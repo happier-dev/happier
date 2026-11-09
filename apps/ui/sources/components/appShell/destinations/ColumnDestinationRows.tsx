@@ -65,8 +65,19 @@ export function useColumnDestinations(column: PlaceableAppShellColumnId | undefi
     currentId: string | null;
     activate: ActivateAppDestination;
 }> {
-    const pathname = useDestinationPathname();
     const activate = useActivateAppDestination();
+    return { ...useColumnDestinationEntries(column), activate };
+}
+
+/**
+ * The column's placed destinations and which one is current, without the activation owner: a memoized column body
+ * reads these and takes `activate` from its route-reading parent, so route publications do not redraw its rows.
+ */
+export function useColumnDestinationEntries(column: PlaceableAppShellColumnId | undefined): Readonly<{
+    destinations: readonly CompactAppDestination[];
+    currentId: string | null;
+}> {
+    const pathname = useDestinationPathname();
     const catalog = useCompactAppDestinations();
     const destinations = React.useMemo(
         () => (column === undefined
@@ -78,7 +89,7 @@ export function useColumnDestinations(column: PlaceableAppShellColumnId | undefi
         () => resolveCurrentAppDestination(catalog, pathname)?.id ?? null,
         [catalog, pathname],
     );
-    return { destinations, currentId, activate };
+    return { destinations, currentId };
 }
 
 export function destinationRowTestId(destination: CompactAppDestination): string {

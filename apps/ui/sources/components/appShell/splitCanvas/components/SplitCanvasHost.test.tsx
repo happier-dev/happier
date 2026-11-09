@@ -177,6 +177,28 @@ describe('SplitCanvasHost', () => {
         }
     });
 
+    it('leaves a hidden retained member layer untouched by a canvas resize', async () => {
+        const state = createNestedState();
+        const header = () => null;
+        const hidden = { id: 'hidden', leafId: 'leaf-a', isActive: false, render: () => React.createElement('HiddenBody', {}) };
+        const visible = { id: 'visible', leafId: 'leaf-a', isActive: true, render: () => React.createElement('VisibleBody', {}) };
+        const members = [hidden, visible];
+        const screen = await renderScreen(<SplitCanvasHost state={state} dispatch={() => {}} renderLeafHeader={header} retainedLeafContents={members} />);
+        const layout = async (width: number, height: number) => act(async () => {
+            invokeTestInstanceHandler(screen.findByTestId('split-canvas-host'), 'onLayout', { nativeEvent: { layout: { width, height } } });
+            invokeTestInstanceHandler(screen.findByTestId('split-canvas-content-slot-leaf-a'), 'onLayout', { nativeEvent: { layout: { x: 0, y: 30 } } });
+        });
+        await layout(1000, 600);
+        const hiddenBefore = screen.findByTestId('split-canvas-retained-content-hidden')?.props;
+        expect(hiddenBefore).toBeTruthy();
+        const visibleBefore = screen.findByTestId('split-canvas-retained-content-visible')?.props;
+        await layout(1200, 700);
+        // The visible member follows the canvas; a hidden one's frame is not observable, so it stays put.
+        expect(screen.findByTestId('split-canvas-retained-content-visible')?.props).not.toBe(visibleBefore);
+        expect(screen.findByTestId('split-canvas-retained-content-hidden')?.props).toBe(hiddenBefore);
+        await screen.unmount();
+    });
+
     it('updates keyboard focus chrome without rebuilding unrelated pane bodies', async () => {
         // Browser event delivery is the boundary; the real canvas owns modality and focus chrome.
         const browser = new EventTarget();

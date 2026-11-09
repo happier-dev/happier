@@ -131,4 +131,35 @@ describe("a phone header's wrapped facts, as a browser lays them out", () => {
     expect(byline.left).toBeGreaterThanOrEqual(last.right - 0.5);
     expect(byline.right).toBeLessThanOrEqual(clip.right + 0.5);
   });
+  it('keeps a glyph that leads the facts apart from the first fact', async () => {
+    // A phone pane's live line led by a machine glyph ("Previews from MacBook Pro"): the glyph and its
+    // first fact read as one item, but never touch.
+    const { PaneHeaderLineView } = await import('./PaneHeader');
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <View testID="column" style={{ width: 360 }}>
+          <PaneHeaderLineView
+            large
+            testID="header"
+            line={{
+              leading: <View testID="mark" style={{ width: 13, height: 13 }} />,
+              segments: ['Previews from MacBook Pro'],
+            }}
+          />
+        </View>,
+      );
+    });
+    const layout = await measureWebLayout(host, {
+      viewport: { width: 400, height: 300 },
+      texts: ['Previews from MacBook Pro'],
+    });
+    const mark = layout.rect('mark');
+    const fact = layout.textRects('Previews from MacBook Pro')[0]!;
+    expect(sameLine(mark, fact)).toBe(true);
+    expect(fact.left - mark.right).toBeGreaterThanOrEqual(4);
+    expect(fact.left - mark.right).toBeLessThanOrEqual(8);
+  });
 });

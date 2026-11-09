@@ -86,7 +86,13 @@ export type ProjectDetailNavigationItem = Readonly<{
 export type DetailPageNavigationDescriptor = Pick<ProjectDetailNavigationItem, 'id' | 'title' | 'icon' | 'disabledReason'>;
 export type DetailPageNavigationItem = Omit<ProjectDetailNavigationItem, 'page' | 'companion'> & Readonly<{ count?: string }>;
 type MachineNavigationInput = Readonly<{ scope: 'machine'; pages: readonly DetailPageNavigationDescriptor[] }>;
-type WorkflowNavigationInput = Readonly<({ scope: 'workflowEditor' } | { scope: 'workflowRun' }) & { settingsAvailable?: boolean }>;
+/**
+ * Editor companions present only when they have something to show: Step needs a selected block,
+ * Agent needs an authoring conversation or draft (Plan T U5; owner 2026-11-06).
+ */
+type WorkflowNavigationInput = Readonly<({ scope: 'workflowEditor' } | { scope: 'workflowRun' }) & {
+    settingsAvailable?: boolean; stepAvailable?: boolean; agentAvailable?: boolean;
+}>;
 /**
  * Host companions an Environment page offers beside itself (DEPLOY-COMPOSE R2). The page names the ones it can show
  * now; each is a side item only (rail on desktop, More on a phone), never a page tab.
@@ -149,11 +155,16 @@ export function resolveDetailNavigationItems(input: MachineNavigationInput | Wor
             id, title, icon, disabledReason: null, navigation: { kind: 'page', page: id, desktop: 'tabs' },
             phonePlacement: 'bar', phoneOrder: 0, defaultPlacement: 'pinned',
         });
+        const companion = (id: string, title: string, icon: DetailPageNavigationItem['icon']): DetailPageNavigationItem => ({
+            // On the desktop rail by default; on a phone, in More (Plan T U5, owner 2026-11-06).
+            ...page(id, title, icon), navigation: { kind: 'companion', companion: id }, phonePlacement: 'more',
+        });
         const descriptors: DetailPageNavigationItem[] = input.scope === 'workflowEditor'
             ? [page('steps', t('workflows.tabs.steps'), 'list'),
                 { ...page('flow', t('workflows.tabs.flow'), 'graph'), navigation: { kind: 'both', page: 'flow', companion: 'flow', desktop: 'tabs' } },
-                ...(input.settingsAvailable ? [{ ...page('settings', t('workflows.page.settings'), 'sliders-horizontal'),
-                    navigation: { kind: 'companion' as const, companion: 'settings' }, phonePlacement: 'more' as const, defaultPlacement: 'overflow' as const }] : [])]
+                ...(input.stepAvailable ? [companion('step', t('workflows.page.inspector.stepOptions'), 'info')] : []),
+                ...(input.settingsAvailable ? [companion('settings', t('workflows.page.settings'), 'sliders-horizontal')] : []),
+                ...(input.agentAvailable ? [companion('agent', t('workflows.authoring.agent'), 'sparkle')] : [])]
             : [page('flow', t('workflows.tabs.map'), 'graph'), page('steps', t('workflows.tabs.steps'), 'list'),
                 page('activity', t('workflows.tabs.activity'), 'pulse')];
         return Object.freeze(descriptors.map((item, phoneOrder) => Object.freeze({ ...item, phoneOrder,
@@ -191,6 +202,7 @@ export function resolveDetailNavigationItems(input: MachineNavigationInput | Wor
         placements: input.pluginPlacements,
         policyContext: input.policyContext,
         ...(input.localize ? { localize: input.localize } : {}),
+        ...(input.pageCompanions ? { pageCompanions: input.pageCompanions } : {}),
         ...(input.runtimeAdmission === undefined ? {} : { runtimeAdmission: input.runtimeAdmission }),
     });
     const appTabs = input.scope === 'app' || !input.appPluginPlacements

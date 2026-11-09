@@ -9,6 +9,6 @@ export function SelectedPaneDestinationHost(props: Readonly<{
     sessionId: string;
     serverId?: string | null;
 }>) {
-    useRegisterSessionPaneDriver(props.sessionId, props.serverId, undefined, undefined, { scopeId: props.scopeId });
+    useRegisterSessionPaneDriver(props.sessionId, props.serverId, undefined, { scopeId: props.scopeId });
     return <AppPaneScopeHost scopeId={props.scopeId} main={null} selectedPaneTabKey={props.tabKey} />;
 }

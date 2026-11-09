@@ -1,8 +1,8 @@
 import * as React from 'react';
-import type { JsonValue } from '@happier-dev/protocol';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiProjectionCurrentness } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { UsageWidgetBatchBoundary } from '@/components/settings/usage/widgets/usageWidgetBatch';
 import type { WidgetSetupDraft } from '@/components/widgets/add/widgetSetupModel';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
@@ -12,6 +12,7 @@ import { WidgetSurface } from './WidgetSurface';
 import { widgetDefinitionOfCandidate } from './widgetSurfaceSetup';
 import { isPublicProfileWidgetSurfaceV1 } from '@happier-dev/protocol/widgets';
 import { PublicProfileWidgetPreviewBoundary } from '@/components/settings/account/publicProfile/PublicProfileWidgetSurface';
+import type { ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 
 /**
  * The Set up / Edit inputs step's live preview: the same instance body every surface mounts, at the
@@ -22,11 +23,12 @@ import { PublicProfileWidgetPreviewBoundary } from '@/components/settings/accoun
 export function WidgetSetupPreview(props: Readonly<{
     scope: WidgetSurfaceRefV1;
     providedContext: Readonly<Record<string, readonly JsonValue[]>>;
+    projectContext?: ProjectWidgetAreaContextV1 | null;
     candidate: WidgetCandidate;
     draft: WidgetSetupDraft;
     testID: string;
 }>): React.ReactElement {
-    const appRuntime = useAppShellPluginUiProjection();
+    const appRuntime = useAppShellPluginUiProjectionCurrentness();
     const { candidate, draft } = props;
     const instance = React.useMemo(() => ({
         v: 1 as const,
@@ -38,6 +40,7 @@ export function WidgetSetupPreview(props: Readonly<{
         <UsageWidgetBatchBoundary><WidgetSurface
             scope={props.scope}
             providedContext={props.providedContext}
+            projectContext={props.projectContext}
             descriptor={candidate}
             instance={instance}
             appRuntime={appRuntime}

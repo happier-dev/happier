@@ -46,6 +46,19 @@ describe('describeUpdatesGroupRow — one row per machine, one state, at most on
         });
     });
 
+
+    it('keeps a cached manual CLI check explicit in the machine summary and visible on the page', async () => {
+        const { partitionUpdatesPageGroups } = await import('./describeUpdatesGroupRow');
+        const cached: UpdateItem = {
+            ...cli, state: 'unknown', cachedRelease: { channel: 'dev' },
+            action: { kind: 'manual', command: 'hdev self update' },
+        };
+        const group = machine([cached]);
+        expect(describeUpdatesGroupRow(group).status).toContain('updates.row.cachedReleaseChannel');
+        expect(describeUpdatesGroupRow(group).action).toBeNull();
+        expect(partitionUpdatesPageGroups([group]).sections).toEqual([group]);
+    });
+
     it('names the one waiting update and runs exactly that item', () => {
         const row = describeUpdatesGroupRow(machine([cli, current(codex)]));
         expect(row.status).toBe('Happier CLI · updates.row.versionChange(from=0.2.12,to=0.2.14)');

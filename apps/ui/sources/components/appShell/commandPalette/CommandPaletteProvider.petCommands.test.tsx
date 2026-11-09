@@ -10,7 +10,6 @@ import { CommandPaletteProvider } from './CommandPaletteProvider';
 
 const applySettingsMock = vi.hoisted(() => vi.fn());
 const applyLocalSettingsMock = vi.hoisted(() => vi.fn());
-const resetDesktopActivityOverlayPositionMock = vi.hoisted(() => vi.fn(async () => {}));
 const captured = vi.hoisted(() => ({
     petControls: null as PetCommandControls | null,
     shortcutLabelHandlers: null as KeyboardShortcutHandlers | null,
@@ -87,10 +86,6 @@ vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
     isDesktopHost: () => true,
 }));
 
-vi.mock('@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge', () => ({
-    resetDesktopActivityOverlayPosition: resetDesktopActivityOverlayPositionMock,
-}));
-
 vi.mock('@/components/settings/pets/petSettingsCommandEvents', () => ({
     requestCodexPetRefresh: vi.fn(),
 }));
@@ -150,7 +145,6 @@ describe('CommandPaletteProvider pet commands', () => {
         vi.clearAllMocks();
         applySettingsMock.mockClear();
         applyLocalSettingsMock.mockClear();
-        resetDesktopActivityOverlayPositionMock.mockClear();
         captured.petControls = null;
         captured.shortcutLabelHandlers = null;
         captured.keyboardHandlers = null;

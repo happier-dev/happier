@@ -5,7 +5,7 @@ import { paneUiState } from '@/sync/domains/state/filePaneUiState';
 import { UiStatePersistenceError } from '@/sync/domains/state/persistentUiState';
 import type { PaneDriver, PaneScopeId } from './types';
 import { registerSessionTerminalWorkspaceOwner, notifySessionTerminalWorkspaceChanged, retireProjectTerminalPresentationForHome } from '@/components/sessions/terminal/sessionTerminalWorkspaceRuntime';
-import { EMPTY_TERMINAL_WORKSPACE, readSessionTerminalWorkspace } from '@/components/sessions/terminal/sessionTerminalWorkspace';
+import { EMPTY_TERMINAL_WORKSPACE, getVisibleSessionTerminalWorkspacePane, readSessionTerminalWorkspace } from '@/components/sessions/terminal/sessionTerminalWorkspace';
 import { appPaneReduce, createAppPaneState, type AppPaneAction, type AppPaneState, type PaneScopeState } from './model/appPaneReducer';
 import { normalizePersistedPaneScopes, serializePersistedPaneScope, mergePaneScopePresentationState, reconcilePersistedTerminalWorkspace } from './model/paneScopePersistence';
 import { PersistedPaneScopeSchema } from './model/paneScopePersistenceSchema';
@@ -96,6 +96,11 @@ function resolveOverlayFocusClear(
     state: AppPaneState,
 ): Readonly<{ scopeId: string; surface: PaneOverlayFocusSurface }> | null {
     switch (action.type) {
+        case 'hideTerminalWorkspace': {
+            const scope = state.scopes[action.scopeId];
+            const surface = scope ? getVisibleSessionTerminalWorkspacePane(scope) : null;
+            return surface ? { scopeId: action.scopeId, surface } : null;
+        }
         case 'closeDetails':
         case 'closeDetailsOverlay':
             return { scopeId: action.scopeId, surface: 'details' };

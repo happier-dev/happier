@@ -11,6 +11,7 @@ import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/appr
 import { WorkflowDefinitionArtifactHeaderV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { readApprovalActionTitle } from '@/components/approvals/approvalRequestTitle';
 import { formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 
 import { projectArtifactHeaderForDisplay } from '@/sync/encryption/artifactEncryption';
 import { storage } from '@/sync/domains/state/storage';
@@ -24,6 +25,9 @@ import { applyProfileCatalogSnapshot, resetProfileCatalogSnapshotsForTests } fro
 import { applyMcpServerCatalogSnapshot, resetMcpServerCatalogSnapshotsForTests } from '@/sync/store/settings/mcpServerCatalogSnapshot';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import * as workspaceRoutes from '@/components/appShell/workspace/workspaceRoutes';
+import * as workspaceRefs from '@/sync/domains/workspaces/workspaceRefs';
 import {
     readDestinationInstanceTitle,
     resolveCompactAppDestinations,
@@ -92,6 +96,82 @@ describe('Project destination instance titles', () => {
         }
     });
 
+    it('uses the template publisher page identity while ordinary plugin publishing keeps its route title', () => {
+        const template = destination('/settings/plugins/publish?templateArtifactId=garden&templateServerId=home-a');
+        const generic = destination('/settings/plugins/publish');
+        expect(readDestinationInstanceTitle(catalog, template, { publishedTitle: { ref: template, title: 'Publish Garden' } }))
+            .toBe('Publish Garden');
+        expect(readDestinationInstanceTitle(catalog, template, { fallbackTitle: 'Publish Garden' })).toBe('Publish Garden');
+        expect(readDestinationInstanceTitle(catalog, generic, { publishedTitle: { ref: generic, title: 'Checking package' } }))
+            .toBe(t('settingsPlugins.publish.title'));
+    });
+    it('masks live, published and saved Session chrome titles while sharing, then restores them', async () => {
+        const previous = storage.getState();
+        const entries = ['/session/private?serverId=home-a', '/session/private/info?serverId=home-a',
+            '/session/saved-private?serverId=home-a', '/session/public?serverId=home-a',
+            '/session/private/file?serverId=home-a&path=%2Fprivate%2Fsecret.ts'].map((href, index) => ({
+                key: String(index), ref: destination(href), fallbackTitle: 'Saved private identity',
+            }));
+        storage.getState().applySessions([createSessionFixture({ id: 'private', serverId: 'home-a', metadata: {
+            path: '/private', host: 'tester', summary: { text: 'Private identity', updatedAt: 1 },
+        } }), createSessionFixture({ id: 'public', serverId: 'home-a', metadata: {
+            path: '/public', host: 'tester', summary: { text: 'Public identity', updatedAt: 1 },
+        } })]);
+        storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { 'home-a': ['private'] } });
+        for (const id of ['private', 'saved-private']) storage.getState().setSessionTagAssignmentsOptimistic('home-a', id, ['private']);
+        const hook = await renderHook(() => useDestinationInstanceTitles(catalog, entries));
+        try {
+            expect(hook.getCurrent().get('0')).toBe('Private identity');
+            await act(async () => { setScreenSharingPrivacyActive(true); });
+            expect([...hook.getCurrent().values()]).toEqual([t('session.untitled'), t('session.untitled'), t('session.untitled'), 'Public identity', t('session.untitled')]);
+            expect(readDestinationInstanceTitle(catalog, entries[0]!.ref, {
+                publishedTitle: { ref: entries[0]!.ref, title: 'Published private identity' },
+            })).toBe(t('session.untitled'));
+            expect(readDestinationInstanceTitle(catalog, entries[2]!.ref, { fallbackTitle: 'Saved private identity' })).toBe(t('session.untitled'));
+            await act(async () => { setScreenSharingPrivacyActive(false); });
+            expect(hook.getCurrent().get('0')).toBe('Private identity');
+            expect(hook.getCurrent().get('2')).toBe('Saved private identity');
+        } finally { await hook.unmount(); setScreenSharingPrivacyActive(false); storage.setState(previous, true); }
+    });
+    it('resolves only an arriving tab and does no title/route work for an unrelated Machine at 153 tabs', async () => {
+        const resolutions: string[] = [];
+        const entry = (index: number) => ({
+            key: `tab-${index}`, ref: destination('/settings/appearance'),
+            get fallbackTitle() { resolutions.push(`tab-${index}`); return `Saved ${index}`; },
+        });
+        const entries = Array.from({ length: 153 }, (_, index) => entry(index));
+        entries[71] = { ...entries[71], ref: destination('/projects/checkout?serverId=home-a') };
+        const arriving = entry(153);
+        // Passthrough instrumentation: the production route resolver and store remain real.
+        const routes = vi.spyOn(workspaceRoutes, 'matchWorkspaceDestinationRoute');
+        const projects = vi.spyOn(workspaceRefs, 'resolveWorkspaceRefById');
+        const hook = await renderHook((rows: typeof entries) => useDestinationInstanceTitles(catalog, rows), { initialProps: entries });
+        try {
+            const before = hook.getCurrent();
+            const routesPerTab = Math.ceil(routes.mock.calls.length / entries.length);
+            expect(routesPerTab).toBeGreaterThan(0);
+            expect(projects).toHaveBeenCalled();
+            resolutions.length = 0;
+            routes.mockClear();
+            projects.mockClear();
+            await act(async () => storage.getState().applyMachines([createMachineFixture({ id: 'strip-background' })]));
+            expect(resolutions).toEqual([]);
+            expect(routes).not.toHaveBeenCalled();
+            expect(projects).not.toHaveBeenCalled();
+            expect(hook.getCurrent()).toBe(before);
+
+            await hook.rerender([...entries, arriving]);
+            expect(new Set(resolutions)).toEqual(new Set(['tab-153']));
+            expect(routes.mock.calls.length).toBeLessThanOrEqual(routesPerTab);
+            console.info('PERF-STRIP title cost', { existingTabs: 153, arrivingTitleInputs: resolutions.length, arrivingRouteMatches: routes.mock.calls.length, routesPerTab });
+            expect(hook.getCurrent().size).toBe(154);
+            expect(hook.getCurrent().get('tab-153')).toBe(readDestinationInstanceTitle(catalog, arriving.ref));
+        } finally {
+            await hook.unmount();
+            routes.mockRestore();
+            projects.mockRestore();
+        }
+    });
     it('keeps destination titles when collection content publishes a headline or an automatic detail selection', () => {
         for (const [href, headline] of [
             ['/machines', 'Calm'], ['/settings/machines', 'Calm'], ['/settings', 'Alice'],
@@ -147,6 +227,17 @@ describe('Project destination instance titles', () => {
         if (!builtin) throw new Error('Expected canonical built-in Profile');
         expect(readDestinationInstanceTitle(catalog, destination('/settings/profiles/azure-openai')))
             .toBe(getProfileDisplayName(builtin));
+    });
+    it('settles a missing Workflow from its exact-kind census while an unknown Artifact still needs full membership', async () => {
+        const entries = ['/workflows/gone', '/artifacts/gone'].map((href, index) => ({ key: String(index), ref: destination(href), fallbackTitle: 'Retained title' }));
+        const hook = await renderHook(() => useDestinationInstanceTitles(catalog, entries));
+        const pendingArtifact = hook.getCurrent().get('1');
+        await act(async () => storage.getState().applyArtifacts([], storage.getState().artifacts, ['workflow-definition.v1']));
+        expect(storage.getState().artifactsLoaded).toBe(false);
+        expect(hook.getCurrent().get('0')).toBe(t('common.unavailable'));
+        expect(hook.getCurrent().get('1')).toBe(pendingArtifact);
+        expect(hook.getCurrent().get('1')).not.toBe(t('artifacts.notFound'));
+        await hook.unmount();
     });
     it('reads an executed Approval whose Action refused its effect as Failed, like its detail page', async () => {
         const request = { v: 2 as const, status: 'executed' as const, createdAtMs: 1, updatedAtMs: 3,
@@ -226,6 +317,14 @@ describe('Project destination instance titles', () => {
         expect([...hook.getCurrent().values()]).toEqual(['Renamed', 'Renamed profile', 'Renamed MCP', t('approvals.title')]);
         expect(readDestinationInstanceTitle(catalog, { ...entries[0]!.ref,
             params: { ...entries[0]!.ref.params, serverId: 'other-home' } })).not.toBe('Renamed');
+        await hook.unmount();
+    });
+    it('names a settings entity page by its route while its catalog read failed, never as Unavailable', async () => {
+        applyProfileCatalogSnapshot(scope, { status: 'unavailable', reason: 'unreachable' }, true);
+        const entries = [{ key: 'profile', ref: destination('/settings/profiles/saved-profile') }];
+        const hook = await renderHook(() => useDestinationInstanceTitles(catalog, entries));
+        expect(readDestinationInstanceTitle(catalog, entries[0]!.ref)).toBe(t('profiles.editProfile'));
+        expect(hook.getCurrent().get('profile')).toBe(t('profiles.editProfile'));
         await hook.unmount();
     });
     it('names restored Workflows and Runs from their stored projections and settles a removed Workflow', async () => {

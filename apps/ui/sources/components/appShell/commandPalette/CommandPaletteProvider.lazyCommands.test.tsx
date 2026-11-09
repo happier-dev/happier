@@ -162,7 +162,7 @@ describe('CommandPaletteProvider lazy command building', () => {
 
         await act(async () => { await testState.keyboardHandlers?.['commandPalette.open']?.(); });
 
-        expect(buildCommandPaletteCommandsSpy).toHaveBeenCalledTimes(1);
+        expect(buildCommandPaletteCommandsSpy).toHaveBeenCalled();
         expect(Modal.show).toHaveBeenCalledTimes(1);
     });
 

@@ -45,6 +45,16 @@ function detailsTabDestinationRef(tab: DetailsTabState, sessionId: string, serve
     };
 }
 
+/** The glyph a Details tab's chip carries (a file chip draws its file type instead). */
+export function resolveDetailsTabGlyph(tab: DetailsTabState, resolveTabIconName?: ((tab: DetailsTabState) => string | null | undefined) | null): IconName {
+    if (tab.kind === 'file') return 'file';
+    return (resolveTabIconName?.(tab) ?? ({
+        commit: 'git-commit', scmReview: 'diff', scmStash: 'archive',
+        scmPullRequest: 'git-pull-request', terminal: 'terminal', executionRunLauncher: 'play',
+        'browser-view': 'globe',
+    } as Record<string, string>)[tab.kind] ?? 'circle') as IconName;
+}
+
 /** A Details tab's close, as its strip offers it: an unsaved tab asks first. */
 export function useGuardedDetailsTabClose(closeDetailsTab: AppPaneScopeApi['closeDetailsTab'], scopeId?: string): (tabKey: string) => void {
     return React.useCallback((tabKey: string) => {
@@ -83,11 +93,7 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
     const renderLeadingIcon = React.useCallback((tab: DetailsTabState, active: boolean) => {
         if (tab.kind === 'file') return <FileIcon fileName={tab.title} size={M.tabGlyphPx}
             testID={`session-details-tab-file-icon-${toTestIdSafeValue(tab.key)}`} />;
-        const iconName = resolveTabIconName?.(tab) ?? ({
-            commit: 'git-commit', scmReview: 'diff', scmStash: 'archive',
-            scmPullRequest: 'git-pull-request', terminal: 'terminal', executionRunLauncher: 'play',
-        }[tab.kind] ?? 'circle');
-        return <Icon name={iconName as IconName} size={M.tabGlyphPx}
+        return <Icon name={resolveDetailsTabGlyph(tab, resolveTabIconName)} size={M.tabGlyphPx}
             color={active ? primaryColor : secondaryColor} />;
     }, [resolveTabIconName, primaryColor, secondaryColor]);
     const wrapTab = React.useCallback((tab: DetailsTabState, content: React.ReactNode) => {

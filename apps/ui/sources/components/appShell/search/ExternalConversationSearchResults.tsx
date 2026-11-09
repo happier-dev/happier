@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { Platform, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { HappierBodyEdgeContext, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { useConversationSearch } from '@/sync/domains/search/useConversationSearch';
 import type { ConversationSearchResult, ConversationSearchSource } from '@/sync/domains/search/searchConversations';
 import { resolveExternalSessionBrowseRpcErrorMessage } from '@/components/sessions/external/browse/externalSessionBrowseErrorPresentation';
@@ -17,7 +17,7 @@ import { readExternalSessionBrowseCandidateKey, readExternalSessionBrowseCandida
 import { resolveExternalSessionBrowseCandidateIdentityPresentation } from '@/components/sessions/presentation/externalSessionIdentityPresentation';
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
@@ -28,6 +28,7 @@ import { SelectionListFooter } from '@/components/ui/selectionList/SelectionList
 import { useHardwareKeyboard } from '@/components/ui/selectionList/useHardwareKeyboard';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Text } from '@/components/ui/text/Text';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
@@ -270,8 +271,7 @@ function CoverageFailures(props: Readonly<{
     const [chosen, setChosen] = React.useState<boolean | null>(null);
     return <ExpandableItem testID="external-conversation-failures" expanded={chosen ?? props.defaultExpanded} onExpandedChange={setChosen} showDivider={false}
         header={state => <View style={styles.menuRow}><Item {...state.headerProps} rowRole="menu" testID="external-conversation-failures-header"
-            title={t('conversationSearch.coverageSourcesFailed')} titleStyle={styles.failureTitle} showChevron={false}
-            rightElement={<ExpandableItemCaret expanded={state.expanded} />} /></View>}>
+            title={t('conversationSearch.coverageSourcesFailed')} titleStyle={styles.failureTitle} /></View>}>
         {props.failures.map(failure => {
             const source = props.sources.find(value => value.machineId === failure.machineId && value.agentId === failure.agentId && value.sourceKey === failure.sourceKey);
             return <View key={JSON.stringify([failure.machineId, failure.agentId, failure.sourceKey])} style={styles.menuRow}
@@ -337,8 +337,12 @@ export function ConversationPreview(props: Readonly<{
             <View style={styles.previewHeading}>{highlight.agentId ? <AgentIcon agentId={highlight.agentId} size={ICON_SIZE.md} /> : null}<Text style={styles.previewTitle} numberOfLines={2}>{highlight.title}</Text></View>
             {highlight.meta ? <Text style={styles.meta} numberOfLines={1}>{highlight.meta}</Text> : null}
             <ScrollView style={styles.previewGrow} contentContainerStyle={styles.previewMessages}>
+                <HappierBodyEdgeContext.Provider value>
                 {!selectedExchange ? <ActivitySpinner size={ICON_SIZE.sm} /> : selectedExchange.failed
-                    ? <><Text style={styles.meta}>{t('externalSessions.browseFailedToLoad')}</Text>{props.onRetry ? <RoundButton title={t('common.retry')} size="small" display="secondary" onPress={props.onRetry} /> : null}</>
+                    // The shared failure line on the preview's own edge, said once; the ways out below still work.
+                    ? <SurfaceStateCard testID="external-conversation-preview-failed" size="line" kind="error" accessibilitySemantics="alert"
+                        title={t('externalSessions.browseContentPreviewFailed')}
+                        action={props.onRetry ? { label: t('common.retry'), onPress: props.onRetry, testID: 'external-conversation-preview-retry' } : undefined} />
                     : selectedExchange.messages.map((message, index) => {
                         const isMatch = message.id === matchedMessageId;
                         const isPrompt = !isMatch && index === 0 && message.kind === 'user-text';
@@ -357,6 +361,7 @@ export function ConversationPreview(props: Readonly<{
                     </View>
                         </React.Fragment>;
                     })}
+                </HappierBodyEdgeContext.Provider>
             </ScrollView>
             <View style={styles.previewActions}>
                 <RoundButton testID="external-conversation-preview-open" title={t('externalSessions.browseContentOpen')} size="small"
@@ -426,7 +431,7 @@ function buildContentSourceModel(props: ContentSourceProps) {
     // The preview opens through the latest render's guards, never a closure from when it was highlighted.
     const describe = (candidate: ExternalSessionBrowseCandidate): SelectedConversationHighlight => {
         const identity = resolveExternalSessionBrowseCandidateIdentityPresentation({ remoteSessionId: candidate.remoteSessionId, title: candidate.title,
-            path: readExternalSessionBrowseCandidatePath(candidate.details), homeDir: props.homeDir, agentLabel: source.label, machineLabel: props.machineLabel, thread: candidate.thread });
+            path: readExternalSessionBrowseCandidatePath(candidate), homeDir: props.homeDir, agentLabel: source.label, machineLabel: props.machineLabel, thread: candidate.thread });
         const relativeTime = candidate.updatedAtMs > 0 ? formatShortRelativeTime(candidate.updatedAtMs) : '';
         return { key: readExternalSessionBrowseCandidateKey(candidate), candidate, title: stripMarkdown(identity.title),
             meta: [identity.secondaryLabel, relativeTime].filter(Boolean).join(' · '),
@@ -443,7 +448,7 @@ function ConversationResultCandidate({ candidate, source: model }: Readonly<{ ca
     const { source } = props;
     // The row's mark names the Agent and the group names the machine; the line keeps the project.
     const identity = resolveExternalSessionBrowseCandidateIdentityPresentation({ remoteSessionId: candidate.remoteSessionId, title: candidate.title,
-        path: readExternalSessionBrowseCandidatePath(candidate.details), homeDir: props.homeDir, machineLabel: props.showMachine ? props.machineLabel : null, thread: candidate.thread });
+        path: readExternalSessionBrowseCandidatePath(candidate), homeDir: props.homeDir, machineLabel: props.showMachine ? props.machineLabel : null, thread: candidate.thread });
     const key = readExternalSessionBrowseCandidateKey(candidate);
     const match = candidate.match;
     const linking = props.linkingKey === key;

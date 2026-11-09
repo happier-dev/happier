@@ -2,8 +2,9 @@ import * as React from 'react';
 
 import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import {
-    hrefForDestinationRef, resolveCurrentAppDestination, useDestinationInstanceTitles, type DestinationInstanceTitleEntry,
+    hrefForDestinationRef, readDestinationSessionAddress, resolveCurrentAppDestination, useDestinationInstanceTitles, type CompactAppDestination, type DestinationInstanceTitleEntry,
 } from '../destinations/compactAppDestinationCatalog';
 import { useOptionalWorkspaceNavigation } from './WorkspaceNavigationContext';
 import { projectWorkspacePhoneTabs, type WorkspacePhoneTab } from './workspacePhoneProjection';
@@ -43,6 +44,7 @@ export type PhoneWorkspaceTabs = Readonly<{
 
 const NONE: readonly WorkspacePhoneTab[] = [];
 const NO_ENTRIES: readonly DestinationInstanceTitleEntry[] = [];
+const NO_CATALOG: readonly CompactAppDestination[] = [];
 const noop = () => {};
 
 /**
@@ -51,24 +53,27 @@ const noop = () => {};
  * and write goes through `WorkspaceProvider`.
  */
 export function usePhoneWorkspaceTabs(): PhoneWorkspaceTabs {
-    const workspace = useOptionalWorkspaceNavigation();
-    const phone = workspace?.phone ?? null;
-    const state = workspace?.state ?? null;
+    const phone = useOptionalWorkspaceNavigation(value => value?.phone ?? null);
+    const state = useOptionalWorkspaceNavigation(value => value?.state ?? null);
+    const isSessionVisible = useSessionRecordingVisibility(phone !== null);
     const projected = React.useMemo(() => {
         if (!phone || !state) return NONE;
         const rows = projectWorkspacePhoneTabs(state)
             // A blank "new tab" is the owner's empty-group filler, never something to show.
-            .map((tab) => ({ ...tab, panes: tab.panes.filter((pane) => pane.target.kind !== 'newTab') }))
+            .map((tab) => ({ ...tab, panes: tab.panes.filter((pane) => {
+                const session = readDestinationSessionAddress(pane.target);
+                return pane.target.kind !== 'newTab' && (!session || isSessionVisible(session));
+            }) }))
             .filter((tab) => tab.panes.length > 0)
             .map((tab) => (tab.panes.some((pane) => pane.id === tab.activeTabId) ? tab : { ...tab, activeTabId: tab.panes[0].id }));
         return [...rows.filter((tab) => !tab.panes.some((pane) => pane.preview)), ...rows.filter((tab) => tab.panes.some((pane) => pane.preview))];
-    }, [phone, state]);
+    }, [phone, state, isSessionVisible]);
     const titleEntries = React.useMemo(() => (projected.length === 0 ? NO_ENTRIES : projected.flatMap((tab) => {
         const pane = tab.panes.find((item) => item.id === tab.activeTabId) ?? tab.panes[0];
         return [{ key: tab.id, instanceKey: pane.id, ref: pane.target, fallbackTitle: state?.fallbackTitlesByTabId[pane.id] }];
     })), [projected, state?.fallbackTitlesByTabId]);
     const catalog = phone?.catalog ?? null;
-    const titles = useDestinationInstanceTitles(catalog ?? [], titleEntries);
+    const titles = useDestinationInstanceTitles(catalog ?? NO_CATALOG, titleEntries);
     const tabs = React.useMemo((): readonly PhoneWorkspaceTab[] => projected.map((tab) => {
         const pane = tab.panes.find((item) => item.id === tab.activeTabId) ?? tab.panes[0];
         const href = catalog ? hrefForDestinationRef(catalog, pane.target) : null;

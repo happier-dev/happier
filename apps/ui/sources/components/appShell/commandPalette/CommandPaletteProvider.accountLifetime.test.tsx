@@ -1,6 +1,8 @@
 import { act } from 'react-test-renderer';
+import * as React from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { createHash } from 'node:crypto';
+import { buildDeferredDaemonProjectionSections, DaemonContributionRegistryProjectionDescribeResponseSchema, DaemonProjectionSectionBodyResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createMachineFixture, createSessionFixture, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
@@ -18,6 +20,126 @@ const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { useCommandPalettePluginActionPresentation } = await import('./CommandPaletteProvider');
+
+it('opens Home Search Actions on their individual selected origins when the catalog spans Machines', async () => {
+    const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+    const { normalizePluginUiProjection } = await import('@/sync/domains/plugins/ui/projection');
+    const { createPluginUiProjectionUnionPublication } = await import('@/sync/domains/plugins/ui/projectionUnion');
+    const { buildCommandPaletteCommands } = await import('./buildCommandPaletteCommands');
+    const serverId = await homes.addHome({ name: 'Flower Home', serverUrl: 'https://palette-flowers.test', accountId: 'flowers', currentAccount: true });
+    storage.setState({ profileScope: { serverId, accountId: 'flowers' }, settingsScope: { serverId, accountId: 'flowers' } });
+    publishAppliedActiveServerSnapshot({ serverId, serverUrl: 'https://palette-flowers.test', generation: 1 });
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Flower Home must be current');
+    const pluginIds = ['qa.flowers', 'qa.notes'];
+    const members = pluginIds.map((pluginId, index) => {
+        const machineId = `palette-machine-${index}`;
+        const sourceCustody = { kind: 'development' as const, registeredRootId: `root-${index}` };
+        const executionOrigin = { serverIdentityId: 'srv_palette_flowers', sourceRef: { machineId, pluginId, sourceCustody } };
+        return { machineId, serverId, serverIdentityId: executionOrigin.serverIdentityId, phase: 'current' as const,
+            interactionEnabled: true, projection: normalizePluginUiProjection({ v: 2, generation: 1,
+                installedPackagesById: { [pluginId]: { id: pluginId, displayName: pluginId, enabled: true, version: '1.0.0',
+                    source: { kind: 'localPath', locator: `root-${index}` }, occurrenceId: `occurrence-${index}`, sourceCustody, executionOrigin } },
+                agentsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [], familiesById: {},
+                actionsById: { [`${pluginId}/change`]: { id: 'change', pluginId, occurrenceId: `occurrence-${index}`, executionOrigin,
+                    title: `Change ${index}`, scopes: ['global', 'session'], surfaces: ['ui'], placementBindings: ['commandPalette'],
+                    execution: { target: 'daemon' }, dangerLevel: 'safe', available: true,
+                    inputHints: { fields: [{ path: 'flower', title: 'Flower', widget: 'text', required: true }] } } },
+            }) };
+    });
+    const publication = createPluginUiProjectionUnionPublication();
+    const selectedOrigins = new Map(members.map((member, index) => [pluginIds[index]!,
+        member.projection.installedPackagesById[pluginIds[index]!]!.executionOrigin!]));
+    let union = publication.publish(members, selectedOrigins).pluginUiProjection;
+    if (!union) throw new Error('Action union missing');
+    function Wrapper({ children }: React.PropsWithChildren) {
+        return React.createElement(AppShellPluginUiProjectionValueProvider, { value: {
+            pluginUiProjection: union, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
+            machineId: null, serverId, platform: 'web', accountLifetime: lifetime,
+            clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {}, reloadConnectedAccountProjection() {},
+        }, children });
+    }
+    const mounted = await renderHook(() => useCommandPalettePluginActionPresentation(null, true), { wrapper: Wrapper });
+    await flushHookEffects();
+    const presentation = mounted.getCurrent();
+    expect(presentation).toBeDefined();
+    if (!presentation) throw new Error('Home Search must consume the selected Action union');
+    const actions = presentation.controller.list({ placement: 'commandPalette', scope: 'global' });
+    expect(actions.map(action => action.qualifiedActionId)).toEqual(pluginIds.map(id => `${id}/change`));
+    const commands = buildCommandPaletteCommands({ sessionsById: {}, isDev: false, activeSessionId: null,
+        features: { executionRunsEnabled: false, voiceEnabled: false },
+        nav: { push() {}, openNewSession() {}, navigateToSession() {} }, actions: { execute: async () => ({ ok: true, result: {} }) },
+        alert: async () => {}, pluginActionPresentation: presentation });
+    expect(commands.filter(command => command.id.startsWith('plugin-action:')).map(command => command.title)).toEqual(['Change 0', 'Change 1']);
+    const forms = [];
+    for (const [index, action] of actions.entries()) {
+        const opened = await presentation.controller.open(action);
+        expect(opened.kind).toBe('form');
+        if (opened.kind !== 'form') throw new Error('Action form must open');
+        expect(opened.form.pickerContext).toMatchObject({ machineId: members[index]!.machineId, serverId });
+        forms.push(opened.form);
+    }
+    // Reading the selected AppShell publication does not fetch a second Machine catalog.
+    expect(machineRpc).not.toHaveBeenCalled();
+    union = publication.publish(members.map((member, index) => index === 0
+        ? { ...member, phase: 'unavailable' as const, interactionEnabled: false } : member), selectedOrigins).pluginUiProjection;
+    await mounted.rerender();
+    expect(forms[0]!.isRetired()).toBe(true);
+    expect(forms[1]!.isRetired()).toBe(false);
+    expect(mounted.getCurrent()!.controller.list({ placement: 'commandPalette', scope: 'global' }).map(action => action.qualifiedActionId))
+        .toEqual(['qa.notes/change']);
+});
+
+it('reads only Agent declarations for a restored producer model and delivers changed Agent facts', async () => {
+    const { useAgentModelChoices } = await import('@/components/settings/pickers/useAgentModelChoices');
+    const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
+    const serverId = await homes.addHome({ name: 'Model Home', serverUrl: 'https://model-projection.test', accountId: 'model-account', currentAccount: true });
+    const machineId = 'model-machine';
+    let title = 'Original Agent';
+    let packageTitle = 'Original package';
+    const sections: string[] = [];
+    machineRpc.mockImplementation(async request => {
+        if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: {} };
+        if (request.method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) throw new Error('Unexpected model transport');
+        const projection = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+            projection: { v: 2, generation: 1,
+                installedPackagesById: { 'acme.model': { id: 'acme.model', displayName: packageTitle, enabled: true,
+                    source: { kind: 'local', locator: '/plugins/model' } } },
+                agentsById: { 'acme.model': {
+                id: 'acme.model', title, identity: { pluginId: 'acme.model', localId: 'agent' }, channel: 'plugin', isBuiltIn: false,
+                capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+            } } } });
+        const snapshot = buildDeferredDaemonProjectionSections({ ...projection,
+            projectionDigest: createHash('sha256').update(JSON.stringify(projection)).digest('hex') });
+        const read = request.payload.sectionRead;
+        if (!read) return snapshot.manifest;
+        const response = snapshot.read(read.digest, read.offset, read.includeDigests);
+        // A carrier can deliver several sections in the same physical response.
+        const deliveredDigests = new Set([read.digest, ...(DaemonProjectionSectionBodyResponseSchema.parse(response).bodies ?? []).map(body => body.digest)]);
+        for (const [section, digest] of Object.entries(snapshot.manifest.sections)) {
+            if (deliveredDigests.has(digest)) sections.push(section);
+        }
+        return response;
+    });
+    const mounted = await renderHook(() => useAgentModelChoices({ value: '', purpose: 'runner', machineId, serverId, observeSelection: true }));
+    await vi.waitFor(() => expect(mounted.getCurrent().groups.some(group => group.entry.title === title)).toBe(true));
+    const installedAgent = () => mounted.getCurrent().groups.find(group => group.entry.agentId === 'acme.model');
+    expect(installedAgent()?.entry.agentCatalogEntry.installedPackage?.displayName).toBe(packageTitle);
+    expect([...sections].sort()).toEqual(['agentsById', 'base', 'installedPackagesById'].sort());
+    sections.length = 0;
+    title = 'Changed Agent';
+    await act(async () => publishMachineContributionRegistryProjectionInvalidation({ machineId, serverId }, 'authority'));
+    await vi.waitFor(() => expect(mounted.getCurrent().groups.some(group => group.entry.title === title)).toBe(true));
+    expect([...sections].sort()).toEqual(['agentsById', 'base'].sort());
+    console.info('RESTORED_MODEL_DEMAND', JSON.stringify({ changedSectionReads: sections, consumedTitle: title }));
+    sections.length = 0;
+    packageTitle = 'Changed package';
+    await act(async () => publishMachineContributionRegistryProjectionInvalidation({ machineId, serverId }, 'authority'));
+    await vi.waitFor(() => expect(installedAgent()?.entry.agentCatalogEntry.installedPackage?.displayName).toBe(packageTitle));
+    expect(installedAgent()?.entry.title).toBe('Changed Agent');
+    expect([...sections].sort()).toEqual(['base', 'installedPackagesById'].sort());
+    console.info('RESTORED_MODEL_PACKAGE_DEMAND', JSON.stringify({ changedSectionReads: sections, consumedPackageTitle: packageTitle }));
+});
 
 beforeEach(async () => {
     await homes.reset();
@@ -53,12 +175,36 @@ it('keeps a routed Session Action form on its Home through focused Account rotat
                 dangerLevel: 'safe', execution: { target: 'daemon' }, available: true,
                 inputHints: { title: 'Review B', submitLabel: 'Review', fields: [{ path: 'reason', title: 'Reason', widget: 'textarea', required: true }] } } },
         } });
+    const demandedSections = ['actionsById', 'familiesById.pluginUi', 'familiesById.inputTypes', 'resourcesById'];
+    const sectionReads: string[] = [];
+    let manifests = 0;
     machineRpc.mockImplementation(async request => {
-        if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return projection;
+        if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+            const snapshot = buildDeferredDaemonProjectionSections({ ...projection,
+                projectionDigest: createHash('sha256').update(JSON.stringify(projection)).digest('hex') });
+            const read = request.payload.sectionRead;
+            if (read) {
+                const response = snapshot.read(read.digest, read.offset, read.includeDigests);
+                const deliveredDigests = new Set([read.digest, ...(DaemonProjectionSectionBodyResponseSchema.parse(response).bodies ?? []).map(body => body.digest)]);
+                for (const [section, digest] of Object.entries(snapshot.manifest.sections)) {
+                    if (deliveredDigests.has(digest)) sectionReads.push(section);
+                }
+                return response;
+            }
+            manifests += 1;
+            return snapshot.manifest;
+        }
         throw new Error(`Unexpected palette machine method: ${request.method}`);
     });
-    const rendered = await renderHook(() => useCommandPalettePluginActionPresentation(session.id));
+    const rendered = await renderHook(({ presented }) => useCommandPalettePluginActionPresentation(session.id, presented),
+        { initialProps: { presented: false } });
+    await flushHookEffects();
+    expect(machineRpc).not.toHaveBeenCalled();
+    await rendered.rerender({ presented: true });
     await vi.waitFor(() => expect(rendered.getCurrent()?.controller.list({ placement: 'commandPalette', scope: 'session' })).toHaveLength(1));
+    expect([...sectionReads].sort()).toEqual(['base', 'installedPackagesById', 'actionsById', 'resourcesById'].sort());
+    expect(manifests).toBe(1);
+    console.info('PALETTE_COLD_SECTIONS', JSON.stringify({ manifests, sectionReads }));
     expect(machineRpc).toHaveBeenCalledWith(expect.objectContaining({
         machineId: machine.id, serverId: routedHome, accountId: 'account-b',
         method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
@@ -70,7 +216,7 @@ it('keeps a routed Session Action form on its Home through focused Account rotat
     const publish = async (next: typeof projection) => {
         projection = next;
         await act(async () => { await loadDaemonMergedProjectionInputs({ machineId: machine.id,
-            serverId: routedHome, accountLifetime: lifetime, staleMs: 0 }); });
+            serverId: routedHome, accountLifetime: lifetime, staleMs: 0, sections: demandedSections }); });
         await flushHookEffects();
     };
     const noise = (arrival: number) => DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
@@ -99,11 +245,15 @@ it('keeps a routed Session Action form on its Home through focused Account rotat
         next.form.replaceInput({ reason: 'Private draft for B' });
         return next.form;
     };
+    sectionReads.length = 0;
     await publish(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ ...projection,
         projection: { ...projection.projection, actionsById: { 'acme.palette/review': {
             ...projection.projection.actionsById['acme.palette/review']!, title: 'Edited review',
         } } },
     }));
+    expect([...sectionReads].sort()).toEqual(['base', 'actionsById'].sort());
+    expect(rendered.getCurrent()!.controller.list({ placement: 'commandPalette', scope: 'session' })[0]?.title).toBe('Edited review');
+    console.info('PALETTE_CHANGED_SECTIONS', JSON.stringify({ sectionReads, title: 'Edited review' }));
     expect(form.isRetired()).toBe(true);
     form = await openCurrent();
     await publish(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ ...projection,

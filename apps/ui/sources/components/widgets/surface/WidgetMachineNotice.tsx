@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useStore } from 'zustand';
 import { PluginUiSurfaceNoticeContext } from '@happier-dev/plugin-ui/advanced';
 
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -9,6 +8,7 @@ import { WidgetFrameBodyNoticeContext, type WidgetFrameBodyNoticeSource } from '
 import { buildPluginDetailRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { MACHINES_ADD_ROUTE } from '@/components/settings/machines/collection/machineCollectionModel';
 import { storage } from '@/sync/domains/state/storageStore';
+import type { StorageSubscriptionScope } from '@/sync/domains/state/storageSubscriptions';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { t } from '@/text';
 
@@ -43,9 +43,9 @@ export function WidgetMachineNoticeBoundary(props: Readonly<{ testID: string; ch
     }, []);
     const router = useRouter();
     // Primitive selections keep each snapshot stable by value while the stores change.
-    const sentence = useStore(storage, () => source?.()?.sentence ?? null);
-    const addMachine = useStore(storage, () => source?.()?.addMachine === true);
-    const managePluginId = useStore(storage, () => source?.()?.managePluginId ?? null);
+    const sentence = storage(() => source?.()?.sentence ?? null, MACHINE_NOTICE_INPUTS);
+    const addMachine = storage(() => source?.()?.addMachine === true, MACHINE_NOTICE_INPUTS);
+    const managePluginId = storage(() => source?.()?.managePluginId ?? null, MACHINE_NOTICE_INPUTS);
     const action = React.useMemo(() => addMachine
         ? { label: t('settings.addMachine'), onPress: () => { runGuardedNavigation(() => router.push(MACHINES_ADD_ROUTE as never)); } }
         : managePluginId
@@ -77,4 +77,9 @@ export function WidgetMachineNoticeBoundary(props: Readonly<{ testID: string; ch
 }
 
 const EMPTY_CLAIMANTS: ReadonlySet<string> = new Set();
+// The body lends a live controller query whose inputs can be held in refs.
+const MACHINE_NOTICE_INPUTS = {
+    machines: true, machineListByServerId: true, machineListStatusByServerId: true,
+    settings: true, profileScope: true,
+} satisfies StorageSubscriptionScope;
 const bodyStyle = { flexGrow: 1, minWidth: 0 } as const;

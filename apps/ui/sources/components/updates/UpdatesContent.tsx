@@ -3,6 +3,7 @@ import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { CountedDisclosureItem } from '@/components/ui/lists/CountedDisclosureItem';
@@ -35,9 +36,10 @@ const SummaryActions = React.memo(function SummaryActions(props: Readonly<{ mode
     const { model } = props;
     const header = describeUpdatesHeader(model.summary, model.batch, model);
     return (
-        <View style={styles.headerActions}>
+        <View accessibilityState={{ busy: Boolean(model.batch) || model.summary.runningCount > 0 || model.checking }} style={styles.headerActions}>
+            {model.batch || model.summary.runningCount > 0 ? <ActivitySpinner size={16} testID="updates.updateAll.spinner" /> : null}
             {!model.batch && props.presentation === 'screen' ? (
-                <UpdatesTextButton label={t('updates.action.checkNow')} onPress={model.checkNow} testID="updates.checkNow" />
+                <UpdatesTextButton label={t('updates.action.checkNow')} onPress={model.checkNow} busy={model.checking} testID="updates.checkNow" />
             ) : null}
             {header.showUpdateAll ? (
                 <RoundButton title={t('updates.action.updateAll')} onPress={() => void model.updateAll()} testID="updates.updateAll" />
@@ -246,7 +248,7 @@ export const UpdatesContent = React.memo(function UpdatesContent(props: Readonly
                             : model.summary.status === 'offline'
                                 ? t('updates.summary.offlineDescription')
                                 : t('updates.summary.upToDateDescription')}
-                        action={<UpdatesTextButton label={t('updates.action.checkNow')} onPress={model.checkNow} testID="updates.empty.checkNow" />}
+                        action={<UpdatesTextButton label={t('updates.action.checkNow')} onPress={model.checkNow} busy={model.checking} testID="updates.empty.checkNow" />}
                     />
                 </View>
             ) : (

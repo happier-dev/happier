@@ -48,7 +48,7 @@ describe('RightSidebarIconTabBar', () => {
         expect(event.preventDefault).toHaveBeenCalled();
         expect(screen.findByTestId(`right-sidebar-tab:${tabs[tabs.length - 1]!.id}`)?.props.tabIndex).toBe(-1);
     });
-    it('keeps every tab target at least 44 by 44 logical pixels', async () => {
+    it('draws every tab at its design square; a finger reaches 44 through the hit area', async () => {
         const tabs = resolveRightSidebarTabs({ scope: 'session', presentation: 'mobile' });
 
         const screen = await renderScreen(
@@ -65,8 +65,9 @@ describe('RightSidebarIconTabBar', () => {
             ? filesTab.props.style({ pressed: false, hovered: false, focused: false })
             : filesTab?.props.style);
 
-        expect(style.width).toBeGreaterThanOrEqual(44);
-        expect(style.height).toBeGreaterThanOrEqual(44);
+        expect(style.width).toBeLessThan(44);
+        expect(style.height).toBeLessThan(44);
+        expect(style.width).toBe(style.height);
     });
 
     it('renders icon tabs with translated accessibility labels and selected state', async () => {
@@ -130,7 +131,7 @@ describe('RightSidebarIconTabBar', () => {
             label: 'Review',
             order: 70,
             scopes: ['session'],
-            disabledReason: 'policy_deferred',
+            disabledReason: 'availability_not_applicable',
             plugin: {
                 pluginId,
                 descriptorId: 'review-panel',

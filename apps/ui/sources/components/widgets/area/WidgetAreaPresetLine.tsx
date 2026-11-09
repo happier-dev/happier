@@ -1,8 +1,9 @@
 import * as React from 'react';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_PAGE_METRICS, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
-import type { ActionExecuteResult } from '@happier-dev/protocol';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
   WidgetAreaPresetResultV1Schema,
@@ -14,7 +15,7 @@ import {
   type WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
 
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiProjectionCurrentness } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -54,13 +55,14 @@ function changeInstances(change: WidgetAreaPresetChangeV1): readonly WidgetInsta
  * the copy's own name, else the widget it is; a group by its title, else its widgets.
  */
 function usePresetChangeSummary(changes: readonly WidgetAreaPresetChangeV1[], surface: WidgetSurfaceRefV1): string | null {
-  const runtime = useAppShellPluginUiProjection();
+  const runtime = useAppShellPluginUiProjectionCurrentness();
+  const localize = usePluginLocalizedTextResolver({ projection: runtime.pluginUiProjection });
   const named = React.useMemo(() => changes.slice(0, NAMED_CHANGES), [changes]);
   const instances = React.useMemo(() => named.flatMap(changeInstances), [named]);
   const installed = React.useMemo(() => instances.flatMap(instance => {
-    const candidate = readWidgetDescriptor(runtime.pluginUiProjection, instance.definition);
+    const candidate = readWidgetDescriptor(runtime.pluginUiProjection, instance.definition, instance.displayName ? undefined : localize);
     return candidate ? [candidate] : [];
-  }), [instances, runtime.pluginUiProjection]);
+  }), [instances, runtime.pluginUiProjection, localize]);
   const descriptors = useWidgetInstanceDescriptors(surface, instances, installed);
   return React.useMemo(() => {
     const title = (instance: WidgetInstanceV1) => resolveWidgetInstanceTitle(instance, descriptors[instances.indexOf(instance)]);
@@ -86,6 +88,12 @@ export function WidgetAreaPresetLine(
     preset: WidgetAreaPresetStateV1;
     surface: WidgetSurfaceRefV1;
     testID: string;
+    /**
+     * `line` (default, lab wgsaved R): the line stands alone above its widgets and Reset holds its trailing
+     * edge. `underHeader`: the line is the description under an area header whose own controls (Organize, +)
+     * hold that edge, so Reset follows the sentence instead of stacking under them.
+     */
+    placement?: 'line' | 'underHeader';
     /** Core pages supply their captured preset resolver and Account lifetime. */
     presetActions?: Readonly<{
       resetPreset(target?: WidgetSurfaceRefV1): Promise<ActionExecuteResult>;
@@ -146,11 +154,13 @@ export function WidgetAreaPresetLine(
   }, [preset.id, preset.name, props.presetActions, surface]);
   return (
     <View testID={props.testID} style={styles.line}>
-      <Icon name="arrow-arc-left" size={ICON_SIZE.sm} color={theme.colors.text.tertiary} />
-      <Text style={styles.text} testID={`${props.testID}.text`}>
-        <Text style={styles.name}>{preset.name}</Text>
-        {t('widgetFrame.presetEditedTail', { changes: summary })}
-      </Text>
+      <View style={[styles.lead, props.placement === 'underHeader' ? styles.leadUnderHeader : null]}>
+        <Icon name="arrow-arc-left" size={ICON_SIZE.sm} color={theme.colors.text.tertiary} />
+        <Text style={styles.text} testID={`${props.testID}.text`}>
+          <Text style={styles.name}>{preset.name}</Text>
+          {t('widgetFrame.presetEditedTail', { changes: summary })}
+        </Text>
+      </View>
       <RoundButton
         testID={`${props.testID}.reset`}
         size="small"
@@ -179,14 +189,27 @@ const styles = StyleSheet.create((theme) => ({
     marginTop: -PRESET_LINE_BUTTON_SLACK_PX,
     marginBottom: HAPPIER_PAGE_METRICS.sectionHeaderGapPx,
   },
-  // The sentence takes the row; Reset stays at the trailing edge and drops under it only on a phone.
+  // The sentence (with its glyph) takes the row; Reset stays at the trailing edge and drops under it only on a phone.
+  lead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s10,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 200,
+    minWidth: 0,
+  },
+  // Under an area header the sentence keeps its own width, so Reset reads as the sentence's action;
+  // where it does not fit, Reset drops under it and the glyph stays beside the sentence.
+  leadUnderHeader: {
+    flexGrow: 0,
+    flexBasis: 'auto',
+  },
   text: {
     ...Typography.default(),
     ...happierPageTextMetrics('meta'),
     color: theme.colors.text.tertiary,
-    flexGrow: 1,
     flexShrink: 1,
-    flexBasis: 200,
     minWidth: 0,
   },
   name: {

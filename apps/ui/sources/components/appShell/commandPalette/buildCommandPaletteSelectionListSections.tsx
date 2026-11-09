@@ -21,10 +21,20 @@ export function buildCommandPaletteOptionId(commandId: string): string {
     return `${COMMAND_OPTION_ID_PREFIX}${commandId}`;
 }
 
-function buildOption(command: Command): SelectionListOption {
+const commandPresentation = Symbol('commandPresentation');
+type CommandOption = SelectionListOption & Readonly<{
+    [commandPresentation]?: Readonly<Pick<Command, 'icon' | 'mark' | 'shortcut'>>;
+}>;
+
+function buildOption(command: Command, previous?: SelectionListOption): CommandOption {
     const icon = command.icon;
     const shortcut = command.shortcut;
+    const presentation = (previous as CommandOption | undefined)?.[commandPresentation];
+    if (previous && presentation && previous.label === command.title
+        && previous.subtitle === (command.subtitle || undefined)
+        && presentation.icon === icon && presentation.mark === command.mark && presentation.shortcut === shortcut) return previous;
     return {
+        [commandPresentation]: { icon, mark: command.mark, shortcut },
         id: buildCommandPaletteOptionId(command.id),
         testID: `command-palette:option:${command.id}`,
         label: command.title,
@@ -32,7 +42,7 @@ function buildOption(command: Command): SelectionListOption {
         ...(command.mark === 'askHappier' ? { icon: () => <AskHappierMark size={ICON_SIZE.md} /> }
             : icon ? { icon: () => <Icon name={icon} size={ICON_SIZE.md} /> } : {}),
         ...(shortcut ? { rightAccessory: () => <KeyHint label={shortcut} /> } : {}),
-    };
+    } satisfies CommandOption;
 }
 
 /**
@@ -43,32 +53,33 @@ function buildOption(command: Command): SelectionListOption {
  */
 export function buildCommandPaletteSelectionListSections(
     commands: readonly Command[],
+    previousSections?: readonly SelectionListSectionDescriptor[],
 ): ReadonlyArray<SelectionListSectionDescriptor> {
+    const previousOptions = new Map(previousSections?.flatMap(section => section.kind === 'static'
+        ? section.options.map(option => [option.id, option] as const) : []));
     const optionsByCategory = new Map<string, SelectionListOption[]>();
     for (const command of commands) {
+        const option = buildOption(command, previousOptions.get(buildCommandPaletteOptionId(command.id)));
         // Uncategorized commands share one untitled leading section rather than
         // borrowing another category's heading.
         const category = command.category ?? '';
         const existing = optionsByCategory.get(category);
         if (existing) {
-            existing.push(buildOption(command));
+            existing.push(option);
             continue;
         }
-        optionsByCategory.set(category, [buildOption(command)]);
+        optionsByCategory.set(category, [option]);
     }
     const sections: SelectionListSectionDescriptor[] = [];
-    let index = 0;
     for (const [category, options] of optionsByCategory) {
-        // The section id is positional because category titles are localized
-        // display copy; two locales-equal titles must never collapse into one
-        // render-plan entry.
+        // Match the grouping key: admitting another category must not re-key
+        // an existing category and remount its unchanged commands.
         sections.push({
             kind: 'static',
-            id: `commands:${index}`,
+            id: `commands:${category}`,
             ...(category ? { title: category } : {}),
             options,
         });
-        index += 1;
     }
     return sections;
 }

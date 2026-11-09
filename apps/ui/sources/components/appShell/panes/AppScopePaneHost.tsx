@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { AppScopeRightSidebar, AppScopeRightSidebarActionRail } from '@/components/appShell/rightSidebar/AppScopeRightSidebar';
+import { AppScopeRightSidebar, AppScopeRightSidebarActionRail, AppScopeRightSidebarProvider } from '@/components/appShell/rightSidebar/AppScopeRightSidebar';
 import { APP_PANE_SCOPE_ID } from '@/components/appShell/rightSidebar/appScopeRightSidebarNavigation';
 import { useAppRightSidebarTabs } from '@/components/appShell/rightSidebar/appRightSidebarTabs';
 
@@ -39,6 +39,9 @@ export const AppScopePaneHost = React.memo(function AppScopePaneHost(props: Read
     const tabs = useAppRightSidebarTabs();
     const destinationScopeId = useDestinationPaneScopeId(APP_PANE_SCOPE_ID);
     const scopeId = props.paneScopeId ?? destinationScopeId;
+    const wrapAppScopeContent = React.useCallback((content: React.ReactElement) => (
+        <AppScopeRightSidebarProvider scopeId={scopeId}>{content}</AppScopeRightSidebarProvider>
+    ), [scopeId]);
     return (
         <AppPaneScopeHost
             scopeId={scopeId}
@@ -50,6 +53,7 @@ export const AppScopePaneHost = React.memo(function AppScopePaneHost(props: Read
             destinationDetails={props.destinationDetails ?? null}
             mainMinWidthPx={props.mainMinWidthPx}
             detailsPreferredWidthPx={props.detailsPreferredWidthPx}
+            wrapScopeContent={wrapAppScopeContent}
         />
     );
 });

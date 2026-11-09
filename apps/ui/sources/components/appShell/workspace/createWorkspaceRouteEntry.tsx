@@ -7,13 +7,14 @@ import { useOptionalWorkspaceNavigation, useWorkspaceNavigationActive } from './
 import { DestinationTitlePublication, useDestinationInstanceKey } from './DestinationInstanceHost';
 import { WorkspaceRouteHostingContext } from './WorkspaceRouteHostingContext';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
-import { useWorkspaceFocusedDestinationTitle } from './WorkspaceWindowTitle';
 import { workspaceRouteFiles, workspaceRouteHref } from './workspaceRoutes';
 import { useRootStackRouteOptions } from '@/components/navigation/root/useRootStackRouteOptions';
 import { resolveRootStackRouteOptions } from '@/components/navigation/root/rootStackRouteOptions';
 import { NavigationTitleChromeProvider, useNavigationChromeShowsBack, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+
+const WORKSPACE_MIRROR_SCREEN_OPTIONS = { headerShown: false } as const;
 
 /** Whether this Expo scene is only the URL mirror of a destination the workspace hosts and renders itself. */
 export function useExpoSceneMirrorsWorkspace(): boolean {
@@ -39,7 +40,9 @@ export function WorkspaceRouteEntry(props: Readonly<{ Body: React.ComponentType;
     }
     // Keep the mirror in its pending position: inserting title metadata before
     // it remounts nested Expo navigators and loses their parsed child route.
-    if (mirrorsWorkspace) return <>{props.mirror}<WorkspaceRouteTitle /></>;
+    // The workspace owns the visible title. Publishing each edit into Expo's hidden
+    // scenes adds synchronous navigator layout updates to every title keystroke.
+    if (mirrorsWorkspace) return <>{props.mirror}<ExpoStack.Screen options={WORKSPACE_MIRROR_SCREEN_OPTIONS} /></>;
     const body = !hosted && workspace && Platform.OS !== 'web'
         ? <NativeWorkspaceRouteTitle><props.Body /></NativeWorkspaceRouteTitle> : <props.Body />;
     return hosted ? body : <ExpoWorkspaceRouteFocus>{body}</ExpoWorkspaceRouteFocus>;
@@ -73,11 +76,4 @@ function NativeWorkspaceRouteTitle(props: React.PropsWithChildren) {
     return <NavigationTitleChromeProvider showsTitle={nativeShowsTitle && headerShown} showsBack={nativeShowsBack && headerShown}>
         <DestinationTitlePublication instance={tab ? { tabId: tab.id, ref: tab.target } : null}>{props.children}</DestinationTitlePublication>
     </NavigationTitleChromeProvider>;
-}
-
-/** Expo retains navigation metadata while its route is only the workspace's URL mirror. */
-function WorkspaceRouteTitle() {
-    const title = useWorkspaceFocusedDestinationTitle() ?? '';
-    const options = React.useMemo(() => ({ title, headerShown: false }), [title]);
-    return <ExpoStack.Screen options={options} />;
 }

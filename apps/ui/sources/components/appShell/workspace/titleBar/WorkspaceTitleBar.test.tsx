@@ -7,7 +7,7 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import type { RenderWithAppProvidersOptions } from '@/dev/testkit/render/renderWithAppProviders';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 import type { SplitCanvasHostControls } from '../../splitCanvas/components/SplitCanvasHost';
-import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from '../WorkspaceNavigationContext';
+import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from '../WorkspaceNavigationContext';
 import { WorkspaceShell } from '../WorkspaceShell';
 import { createWorkspaceState, reduceWorkspaceState, type WorkspaceState, type WorkspaceTab } from '../workspaceState';
 import { WorkspaceTitleBar } from './WorkspaceTitleBar';
@@ -68,7 +68,7 @@ function tab(id: string, overrides: Partial<WorkspaceTab> = {}): WorkspaceTab {
     return { id, target: { kind: `removed:${id}`, params: {} }, pinned: false, preview: false, ...overrides };
 }
 
-function Harness(props: Readonly<{ initial: WorkspaceState; clusterEndPx: number; trailingStartPx?: number; chromeActive?: boolean; tabsOnly?: boolean; catalog?: readonly CompactAppDestination[] }>) {
+function Harness(props: Readonly<{ initial: WorkspaceState; clusterEndPx: number; trailingStartPx?: number; chromeActive?: boolean; phone?: boolean; tabsOnly?: boolean; catalog?: readonly CompactAppDestination[] }>) {
     const [state, dispatch] = React.useReducer(reduceWorkspaceState, props.initial);
     const canvasControlsRef = React.useRef<SplitCanvasHostControls | null>(null);
     const currentState = React.useRef(state);
@@ -85,6 +85,7 @@ function Harness(props: Readonly<{ initial: WorkspaceState; clusterEndPx: number
     const [geometry] = React.useState(createWorkspaceBarGeometry);
     const value: WorkspaceNavigationContextValue = {
         active: true, state, dispatch, canvasControlsRef,
+        phone: props.phone ? { catalog: EMPTY_CATALOG, onTab: false, openHref: () => false, activateTab: () => {}, closeTab: () => {} } : null,
         closeTab: (groupId, tabId) => dispatch({ type: 'closeTab', groupId, tabId, newTab: tab('empty', { target: { kind: 'newTab', params: {} } }) }),
         closeTabs: (groupId, tabIds) => {
             for (const tabId of tabIds) if (!state.tabs[tabId]?.pinned) dispatch({ type: 'closeTab', groupId, tabId, newTab: tab('empty', { target: { kind: 'newTab', params: {} } }) });
@@ -94,7 +95,7 @@ function Harness(props: Readonly<{ initial: WorkspaceState; clusterEndPx: number
         navigationForTab: () => ({ push: () => {}, replace: () => {}, back: () => {} }),
         registerBackStep: () => () => {}, back: () => {}, forward: () => {},
     };
-    return <WorkspaceNavigationContext.Provider value={value}>
+    return <WorkspaceNavigationProvider value={value}>
         <WorkspaceBarGeometryContext.Provider value={geometry}>
             {React.createElement('WorkspaceStateProbe', { state, dispatch })}
             {props.tabsOnly ? <WorkspaceGroupTabs workspace={value} group={state.groups['group:1']} catalog={props.catalog ?? EMPTY_CATALOG}
@@ -108,7 +109,7 @@ function Harness(props: Readonly<{ initial: WorkspaceState; clusterEndPx: number
                 <WorkspaceShell catalog={EMPTY_CATALOG} />
             </AppShellMaterialFrame>}
         </WorkspaceBarGeometryContext.Provider>
-    </WorkspaceNavigationContext.Provider>;
+    </WorkspaceNavigationProvider>;
 }
 
 function stateOf(screen: Awaited<ReturnType<typeof renderScreen>>): WorkspaceState {
@@ -159,6 +160,23 @@ describe('WorkspaceTitleBar', () => {
             await screen.unmount();
             routes.mockRestore();
             storage.setState(original, true);
+        }
+    });
+    it('mounts no desktop strip tabs once the window narrows to the phone layout', async () => {
+        let initial = createWorkspaceState(tab('document-0'));
+        for (let index = 1; index < 30; index += 1) initial = reduceWorkspaceState(initial, {
+            type: 'openTab', groupId: 'group:1', tab: tab(`document-${index}`), fallbackTitle: `Document ${index}`,
+        });
+        const frames = windowMeasurement({ 'workspace-title-bar': { x: 0, width: 1440 },
+            'workspace-group-group_1': { x: 300, width: 1100 } });
+        const screen = await renderScreen(<Harness initial={initial} clusterEndPx={200} />, { createNodeMock: frames });
+        try {
+            const stripTabs = () => screen.root.findAll(node => typeof node.type === 'function' && node.type.name === 'DocumentBarTabRow').length;
+            expect(stripTabs()).toBeGreaterThan(0);
+            await screen.update(<Harness initial={initial} clusterEndPx={200} phone />);
+            expect(stripTabs()).toBe(0);
+        } finally {
+            await screen.unmount();
         }
     });
     it('changes only the affected document descriptor across a 120-tab title, pin and selection publication', async () => {

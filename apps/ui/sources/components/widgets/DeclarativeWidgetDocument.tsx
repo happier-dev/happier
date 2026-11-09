@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { PluginDeclarativeDocumentV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarative-document-authoring';
 import { PluginDeclarativeNodeV2Schema } from '@happier-dev/protocol/plugins/contributions/ui/v2';
@@ -12,7 +12,6 @@ import { projectDeclarativeDataResourceSnapshot, resolveDeclarativeDataResourceB
     type DeclarativeDataSourceProjection } from '@/components/plugins/surfaces/declarativeDataSource';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { readDeclarativeText, renderDeclarativeNode, type DeclarativeNodeRenderContext } from '@/components/plugins/shared/declarativeNodes';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { resolvePluginSurfaceStatePresentation } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
@@ -194,7 +193,7 @@ export function DeclarativeWidgetDocument(props: DeclarativeWidgetDocumentProps)
     // Definition ingress already admitted the complete document, including data-field semantics.
     const document = props.document;
     const context: DeclarativeNodeRenderContext = { colors: theme.colors, presentationTheme, widgetPresentation,
-        minimumTouchTarget: resolveMinimumInteractiveTargetSize(Platform.OS), localize: readDeclarativeText,
+        minimumTouchTarget: 0, localize: readDeclarativeText,
         markdownProfile: 'widget', resolveAction: () => null, renderField: () => null, renderCollectionList: () => null };
     const [freshness] = React.useState(createDataFreshnessStore);
     // Post a snapshot reads exactly what this document shows, only when the person asks for it.

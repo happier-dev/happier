@@ -40,6 +40,7 @@ describe('rightSidebarMobileProjection', () => {
         const tabs = resolveRightSidebarTabs({
             scope: 'session',
             presentation: 'mobile',
+            browserFeatureEnabled: true,
             terminalTabAvailable: true,
             pluginPlacements: [pluginPlacement],
         });
@@ -90,7 +91,7 @@ describe('rightSidebarMobileProjection', () => {
     });
 
     it('hides the matching Project launcher without removing its mobile route destination', () => {
-        const tabs = resolveRightSidebarTabs({ scope: 'project', activePage: 'changes', presentation: 'mobile' });
+        const tabs = resolveRightSidebarTabs({ scope: 'project', activePage: 'changes', presentation: 'mobile', browserFeatureEnabled: true });
         expect(resolveRightSidebarMobileProjection({ scope: 'project', tabs }).map(entry => entry.tabId))
             .toEqual(['files', 'scripts', 'browser', 'services']);
         expect(resolveRightSidebarTabIdForMobileSurface({ scope: 'project', surface: 'git', tabs })).toBe('git');

@@ -7,6 +7,11 @@ describe('resolveDetailsDockPreferredPx', () => {
         expect(resolveDetailsDockPreferredPx({ ...base, storedPx: 600, budgetMaxPx: 956 })).toBe(750);
         expect(resolveDetailsDockPreferredPx({ ...base, storedPx: 600, budgetMaxPx: 680 })).toBe(680);
     });
+    it('lets a destination that reads narrower than the default take its width until the person drags', () => {
+        const narrow = { storedDefaultPx: 600, destinationPreferredPx: 440, budgetMaxPx: 956 };
+        expect(resolveDetailsDockPreferredPx({ ...narrow, storedPx: 600 })).toBe(440);
+        expect(resolveDetailsDockPreferredPx({ ...narrow, storedPx: 700 })).toBe(700);
+    });
     it('keeps a dragged width, a destination with no preference, and the overlay decision of a narrow window', () => {
         expect(resolveDetailsDockPreferredPx({ ...base, storedPx: 520, budgetMaxPx: 956 })).toBe(520);
         expect(resolveDetailsDockPreferredPx({ storedDefaultPx: 600, destinationPreferredPx: undefined, storedPx: 600, budgetMaxPx: 956 })).toBe(600);

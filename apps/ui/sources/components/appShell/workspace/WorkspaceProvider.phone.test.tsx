@@ -1,30 +1,24 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { resolveCompactAppDestinations, type CompactAppDestination } from '../destinations/compactAppDestinationCatalog';
-import { WorkspaceProvider } from './WorkspaceProvider';
-import { usePhoneWorkspaceTabs, type PhoneWorkspaceTabs } from './usePhoneWorkspaceTabs';
-import { useOptionalWorkspaceNavigation } from './WorkspaceNavigationContext';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import type { CompactAppDestination } from '../destinations/compactAppDestinationCatalog';
+import type { PhoneWorkspaceTabs } from './usePhoneWorkspaceTabs';
 import { projectWorkspaceSharedTabs } from './workspaceSyncedTabs';
-import { useWorkspaceOpenActions, WORKSPACE_OPEN_IN_NEW_TAB_ID } from './useWorkspaceOpenActions';
 import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
 import { serializeWorkspaceLayout, workspaceLayoutScopeKey } from './workspacePersistence';
 import { clearActiveUnsavedChangesGuard, setActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
-import { invokeWorkspaceAction } from './workspaceActionRuntime';
-import { InjectedAuthProvider } from '@/auth/context/AuthContext';
-import { storage } from '@/sync/domains/state/storage';
 import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildSessionNavigationCursor } from '@/sync/domains/session/navigation/sessionNavigationCursor';
 import { clearSessionNavigationCursor, publishSessionNavigationCursor } from '@/sync/domains/session/navigation/sessionNavigationCursorStore';
 import { buildServerScopedSessionKey } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 import { sessionMruState } from '@/sync/domains/session/navigation/recentSessions';
-import { useSessionSwitcher, type SessionSwitcher } from '@/components/navigation/mobile/chrome/lateralSwipe/useSessionSwitcher';
-import { readSessionAllTabs } from '@/components/sessions/shell/useSessionAllTabsOpener';
-import { SessionSwitcherBand } from '@/components/navigation/mobile/chrome/lateralSwipe/SessionSwitcherBand';
+import type { SessionSwitcher } from '@/components/navigation/mobile/chrome/lateralSwipe/useSessionSwitcher';
+import type { WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
 import { readReanimatedFrameCallbacks, resetReanimatedFrameCallbacks } from '@/dev/testkit/mocks/reanimated';
 import { findGestureByKind, type TestGestureChain } from '@/dev/testkit/mocks/gestureHandler';
-import { resetSessionSwitcherStateForTests, useSessionSwitcherState } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { SESSION_SWITCHER_ROW_HEIGHT } from '@/components/navigation/mobile/chrome/lateralSwipe/sessionSwitcherPanelLayout';
 
 const boundary = vi.hoisted(() => ({
@@ -34,25 +28,19 @@ const boundary = vi.hoisted(() => ({
     pushes: [] as string[],
     replaces: [] as string[],
 }));
-// Socket transport is a genuine boundary; no credentials means no tab-sync RPC should run.
-vi.mock('@/sync/api/session/apiSocket', () => ({ apiSocket: {} }));
-// Session list surfaces demand content from the sync singleton; the fixture settles that demand without a Home.
-vi.mock('@/sync/sync', async () => ({ sync: (await import('@/dev/testkit/mocks/sync')).createSessionListHydrationSyncBoundary() }));
+const { workspaceLayoutsState } = await import('@/sync/domains/state/filePaneUiState');
+Object.defineProperty(boundary, 'layouts', {
+    get: () => workspaceLayoutsState.readAll(),
+    set: (layouts: Record<string, unknown>) => {
+        for (const key of Object.keys(workspaceLayoutsState.readAll())) workspaceLayoutsState.remove(key);
+        for (const [key, layout] of Object.entries(layouts)) workspaceLayoutsState.set(key, layout);
+    },
+});
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 // This navigation journey never renders Markdown; the vendor/native SDK remains a boundary.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
     splitStreamingRevealTextParts: () => { throw new Error('Unexpected vendor Markdown reveal in workspace navigation test'); },
-}));
-// This harness has no recipient-envelope HTTP/process authority; reaching that API is a setup bug.
-vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
-    const unavailable = () => { throw new Error('Unexpected recipient-envelope API in workspace navigation test'); };
-    return { createSessionDataKeyEnvelopeClient: unavailable, readSessionDataKeyEnvelopeCollectionPage: unavailable,
-        prepareSessionDataKeyEnvelopesForScope: unavailable, prepareSessionDataKeyEnvelopesDetached: unavailable };
-});
-// Authentication is a boundary of this no-network layout harness, not a lifecycle under test.
-vi.mock('@/auth/context/AuthContext', () => ({
-    useOptionalAuth: () => null,
-    useAuth: () => ({ refreshFromActiveServer: async () => {} }),
-    InjectedAuthProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 vi.mock('react-native-gesture-handler', async () => (await import('@/dev/testkit/mocks/gestureHandler')).createGestureHandlerMock());
 vi.mock('react-native-worklets', () => ({ scheduleOnRN: (callback: (...args: unknown[]) => unknown, ...args: unknown[]) => queueMicrotask(() => callback(...args)) }));
@@ -68,6 +56,7 @@ vi.mock('react-native-safe-area-context', () => {
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({ Platform: { OS: 'ios', select: (values: Record<string, unknown>) => values.ios ?? values.default },
+        Dimensions: { get: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }), addEventListener: () => ({ remove: () => {} }) },
         useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }) });
 });
 vi.mock('react-native-unistyles', async () => {
@@ -81,27 +70,26 @@ vi.mock('expo-router', async () => {
         replace: (href: unknown) => { boundary.replaces.push(String(href)); },
     } }).module;
 });
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    const { create } = await import('zustand');
-    const baseline = createStorageModuleStub({});
-    const store = create<ReturnType<typeof baseline.storage.getState>>(() => ({
-        ...baseline.storage.getState(), settings: baseline.useSettings(),
-        applyLocalSettings: (delta: Record<string, unknown>) => { boundary.layouts = delta.workspaceLayoutV1 as typeof boundary.layouts; },
-    }));
-    return createStorageModuleStub({
-    storage: store,
-    getStorage: () => store,
-    useSetting: (key: keyof ReturnType<typeof baseline.useSettings>) => store.getState().settings[key],
-    useIsDataReady: () => true,
-    useActiveServerAccountScope: () => ({ serverId: 'home-a', accountId: 'alice' }),
-    // The workspace layout setting is the only device-local value this owner reads; it writes through the storage writer.
-    useLocalSetting: (key: string) => {
-        if (key !== 'workspaceLayoutV1') throw new Error(`Unexpected setting ${key}`);
-        return boundary.layouts as never;
-    },
-    });
-});
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+installDisconnectedServerSocketBoundary();
+const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+await loadSyncSingletonForTests();
+const { storage } = await import('@/sync/domains/state/storageStore');
+const { clearPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
+const { resolveCompactAppDestinations } = await import('../destinations/compactAppDestinationCatalog');
+const { WorkspaceProvider } = await import('./WorkspaceProvider');
+const { usePhoneWorkspaceTabs } = await import('./usePhoneWorkspaceTabs');
+const { useOptionalWorkspaceNavigation } = await import('./WorkspaceNavigationContext');
+const { useWorkspaceOpenActions, WORKSPACE_OPEN_IN_NEW_TAB_ID } = await import('./useWorkspaceOpenActions');
+const { invokeWorkspaceAction } = await import('./workspaceActionRuntime');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+const { useSessionSwitcher } = await import('@/components/navigation/mobile/chrome/lateralSwipe/useSessionSwitcher');
+const { setScreenSharingPrivacyActive } = await import('@/desktop/capture/useNativeRecordingActive');
+const { readSessionAllTabs } = await import('@/components/sessions/shell/useSessionAllTabsOpener');
+const { SessionSwitcherBand } = await import('@/components/navigation/mobile/chrome/lateralSwipe/SessionSwitcherBand');
+const { resetSessionSwitcherStateForTests, useSessionSwitcherState } = await import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry');
+const initialStorage = storage.getState();
 
 const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
     externalSessions: false, inbox: false, workflows: false, friends: false,
@@ -124,22 +112,114 @@ function SwitcherProbe() {
 let restoreStorage: (() => void) | null = null;
 
 describe('workspace owner on a phone', () => {
-    afterEach(() => {
+    beforeEach(async () => {
+        clearPersistenceStorage();
+        installHomeGovernanceBoundaries(homes);
+        await homes.addHome({ name: 'Phone workspace', serverUrl: 'https://home-a', accountId: null });
+        const scope = { serverId: 'home-a', accountId: 'alice' };
+        storage.setState({ ...initialStorage, profileScope: scope, settingsScope: scope, isDataReady: true }, true);
+    });
+
+    afterEach(async () => {
+        standardCleanup();
+        setScreenSharingPrivacyActive(false);
         boundary.layouts = {}; boundary.pathname = '/session/A1'; boundary.params = { serverId: 'home-a', mobileSurface: 'git' };
-        boundary.pushes = []; boundary.replaces = []; standardCleanup();
+        boundary.pushes = []; boundary.replaces = [];
         clearActiveUnsavedChangesGuard();
         clearSessionNavigationCursor();
         restoreStorage?.(); restoreStorage = null;
         resetSessionSwitcherStateForTests(); resetReanimatedFrameCallbacks();
+        await homes.reset();
+        storage.setState(initialStorage, true);
     });
 
     const render = () => renderScreen(<WorkspaceProvider enabled={false} phone catalog={catalog}><Probe /></WorkspaceProvider>);
     const read = (screen: Awaited<ReturnType<typeof render>>) => screen.root.findByType('PhoneTabs').props as {
-        tabs: PhoneWorkspaceTabs; workspace: NonNullable<ReturnType<typeof useOptionalWorkspaceNavigation>>;
+        tabs: PhoneWorkspaceTabs; workspace: WorkspaceNavigationContextValue;
         rowMenu: ReturnType<typeof useWorkspaceOpenActions>;
     };
     const rows = (tabs: PhoneWorkspaceTabs) => tabs.tabs.map((tab) => tab.panes.map((pane) =>
         `${pane.target.kind}:${pane.target.params.id ?? ''}${pane.preview ? ' (preview)' : ''}`).join('+'));
+
+    it('keeps Project phone chrome page and Shell presses in the retained pane across reload', async () => {
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        const serverUrl = 'https://project-phone-navigation.test';
+        const serverId = await homes.addHome({ name: 'Project phone navigation', serverUrl, accountId: 'alice', currentAccount: true });
+        const credentials = await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId });
+        if (!credentials) throw new Error('Expected saved Project phone credentials');
+        const connection = await restoreServerAccountForTest({ serverUrl, accountId: 'alice', credentials, request: homes.request });
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        storage.setState(current => ({ settingsScope: { serverId, accountId: 'alice' }, profileScope: { serverId, accountId: 'alice' },
+            settings: { ...current.settings, mobileWorkspaceExperienceV1: 'cockpit' } }));
+        boundary.pathname = '/projects/wr_1/terminal';
+        boundary.params = { serverId };
+        const tab = { id: 'shell-pane', target: { kind: 'project', params: { workspaceRefId: 'wr_1', pageId: 'terminal', serverId } }, pinned: false, preview: false };
+        const saved = createWorkspaceState(tab);
+        boundary.layouts = { [workspaceLayoutScopeKey({ serverId, accountId: 'alice', windowId: 'main' })]: saved };
+        const { MainAppTabStateProvider } = await import('@/components/navigation/mobile/chrome/MainAppTabStateProvider');
+        const { MobileBottomChromeHost } = await import('@/components/navigation/mobile/chrome/MobileBottomChromeHost');
+        const { useSetting } = await import('@/sync/domains/state/storage');
+        const { useDeviceType } = await import('@/utils/platform/responsive');
+        const { usePathname } = await import('./destinationRoute');
+        const { AppPaneProvider } = await import('../panes/AppPaneProvider');
+        const { AppShellPluginUiProjectionProvider } = await import('../plugins/AppShellPluginUiProjection');
+        const { DestinationInstanceHost } = await import('./DestinationInstanceHost');
+        const { ProjectPageCatalogProvider } = await import('@/components/projects/navigation/useProjectPageCatalog');
+        const { applyProjectAccountRowsFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const project = { id: 'wr_1', serverId, machineId: 'project-machine', rootPath: '/repo', projectKey: 'phone-project', createdAtMs: 1 };
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [project] });
+        function ChromeFacts() {
+            const { binding } = useServerCredentialAccountScopeBinding(serverId);
+            return React.createElement('ChromeFixtureFacts', { experience: useSetting('mobileWorkspaceExperienceV1'), deviceType: useDeviceType(), pathname: usePathname(),
+                actionReady: binding?.isCurrent() === true });
+        }
+        const mount = () => renderScreen(<InjectedAuthProvider credentials={credentials}>
+            <AppPaneProvider><AppShellPluginUiProjectionProvider><MainAppTabStateProvider><WorkspaceProvider enabled={false} phone catalog={catalog}>
+                {navigation => {
+                    const tabId = navigation.state.groups[navigation.state.focusedGroupId].activeTabId;
+                    const selected = navigation.state.tabs[tabId];
+                    return <><Probe /><ChromeFacts />
+                        <DestinationInstanceHost tabId={tabId} ref={selected.target}
+                            pathname={`/projects/wr_1/${selected.target.params.pageId ?? 'overview'}`}
+                            visible focused phone navigation={navigation.navigationForTab(tabId)}>
+                            <ProjectPageCatalogProvider workspaceRef={project} activeRootPath={project.rootPath}>{null}</ProjectPageCatalogProvider>
+                        </DestinationInstanceHost>
+                        <MobileBottomChromeHost />
+                    </>;
+                }}
+            </WorkspaceProvider></MainAppTabStateProvider></AppShellPluginUiProjectionProvider></AppPaneProvider>
+        </InjectedAuthProvider>);
+        let screen = await mount();
+        try {
+            const current = () => read(screen).workspace.state;
+            const projectChrome = () => screen.root.findAll(node => node.props.workspaceRefId === 'wr_1'
+                && typeof node.props.onPagePress === 'function' && typeof node.props.onSurfacePress === 'function').at(-1)!;
+            expect(screen.root.findByType('ChromeFixtureFacts').props).toMatchObject({ experience: 'cockpit', deviceType: 'phone', pathname: '/projects/wr_1/terminal' });
+            await act(async () => { projectChrome().props.onPagePress('overview'); });
+            await vi.waitFor(() => expect(current().tabs['shell-pane'].target.params.pageId).toBe('overview'));
+            expect(Object.keys(current().tabs)).toEqual(['shell-pane']);
+            const overviewRoute = new URL(boundary.replaces.at(-1)!, 'https://phone-navigation.test');
+            boundary.pathname = overviewRoute.pathname;
+            boundary.params = Object.fromEntries(overviewRoute.searchParams);
+            await screen.unmount();
+            screen = await mount();
+            await vi.waitFor(() => expect(screen.root.findByType('ChromeFixtureFacts').props.actionReady).toBe(true));
+            expect(Object.keys(current().tabs)).toEqual(['shell-pane']);
+            expect(current().groups[current().focusedGroupId].activeTabId).toBe('shell-pane');
+            await act(async () => { projectChrome().props.onSurfacePress('terminal'); });
+            await vi.waitFor(() => expect(current().tabs['shell-pane'].target.params).toMatchObject({
+                pageId: 'overview', mobileSurface: 'terminal',
+            }));
+            expect(Object.keys(current().tabs)).toEqual(['shell-pane']);
+        } finally {
+            await screen.unmount();
+            await connection.dispose();
+        }
+    });
 
     it('activates the exact same-destination instance in its split group before the route echo', async () => {
         const tab = (id: string) => ({ id, target: { kind: 'session', params: { id: 'A1', serverId: 'home-a' } }, pinned: false, preview: false });
@@ -219,6 +299,44 @@ describe('workspace owner on a phone', () => {
         return { screen, readSwitcher };
     };
 
+    it('filters private Sessions from list and MRU switcher paths and restores them after sharing', async () => {
+        const { readSwitcher } = await renderSwitcher(['home-a:B', 'home-a:C', 'home-a:A'], 'recent', 'list');
+        await act(async () => {
+            storage.setState({ settings: { ...storage.getState().settings, sessionListHiddenTagIdsWhileRecording: { 'home-a': ['private'] } } });
+            storage.getState().setSessionTagAssignmentsOptimistic('home-a', 'C', ['private']);
+            setScreenSharingPrivacyActive(true);
+        });
+        const ids = (mode: 'up' | 'next') => readSwitcher().switcher.prepare().rows[mode].map(row => row.target.kind === 'session' ? row.target.sessionId : '');
+        expect(ids('up')).toEqual(['A']);
+        expect(ids('next')).toEqual([]);
+        await act(async () => { setScreenSharingPrivacyActive(false); });
+        expect(ids('up')).toEqual(['C', 'A']);
+        expect(ids('next')).toEqual(['C']);
+    });
+
+    it('removes a private Session from an already open switcher panel when sharing starts', async () => {
+        const { screen } = await renderSwitcher(['home-a:B', 'home-a:C', 'home-a:A'], 'recent', 'list', true);
+        const pan = findGestureByKind(screen.root.findAllByType('GestureDetector')[0].props.gesture as TestGestureChain, 'pan')!;
+        await act(async () => {
+            pan.__handlers.onBegin();
+            pan.__handlers.onStart({ translationX: 0, translationY: -15, absoluteY: 829 });
+            pan.__handlers.onUpdate({ translationX: 0, translationY: -120, absoluteY: 724 });
+        });
+        const panelIds = () => {
+            const panel = screen.root.find(node => Array.isArray(node.props.layout?.rowBottoms) && typeof node.props.viewportHeight === 'number');
+            return panel.props.layout.items.flatMap((item: { kind: string; row?: { target: { sessionId?: string } } }) => item.kind === 'row' ? [item.row?.target.sessionId] : []);
+        };
+        expect(panelIds()).toContain('C');
+        await act(async () => {
+            storage.setState({ settings: { ...storage.getState().settings, sessionListHiddenTagIdsWhileRecording: { 'home-a': ['private'] } } });
+            storage.getState().setSessionTagAssignmentsOptimistic('home-a', 'C', ['private']);
+            setScreenSharingPrivacyActive(true);
+        });
+        expect(panelIds()).not.toContain('C');
+        await act(async () => { setScreenSharingPrivacyActive(false); });
+        expect(panelIds()).toContain('C');
+    });
+
     it('reveals rows reached by stationary edge-hold frame advancement', async () => {
         const order = ['B', ...Array.from({ length: 15 }, (_, index) => `older-${index}`)];
         const { screen } = await renderSwitcher(order.map(id => `home-a:${id}`), 'recent', 'list', true);
@@ -243,7 +361,7 @@ describe('workspace owner on a phone', () => {
         const rowBottom = panel.props.layout.rowBottoms[shared.index.value] as number;
         expect(rowBottom - shared.scroll.value).toBeGreaterThanOrEqual(0);
         expect(rowBottom + SESSION_SWITCHER_ROW_HEIGHT - shared.scroll.value).toBeLessThanOrEqual(panel.props.viewportHeight);
-        storage.setState(before);
+        await act(async () => { storage.setState(before); });
     });
 
     it('reads genuine 0.2 MRU keys in both switcher and All tabs through the navigation normalizer', async () => {

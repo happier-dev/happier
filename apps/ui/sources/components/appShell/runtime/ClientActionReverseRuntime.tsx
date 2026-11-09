@@ -8,7 +8,8 @@ import { useMachinePresenceMembership } from '@/sync/domains/machines/reachabili
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
 import { createUiClientActionReverseHandler } from '@/sync/ops/actions/clientActionReverseDispatch';
-import { sessionUiActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { currentUiContextReadClientRpcMethod, isCurrentUiContextClientRpcMethod,
+    sessionUiActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { createCurrentUiContributedActionRpcHandler } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -92,6 +93,15 @@ function useMachineClientActionBindings({
     }, [serverId, generation, accountId, machineIds, methods, sessionId, contributedMachineIds]);
 }
 
+/**
+ * Opaque current-context command ids stay local window-selection addresses. On
+ * the wire every command travels through the one per-Machine current-context
+ * room, so a command set change publishes no Socket registration.
+ */
+function isSocketRoom(method: string): boolean {
+    return method === currentUiContextReadClientRpcMethod() || !isCurrentUiContextClientRpcMethod(method);
+}
+
 /** Currently reachable Machines share the existing reconnect-safe reverse-RPC channel. */
 export function ClientActionReverseRuntime(): null {
     const { serverId, generation } = useActiveServerSnapshot();
@@ -111,7 +121,7 @@ export function ClientActionReverseRuntime(): null {
     const methods = React.useMemo(() => [...new Set([RPC_METHODS.UI_ACTION_EXECUTE, ...localMethods,
         ...windowSurfaces.flatMap(surface => surface.homeId === serverId && surface.accountId === accountId
             ? surface.methods ?? [] : []),
-    ])], [serverId, accountId, localMethods, windowSurfaces]);
+    ])].filter(isSocketRoom), [serverId, accountId, localMethods, windowSurfaces]);
     // Registration belongs to the runtime, without one React mount per Machine or method.
     useMachineClientActionBindings({ serverId, generation, accountId, machineIds: selectableMachineIds, methods,
         sessionId: currentSessionId, readCurrentSessionId: currentUiReader?.readCurrentSessionId, contributedMachineIds });

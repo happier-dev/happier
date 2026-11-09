@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import { getWidgetSizeFootprintV1, type WidgetSizeV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
@@ -14,6 +14,7 @@ import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionT
 import { Text } from '@/components/ui/text/Text';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { Typography } from '@/constants/Typography';
+import { StatusDot } from '@/components/ui/status/StatusDot';
 
 /**
  * The width of the surface the widget will stand in: the page column a grid surface lays its cards
@@ -53,6 +54,7 @@ export function WidgetPreviewStage(props: Readonly<{
     children: React.ReactNode;
 }>): React.ReactElement {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
     const [room, setRoom] = React.useState(0);
     const [roomHeight, setRoomHeight] = React.useState(0);
     const [height, setHeight] = React.useState(0);
@@ -118,7 +120,7 @@ export function WidgetPreviewStage(props: Readonly<{
     return (
         <View style={[styles.stage, wantedRoomHeight > 0 ? { minHeight: Math.max(STAGE_MIN_HEIGHT_PX, STAGE_CAPTION_ROOM_PX + wantedRoomHeight) } : null]} testID={props.testID}>
             <View style={styles.captionRow}>
-                {props.live ? <View style={styles.liveDot} testID={`${props.testID}.live`} /> : null}
+                {props.live ? <StatusDot color={theme.colors.state.success.foreground} size={6} testID={`${props.testID}.live`} /> : null}
                 <Text style={styles.caption} numberOfLines={1}>{props.caption}</Text>
             </View>
             <View style={styles.room} onLayout={onRoomLayout}>
@@ -153,7 +155,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     captionRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6 },
     caption: { ...Typography.default('semiBold'), ...happierPageTextMetrics('meta'), color: theme.colors.text.tertiary },
     // Live is the one state the caption shows in colour.
-    liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: theme.colors.state.success.foreground },
     // The card hangs under its caption: a tall pane leaves its spare room below, never above.
     room: { flex: 1, minHeight: 0, alignItems: 'center', justifyContent: 'flex-start', overflow: 'hidden' },
     // Out of flow, so the room keeps the pane's height and the surface is scaled into it.

@@ -7,7 +7,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 import { useOptionalWorkspaceNavigation } from './WorkspaceNavigationContext';
 
-/** Navigation metadata, browser title and desktop title all follow the same focused destination. */
+/** Browser and desktop window titles follow the same focused destination. */
 export function useWorkspaceFocusedDestinationTitle(): string | null {
     const workspace = useOptionalWorkspaceNavigation();
     const group = workspace?.active ? workspace.state.groups[workspace.state.focusedGroupId] : undefined;

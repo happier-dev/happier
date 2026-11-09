@@ -6,7 +6,7 @@ import { resolveWorkspaceOpenModeFromPointer, useWorkspaceOpenActions, type Work
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import { isSecondaryEntityRowControl, useEntityDragDomBinding } from '@/components/ui/treeDragDrop/useEntityDragDomBinding';
-import { useOptionalWorkspaceNavigation } from './WorkspaceNavigationContext';
+import { useWorkspaceRouterFacts } from './WorkspaceNavigationContext';
 import { readDestinationInstanceTitle, resolveDestinationRefFromHref } from '../destinations/compactAppDestinationCatalog';
 import type { EntityDragItemV1 } from '@happier-dev/protocol/plugins/ui';
 import { resolveWorkspaceDestinationEntityItem } from './workspaceEntitySource';
@@ -48,7 +48,7 @@ export function WorkspaceDestinationRow(props: WorkspaceDestinationRowProps) {
 function WorkspaceDestinationRowDestination(props: WorkspaceDestinationRowProps) {
     const { theme } = useUnistyles();
     const actions = useWorkspaceOpenActions(props.href, props.onOpened, props.openOptions);
-    const workspace = useOptionalWorkspaceNavigation();
+    const workspace = useWorkspaceRouterFacts();
     const scope = useActiveServerAccountScope();
     const runtime = useEntityDragDropRuntime();
     const mention = useEntityComposerMention();

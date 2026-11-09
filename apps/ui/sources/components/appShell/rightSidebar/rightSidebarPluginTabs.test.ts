@@ -53,6 +53,28 @@ function createPlacement(overrides: Partial<PluginUiSurfacePlacementProjection> 
 }
 
 describe('rightSidebarPluginTabs', () => {
+    it('lists a page-items-only App companion only while its page names it', () => {
+        const companion = createPlacement({ id: `surfacePlacement:${REVIEW_PLUGIN_ID}:review-notes`, descriptorId: 'review-notes',
+            target: { kind: 'app' }, display: { developerFallback: 'Notes', icon: 'review', reach: 'pageItems' } });
+        const everywhere = createPlacement({ target: { kind: 'app' } });
+        const ids = (pageCompanions?: ReadonlySet<string>) => resolveRightSidebarPluginTabs({ scope: 'app', placements: [companion, everywhere],
+            ...(pageCompanions ? { pageCompanions } : {}) }).map(tab => tab.id);
+        expect(ids()).toEqual([expect.stringContaining('review-panel')]);
+        expect(ids(new Set(['acme.other/review-notes']))).toEqual([expect.stringContaining('review-panel')]);
+        expect(ids(new Set([`${REVIEW_PLUGIN_ID}/review-notes`]))).toEqual(expect.arrayContaining([
+            expect.stringContaining('review-panel'), expect.stringContaining('review-notes')]));
+    });
+
+    it('carries sidebar auto and count references without interpreting static badges as content', () => {
+        for (const scope of ['session', 'project', 'app'] as const) {
+            const [tab] = resolveRightSidebarPluginTabs({ scope, placements: [createPlacement({
+                target: { kind: scope }, display: { defaultPlacement: 'auto', countResourceId: 'issues-count', badge: { label: 'Preview' } },
+            })] });
+            expect(tab).toMatchObject({ defaultPlacement: 'auto', countResourceId: 'issues-count', badge: { label: 'Preview' } });
+            expect(tab).not.toHaveProperty('hasContent');
+        }
+        expect(resolveRightSidebarPluginTabs({ scope: 'session', placements: [createPlacement()] })[0]).toHaveProperty('defaultPlacement', 'overflow');
+    });
     it('normalizes plugin surface placements into namespaced right-sidebar tabs', () => {
         const tabs = resolveRightSidebarPluginTabs({
             scope: 'session',

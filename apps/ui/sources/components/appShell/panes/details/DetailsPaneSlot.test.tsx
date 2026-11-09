@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { pressTestInstance, renderScreen } from '@/dev/testkit';
+import { measureMountedCollections, pressTestInstance, renderScreen } from '@/dev/testkit';
 import { installAppPaneScopeHostCommonModuleMocks } from '../appPaneScopeHostTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -52,14 +52,18 @@ afterEach(() => {
 const { AppPaneProvider } = await import('../AppPaneProvider');
 const { DetailsPaneSlotHost, useDetailsPaneSlotBinding } = await import('./DetailsPaneSlot');
 const { AppPaneScopeHost } = await import('../AppPaneScopeHost');
+const { useAppPaneScope } = await import('../hooks/useAppPaneScope');
 
-async function mountPluginPage() {
-    const { DetailsPane, Text, defineUiSurface, usePluginTheme } = await import('@happier-dev/plugin-ui');
+async function mountPluginPage(renderHost?: React.ComponentProps<typeof DetailsPaneSlotHost>['renderHost'], initiallyOpen = true) {
+    const { DetailsPane, Text, defineUiSurface, usePluginTheme, useSurfaceContext } = await import('@happier-dev/plugin-ui');
     const { createSurfaceContextFixture } = await import('@happier-dev/plugin-sdk/testing');
     const { createPluginUiPrivatePresentationHost } = await import('@/components/plugins/surfaces/pluginUiPrivatePresentationHost');
     const { DetailsPaneSlotHost, useDetailsPaneSlotBinding } = await import('./DetailsPaneSlot');
 
-    const context = createSurfaceContextFixture({ platform: 'ios' });
+    const context = createSurfaceContextFixture({ platform: 'ios',
+        mount: { kind: 'destination', destination: { pluginId: 'happier.test', localId: 'page' }, container: 'appPage' },
+        target: renderHost ? { kind: 'project', projectKey: 'test' } : { kind: 'app' },
+    });
     // The Host API is the plugin boundary; this page calls none of it.
     const hostApi = {
         context: async () => context,
@@ -69,10 +73,11 @@ async function mountPluginPage() {
 
     function Probe() {
         const theme = usePluginTheme();
+        const surface = useSurfaceContext();
         const [instance] = React.useState(() => ++state.detailMounts);
         return (
             <>
-                {React.createElement('ProbeFacts', { text: theme.colors.text, instance })}
+                {React.createElement('ProbeFacts', { text: theme.colors.text, instance, target: surface.target })}
                 <Text testID="probe-public-text" value="Plugin text" />
             </>
         );
@@ -82,7 +87,7 @@ async function mountPluginPage() {
     let setDetailOpen: (value: boolean) => void = () => {};
     function PluginPage() {
         state.pageRenders += 1;
-        const [open, setOpen] = React.useState(true);
+        const [open, setOpen] = React.useState(initiallyOpen);
         setDetailOpen = setOpen;
         const [detailText, setText] = React.useState('first');
         setDetailText = setText;
@@ -115,13 +120,140 @@ async function mountPluginPage() {
     // The details pane stands in the App's pane host, whose state is the app-lifetime pane provider's.
     const { AppPaneProvider } = await import('../AppPaneProvider');
     const screen = await renderScreen(
-        <AppPaneProvider><DetailsPaneSlotHost testID="page-details"><Mount /></DetailsPaneSlotHost></AppPaneProvider>,
+        <AppPaneProvider><DetailsPaneSlotHost testID="page-details" renderHost={renderHost}><Mount /></DetailsPaneSlotHost></AppPaneProvider>,
     );
     return { screen, context, setDetailText: (value: string) => act(() => setDetailText(value)),
         setDetailOpen: (value: boolean) => act(() => setDetailOpen(value)) };
 }
 
 describe('DetailsPaneSlotHost (the page details pane a plugin DetailsPane renders in)', () => {
+    it('runs the public Project author Collection through host pane, shared page action, and return', async () => {
+        const { renderSurface } = await import('../../../../../../../packages/plugin-sdk/examples/public-authoring/ui/reviewPanelPortable');
+        const { createSurfaceContextFixture } = await import('@happier-dev/plugin-sdk/testing');
+        const { createPluginUiPrivatePresentationHost } = await import('@/components/plugins/surfaces/pluginUiPrivatePresentationHost');
+        const context = createSurfaceContextFixture({
+            mount: { kind: 'destination', destination: { pluginId: 'com.acme.review', localId: 'review-project-page' }, container: 'appPage' },
+            target: { kind: 'project', projectKey: 'accepted-project' },
+        });
+        const replacePageLocation = vi.fn(async (subPath: string) => ({ subPath }));
+        const readResource = vi.fn(async () => { throw new Error('The identity example needs no Resource or Machine'); });
+        // Host API calls are the authored plugin's external boundary.
+        const hostApi = { context: async () => context, watchContext: async () => ({ dispose() {} }),
+            replacePageLocation, readResource } as unknown as import('@happier-dev/plugin-sdk/ui').PluginUiHostApi;
+        function Mount() {
+            const binding = useDetailsPaneSlotBinding();
+            const presentationHost = React.useMemo(() => createPluginUiPrivatePresentationHost(undefined,
+                binding ? { detailsPane: binding } : {}), [binding]);
+            return React.cloneElement(renderSurface({ plugin: { id: 'com.acme.review', version: '1.0.0' },
+                surface: context, hostApi, signal: new AbortController().signal, subPath: '' }) as React.ReactElement<Record<string, unknown>>,
+            { presentationHost });
+        }
+        const screen = await renderScreen(<AppPaneProvider><DetailsPaneSlotHost renderHost={({ main, details, onCloseDetails }) => (
+            <AppPaneScopeHost scopeId="project:external-example" main={main}
+                destinationDetails={details ? { pane: details.content, onClose: onCloseDetails } : undefined} />
+        )}><Mount /></DetailsPaneSlotHost></AppPaneProvider>);
+        expect(screen.root.findAllByType('DetailsColumn' as never)).toHaveLength(0);
+        await measureMountedCollections(screen, { width: 1000, height: 700 });
+        await screen.pressByTestIdAsync('review.project.identity');
+        expect(screen.root.findByType('DetailsColumn' as never).findAll(node => node.props.testID === 'review.project.key').length).toBeGreaterThan(0);
+        const { TextField } = await import('@happier-dev/plugin-ui');
+        await act(async () => { screen.root.findByType(TextField).props.onChange('Retain this review note'); });
+        replacePageLocation.mockResolvedValueOnce({ subPath: 'identity' });
+        await screen.pressByTestIdAsync('review.project.openAsPage');
+        expect(screen.root.findAllByType('DetailsColumn' as never)).toHaveLength(1);
+        expect(screen.findByTestId('review.project.return')).toBeNull();
+        await screen.pressByTestIdAsync('review.project.openAsPage');
+        expect(replacePageLocation).toHaveBeenLastCalledWith('identity/page', { backLocation: 'identity' });
+        expect(screen.root.findAllByType('DetailsColumn' as never)).toHaveLength(0);
+        expect(screen.root.findByType(TextField).props.value).toBe('Retain this review note');
+        await screen.pressByTestIdAsync('review.project.return');
+        expect(replacePageLocation).toHaveBeenLastCalledWith('identity', { backLocation: '' });
+        expect(screen.root.findAllByType('DetailsColumn' as never)).toHaveLength(1);
+        expect(screen.root.findByType(TextField).props.value).toBe('Retain this review note');
+        expect(readResource).not.toHaveBeenCalled();
+    });
+    it('does not mount a closed external detail, then mounts only that detail on demand', async () => {
+        const { screen, setDetailOpen } = await mountPluginPage(undefined, false);
+        expect(state.detailMounts).toBe(0);
+        expect(screen.root.findAllByType('DetailsColumn' as never)).toHaveLength(0);
+        setDetailOpen(true);
+        expect(state.detailMounts).toBe(1);
+        setDetailOpen(false);
+        expect(screen.root.findAllByType('ProbeFacts' as never)).toHaveLength(0);
+    });
+    it('keeps equal publications local: thirty relevant refreshes cause zero frame renders or detail remounts', async () => {
+        let frames = 0;
+        let mounts = 0;
+        let refresh: () => void = () => {};
+        function Detail() {
+            React.useEffect(() => { mounts += 1; }, []);
+            return React.createElement('StableDetail');
+        }
+        const body = <Detail />;
+        const onClose = () => {};
+        function Publisher() {
+            const [, setRevision] = React.useState(0);
+            refresh = () => setRevision(value => value + 1);
+            const binding = useDetailsPaneSlotBinding();
+            return <>{binding?.renderDetailsPane({ open: true, title: 'Stable detail', children: body, onClose })}</>;
+        }
+        const screen = await renderScreen(<AppPaneProvider><DetailsPaneSlotHost renderHost={({ main, details, onCloseDetails }) => {
+            frames += 1;
+            return <AppPaneScopeHost scopeId="project:stable" main={main}
+                destinationDetails={details ? { pane: details.content, onClose: onCloseDetails } : undefined} />;
+        }}><Publisher /></DetailsPaneSlotHost></AppPaneProvider>);
+        const settledFrames = frames;
+        expect(settledFrames).toBeGreaterThan(0);
+        const settledHost = state.lastHostProps;
+        for (let index = 0; index < 30; index += 1) await act(async () => refresh());
+        expect(frames - settledFrames).toBe(0);
+        expect(state.lastHostProps).toBe(settledHost);
+        expect(mounts).toBe(1);
+        expect(screen.root.findAllByType('StableDetail' as never)).toHaveLength(1);
+    });
+    it('composes an external detail into one existing Project host without the default App host', async () => {
+        const renderHost: NonNullable<React.ComponentProps<typeof DetailsPaneSlotHost>['renderHost']> = ({ main, details, onCloseDetails }) => (
+            <AppPaneScopeHost scopeId="project:test" main={main}
+                detailsPaneEnabled detailsPaneBuiltinAdapter={{ destinationIds: ['details'], defaultDestinationId: 'details', render: () => 'Builtin details' }}
+                destinationDetails={details ? { pane: details.content, onClose: onCloseDetails } : undefined} />
+        );
+        const { screen, setDetailText, setDetailOpen } = await mountPluginPage(renderHost);
+        expect(screen.findAllByType(AppPaneScopeHost)).toHaveLength(1);
+        expect(screen.findByType(AppPaneScopeHost).props.scopeId).toBe('project:test');
+        expect(screen.root.findByType('DetailsColumn' as never).findAllByType('ProbeFacts' as never)).toHaveLength(1);
+        expect(screen.root.findByType('ProbeFacts' as never).props.target).toEqual({ kind: 'project', projectKey: 'test' });
+        const hostBefore = state.lastHostProps;
+        setDetailText('updated without reopening');
+        expect(state.lastHostProps).toBe(hostBefore);
+        expect(screen.root.findByType('DetailText' as never).props.text).toBe('updated without reopening');
+        setDetailOpen(false);
+        expect(screen.findByType(AppPaneScopeHost).props.destinationDetails).toBeUndefined();
+        expect(screen.root.findAllByType('DetailsColumn' as never)).toHaveLength(0);
+    });
+    it('retracts a page publication to the saved builtin details selection in the same Project scope', async () => {
+        let pane: ReturnType<typeof useAppPaneScope> | null = null;
+        function SavedSelection() {
+            pane = useAppPaneScope('project:saved');
+            return null;
+        }
+        const renderHost: NonNullable<React.ComponentProps<typeof DetailsPaneSlotHost>['renderHost']> = ({ main, details, onCloseDetails }) => (
+            <AppPaneScopeHost scopeId="project:saved" main={<>{main}<SavedSelection /></>}
+                detailsPaneEnabled detailsPaneBuiltinAdapter={{ destinationIds: ['details'], defaultDestinationId: 'details', render: () => React.createElement('SavedBuiltin') }}
+                destinationDetails={details ? { pane: details.content, onClose: onCloseDetails } : undefined} />
+        );
+        const { screen, setDetailOpen } = await mountPluginPage(renderHost);
+        await act(async () => { pane!.openDetailsTab({ key: 'file:retained', kind: 'file', title: 'Retained file', resource: {} }, { intent: 'pinned' }); });
+        expect(screen.root.findAllByType('SavedBuiltin' as never)).toHaveLength(0);
+        setDetailOpen(false);
+        expect(screen.root.findAllByType('SavedBuiltin' as never)).toHaveLength(1);
+        expect(pane!.scopeState?.details.activeTabKey).toBe('file:retained');
+        expect(pane!.scopeState?.details.tabs.map(tab => tab.key)).toContain('file:retained');
+        setDetailOpen(true);
+        expect(screen.root.findAllByType('SavedBuiltin' as never)).toHaveLength(0);
+        await act(async () => { state.lastHostProps.onCloseDetails(); });
+        expect(screen.root.findAllByType('SavedBuiltin' as never)).toHaveLength(1);
+        expect(pane!.scopeState?.details.activeTabKey).toBe('file:retained');
+    });
     it.each(['tablet', 'phone'] as const)('preserves an external plugin detail across viewport changes (opened on %s)', async (openedOn) => {
         state.deviceType = openedOn;
         const { screen, setDetailOpen } = await mountPluginPage();

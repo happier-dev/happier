@@ -4,15 +4,24 @@ import { act } from 'react-test-renderer';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import * as uuidBoundary from '@/platform/randomUUID';
-import { type JsonValue, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1, SessionOwnerMetadataV1Schema, SessionListQueryResponseV1Schema, projectLegacySessionAccessCapabilitiesV1,
-    SessionSystemRecordStoredSchema, tryWriteServerEnabledBitInPlace, decodePlainArtifactStoredContent, normalizeActionsSettingsV1 } from '@happier-dev/protocol';
+import { type JsonValue} from '@happier-dev/protocol/json/strictJsonValue';
+import { createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1, SessionOwnerMetadataV1Schema} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { projectLegacySessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import {
+    SessionSystemRecordStoredSchema} from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
+import { tryWriteServerEnabledBitInPlace} from '@happier-dev/protocol/features/serverEnabledBit';
+import { decodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { readBuiltinWidgetDescriptorV1, resolveConfiguredWidgetInputs, WidgetInstanceActionOutputSchemasV1, type WidgetInputBindingsV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
+
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal'))
+    .createModalModuleMock({ confirmResult: true }).module);
 
 const harness = createHomeGovernanceHarness();
 const readBatchRequest = createSessionReadBatchFetchBoundary(harness.request);
@@ -28,6 +37,7 @@ installDisconnectedServerSocketBoundary(socket => {
 });
 await loadSyncSingletonForTests();
 const { SaveAsWidgetPanel } = await import('./SaveAsWidgetPanel');
+const { SessionVisualCopyPanel } = await import('@/components/sessions/board/SessionVisualCopyPanel');
 const { useWidgetDefinitionFlows } = await import('./useWidgetDefinitionFlows');
 const { WidgetSetupStep } = await import('../add/WidgetSetupStep');
 const { t } = await import('@/text');
@@ -220,7 +230,7 @@ describe('Session widget placement through the destination setup', () => {
     });
 
     /** A signed-in Home with one Session; default policy admits reversible save and placement. */
-    async function openSessionHome(input: Readonly<{ key: string; builtinId: string; bindings: WidgetInputBindingsV1; placementDisabled?: boolean; placementNeedsApproval?: boolean; declarative?: boolean }>) {
+    async function openSessionHome(input: Readonly<{ key: string; builtinId: string; bindings: WidgetInputBindingsV1; placementDisabled?: boolean; placementNeedsApproval?: boolean; declarative?: boolean; visual?: 'typed' | 'html' }>) {
         const accountId = 'owner';
         const sessionId = 'source';
         const serverUrl = `https://${input.key}.example`;
@@ -251,7 +261,7 @@ describe('Session widget placement through the destination setup', () => {
         } });
         harness.answer(serverId, '/v1/auth/ping', { body: { success: true } });
         // Widget input admission confirms the Session the copy reads is one this Account can read.
-        harness.answer(serverId, '/v2/sessions/query', { body: SessionListQueryResponseV1Schema.parse({ sessions: [{
+        harness.answer(serverId, '/v2/sessions/query', { body: createSessionListSourceFixture({ sessions: [{
             id: sessionId, seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1, archivedAt: null, encryptionMode: 'plain',
             metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1, summary: { text: 'Source Session', updatedAt: 1 } }), metadataVersion: 1,
             agentState: null, agentStateVersion: 0, dataEncryptionKey: null,
@@ -267,8 +277,10 @@ describe('Session widget placement through the destination setup', () => {
         applyProjectAccountRowsFixture(storage, { workspaceRefs: [{ id: 'destination-workspace', serverId, machineId: 'machine', rootPath: '/destination',
             label: 'Destination project', projectKey: 'destination-project', createdAtMs: 0 }] });
         const instance = { v: 1 as const, id: 'source-item', definition: { kind: 'builtin' as const, id: input.builtinId }, bindings: input.bindings };
+        const { artifactHtmlBundleFromBodyV1 } = await import('@happier-dev/protocol/artifacts/artifactHtmlV1');
         const item = SessionSurfaceItemV1Schema.parse({ v: 1, title: 'Source widget', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
-            source: input.declarative ? { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Original' } } } : { kind: 'widget', instance } });
+            source: input.visual === 'html' ? { kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<p>Original</p>') }
+                : input.declarative ? { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Original' } } } : { kind: 'widget', instance } });
         const record = SessionSystemRecordStoredSchema.parse({ id: 'source-item',
             address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'source-item' }, content: { t: 'plain', v: item },
             revision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ', createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z' });
@@ -295,6 +307,8 @@ describe('Session widget placement through the destination setup', () => {
                 providedContext: { session: [{ serverId, sessionId }], projects: [['source-project']] },
                 sessionItem: { itemId: instance.id, title: 'Source widget', savable: true, canEdit: true, converted: [], sourceLabel: 'Source widget' },
                 anchorRef: React.useRef(null), testID: 'placement' });
+            if (input.visual) return <SessionVisualCopyPanel account={account} sessionId={sessionId} itemId={instance.id}
+                item={item} share={false} onClose={() => {}} testID="visualCopy" />;
             return <View><Pressable testID="openAdd" onPress={flows.addTo} /><Pressable testID="openSave" onPress={flows.saveAsYours} />
                 <Pressable testID="openAbout" onPress={flows.about} />{flows.panel}</View>;
         }
@@ -345,6 +359,45 @@ describe('Session widget placement through the destination setup', () => {
     }
 
     const sessionValue = (sessionId: string, serverId: string): WidgetInputBindingsV1 => ({ session: { kind: 'value', value: { serverId, sessionId } } });
+
+    it.each(['typed', 'html'] as const)('visual %s Save reconciles commit then lost acknowledgement without another copy', async visual => {
+        const home = await openSessionHome({ key: `visual-lost-${visual}`, builtinId: 'session_summary',
+            bindings: { session: { kind: 'context', slot: 'session' } }, visual });
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        let readsUnavailable = false;
+        setRuntimeFetch((input, init) => {
+            const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+            const path = new URL(url).pathname;
+            // HTML's Artifact API retries the same POST itself. Keep the transport down after
+            // the lost acknowledgement until the person explicitly retries after recovery.
+            if (readsUnavailable && (path.startsWith('/v1/artifacts/') || (path === '/v1/artifacts' && init?.method === 'POST')))
+                return Promise.resolve(new Response('{}', { status: 503 }));
+            return readBatchRequest(input, init);
+        });
+        harness.artifacts(home.account.serverId).afterNextCreate(async () => {
+            readsUnavailable = true;
+            throw new TypeError('Connection lost after commit');
+        });
+        const copies = () => harness.artifacts(home.account.serverId).list().filter(row =>
+            Reflect.get(decodePlainArtifactStoredContent(row.header) as object, 'kind') === (visual === 'html' ? 'html' : 'widget-definition.v1'));
+        try {
+            await home.screen.pressByTestIdAsync('visualCopy.save');
+            await waitForHomeGovernance(() => expect(home.screen.getTextContent()).toContain(t('widgetDefinition.visualSaveFailed')));
+            expect(copies()).toHaveLength(1);
+            const id = copies()[0]!.id;
+            // An unavailable read never grants permission to create a fresh identity.
+            await home.screen.pressByTestIdAsync('visualCopy.save');
+            await waitForHomeGovernance(() => expect(home.screen.getTextContent()).toContain(t('widgetDefinition.visualSaveFailed')));
+            expect(copies().map(row => row.id)).toEqual([id]);
+            readsUnavailable = false;
+            await home.screen.pressByTestIdAsync('visualCopy.save');
+            await waitForHomeGovernance(() => expect(home.screen.getTextContent()).toContain(t('widgetDefinition.visualSavedCopy')));
+            expect(copies().map(row => row.id)).toEqual([id]);
+            // Once saved there is nothing left to cancel: Done is the one way out.
+            expect(home.screen.findByTestId('visualCopy.cancel')).toBeNull();
+            expect(home.screen.findByTestId('visualCopy.primary')).not.toBeNull();
+        } finally { await home.screen.unmount(); await home.disconnect(); }
+    });
 
     it.each(['save', 'addTo'] as const)('%s reconciles a committed definition after lost acknowledgement and failed readback before placing it', async via => {
         const home = await openSessionHome({ key: `lost-definition-${via}`, builtinId: 'session_summary',

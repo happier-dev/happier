@@ -1,11 +1,11 @@
 import { readDestinationInstanceTitle, type CompactAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import type { PaneDropScene } from '@/components/appShell/splitCanvas/presentation/paneDropPresentation';
 import type { WorkspaceState } from './workspaceState';
-import type { WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
+import type { WorkspaceDestinationTitles } from './WorkspaceNavigationContext';
 
 /** A drag preview uses the same title owner and unresolved-title rules as its tab. */
 export function readWorkspaceTabTitle(state: WorkspaceState, catalog: readonly CompactAppDestination[], tabId: string,
-    destinationTitles?: WorkspaceNavigationContextValue['destinationTitles']): string | null {
+    destinationTitles?: WorkspaceDestinationTitles): string | null {
     const tab = state.tabs[tabId];
     if (!tab) return null;
     return readDestinationInstanceTitle(catalog, tab.target, {
@@ -18,7 +18,7 @@ export function createWorkspaceDropScene(state: WorkspaceState, catalog: readonl
     paneId: string;
     beforeTabId?: string | null;
     declinedSplit?: boolean;
-    destinationTitles?: WorkspaceNavigationContextValue['destinationTitles'];
+    destinationTitles?: WorkspaceDestinationTitles;
 }>): PaneDropScene {
     const group = state.groups[input.paneId];
     return {

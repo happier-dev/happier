@@ -11,6 +11,8 @@ const testState = vi.hoisted(() => ({
     keyboardHandlers: null as KeyboardShortcutHandlers | null,
     sessions: {} as Record<string, unknown>,
     store: null as null | { setState: (partial: Record<string, unknown>) => void; getState: () => Record<string, unknown> },
+    setRouteParams: null as null | ((params: Record<string, string>) => void),
+    segments: [] as string[],
     enabledFeatures: new Set<string>(),
     settings: {
         commandPaletteEnabled: true,
@@ -30,10 +32,12 @@ vi.mock('react-native', async () => {
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({
+    const mock = createExpoRouterMock({
         router: { push: testState.routerPush },
-        segments: [],
-    }).module;
+        segments: () => testState.segments,
+    });
+    testState.setRouteParams = (params) => { mock.spies.setParams(params); };
+    return mock.module;
 });
 
 vi.mock('@/modal', async () => {
@@ -81,7 +85,8 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdFo
     resolvePreferredServerIdForSessionId: () => null,
 }));
 
-vi.mock('@/utils/platform/desktopHost', () => ({
+vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/utils/platform/desktopHost')>()),
     isDesktopHost: () => false,
     desktopHostKind: () => null,
 }));
@@ -128,6 +133,7 @@ describe('CommandPaletteProvider subscription locality', () => {
         standardCleanup();
         testState.keyboardHandlers = null;
         testState.enabledFeatures.clear();
+        testState.segments = [];
     });
 
     it('does not re-render its app-shell consumers when sessions change while the palette is closed', async () => {
@@ -154,6 +160,52 @@ describe('CommandPaletteProvider subscription locality', () => {
         expect(consumerRenders).toBe(rendersAfterMount);
     });
 
+    it('does not re-render its app-shell consumers when route params change while the palette is closed', async () => {
+        const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
+        const { useUniversalSearchRuntime } = await import('@/components/appShell/search/UniversalSearchRuntimeContext');
+        let consumerRenders = 0;
+        function RailLikeConsumer() {
+            useUniversalSearchRuntime();
+            consumerRenders += 1;
+            return null;
+        }
+
+        await renderScreen(<CommandPaletteProvider><RailLikeConsumer /></CommandPaletteProvider>);
+        const rendersAfterMount = consumerRenders;
+        const handlersAfterMount = testState.keyboardHandlers;
+
+        for (const serverId of ['server-a', 'server-b']) {
+            await act(async () => { testState.setRouteParams!({ serverId }); });
+        }
+
+        // The runtime is open/build entry points, not route state: its consumers (the Sessions list,
+        // quick-open empty state) must not render for a route change they cannot observe.
+        expect(consumerRenders).toBe(rendersAfterMount);
+        expect(testState.keyboardHandlers).toBe(handlersAfterMount);
+    });
+
+    it('builds commands for the switched Session while Expo still mirrors the previous one', async () => {
+        const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
+        const { CurrentRouteLocationProvider } = await import('@/components/appShell/workspace/currentRouteLocation');
+        const { useUniversalSearchRuntime } = await import('@/components/appShell/search/UniversalSearchRuntimeContext');
+        // Expo's mirror stays on /session/session-a; the workspace switched the same route pattern to session-b.
+        testState.segments = ['(app)', 'session', '[id]'];
+        testState.setRouteParams!({ id: 'session-a' });
+        const location = { pathname: '/session/session-b', params: { id: 'session-b' } };
+        let runtime: ReturnType<typeof useUniversalSearchRuntime> | null = null;
+        function RuntimeReader() {
+            runtime = useUniversalSearchRuntime();
+            return null;
+        }
+
+        await renderScreen(<CurrentRouteLocationProvider value={location}>
+            <CommandPaletteProvider><RuntimeReader /></CommandPaletteProvider>
+        </CurrentRouteLocationProvider>);
+        runtime!.buildCommands();
+
+        expect(buildCommandPaletteCommandsSpy.mock.calls.at(-1)?.[0]).toMatchObject({ activeSessionId: 'session-b' });
+    });
+
     it('refreshes the open palette with a session that arrives while it is open', async () => {
         const { Modal } = await import('@/modal');
         const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
@@ -170,5 +222,40 @@ describe('CommandPaletteProvider subscription locality', () => {
 
         const updates = vi.mocked(Modal.update).mock.calls.map((call) => call[1] as { commands?: Array<{ id: string }> });
         expect(updates.some((props) => props.commands?.some((command) => command.id === 'session-late'))).toBe(true);
+    });
+
+    it('republishes open palette commands only when the Sessions they list change', async () => {
+        const { Modal } = await import('@/modal');
+        const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
+        // Seven Sessions: the palette lists the five most recent. A busy Account streams the newest
+        // one (its activity time moves, it stays first) and touches one outside the five.
+        const sessionsAt = (tick: number, newestName = 'Session 7') => Object.fromEntries(
+            Array.from({ length: 7 }, (_, index) => {
+                const id = `s${index + 1}`;
+                const updatedAt = id === 's7' ? 100 + tick : id === 's1' ? 1 + tick / 100 : index + 1;
+                const name = id === 's7' ? newestName : `Session ${index + 1}`;
+                return [id, { id, updatedAt, metadataVersion: tick, metadata: { name, path: `/tmp/${id}` } }];
+            }),
+        );
+        await act(async () => { testState.store!.setState({ sessions: sessionsAt(0) }); });
+
+        await renderScreen(<CommandPaletteProvider><React.Fragment /></CommandPaletteProvider>);
+        await act(async () => {
+            await testState.keyboardHandlers?.['commandPalette.open']?.();
+        });
+        const commandUpdates = () => vi.mocked(Modal.update).mock.calls
+            .map((call) => call[1] as { commands?: Array<{ id: string; title: string }> })
+            .filter((props) => props.commands);
+        const updatesAfterOpen = commandUpdates().length;
+
+        for (let tick = 1; tick <= 5; tick += 1) {
+            await act(async () => { testState.store!.setState({ sessions: sessionsAt(tick) }); });
+        }
+        expect(commandUpdates().length - updatesAfterOpen).toBe(0);
+
+        // A listed Session's title is real content: the open palette shows it.
+        await act(async () => { testState.store!.setState({ sessions: sessionsAt(6, 'Renamed newest') }); });
+        expect(commandUpdates().length - updatesAfterOpen).toBe(1);
+        expect(commandUpdates().at(-1)!.commands!.find((command) => command.id === 'session-s7')?.title).toBe('Renamed newest');
     });
 });

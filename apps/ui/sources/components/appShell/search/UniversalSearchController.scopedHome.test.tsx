@@ -814,6 +814,47 @@ describe('UniversalSearchController exact Home scope', () => {
             .toContain('search-session-0');
     });
 
+    it('re-projects only the Session rows a list publish changed', async () => {
+        fixture.sessionListRows = Array.from({ length: 1_000 }, (_, index) => ({
+            serverId: HOME_A,
+            serverName: 'Home A',
+            session: { id: `row-session-${index}`, updatedAt: index + 1,
+                metadata: { name: `Needle Session ${index}`, path: `/repo/${index}` } },
+        }));
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]} initialQuery="needle"
+            initialScope={{ accountId: 'account-a', serverId: HOME_A, sessionId: null, machineId: null, rootPath: null }}
+            presentation="modal" onRequestClose={vi.fn()} />);
+        const sessionOptions = () => {
+            const section = selectionListProps()?.rootStep.sections.find(item => item.id === 'sessions');
+            if (!section || section.kind !== 'static') throw new Error('Sessions section missing');
+            return section.options;
+        };
+        await vi.waitFor(() => expect(sessionOptions()[0]?.label).toBe('Needle Session 999'));
+        let metadataReads = 0;
+        // Observe every row except the one that changes (the store reads that one to replace it).
+        for (const row of Object.values(storage.getState().sessionListRowsByServerId[HOME_A]!)) {
+            if (row.id === 'row-session-500') continue;
+            const metadata = row.metadata;
+            // Observe reads of the real admitted row; internal title/search logic remains real.
+            Object.defineProperty(row, 'metadata', { configurable: true, enumerable: true,
+                get: () => { metadataReads += 1; return metadata; } });
+        }
+
+        // One Session changes three times: only its row is replaced; every other row keeps its identity.
+        for (let tick = 1; tick <= 3; tick += 1) {
+            await act(async () => {
+                storage.getState().applyServerScopedSessionListRowPatches(HOME_A, [{
+                    sessionId: 'row-session-500',
+                    patch: () => ({ updatedAt: 5_000 + tick, metadata: { name: `Needle Session 500 v${tick}`, path: '/repo/500' } }),
+                }]);
+            });
+        }
+        expect(sessionOptions()[0]?.label).toBe('Needle Session 500 v3');
+        expect(sessionOptions()).toHaveLength(1_000);
+        expect(metadataReads, 'unchanged rows keep their projection').toBe(0);
+    });
+
     it('ensures complete inventory once for the scope lifetime without exposing or restarting a result section', async () => {
                 fixture.sessionListRows = [
             {
@@ -1059,10 +1100,8 @@ describe('UniversalSearchController exact Home scope', () => {
             const initial = createWorkspaceState({ id: 'retained-session', target: { kind: 'session',
                 params: { id: 'session-b', serverId: localHomeB, bottom: 'terminal' } }, pinned: false, preview: false });
             const key = workspaceLayoutScopeKey({ serverId: HOME_B, accountId: 'account-1', windowId: 'main' });
-            const settings = storage.getState().localSettings;
-            storage.setState({ localSettings: { ...settings, workspaceLayoutV1: {
-                ...settings.workspaceLayoutV1, [key]: serializeWorkspaceLayout(initial),
-            } } });
+            const { workspaceLayoutsState } = await import('@/sync/domains/state/filePaneUiState');
+            workspaceLayoutsState.set(key, serializeWorkspaceLayout(initial));
             const catalog = resolveCompactAppDestinations({ builtins: { externalSessions: false, inbox: true, workflows: false, friends: false }, pages: [] });
             return <WorkspaceProvider enabled catalog={catalog}>{current => {
                 navigation = current;

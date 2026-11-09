@@ -2,7 +2,8 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { hrefForDestinationRef, resolveCurrentAppDestination, useDestinationInstanceTitles, useDestinationInstanceTitleSources, type CompactAppDestination, type DestinationRef, type DestinationInstanceTitleEntry } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { hrefForDestinationRef, readDestinationSessionAddress, resolveCurrentAppDestination, useDestinationInstanceTitles, useDestinationInstanceTitleSources, type CompactAppDestination, type DestinationRef, type DestinationInstanceTitleEntry } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { DETAILS_TAB_STRIP_METRICS as M } from '@/components/appShell/panes/details/header/detailsTabHeaderMetrics';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -15,7 +16,6 @@ import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { useWorkspacePresentationVisibility, type WorkspaceNavigationContextValue } from '../WorkspaceNavigationContext';
 import { selectWorkspaceVisibleGroup, type WorkspaceGroup } from '../workspaceState';
-import { useWorkspaceOpenActions } from '../useWorkspaceOpenActions';
 import { selectWorkspaceTabsToClose } from '../workspaceActions';
 import { executeWorkspaceUiAction } from '../workspaceActionRuntime';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -29,6 +29,7 @@ import { splitCanvasEntityTargetId } from '@/components/appShell/splitCanvas/hoo
 import { presentPaneDropAdmission } from '@/components/appShell/splitCanvas/presentation/paneDropPresentation';
 import { usePaneDropStripCue } from '@/components/appShell/splitCanvas/presentation/usePaneDropStripCue';
 import { createWorkspaceDropScene } from '../workspaceDropScene';
+import { useWorkspaceOpenActions } from '../useWorkspaceOpenActions';
 
 type WorkspaceDocumentTab = DocumentTabItem & Readonly<{
     icon: IconName;
@@ -58,8 +59,20 @@ export function WorkspaceGroupTabs(props: Readonly<{
     const { theme } = useUnistyles();
     const { workspace } = props;
     const presentation = useWorkspacePresentationVisibility(workspace.desktopPresentation);
-    const group = React.useMemo(() => selectWorkspaceVisibleGroup(workspace.state, props.group, presentation),
-        [presentation, props.group, workspace.state]);
+    const isSessionVisible = useSessionRecordingVisibility();
+    const group = React.useMemo(() => {
+        const visible = selectWorkspaceVisibleGroup(workspace.state, props.group, presentation);
+        const tabIds = visible.tabIds.filter(id => {
+            const target = workspace.state.tabs[id]?.target;
+            const session = target ? readDestinationSessionAddress(target) : null;
+            return !session || isSessionVisible(session);
+        });
+        return tabIds.length === visible.tabIds.length ? visible : { ...visible, tabIds };
+    }, [presentation, props.group, workspace.state, isSessionVisible]);
+    const recentlyClosed = React.useMemo(() => workspace.state.recentlyClosed.filter(entry => {
+        const session = readDestinationSessionAddress(entry.tab.target);
+        return !session || isSessionVisible(session);
+    }), [workspace.state.recentlyClosed, isSessionVisible]);
     const scope = useActiveServerAccountScope();
     const workspaceRefs = useWorkspaceRefs();
     const runtime = useEntityDragDropRuntime();
@@ -76,11 +89,11 @@ export function WorkspaceGroupTabs(props: Readonly<{
     // The live instance title (a session's name, a file, a page); the title saved with the layout
     // stands in only while the instance cannot be named yet.
     const titleResolutionEntries = React.useMemo(() => overflowOpen
-        ? [...titleEntries, ...workspace.state.recentlyClosed.map(entry => ({ key: `closed:${entry.tab.id}`, instanceKey: entry.tab.id, ref: entry.tab.target, fallbackTitle: entry.fallbackTitle }))]
-        : titleEntries, [overflowOpen, titleEntries, workspace.state.recentlyClosed]);
+        ? [...titleEntries, ...recentlyClosed.map(entry => ({ key: `closed:${entry.tab.id}`, instanceKey: entry.tab.id, ref: entry.tab.target, fallbackTitle: entry.fallbackTitle }))]
+        : titleEntries, [overflowOpen, titleEntries, recentlyClosed]);
     const titleSources = useDestinationInstanceTitleSources(props.catalog, titleResolutionEntries);
     const liveTitles = useDestinationInstanceTitles(props.catalog, overflowOpen ? titleResolutionEntries : EMPTY_TITLE_ENTRIES);
-    const hasRecentlyClosed = workspace.state.recentlyClosed.length > 0;
+    const hasRecentlyClosed = recentlyClosed.length > 0;
     const previousTabs = React.useRef<ReadonlyMap<string, WorkspaceDocumentTab>>(new Map());
     const tabs = React.useMemo(() => {
         const byId = new Map<string, WorkspaceDocumentTab>();
@@ -151,7 +164,6 @@ export function WorkspaceGroupTabs(props: Readonly<{
 
     const menuTab = menu && group.tabIds.includes(menu.tabId) ? workspace.state.tabs[menu.tabId] : undefined;
     const openActions = useWorkspaceOpenActions(menuTab ? hrefForDestinationRef(props.catalog, menuTab.target) : null, undefined, { sourceTabId: menuTab?.id });
-
     const menuItems = React.useMemo((): readonly DropdownMenuItem[] => {
         if (!menuTab) return [];
         const glyph = (name: IconName) => <Icon name={name} size={16} color={theme.colors.text.secondary} />;
@@ -209,14 +221,14 @@ export function WorkspaceGroupTabs(props: Readonly<{
         } : {}),
         checked: tab.key === group.activeTabId,
         category: t('workspaceBar.tabsLabel'),
-    })), ...workspace.state.recentlyClosed.map((entry, index) => ({
+    })), ...recentlyClosed.map((entry, index) => ({
         id: `closed:${entry.tab.id}`, testID: `workspace-reopen-tab-${toTestIdSafeValue(entry.tab.id)}`,
         title: liveTitles.get(`closed:${entry.tab.id}`) ?? t('common.loading'),
         category: t('workspaceTabs.recentlyClosed'),
         icon: <Icon name="clock-counter-clockwise" size={16} color={theme.colors.text.secondary} />,
         ...(index === 0 ? { shortcut: shortcutLabels['workspace.tab.reopen'] } : {}),
     })), ...closeItems(group.activeTabId, 'workspace-overflow').map(item => ({ ...item, category: t('workspaceBar.tabMenuLabel') }))] : [],
-    [overflowOpen, closeItems, group.activeTabId, hasRecentlyClosed, liveTitles, shortcutLabels, stripTabs, styles.menuTabMarks, theme.colors.text.primary, theme.colors.text.secondary, theme.colors.text.tertiary, workspace.state.recentlyClosed]);
+    [overflowOpen, closeItems, group.activeTabId, hasRecentlyClosed, liveTitles, shortcutLabels, stripTabs, styles.menuTabMarks, theme.colors.text.primary, theme.colors.text.secondary, theme.colors.text.tertiary, recentlyClosed]);
 
     const entityDragDrop: DocumentTabEntityDragDrop | undefined = scope ? {
         runtime, id: `workspace-tabs:${group.id}`, scope, acceptedKinds: WORKSPACE_ENTITY_KINDS,
@@ -227,7 +239,7 @@ export function WorkspaceGroupTabs(props: Readonly<{
         resolve: ({ item, beforeTabId }) => presentPaneDropAdmission(resolveWorkspaceEntityDrop({
             workspace, scope, item, beforeTabId, target: { leafId: group.id, placement: 'center' },
             catalog: props.catalog, workspaceRefs,
-        }), createWorkspaceDropScene(workspace.state, props.catalog, { paneId: group.id, beforeTabId, destinationTitles: workspace.destinationTitles })),
+        }), createWorkspaceDropScene(workspace.state, props.catalog, { paneId: group.id, beforeTabId, destinationTitles: workspace.readDestinationTitles?.() })),
         execute: effect => executeWorkspaceEntityDrop(effect, scope),
     } : undefined;
     const latestEntity = React.useRef(entityDragDrop);

@@ -3,9 +3,11 @@ import renderer, { act } from 'react-test-renderer';
 import type {
     InteractionTransientQuestionV1,
     InteractionTransientRequestV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/interactions/transientV1';
 import { describe, expect, it, vi } from 'vitest';
 import { flattenTestStyle } from '@/dev/testkit';
+import { createLayoutChangeEvent } from '@/dev/testkit/fixtures/nativeEventFixtures';
+import { hitAreaOverlap, readHitArea } from '@/dev/testkit/harness/hitFrameReach';
 
 import {
     AppShellConfirmationDialog,
@@ -94,9 +96,15 @@ function readControlText(control: renderer.ReactTestInstance): string {
         .join('');
 }
 
+/** The host node of a control: the shared pressable's props (checked, role) land on it. */
+function host(tree: renderer.ReactTestRenderer, testID: string): renderer.ReactTestInstance {
+    return tree.root.findAll((node) => typeof node.type === 'string' && node.props.testID === testID)[0]!;
+}
+
 describe('app-shell transient interaction presenter', () => {
-    it('uses the Android physical 48dp target for every transient question and confirmation control', async () => {
+    it('draws every transient question and confirmation control at its design size and reaches the 48dp Android target by hit area', async () => {
         const { Platform } = await import('react-native');
+        const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
         const previousPlatform = Platform.OS;
         (Platform as { OS: string }).OS = 'android';
         try {
@@ -114,19 +122,23 @@ describe('app-shell transient interaction presenter', () => {
             let questionTree!: renderer.ReactTestRenderer;
             let confirmationTree!: renderer.ReactTestRenderer;
             await act(async () => {
-                questionTree = renderer.create(<AppShellQuestionDialog
-                    onClose={vi.fn()}
-                    questions={questions}
-                    onAnswer={vi.fn()}
-                    onCancel={vi.fn()}
-                />);
-                confirmationTree = renderer.create(<AppShellConfirmationDialog
-                    onClose={vi.fn()}
-                    description="Proceed?"
-                    confirmLabel="Confirm"
-                    onConfirm={vi.fn()}
-                    onCancel={vi.fn()}
-                />);
+                questionTree = renderer.create(<HappierUiPlatformProvider platform={{ platform: 'android', colorScheme: 'light' }}>
+                    <AppShellQuestionDialog
+                        onClose={vi.fn()}
+                        questions={questions}
+                        onAnswer={vi.fn()}
+                        onCancel={vi.fn()}
+                    />
+                </HappierUiPlatformProvider>);
+                confirmationTree = renderer.create(<HappierUiPlatformProvider platform={{ platform: 'android', colorScheme: 'light' }}>
+                    <AppShellConfirmationDialog
+                        onClose={vi.fn()}
+                        description="Proceed?"
+                        confirmLabel="Confirm"
+                        onConfirm={vi.fn()}
+                        onCancel={vi.fn()}
+                    />
+                </HappierUiPlatformProvider>);
             });
 
             for (const testID of [
@@ -136,11 +148,23 @@ describe('app-shell transient interaction presenter', () => {
                 'app-shell-question-cancel',
                 'app-shell-question-submit',
             ]) {
-                expect(flattenTestStyle(questionTree.root.findByProps({ testID }).props.style).minHeight).toBe(48);
+                expect(flattenTestStyle(host(questionTree, testID).props.style).minHeight).toBeUndefined();
             }
             for (const testID of ['app-shell-confirmation-decline', 'app-shell-confirmation-confirm']) {
-                expect(flattenTestStyle(confirmationTree.root.findByProps({ testID }).props.style).minHeight).toBe(48);
+                expect(flattenTestStyle(host(confirmationTree, testID).props.style).minHeight).toBeUndefined();
             }
+
+            // The two actions are drawn as labels with a gap between: each reaches 48 tall by hit area
+            // and the pair never overlap.
+            const drawn = { width: 72, height: 36 };
+            for (const testID of ['app-shell-confirmation-decline', 'app-shell-confirmation-confirm']) {
+                await act(async () => { host(confirmationTree, testID).props.onLayout(createLayoutChangeEvent({ x: 0, y: 0, ...drawn })); });
+            }
+            const decline = readHitArea(host(confirmationTree, 'app-shell-confirmation-decline'), drawn);
+            const confirm = readHitArea(host(confirmationTree, 'app-shell-confirmation-confirm'), drawn);
+            expect(decline.height).toBe(48);
+            expect(confirm.height).toBe(48);
+            expect(hitAreaOverlap(decline, confirm, { axis: 'horizontal', gap: 10 })).toBe(0);
         } finally {
             (Platform as { OS: string }).OS = previousPlatform;
         }
@@ -233,12 +257,8 @@ describe('app-shell transient interaction presenter', () => {
             tree.root.findByProps({ testID: 'app-shell-question-features-choice-voice' }).props.onPress();
         });
 
-        expect(tree.root.findByProps({
-            testID: 'app-shell-question-mode-choice-safe',
-        }).props.accessibilityState).toEqual({ checked: true });
-        expect(tree.root.findByProps({
-            testID: 'app-shell-question-features-choice-voice',
-        }).props.accessibilityState).toEqual({ checked: true });
+        expect(host(tree, 'app-shell-question-mode-choice-safe').props.accessibilityState).toMatchObject({ checked: true });
+        expect(host(tree, 'app-shell-question-features-choice-voice').props.accessibilityState).toMatchObject({ checked: true });
         expect(tree.root.findByProps({
             testID: 'app-shell-question-mode-choice-safe-selected-indicator',
         }).props.name).toBe('check-circle');
@@ -315,8 +335,8 @@ describe('app-shell transient interaction presenter', () => {
                 />);
             });
 
-            const safe = tree.root.findByProps({ testID: 'app-shell-question-mode-choice-safe' });
-            const fast = tree.root.findByProps({ testID: 'app-shell-question-mode-choice-fast' });
+            const safe = host(tree, 'app-shell-question-mode-choice-safe');
+            const fast = host(tree, 'app-shell-question-mode-choice-fast');
             expect(safe.props.role).toBe('radio');
             expect(safe.props['aria-checked']).toBe(false);
             expect(safe.props.tabIndex).toBe(0);
@@ -334,12 +354,8 @@ describe('app-shell transient interaction presenter', () => {
 
             expect(event.preventDefault).toHaveBeenCalledOnce();
             expect(event.stopPropagation).toHaveBeenCalledOnce();
-            expect(tree.root.findByProps({
-                testID: 'app-shell-question-mode-choice-safe',
-            }).props.tabIndex).toBe(-1);
-            expect(tree.root.findByProps({
-                testID: 'app-shell-question-mode-choice-fast',
-            }).props).toMatchObject({
+            expect(host(tree, 'app-shell-question-mode-choice-safe').props.tabIndex).toBe(-1);
+            expect(host(tree, 'app-shell-question-mode-choice-fast').props).toMatchObject({
                 tabIndex: 0,
                 'aria-checked': true,
                 accessibilityState: { checked: true },
@@ -379,9 +395,7 @@ describe('app-shell transient interaction presenter', () => {
                 accessibilityLabel: 'Choose a mode',
                 role: undefined,
             });
-            expect(tree.root.findByProps({
-                testID: 'app-shell-question-mode-choice-safe',
-            }).props).toMatchObject({
+            expect(host(tree, 'app-shell-question-mode-choice-safe').props).toMatchObject({
                 accessibilityRole: 'radio',
                 accessibilityState: { checked: false },
                 onKeyDown: undefined,

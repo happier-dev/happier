@@ -1,4 +1,6 @@
 /** @vitest-environment jsdom */
+import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
+import { parseRecentWorkspaceFiles, recentWorkspaceFilesKey } from '@/sync/domains/workspaces/files/recentWorkspaceFiles';
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -8,6 +10,8 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import type { WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import type { FileViewActionOwner } from '@/sync/ops/actions/scopeActionFamily';
 import type { WorkspaceSymbolSearchInput } from '@/components/appShell/search/workspaceSymbolSearchSource';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 
 const route = vi.hoisted(() => ({ pathname: '/', params: {} as Record<string, string> }));
 
@@ -28,10 +32,16 @@ vi.mock('@/utils/web/radixCjs', async () => {
     const { createRadixCjsRealModule } = await import('@/dev/testkit/mocks/radixCjs');
     return await createRadixCjsRealModule();
 });
+// Empty-query Quick Open uses the recycler; jsdom has no measured viewport.
+// Substitute that native layout boundary while keeping row rendering and activation real.
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return await createLegendListModuleMock({ renderItems: true });
+});
 installDisconnectedServerSocketBoundary();
 // Load these after the native boundary has selected real React Native Web;
 // the testkit barrel otherwise evaluates its render helpers before that choice.
-const [{ serveActionHomes }, { applyProjectAccountRowsFixture, installBrowserStorageLockBoundary }] = await Promise.all([
+const [{ serveActionHomes }, { installBrowserStorageLockBoundary }] = await Promise.all([
     import('@/dev/testkit/harness/actionHomesHttpHarness'), import('@/dev/testkit'),
 ]);
 
@@ -41,6 +51,7 @@ const { ModalProvider } = await import('@/modal/ModalProvider');
 const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { storage } = await import('@/sync/domains/state/storage');
+const { recentWorkspaceFilesState } = await import('@/sync/domains/state/filePaneUiState');
 const { settingsDefaults } = await import('@/sync/domains/settings/settings');
 // Amortize the runner's cold TypeScript transformation outside operation deadlines,
 // as the former static import did. The owner graph test independently proves that
@@ -56,10 +67,70 @@ const [{ WorkspaceProvider }, { AppPaneProvider }, { resolveCompactAppDestinatio
     import('@/sync/domains/workspaces/files/recentWorkspaceFiles'), import('@/sync/domains/workspaces/workspaceScope'),
 ]);
 
+it.each(['checkout', 'idle', 'focus'] as const)('opens Text in files from the presented Project: %s', async contract => {
+    const restoreLocks = installBrowserStorageLockBoundary();
+    const homes = await serveActionHomes({ homes: [{ key: 'home', serverUrl: 'https://project-text-search.test',
+        serverIdentityId: 'srv_project_text_search', accountId: 'alice', currentAccount: true,
+        settings: { commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true } }],
+        route: request => request.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`
+            ? Response.json(createPlainProjectAccountRowListFixture({ workspaceRefs: [{ id: 'search-project',
+                serverId: 'srv_project_text_search', machineId: 'studio', rootPath: '/repo', label: 'Search project', createdAtMs: 1 }] }))
+            : undefined });
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { AppPaneScopeHost } = await import('@/components/appShell/panes/AppPaneScopeHost');
+    const { readProjectWidgetAreaContextV1 } = await import('@/sync/domains/widgets/projectWidgetAreaContext');
+    const { buildProjectPaneScopeId } = await import('@/components/projects/detail/projectPaneScope');
+    const { resolveKeyboardPlatform } = await import('@/keyboard/runtime');
+    const { t } = await import('@/text');
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const initial = storage.getState();
+    let disconnect: (() => Promise<unknown>) | undefined;
+    try {
+        disconnect = await homes.restoreActiveConnection();
+        const account = captureActiveServerAccountScopeLifetime()!;
+        await vi.waitFor(() => expect(storage.getState().projectAccountRows!.status).toBe('ready'));
+        const checkout = storage.getState().projectAccountRows!.workspaceRefs.find(ref => ref.id === 'search-project')!;
+        const scopeId = buildProjectPaneScopeId(checkout.id, checkout.serverId);
+        // Project pages use the direct adapter, not a registered Session-style driver.
+        const projectContext = readProjectWidgetAreaContextV1({ serverId: checkout.serverId,
+            projectRef: checkout, activeCheckout: checkout, authority: account });
+        storage.setState({ isDataReady: true, settings: { ...settingsDefaults,
+            commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true } });
+        await act(async () => root.render(<InjectedAuthProvider credentials={null}><ModalProvider><AppPaneProvider>
+            <CommandPaletteProvider><AppPaneScopeHost scopeId={scopeId}
+                surfaceScope={{ targetKind: 'project', projectId: checkout.id, projectContext,
+                    accountLifetime: account, serverId: checkout.serverId, machineId: checkout.machineId,
+                    projectionPhase: 'current' }}
+                main={<button data-testid="project-search-origin">Project Code</button>} /></CommandPaletteProvider>
+        </AppPaneProvider></ModalProvider></InjectedAuthProvider>));
+        container.querySelector<HTMLButtonElement>('button')!.focus();
+        const command = ['macos', 'ios'].includes(resolveKeyboardPlatform());
+        await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'H', code: 'KeyH', altKey: !command, metaKey: command, shiftKey: true, bubbles: true, cancelable: true,
+        })));
+        const host = () => document.querySelector('[data-testid="universal-search-host"]');
+        await vi.waitFor(() => expect(host()).not.toBeNull());
+        if (contract === 'checkout') await vi.waitFor(() => expect(host()!.textContent).toContain('Search project'));
+        if (contract === 'idle') expect(host()!.textContent).not.toContain(t('selectionList.emptyMatch'));
+        if (contract === 'focus') expect(document.activeElement).toBe(host()!.querySelector('input'));
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        try { await disconnect?.(); }
+        finally { await homes.dispose(); restoreLocks(); storage.setState(initial, true); }
+    }
+});
+
 it('keeps the canonical file opener when Search renders in the global modal outside Workspace context', async () => {
     const restoreLocks = installBrowserStorageLockBoundary();
     const homes = await serveActionHomes({ homes: [{ key: 'home', serverUrl: 'https://workspace-search-portal.test',
-        accountId: 'alice', currentAccount: true }], route: () => undefined });
+        serverIdentityId: 'srv_search_portal', accountId: 'alice', currentAccount: true }],
+        route: request => request.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`
+            ? Response.json(createPlainProjectAccountRowListFixture({ workspaceRefs: [{ id: 'portal-project',
+                serverId: 'srv_search_portal', machineId: 'studio', rootPath: '/repo', label: null, createdAtMs: 1 }] }))
+            : undefined });
     let disconnect: (() => Promise<unknown>) | undefined;
     const container = document.createElement('div');
     document.body.append(container);
@@ -73,11 +144,10 @@ it('keeps the canonical file opener when Search renders in the global modal outs
         route.pathname = '/projects/portal-project/overview';
         route.params = { workspaceRefId: 'portal-project', serverId: scope.serverId };
         window.history.replaceState(null, '', `${route.pathname}?serverId=${encodeURIComponent(scope.serverId)}`);
-        storage.setState({ isDataReady: true, settings: { ...storage.getState().settings, commandPaletteEnabled: true },
-            localSettings: { ...storage.getState().localSettings, recentWorkspaceFilesV1:
-                recordRecentWorkspaceFile({}, workspaceKey, 'from-search.ts') } });
-        applyProjectAccountRowsFixture(storage, { workspaceRefs: [{ id: 'portal-project', ...workspace,
-            label: null, createdAtMs: 1 }] });
+        replacePersistentUiStateForTest(recentWorkspaceFilesState, parseRecentWorkspaceFiles(recordRecentWorkspaceFile({}, recentWorkspaceFilesKey(scope, workspaceKey), 'from-search.ts')));
+        storage.setState({ isDataReady: true, settings: { ...storage.getState().settings, commandPaletteEnabled: true } });
+        await vi.waitFor(() => expect(storage.getState().projectAccountRows).toMatchObject({ status: 'ready',
+            workspaceRefs: [expect.objectContaining({ id: 'portal-project' })] }));
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
             externalSessions: false, inbox: false, workflows: false, friends: false } });
         let runtime!: ReturnType<typeof useUniversalSearchRuntime>;
@@ -163,8 +233,12 @@ it('reopens Search through the app-shell shortcut after its route-modal host ret
 it('uses the presented File page for global quick open and symbols without focusing its DOM', async () => {
     const restoreLocks = installBrowserStorageLockBoundary();
     const homes = await serveActionHomes({ homes: [{ key: 'home', serverUrl: 'https://workspace-search-presented-file.test',
-        accountId: 'alice', currentAccount: true,
-        settings: { commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true } }], route: () => undefined });
+        serverIdentityId: 'srv_search_presented_file', accountId: 'alice', currentAccount: true,
+        settings: { commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true } }],
+        route: request => request.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`
+            ? Response.json(createPlainProjectAccountRowListFixture({ workspaceRefs: [{ id: 'presented-project',
+                serverId: 'srv_search_presented_file', machineId: 'studio', rootPath: '/repo', label: null, createdAtMs: 1 }] }))
+            : undefined });
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const { registerFileViewActionOwner } = await import('@/sync/ops/actions/scopeActionFamily');
     const { resolveKeyboardPlatform } = await import('@/keyboard/runtime');
@@ -180,8 +254,8 @@ it('uses the presented File page for global quick open and symbols without focus
         const account = storage.getState().profileScope!;
         const workspace = { serverId: account.serverId, machineId: 'studio', rootPath: '/repo' };
         const searchScope = { ...workspace, accountId: account.accountId, sessionId: null };
-        applyProjectAccountRowsFixture(storage, { workspaceRefs: [{ id: 'presented-project', ...workspace,
-            label: null, createdAtMs: 1 }] });
+        await vi.waitFor(() => expect(storage.getState().projectAccountRows).toMatchObject({ status: 'ready',
+            workspaceRefs: [expect.objectContaining({ id: 'presented-project' })] }));
         storage.setState({ isDataReady: true, settings: { ...settingsDefaults,
             commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true } });
         // No File route or focused element supplies scope. This is the mounted
@@ -237,5 +311,48 @@ it('uses the presented File page for global quick open and symbols without focus
         container.remove();
         try { await disconnect?.(); }
         finally { await homes.dispose(); restoreLocks(); storage.setState(initial, true); }
+    }
+});
+
+it.each(['rail', 'railItem'] as const)('moves focus into the Search input when Alt+K is pressed with focus on the app rail (%s)', async focusOn => {
+    const { View } = await import('react-native');
+    const { usePaneRegionFocusBoundary } = await import('@/components/appShell/panes/paneRegion');
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const before = storage.getState().settings;
+    storage.setState({ settings: { ...settingsDefaults, commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true } });
+    // The rail's own focus region, as AppRail attaches it: a labelled navigation landmark that F6 focuses.
+    function Rail() {
+        const boundary = usePaneRegionFocusBoundary('rail', true);
+        return <View ref={boundary.ref} onFocus={boundary.onFocus} testID="rail"
+            {...{ role: 'navigation', tabIndex: -1, onFocusCapture: boundary.onFocusCapture }}>
+            <button data-testid="rail-item">Sessions</button>
+        </View>;
+    }
+    const palette = () => document.querySelector('[data-testid="universal-search-host"]');
+    try {
+        await act(async () => root.render(<InjectedAuthProvider credentials={null}>
+            <ModalProvider><CommandPaletteProvider><Rail /></CommandPaletteProvider></ModalProvider>
+        </InjectedAuthProvider>));
+        const origin = container.querySelector<HTMLElement>(focusOn === 'rail' ? '[data-testid="rail"]' : '[data-testid="rail-item"]')!;
+        origin.focus();
+        expect(document.activeElement).toBe(origin);
+        // A person's key press: it starts on the focused element and bubbles to the document.
+        await act(async () => {
+            origin.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', altKey: true, bubbles: true, cancelable: true }));
+        });
+        await vi.waitFor(() => expect(palette()?.querySelector('input')).toBeTruthy());
+        await act(async () => {});
+        expect(document.activeElement).toBe(palette()!.querySelector('input'));
+        await act(async () => {
+            document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
+        });
+        await vi.waitFor(() => expect(palette()).toBeNull());
+        await vi.waitFor(() => expect(document.activeElement).toBe(origin));
+    } finally {
+        await act(async () => root.unmount());
+        storage.setState({ settings: before });
+        container.remove();
     }
 });

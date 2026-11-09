@@ -1,4 +1,4 @@
-import type { WorkspaceActionId } from '@happier-dev/protocol';
+import type { WorkspaceActionId } from '@happier-dev/protocol/actions/workspaceActionFamily';
 import type { AdmittedClientActionContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { workspaceActionFailure, type WorkspaceActionOutcome } from './workspaceActions';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult, isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';

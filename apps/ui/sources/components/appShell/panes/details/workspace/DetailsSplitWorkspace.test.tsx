@@ -7,9 +7,9 @@ import { createStore } from 'zustand/vanilla';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { SplitCanvasHost } from '@/components/appShell/splitCanvas/components/SplitCanvasHost';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { registerMountedTabUnsavedChangesGuard, runGuardedTabNavigation } from '@/utils/navigation/runGuardedNavigation';
+import { detailsTabNavigationKey } from './detailsTabLifetime';
 import type { DetailsTabState } from './detailsWorkspaceTypes';
 
 vi.mock('@/text', async () => {
@@ -216,7 +216,7 @@ describe('DetailsSplitWorkspace', () => {
     it('keeps a group open when one of its retained editors declines closing', async () => {
         const { DetailsSplitWorkspace } = await import('./DetailsSplitWorkspace');
         const requestDecision = vi.fn(async () => 'keepEditing' as const);
-        const remove = registerMountedTabUnsavedChangesGuard('file:a', { isDirtyRef: { current: true }, tag: 'file-editor', requestDecision });
+        const remove = registerMountedTabUnsavedChangesGuard(detailsTabNavigationKey(pane.scopeId, 'file:a'), { isDirtyRef: { current: true }, tag: 'file-editor', requestDecision });
         const closeDetailsGroup = vi.fn();
         try {
             const screen = await renderScreen(<DetailsSplitWorkspace pane={{ ...pane, closeDetailsGroup }} renderTabContent={() => null} />);
@@ -590,7 +590,7 @@ describe('DetailsSplitWorkspace', () => {
         expect(pane.focusDetailsGroup).toHaveBeenCalledWith('group:1');
     });
 
-    it('uses the shared platform target size for every full-bleed overlay control', async () => {
+    it('draws every full-bleed overlay control at its design size, leaving the finger target to its hit area', async () => {
         const { DetailsSplitWorkspace } = await import('./DetailsSplitWorkspace');
         const originalPlatform = Platform.OS;
         const overlay = {
@@ -619,7 +619,6 @@ describe('DetailsSplitWorkspace', () => {
                         renderTabContent={(tab) => React.createElement('TabContent', { tabKey: tab.key })}
                     />,
                 );
-                const targetSize = resolveMinimumInteractiveTargetSize(platform);
 
                 for (const testID of [
                     'details-workspace-overlay-back',
@@ -629,8 +628,9 @@ describe('DetailsSplitWorkspace', () => {
                 ]) {
                     const action = screen.root.findByProps({ testID });
                     const style = flattenStyle(action.props.style);
-                    expect(style.minWidth).toBe(targetSize);
-                    expect(style.minHeight).toBe(targetSize);
+                    // Drawn at the control's design; the finger target is its hit area.
+                    expect(style.minWidth).toBeUndefined();
+                    expect(style.minHeight).toBeUndefined();
                 }
 
                 await screen.unmount();

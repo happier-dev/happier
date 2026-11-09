@@ -1,4 +1,5 @@
-import type { ActionExecuteResult, ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { Command } from './types';
 
 type CommandPaletteAction = NonNullable<ActionExecutorDeps['uiCommandPaletteAction']>;

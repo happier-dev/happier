@@ -11,6 +11,41 @@ import {
     type BuildPluginSearchProviderSectionsInput,
 } from './pluginSearchProviderSections';
 
+vi.mock('socket.io-client', async importOriginal => (
+    await import('@/dev/testkit/harness/serverAccountConnectionHarness')
+).createSocketIoClientBoundary(importOriginal));
+
+// The bundled package/declaration bytes are the system boundary. Account
+// selection, projection, SDK registration and Action dispatch remain real.
+vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', async () => {
+    const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+    const { PluginUiArtifactsManifestEntryV2Schema } = await import('@happier-dev/protocol/plugins/ui');
+    const { PluginSearchQueryV1Schema, PluginSearchResultV1Schema } = await import('@happier-dev/protocol/plugins/contributions/search-providers');
+    const { projectPluginPortableUiDeclarationsV1 } = await import('@happier-dev/protocol/plugins/contributions/ui');
+    const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: 'acme.account-search', version: '1.0.0',
+        displayName: 'Account search', runtime: { apiVersion: 1 }, contributes: {
+            actions: [{ id: 'query', title: 'Account search', scopes: ['global'], surfaces: ['ui'], placementBindings: [],
+                dangerLevel: 'safe', readOnly: true, inputSchema: PluginSearchQueryV1Schema.jsonSchema,
+                resultSchema: PluginSearchResultV1Schema.jsonSchema,
+                execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } } },
+                { id: 'read-setting', title: 'Read setting', scopes: ['global'], surfaces: ['ui', 'plugin'], placementBindings: [],
+                    dangerLevel: 'safe', readOnly: true,
+                    execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } } }],
+            searchProviders: [{ id: 'entries', action: 'query' }],
+        } });
+    const digest = `sha256:${'a'.repeat(64)}`;
+    const graph = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId: 'account-runtime', tier: 'reactNative',
+        entry: 'react-native/account-runtime/entry.cjs.bundle', digest,
+        files: [{ relativePath: 'react-native/account-runtime/entry.cjs.bundle', digest, byteSize: 1 }],
+        builtWith: { bundler: 'esbuild', version: '0.27.2' }, executable: { exports: ['activate'] }, hostUiApiRange: '^1.0.0' });
+    const declaration = { pluginId: manifest.id, pluginVersion: manifest.version, displayName: manifest.displayName,
+        packageName: '@acme/account-search', normalizedManifest: manifest, artifactGraphs: [graph],
+        entriesById: projectPluginPortableUiDeclarationsV1(manifest) };
+    return { BUNDLED_PLUGIN_UI_APP_ARTIFACTS: [], BUNDLED_PLUGIN_BRAND_MARKS: [], BUNDLED_PLUGIN_PACKAGED_RESOURCES: [],
+        BUNDLED_PLUGIN_UI_APP_DECLARATIONS: [{ ...declaration, presentationManifest: manifest,
+            loadDeclaration: async () => declaration }] };
+});
+
 // Real semantic routing, launch admission and Action dispatch run above this
 // injected machine transport. No plugin process or network is opened here.
 const executeAction = vi.fn<PluginSurfaceContributedActionTransport>();
@@ -93,7 +128,164 @@ beforeEach(() => {
     openSurface.mockReset();
 });
 
+it.each(['account', 'machine', 'home', 'home partial'] as const)('queries Account data from a %s provider and fences its withdrawal', async providerPlacement => {
+    const homeScope = providerPlacement === 'home' || providerPlacement === 'home partial';
+    const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+    const { createHomeHubArtifactHttpBoundary } = await import('@/dev/testkit/harness/homeHubArtifactHttpBoundary');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection, retirePluginAccountAvailabilityProjection,
+        clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+    const { unionPluginUiProjections, mergeInstalledPluginUiProjections } = await import('@/sync/domains/plugins/ui/projectionUnion');
+    const { normalizePluginUiProjection } = await import('@/sync/domains/plugins/ui/projection');
+    const { PluginProjectionV2Schema, PluginProjectedActionV2Schema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+    const { widgetExecutionOrigin, widgetInstalledPackage } = await import('@/dev/testkit/fixtures/pluginWidgetProjectionFixtures');
+    const { resolveProjectedPluginUiClientExecutables } = await import('@/components/plugins/reactNative/clientExecutableProjection');
+    const { createPluginReactNativeBundleCache } = await import('@/components/plugins/reactNative/bundleCache');
+    const { getInstalledPluginUiClientExecutableComposition } = await import('@/components/plugins/reactNative/clientExecutableContributions');
+    const http = createHomeHubArtifactHttpBoundary('search-account');
+    const connection = await restoreServerAccountForTest({ serverUrl: 'http://account-search.test', accountId: 'search-account', request: http.request });
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Expected real Account lifetime');
+    const pluginId = 'acme.account-search';
+    const actionKey = `${pluginId}/query`;
+    replacePluginAccountAvailabilityProjection({ scope: lifetime.scope,
+        snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    const availability = readPluginAccountAvailability(lifetime.scope);
+    const readCurrent = () => availability.readAccountUiProjection();
+    const unpublish = publishCommittedAppShellPluginUiProjection(readCurrent);
+    const account = readCurrent();
+    const accountAction = account?.actionsById[actionKey];
+    if (!account || !accountAction) throw new Error('Expected admitted Account query declaration');
+    const executionOrigin = widgetExecutionOrigin(pluginId, 'machine-search');
+    const occurrenceId = 'daemon-search:55';
+    const rawAction = PluginProjectedActionV2Schema.parse({ id: 'query', pluginId, occurrenceId, executionOrigin,
+        title: 'Account search', scopes: ['global'], surfaces: ['ui'], placementBindings: [], dangerLevel: 'safe',
+        readOnly: true, available: true, execution: accountAction.execution });
+    const daemon = normalizePluginUiProjection(PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+        installedPackagesById: { [pluginId]: { ...widgetInstalledPackage(pluginId, 'Account search'), version: '1.0.0', occurrenceId, executionOrigin } },
+        actionsById: { [actionKey]: rawAction }, familiesById: { pluginUi: { family: 'pluginUi', entriesById: {
+            [`searchProvider:${pluginId}:entries`]: { id: `searchProvider:${pluginId}:entries`, pluginId, occurrenceId,
+                contributionKind: 'searchProvider', descriptorId: 'entries', identity: { pluginId, localId: 'entries' }, action: { pluginId, localId: 'query' } },
+        } } } }));
+    const machineScoped = unionPluginUiProjections([{ machineId: 'machine-search', serverId: lifetime.scope.serverId,
+        serverIdentityId: executionOrigin.serverIdentityId, projection: daemon, phase: 'current', interactionEnabled: true }],
+    new Map([[pluginId, executionOrigin]])).pluginUiProjection;
+    const scoped = providerPlacement !== 'machine' ? mergeInstalledPluginUiProjections([account], null) : machineScoped;
+    if (!scoped) throw new Error('Expected real selected daemon provider projection');
+    const targets = resolveProjectedPluginUiClientExecutables({ actionProjection: { projection: account }, platform: 'web' });
+    expect(targets).toHaveLength(1);
+    const cache = createPluginReactNativeBundleCache();
+    for (const target of targets) cache.putInstalledArtifact({ identity: target.cacheIdentity, bytes: new Uint8Array([47, 47]), format: 'plainJs' });
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let queries = 0;
+    let nestedRead: unknown;
+    const activate = (api: import('@happier-dev/plugin-sdk').PluginAccountApi) => {
+        api.actions.register('read-setting', async (_value, context) =>
+            context.services.actions.execute('settings.get', { anchor: 'appearance.themeMode' }));
+        api.actions.register('query', async (value, context) => {
+            const queryNumber = ++queries;
+            if (providerPlacement === 'home partial' && queryNumber === 2) throw new Error('source unavailable');
+            nestedRead = await context.services.actions.execute({ pluginId, localId: 'read-setting' }, {});
+            const query = value && typeof value === 'object' && !Array.isArray(value) ? value.query : null;
+            if (typeof query !== 'string') throw new Error('Expected admitted Search query');
+            if (query === 'hold') await gate;
+            return { items: [{ id: 'match', title: query, command: { kind: 'executeAction', action: 'query', input: { query: 'activate', limit: 1 } } }], truncated: false };
+        });
+    };
+    const composition = getInstalledPluginUiClientExecutableComposition();
+    try {
+        if (providerPlacement !== 'machine') {
+            expect(buildPluginSearchProviderSections({ projection: scoped,
+                scopedLaunchFacts: { serverId: lifetime.scope.serverId, machineId: null, interactionEnabled: true },
+                accountLifetime: lifetime, onCommitActivation: vi.fn() })).toHaveLength(0);
+        }
+        const attempts = await composition.reconcile(targets.map(target => ({ pluginId, pluginVersion: target.pluginVersion,
+            hostUiApiRange: target.hostUiApiRange, contributes: target.contributes, target: target.target,
+            executionOrigin: target.executionOrigin, authority: target.authority, occurrenceId: target.occurrenceId,
+            accountLifetime: lifetime, isCurrent: lifetime.isCurrent, cache, identity: target.cacheIdentity,
+            moduleReference: target.moduleReference,
+            // The package loader is the physical artifact boundary; its SDK registration transaction is real.
+            backend: { backendId: 'commonJs', available: true, loadInstalledBundle: async () => activate as import('@/components/plugins/reactNative/loader').PluginReactNativeExecutableExport },
+        })));
+        expect(attempts).toMatchObject([{ result: { ok: true } }]);
+        const { dispatchPluginResolvedSemanticCommand } = await import('@/components/plugins/surfaces/dispatchPluginResolvedSemanticCommand');
+        expect(await dispatchPluginResolvedSemanticCommand({ projection: scoped, callerPluginId: pluginId,
+            expectedAction: accountAction, command: { kind: 'executeAction', action: { pluginId, localId: 'read-setting' }, input: {} },
+            scopedLaunchFacts: { serverId: lifetime.scope.serverId, machineId: null, interactionEnabled: true },
+            accountLifetime: lifetime })).toMatchObject({ ok: false, reason: 'plugin_ui_action_unavailable' });
+        expect(nestedRead).toBeUndefined();
+        const onCommitActivation = vi.fn();
+        const built = buildPluginSearchProviderSections({ projection: scoped,
+            scopedLaunchFacts: { serverId: lifetime.scope.serverId, machineId: providerPlacement !== 'machine' ? null : 'machine-search', interactionEnabled: true },
+            ...(homeScope ? { homeMachines: [
+                { machineId: 'machine-one', name: 'First', reachable: true }, { machineId: 'machine-two', name: 'Second', reachable: true },
+                { machineId: 'machine-offline', name: 'Offline', reachable: false },
+            ] } : {}),
+            accountLifetime: lifetime, isOccurrenceCurrent: (_id, occurrence) => occurrence === (providerPlacement !== 'machine' ? accountAction.occurrenceId : occurrenceId),
+            onCommitActivation });
+        expect(built).toHaveLength(1);
+        const section = built[0]!;
+        const result = await section.resolve('needle', new AbortController().signal);
+        expect(result.options).toMatchObject([{ label: 'needle' }]);
+        expect(nestedRead).toMatchObject({ anchor: 'appearance.themeMode' });
+        expect(queries).toBe(homeScope ? 2 : 1);
+        if (homeScope) expect(result.resultHint).toContain('Offline');
+        if (providerPlacement === 'home partial') expect(result.resultHint).toContain('Second');
+        result.options[0]!.onSelect?.();
+        const pending = section.resolve('hold', new AbortController().signal);
+        await vi.waitFor(() => expect(queries).toBe(homeScope ? 4 : 2));
+        retirePluginAccountAvailabilityProjection([pluginId]);
+        expect(readCurrent()?.actionsById[actionKey]).toBeUndefined();
+        release();
+        expect(await pending).toEqual({ options: [] });
+        await expect(section.resolve('again', new AbortController().signal)).resolves.toEqual({ options: [] });
+        expect(await onCommitActivation.mock.calls[0]![0]()).toMatchObject({ ok: false, reason: 'plugin_ui_generation_retired' });
+        expect(queries).toBe(homeScope ? 4 : 2);
+    } finally {
+        release(); unpublish(); await composition.invalidatePlugin(pluginId);
+        clearPluginAccountAvailabilityProjection(); await connection.dispose();
+    }
+});
+
 describe('buildPluginSearchProviderSections', () => {
+    it('queries a source-backed Machine provider through the real projection union', async () => {
+        const { PluginProjectionV2Schema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+        const { widgetInstalledPackage } = await import('@/dev/testkit/fixtures/pluginWidgetProjectionFixtures');
+        const { normalizePluginUiProjection } = await import('@/sync/domains/plugins/ui/projection');
+        const { unionPluginUiProjections } = await import('@/sync/domains/plugins/ui/projectionUnion');
+        const pluginId = 'qa.journey-machine-search';
+        const machineId = 'machine-search';
+        const serverId = 'srv_search';
+        const occurrenceId = `${pluginId}:115`;
+        const executionOrigin = { serverIdentityId: serverId, sourceRef: {
+            machineId, pluginId, sourceCustody: { kind: 'development' as const, registeredRootId: '/tmp/journey-machine-search' },
+        } };
+        const daemon = normalizePluginUiProjection(PluginProjectionV2Schema.parse({ v: 2, generation: 115,
+            installedPackagesById: { [pluginId]: { ...widgetInstalledPackage(pluginId, 'QA Machine Search'),
+                version: '1.0.0', occurrenceId, executionOrigin } },
+            actionsById: { [`${pluginId}/query`]: { id: 'query', pluginId, occurrenceId, executionOrigin,
+                title: 'QA Machine Search', scopes: ['global'], surfaces: ['ui'], placementBindings: [],
+                execution: { target: 'daemon' }, dangerLevel: 'safe', available: true } },
+            familiesById: { pluginUi: { family: 'pluginUi', entriesById: {
+                [`searchProvider:${pluginId}:fixture-search`]: { id: `searchProvider:${pluginId}:fixture-search`,
+                    pluginId, occurrenceId, contributionKind: 'searchProvider', descriptorId: 'fixture-search',
+                    identity: { pluginId, localId: 'fixture-search' }, action: { pluginId, localId: 'query' } },
+            } } },
+        }));
+        const union = unionPluginUiProjections([{ machineId, serverId, serverIdentityId: serverId,
+            projection: daemon, phase: 'current', interactionEnabled: true }], new Map([[pluginId, executionOrigin]]));
+        executeAction.mockResolvedValue(actionResult({ ok: true, result: { items: [{ id: 'match',
+            title: 'QA Machine Search: journey', command: { kind: 'executeAction', action: 'query' } }], truncated: false } }));
+        const built = sections({ projection: union.pluginUiProjection,
+            scopedLaunchFacts: { serverId, machineId, interactionEnabled: true } });
+        expect(built).toHaveLength(1);
+        expect(await built[0]!.resolve('journey', new AbortController().signal)).toMatchObject({
+            options: [{ label: 'QA Machine Search: journey' }],
+        });
+    });
+
     it.each([true, false])('announces an empty plugin reply truthfully when truncated=%s', async (truncated) => {
         const React = await import('react');
         const { act } = await import('react-test-renderer');

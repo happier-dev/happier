@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { I18nManager, Platform, Pressable, ScrollView, View } from 'react-native';
+import { I18nManager, Platform, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, useHappierMaterialColorResolver, type HappierFocusable } from '@happier-dev/plugin-ui/presentation';
 import { resolveHappierFocusRingVisible, resolveHappierTabKeySelection } from '@happier-dev/plugin-ui/presentation';
 import {
     isPluginUiDestinationBindingAdmittedAtRuntimeV1,
@@ -14,7 +14,6 @@ import {
 
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text } from '@/components/ui/text/Text';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Typography } from '@/constants/Typography';
 import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -54,7 +53,7 @@ import {
     selectPluginDestinationSurfacePlacements,
     selectPluginSurfacePlacementsByDestination,
 } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
-import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { createPluginLocalizedTextResolver, usePluginLocalizedText, type PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
@@ -569,6 +568,8 @@ export type PluginDetailsDestinationOpenSurfaceAdapterInput = Readonly<{
     targetKind: PluginDetailsDestinationTargetKind;
     projection: PluginUiProjectionModel | null | undefined;
     mount: PluginDetailsDestinationMountProps;
+    localize?: PluginLocalizedTextResolver;
+    demandTranslations?: (pluginIds: readonly string[]) => Promise<void>;
 }> & PluginDetailsDestinationOpenSurfaceCallbacks;
 
 function unavailableDetailsDestination(reason: string): PluginSurfaceOpenOutcome {
@@ -597,7 +598,7 @@ export function createPluginDetailsDestinationNavigationOwners(input: Readonly<{
     store: PluginDetailsDestinationLaunchStore;
     accountLifetime: ActiveServerAccountScopeLifetime | null;
 }> & PluginDetailsDestinationOpenSurfaceAdapterInput): PluginDetailsDestinationNavigationOwners {
-    const localizePluginText = createPluginLocalizedTextResolver({ projection: input.projection });
+    const localizePluginText = input.localize ?? createPluginLocalizedTextResolver({ projection: input.projection });
     const scopedLaunchFacts = createPluginDetailsDestinationLaunchScopeFacts({
         projection: input.projection,
         mount: input.mount,
@@ -679,9 +680,13 @@ export function createPluginDetailsDestinationNavigationOwners(input: Readonly<{
         return { ok: true };
     };
     return Object.freeze({
-        detailsTab: openDetailsTab,
+        detailsTab: input.demandTranslations ? async (resolution: PluginSurfaceDestinationOpenResolution) => {
+            await input.demandTranslations?.([resolution.placement.pluginId]);
+            return openDetailsTab(resolution);
+        } : openDetailsTab,
         detailsPane: openDetailsPane,
         ...(input.openTabWindow ? { detailsTabWindow: async (resolution: PluginSurfaceDestinationOpenResolution) => {
+            await input.demandTranslations?.([resolution.placement.pluginId]);
             return openDetailsTab(resolution, true);
         } } : {}),
         ...(input.openOverlayWindow ? { detailsPaneWindow: (resolution: PluginSurfaceDestinationOpenResolution) => openDetailsPane(resolution, true) } : {}),
@@ -731,10 +736,13 @@ export function usePluginDetailsDestinationOpenSurfaceHandler(
     input: PluginDetailsDestinationOpenSurfaceAdapterInput,
 ): PluginSurfaceOpenHandler | undefined {
     const scope = React.useContext(PluginDetailsDestinationLaunchScopeContext);
+    const { localize, demandTranslations } = usePluginLocalizedText({ projection: input.projection });
     return React.useMemo(() => {
         if (!scope) return undefined;
         return createPluginDetailsDestinationOpenSurfaceHandler({
             ...input,
+            localize,
+            demandTranslations,
             store: scope.store,
             accountLifetime: scope.accountLifetime,
         });
@@ -752,6 +760,8 @@ export function usePluginDetailsDestinationOpenSurfaceHandler(
         input.openTabWindow,
         input.projection,
         input.targetKind,
+        localize,
+        demandTranslations,
         scope,
     ]);
 }
@@ -764,10 +774,13 @@ export function usePluginDetailsDestinationNavigationOwners(
     input: PluginDetailsDestinationOpenSurfaceAdapterInput,
 ): PluginDetailsDestinationNavigationOwners | undefined {
     const scope = React.useContext(PluginDetailsDestinationLaunchScopeContext);
+    const { localize, demandTranslations } = usePluginLocalizedText({ projection: input.projection });
     return React.useMemo(() => {
         if (!scope) return undefined;
         return createPluginDetailsDestinationNavigationOwners({
             ...input,
+            localize,
+            demandTranslations,
             store: scope.store,
             accountLifetime: scope.accountLifetime,
         });
@@ -783,6 +796,8 @@ export function usePluginDetailsDestinationNavigationOwners(
         input.openTabWindow,
         input.projection,
         input.targetKind,
+        localize,
+        demandTranslations,
         scope,
     ]);
 }
@@ -888,10 +903,10 @@ export function usePluginDetailsPaneLaunch(input: Readonly<{
         if (staged && scope) {
             setDelivered(staged);
             scope.store.settle(staged);
-        } else if (delivered !== null && !deliveredIsCurrent) {
+        } else if (delivered !== null && !deliveredIsCurrent && input.mount.projectionPhase !== 'establishing') {
             setDelivered(null);
         }
-    }, [scope, staged, delivered, deliveredIsCurrent]);
+    }, [scope, staged, delivered, deliveredIsCurrent, input.mount.projectionPhase]);
     return staged ?? (deliveredIsCurrent ? delivered : null);
 }
 
@@ -998,15 +1013,16 @@ const viewerChoiceStylesheet = StyleSheet.create((theme) => ({
     root: {
         borderBottomColor: theme.colors.border.default,
         borderBottomWidth: 1,
-        backgroundColor: theme.colors.surface.inset,
+        backgroundColor: theme.colors.surface.base,
         paddingHorizontal: theme.space.s10,
-        paddingVertical: theme.space.s6,
     },
-    // One band height: a choice without an attribution line stands as tall as its neighbours.
+    // One band height: a choice without an attribution line stands as tall as its neighbours. The band's
+    // vertical padding sits inside the scroller, which clips, so a choice's hit area can reach into it.
     choices: {
         alignItems: 'stretch',
         gap: theme.space.s8,
         paddingRight: theme.space.s10,
+        paddingVertical: theme.space.s6,
     },
     choice: {
         maxWidth: 220,
@@ -1057,8 +1073,7 @@ export function PluginDetailsViewerChoiceChrome(props: Readonly<{
     const { theme } = useUnistyles();
     const materialColor = useHappierMaterialColorResolver();
     const [pending, setPending] = React.useState(false);
-    const tabRefs = React.useRef(new Map<string, React.ElementRef<typeof Pressable> | null>());
-    const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
+    const tabRefs = React.useRef(new Map<string, HappierFocusable>());
 
     const selectCandidate = React.useCallback((candidate: PluginDetailsViewerChoice) => {
         if (pending || candidate.disabled === true || candidate.selected) return;
@@ -1075,9 +1090,8 @@ export function PluginDetailsViewerChoiceChrome(props: Readonly<{
         });
     }, [pending, props.model]);
 
-    const handleTabKeyDown = React.useCallback((candidateIndex: number, event: any) => {
-        if (Platform.OS !== 'web') return;
-        const key = event?.nativeEvent?.key ?? event?.key;
+    // Returns whether the key was a tab-selection key: the shared pressable then consumes the event.
+    const handleTabKeyDown = React.useCallback((candidateIndex: number, key: string): boolean => {
         const nextIndex = resolveHappierTabKeySelection({
             tabs: props.model.candidates.map((candidate) => ({
                 disabled: pending || candidate.disabled === true,
@@ -1086,19 +1100,19 @@ export function PluginDetailsViewerChoiceChrome(props: Readonly<{
             key,
             rtl: I18nManager.isRTL,
         });
-        if (nextIndex === null || nextIndex < 0) return;
+        if (nextIndex === null || nextIndex < 0) return false;
         const nextCandidate = props.model.candidates[nextIndex];
-        if (!nextCandidate) return;
-        event?.preventDefault?.();
+        if (!nextCandidate) return false;
         selectCandidate(nextCandidate);
         if (nextIndex !== candidateIndex) tabRefs.current.get(nextCandidate.id)?.focus?.();
+        return true;
     }, [pending, props.model.candidates, selectCandidate]);
 
     if (props.model.candidates.length === 0) return null;
 
     return (
         <View
-            style={[styles.root, { backgroundColor: materialColor(theme.colors.surface.inset, 'transparent') }]}
+            style={[styles.root, { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]}
             accessibilityRole="tablist"
             accessibilityLabel={t('common.fileViewer')}
         >
@@ -1109,44 +1123,36 @@ export function PluginDetailsViewerChoiceChrome(props: Readonly<{
             >
                 {props.model.candidates.map((candidate, candidateIndex) => {
                     const disabled = pending || candidate.disabled === true;
-                    const webKeyDownProps = Platform.OS === 'web'
-                        ? ({ onKeyDown: (event: any) => handleTabKeyDown(candidateIndex, event) } as Record<string, unknown>)
-                        : {};
                     const accessibilityLabel = candidate.detail
                         ? `${candidate.label} · ${candidate.detail}`
                         : candidate.label;
                     return (
-                        <Pressable
+                        <HappierPressable
                             key={candidate.id}
-                            ref={(node) => {
+                            controlRef={(node) => {
                                 if (node) tabRefs.current.set(candidate.id, node);
                                 else tabRefs.current.delete(candidate.id);
                             }}
                             testID={`plugin-details-viewer-choice:${candidate.id}`}
                             accessibilityRole="tab"
                             accessibilityLabel={accessibilityLabel}
-                            accessibilityState={{ selected: candidate.selected, disabled }}
-                            aria-selected={candidate.selected}
+                            selected={candidate.selected}
                             disabled={disabled}
                             tabIndex={Platform.OS === 'web' ? (candidate.selected && !disabled ? 0 : -1) : undefined}
-                            {...webKeyDownProps}
+                            onKeyDown={Platform.OS === 'web' ? (key) => handleTabKeyDown(candidateIndex, key) : undefined}
                             onPress={() => selectCandidate(candidate)}
-                            style={(interactionState) => {
-                                const webState = interactionState as typeof interactionState & { focused?: boolean };
-                                return [
-                                    styles.choice,
-                                    {
-                                        minWidth: minimumInteractiveTargetSize,
-                                        minHeight: minimumInteractiveTargetSize,
-                                    },
-                                    candidate.selected ? styles.choiceSelected : null,
-                                    candidate.selected ? { backgroundColor: materialColor(theme.colors.surface.base) } : null,
-                                    disabled ? styles.choiceDisabled : null,
-                                    !disabled && interactionState.pressed ? styles.choicePressed : null,
-                                    // Inset: a choice fills its horizontal scroller's height, which clips outside it.
-                                    focusRingStyle({ focused: resolveHappierFocusRingVisible(webState.focused), color: theme.colors.border.focus, placement: 'inset' }),
-                                ];
-                            }}
+                            // The choices sit one gap apart in a clipping scroller: the hit area takes half the gap
+                            // sideways and the band's padding above and below.
+                            hitReach={{ left: theme.space.s8 / 2, right: theme.space.s8 / 2, top: theme.space.s6, bottom: theme.space.s6 }}
+                            style={(interactionState) => [
+                                styles.choice,
+                                candidate.selected ? styles.choiceSelected : null,
+                                candidate.selected ? { backgroundColor: materialColor(theme.colors.surface.base) } : null,
+                                disabled ? styles.choiceDisabled : null,
+                                !disabled && interactionState.pressed ? styles.choicePressed : null,
+                                // Inset: a choice fills its horizontal scroller's height, which clips outside it.
+                                focusRingStyle({ focused: resolveHappierFocusRingVisible(interactionState.focused), color: theme.colors.border.focus, placement: 'inset' }),
+                            ]}
                         >
                             <View style={styles.choiceContent}>
                                 <Text
@@ -1170,7 +1176,7 @@ export function PluginDetailsViewerChoiceChrome(props: Readonly<{
                                     </Text>
                                 ) : null}
                             </View>
-                        </Pressable>
+                        </HappierPressable>
                     );
                 })}
             </ScrollView>
@@ -1344,10 +1350,10 @@ function PluginDetailsDestinationSurfaceMount(props: Readonly<{
         if (staged && scope) {
             setDelivered(staged);
             scope.store.settle(staged);
-        } else if (delivered !== null && !deliveredIsCurrent) {
+        } else if (delivered !== null && !deliveredIsCurrent && props.mount.projectionPhase !== 'establishing') {
             setDelivered(null);
         }
-    }, [scope, staged, delivered, deliveredIsCurrent]);
+    }, [scope, staged, delivered, deliveredIsCurrent, props.mount.projectionPhase]);
     React.useEffect(() => {
         if (!fallback || !fallbackLaunch?.unavailableFallback) return;
         const prior = fallbackInvocationRef.current;
@@ -1363,12 +1369,6 @@ function PluginDetailsDestinationSurfaceMount(props: Readonly<{
             // retired private ref or replace the canonical tombstone.
         }
     }, [fallback, fallbackLaunch]);
-    React.useEffect(() => {
-        if (delivered !== null && !deliveredIsCurrent) {
-            setDelivered(null);
-        }
-    }, [delivered, deliveredIsCurrent]);
-
     if (fallback) {
         return <>{props.renderFallback(fallback)}</>;
     }

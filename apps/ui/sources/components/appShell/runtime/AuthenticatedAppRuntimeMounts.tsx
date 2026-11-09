@@ -54,15 +54,11 @@ function DesktopBrowserRecordingReverseCaptureRuntimeMount(): React.ReactElement
     const localDaemonControl = useLocalDaemonControl();
     const activeServerSnapshot = useActiveServerSnapshot();
     const uiAccountId = storage((state) => state.profile?.id ?? null);
-    const activeServerMachines = useAllMachines();
     const daemonMachineId = localDaemonControl.status?.machineId?.trim() ?? '';
-    const isMachineVisibleOnActiveServer = React.useMemo(
-        () => Boolean(
-            daemonMachineId
-            && activeServerMachines.some((machine) => machine.id.trim() === daemonMachineId),
-        ),
-        [activeServerMachines, daemonMachineId],
-    );
+    // One boolean from the active Home's list: other Machines' publications leave this always-mounted owner quiet.
+    const isMachineVisibleOnActiveServer = useAllMachines(React.useCallback((machines: readonly { id: string }[]) => Boolean(
+        daemonMachineId && machines.some((machine) => machine.id.trim() === daemonMachineId),
+    ), [daemonMachineId]));
     const verifiedMachineId = React.useMemo(
         () => resolveVerifiedLocalBrowserRecordingCaptureMachineId({
             daemonStatus: localDaemonControl.status,

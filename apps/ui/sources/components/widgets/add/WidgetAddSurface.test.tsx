@@ -18,7 +18,8 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { installSessionActionFixture } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { SessionCurrentProjectionRecordV1Schema, SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { SessionViewerProjectionV1Schema } from '@happier-dev/protocol/sessions/personal/viewer';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { darkTheme, lightTheme } from '@/theme';
@@ -515,20 +516,22 @@ describe('WidgetAddSurface', () => {
         const viewer = SessionViewerProjectionV1Schema.parse({ latestFailureSeq: null, readState: { state: 'not_started' },
             relevance: { relevant: false, reasons: [] }, attention: { needsAttention: false, reasons: [], primary: null, presentation: 'full' },
             follow: { follows: false, notificationLevel: 'none' }, notification: { level: 'none', source: 'preference' } });
-        const b = { ...await wire('B'), viewer, agentState: JSON.stringify({ requests: {
+        const b = SessionCurrentProjectionRecordV1Schema.parse({ ...await wire('B'), viewer, agentState: JSON.stringify({ requests: {
             ask: { tool: 'Bash', arguments: {}, createdAt: Date.now() },
-        } }) };
+        } }) });
         // This inaccessible encrypted row comes from the same HTTP producer shape;
         // the real hydrator/awareness owner decides that it cannot be selected.
         const { SecretBoxEncryption } = await import('@/sync/encryption/encryptor');
         const { encodeBase64 } = await import('@/encryption/base64');
         const cipher = new SecretBoxEncryption(new Uint8Array(32).fill(7));
-        const c = { ...await wire('C'), encryptionMode: 'e2ee', metadata: encodeBase64((await cipher.encrypt([{}]))[0]!), viewer };
+        const c = SessionCurrentProjectionRecordV1Schema.parse({ ...await wire('C'), encryptionMode: 'e2ee', metadata: encodeBase64((await cipher.encrypt([{}]))[0]!), viewer });
+        homes.answer(serverId, '/v2/sessions/B', { body: { session: b } });
+        homes.answer(serverId, '/v2/sessions/C', { body: { session: c } });
         // C must enter through the query hydrator, not an already-ready plain
         // Session left in the cache by the plain HTTP producer helper above.
         const { C: _seededPlainC, ...sessions } = storage.getState().sessions;
         storage.setState({ sessions, sessionListRowsByServerId: {} });
-        homes.answer(serverId, 'POST /v2/sessions/query', { body: SessionListQueryResponseV1Schema.parse({ sessions: [b, c], hasNext: false, nextCursor: null,
+        homes.answer(serverId, 'POST /v2/sessions/query', { body: createSessionListSourceFixture({ sessions: [b, c], hasNext: false, nextCursor: null,
             attentionHasNext: false, attentionNextCursor: null }) });
         const home = { serverId: connection.home.id, accountId: 'me', owner: { kind: 'home' as const } };
         const summary = selectBuiltinWidgetCandidates().find((candidate) => candidate.definition?.kind === 'builtin' && candidate.definition.id === 'session_summary')!;

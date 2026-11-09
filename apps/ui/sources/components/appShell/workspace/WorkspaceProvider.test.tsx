@@ -49,7 +49,7 @@ import { clearActiveUnsavedChangesGuard, setActiveUnsavedChangesGuard, type Acti
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { KeyboardShortcutProvider, useKeyboardCommand, type KeyboardCommandId } from '@/keyboard';
 import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
-import { parseWorkspaceLayout, readScopedWorkspaceLayout, serializeWorkspaceLayout, workspaceLayoutScopeKey } from './workspacePersistence';
+import { parseWorkspaceLayout, serializeWorkspaceLayout, workspaceLayoutScopeKey } from './workspacePersistence';
 import { clearPersistenceStorage, getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { removeServerProfile, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
@@ -148,7 +148,6 @@ Object.defineProperties(boundary, {
         set: (layouts: Record<string, unknown>) => {
             for (const key of Object.keys(workspaceLayoutsState.readAll())) workspaceLayoutsState.remove(key);
             for (const [key, layout] of Object.entries(layouts)) workspaceLayoutsState.set(key, layout);
-            storage.setState({ localSettings: { ...storage.getState().localSettings, workspaceLayoutV1: {} } });
         },
     },
     scope: {
@@ -274,11 +273,15 @@ async function installDelayedDraftRecordBoundary() {
     const browserRecords = {
         list: async () => new Map(records),
         read: async (key: string) => records.get(key),
-        update: async (key: string, update: (current: string | undefined) => { value: string | undefined; result: string | undefined }) => {
+        updateMany: async (keys: readonly string[], update: (current: ReadonlyMap<string, string | undefined>) => {
+            values: ReadonlyMap<string, string | undefined>; result: void;
+        }) => {
             await pendingCommit;
-            const next = update(records.get(key));
-            if (next.value === undefined) records.delete(key);
-            else records.set(key, next.value);
+            const next = update(new Map(keys.map((key) => [key, records.get(key)])));
+            for (const [key, value] of next.values) {
+                if (value === undefined) records.delete(key);
+                else records.set(key, value);
+            }
             return next.result;
         },
     };
@@ -289,6 +292,9 @@ async function installDelayedDraftRecordBoundary() {
     const set = storage.set.bind(storage);
     const getString = storage.getString.bind(storage);
     const remove = storage.delete.bind(storage);
+    const allKeys = storage.getAllKeys.bind(storage);
+    vi.spyOn(storage, 'getAllKeys').mockImplementation(() => [
+        ...allKeys().filter((key) => !key.startsWith('session-drafts-repository-v1:')), ...drafts.getAllKeys()]);
     vi.spyOn(storage, 'set').mockImplementation((key, value) => key.startsWith('session-drafts-repository-v1:')
         ? drafts.set(key, String(value)) : set(key, value));
     vi.spyOn(storage, 'getString').mockImplementation(key => key.startsWith('session-drafts-repository-v1:')
@@ -1317,7 +1323,7 @@ describe('consumed workspace navigation owner', () => {
         const runtime = await activateStorageAccountScope({ serverId: 'home-a', accountId: 'alice' }, storage);
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) throw new Error('Expected admitted Account');
-        storage.setState({ isDataReady: true, localSettings: { ...storage.getState().localSettings, workspaceLayoutV1: {} } });
+        storage.setState({ isDataReady: true });
         boundary.platform = 'web';
         const localSubPath = 'entries/github:1117388084/710';
         boundary.pathname = '/plugins/acme.notes/notes/entries/github%3A1117388084/710';
@@ -1930,7 +1936,7 @@ describe('consumed workspace navigation owner', () => {
         vi.stubGlobal('window', undefined);
         boundary.layouts = {};
         storage.setState({ ...initialStorageState, profileScope: { serverId: 'home-a', accountId: 'alice' }, isDataReady: true,
-            localSettings: { ...initialStorageState.localSettings, workspaceLayoutV1: {}, titleStripThemeToggleVisible: false } }, true);
+            localSettings: { ...initialStorageState.localSettings, titleStripThemeToggleVisible: false } }, true);
     });
     afterEach(() => { standardCleanup(); storage.setState(initialStorageState, true); boundary.mirrors = [];
         boundary.platform = 'ios'; boundary.tablet = false; boundary.pathname = '/session/A1'; boundary.params = { id: 'A1', serverId: 'home-a' };
@@ -2672,8 +2678,8 @@ describe('consumed workspace navigation owner', () => {
         const storageKey = `ui-state:workspace-layouts-v1:${key}`;
         const raw = getPersistenceStorage().getString(storageKey)!;
         expect(JSON.parse(raw)).toEqual(serializeWorkspaceLayout(expected));
-        // The predecessor settings reader admits precisely the same active/focus/MRU fields.
-        expect(readScopedWorkspaceLayout({ [key]: JSON.parse(raw) }, key)).toEqual(expected);
+        // The current layout parser preserves active/focus/MRU fields.
+        expect(parseWorkspaceLayout(JSON.parse(raw))).toEqual(expected);
         await screen.unmount();
         // Simulate process reload at the isolated device-KV boundary, not a warm owner cache.
         clearPersistenceStorage();

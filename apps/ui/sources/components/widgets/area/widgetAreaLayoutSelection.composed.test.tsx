@@ -7,7 +7,11 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createActionExecutor, normalizeActionsSettingsV1, type ActionExecutorDeps, RPC_METHODS, UiActionDispatchRequestV1Schema } from '@happier-dev/protocol';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { normalizeActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
+import { type ActionExecutorDeps} from '@happier-dev/protocol/actions/executor/types';
+import { RPC_METHODS} from '@happier-dev/protocol/rpc/methods';
+import { UiActionDispatchRequestV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { WidgetInstanceRefV1Schema, WidgetInstanceActionOutputSchemasV1 } from '@happier-dev/protocol/widgets';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -26,6 +30,8 @@ const { resolveCompactAppDestinations } = await import('@/components/appShell/de
 const { useCorePageWidgetAreaBinding } = await import('./useCorePageWidgetAreaBinding');
 const { useWidgetAreaLayout } = await import('./useWidgetAreaLayout');
 const { useProjectWidgetAreaBinding } = await import('./useProjectWidgetAreaBinding');
+const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
+const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
 const { createUiClientActionReverseHandler } = await import('@/sync/ops/actions/clientActionReverseDispatch');
 const { API_TOKEN_FULL_GRANT_V1 } = await import('@happier-dev/protocol/auth/apiTokenGrant');
 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
@@ -93,6 +99,40 @@ it('refuses an ambiguous mounted area without changing either owner', async () =
     expect(hook.getCurrent().first.surface).toEqual(surface);
     expect(hook.getCurrent().second.surface).toEqual(surface);
     await hook.unmount();
+});
+
+it.each(['destination', 'panel'] as const)('registers only the presented Project selection owner across a retained %s transition', async retention => {
+    const selected: string[] = [];
+    const projectRef = { id: 'checkout', serverId, machineId: 'machine', rootPath: '/repo', projectKey: 'responsive-project', createdAtMs: 1 };
+    let phone = false;
+    const hook = await renderHook(() => ({
+        first: useProjectWidgetAreaBinding({ serverId, projectName: 'Project', projectRef, onSelectLayout: () => selected.push('desktop') }),
+    }), { wrapper: ({ children }) => <DestinationInstanceContext.Provider value={{ tabId: 'desktop', ref: { kind: 'home', params: {} },
+        pathname: '/projects/checkout', visible: !phone, focused: retention === 'panel' || !phone, isFocused: () => retention === 'panel' || !phone }}>
+        <PluginSurfaceFocusEligibilityProvider active={retention === 'destination' || !phone}>{children}</PluginSurfaceFocusEligibilityProvider>
+    </DestinationInstanceContext.Provider> });
+    const mobile = await renderHook(() => useProjectWidgetAreaBinding({ serverId, projectName: 'Project', projectRef,
+        onSelectLayout: () => selected.push('phone') }), { wrapper: ({ children }) => <DestinationInstanceContext.Provider value={{ tabId: 'phone',
+        ref: { kind: 'home', params: {} }, pathname: '/projects/checkout', visible: phone, focused: retention === 'panel' || phone, isFocused: () => retention === 'panel' || phone }}>
+        <PluginSurfaceFocusEligibilityProvider active={retention === 'destination' || phone}>{children}</PluginSurfaceFocusEligibilityProvider>
+    </DestinationInstanceContext.Provider> });
+    const { resolveMountedWidgetAreaLayoutSelectionOwner } = await import('@/sync/domains/widgets/widgetAreaLayoutSelection');
+    const surface = { serverId: 'srv_0123456789abcdefghijklmnopqrstuv', accountId: 'account-a',
+        owner: { kind: 'project' as const, projectId: projectRef.projectKey } };
+    try {
+        const desktop = resolveMountedWidgetAreaLayoutSelectionOwner(surface);
+        expect(desktop).not.toHaveProperty('ok');
+        if ('ok' in desktop) throw new Error(desktop.errorCode);
+        desktop.select(surface);
+        phone = true;
+        await hook.rerender();
+        await mobile.rerender();
+        const current = resolveMountedWidgetAreaLayoutSelectionOwner(surface);
+        expect(current).not.toHaveProperty('ok');
+        if ('ok' in current) throw new Error(current.errorCode);
+        current.select(surface);
+        expect(selected).toEqual(['desktop', 'phone']);
+    } finally { await hook.unmount(); await mobile.unmount(); }
 });
 
 it('projects an acknowledged Project removal into the mounted area', async () => {

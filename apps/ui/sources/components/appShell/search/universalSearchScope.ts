@@ -65,7 +65,7 @@ export function buildUniversalSearchScopeChoices(input: Readonly<{
     accountIdByServerId: ReadonlyMap<string, string>;
     profiles: readonly ServerProfile[];
     workspaces: readonly WorkspaceRefV1[];
-    sessions: readonly Session[];
+    sessions: readonly Pick<Session, 'id' | 'serverId'>[];
     includeAllMachines?: boolean;
     allMachinesLabel?: string;
     readMachineTarget(target: Readonly<{

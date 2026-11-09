@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { Platform, Pressable, ScrollView, View } from 'react-native';
+import { Platform, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     HappierItemGroupBehavior,
+    HappierPressable,
     useHappierItemGroupItemBehavior,
 } from '@happier-dev/plugin-ui/presentation';
 import { createTransientInteractionOwner } from '@happier-dev/protocol/plugins/interactions/owner';
@@ -17,12 +18,11 @@ import type {
     InteractionTransientRequestV1,
     InteractionTransientRequesterV1,
     InteractionTransientResultV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/interactions/transientV1';
 
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Icon } from '@/components/ui/icons/Icon';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Modal, type CustomModalInjectedProps, type IModal } from '@/modal';
 import { t } from '@/text';
 import {
@@ -35,7 +35,6 @@ const styles = StyleSheet.create((theme) => ({
     question: { gap: theme.space.s8 },
     prompt: { color: theme.colors.text.primary, ...Typography.variant('label', 'regular') },
     choice: {
-        minHeight: 44,
         borderWidth: 1,
         borderColor: theme.colors.border.default,
         borderRadius: 10,
@@ -50,7 +49,6 @@ const styles = StyleSheet.create((theme) => ({
     choiceLabel: { color: theme.colors.text.primary, ...Typography.variant('label', 'regular') },
     choiceDescription: { color: theme.colors.text.secondary, ...Typography.variant('meta'), marginTop: theme.space.s2 },
     input: {
-        minHeight: 44,
         borderWidth: 1,
         borderColor: theme.colors.border.default,
         borderRadius: 10,
@@ -59,7 +57,7 @@ const styles = StyleSheet.create((theme) => ({
         paddingVertical: theme.space.s10,
     },
     actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: theme.space.s10 },
-    action: { minHeight: 44, paddingHorizontal: theme.space.s16, justifyContent: 'center' },
+    action: { paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s8, justifyContent: 'center' },
     actionText: { color: theme.colors.text.link, ...Typography.variant('label') },
     disabled: { opacity: 0.45 },
 }));
@@ -116,13 +114,6 @@ type SingleChoiceOptionProps = Readonly<{
     accessibilityRole?: 'radio';
 }>;
 
-type WebKeyboardEvent = Readonly<{
-    key?: string;
-    nativeEvent?: Readonly<{ key?: string }>;
-    preventDefault?(): void;
-    stopPropagation?(): void;
-}>;
-
 function ChoiceContent(props: Readonly<{
     questionId: string;
     choice: InteractionTransientChoiceV1;
@@ -153,37 +144,26 @@ function ChoiceContent(props: Readonly<{
 function SingleChoiceOption(props: SingleChoiceOptionProps): React.ReactElement {
     const { theme } = useUnistyles();
     const isWeb = Platform.OS === 'web';
-    const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
     const groupItem = useHappierItemGroupItemBehavior({
         role: 'radio',
         itemGroupRadioIndex: props.itemGroupRadioIndex,
     });
-    const onKeyDown = React.useCallback((event: WebKeyboardEvent) => {
-        if (!isWeb) return;
-        const key = event.nativeEvent?.key ?? event.key;
-        if (!key || !groupItem.onKeyDown(key)) return;
-        event.preventDefault?.();
-        event.stopPropagation?.();
-    }, [groupItem, isWeb]);
-    const webKeyDownProps = {
-        onKeyDown: isWeb ? onKeyDown : undefined,
-    } as Record<string, unknown>;
 
     return (
-        <Pressable
-            ref={groupItem.grouped ? groupItem.targetRef : undefined}
+        <HappierPressable
+            controlRef={groupItem.grouped ? groupItem.targetRef : undefined}
             testID={`app-shell-question-${props.questionId}-choice-${props.choice.id}`}
             accessibilityRole="radio"
-            accessibilityState={{ checked: props.selected }}
+            checked={props.selected}
             accessibilityLabel={props.choice.label}
-            role={isWeb ? 'radio' : undefined}
-            aria-checked={isWeb ? props.selected : undefined}
             tabIndex={isWeb && groupItem.grouped
                 ? groupItem.tabStopIndex === props.itemGroupRadioIndex ? 0 : -1
                 : undefined}
-            {...webKeyDownProps}
+            onKeyDown={groupItem.onKeyDown}
+            // The radio rows touch inside their group: each hit area stays on its own row.
+            hitReach={{ top: 0, bottom: 0 }}
             onPress={props.onPress}
-            style={[styles.choice, { minHeight: minimumInteractiveTargetSize }, props.selected ? styles.selected : null]}
+            style={[styles.choice, props.selected ? styles.selected : null]}
         >
             <ChoiceContent
                 questionId={props.questionId}
@@ -191,7 +171,7 @@ function SingleChoiceOption(props: SingleChoiceOptionProps): React.ReactElement 
                 selected={props.selected}
                 indicatorColor={theme.colors.text.link}
             />
-        </Pressable>
+        </HappierPressable>
     );
 }
 
@@ -234,7 +214,6 @@ function SingleChoiceQuestionOptions(props: Readonly<{
 
 export function AppShellQuestionDialog(props: QuestionDialogProps): React.ReactElement {
     const { theme } = useUnistyles();
-    const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
     const [answers, setAnswers] = React.useState<Record<string, InteractionTransientQuestionAnswerV1>>({});
     const ready = props.questions.every((question) => hasRequiredAnswer(question, answers[question.id]));
 
@@ -294,7 +273,7 @@ export function AppShellQuestionDialog(props: QuestionDialogProps): React.ReactE
                                 ...current,
                                 [question.id]: { kind: 'text', value },
                             }))}
-                            style={[styles.input, { minHeight: minimumInteractiveTargetSize }]}
+                            style={styles.input}
                         />
                     ) : (
                         <>
@@ -310,14 +289,16 @@ export function AppShellQuestionDialog(props: QuestionDialogProps): React.ReactE
                             ) : question.choices.map((choice) => {
                                 const selected = isChoiceSelected(answers[question.id], choice.id);
                                 return (
-                                    <Pressable
+                                    <HappierPressable
                                         key={choice.id}
                                         testID={`app-shell-question-${question.id}-choice-${choice.id}`}
                                         accessibilityRole="checkbox"
-                                        accessibilityState={{ checked: selected }}
+                                        checked={selected}
                                         accessibilityLabel={choice.label}
+                                        // The rows stand one stack gap apart: each hit area takes half of it.
+                                        hitReach={{ top: theme.space.s8 / 2, bottom: theme.space.s8 / 2 }}
                                         onPress={() => setChoice(question, { kind: 'choice', choiceId: choice.id })}
-                                        style={[styles.choice, { minHeight: minimumInteractiveTargetSize }, selected ? styles.selected : null]}
+                                        style={[styles.choice, selected ? styles.selected : null]}
                                     >
                                         <ChoiceContent
                                             questionId={question.id}
@@ -325,7 +306,7 @@ export function AppShellQuestionDialog(props: QuestionDialogProps): React.ReactE
                                             selected={selected}
                                             indicatorColor={theme.colors.text.link}
                                         />
-                                    </Pressable>
+                                    </HappierPressable>
                                 );
                             })}
                             {question.allowCustom ? (
@@ -344,7 +325,7 @@ export function AppShellQuestionDialog(props: QuestionDialogProps): React.ReactE
                                         return '';
                                     })()}
                                     onChangeText={(value) => setChoice(question, { kind: 'custom', value })}
-                                    style={[styles.input, { minHeight: minimumInteractiveTargetSize }]}
+                                    style={styles.input}
                                 />
                             ) : null}
                         </>
@@ -352,24 +333,25 @@ export function AppShellQuestionDialog(props: QuestionDialogProps): React.ReactE
                 </View>
             ))}
             <View style={styles.actions}>
-                <Pressable
+                <HappierPressable
                     testID="app-shell-question-cancel"
                     accessibilityRole="button"
+                    hitReach={{ left: theme.space.s10 / 2, right: theme.space.s10 / 2 }}
                     onPress={() => { props.onCancel(); props.onClose(); }}
-                    style={[styles.action, { minHeight: minimumInteractiveTargetSize }]}
+                    style={styles.action}
                 >
                     <Text style={styles.actionText}>{t('common.cancel')}</Text>
-                </Pressable>
-                <Pressable
+                </HappierPressable>
+                <HappierPressable
                     testID="app-shell-question-submit"
                     accessibilityRole="button"
-                    accessibilityState={{ disabled: !ready }}
                     disabled={!ready}
+                    hitReach={{ left: theme.space.s10 / 2, right: theme.space.s10 / 2 }}
                     onPress={() => { props.onAnswer(Object.freeze({ ...answers })); props.onClose(); }}
-                    style={[styles.action, { minHeight: minimumInteractiveTargetSize }, !ready ? styles.disabled : null]}
+                    style={[styles.action, !ready ? styles.disabled : null]}
                 >
                     <Text style={styles.actionText}>{t('tools.askUserQuestion.submit')}</Text>
-                </Pressable>
+                </HappierPressable>
             </View>
         </ScrollView>
     );
@@ -410,8 +392,7 @@ type ConfirmationDialogProps = CustomModalInjectedProps & Readonly<{
 }>;
 
 export function AppShellConfirmationDialog(props: ConfirmationDialogProps): React.ReactElement {
-    useUnistyles();
-    const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
+    const { theme } = useUnistyles();
     return (
         <View style={styles.body}>
             <Text style={styles.prompt}>{props.description}</Text>
@@ -423,22 +404,24 @@ export function AppShellConfirmationDialog(props: ConfirmationDialogProps): Reac
                   * it did the same thing as walking away, so it names the
                   * decision it actually makes.
                   */}
-                <Pressable
+                <HappierPressable
                     testID="app-shell-confirmation-decline"
                     accessibilityRole="button"
+                    hitReach={{ left: theme.space.s10 / 2, right: theme.space.s10 / 2 }}
                     onPress={() => { props.onCancel(); props.onClose(); }}
-                    style={[styles.action, { minHeight: minimumInteractiveTargetSize }]}
+                    style={styles.action}
                 >
                     <Text style={styles.actionText}>{t('common.decline')}</Text>
-                </Pressable>
-                <Pressable
+                </HappierPressable>
+                <HappierPressable
                     testID="app-shell-confirmation-confirm"
                     accessibilityRole="button"
+                    hitReach={{ left: theme.space.s10 / 2, right: theme.space.s10 / 2 }}
                     onPress={() => { props.onConfirm(); props.onClose(); }}
-                    style={[styles.action, { minHeight: minimumInteractiveTargetSize }]}
+                    style={styles.action}
                 >
                     <Text style={styles.actionText}>{props.confirmLabel}</Text>
-                </Pressable>
+                </HappierPressable>
             </View>
         </View>
     );

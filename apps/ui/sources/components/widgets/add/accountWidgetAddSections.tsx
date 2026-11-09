@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { MACHINE_BUILTIN_WIDGET_IDS_V1, PROJECT_BUILTIN_WIDGET_IDS_V1, SESSION_COMPANION_BUILTIN_ITEM_IDS, USAGE_BUILTIN_WIDGET_IDS_V1, normalizeWidgetSizeForSurfaceV1, supportsWidgetGroupsV1, type WidgetLayoutFragmentSummaryV1, type WidgetProjectAreaV1, type WidgetInputBindingsV1, type WidgetInstanceV1, type WidgetSurfaceRefV1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -73,14 +74,14 @@ export type AccountWidgetAddInput = Readonly<{
 /**
  * Happier's built-in families that read as one group of their own (plan 60 AGW-14, lab `rw` AD; usage
  * lab `d2edit-G`): Machines, Usage, the Project widgets and the Session details widgets (Session summary,
- * Plan, Changes, Local services: each needs a chosen Session). On a family's own page its group leads, so Add on Usage opens
- * on the Usage widgets; elsewhere the families keep this order.
+ * Plan, Changes, Local services: each needs a chosen Session). The family matching the presenting
+ * surface leads (Project, Machines or Usage); other families keep this order, including on Account Home.
  */
 const BUILTIN_WIDGET_FAMILIES = [
-    { id: 'machines', ids: new Set<string>(MACHINE_BUILTIN_WIDGET_IDS_V1), pageId: null, title: () => t('machines.widgets.machine_fleet') },
-    { id: 'usage', ids: new Set<string>(USAGE_BUILTIN_WIDGET_IDS_V1), pageId: 'usage', title: () => t('usage.board.page.title') },
-    { id: 'projects', ids: new Set<string>(PROJECT_BUILTIN_WIDGET_IDS_V1), pageId: null, title: () => t('tabs.projects') },
-    { id: 'session', ids: new Set<string>(SESSION_COMPANION_BUILTIN_ITEM_IDS), pageId: null, title: () => t('widgetAdd.sessionDetails') },
+    { id: 'machines', ids: new Set<string>(MACHINE_BUILTIN_WIDGET_IDS_V1), ownerKind: 'corePage', pageId: 'machines', title: () => t('machines.widgets.machine_fleet') },
+    { id: 'usage', ids: new Set<string>(USAGE_BUILTIN_WIDGET_IDS_V1), ownerKind: 'corePage', pageId: 'usage', title: () => t('usage.board.page.title') },
+    { id: 'projects', ids: new Set<string>(PROJECT_BUILTIN_WIDGET_IDS_V1), ownerKind: 'project', pageId: null, title: () => t('tabs.projects') },
+    { id: 'session', ids: new Set<string>(SESSION_COMPANION_BUILTIN_ITEM_IDS), ownerKind: null, pageId: null, title: () => t('widgetAdd.sessionDetails') },
 ] as const;
 type BuiltinWidgetFamily = (typeof BUILTIN_WIDGET_FAMILIES)[number];
 function builtinWidgetFamilyOf(candidate: WidgetCandidate): BuiltinWidgetFamily | null {
@@ -140,9 +141,10 @@ export function buildAccountWidgetAddSections(input: AccountWidgetAddInput): rea
         renderGroupPreview: input.renderGroupPreview ?? (() => null),
     }), ...(input.fragmentActions ? { actions: input.fragmentActions(fragment) } : {}) })) : [];
     const yours = [...widgets.yours.map(entry), ...groups];
-    const pageId = input.scope?.owner.kind === 'corePage' ? input.scope.owner.pageId : null;
-    const ownPage = (family: BuiltinWidgetFamily) => pageId !== null && family.pageId === pageId;
-    const families = [...BUILTIN_WIDGET_FAMILIES].sort((a, b) => Number(ownPage(b)) - Number(ownPage(a)))
+    const owner = input.scope?.owner;
+    const ownScope = (family: BuiltinWidgetFamily) => owner !== undefined && family.ownerKind === owner.kind
+        && (owner.kind !== 'corePage' || family.pageId === owner.pageId);
+    const families = [...BUILTIN_WIDGET_FAMILIES].sort((a, b) => Number(ownScope(b)) - Number(ownScope(a)))
         .map(family => ({ family, candidates: widgets.builtIn.filter(candidate => builtinWidgetFamilyOf(candidate) === family) }))
         .filter(({ candidates }) => candidates.length > 0);
     const otherBuiltIns = widgets.builtIn.filter(candidate => builtinWidgetFamilyOf(candidate) === null);
@@ -191,8 +193,9 @@ export function useAccountWidgetAddSections(input: Readonly<{
     /** Local sections are ready independently; only these remote sections are still unresolved. */
     pendingSections: readonly (Pick<WidgetAddSection, 'id' | 'title'> & Readonly<{ retry?: () => void }>)[];
 }> {
-    const installed = useHomeWidgetCandidates();
     const appRuntime = useAppShellPluginUiProjection();
+    const localize = usePluginLocalizedTextResolver({ projection: appRuntime.pluginUiProjection });
+    const installed = useHomeWidgetCandidates(localize, input.context?.projectContext?.policyContext);
     const { scope, instances, addInstance, labels, context, testID } = input;
     const { candidates: yours, status: yoursStatus, retry: retryYours } = useYourWidgetCandidatesState(scope ? { serverId: scope.serverId, accountId: scope.accountId } : null, appRuntime.pluginUiProjection);
     const candidates = React.useMemo(() => (yours.length > 0 ? [...installed, ...yours] : installed), [installed, yours]);
@@ -215,13 +218,14 @@ export function useAccountWidgetAddSections(input: Readonly<{
         ...(context ? { context } : {}),
         ...(groupCapable && scope ? { fragments, fragmentActions, addGroup, renderGroupPreview: (fragment: WidgetLayoutFragmentSummaryV1, draft: WidgetSetupDraft, waiting?: string) => (
             <WidgetGroupFragmentPreview fragment={fragment} draft={draft} candidates={candidates} scope={scope} phone={phone} waiting={waiting}
-                providedContext={context ? widgetProvidedContext(context) : NO_PROVIDED_CONTEXT} testID={`${testID}.groupPreview.${fragment.artifactId}`} />
+                providedContext={context ? widgetProvidedContext(context) : NO_PROVIDED_CONTEXT} projectContext={context?.projectContext} testID={`${testID}.groupPreview.${fragment.artifactId}`} />
         ) } : {}),
         ...(scope ? {
             renderSetupPreview: (candidate: WidgetCandidate, preview: Readonly<{ draft: WidgetSetupDraft }>) => (
                 <WidgetSetupPreview
                     scope={scope}
                     providedContext={context ? widgetProvidedContext(context) : NO_PROVIDED_CONTEXT}
+                    projectContext={context?.projectContext}
                     candidate={candidate}
                     draft={preview.draft}
                     testID={`${testID}.setupPreview.${candidate.key}`}

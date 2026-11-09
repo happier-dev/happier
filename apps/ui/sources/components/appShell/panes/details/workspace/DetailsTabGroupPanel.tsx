@@ -20,16 +20,20 @@ import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPa
 import type { DetailsTabState, DetailsWorkspaceGroupView } from './detailsWorkspaceTypes';
 import {
     DetailsTabStrip,
+    resolveDetailsTabGlyph,
+    useGuardedDetailsTabClose,
     detailsTabNativeId,
     detailsTabPanelNativeId,
     type DetailsTabPresentation,
     type DetailsTabStripTestIds,
 } from './DetailsTabStrip';
 import { DetailsTabChromeProvider, useDetailsTabUnsavedKeys } from './detailsTabChrome';
-import { HeaderActionsScope, useStackHeaderActionsClaimed, useStackHeaderActionsPublisher } from '@/components/navigation/stackHeaderActions';
+import { HeaderActionsScope, useStackHeaderActionsClaimed, useStackHeaderActionsPublisher, type LentHeaderMenuRow } from '@/components/navigation/stackHeaderActions';
 import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { PopoverScope } from '@/components/ui/popover';
-import { DetailsTabLifetimeScope } from './detailsTabLifetime';
+import { DetailsTabLifetimeScope, detailsTabNavigationKey } from './detailsTabLifetime';
+import { runGuardedTabNavigation } from '@/utils/navigation/runGuardedNavigation';
+import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 
 type ScrollPropagationEvent = Readonly<{ stopPropagation?: () => void }>;
 
@@ -158,6 +162,11 @@ export type DetailsTabGroupPanelProps = Readonly<{
      */
     renderLiveActions?: (() => React.ReactNode) | null;
     renderHeaderActions?: (() => React.ReactNode) | null;
+    /**
+     * Closing the pane's last tab ends the pane's presentation rather than leaving it empty (a phone
+     * Session returns to the scene it came from). Offered by the one tab's header `⋯` on a phone.
+     */
+    closeLastTab?: (() => void) | null;
     renderEmptyState?: (() => React.ReactNode) | null;
     /**
      * The group is the pane's only one: while it shows a single tab whose content draws its own
@@ -213,24 +222,66 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
     const headerPaddingTop = props.headerPaddingTop ?? 0;
     // A phone keeps its strip only while it carries the screen's leading control (Back belongs on that
     // row). When the screen bar above already holds Back, a one-tab strip is a second header (lab FV1p).
+    // What the leading slot draws decides it, not whether a renderer was passed: a pane whose leading
+    // control is withheld (the Session cockpit keeps Back in its own header) has nothing to carry.
     const phone = useSurfaceStateSize() === 'phone';
-    const phoneStripCarriesLeading = phone && Boolean(props.renderHeaderLeadingActions);
+    const leadingActions = props.renderHeaderLeadingActions ? props.renderHeaderLeadingActions() : null;
+    const phoneStripCarriesLeading = phone && leadingActions != null;
     // A hidden main column's restore chip lives on the strip edge the column went to (lab H1/H3), so the
     // focused group keeps its strip while that chip has something to show.
     const restoreChipOnStrip = usePaneMainRestoreChipVisible() && props.group.isFocused;
-    const lendsControls = props.collapseSingleTabStrip === true && !phoneStripCarriesLeading && !forceEmptyState && !restoreChipOnStrip && props.group.tabs.length === 1;
+    // One tab bar on a phone (owner ruling 2026-10-30): the Session tabs rail is the phone's only tab bar, so a group
+    // holding several pages (a wide layout's, after a resize) shows the page on screen alone, and the other pages its
+    // strip offered move into that page's `⋯`. Presentation only: the group itself is not changed.
+    const lendsControls = props.collapseSingleTabStrip === true && !phoneStripCarriesLeading && !forceEmptyState && !restoreChipOnStrip
+        && (props.group.tabs.length === 1 || phone);
     const headerActionsScopeKey = `details-group:${React.useId()}`;
     const { renderHeaderLeadingActions, renderHeaderActions, renderLiveActions } = props;
     // Nothing to lend lends nothing: an empty fragment would read as pane controls and keep a header's row (FV2bp).
+    // Live controls travel with the pane's controls; launchers (`renderStripActions`) stay with the strip.
     const renderLentControls = React.useCallback(() => {
         const leading = renderHeaderLeadingActions ? renderHeaderLeadingActions() : null;
         const live = renderLiveActions ? renderLiveActions() : null;
         const trailing = renderHeaderActions ? renderHeaderActions() : null;
         return leading == null && live == null && trailing == null ? null : <>{leading}{live}{trailing}</>;
     }, [renderHeaderActions, renderHeaderLeadingActions, renderLiveActions]);
-    useStackHeaderActionsPublisher(headerActionsScopeKey, lendsControls ? renderLentControls : null);
     const controlsTakenByTab = useStackHeaderActionsClaimed(headerActionsScopeKey);
     const showStrip = !(lendsControls && controlsTakenByTab);
+    // On a phone the one tab's page header is its only chrome (owner ruling 2026-10-30): what its chip
+    // offered (pin or unpin, close) moves into that header's `⋯` rather than leaving with the strip.
+    const { pinDetailsTab, unpinDetailsTab, setActiveDetailsTab } = props.pane;
+    const closeTab = useGuardedDetailsTabClose(props.pane.closeDetailsTab, props.pane.scopeId);
+    const { closeLastTab } = props;
+    const foldedTab = phone && !showStrip ? activeTab : null;
+    // A pane that lends its own close (a full-screen route's ✕) already offers it in the header; a live control is no close.
+    const paneLendsClose = foldedTab !== null
+        && ((renderHeaderLeadingActions?.() ?? null) !== null || (renderHeaderActions?.() ?? null) !== null);
+    const foldedTabKey = foldedTab?.key ?? null;
+    const foldedTabPin = foldedTab ? (foldedTab.isPreview ? 'pin' : foldedTab.isPinned ? 'unpin' : null) : null;
+    const { resolveTabIconName } = props;
+    const groupTabs = props.group.tabs;
+    const otherTabs = React.useMemo(() => foldedTabKey === null ? null : groupTabs.filter((tab) => tab.key !== foldedTabKey),
+        [foldedTabKey, groupTabs]);
+    const stripMenuRows = React.useMemo((): readonly LentHeaderMenuRow[] | null => {
+        if (foldedTabKey === null) return null;
+        const show = (otherTabs ?? []).map((tab): LentHeaderMenuRow => ({ id: `details-tab-show:${tab.key}`, title: tab.title,
+            testID: `details-tab-menu-show-${toTestIdSafeValue(tab.key)}`, iconName: resolveDetailsTabGlyph(tab, resolveTabIconName),
+            onSelect: () => setActiveDetailsTab(tab.key) }));
+        const pin: LentHeaderMenuRow | null = foldedTabPin === 'pin'
+            ? { id: 'details-tab-pin', title: t('session.detailsPanel.pinTabA11y'), testID: 'details-tab-menu-pin', iconName: 'push-pin', onSelect: () => pinDetailsTab(foldedTabKey) }
+            : foldedTabPin === 'unpin'
+                ? { id: 'details-tab-unpin', title: t('session.detailsPanel.unpinTabA11y'), testID: 'details-tab-menu-unpin', iconName: 'push-pin-slash', onSelect: () => unpinDetailsTab(foldedTabKey) }
+                : null;
+        const close: LentHeaderMenuRow = { id: 'details-tab-close', title: t('session.detailsPanel.closeTabA11y'),
+            // Closing the last page ends the pane; with others held, the next one takes the screen.
+            testID: 'details-tab-menu-close', iconName: 'x', onSelect: closeLastTab && show.length === 0
+                ? () => { void runGuardedTabNavigation([detailsTabNavigationKey(props.pane.scopeId, foldedTabKey)], closeLastTab); }
+                : () => closeTab(foldedTabKey) };
+        return [...show, ...(pin ? [pin] : []), ...(paneLendsClose ? [] : [close])];
+    }, [closeLastTab, closeTab, foldedTabKey, foldedTabPin, otherTabs, paneLendsClose, pinDetailsTab, resolveTabIconName, setActiveDetailsTab, unpinDetailsTab]);
+    // The rows travel with the lent controls, so whichever header draws those controls offers them too (a Details
+    // header in its own `⋯`; a plugin or core page header in a `⋯` beside them).
+    useStackHeaderActionsPublisher(headerActionsScopeKey, lendsControls ? renderLentControls : null, stripMenuRows);
     const mainColumnEdge = useOptionalAppPaneScopeLayout()?.arrangement === 'editor' ? 'end' : 'start';
     const { unsavedKeys, chromeFor } = useDetailsTabUnsavedKeys(props.pane.pinDetailsTab);
     // Every diff drawn in this group applies the one split-width rule against the group's width. Only
@@ -255,7 +306,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
             {/* The tab group (its strip and body) is the boundary its menus and Add surfaces float inside. */}
             <PopoverScope boundaryRef={rootRef}>
             {showStrip ? <View style={[styles.header, { paddingTop: headerPaddingTop, backgroundColor }]}>
-                {props.renderHeaderLeadingActions ? props.renderHeaderLeadingActions() : null}
+                {leadingActions}
                 {/* A hidden main column's restore chip, at the strip edge the column went to (lab H1–H3). */}
                 {props.group.isFocused && mainColumnEdge === 'start' ? <PaneMainRestoreChip /> : null}
                 {!forceEmptyState ? (
@@ -276,6 +327,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                 )}
                 {props.group.isFocused && mainColumnEdge === 'end' ? <PaneMainRestoreChip /> : null}
                 {props.renderStripActions ? props.renderStripActions() : null}
+                {/* Launchers lead; what stays reachable and the pane's own controls close the row, in the same order a lent header draws them. */}
                 {renderLiveActions ? renderLiveActions() : null}
                 {props.renderHeaderActions ? props.renderHeaderActions() : null}
             </View> : null}
@@ -308,7 +360,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                             >
                                 <RetainedPanelSurface isActive={presented} mode="flow">
                                     <DetailsTabChromeProvider value={chromeFor(tab.key)}>
-                                        <HeaderActionsScope scopeKey={lendsControls ? headerActionsScopeKey : null}>
+                                        <HeaderActionsScope scopeKey={lendsControls && isActive ? headerActionsScopeKey : null}>
                                             <React.Suspense fallback={<PaneLoadingFallback />}>
                                                 <DetailsTabBody scopeId={props.pane.scopeId} tab={tab} active={presented} renderTabContent={props.renderTabContent} />
                                             </React.Suspense>

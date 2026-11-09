@@ -1,9 +1,12 @@
+import { replacePersistentUiStateForTest, PersistedPaneScopesSchema } from '@/dev/testkit/harness/persistentUiState';
 /** @vitest-environment jsdom */
 import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceClosedTabsListOutputSchema } from '@happier-dev/protocol/actions/workspaceActionFamily';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createSessionFixture, installBrowserStorageLockBoundary, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -13,6 +16,7 @@ import type { RenderWithAppProvidersOptions } from '@/dev/testkit/render/renderW
 import type { DestinationRef } from '../destinations/compactAppDestinationCatalog';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { clearActiveUnsavedChangesGuard, registerMountedTabUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
+import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 
 const route = vi.hoisted(() => ({ pathname: '/session/named/info', params: { id: 'named' } as Record<string, string>, platform: 'web' as 'web' | 'ios' }));
 vi.mock('socket.io-client', async importOriginal =>
@@ -98,6 +102,7 @@ const production = await (async () => {
         finally { await warmHomes.dispose(); warmLocks(); }
     }
 })();
+const { paneUiState } = await import('@/sync/domains/state/filePaneUiState');
 afterEach(async () => {
     route.platform = 'web'; route.pathname = '/session/named/info'; route.params = { id: 'named' };
     standardCleanup();
@@ -133,8 +138,8 @@ describe('workspace tabs production composition', () => {
         const sessionC = 'reviewer-c';
         const sessionD = 'reviewer-d';
         storage.setState({ isDataReady: true });
-        storage.getState().applyLocalSettings({ appPaneScopesV1: {}, sessionsRightPaneDefaultOpen: false,
-            uiMultiPanePanelsEnabled: true }, { persist: false });
+        (replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({})), storage.getState().applyLocalSettings({ sessionsRightPaneDefaultOpen: false,
+            uiMultiPanePanelsEnabled: true }, { persist: false }));
         storage.getState().applySessions([sessionA, sessionB, sessionC, sessionD].map(id => createSessionFixture({ id, serverId: scope.serverId })));
         const view = inspector.INSPECTOR_UI.views.find(candidate => candidate.id === inspector.INSPECTOR_APP_SURFACE_ID);
         if (!view || view.container !== 'rightSidebarTab' || view.target.kind !== 'app') throw new Error('Inspector must retain its canonical app sidebar binding');
@@ -198,7 +203,7 @@ describe('workspace tabs production composition', () => {
         let currentSession = '';
         function SessionPane({ sessionId }: Readonly<{ sessionId: string }>) {
             currentSession = sessionId;
-            const scopeId = useRegisterSessionPaneDriver(sessionId, scope.serverId, undefined, runtime);
+            const scopeId = useRegisterSessionPaneDriver(sessionId, scope.serverId, runtime);
             const paneSurfaceScope = React.useMemo(() => createSessionPaneSurfaceScope(sessionId, runtime), [sessionId]);
             const current = navigation.state.tabs[navigation.state.groups[navigation.state.focusedGroupId].activeTabId];
             pane = useSessionViewBootstrap({ sessionId, serverId: scope.serverId, paneScopeId: scopeId,
@@ -217,7 +222,13 @@ describe('workspace tabs production composition', () => {
         window.history.replaceState(null, '', `${route.pathname}?serverId=${encodeURIComponent(scope.serverId)}`);
         const catalog = catalogModule.resolveCompactAppDestinations({ pages: [], builtins: {
             externalSessions: false, inbox: true, workflows: false, friends: false } });
-        const screen = await renderScreen(<KeyboardShortcutProvider handlers={{}}><AppPaneProvider>
+        // The Session pane mounts the Board controller, which reads the Account like every production shell.
+        const [{ InjectedAuthProvider }, { TokenStorage }] = await Promise.all([
+            import('@/auth/context/AuthContext'), import('@/auth/storage/tokenStorage'),
+        ]);
+        const credentials = await TokenStorage.getCredentialsForServerUrl(homes.homes.home!.serverUrl);
+        expect(credentials).not.toBeNull();
+        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><KeyboardShortcutProvider handlers={{}}><AppPaneProvider>
             <AppShellPluginUiProjectionValueProvider value={shell}>
                 <WorkspaceProvider enabled catalog={catalog}>{owner => {
                     navigation = owner;
@@ -229,7 +240,7 @@ describe('workspace tabs production composition', () => {
                     </DestinationInstanceHost> : null;
                 }}</WorkspaceProvider>
             </AppShellPluginUiProjectionValueProvider>
-        </AppPaneProvider></KeyboardShortcutProvider>);
+        </AppPaneProvider></KeyboardShortcutProvider></InjectedAuthProvider>);
         try {
             await vi.waitFor(() => expect(currentSession).toBe(sessionA));
             await act(async () => openInspector({ pluginId: fixturePluginId, localId: view.id }));
@@ -309,6 +320,11 @@ describe('workspace tabs production composition', () => {
         ]);
         const initial = storage.getState();
         const scope = initial.profileScope!;
+        const [{ InjectedAuthProvider }, { TokenStorage }] = await Promise.all([
+            import('@/auth/context/AuthContext'), import('@/auth/storage/tokenStorage'),
+        ]);
+        const credentials = await TokenStorage.getCredentialsForServerUrl(homes.homes.home!.serverUrl);
+        expect(credentials).not.toBeNull();
         storage.setState({ isDataReady: true });
         storage.getState().applySessions([createSessionFixture({ id: 'tracked', serverId: scope.serverId })]);
         route.pathname = '/session/tracked'; route.params = { id: 'tracked', serverId: scope.serverId };
@@ -337,13 +353,13 @@ describe('workspace tabs production composition', () => {
                 workspaceRoot: '/repo', active: true });
             opener = useWorkspaceFileOpener(); return null;
         }
-        const screen = await renderScreen(<PanePresentationProvider value={intent => { presentations.push(intent); }}><AppPaneProvider>
+        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><PanePresentationProvider value={intent => { presentations.push(intent); }}><AppPaneProvider>
             <WorkspaceProvider enabled={platform === 'web'} phone={platform === 'ios'} catalog={catalog}>{owner => {
                 navigation = owner;
                 const current = owner.state.tabs[owner.state.groups[owner.state.focusedGroupId].activeTabId];
                 return platform === 'web' ? <DestinationInstanceHost tabId={current.id} ref={current.target}
                     pathname={route.pathname} focused visible navigation={owner.navigationForTab(current.id)}><TrackEntry /></DestinationInstanceHost> : <TrackEntry />;
-            }}</WorkspaceProvider></AppPaneProvider></PanePresentationProvider>);
+            }}</WorkspaceProvider></AppPaneProvider></PanePresentationProvider></InjectedAuthProvider>);
         try {
             if (platform === 'web') document.body.appendChild(foregroundInput);
             const { invokeWorkspaceAction } = await import('./workspaceActionRuntime');
@@ -454,7 +470,8 @@ describe('workspace tabs production composition', () => {
             await act(async () => { storage.getState().applySettingsForScope(scope, settings, 2); });
             await act(async () => { opened = await opener.open({ kind: 'session', sessionId: 'tracked', serverId: scope.serverId,
                 path: 'blocked.ts' }, { intent: 'preview', present: false, onOpened: () => placedFiles.push('blocked.ts') }); });
-            expect(opened).toBe(false);
+            // The typed Off notice is already presented; callers must not add another error.
+            expect(opened).toBeNull();
             expect(placedFiles).toEqual(['main.ts']);
             expect(pane.scopeState?.details.activeTabKey).toBe(workspaceFileDetailsTabKey('tracked.ts', '/repo'));
         } finally { await screen.unmount(); foregroundInput.remove(); storage.setState(initial, true); }
@@ -465,11 +482,16 @@ describe('workspace tabs production composition', () => {
         restoreBrowserLocks = installBrowserStorageLockBoundary();
         installDisconnectedServerSocketBoundary();
         const homes = await serveActionHomes({ homes: [{ key: 'home', serverUrl: 'https://workspace-open-project-file.test',
-            accountId: 'alice', currentAccount: true }], route: () => undefined });
+            serverIdentityId: 'srv_open_project_file', accountId: 'alice', currentAccount: true }],
+            route: request => request.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`
+                ? Response.json(createPlainProjectAccountRowListFixture({ workspaceRefs: [
+                    { id: 'shared-project', serverId: 'srv_open_project_file', machineId: 'studio', rootPath: '/repo', label: null, createdAtMs: 1 },
+                    { id: 'shared-project', serverId: 'other-home', machineId: 'other-machine', rootPath: '/other', label: null, createdAtMs: 1 },
+                ] })) : undefined });
         disposeHome = homes.dispose; disconnectHome = await homes.restoreActiveConnection();
-        const [{ storage }, { useOpenProject }, { applyProjectAccountRowsFixture }, { useAppPaneContext }] = await Promise.all([
+        const [{ storage }, { useOpenProject }, { useAppPaneContext }] = await Promise.all([
             import('@/sync/domains/state/storage'), import('@/components/projects/useOpenProject'),
-            import('@/dev/testkit/fixtures/projectAccountRows'), import('../panes/AppPaneProvider'),
+            import('../panes/AppPaneProvider'),
         ]);
         const initial = storage.getState();
         const scope = initial.profileScope!;
@@ -477,10 +499,9 @@ describe('workspace tabs production composition', () => {
         route.params = { workspaceRefId: 'shared-project', serverId: scope.serverId };
         window.history.replaceState(null, '', `${route.pathname}?serverId=${encodeURIComponent(scope.serverId)}`);
         storage.setState({ isDataReady: true });
-        applyProjectAccountRowsFixture(storage, { workspaceRefs: [
-            { id: 'shared-project', serverId: scope.serverId, machineId: 'studio', rootPath: '/repo', label: null, createdAtMs: 1 },
-            { id: 'shared-project', serverId: 'other-home', machineId: 'other-machine', rootPath: '/other', label: null, createdAtMs: 1 },
-        ] });
+        await vi.waitFor(() => expect(storage.getState().projectAccountRows).toMatchObject({ status: 'ready',
+            workspaceRefs: [expect.objectContaining({ id: 'shared-project', serverId: scope.serverId }),
+                expect.objectContaining({ id: 'shared-project', serverId: 'other-home' })] }));
         const [{ WorkspaceProvider }, , , , , , { AppPaneProvider }, , catalogModule] = production;
         const catalog = catalogModule.resolveCompactAppDestinations({ pages: [], builtins: {
             externalSessions: false, inbox: false, workflows: false, friends: false } });
@@ -604,15 +625,38 @@ describe('workspace tabs production composition', () => {
             {owner => { navigation = owner; return <SearchActivation />; }}
         </WorkspaceProvider></AppPaneProvider>);
         const find = { query: '🦦', options: { matchCase: false, regex: false },
-            target: { kind: 'file' as const, path: 'riverside.txt', anchor: { kind: 'fileLine' as const, startLine: 2 } } };
+            target: { kind: 'file' as const, path: 'a:b.ts', anchor: { kind: 'fileLine' as const, startLine: 2 } } };
         try {
             // Capture the real typed refusal before the search adapter reduces it to unavailable.
             const { invokeWorkspaceAction } = await import('./workspaceActionRuntime');
             expect(await invokeWorkspaceAction({ actionId: 'workspace.tabs.list', input: {} })).toMatchObject({ ok: true });
             await vi.waitFor(async () => { await act(async () => {});
                 expect(pane.fileFindSeedAccountBindings.get(scope.serverId)?.isCurrent()).toBe(true); });
+            const { normalizeActionsSettingsV1 } = await import('@happier-dev/protocol/actions/actionSettings');
+            const { runUniversalSearchActivation } = await import('../search/runUniversalSearchActivation');
+            const { Modal } = await import('@/modal');
+            const disabledSettings = { ...storage.getState().settings, actionsSettingsV1: normalizeActionsSettingsV1({
+                v: 1, actions: { 'workspace.tabs.open': { enabled: false } },
+            }) };
+            homes.replaceAccountSettings('home', { settings: disabledSettings, version: 2 });
+            await act(async () => { storage.getState().applySettingsForScope(scope, disabledSettings, 2); });
+            vi.mocked(Modal.alert).mockClear();
+            await act(async () => { await runUniversalSearchActivation({ dismiss: () => {},
+                activate: async () => {
+                    const outcome = await activateUniversalSearchResult({ kind: 'workspaceFile', path: 'a:b.ts',
+                        serverId: scope.serverId, accountId: scope.accountId, sessionId: null, workspaceRefId: 'riverside',
+                        scope: { serverId: scope.serverId, machineId: 'studio', rootPath: '/repo' } },
+                    { openProject, openFile, navigateToSession: () => {}, push: () => {} });
+                    return outcome.ok ? true : outcome.reason === 'cancelled' ? null : false;
+                },
+                presentFailure: () => Modal.alert('common.error', 'errors.searchFailed'),
+            }); });
+            expect(Modal.alert).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(Modal.alert).mock.calls[0]?.[0]).toBe('actionConfirmations.turnedOffTitle');
+            homes.replaceAccountSettings('home', { settings: initial.settings, version: 3 });
+            await act(async () => { storage.getState().applySettingsForScope(scope, initial.settings, 3); });
             let result: Awaited<ReturnType<typeof activateUniversalSearchResult>> | undefined;
-            await act(async () => { result = await activateUniversalSearchResult({ kind: 'workspaceFile', path: 'riverside.txt',
+            await act(async () => { result = await activateUniversalSearchResult({ kind: 'workspaceFile', path: 'a:b.ts',
                 serverId: scope.serverId, accountId: scope.accountId, sessionId: null,
                 workspaceRefId: 'riverside', scope: { serverId: scope.serverId, machineId: 'studio', rootPath: '/repo' },
                 anchor: { kind: 'fileLine', startLine: 2 }, find }, { openProject, openFile,
@@ -620,13 +664,13 @@ describe('workspace tabs production composition', () => {
                 push: () => { throw new Error('A Project hit must use its canonical owner'); } }); });
             expect(result).toEqual({ ok: true });
             const tab = navigation.state.tabs[navigation.state.groups[navigation.state.focusedGroupId].activeTabId];
-            expect(tab.target).toMatchObject({ kind: 'project', params: { workspaceRefId: 'riverside', initialFile: 'riverside.txt',
+            expect(tab.target).toMatchObject({ kind: 'project', params: { workspaceRefId: 'riverside', initialFile: 'a:b.ts',
                 anchor: 'fileLine', startLine: '2' } });
             expect(JSON.stringify(tab.target)).not.toContain(find.query);
             expect(pane.fileFindSeedHandoff.peekCurrent({ host: 'project', id: 'riverside',
-                scope: { serverId: scope.serverId, machineId: 'studio', rootPath: '/repo' }, path: 'riverside.txt' })).toEqual(find);
-            const sessionFind = { ...find, target: { ...find.target, path: 'session.txt' } };
-            await act(async () => { result = await activateUniversalSearchResult({ kind: 'workspaceFile', path: 'session.txt',
+                scope: { serverId: scope.serverId, machineId: 'studio', rootPath: '/repo' }, path: 'a:b.ts' })).toEqual(find);
+            const sessionFind = { ...find, target: { ...find.target, path: 'a:b.ts' } };
+            await act(async () => { result = await activateUniversalSearchResult({ kind: 'workspaceFile', path: 'a:b.ts',
                 serverId: null, accountId: scope.accountId, sessionId: session.id, workspaceRefId: null,
                 scope: { serverId: scope.serverId, machineId: 'studio', rootPath: '/repo' }, anchor: find.target.anchor, find: sessionFind }, {
                 openProject, openFile, navigateToSession: () => { throw new Error('A Session file must use the file Action'); },
@@ -634,11 +678,12 @@ describe('workspace tabs production composition', () => {
             }); });
             expect(result).toEqual({ ok: true });
             const sessionTab = navigation.state.tabs[navigation.state.groups[navigation.state.focusedGroupId].activeTabId];
-            expect(sessionTab.target).toMatchObject({ kind: 'session', params: { id: session.id, serverId: scope.serverId,
-                details: 'file', path: 'session.txt', anchor: 'fileLine', startLine: '2' } });
+            // A phone presents an addressed Session file as its own Details page (7ce06f2267); desktop keeps it in the Session pane.
+            expect(sessionTab.target).toMatchObject({ kind: platform === 'ios' ? 'sessionDetails' : 'session', params: { id: session.id, serverId: scope.serverId,
+                details: 'file', path: 'a:b.ts', anchor: 'fileLine', startLine: '2' } });
             expect(JSON.stringify(sessionTab.target)).not.toContain(sessionFind.query);
             expect(pane.fileFindSeedHandoff.peekCurrent({ host: 'session', id: session.id,
-                scope: { serverId: scope.serverId, machineId: 'studio', rootPath: '/repo' }, path: 'session.txt' })).toEqual(sessionFind);
+                scope: { serverId: scope.serverId, machineId: 'studio', rootPath: '/repo' }, path: 'a:b.ts' })).toEqual(sessionFind);
         } finally { await screen.unmount(); storage.setState(initial, true); }
     });
 
@@ -675,9 +720,9 @@ describe('workspace tabs production composition', () => {
         saved = stateModule.reduceWorkspaceState(saved, { type: 'openTab', groupId: saved.focusedGroupId,
             tab: { id: 'other-close', target: { kind: 'removed-plugin', params: { id: 'other' } }, pinned: false, preview: false } });
         saved = stateModule.reduceWorkspaceState(saved, { type: 'activateTab', groupId: saved.focusedGroupId, tabId: 'pinned-close' });
-        storage.setState({ isDataReady: true, localSettings: { ...storage.getState().localSettings, workspaceLayoutV1: {
-            [persistenceModule.workspaceLayoutScopeKey({ ...scope, windowId: 'main' })]: persistenceModule.serializeWorkspaceLayout(saved),
-        } } });
+        const { workspaceLayoutsState } = await import('@/sync/domains/state/filePaneUiState');
+        workspaceLayoutsState.set(persistenceModule.workspaceLayoutScopeKey({ ...scope, windowId: 'main' }), persistenceModule.serializeWorkspaceLayout(saved));
+        storage.setState({ isDataReady: true });
         if (!phone) window.sessionStorage.setItem('happier.workspace.windowIdV1', 'main');
         let navigation!: WorkspaceNavigationContextValue;
         const screen = await renderScreen(<KeyboardShortcutProvider handlers={{}}><AppPaneProvider>
@@ -789,9 +834,8 @@ describe('workspace tabs production composition', () => {
         saved = stateModule.reduceWorkspaceState(saved, { type: 'activateTab', groupId: saved.focusedGroupId, tabId: 'native-info' });
         const scope = storage.getState().profileScope;
         if (!scope) throw new Error('Native title journey requires the restored Account scope');
-        storage.setState({ localSettings: { ...storage.getState().localSettings, workspaceLayoutV1: {
-            [persistenceModule.workspaceLayoutScopeKey({ ...scope, windowId: 'main' })]: persistenceModule.serializeWorkspaceLayout(saved),
-        } } });
+        const { workspaceLayoutsState } = await import('@/sync/domains/state/filePaneUiState');
+        workspaceLayoutsState.set(persistenceModule.workspaceLayoutScopeKey({ ...scope, windowId: 'main' }), persistenceModule.serializeWorkspaceLayout(saved));
         let navigation!: WorkspaceNavigationContextValue;
         function Switcher() {
             const switcher = useSessionSwitcher({ sessionId: null, serverId: homeId });
@@ -831,7 +875,19 @@ describe('workspace tabs production composition', () => {
             expect(railTitles()).toContain('Foreground stays other');
             expect(switcherTitles()).toContain('Inactive native identity renamed');
             expect(switcherTitles()).toContain('Foreground stays other');
+            const { setScreenSharingPrivacyActive } = await import('@/desktop/capture/useNativeRecordingActive');
+            await act(async () => {
+                storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [homeId]: ['private'] } });
+                storage.getState().setSessionTagAssignmentsOptimistic(homeId, 'named', ['private']);
+                setScreenSharingPrivacyActive(true);
+            });
+            expect(screen.findByTestId('phone-rail-tab-native-info')).toBeNull();
+            expect(navigation.state.tabs['native-info']).toBeDefined();
+            expect(navigation.state.groups[navigation.state.focusedGroupId].activeTabId).toBe('native-other');
+            await act(async () => { setScreenSharingPrivacyActive(false); });
+            expect(railTitles()).toContain('Inactive native identity renamed');
         } finally {
+            (await import('@/desktop/capture/useNativeRecordingActive')).setScreenSharingPrivacyActive(false);
             await screen.unmount();
             storage.setState(initial, true);
         }
@@ -860,6 +916,8 @@ describe('workspace tabs production composition', () => {
         const catalog = catalogModule.resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
         const geometry = geometryModule.createWorkspaceBarGeometry();
         geometry.setGroupFrame('group:1', { x: 220, width: 1000 });
+        const { WorkspaceWindowTitle } = await import('./WorkspaceWindowTitle');
+        const { setScreenSharingPrivacyActive } = await import('@/desktop/capture/useNativeRecordingActive');
         let navigation!: WorkspaceNavigationContextValue;
         const [{ InjectedAuthProvider }, { TokenStorage }] = await Promise.all([
             import('@/auth/context/AuthContext'), import('@/auth/storage/tokenStorage'),
@@ -872,6 +930,7 @@ describe('workspace tabs production composition', () => {
                 const detailActive = detail?.id === owner.state.groups[owner.state.focusedGroupId]?.activeTabId;
                 return <geometryModule.WorkspaceBarGeometryContext.Provider value={geometry}>
                     <WorkspaceTitleBar catalog={catalog} clusterEndPx={200} stripHeightPx={40} />
+                    <WorkspaceWindowTitle />
                     {detail ? <DestinationInstanceHost tabId={detail.id} ref={detail.target} pathname={route.pathname}
                         focused={detailActive} visible={detailActive} navigation={owner.navigationForTab(detail.id)}><SessionInfoRoute /></DestinationInstanceHost> : null}
                 </geometryModule.WorkspaceBarGeometryContext.Provider>;
@@ -913,6 +972,19 @@ describe('workspace tabs production composition', () => {
             await act(async () => { storage.getState().applySessions([named('Workspace tabs renamed')]); });
             expect(label()).toContain('Workspace tabs renamed');
             expect(label()).not.toContain('Fix workspace tabs');
+            await act(async () => {
+                storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [homeId]: ['private'] } });
+                storage.getState().setSessionTagAssignmentsOptimistic(homeId, 'named', ['private']);
+                setScreenSharingPrivacyActive(true);
+            });
+            expect(screen.findByTestId(`workspace-tab-${sessionTab}`)).toBeNull();
+            expect(navigation.state.tabs[sessionTab]).toBeDefined();
+            expect(group().activeTabId).toBe(sessionTab);
+            expect(screen.findHostByTestId('session-info-screen')).not.toBeNull();
+            expect(document.title).toBe('session.untitled');
+            await act(async () => { setScreenSharingPrivacyActive(false); });
+            expect(label()).toContain('Workspace tabs renamed');
+            expect(document.title).toBe('Workspace tabs renamed');
             await action('workspace.tabs.pin', { tabId: sessionTab, pinned: true });
             const middle = await open(`/session/middle?serverId=${homeId}`);
             const right = await open(`/session/right?serverId=${homeId}`);
@@ -941,6 +1013,15 @@ describe('workspace tabs production composition', () => {
             expect(navigation.state.tabs[sessionTab]).toBeUndefined();
             const closed = WorkspaceClosedTabsListOutputSchema.parse(await action('workspace.tabs.closed.list', {}));
             expect(closed.tabs.find(tab => tab.id === sessionTab)?.title).toBe('Workspace tabs renamed');
+            await screen.pressByTestIdAsync('workspace-overflow-group_1');
+            const closedRowId = `workspace-reopen-tab-${toTestIdSafeValue(sessionTab)}`;
+            await settle(() => { expect(screen.findByTestId(closedRowId)).not.toBeNull(); });
+            await act(async () => { setScreenSharingPrivacyActive(true); });
+            expect(screen.findByTestId(closedRowId)).toBeNull();
+            expect(navigation.state.recentlyClosed.some(entry => entry.tab.id === sessionTab)).toBe(true);
+            await act(async () => { setScreenSharingPrivacyActive(false); });
+            expect(screen.findByTestId(closedRowId)).not.toBeNull();
+            await screen.pressByTestIdAsync('workspace-overflow-group_1');
             await action('workspace.tabs.reopen', { tabId: sessionTab });
             await action('workspace.tabs.pin', { tabId: sessionTab, pinned: false });
             expect(label()).toContain('Workspace tabs renamed');
@@ -949,6 +1030,7 @@ describe('workspace tabs production composition', () => {
             expect(await execute('workspace.tabs.close_all', {}, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: homeId, expectedAccountId: 'alice' }))
                 .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
         } finally {
+            setScreenSharingPrivacyActive(false);
             await screen.unmount();
             storage.setState(initial, true);
         }

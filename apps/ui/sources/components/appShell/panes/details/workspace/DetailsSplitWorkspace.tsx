@@ -20,7 +20,6 @@ import { t } from '@/text';
 import type {
     SplitCanvasAction,
     SplitCanvasLeafNode,
-    SplitCanvasState,
 } from '@/components/appShell/splitCanvas/model/splitCanvasTypes';
 import { buildDetailsWorkspaceStateView } from './detailsWorkspaceSelectors';
 import {
@@ -121,6 +120,8 @@ export type DetailsSplitWorkspaceProps = Readonly<{
     /** What must stay reachable (Track, a pending approval, the pane's toggles); it travels with the pane's controls (see `DetailsTabGroupPanel`). */
     renderLiveActions?: (() => React.ReactNode) | null;
     renderHeaderActions?: (() => React.ReactNode) | null;
+    /** Closing the pane's last tab ends the pane's presentation (see `DetailsTabGroupPanel`). */
+    closeLastTab?: (() => void) | null;
     renderEmptyState?: (() => React.ReactNode) | null;
     /**
      * The current scope adapter renders an exact qualified `detailsPane`
@@ -131,22 +132,6 @@ export type DetailsSplitWorkspaceProps = Readonly<{
 }>;
 
 type DetailsLeafPayload = { groupId: string };
-
-const TypedSplitCanvasHost = SplitCanvasHost as unknown as React.ComponentType<Readonly<{
-    state: SplitCanvasState<DetailsLeafPayload>;
-    dispatch: (action: SplitCanvasAction<DetailsLeafPayload>) => void;
-    renderLeaf: (input: Readonly<{
-        leaf: SplitCanvasLeafNode<DetailsLeafPayload>;
-        isFocused: boolean;
-        isMaximized: boolean;
-    }>) => React.ReactNode;
-    renderLeafLabel?: (leaf: SplitCanvasLeafNode<DetailsLeafPayload>) => string;
-    onRequestSplitLeaf?: (input: Readonly<{
-        leafId: string;
-        direction: 'left' | 'right' | 'up' | 'down';
-    }>) => void;
-    keyboardEnabled?: boolean;
-}>>;
 
 function isDetailsStateView(value: unknown): value is PaneDetailsStateView {
     return !!value && typeof value === 'object' && Array.isArray((value as PaneDetailsStateView).groups);
@@ -265,6 +250,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
                     renderStripActions={isFocused ? props.renderStripActions : null}
                     renderLiveActions={isFocused ? props.renderLiveActions : null}
                     renderHeaderActions={isFocused ? props.renderHeaderActions : null}
+                    closeLastTab={details.groups.length === 1 ? props.closeLastTab : null}
                     renderEmptyState={props.renderEmptyState}
                     collapseSingleTabStrip={details.groups.length === 1}
                 />
@@ -285,6 +271,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
         props.renderHeaderLeadingActions,
         props.renderStripActions,
         props.renderLiveActions,
+        props.closeLastTab,
         props.renderTabContent,
         props.resolveTabIconName,
         props.resolveTabPresentation,
@@ -424,7 +411,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
         escapeEnabled: overlay !== null,
     });
     const renderWorkspace = details.root ? (
-        <TypedSplitCanvasHost
+        <SplitCanvasHost<DetailsLeafPayload>
             keyboardEnabled
             state={splitCanvasState}
             dispatch={dispatch}

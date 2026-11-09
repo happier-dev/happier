@@ -13,8 +13,11 @@ export type GroupTabState = Readonly<{
 
 function recentTabs(group: TabGroupState): string[] {
     const seen = new Set<string>();
+    // Membership by set: a group can hold hundreds of tabs, and a carry over a split zone
+    // reduces a simulated open on every pointer frame.
+    const members = new Set(group.tabIds);
     return [group.activeTabId, ...group.mru, ...group.tabIds.slice().reverse()]
-        .filter((id): id is string => id != null && group.tabIds.includes(id))
+        .filter((id): id is string => id != null && members.has(id))
         .filter((id) => {
             if (seen.has(id)) return false;
             seen.add(id);

@@ -1,15 +1,16 @@
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol';
+import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createMachineFixture, createSessionFixture, renderScreen as renderPanelScreen } from '@/dev/testkit';
-import { storage } from '@/sync/domains/state/storageStore';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { installSessionDetailsPanelNonRnModuleMocks } from '@/components/sessions/panes/sessionDetailsPanelNonRnModuleMocks';
 import type { SelectedPaneDestinationV1 } from './model/selectedPaneDestination';
+import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
     type PluginUiProjectionModel,
@@ -27,15 +28,16 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock({ useWindowDimensions: dimensions, Dimensions: { get: dimensions } });
 });
 const runtime = installSessionPaneRuntimeTestHarness({ sessionId: 'session-1', scopeId: 'scope1' });
+const { storage } = await import('@/sync/domains/state/storageStore');
 let currentScreen: Awaited<ReturnType<typeof renderPanelScreen>>;
-let ActualSurfaceHost: typeof import('@/components/plugins/surfaces')['PluginSurfacePlacementHost'];
-let MultiPaneHostWithBottom: typeof import('@/components/ui/panels/MultiPaneHostWithBottom')['MultiPaneHostWithBottom'];
+// Collect the real runtime graph before timed hooks; cold source transforms
+// are not part of the pane's behavioral setup budget.
+const { PluginSurfacePlacementHost: ActualSurfaceHost } = await import('@/components/plugins/surfaces');
+const { MultiPaneHostWithBottom } = await import('@/components/ui/panels/MultiPaneHostWithBottom');
 let paneSeed: Readonly<{ right?: SelectedPaneDestinationV1; bottom?: SelectedPaneDestinationV1 }> = {};
 beforeEach(async () => {
     deviceTypeState.value = 'tablet';
     paneSeed = {};
-    ({ PluginSurfacePlacementHost: ActualSurfaceHost } = await import('@/components/plugins/surfaces'));
-    ({ MultiPaneHostWithBottom } = await import('@/components/ui/panels/MultiPaneHostWithBottom'));
     const session = createSessionFixture({ id: 'session-1', serverId: runtime.serverId });
     const machine = createMachineFixture({ id: 'machine-1' });
     storage.getState().applyMachines([machine]);
@@ -131,6 +133,99 @@ function projectionWith(...placements: readonly PluginUiSurfacePlacementProjecti
 }
 
 describe('AppPaneScopeHost plugin destinations', () => {
+    it.each(['project', 'session'] as const)('mounts a %s details destination over a retained page detail and returns to it', async (targetKind) => {
+        const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
+        const { useAppPaneScope } = await import('./hooks/useAppPaneScope');
+        const { DetailsSplitWorkspace } = await import('./details/workspace/DetailsSplitWorkspace');
+        const { PluginDetailsPaneOverlay } = await import('./details/surfaces/PluginDetailsPaneOverlay');
+        const localId = targetKind === 'project' ? 'github-local-act-project' : 'external-session-form';
+        const pluginId = targetKind === 'project' ? 'happier.scm.forge.github' : 'org.example.external';
+        const base = createPlacement({ descriptorId: localId, container: 'detailsPane', targetKind });
+        const binding = normalizePluginUiDestinationBindingV1({ pluginId, destinationId: localId,
+            rendererId: `${localId}-renderer`, container: 'detailsPane', target: { kind: targetKind } });
+        if (!binding) throw new Error('Expected an admitted destination');
+        const placement = { ...base, pluginId, binding, id: `surfacePlacement:${pluginId}:${localId}`,
+            hostOrigin: { ...base.hostOrigin!, executionOrigin: PluginMachineExecutionOriginV1Schema.parse({
+                serverIdentityId: runtime.serverIdentityId,
+                materializationRef: { pluginId, machineId: 'machine-1', materializationId: `${localId}-install-a` },
+            }) } };
+        const projection = projectionWith(placement);
+        const mount = { machineId: 'machine-1', serverId: runtime.serverId, platform: 'web' as const,
+            projectionPhase: 'current' as const, projectionInteractionEnabled: true,
+            ...(targetKind === 'project' ? { projectId: 'project-1' } : { sessionId: 'session-1' }) };
+        let openSurface: PluginSurfaceOpenHandler | undefined;
+        let detailMounts = 0;
+        function PageDetail() {
+            const [draft, setDraft] = React.useState('workflow draft');
+            React.useEffect(() => { detailMounts += 1; }, []);
+            return React.createElement('PageDetailDraft', { draft, setDraft });
+        }
+        function DetailsWorkspace() {
+            const pane = useAppPaneScope('scope1');
+            return <DetailsSplitWorkspace pane={pane} renderTabContent={() => null}
+                renderOverlay={overlay => <PluginDetailsPaneOverlay targetKind={targetKind}
+                    projection={projection} mount={mount} overlay={overlay} />} />;
+        }
+        const screen = await renderScreen(<AppPaneScopeHost scopeId="scope1" main={<div />}
+            destinationDetails={{ pane: <PageDetail />, onClose: () => { throw new Error('Overlay must return to the page detail'); } }}
+            detailsPaneBuiltinAdapter={{ destinationIds: ['details'], defaultDestinationId: 'details', render: () => <DetailsWorkspace /> }}
+            surfaceScope={{ ...mount, ...(targetKind === 'project' ? { targetKind, projectId: 'project-1' } : { targetKind, sessionId: 'session-1' }), accountLifetime: captureActiveServerAccountScopeLifetime(),
+                pluginUiProjection: projection, interactionEnabled: true }}
+            onPluginSurfaceOpenChange={handler => { openSurface = handler; }} />);
+        await act(async () => { screen.root.findByType('PageDetailDraft' as never).props.setDraft('edited workflow draft'); });
+        expect(screen.root.findAllByType(ActualSurfaceHost)).toHaveLength(0);
+        if (!openSurface) throw new Error('Expected the real pane destination opener');
+        await act(async () => {
+            expect(await openSurface!({ destination: binding.destination, input: { activity: 'local-run' } })).toEqual({ ok: true });
+        });
+        const mounted = screen.root.findAllByType(ActualSurfaceHost).filter(node => node.props.placement.binding.kind === 'destination'
+            && node.props.placement.binding.container === 'detailsPane');
+        expect(mounted).toHaveLength(1);
+        expect(mounted[0]!.props).toMatchObject({ placement, launchInput: { activity: 'local-run' }, ...mount });
+        expect(JSON.stringify(paneUiState.readAll())).not.toContain('local-run');
+        await act(async () => { runtime.pane.closeDetailsOverlay!(); });
+        expect(screen.root.findAllByType(ActualSurfaceHost)).toHaveLength(0);
+        expect(screen.root.findByType('PageDetailDraft' as never).props.draft).toBe('edited workflow draft');
+        expect(detailMounts).toBe(1);
+    });
+
+    it.each(['missing', 'disabled'] as const)('refuses a details destination when the presentation owner is %s', async (owner) => {
+        const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
+        const { useAppPaneScope } = await import('./hooks/useAppPaneScope');
+        const { PluginDetailsPaneOverlay } = await import('./details/surfaces/PluginDetailsPaneOverlay');
+        const placement = createPlacement({ descriptorId: 'unpresentable', container: 'detailsPane', targetKind: 'project' });
+        const projection = projectionWith(placement);
+        const mount = { projectId: 'project-1', machineId: 'machine-1', serverId: runtime.serverId, platform: 'web' as const,
+            projectionPhase: 'current' as const, projectionInteractionEnabled: true };
+        let openSurface: PluginSurfaceOpenHandler | undefined;
+        function Presenter() {
+            const pane = useAppPaneScope('scope1');
+            return pane.scopeState?.details.overlay ? <PluginDetailsPaneOverlay targetKind="project"
+                projection={projection} mount={mount} overlay={pane.scopeState.details.overlay} /> : null;
+        }
+        const host = (ready: boolean) => <AppPaneScopeHost scopeId="scope1" main={<div />}
+            detailsPaneEnabled={ready || owner !== 'disabled'}
+            {...(ready || owner === 'disabled' ? { detailsPaneBuiltinAdapter: {
+                destinationIds: ['details'], defaultDestinationId: 'details', render: () => <Presenter />,
+            } } : {})}
+            surfaceScope={{ targetKind: 'project', projectId: 'project-1', accountLifetime: captureActiveServerAccountScopeLifetime(),
+                pluginUiProjection: projection, projectionPhase: 'current', machineId: 'machine-1',
+                serverId: runtime.serverId, platform: 'web', interactionEnabled: true }}
+            onPluginSurfaceOpenChange={handler => { openSurface = handler; }} />;
+        const screen = await renderScreen(host(false));
+        if (!openSurface) throw new Error('Expected the real pane destination opener');
+        await act(async () => {
+            expect(await openSurface!({ destination: placement.binding.destination, input: { activity: 'refused-run' } }))
+                .toMatchObject({ ok: false, code: 'unavailable', reason: 'details_destination_overlay_owner_unavailable' });
+        });
+        expect(runtime.pane.scopeState?.details.overlay).toBeNull();
+        expect(currentScreen.root.findAllByType(ActualSurfaceHost)).toHaveLength(0);
+        // A later explicit selection must not receive input from the refused open.
+        await screen.update(host(true));
+        await act(async () => { expect(runtime.pane.openDetailsOverlay!({ destination: placement.binding.destination })).toBe(true); });
+        expect(screen.root.findByType(ActualSurfaceHost).props.launchInput).toBeUndefined();
+    });
+
     it('hands a destination outside a nested Session pane scope to the enclosing semantic owner', async () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
         const {
@@ -288,7 +383,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
         expect(runtime.pane.scopeState?.details.overlay).toMatchObject({ destination: detailsPlacement.binding.destination });
     });
 
-    it('stages a Project full-bleed details destination without enabling a docked details pane', async () => {
+    it('refuses a right-pane Project request when Details presentation is disabled', async () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
         const rightPlacement = createPlacement({
             descriptorId: 'project-side',
@@ -312,9 +407,6 @@ describe('AppPaneScopeHost plugin destinations', () => {
             <AppPaneScopeHost
                 scopeId="scope1"
                 main={<div />}
-                // Project's existing WorkspaceDetailsPanel owns the full-bleed
-                // overlay in its main region; this must not create docked
-                // details chrome simply to deliver the exact open request.
                 detailsPaneEnabled={false}
                 surfaceScope={{
                     accountLifetime: captureActiveServerAccountScopeLifetime(),
@@ -338,10 +430,10 @@ describe('AppPaneScopeHost plugin destinations', () => {
             await expect(openSurface({
                 destination: detailsPlacement.binding.destination,
                 input: { activity: 'project-run-1' },
-            })).resolves.toEqual({ ok: true });
+            })).resolves.toMatchObject({ ok: false, code: 'unavailable' });
         });
 
-        expect(runtime.pane.scopeState?.details.overlay).toMatchObject({ destination: detailsPlacement.binding.destination });
+        expect(runtime.pane.scopeState?.details.overlay).toBeNull();
     });
 
     it('hands an admitted right-pane open to the AppPane bottom selection owner without persisting input', async () => {
@@ -388,7 +480,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
         expect(runtime.pane.scopeState?.bottom.selectedDestination).toEqual({
             kind: 'plugin', destination: bottomPlacement.binding.destination,
         });
-        expect(JSON.stringify(storage.getState().localSettings.appPaneScopesV1)).not.toContain('run-1');
+        expect(JSON.stringify(paneUiState.readAll())).not.toContain('run-1');
     });
 
     it('uses a typed default when no pane is selected and otherwise renders no pane', async () => {
@@ -415,6 +507,22 @@ describe('AppPaneScopeHost plugin destinations', () => {
 
         expect(defaultScreen.findAllByType(DefaultPane)).toHaveLength(1);
         expect(defaultScreen.findAllByType(ActualSurfaceHost)).toHaveLength(0);
+    });
+
+    it('mounts the scope sidebar when the side is open with nothing chosen, so it is never an invisible open column', async () => {
+        const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
+        setPaneState();
+        const SidebarChooser = () => React.createElement('SidebarChooser');
+
+        const screen = await renderScreen(
+            <AppPaneScopeHost
+                scopeId="scope1"
+                main={<div />}
+                rightSidebarAdapter={{ available: true, render: () => <SidebarChooser /> }}
+            />,
+        );
+
+        expect(screen.findAllByType(SidebarChooser)).toHaveLength(1);
     });
 
     it('keeps a selected plugin destination unresolved when no scope adapter stamps its target', async () => {

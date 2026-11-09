@@ -231,6 +231,23 @@ describe('UpdatesPopoverButton', () => {
         // "Open Updates" stays the footer link to the full list.
         expect(screen.findAllByTestId('updates.open_full').length).toBeGreaterThan(0);
     });
+    it('keeps the check and batch indicators visible for their full model lifetimes', async () => {
+        const { UpdatesContent } = await import('./UpdatesContent');
+        const model: UpdatesContentModel = {
+            summary: TWO, groups: [], checkedAt: null, uncheckedMachineCount: 0, sessionsRunningOn: new Set(),
+            runItem: async () => {}, updateGroup: async () => {}, updateAll: async () => {}, stopAfterCurrent: () => {},
+            batch: null, checking: true, checkNow: () => {}, skipAppVersion: null, openWhatsNew: () => {}, whatsNewUnread: false,
+        };
+        const screen = await renderScreen(<UpdatesContent model={model} presentation="screen" />);
+        expect(screen.findAllByTestId('updates.checkNow.spinner').length).toBeGreaterThan(0);
+        expect(screen.findByTestId('updates.checkNow')?.props.accessibilityState).toMatchObject({ busy: true, disabled: true });
+        await screen.update(<UpdatesContent model={{ ...model, checking: false, batch: { done: 0, total: 2, stopping: false } }} presentation="screen" />);
+        expect(screen.findAllByTestId('updates.updateAll.spinner').length).toBeGreaterThan(0);
+        await screen.update(<UpdatesContent model={{ ...model, checking: false }} presentation="screen" />);
+        expect(screen.findAllByTestId('updates.checkNow.spinner')).toHaveLength(0);
+        expect(screen.findAllByTestId('updates.updateAll.spinner')).toHaveLength(0);
+    });
+
     it('the row\'s session-impact note is part of its accessible name', async () => {
         const { UpdateRow } = await import('./UpdateRow');
         const item = {
@@ -257,7 +274,7 @@ describe('UpdatesPopoverButton', () => {
             groups: [{ id: 'this-computer', kind: 'thisComputer', machineName: 'local', machineId: 'unrelated-group-id', online: true, lastSeenAt: null, items: [item] }],
             checkedAt: null, uncheckedMachineCount: 0, sessionsRunningOn: new Set(['local']),
             runItem: async () => {}, updateGroup: async () => {}, updateAll: async () => {}, stopAfterCurrent: () => {}, batch: null,
-            checkNow: () => {}, skipAppVersion: null, openWhatsNew: () => {}, whatsNewUnread: false,
+            checking: false, checkNow: () => {}, skipAppVersion: null, openWhatsNew: () => {}, whatsNewUnread: false,
         };
         const screen = await renderScreen(<UpdatesContent model={model} presentation={presentation} />);
         const hasNote = () => screen.findAll((node) => typeof node.props?.accessibilityLabel === 'string')

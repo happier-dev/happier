@@ -7,9 +7,10 @@ import PluginAppPageRootRoute from '@/app/(app)/plugins/[pluginId]/[localId]/ind
 import PluginAppPageDeepLinkRoute from '@/app/(app)/plugins/[pluginId]/[localId]/[...subPath]';
 import { PluginSurfaceFallback } from '@/components/sessions/panes/PluginSurfaceFallback';
 import { WorkspaceRouteEntry } from './createWorkspaceRouteEntry';
-import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
+import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
 import { createWorkspaceState } from './workspaceState';
 import { NavigationTitleChromeProvider, PageHeader } from '@/components/ui/layout/PageHeader';
+import { WorkspaceWindowTitle } from './WorkspaceWindowTitle';
 
 const platform = vi.hoisted(() => ({ os: 'web' }));
 vi.mock('react-native', async () => {
@@ -48,42 +49,48 @@ describe('WorkspaceRouteEntry', () => {
                 primaryAction={{ title: 'Create', onPress: () => {}, testID: 'workflow-create' }} />;
         }
         try {
-            const screen = await renderScreen(<WorkspaceNavigationContext.Provider value={{ ...workspace(false), ownsRoute: false }}>
+            const screen = await renderScreen(<WorkspaceNavigationProvider value={{ ...workspace(false), ownsRoute: false }}>
                 <NavigationTitleChromeProvider showsTitle showsBack><WorkspaceRouteEntry Body={Body} /></NavigationTitleChromeProvider>
-            </WorkspaceNavigationContext.Provider>);
+            </WorkspaceNavigationProvider>);
             expect(screen.findByTestId('workflow-create')).not.toBeNull();
             expect(screen.getTextContent()).toContain('Workflows');
         } finally { platform.os = 'web'; }
     });
-    it('publishes the focused live destination title to the Expo window owner while the editable body stays in its retained host', async () => {
+    it('updates the window title without republishing hidden Expo options while a retained page is renamed', async () => {
         const ref = { kind: 'workflow', params: { id: 'deploy' } };
         const base = { ...workspace(true), state: createWorkspaceState({ id: 'workflow-tab', target: ref, pinned: false, preview: false }) };
-        const element = (title: string) => <WorkspaceNavigationContext.Provider value={{ ...base,
-            destinationTitles: { 'workflow-tab': { ref, title } },
-        }}><WorkspaceRouteEntry Body={() => { throw new Error('Expo must not mount the workspace body'); }} /></WorkspaceNavigationContext.Provider>;
-        const screen = await renderScreen(element('Deploy Lumen'));
-        expect(windowTitle.options?.title).toBe('Deploy Lumen');
-        expect(windowTitle.options?.headerShown).toBe(false);
-        await screen.update(element('Deploy renamed'));
-        expect(windowTitle.options?.title).toBe('Deploy renamed');
+        const element = (title: string) => <WorkspaceNavigationProvider value={base}
+            destinationTitles={{ 'workflow-tab': { ref, title } }}><WorkspaceWindowTitle /><WorkspaceRouteEntry Body={() => { throw new Error('Expo must not mount the workspace body'); }} /></WorkspaceNavigationProvider>;
+        // The browser document is a platform boundary; title selection and route ownership stay real.
+        const browserDocument = { title: '' };
+        vi.stubGlobal('document', browserDocument);
+        try {
+            const screen = await renderScreen(element('Deploy Lumen'));
+            const mirrorOptions = windowTitle.options;
+            expect(browserDocument.title).toBe('Deploy Lumen');
+            expect(mirrorOptions?.headerShown).toBe(false);
+            await screen.update(element('Deploy renamed'));
+            expect(browserDocument.title).toBe('Deploy renamed');
+            expect(windowTitle.options).toBe(mirrorOptions);
+        } finally { vi.unstubAllGlobals(); }
     });
     it.each([
         { route: 'Settings', RouteEntry: PluginSettingsPageRoute, testID: 'plugin-settings-page-hydrating' },
         { route: 'App root', RouteEntry: PluginAppPageRootRoute, testID: 'plugin-app-page-hydrating' },
         { route: 'App deep link', RouteEntry: PluginAppPageDeepLinkRoute, testID: 'plugin-app-page-hydrating' },
     ])('uses the plugin $route skeleton before Account/workspace hydration admits its body', async ({ RouteEntry, testID }) => {
-        const screen = await renderScreen(<WorkspaceNavigationContext.Provider value={workspace(false)}>
+        const screen = await renderScreen(<WorkspaceNavigationProvider value={workspace(false)}>
             <RouteEntry />
-        </WorkspaceNavigationContext.Provider>);
+        </WorkspaceNavigationProvider>);
         expect(screen.findByTestId(`${testID}-loading-skeleton`)).not.toBeNull();
         expect(screen.getTextContent()).toBe('');
     });
     it('keeps the page-shaped loading fallback until the retained route owns the body, without mounting a temporary editable page', async () => {
         let mountedBodies = 0;
         function Body() { mountedBodies += 1; return React.createElement('EditablePage'); }
-        const page = (active: boolean) => <WorkspaceNavigationContext.Provider value={workspace(active)}>
+        const page = (active: boolean) => <WorkspaceNavigationProvider value={workspace(active)}>
             <WorkspaceRouteEntry Body={Body} loadingFallback={<PluginSurfaceFallback testID="cold-plugin-page" state="loading" />} />
-        </WorkspaceNavigationContext.Provider>;
+        </WorkspaceNavigationProvider>;
         const screen = await renderScreen(page(false));
         expect(screen.findByTestId('cold-plugin-page-loading-skeleton')).not.toBeNull();
         expect(screen.getTextContent()).toBe('');

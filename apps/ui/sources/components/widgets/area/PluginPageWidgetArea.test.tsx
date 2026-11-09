@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createActionExecutor, StrictJsonValueSchema, type PluginJsonSchemaV2 } from '@happier-dev/protocol';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { StrictJsonValueSchema} from '@happier-dev/protocol/json/strictJsonValue';
+import { type PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { buildWidgetAreaActionInputV1, createPluginWidgetAreaHostPortV1, PluginUiWidgetAreaRequestV1Schema, PluginUiWidgetAreaResultV1Schema } from '@happier-dev/protocol/plugins/ui';
 import {
@@ -15,7 +17,7 @@ import type { PluginUiHostApi, SurfaceContext } from '@happier-dev/plugin-sdk/ui
 import { projectHappierUiEnvironment } from '@happier-dev/plugin-ui/environment';
 import { ScrollArea, WidgetSurface } from '@happier-dev/plugin-ui';
 
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { widgetInstalledPackage, widgetProjectionOf } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
 import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoardArtifactBoundary';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
@@ -24,7 +26,8 @@ import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThem
 import type { WidgetSetup, WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
 import { resolveThemeProfile } from '@/theme/profiles/resolveThemeProfile';
 
-import { PluginDeclarativeProjectedModelV1Schema } from '@happier-dev/protocol';
+import { PluginDeclarativeProjectedModelV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/declarativeProjectedModelV1';
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 
 import type { WidgetAreaPort } from './useWidgetAreaLayout';
 import { createLayoutArtifactHttpBoundary, createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
@@ -99,6 +102,9 @@ const { AppShellPluginUiProjectionValueProvider } = await import('@/components/a
 const { createPluginUiPrivatePresentationHost } = await import('@/components/plugins/surfaces/pluginUiPrivatePresentationHost');
 const { CardGridCell } = await import('@/components/ui/cardGrid/CardGrid');
 const { ItemRowActions } = await import('@/components/ui/lists/ItemRowActions');
+const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
+const { FieldTextInput } = await import('@/components/ui/forms/FieldTextInput');
+const { SessionVisualNetworkPanel } = await import('@/components/sessions/board/SessionVisualNetworkPanel');
 const { ItemList } = await import('@/components/ui/lists/ItemList');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { WidgetSetupStep } = await import('@/components/widgets/add/WidgetSetupStep');
@@ -405,7 +411,10 @@ describe('a plugin page widget area', () => {
         }
     });
     it('shows named layouts through the shared tab owner and switches the displayed document through an agent Action', async () => {
-        const { store, hostApi, executor } = createArea();
+        const selectedSurface: WidgetSurfaceRefV1 = { ...surface, owner: { kind: 'pluginArea', pluginId: 'acme.prs', pageId: 'overview', area: 'pinned', layoutId: 'empty' } };
+        const selectedId = buildWidgetSurfaceArtifactIdV1(selectedSurface);
+        let selectedReads = 0;
+        const { store, hostApi, executor } = createArea({ beforeRead: async id => { if (id === selectedId) selectedReads++; } });
         await store.apply({ kind: 'add', instance: follow, size: 'small' });
         expect(await executor.execute('widgets.area.layout.create', { surface, layoutId: 'empty', name: 'Empty' }, { surface: 'ui', bypassApprovals: true })).toMatchObject({ ok: true });
         const screen = await renderScreen(page(hostApi, 'happier'));
@@ -425,11 +434,13 @@ describe('a plugin page widget area', () => {
         expect(barLabels.list).toBe('widgetAdd.areaPinned');
         expect(barLabels.current('Empty')).toBe('Empty');
         expect(screen.findByTestId('prs.pinned.widget.follow')).not.toBeNull();
+        selectedReads = 0;
         await act(async () => {
             const selected = await executor.execute('widgets.area.layout.select', { surface: { ...surface, owner: { ...surface.owner, layoutId: 'empty' } } }, { surface: 'mcp', bypassApprovals: true });
             expect(selected, JSON.stringify(selected)).toMatchObject({ ok: true });
         });
         await vi.waitFor(() => expect(screen.findByTestId('prs.pinned.widget.follow')).toBeNull());
+        expect(selectedReads).toBe(1);
         const defaultTab = screen.findByType(WidgetAreaLayoutBar).props.layouts.find((entry: { isDefault?: boolean }) => entry.isDefault);
         await act(async () => screen.findByType(WidgetAreaLayoutBar).props.onSelect(defaultTab.id));
         await vi.waitFor(() => expect(screen.findByTestId('prs.pinned.widget.follow')).not.toBeNull());
@@ -453,13 +464,15 @@ describe('a plugin page widget area', () => {
             await vi.waitFor(() => expect(screen.findAllByType(WidgetAreaPresetLine)).toHaveLength(1));
             const line = screen.findByType(WidgetAreaPresetLine);
             const displayed: WidgetSurfaceRefV1 = line.props.surface;
+            let selection!: Promise<unknown>;
             await act(async () => {
-                expect(await fixture.executor.execute('widgets.area.layout.select', { surface: selected }, { surface: 'mcp', bypassApprovals: true })).toMatchObject({ ok: true });
                 holdSelected = true;
+                selection = fixture.executor.execute('widgets.area.layout.select', { surface: selected }, { surface: 'mcp', bypassApprovals: true });
             });
             expect(screen.findByType(WidgetAreaPresetLine).props.surface).toEqual(displayed);
             const reset = line.props.presetActions.resetPreset(displayed);
             holdSelected = false; release();
+            expect(await selection).toMatchObject({ ok: true });
             const result = await reset;
             expect(result).toMatchObject({ ok: true, result: { undo: { surface: displayed } } });
             expect(widgetPlacements(await fixture.storeFor(initial).read())).toEqual([]);
@@ -687,7 +700,7 @@ describe('a plugin page widget area', () => {
         expect(result).toEqual(kind === 'approvalPending' ? { ok: true, approvalPending: true } : { ok: false, message: 'widgetAdd.saveFailed' });
         expect(widgetPlacements(await area.store.read()).map(entry => entry.instance)).toEqual([pin]);
     });
-    it.each(['plugin', 'declarative', 'project'] as const)('releases offscreen %s widget demand, retains geometry and resumes on scroll reentry', async kind => {
+    it.each(['plugin', 'declarative', 'project'] as const)('defers never-near %s widgets and retains loaded bodies without new reads on scroll reentry', async kind => {
         widgetDemand.active.clear(); widgetDemand.reads = []; widgetDemand.opens = 0; widgetDemand.releases = 0;
         const plugin = createArea();
         const project = projectMovementFixture().first;
@@ -732,6 +745,7 @@ describe('a plugin page widget area', () => {
         expect(widgetDemand.active).toEqual(new Set(['happier']));
         expect(widgetDemand.opens).toBe(1);
         expect(new Set(widgetDemand.reads)).toEqual(new Set(['happier']));
+        const firstBody = screen.findHostByTestId(`${areaId}.widget.follow.bodyHeight`)!;
         const firstReads = widgetDemand.reads.length;
         await act(async () => { screen.findHostByTestId(`${areaId}.widget.follow.bodyHeight`)!.props.onLayout({ nativeEvent: { layout: { height: 220 } } }); });
         await act(async () => {
@@ -739,20 +753,22 @@ describe('a plugin page widget area', () => {
             scroll.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: scrollY } } });
         });
         await flushHookEffects({ cycles: 4 });
-        expect(widgetDemand.active).toEqual(new Set(['website']));
-        expect(widgetDemand.releases).toBe(1);
+        expect(widgetDemand.active).toEqual(new Set(['happier', 'website']));
+        expect(widgetDemand.releases).toBe(0);
         expect(new Set(widgetDemand.reads.slice(firstReads))).toEqual(new Set(['website']));
         const secondReads = widgetDemand.reads.length;
-        expect(screen.findHostByTestId(`${areaId}.widget.follow.deferred`)!.props.style).toEqual({ minHeight: 220 });
+        expect(screen.findHostByTestId(`${areaId}.widget.follow.bodyHeight`)).toBe(firstBody);
+        expect(screen.findHostByTestId(`${areaId}.widget.follow.deferred`)).toBeNull();
         await act(async () => {
             scrollY = 0;
             scroll.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: scrollY } } });
         });
         await flushHookEffects({ cycles: 4 });
-        expect(widgetDemand.active).toEqual(new Set(['happier']));
-        expect(widgetDemand.opens).toBe(3);
-        expect(new Set(widgetDemand.reads.slice(secondReads))).toEqual(new Set(['happier']));
-        expect(widgetDemand.releases).toBe(2);
+        expect(widgetDemand.active).toEqual(new Set(['happier', 'website']));
+        expect(widgetDemand.opens).toBe(2);
+        expect(widgetDemand.reads.slice(secondReads)).toEqual([]);
+        expect(widgetDemand.releases).toBe(0);
+        expect(screen.findHostByTestId(`${areaId}.widget.follow.bodyHeight`)).toBe(firstBody);
     });
     it('moves a context-following widget between declared page areas under the Account UI move waiver with the current admitted page context', async () => {
         const { sync } = await import('@/sync/syncEngine');
@@ -821,7 +837,7 @@ describe('a plugin page widget area', () => {
             await act(async () => { carry = drag.runtime.begin(drag.sourceId, 'keyboard'); });
             await flushHookEffects({ cycles: 4 });
             const destination = () => drag.runtime.getDestinations(drag.sourceId).find((entry: { group?: string }) => entry.group === 'Page B');
-            expect(destination()?.admission, JSON.stringify(destination()?.admission)).toMatchObject({ status: 'allowed' });
+            await waitForTestEvent(drag.runtime.subscribe, () => expect(destination()?.admission, JSON.stringify(destination()?.admission)).toMatchObject({ status: 'allowed' }));
             await act(async () => { carry?.choose(destination()!.targetId, destination()!.destination); await screen.update(pages(42)); });
             await flushHookEffects({ cycles: 4 });
             expect(screen.findByTestId('page-b.unavailable')).not.toBeNull();
@@ -832,10 +848,10 @@ describe('a plugin page widget area', () => {
             await flushHookEffects({ cycles: 4 });
             await act(async () => { carry = drag.runtime.begin(drag.sourceId, 'keyboard'); });
             await flushHookEffects({ cycles: 4 });
-            expect(destination()?.admission).toMatchObject({ status: 'allowed' });
+            await waitForTestEvent(drag.runtime.subscribe, () => expect(destination()?.admission, JSON.stringify(destination()?.admission)).toMatchObject({ status: 'allowed' }));
             await act(async () => { carry?.choose(destination()!.targetId, destination()!.destination); await screen.update(pages('current-repository')); });
             await flushHookEffects({ cycles: 4 });
-            expect(destination()?.admission).toMatchObject({ status: 'allowed' });
+            await waitForTestEvent(drag.runtime.subscribe, () => expect(destination()?.admission, JSON.stringify(destination()?.admission)).toMatchObject({ status: 'allowed' }));
             await act(async () => { expect((await carry?.release())?.status).toBe('applied'); });
             expect(createdArtifactIds).toEqual([]);
             await flushHookEffects({ cycles: 4 });
@@ -980,6 +996,54 @@ describe('a plugin page widget area', () => {
         expect(menuOf(screen, 'saved').props.actions.some((action: { id: string }) => action.id === 'remove')).toBe(true);
     });
 
+    it('edits a saved HTML widget\u2019s network access from its \u22ef through the area\u2019s own write, and reads it back', async () => {
+        const area = createArea();
+        const definition = WidgetDefinitionV1Schema.parse({ v: 1, id: 'status-page', name: 'Status page',
+            provenance: { authorAccountId: scope.accountId, source: { kind: 'authored' } },
+            sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
+            inputs: { fields: [] }, inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+            body: { kind: 'html', source: artifactHtmlBundleFromBodyV1('<main>Status</main>') } });
+        const html: WidgetInstanceV1 = { v: 1, id: 'status', definition: { kind: 'artifact', artifactId: definition.id }, bindings: {} };
+        const definitionHttp = createLayoutArtifactHttpBoundary(scope.accountId, { artifactId: definition.id,
+            kind: 'widget-definition.v1', defaultLayout: definition, parseLayout: value => WidgetDefinitionV1Schema.parse(value),
+            buildHeader: buildWidgetDefinitionArtifactHeaderV1 });
+        definitionHttp.seed(definition);
+        viewerRequest = definitionHttp.request;
+        await area.store.apply({ kind: 'add', instance: html, size: 'medium' });
+        await area.store.apply({ kind: 'add', instance: pin });
+        storage.setState({ artifacts: { ...storage.getState().artifacts, [definition.id]: {
+            id: definition.id, ownerAccountId: scope.accountId, isDecrypted: true, title: definition.name,
+            rawHeader: buildWidgetDefinitionArtifactHeaderV1(definition), headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+        } } });
+        const screen = await renderScreen(page(area.hostApi, 'happier'));
+        await flushHookEffects({ cycles: 6 });
+        // Only a visual whose guest frame the choice governs offers it; an installed plugin widget does not.
+        expect(menuOf(screen, 'pin').props.actions.some((entry: { id: string }) => entry.id === 'network')).toBe(false);
+        await runAction(screen, 'status', 'network');
+        const panel = () => screen.findAllByType(SessionVisualNetworkPanel)[0];
+        expect(panel()?.props.current).toEqual({ mode: 'none', origins: [] });
+        // The footer's reassurance about public links belongs to None only; it misreads beside chosen sites.
+        const shareOffNote = 'sessionBoard.item.network.shareOffNote';
+        expect(screen.getTextContent()).toContain(shareOffNote);
+        const choose = screen.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === 'prs.pinned.widget.status.network.mode')!;
+        await act(async () => choose.props.onChange('origins'));
+        // Save is filled only when it can save: with no site yet it recedes and says why; a valid site enables it.
+        const save = () => screen.findByTestId('prs.pinned.widget.status.network.save')?.props;
+        expect(save()).toMatchObject({ disabled: true, accessibilityHint: 'sessionBoard.item.network.sitesNeeded' });
+        const sites = screen.findAllByType(FieldTextInput).find(node => node.props.testID === 'prs.pinned.widget.status.network.sitesInput')!;
+        await act(async () => sites.props.onChangeText('https://status.example.com'));
+        expect(save()?.disabled).toBe(false);
+        expect(screen.getTextContent()).not.toContain(shareOffNote);
+        await screen.pressByTestIdAsync('prs.pinned.widget.status.network.save');
+        await flushHookEffects({ cycles: 6 });
+        expect(widgetPlacements(await area.store.read()).find(entry => entry.instance.id === 'status')?.instance.networkOverride)
+            .toEqual({ networkOrigins: ['https://status.example.com'] });
+        expect(panel()).toBeUndefined();
+        // Reopened, it reads the instance's own choice, not the definition's.
+        await runAction(screen, 'status', 'network');
+        expect(panel()?.props.current).toEqual({ mode: 'origins', origins: ['https://status.example.com'] });
+    });
+
     it('follows This page while a pinned sibling keeps its own value, and a page change re-reads only the follower', async () => {
         const area = createArea();
         await area.store.apply({ kind: 'add', instance: follow });
@@ -1094,8 +1158,10 @@ describe('a plugin page widget area', () => {
                 context={pluginPageWidgetContext({ repository: 'happier' })} geometry="grid" title="Pinned" surfaceName="PRs & Issues" testID="prs.pinned" /> : undefined));
             await flushHookEffects({ cycles: 4 });
             await runAction(screen, pin.id, grouping ? 'groupWith-follow' : 'frameStyle');
-            if (grouping) expect(screen.findByTestId('prs.pinned.meta')?.props.children).toBe('widgetAdd.areaApprovalPending');
-            else expect(screen.findByTestId('prs.pinned.widget.pin.frame.pending')).not.toBeNull();
+            // The real executor and Artifact reader settle on publications, not a microtask count
+            // or vi.waitFor's shorter default deadline. The containing test owns that deadline.
+            if (grouping) await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('prs.pinned.meta')?.props.children).toBe('widgetAdd.areaApprovalPending'));
+            else await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('prs.pinned.widget.pin.frame.pending')).not.toBeNull());
             expect(widgetPlacements(http.layout())[0]?.frameStyle).not.toBe('plain');
             expect(approvalRows.list()).toHaveLength(1);
             const receipt = approvalRows.list()[0]!;
@@ -1109,18 +1175,22 @@ describe('a plugin page widget area', () => {
             }
             expect(await decideApprovalAsInbox(scope.serverId, receipt.id, decision)).toMatchObject({ ok: true });
             if (grouping) {
-                await vi.waitFor(() => expect(screen.findByTestId('prs.pinned.meta')?.props.children).toBe('widgetAdd.areaWriteFailed'));
+                await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('prs.pinned.meta')?.props.children).toBe('widgetAdd.areaWriteFailed'));
                 expect(http.layout().items.every(item => item.kind === 'widget')).toBe(true);
             } else if (scenario === 'approve' || scenario === 'context-replaced') {
-                await vi.waitFor(() => expect(screen.findByTestId('prs.pinned.widget.pin.frame.pending')).toBeNull());
-                expect(widgetPlacements(http.layout())[0]?.frameStyle).toBe('plain');
-                expect(screen.findByTestId('prs.pinned.widget.pin.frame.stale')).toBeNull();
-                expect(menuOf(screen, pin.id).props.actions.find((entry: { id: string }) => entry.id === 'frameStyle')?.title).toBe('widgetFrame.showFrame');
+                await waitForTestEvent(screen.subscribe, () => {
+                    expect(screen.findByTestId('prs.pinned.widget.pin.frame.pending')).toBeNull();
+                    expect(widgetPlacements(http.layout())[0]?.frameStyle).toBe('plain');
+                    expect(screen.findByTestId('prs.pinned.widget.pin.frame.stale')).toBeNull();
+                    expect(menuOf(screen, pin.id).props.actions.find((entry: { id: string }) => entry.id === 'frameStyle')?.title).toBe('widgetFrame.showFrame');
+                });
             } else {
-                await vi.waitFor(() => expect(screen.findByTestId('prs.pinned.widget.pin.frame.pending')).toBeNull());
-                expect(widgetPlacements(http.layout())[0]?.frameStyle).not.toBe('plain');
-                expect(screen.findByTestId('prs.pinned.widget.pin.frame.stale')).not.toBeNull();
-                expect(screen.getTextContent()).toContain(scenario === 'execution-failed' ? 'widgetAdd.refusals.editDenied' : 'widgetAdd.areaWriteFailed');
+                await waitForTestEvent(screen.subscribe, () => {
+                    expect(screen.findByTestId('prs.pinned.widget.pin.frame.pending')).toBeNull();
+                    expect(widgetPlacements(http.layout())[0]?.frameStyle).not.toBe('plain');
+                    expect(screen.findByTestId('prs.pinned.widget.pin.frame.stale')).not.toBeNull();
+                    expect(screen.getTextContent()).toContain(scenario === 'execution-failed' ? 'widgetAdd.refusals.editDenied' : 'widgetAdd.areaWriteFailed');
+                });
             }
             expect(screen.findByTestId('prs.pinned.widget.pin')).not.toBeNull();
         } finally { standardCleanup(); restoreLoader(); storage.setState(previous, true); }

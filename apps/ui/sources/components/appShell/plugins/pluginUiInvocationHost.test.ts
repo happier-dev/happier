@@ -2,14 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     DaemonPluginActionSchemasReadRequestSchema,
     DaemonPluginActionSchemasReadResponseSchema,
-    DaemonPluginStructuredMessageActionExecuteRequestSchema,
     DaemonPluginStructuredMessageActionExecuteResponseSchema,
-    PluginContributesV2Schema,
     PluginProjectedActionV2Schema,
-    type PluginContributionIdentityV1,
-    type PluginMachineExecutionOriginV1,
     type PluginProjectedActionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    DaemonPluginStructuredMessageActionExecuteRequestSchema} from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import {
+    PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
+import {
+    type PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import {
+    type PluginMachineExecutionOriginV1} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
     computePluginUiArtifactFileSetSha256DigestV1,
@@ -502,6 +506,11 @@ describe('AppShell plugin UI invocation host', () => {
         })).rejects.toMatchObject({ code: 'plugin_ui_method_unavailable' });
         await expect(ui.settleEphemeralInput({ kind: 'cancelled' }))
             .rejects.toMatchObject({ code: 'plugin_ui_method_unavailable' });
+        await expect(ui.downloadFile({ action: { pluginId: 'acme.files', localId: 'download' }, input: {} }))
+            .rejects.toMatchObject({ code: 'plugin_ui_method_unavailable' });
+        await expect(ui.openManagedMachineConfiguration({ provisioner: { pluginId: 'example.sandbox', localId: 'sandbox' } }))
+            .rejects.toMatchObject({ code: 'plugin_ui_method_unavailable' });
+        expect(machineRpc).not.toHaveBeenCalled();
         expect(ui.version().methods).toEqual(['executeAction']);
     });
 });

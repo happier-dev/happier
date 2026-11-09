@@ -1,4 +1,5 @@
 import { createEmptyPaneDetailsState } from './detailsWorkspaceReducer';
+import { PaneSlotPresentationSchema } from '../../model/selectedPaneDestination';
 import {
     isPluginDetailsDestinationResourceCandidate,
     normalizePluginDetailsDestinationResource,
@@ -87,6 +88,8 @@ function normalizeNextGroupOrdinal(value: unknown): number {
 function normalizePersistedOverlay(value: unknown): DetailsWorkspaceOverlayState | null {
     if (!isObjectRecord(value)) return null;
     const destination = PluginUiDestinationReferenceV1Schema.safeParse(value.destination);
+    const presentation = value.presentation === undefined ? null : PaneSlotPresentationSchema.safeParse(value.presentation);
+    if (presentation && !presentation.success) return null;
     const instanceKey = value.instanceKey === undefined
         ? { success: true as const, data: undefined }
         : PluginUiInstanceKeyV1Schema.safeParse(value.instanceKey);
@@ -105,6 +108,7 @@ function normalizePersistedOverlay(value: unknown): DetailsWorkspaceOverlayState
         'returnFocusedGroupId',
         'returnMaximizedGroupId',
         'returnIsOpen',
+        'presentation',
     ]);
     if (Object.keys(value).some((key) => !allowedKeys.has(key))) return null;
     return {
@@ -113,6 +117,7 @@ function normalizePersistedOverlay(value: unknown): DetailsWorkspaceOverlayState
         returnFocusedGroupId: value.returnFocusedGroupId,
         returnMaximizedGroupId: value.returnMaximizedGroupId,
         returnIsOpen: value.returnIsOpen,
+        ...(presentation?.success ? { presentation: presentation.data } : {}),
     };
 }
 
@@ -178,7 +183,7 @@ function resolveSerializedDetailsTabs(value: PaneDetailsState): Readonly<{
             const fallback = fallbackByCurrentKey.get(tabKey);
             const canRehydrate = fallback && fallbackKeyCounts.get(fallback.key) === 1;
             const persistedTab = canRehydrate
-                ? fallback
+                ? { ...fallback, ...(tab.presentation ? { presentation: tab.presentation } : {}) }
                 : normalizePersistedDetailsTabState(tab);
             const persistedKey = canRehydrate ? fallback.key : tabKey;
             persistedKeyByCurrentKey.set(tabKey, persistedKey);

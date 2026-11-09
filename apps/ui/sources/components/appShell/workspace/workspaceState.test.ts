@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { collectSplitCanvasLeafIds } from '../splitCanvas/model/splitCanvasSelectors';
-import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
+import { createWorkspaceState, reduceWorkspaceState, selectWorkspaceVisibleGroup } from './workspaceState';
 import type { WorkspaceTab } from './workspaceState';
-import { parseWorkspaceLayout, serializeWorkspaceLayout, readScopedWorkspaceLayout, writeScopedWorkspaceLayout, workspaceLayoutScopeKey } from './workspacePersistence';
+import { parseWorkspaceLayout, serializeWorkspaceLayout, workspaceLayoutScopeKey } from './workspacePersistence';
 
 const tab = (id: string, kind = 'session', preview = false): WorkspaceTab => {
     const params: Record<string, string> = kind === 'session' ? { id, serverId: 'home-a' } : {};
@@ -11,6 +11,30 @@ const tab = (id: string, kind = 'session', preview = false): WorkspaceTab => {
 };
 
 describe('workspace state', () => {
+    it('presents the remaining MRU tab while window placements and admitted transfers retain their membership', () => {
+        let state = createWorkspaceState(tab('remaining'));
+        state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: tab('placed') });
+        state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: tab('transferring') });
+        const original = state.groups['group:1'];
+        expect(selectWorkspaceVisibleGroup(state, original)).toBe(original);
+        state = reduceWorkspaceState(state, { type: 'setPresentation', tabId: 'placed', presentation: { windowId: 'native-window' } });
+        expect(selectWorkspaceVisibleGroup(state, original, { transferringTabIds: ['transferring'] })).toEqual({
+            id: 'group:1', tabIds: ['remaining'], activeTabId: 'remaining', mru: ['remaining'],
+        });
+        expect(state.groups['group:1']).toBe(original);
+        expect(Object.keys(state.tabs)).toEqual(['remaining', 'placed', 'transferring']);
+        expect(selectWorkspaceVisibleGroup(state, original, { transferringTabIds: ['transferring', 'remaining'] }).activeTabId).toBe('');
+    });
+    it('excludes scoped window records from other layouts but admits the destination own tab', () => {
+        const state = createWorkspaceState(tab('same-id'));
+        const group = state.groups['group:1'];
+        const placedTabs = [{ tabId: 'same-id', windowId: 'destination', serverId: 'home-a', accountId: 'alice' }];
+        const scope = { serverId: 'home-a', accountId: 'alice' };
+        expect(selectWorkspaceVisibleGroup(state, group, { placedTabs, scope }).tabIds).toEqual([]);
+        expect(selectWorkspaceVisibleGroup(state, group, { placedTabs, scope, windowId: 'destination' })).toBe(group);
+        expect(selectWorkspaceVisibleGroup(state, group, { placedTabs, scope: { ...scope, serverId: 'other-home' } })).toBe(group);
+        expect(selectWorkspaceVisibleGroup(state, group, { placedTabs, scope: { ...scope, accountId: 'bob' } })).toBe(group);
+    });
     it('retires a saved title when a tab navigates to another destination', () => {
         let state = createWorkspaceState(tab('a'));
         state = reduceWorkspaceState(state, { type: 'setFallbackTitle', tabId: 'a', title: 'Original session' });
@@ -336,10 +360,10 @@ describe('workspace state', () => {
         const two = workspaceLayoutScopeKey({ serverId: 'home', accountId: 'alice', windowId: 'window-b' });
         const otherAccount = workspaceLayoutScopeKey({ serverId: 'home', accountId: 'bob', windowId: 'window-a' });
         const state = createWorkspaceState(tab('a'));
-        const layouts = writeScopedWorkspaceLayout({}, one, state);
-        expect(readScopedWorkspaceLayout(layouts, one)).toEqual(state);
-        expect(readScopedWorkspaceLayout(layouts, two)).toBeNull();
-        expect(readScopedWorkspaceLayout(layouts, otherAccount)).toBeNull();
-        expect(readScopedWorkspaceLayout({ [one]: { v: 1, tabs: {} } }, one)).toBeNull();
+        const layouts = { [one]: serializeWorkspaceLayout(state) };
+        expect(parseWorkspaceLayout(layouts[one])).toEqual(state);
+        expect(parseWorkspaceLayout(layouts[two])).toBeNull();
+        expect(parseWorkspaceLayout(layouts[otherAccount])).toBeNull();
+        expect(parseWorkspaceLayout({ v: 1, tabs: {} })).toBeNull();
     });
 });

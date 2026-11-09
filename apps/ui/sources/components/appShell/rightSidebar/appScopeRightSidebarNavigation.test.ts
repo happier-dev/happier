@@ -23,6 +23,14 @@ function harness(overrides: Partial<Parameters<typeof openAppRightSidebarTab>[0]
 }
 
 describe('openAppRightSidebarTab', () => {
+    it('selects the actual reopened App page scope after its navigation is admitted', () => {
+        let opened: ((scopeId: string) => void) | undefined;
+        const result = harness({ activeScopeId: null, openAppPage: (_href, onOpened) => { opened = onOpened; } });
+        expect(result.selected).toEqual([]);
+        opened?.('workspace:pane:existing-panels:app');
+        expect(result.selected).toEqual([['workspace:pane:existing-panels:app', { kind: 'plugin', destination: INSPECTOR }]]);
+        expect(result.navigate).not.toHaveBeenCalled();
+    });
     it("opens an App panel in the right sidebar of the page on screen, without navigating", () => {
         const onSession = harness();
         expect(onSession.selected).toEqual([['session:abc', { kind: 'plugin', destination: INSPECTOR }]]);

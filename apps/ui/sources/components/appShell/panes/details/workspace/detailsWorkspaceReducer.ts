@@ -314,11 +314,18 @@ export function applyReplaceDetailsTab(
         tab: DetailsTab;
         openAs?: DetailsTabOpenMode;
         restoreSourceOnRehydrate?: boolean;
+        openIfMissing?: boolean;
     }>,
 ): PaneDetailsState {
     const sourceGroupId = findGroupIdByTabKey(detailsState, params.tabKey);
     const existing = getOwnDetailsWorkspaceRecordEntry(detailsState.tabsByKey, params.tabKey);
-    if (!sourceGroupId || !existing) return detailsState;
+    if (!sourceGroupId || !existing) {
+        if (!params.openIfMissing) return detailsState;
+        // Empty Browser pages are rendered before they hold a tab. Their first navigation uses
+        // the same tab admission as an ordinary open, while staying in the pane already on screen.
+        return { ...applyOpenDetailsTab(detailsState, { tab: params.tab, openAs: params.openAs ?? 'pinned' }),
+            isOpen: detailsState.isOpen };
+    }
 
     const isPinned =
         params.openAs === 'pinned'

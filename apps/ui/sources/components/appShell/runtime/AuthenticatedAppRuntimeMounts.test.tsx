@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { createServer } from 'node:http';
+import { Server } from 'socket.io';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
@@ -14,8 +16,10 @@ import {
 import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { SystemTaskResultSchema, SystemTaskSpecSchema, type SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import { socketRpcCodec } from '@happier-dev/sync-client';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { EphemeralUpdateSchema } from '@happier-dev/protocol/updates';
 
-const host = vi.hoisted(() => ({ platform: 'web', desktop: false, electron: false, windowLabel: 'main', responderWindowId: 'main' as string | null }));
+const host = vi.hoisted(() => ({ platform: 'web', desktop: false, electron: false, realSocket: false, windowLabel: 'main', responderWindowId: 'main' as string | null }));
 const nativeListeners = vi.hoisted(() => new Map<string, Set<(event: unknown) => void>>());
 
 vi.mock('socket.io-client', async importOriginal =>
@@ -138,6 +142,7 @@ beforeEach(async () => {
     host.platform = 'web';
     host.desktop = false;
     host.electron = false;
+    host.realSocket = false;
     host.windowLabel = 'main';
     host.responderWindowId = 'main';
     homeUrl = 'https://runtime.example.test';
@@ -252,11 +257,15 @@ async function mount(props: RuntimeProps, machineIds: readonly string[] = [], se
     const { createPlainMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
     const machines = machineIds.map(id => createPlainMachineRowFixture({ id, accountId }));
     homes.answer(homeId, '/v1/machines', { body: machines });
+    if (host.realSocket) for (const machine of machines) {
+        homes.answer(homeId, `/v1/machines/${machine.id}`, { body: { machine } });
+    }
     const { configureConnectedServerSocketBoundary, restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
     connection = await restoreServerAccountForTest({ serverUrl: homeUrl,
         serverIdentityId, accountId, request: homes.request,
         configureSocket: socket => {
             sockets.push(socket);
+            if (host.realSocket) return;
             configureConnectedServerSocketBoundary(socket);
             const emit = socket.emit.bind(socket);
             socket.emit = vi.fn<typeof socket.emit>((event, ...args) => {
@@ -348,6 +357,132 @@ describe('AuthenticatedAppRuntimeMounts', () => {
         expect([...nativeListeners.values()].every(listeners => listeners.size === 0)).toBe(true);
     });
 
+    it('keeps settled authenticated Home runtimes on their Account socket without scoped-pool churn or registration replay', async () => {
+        const http = createServer();
+        const relay = new Server(http, { path: '/v1/updates/' });
+        const counts = { scopedAcquisitions: 0, connections: 0, disconnects: 0, polling: 0, upgrades: 0, postUpgradePolling: 0, registrations: 0 };
+        const upgradedConnections = new Set<string>();
+        http.prependListener('request', request => {
+            const query = new URL(request.url ?? '/', 'http://127.0.0.1').searchParams;
+            if (query.get('transport') !== 'polling') return;
+            counts.polling++;
+            if (upgradedConnections.has(query.get('sid') ?? '')) counts.postUpgradePolling++;
+        });
+        relay.engine.on('connection', engine => {
+            counts.connections++;
+            engine.on('upgrade', () => { counts.upgrades++; upgradedConnections.add(engine.id); });
+            engine.on('close', () => { counts.disconnects++; });
+        });
+        relay.on('connection', socket => {
+            socket.on(SOCKET_RPC_EVENTS.REGISTER, () => { counts.registrations++; });
+            socket.onAny(async (event, ...args: unknown[]) => {
+                const ack = args.at(-1);
+                if (typeof ack !== 'function') return;
+                const packet = args[0];
+                if (event === SOCKET_RPC_EVENTS.CALL && packet && typeof packet === 'object'
+                    && 'method' in packet && typeof packet.method === 'string' && 'params' in packet) {
+                    const decoded = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, packet.params, packet.method);
+                    const response = packet.method.endsWith(`:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`)
+                        ? DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+                            projection: { v: 2, generation: 1, familiesById: {} } })
+                        : packet.method.endsWith(`:${RPC_METHODS.CAPABILITIES_DETECT}`)
+                            ? { protocolVersion: 1, results: {} } : null;
+                    if (response) {
+                        ack({ ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' }, response, decoded.callId) });
+                        return;
+                    }
+                }
+                ack(event === SOCKET_RPC_EVENTS.CALL
+                    ? { ok: false, error: 'Method not available in idle fixture', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }
+                    : { v: 1, ok: true, admittedSessionIds: [] });
+            });
+        });
+        await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+        const address = http.address();
+        if (!address || typeof address === 'string') throw new Error('Missing idle Home address');
+        homeUrl = `http://127.0.0.1:${address.port}`;
+        host.realSocket = true;
+        const { allowRealServerSocketBoundary } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const realSocketBoundary = allowRealServerSocketBoundary(homeUrl);
+        homeId = await homes.addHome({ name: 'Real idle runtime', serverUrl: homeUrl,
+            serverIdentityId: 'srv_authenticated_runtime_idle', accountId });
+        homes.answer(homeId, '/v1/kv/bulk', { body: { values: [] } });
+        homes.answer(homeId, '/v1/account/activity/badge-snapshot', { body: { badgeCount: 0 } });
+        const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
+        const machineRpc = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+        const calls = vi.spyOn(machineRpc, 'machineRpcWithServerScope');
+        const acquire = serverScopedRpcSocketPool.acquire;
+        vi.stubGlobal('__HAPPIER_PERF_DIAGNOSTICS__', true);
+        const setupPhases: Array<Readonly<{ phase: string; atMs: number; connectionId: number }>> = [];
+        const performanceApi = (globalThis as typeof globalThis & { __HAPPIER_SYNC_PERFORMANCE__?: {
+            subscribeScopedRpcSetup?: (listener: (event: Readonly<{ phase: string; atMs: number; connectionId: number }>) => void) => () => void;
+        } }).__HAPPIER_SYNC_PERFORMANCE__;
+        const detachSetup = performanceApi?.subscribeScopedRpcSetup?.(event => {
+            setupPhases.push({ phase: event.phase, atMs: event.atMs, connectionId: event.connectionId });
+        }) ?? (() => {});
+        const acquisition = vi.spyOn(serverScopedRpcSocketPool, 'acquire').mockImplementation(async params => {
+            counts.scopedAcquisitions++;
+            return await acquire(params);
+        });
+        try {
+            const screen = await mount({ isAuthenticated: true, isDesktopShell: false }, ['machine-idle'], 'srv_authenticated_runtime_idle');
+            const { readDaemonMergedProjectionSummary } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+            await vi.waitFor(() => {
+                expect(counts.registrations).toBeGreaterThan(0);
+                expect(counts.upgrades).toBeGreaterThan(0);
+                expect(readDaemonMergedProjectionSummary({ machineId: 'machine-idle', serverId: homeId }).current).toBe(true);
+            });
+            // Finite mount reads may borrow the pool. Let its existing idle
+            // retirement settle before measuring an otherwise unchanged Home.
+            await vi.waitFor(() => expect(counts.disconnects).toBe(counts.connections - 1), { timeout: 10_000 });
+            expect(setupPhases.map(event => event.phase)).toEqual(expect.arrayContaining(['acquire', 'connect', 'connected']));
+            const settled = { ...counts };
+            const settledMethods = calls.mock.calls.map(([request]) => request.method);
+            // Keep the real Machine online with its named 20 s liveness push;
+            // an expired fixture must not make a polling test pass by going offline.
+            for (let heartbeat = 0; heartbeat < 3; heartbeat++) await act(async () => {
+                await new Promise(resolve => setTimeout(resolve, 20_000));
+                relay.emit('ephemeral', EphemeralUpdateSchema.parse({ type: 'machine-activity',
+                    id: 'machine-idle', active: true, activeAt: Date.now() }));
+            });
+            const { storage } = await import('@/sync/domains/state/storage');
+            const { isMachineSelectableForFleet } = await import('@/sync/domains/machines/administration/fleetUnion');
+            const machine = storage.getState().machines['machine-idle'];
+            if (!machine) throw new Error('The idle Machine left its Account inventory');
+            expect(isMachineSelectableForFleet({ serverId: homeId, accountId }, machine)).toBe(true);
+            expect({ counts, methods: calls.mock.calls.map(([request]) => request.method) })
+                .toEqual({ counts: settled, methods: settledMethods });
+            expect(counts.postUpgradePolling).toBe(0);
+            console.info('[scoped-pool-churn-1025]', JSON.stringify({ idleMs: 60_000,
+                idleDelta: { acquisitions: counts.scopedAcquisitions - settled.scopedAcquisitions,
+                    connections: counts.connections - settled.connections, disconnects: counts.disconnects - settled.disconnects,
+                    polling: counts.polling - settled.polling, registrations: counts.registrations - settled.registrations,
+                    rpcCalls: calls.mock.calls.length - settledMethods.length },
+                setup: setupPhases.map(event => ({ ...event, atMs: event.atMs - (setupPhases[0]?.atMs ?? 0) })) }));
+            await screen.unmount();
+        } finally {
+            acquisition.mockRestore();
+            calls.mockRestore();
+            detachSetup();
+            await connection?.dispose();
+            connection = undefined;
+            await serverScopedRpcSocketPool.stopAll();
+            await new Promise<void>(resolve => relay.close(() => resolve()));
+            realSocketBoundary.dispose();
+        }
+    }, 90_000);
+
+    it.each([
+        { isDesktopShell: false, label: 'mobile' },
+        { isDesktopShell: true, label: 'desktop' },
+    ])('mounts the authenticated attention-reminder runtime for $label consumers', async ({ isDesktopShell }) => {
+        host.desktop = isDesktopShell;
+        const screen = await mount({ isAuthenticated: false, isDesktopShell });
+        expect(screen.findAllByType(owners.SessionAttentionReminderRuntime)).toHaveLength(0);
+        await screen.update(<RuntimeComposition isAuthenticated isDesktopShell={isDesktopShell} />);
+        expect(screen.findAllByType(owners.SessionAttentionReminderRuntime)).toHaveLength(1);
+    });
+
     it('mounts first-open onboarding before auth while keeping release notes authenticated-only', async () => {
         const screen = await mount({ isAuthenticated: false, isDesktopShell: false });
         expect(screen.findAllByType(owners.OnboardingShowcaseAutoShowMount)).toHaveLength(1);
@@ -423,6 +558,45 @@ describe('AuthenticatedAppRuntimeMounts', () => {
         host.platform = 'android';
         const screen = await mount({ isAuthenticated: true, isDesktopShell: false });
         expect(screen.findAllByType(owners.ActivitySurfacesRuntime)).toHaveLength(0);
+    });
+
+    it('keeps one current UI room per Machine through a settled idle minute and a real command change', async () => {
+        const machineId = 'machine-idle-current-ui';
+        const machineMethods = (event: string) => emittedMethods(event).filter(method => method.startsWith(machineId + ':'));
+        const readRoom = machineId + ':' + currentUiContextReadClientRpcMethod();
+        function MountedControl({ title, value }: Readonly<{ title: string; value: number }>) {
+            owners.useCurrentUiContextLocalCommands([{ key: 'details', title, invoke: () => { void value; } }]);
+            return null;
+        }
+        const tree = (title: string, value: number) => <RuntimeComposition isAuthenticated isDesktopShell={false}>
+            <MountedControl title={title} value={value} />
+        </RuntimeComposition>;
+        const screen = await mount({ isAuthenticated: true, isDesktopShell: false,
+            children: <MountedControl title="Open details" value={0} /> }, [machineId]);
+        const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
+        await waitForHomeGovernance(() => expect(machineMethods(SOCKET_RPC_EVENTS.REGISTER)).toContain(readRoom));
+        // An opaque command id is never its own Socket room.
+        expect(machineMethods(SOCKET_RPC_EVENTS.REGISTER).filter(method => method.includes('.current-context.command.'))).toEqual([]);
+        const initialRegistrations = machineMethods(SOCKET_RPC_EVENTS.REGISTER).length;
+        vi.useFakeTimers();
+        try {
+            for (let second = 1; second <= 60; second++) {
+                await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+                // Named Machine liveness is allowed at idle; it changes no command fact.
+                if (second % 20 === 0) await act(async () => {
+                    observeMachinePresenceForTest({ serverId: homeId, accountId }, [machineId]);
+                });
+                await screen.update(tree('Open details', second));
+            }
+            expect(machineMethods(SOCKET_RPC_EVENTS.REGISTER).slice(initialRegistrations)).toEqual([]);
+            await screen.update(tree('Close details', 61));
+            expect({ registrations: machineMethods(SOCKET_RPC_EVENTS.REGISTER).slice(initialRegistrations),
+                withdrawals: machineMethods(SOCKET_RPC_EVENTS.UNREGISTER) }).toEqual({ registrations: [], withdrawals: [] });
+            await screen.unmount();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it.each(['browser', 'secondary full', 'electron'] as const)('serves current UI context through the %s Home responder and retires it when authentication ends', async realm => {

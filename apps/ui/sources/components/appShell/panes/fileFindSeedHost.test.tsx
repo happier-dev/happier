@@ -1,3 +1,5 @@
+import { replacePersistentUiStateForTest, PersistedPaneScopesSchema } from '@/dev/testkit/harness/persistentUiState';
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
 import 'fake-indexeddb/auto';
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -29,7 +31,8 @@ const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
-const { renderScreen } = await import('@/dev/testkit');
+const { renderScreen: renderWithoutAuth } = await import('@/dev/testkit');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { act } = await import('react-test-renderer');
 const { getStorage } = await import('@/sync/domains/state/storage');
 const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
@@ -45,6 +48,13 @@ const initialState = getStorage().getState();
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let serverId = '';
 
+function AccountBoundary({ children }: React.PropsWithChildren) {
+    return <InjectedAuthProvider credentials={connection?.credentials ?? null}>{children}</InjectedAuthProvider>;
+}
+function renderScreen(element: React.ReactElement) {
+    return renderWithoutAuth(element, { wrapper: AccountBoundary });
+}
+
 const destination = { host: 'project' as const, id: 'project-a', path: 'src/a.ts',
     scope: { serverId: '', machineId: 'machine-a', rootPath: '/repo' } };
 const seed = { query: 'needle', options: { matchCase: false, regex: false }, target: { kind: 'file' as const, path: 'src/a.ts' } };
@@ -53,7 +63,7 @@ beforeEach(async () => {
     serverId = await homes.addHome({ name: 'Find Home', serverUrl: 'https://file-find-home.test', accountId: 'account-a' });
     connection = await restoreServerAccountForTest({ serverUrl: 'https://file-find-home.test', accountId: 'account-a', request: homes.request });
     getStorage().setState({ profileScope: { serverId, accountId: 'account-a' } });
-    getStorage().getState().applyLocalSettings({ appPaneScopesV1: {} });
+    (replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({})), getStorage().getState().applyLocalSettings({ }));
     destination.scope.serverId = serverId;
 });
 afterEach(async () => {
@@ -212,7 +222,7 @@ describe('file Find destination memory', () => {
             await act(async () => { hydration.resolve(); });
             expect(model.getSnapshot()).toMatchObject({ open: true, query: message.text, status: { kind: 'results', current: 1, total: 1 } });
             expect(screen.findByTestId('transcript-find')).not.toBeNull();
-        } finally { await screen.unmount(); model.dispose(); }
+        } finally { await screen.unmount(); model?.dispose(); }
     });
     it.each(['synchronous push', 'asynchronous navigation'])('discards a chat launch when %s fails before the host mounts', async (navigation) => {
         let open!: () => Promise<void>;

@@ -9,6 +9,9 @@ import type {
     SelectionListDynamicSection,
     SelectionListOption,
     SelectionListSectionDescriptor,
+    SelectionListVirtualizedOptionSource,
+    SelectionListVirtualizedOptionSourceHeader,
+    SelectionListVirtualizedOptionSourceItem,
 } from '@/components/ui/selectionList';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
@@ -28,6 +31,7 @@ import { useCodeTextFile } from '@/components/projects/files/code/useCodeTextFil
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { UniversalSearchSourceFocus } from './UniversalSearchRuntimeContext';
 import { boundedReplyHints } from './searchBoundedReplyHints';
+import { hasUniversalSearchOptionProjection, projectUniversalSearchOption } from './universalSearchOptionProjection';
 
 const EMPTY_WORKSPACE_SCOPE: WorkspaceScopeBase = { serverId: '', machineId: '', rootPath: '' };
 
@@ -181,12 +185,16 @@ export const FILE_CONTENT_FOLDER_OPTION_PREFIX = 'fileContent:folder:';
 
 export type BuildUniversalSearchSectionsInput = Readonly<{
     query: string;
+    /** This mounted producer's current output; retain unchanged rows by their scoped identity. */
+    previousSections?: readonly SelectionListSectionDescriptor[];
     commands: readonly Command[];
     sessions: readonly UniversalSearchSessionEntity[];
     sessionInventoryStatus?: 'idle' | 'loading' | 'ready' | 'error';
     projects: readonly UniversalSearchProjectEntity[];
     /** The resolved settings catalog's own Fuse owner; never a second matcher. */
     searchSettingsPages: (query: string) => readonly UniversalSearchSettingsPageEntity[];
+    /** The catalog's search-input revision, so admission/locale changes refresh an unchanged query. */
+    settingsSearchRevision?: number;
     transcript: UniversalSearchSource;
     files: UniversalSearchSource;
     fileContent?: UniversalSearchSource;
@@ -201,6 +209,12 @@ export type BuildUniversalSearchSectionsInput = Readonly<{
     symbols?: UniversalSearchSource;
     recentFiles?: readonly UniversalSearchResult[];
     changedFiles?: readonly UniversalSearchResult[];
+    /** Inventory identities stay cheap; the existing virtualizer requests the displayed result only. */
+    changedFileSource?: Readonly<{
+        count: number;
+        getOptionId(index: number): string;
+        getResult(index: number): UniversalSearchResult;
+    }>;
     /** `folder`: no Session in scope, so Changed is the folder's own uncommitted changes. */
     changedFilesScope?: 'session' | 'folder';
     filesStatusHint?: string;
@@ -511,8 +525,9 @@ function toOption(
     fileLine?: FileContentLine,
     /** The typed query: a row whose title is the text that matched tints it. */
     titleQuery?: string,
+    previous?: SelectionListOption,
 ): SelectionListOption {
-    return {
+    return projectUniversalSearchOption(previous, { result, iconName, onCommit, fileLine, titleQuery }, () => ({
         id: buildUniversalSearchOptionId(result.sourceId, result.scopeKey, result.id),
         testID: `universal-search:option:${result.sourceId}:${result.id}`,
         label: result.target.kind === 'workspaceFile' && !result.fileContent && result.target.anchor && 'startLine' in result.target.anchor
@@ -567,7 +582,7 @@ function toOption(
             : result.kind === 'workspaceFile' && result.target.kind === 'workspaceFile' ? fileIcon(result.target.path)
             : icon(iconName) }),
         onSelect: () => { onCommit(result); },
-    };
+    }));
 }
 
 function buildDynamicSection(
@@ -623,8 +638,9 @@ function buildDynamicSection(
         errorHint: t('universalSearch.groupFailed', { group: input.title }),
         retryLabel: t('common.retry'),
         resultTransition: 'none',
-        resolve: async (seed, signal, onProgress) => {
+        resolve: async (seed, signal, onProgress, previousOptions) => {
             const project = (resolved: Awaited<ReturnType<typeof source.resolve>>) => {
+                const previousById = new Map(previousOptions?.map(option => [option.id, option]));
                 const page = isUniversalSearchResolvePage(resolved)
                     ? resolved
                     : { results: resolved, emptyHint: undefined };
@@ -632,7 +648,8 @@ function buildDynamicSection(
                 // so any row read alone, spoken or scrolled to, still says where it lands.
                 const lines = groupFileContentLines(page.results);
                 const options: SelectionListOption[] = lines.length === 0
-                    ? page.results.slice(0, input.rowLimit).map((result) => toOption(result, input.iconName, input.onCommit, undefined, seed.trim() || undefined))
+                    ? page.results.slice(0, input.rowLimit).map((result) => toOption(result, input.iconName, input.onCommit, undefined, seed.trim() || undefined,
+                        previousById.get(buildUniversalSearchOptionId(result.sourceId, result.scopeKey, result.id))))
                     : input.groupByFile
                         ? (() => {
                             // One gutter per file, as wide as its last shown line number.
@@ -731,6 +748,7 @@ function buildDynamicSection(
                 // Coverage still describes the searched corpus when it yields no rows.
                 // SelectionList needs its empty-state hint to retain that section.
                 const emptyHint = page.emptyHint ?? scopeHints.emptyHint ?? (options.length === 0 ? resultHint : undefined);
+                previousOptions = options;
                 return {
                     options,
                     ...(emptyHint !== undefined ? { emptyHint } : {}),
@@ -756,12 +774,93 @@ function narrowLocalEntities<T>(
     return query.length === 0 ? entities.slice(0, recentLimit) : entities;
 }
 
+type UniversalSearchSectionProjection = Readonly<{
+    sections: readonly SelectionListSectionDescriptor[];
+    virtualizedOptionSource?: SelectionListVirtualizedOptionSource;
+}>;
+
+function buildVirtualizedFilesOptions(input: BuildUniversalSearchSectionsInput): SelectionListVirtualizedOptionSource | undefined {
+    const recent = input.recentFiles ?? [];
+    const changed = input.changedFileSource ?? {
+        count: input.changedFiles?.length ?? 0,
+        getOptionId: (index: number) => {
+            const result = input.changedFiles![index]!;
+            return buildUniversalSearchOptionId(result.sourceId, result.scopeKey, result.id);
+        },
+        getResult: (index: number) => input.changedFiles![index]!,
+    };
+    const items: SelectionListVirtualizedOptionSourceItem[] = [];
+    const headers: SelectionListVirtualizedOptionSourceHeader[] = [];
+    const ids: string[] = [];
+    const positions = new Map<string, Readonly<{ optionIndex: number; itemIndex: number }>>();
+    const changedIndexes: number[] = [];
+    const addOption = (id: string) => {
+        const optionIndex = ids.length;
+        ids.push(id);
+        positions.set(id, { optionIndex, itemIndex: items.length });
+        items.push({ kind: 'option', key: id, optionIndex, positionInSet: optionIndex + 1 });
+    };
+    const addHeader = (id: string, title: string) => {
+        const sectionIndex = headers.length;
+        headers.push({ id, title, ...(sectionIndex === 0 && input.filesStatusHint ? { resultHint: input.filesStatusHint } : {}) });
+        items.push({ kind: 'section-header', key: `${id}::header`, sectionIndex });
+    };
+    const addHint = () => {
+        const sectionIndex = headers.length - 1;
+        const header = headers[sectionIndex];
+        if (header?.resultHint) items.push({ kind: 'result-hint', key: `${header.id}::resultHint`, sectionIndex });
+    };
+    if (recent.length > 0) {
+        addHeader('files:recent', t('universalSearch.quickOpen.recent'));
+        for (const result of recent) addOption(buildUniversalSearchOptionId(result.sourceId, result.scopeKey, result.id));
+        addHint();
+    }
+    const recentIds = new Set(ids);
+    for (let index = 0; index < changed.count; index += 1) {
+        const id = changed.getOptionId(index);
+        if (recentIds.has(id)) continue;
+        if (changedIndexes.length === 0) addHeader('files:changed', input.changedFilesScope === 'folder'
+            ? t('universalSearch.quickOpen.changedInFolder') : t('universalSearch.quickOpen.changed'));
+        changedIndexes.push(index);
+        addOption(id);
+    }
+    if (changedIndexes.length > 0) addHint();
+    if (ids.length === 0) return undefined;
+    const focusable = (index: number) => index >= 0 && index < ids.length;
+    return {
+        items, optionCount: ids.length, stateKey: '',
+        getOption: index => {
+            if (!focusable(index)) throw new RangeError('Unknown quick-open option');
+            return toOption(index < recent.length ? recent[index]! : changed.getResult(changedIndexes[index - recent.length]!), 'file', input.onCommitResult);
+        },
+        getOptionId: index => ids[index] ?? '',
+        findOptionIndexById: id => positions.get(id)?.optionIndex ?? -1,
+        findItemIndexByOptionIndex: index => positions.get(ids[index] ?? '')?.itemIndex ?? -1,
+        getFirstFocusableOptionIndex: () => 0,
+        getNextFocusableOptionIndex: (index, direction) => (index + direction + ids.length) % ids.length,
+        isFocusableOptionIndex: focusable,
+        getHeader: sectionIndex => headers[sectionIndex]!,
+    };
+}
+
+export function buildUniversalSearchSections(input: BuildUniversalSearchSectionsInput): readonly SelectionListSectionDescriptor[];
+export function buildUniversalSearchSections(input: BuildUniversalSearchSectionsInput, projection: 'virtualized'): UniversalSearchSectionProjection;
 export function buildUniversalSearchSections(
-    input: BuildUniversalSearchSectionsInput,
-): ReadonlyArray<SelectionListSectionDescriptor> {
+    { previousSections, ...input }: BuildUniversalSearchSectionsInput,
+    projection?: 'virtualized',
+): ReadonlyArray<SelectionListSectionDescriptor> | UniversalSearchSectionProjection {
+    if (projection === 'virtualized') {
+        const virtualizedOptionSource = input.source === 'files' && !input.query.trim() ? buildVirtualizedFilesOptions(input) : undefined;
+        return virtualizedOptionSource ? { sections: [], virtualizedOptionSource } : { sections: buildUniversalSearchSections({ ...input, previousSections }) };
+    }
     const query = input.query.trim();
     const rowLimit = input.rowLimit ?? UNIVERSAL_SEARCH_PAGE_SIZE;
     const onCommit = input.onCommitResult;
+    const previousOptions = new Map(previousSections?.flatMap(section => section.kind === 'static'
+        ? section.options.filter(hasUniversalSearchOptionProjection).map(option => [option.id, option] as const) : []));
+    const localOption = (result: UniversalSearchResult, iconName: IconName, titleQuery?: string) =>
+        toOption(result, iconName, onCommit, undefined, titleQuery,
+            previousOptions.get(buildUniversalSearchOptionId(result.sourceId, result.scopeKey, result.id)));
     const sections: SelectionListSectionDescriptor[] = [];
     const scopedToContent = input.source === 'fileContent';
     if (input.source === 'symbols') return buildDynamicSection({ sourceId: 'symbols',
@@ -775,7 +874,7 @@ export function buildUniversalSearchSections(
                 // A Session lists what it changed; a project (no Session) lists the folder's uncommitted changes.
                 { id: 'files:changed', title: input.changedFilesScope === 'folder' ? t('universalSearch.quickOpen.changedInFolder') : t('universalSearch.quickOpen.changed'), results: input.changedFiles?.filter(result => !recentIds.has(buildUniversalSearchOptionId(result.sourceId, result.scopeKey, result.id))) },
             ].flatMap(({ id, title, results }): SelectionListSectionDescriptor[] => results?.length ? [{
-                kind: 'static', id, title, options: results.map(result => toOption(result, 'file', onCommit)),
+                kind: 'static', id, title, options: results.map(result => localOption(result, 'file')),
             }] : []);
             if (input.filesStatusHint && groups.length > 0) return groups.map((group, index) => index === 0 ? { ...group, resultHint: input.filesStatusHint } : group);
             if (input.filesStatusHint) return buildDynamicSection({ sourceId: UNIVERSAL_SEARCH_SOURCE_IDS.files,
@@ -794,7 +893,21 @@ export function buildUniversalSearchSections(
         }).map(section => ({ kind: 'dynamic' as const, ...section }));
     }
     const folders = input.fileContentFolders ?? [];
-    const contentSections = (input.fileContent ?? { status: 'absent' }).status === 'absent' && folders.length > 0 && !scopedToContent
+    const noFolderInScope = (input.fileContent ?? { status: 'absent' }).status === 'absent';
+    // No folder in scope (lab ST): the group offers the recent folders instead of guessing one. Inline it
+    // waits for a query and shows a few. The Text in files scope opens on all of them as local rows, so a
+    // reordering never blanks the list; the typed query is what the chosen folder is searched for, and the
+    // step's empty line says how to get a folder when there are none.
+    const folderSuggestions = (rows: readonly UniversalSearchFolderSuggestion[]) => rows.map((folder): SelectionListOption => ({
+        id: `${FILE_CONTENT_FOLDER_OPTION_PREFIX}${folder.id}`,
+        label: t('universalSearch.content.searchInFolder', { name: folder.name }),
+        ...(folder.subtitle ? { subtitle: folder.subtitle } : {}),
+        icon: icon('folder'),
+        onSelect: folder.onSelect,
+    }));
+    const contentSections: SelectionListSectionDescriptor[] = noFolderInScope && scopedToContent
+        ? folders.length > 0 ? [{ kind: 'static', id: UNIVERSAL_SEARCH_SOURCE_IDS.fileContent, options: folderSuggestions(folders) }] : []
+        : noFolderInScope && folders.length > 0 && !scopedToContent
         ? [{
             kind: 'dynamic' as const,
             id: UNIVERSAL_SEARCH_SOURCE_IDS.fileContent,
@@ -804,15 +917,7 @@ export function buildUniversalSearchSections(
             resultFiltering: 'provider' as const,
             debounceMs: 0,
             resultTransition: 'none' as const,
-            resolve: async () => ({
-                options: folders.slice(0, INLINE_FILE_CONTENT_LINES).map((folder): SelectionListOption => ({
-                    id: `${FILE_CONTENT_FOLDER_OPTION_PREFIX}${folder.id}`,
-                    label: t('universalSearch.content.searchInFolder', { name: folder.name }),
-                    ...(folder.subtitle ? { subtitle: folder.subtitle } : {}),
-                    icon: icon('folder'),
-                    onSelect: folder.onSelect,
-                })),
-            }),
+            resolve: async () => ({ options: folderSuggestions(folders.slice(0, INLINE_FILE_CONTENT_LINES)) }),
         }]
         : buildDynamicSection({ sourceId: UNIVERSAL_SEARCH_SOURCE_IDS.fileContent, title: t('universalSearch.content.textInFiles'), source: input.fileContent ?? { status: 'absent' }, iconName: 'file', preserveQuery: true, scopeLabel: input.fileContentScopeLabel, onShowAll: input.onShowAllFileMatches, onCommit,
         // Inline (lab G1) the group shows the best few lines and then "All N matches"; the scope lists every line by file.
@@ -826,7 +931,7 @@ export function buildUniversalSearchSections(
         ? nonRecentCommands
         : nonRecentCommands
             .filter((command) => command.emptyQuerySuggested === true);
-    const commandSections = buildCommandPaletteSelectionListSections(visibleCommands);
+    const commandSections = buildCommandPaletteSelectionListSections(visibleCommands, previousSections);
 
     const sessions = narrowLocalEntities(input.sessions, query, EMPTY_QUERY_RECENT_LIMIT);
     const sessionInventoryHint = query.length > 0
@@ -843,7 +948,7 @@ export function buildUniversalSearchSections(
             title: query.length === 0
                 ? t('commandPalette.commands.recentSessionsCategory')
                 : t('universalSearch.sections.sessions'),
-            options: sessions.map((session) => toOption({
+            options: sessions.map((session) => localOption({
                 id: session.sessionId,
                 // The same session id can exist on two Homes; the Home the row
                 // was projected from is part of what the user selected.
@@ -860,38 +965,45 @@ export function buildUniversalSearchSections(
                     serverId: session.serverId,
                     accountId: session.accountId,
                 },
-            }, 'chats-circle', onCommit, undefined, query || undefined)),
+            }, 'chats-circle', query || undefined)),
             ...(sessionInventoryHint ? { resultHint: sessionInventoryHint } : {}),
         }
         : null;
 
     // The Settings catalog ranks and admits literal matches or title typos. Its shared row projection
     // shows the description/keyword when it explains the hit; preserve that provider order.
-    const settingsPages = query.length > 0 ? input.searchSettingsPages(query).slice(0, rowLimit) : [];
-    const settingsSection: SelectionListSectionDescriptor | null = settingsPages.length > 0
+    // SelectionList owns dispatch for a changed query. Building descriptors as other sources
+    // publish must not run the catalog's Fuse search again.
+    const settingsSection: SelectionListSectionDescriptor | null = query.length > 0
         ? {
             kind: 'dynamic',
             id: UNIVERSAL_SEARCH_SOURCE_IDS.settings,
             title: t('universalSearch.sections.settings'),
-            resolverKey: `${UNIVERSAL_SEARCH_SOURCE_IDS.settings}|${query}`,
+            // The catalog is the target; the typed query is the seed, so refining it keeps the group continuous.
+            resolverKey: `${UNIVERSAL_SEARCH_SOURCE_IDS.settings}|${input.settingsSearchRevision ?? 0}`,
             visibleWhen: (value: string) => value.trim().length > 0,
             debounceMs: 0,
-            loadingSkeletonRows: 0,
             resultFiltering: 'provider',
-            showSkeletonsOnFirstLoad: true,
+            // No first-load placeholder: matching is local and settles at once, and a group header
+            // with no rows must never show while the catalog's verdict for the query is pending.
             resultTransition: 'none',
-            resolve: async () => ({
-                options: settingsPages.map((page) => toOption({
-                    id: page.id,
-                    // Settings pages are host-local: the catalog is the scope.
-                    scopeKey: buildUniversalSearchScopeKey(['settings']),
-                    sourceId: UNIVERSAL_SEARCH_SOURCE_IDS.settings,
-                    kind: 'settingsPage',
-                    title: page.title,
-                    ...(page.subtitle ? { subtitle: page.subtitle } : {}),
-                    target: { kind: 'settingsPage', route: page.route },
-                }, 'sliders-horizontal', onCommit)),
-            }),
+            resolve: async (seed, _signal, _onProgress, previous) => {
+                const previousById = new Map(previous?.map(option => [option.id, option]));
+                return {
+                    options: input.searchSettingsPages(seed.trim()).slice(0, rowLimit).map((page) => toOption({
+                        id: page.id,
+                        // Settings pages are host-local: the catalog is the scope.
+                        scopeKey: buildUniversalSearchScopeKey(['settings']),
+                        sourceId: UNIVERSAL_SEARCH_SOURCE_IDS.settings,
+                        kind: 'settingsPage',
+                        title: page.title,
+                        ...(page.subtitle ? { subtitle: page.subtitle } : {}),
+                        target: { kind: 'settingsPage', route: page.route },
+                    }, 'sliders-horizontal', onCommit, undefined, undefined,
+                        previousById.get(buildUniversalSearchOptionId(UNIVERSAL_SEARCH_SOURCE_IDS.settings,
+                            buildUniversalSearchScopeKey(['settings']), page.id)))),
+                };
+            },
         }
         : null;
 
@@ -913,7 +1025,7 @@ export function buildUniversalSearchSections(
             kind: 'static',
             id: UNIVERSAL_SEARCH_SOURCE_IDS.projects,
             title: t('universalSearch.sections.projects'),
-            options: projects.map((project) => toOption({
+            options: projects.map((project) => localOption({
                 id: project.workspaceRefId,
                 scopeKey: buildUniversalSearchScopeKey([
                     project.accountId,
@@ -933,7 +1045,7 @@ export function buildUniversalSearchSections(
                     machineId: project.machineId,
                     rootPath: project.rootPath,
                 },
-            }, 'folder-open', onCommit, undefined, query || undefined)),
+            }, 'folder-open', query || undefined)),
         });
     }
 

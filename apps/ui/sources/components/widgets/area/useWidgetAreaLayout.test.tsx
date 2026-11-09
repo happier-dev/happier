@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { act } from 'react-test-renderer';
-import { PluginUiWidgetAreaResultV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { buildWidgetAreaActionInputV1, PluginUiWidgetAreaResultV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1, buildWidgetSurfaceArtifactIdV1, buildWidgetSurfaceArtifactHeaderV1, flattenWidgetLayoutWidgetsV1, WidgetAreaLayoutV1Schema, type WidgetAreaLayoutV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import type { HomeHubArtifactV1, HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
 import { renderHook, flushHookEffects } from '@/dev/testkit';
@@ -11,6 +11,101 @@ import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccount
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoardArtifactBoundary';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { HappyError } from '@/utils/errors/errors';
+import { ServerFetchReadSupersededError } from '@/sync/http/client';
+import { createWidgetAreaReadFailureV1 } from '@happier-dev/protocol/widgets';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+
+it.each(['currentness', 'superseded', 'cancelled', 'offline'] as const)('retains the admitted area through a %s read outcome without automatic retries', async outcome => {
+    const connection = await restoreServerAccountForTest({ serverUrl: 'https://area-currentness-503.test', accountId: 'actor' });
+    const surface: WidgetSurfaceRefV1 = { serverId: connection.home.id, accountId: 'actor',
+        owner: { kind: 'corePage', pageId: 'public-profile', area: 'main', layoutId: 'minimal' } };
+    let failed = false;
+    let denied = false;
+    let reads = 0;
+    const transport: HomeHubArtifactTransportV1 = {
+        read: async () => {
+            reads++;
+            if (denied) throw Object.assign(new Error('Feature or consent unavailable'), { code: 'permission_denied', canTryAgain: false });
+            if (failed && outcome === 'superseded') throw new ServerFetchReadSupersededError();
+            if (failed && outcome === 'cancelled') throw new DOMException('Cancelled read', 'AbortError');
+            if (failed && outcome === 'offline') throw new TypeError('Failed to fetch');
+            if (failed) throw new HappyError('Account encryption currentness is temporarily unavailable', true,
+                { status: 503, kind: 'server', code: 'account-encryption-currentness-unavailable' });
+            return null;
+        },
+        create: async () => { throw new Error('Unexpected create'); },
+        update: async () => { throw new Error('Unexpected update'); },
+    };
+    const area = createWidgetAreaActionPortV1(() => createWidgetSurfaceArtifactPortV1(transport, { surface, isCurrent: () => true,
+        presets: [{ id: 'minimal', name: 'Minimal', items: [{ kind: 'widget', instance: {
+            v: 1, id: 'displayed', definition: { kind: 'builtin', id: 'usage_planet' }, bindings: {},
+        } }] }],
+    }));
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ widgetAccountScope: () => surface,
+        widgetSurfaceActions: { corePage: area } }));
+    // Account Actions envelope errors; native Host API reads may reject directly.
+    const actionPort: WidgetAreaPort = { surface, execute: async (operation, signal) => {
+        if (outcome === 'superseded') return PluginUiWidgetAreaResultV1Schema.parse(await executor.execute(operation.actionId,
+            buildWidgetAreaActionInputV1(operation, surface), { surface: 'ui', bypassApprovals: true, signal }));
+        const result = await area.read(surface, {});
+        return 'ok' in result ? result : PluginUiWidgetAreaResultV1Schema.parse({ ok: true, result });
+    } };
+    const context = {};
+    let returnedIsCurrent: (() => boolean) | undefined;
+    let hook = await renderHook(() => useWidgetAreaLayout(actionPort, context));
+    try {
+        await flushHookEffects();
+        const admitted = hook.getCurrent().state;
+        expect(admitted.status).toBe('ready');
+        failed = true;
+        await act(async () => { await hook.getCurrent().reload(); });
+        const retained = hook.getCurrent().state;
+        expect(retained).toMatchObject({ status: 'ready', readFailure: {
+            reasonCode: outcome === 'cancelled' || outcome === 'superseded' ? 'cancelled'
+                : outcome === 'offline' ? 'widget_area_unavailable' : 'account-encryption-currentness-unavailable',
+        } });
+        expect(reads).toBe(2);
+        expect(retained.status === 'ready' && admitted.status === 'ready' && retained.items === admitted.items).toBe(true);
+        if (outcome === 'offline') {
+            await hook.unmount();
+            hook = await renderHook(() => useWidgetAreaLayout(actionPort, context));
+            await flushHookEffects();
+            expect(hook.getCurrent().state, 'a warm return keeps the admitted layout after transport loss').toMatchObject({ status: 'ready' });
+            const returned = hook.getCurrent().state;
+            expect(returned.status === 'ready' && admitted.status === 'ready' && returned.items === admitted.items).toBe(true);
+            if (returned.status === 'ready') returnedIsCurrent = returned.isCurrent;
+        }
+        failed = false;
+        if (outcome === 'offline') {
+            await act(async () => { publishHomeAccountChange('other-home', undefined, { source: 'connected' }); });
+            expect(reads).toBe(3);
+            await act(async () => { publishHomeAccountChange(connection.home.id, undefined, { source: 'connected' }); });
+            await flushHookEffects();
+            expect(reads).toBe(4);
+        } else await act(async () => { await hook.getCurrent().reload(); });
+        expect(hook.getCurrent().state).not.toHaveProperty('readFailure');
+        if (outcome === 'offline') {
+            denied = true;
+            await act(async () => { await hook.getCurrent().reload(); });
+            expect(hook.getCurrent().state).toMatchObject({ status: 'unavailable', reasonCode: 'permission_denied' });
+            await hook.unmount();
+            expect(returnedIsCurrent?.(), 'restored facts do not keep a detached reader admitted').toBe(false);
+            hook = await renderHook(() => useWidgetAreaLayout(actionPort, context));
+            await flushHookEffects();
+            expect(hook.getCurrent().state.status).toBe('unavailable');
+            denied = false;
+            await act(async () => { await hook.getCurrent().reload(); });
+            expect(hook.getCurrent().state.status).toBe('ready');
+            await hook.unmount();
+            failed = true;
+            retireActiveServerAccountScopeLifetime();
+            hook = await renderHook(() => useWidgetAreaLayout(actionPort, context));
+            await flushHookEffects();
+            expect(hook.getCurrent().state.status).toBe('unavailable');
+        }
+    } finally { await hook.unmount(); await connection.dispose(); }
+});
 
 it('keeps a connecting plugin area loading, retains authorized data, and clears it on a terminal refusal', async () => {
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://area-connection-pending.test', accountId: 'actor' });
@@ -31,8 +126,9 @@ it('keeps a connecting plugin area loading, retains authorized data, and clears 
         if (retireOnRead) retireActiveServerAccountScopeLifetime();
         return readiness === 'ready'
             ? PluginUiWidgetAreaResultV1Schema.parse({ ok: true, result: await area.read(surface, {}) })
+            : readiness === 'failed' ? { ...createWidgetAreaReadFailureV1('widget_area_unavailable'), error: readiness }
             : { ok: false, errorCode: readiness === 'pending' ? 'plugin_surface_connection_pending'
-                : readiness === 'failed' ? 'widget_area_unavailable' : 'plugin_action_caller_forbidden', error: readiness };
+                : 'plugin_action_caller_forbidden', error: readiness };
     } };
     const context = {};
     const hook = await renderHook(() => useWidgetAreaLayout(port, context));
@@ -316,10 +412,12 @@ it('withdraws mounted effect admission on exact Artifact publication before a de
         storageMode: 'plain' as const, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
     let revoked = false;
     let readFails = false;
+    let reads = 0;
     let releaseRead: (() => void) | undefined;
     let waitForRead = false;
     const transport: HomeHubArtifactTransportV1 = {
         read: async () => {
+            reads++;
             if (waitForRead) await new Promise<void>(resolve => { releaseRead = resolve; });
             if (readFails) throw new Error('Artifact read failed');
             if (!revoked) storage.getState().applyArtifacts([{ ...publication }]);
@@ -340,18 +438,24 @@ it('withdraws mounted effect admission on exact Artifact publication before a de
         return PluginUiWidgetAreaResultV1Schema.parse('ok' in result ? result : { ok: true, result });
     } };
     const context = {};
-    storage.getState().deleteArtifact(artifactId);
-    expect(storage.getState().artifacts[artifactId]).toBeUndefined();
+    storage.getState().applyArtifacts([{ ...publication }]);
     const hook = await renderHook(() => useWidgetAreaLayout(port, context));
     await flushHookEffects();
     const admitted = hook.getCurrent().state;
     expect(admitted.status).toBe('ready');
     if (admitted.status !== 'ready') throw new Error('Expected admitted attached surface');
-    expect(admitted.isCurrent()).toBe(true); // Initial publication settles through the existing exact-row reconciliation.
+    expect(admitted.isCurrent()).toBe(true);
+    expect(reads).toBe(1);
+    await act(async () => storage.getState().applyArtifacts([{ ...publication }]));
+    await flushHookEffects();
+    expect(reads).toBe(1);
+    await act(async () => { await hook.getCurrent().reload(); });
+    expect(reads).toBe(2);
     const firstPublication = storage.getState().artifacts[artifactId];
     waitForRead = true;
     publication.updatedAt = 2;
     await act(async () => storage.getState().applyArtifacts([{ ...publication }]));
+    expect(reads).toBe(3);
     expect(admitted.isCurrent()).toBe(false);
     expect(admitted.isReadPending()).toBe(true);
     expect(hook.getCurrent().state.status).toBe('ready'); // Last admitted layout remains during the read.
@@ -379,6 +483,43 @@ it('withdraws mounted effect admission on exact Artifact publication before a de
     await flushHookEffects();
     expect(hook.getCurrent().state).toMatchObject({ status: 'unavailable' });
     await hook.unmount();
+});
+
+it('admits the Artifact published by its own first read without another read', async () => {
+    const surface: WidgetSurfaceRefV1 = { serverId: 'home', accountId: 'owner',
+        owner: { kind: 'project', projectId: 'self-publication', layoutId: 'named' } };
+    const artifactId = buildWidgetSurfaceArtifactIdV1(surface);
+    const layout: WidgetAreaLayoutV1 = { v: 1, surface, items: [] };
+    let reads = 0;
+    const transport: HomeHubArtifactTransportV1 = {
+        read: async () => {
+            reads++;
+            if (reads === 1) storage.getState().applyArtifacts([{ id: artifactId, title: 'Named', isDecrypted: true,
+                ownerAccountId: 'owner', access: 'view', storageMode: 'plain', headerVersion: 1,
+                bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }]);
+            return { artifactId, ownerAccountId: 'owner', access: 'view',
+                header: buildWidgetSurfaceArtifactHeaderV1(layout), revision: { headerVersion: 1, bodyVersion: 1 },
+                body: JSON.stringify(layout) };
+        },
+        create: async () => { throw new Error('Unexpected create'); },
+        update: async () => { throw new Error('Unexpected update'); },
+    };
+    const area = createWidgetAreaActionPortV1(() => createWidgetSurfaceArtifactPortV1(transport, {
+        surface, isCurrent: () => true,
+    }));
+    const port: WidgetAreaPort = { execute: async () => {
+        const result = await area.read(surface, {});
+        return PluginUiWidgetAreaResultV1Schema.parse('ok' in result ? result : { ok: true, result });
+    } };
+    const context = {};
+    const hook = await renderHook(() => useWidgetAreaLayout(port, context));
+    try {
+        await flushHookEffects();
+        expect(hook.getCurrent().state.status).toBe('ready');
+        const state = hook.getCurrent().state;
+        expect(state.status === 'ready' && state.isCurrent()).toBe(true);
+        expect(reads).toBe(1);
+    } finally { await hook.unmount(); storage.getState().deleteArtifact(artifactId); }
 });
 
 it('applies a reversible edit to the displayed area during a publication refresh without losing concurrent edits', async () => {

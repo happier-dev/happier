@@ -216,13 +216,17 @@ export function PluginPageWidgetArea(props: PluginUiWidgetAreaPresentation & Rea
         delete: t('usage.board.page.deleteView'), deleteLabel: t('usage.board.page.deleteView'),
     };
     const testID = props.testID ?? `widget-area.${props.area}`;
+    // The area's items take every area prop; an unchanged description keeps the same dashboard copy.
+    const dashboard = React.useMemo(() => ({ addLabel: t('widgetAdd.areaEmptyAction'),
+        emptyTitle: props.description ?? t('widgetAdd.areaEmptyReason'), holdsEmptyLineWhileLoading: true as const }), [props.description]);
     return (
         <>
         {/* One header: the layout tabs name the area (lab `p-overview`, as on Usage and a Project), so the
             area below draws no second title and adds through its one dashed line. Held while loading so
             nothing moves on arrival. */}
         <WidgetAreaLayoutBar layouts={options} selectedId={selectedId} onSelect={id => { void selectLayout(id); }}
-            onCreate={ready?.canEdit ? () => { void create(); } : null} actions={actions} labels={labels} heading="section" testID={`${testID}.layouts`} />
+            onCreate={ready?.canEdit ? () => { void create(); } : null} actions={actions} readFailure={layouts.readFailure}
+            labels={labels} heading="section" testID={`${testID}.layouts`} />
         {ready?.preset?.isEdited ? <WidgetAreaPresetLine preset={ready.preset} surface={ready.surface} testID={`${testID}.preset`}
             presetActions={{ resetPreset: async (surface = ready.surface) => {
                 const admitted = { surface, context: ready.context };
@@ -237,7 +241,7 @@ export function PluginPageWidgetArea(props: PluginUiWidgetAreaPresentation & Rea
             geometry="grid"
             title={props.title ?? t('widgetAdd.areaPinned')}
             surfaceName={props.surfaceName}
-            dashboard={{ addLabel: t('widgetAdd.areaEmptyAction'), emptyTitle: props.description ?? t('widgetAdd.areaEmptyReason'), holdsEmptyLineWhileLoading: true }}
+            dashboard={dashboard}
             testID={testID}
         />
         </>

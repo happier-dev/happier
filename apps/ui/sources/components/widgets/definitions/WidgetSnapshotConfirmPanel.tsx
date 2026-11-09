@@ -100,7 +100,7 @@ export function WidgetSnapshotConfirmPanel(props: Readonly<{
         const outcome = await runWidgetDefinitionCommand('widgets.snapshot.post', {
             surface: props.surface, itemId: randomUUID(), title: props.title, preview: opened.preview, placement: {},
             // This panel is the confirmation the policy asks for: the person read the frozen card and pressed Post.
-        }, props.surface, undefined, undefined, { actionId: 'widgets.snapshot.post' });
+        }, props.surface, undefined, undefined, { confirmed: true });
         if (outcome.kind === 'applied') {
             AccessibilityInfo.announceForAccessibility?.(t('widgetDefinition.snapshotPosted'));
             props.onDone();

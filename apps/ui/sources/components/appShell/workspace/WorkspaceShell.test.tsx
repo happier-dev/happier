@@ -231,12 +231,10 @@ async function renderWorkspace(initial: WorkspaceState, horizontalArea?: Horizon
     if (!scope) throw new Error('Shell fixture requires the restored Account scope');
     scale?.seed(scope.serverId);
     const { serializeWorkspaceLayout, workspaceLayoutScopeKey } = production[4];
-    // Seed the current persistence owner; the local-settings layout below is only its legacy rescue.
+    // Seed the current persistence owner.
     const { workspaceLayoutsState } = await import('@/sync/domains/state/filePaneUiState');
     workspaceLayoutsState.set(workspaceLayoutScopeKey({ ...scope, windowId: WINDOW_ID }), serializeWorkspaceLayout(initial));
-    storage.setState({ isDataReady: true, localSettings: { ...storage.getState().localSettings, workspaceLayoutV1: {
-        [workspaceLayoutScopeKey({ ...scope, windowId: WINDOW_ID })]: serializeWorkspaceLayout(initial),
-    } } });
+    storage.setState({ isDataReady: true });
     const catalog = production[3].resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
     const activeTab = initial.tabs[initial.groups[initial.focusedGroupId].activeTabId];
     const href = production[3].hrefForDestinationRef(catalog, activeTab.target);
@@ -336,6 +334,41 @@ describe('WorkspaceShell params-only target write', () => {
 
         expect(hostProps(focusedId)).not.toBe(writtenBefore);
         expect(hostProps(otherId)).toBe(otherBefore);
+    });
+});
+
+describe('WorkspaceShell retained member layer', () => {
+    it('leaves a hidden tab\'s member layer untouched by another tab\'s write', async () => {
+        const screen = await renderWorkspace(initialState());
+        const { navigation } = screen.root.findByType('WorkspaceStateProbe').props;
+        await act(async () => { navigation.activateTab('group:1', 'a'); });
+        await act(async () => { navigation.activateTab('group:1', 'b'); });
+        await settle(() => { expect(screen.root.findAllByType('StatefulRouteBodyProbe')).toHaveLength(2); });
+        const focusedId = stateOf(screen).groups['group:1'].activeTabId;
+        const otherId = focusedId === 'a' ? 'b' : 'a';
+        // A host element whose parent did not re-render keeps the props object it was committed with.
+        const layerProps = (tabId: string) => screen.findByTestId(`split-canvas-retained-content-${tabId}`)?.props;
+        const otherBefore = layerProps(otherId);
+        expect(otherBefore).toBeTruthy();
+
+        await act(async () => { navigation.dispatch({ type: 'setTarget', tabId: focusedId,
+            target: { kind: 'sessions', params: { anchor: focusedId, q: 'x' } } }); });
+
+        expect(layerProps(otherId)).toBe(otherBefore);
+    });
+
+    it('re-renders a member layer when its tab changes', async () => {
+        const screen = await renderWorkspace(initialState());
+        const { navigation } = screen.root.findByType('WorkspaceStateProbe').props;
+        await act(async () => { navigation.activateTab('group:1', 'a'); });
+        await settle(() => { expect(screen.root.findAllByType('StatefulRouteBodyProbe').length).toBeGreaterThan(0); });
+        const focusedId = stateOf(screen).groups['group:1'].activeTabId;
+        const layerProps = (tabId: string) => screen.findByTestId(`split-canvas-retained-content-${tabId}`)?.props;
+        const before = layerProps(focusedId);
+        await act(async () => { navigation.dispatch({ type: 'setTarget', tabId: focusedId,
+            target: { kind: 'sessions', params: { anchor: focusedId, q: 'y' } } }); });
+        expect(stateOf(screen).tabs[focusedId].target.params.q).toBe('y');
+        expect(layerProps(focusedId)).not.toBe(before);
     });
 });
 

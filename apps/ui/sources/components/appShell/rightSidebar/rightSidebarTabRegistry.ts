@@ -63,6 +63,8 @@ export type ResolveRightSidebarTabsInput = Readonly<{
      */
     appPluginPlacements?: readonly PluginUiSurfacePlacementProjection[];
     appLocalize?: PluginLocalizedTextResolver;
+    /** The presented page's own companion keys; only they admit that scope's `reach: 'pageItems'` views. */
+    pageCompanions?: ReadonlySet<string>;
 }>;
 
 export type SessionRightSidebarTabId =

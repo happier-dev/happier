@@ -37,7 +37,8 @@ export function WorkspaceTitleBar(props: Readonly<{
 }>) {
     const workspace = useOptionalWorkspaceNavigation();
     const geometry = React.useContext(WorkspaceBarGeometryContext);
-    if (!workspace?.active || !geometry) return null;
+    // A phone presents its tabs in its own rail; a window narrowed from desktop must not keep the wide strip mounted hidden.
+    if (!workspace?.active || workspace.phone || !geometry) return null;
     return <WorkspaceTitleBarSegments workspace={workspace} geometry={geometry} {...props} />;
 }
 

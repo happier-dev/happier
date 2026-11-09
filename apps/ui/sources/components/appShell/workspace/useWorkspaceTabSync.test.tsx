@@ -44,7 +44,6 @@ Object.defineProperty(boundary, 'layouts', {
     set: (layouts: Record<string, unknown>) => {
         for (const key of Object.keys(workspaceLayoutsState.readAll())) workspaceLayoutsState.remove(key);
         for (const [key, layout] of Object.entries(layouts)) workspaceLayoutsState.set(key, layout);
-        getStorage().setState({ localSettings: { ...getStorage().getState().localSettings, workspaceLayoutV1: {} } });
     },
 });
 const initialTab = { id: 'placeholder', target: { kind: 'newTab', params: {} }, pinned: false, preview: true };

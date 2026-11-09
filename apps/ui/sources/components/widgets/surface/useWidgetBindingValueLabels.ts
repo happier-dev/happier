@@ -16,6 +16,7 @@ import { useSessionContentDemand } from '@/sync/domains/session/useSessionConten
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { resolveExactServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 
 /** A typed location (absolute, home-relative or UNC path) says where, not what: it never names a copy. */
 const TYPED_LOCATION = /^(?:[\\/~]|[A-Za-z]:[\\/])/;
@@ -30,6 +31,7 @@ export function useWidgetBindingValueLabels(
     candidate: Pick<WidgetCandidate, 'inputs' | 'sessionInputPath'> | null | undefined,
     fieldCandidates?: readonly (WidgetCandidate | null | undefined)[],
 ): WidgetBindingValueLabels {
+    const isSessionVisible = useSessionRecordingVisibility();
     const entries = React.useMemo(() => {
         const fields = candidate?.inputs?.fields ?? [];
         const target = readWidgetInputTargetV1(candidate ?? {});
@@ -53,7 +55,7 @@ export function useWidgetBindingValueLabels(
                 machine: machine?.success ? machine.data : null };
         });
     }, [bindings, candidate, fieldCandidates]);
-    const addresses = React.useMemo(() => entries.flatMap(entry => entry.session ? [entry.session] : []), [entries]);
+    const addresses = React.useMemo(() => entries.flatMap(entry => entry.session && isSessionVisible(entry.session) ? [entry.session] : []), [entries, isSessionVisible]);
     // The pinned Sessions are named from encrypted content: they demand it like visible list rows.
     useSessionContentDemand(addresses, { tag: 'widgets.hydrateBoundSessions', hydrate: 'unsettled' });
     const sessionNames = useSessionDisplayNameProjections(addresses, sessionName);
@@ -76,7 +78,7 @@ export function useWidgetBindingValueLabels(
         return Object.fromEntries(entries.map((entry, index) => {
             const { field, value } = entry;
             let label: string | null = null;
-            if (entry.session) label = sessionNames[sessionIndex++] ?? null;
+            if (entry.session) label = isSessionVisible(entry.session) ? sessionNames[sessionIndex++] ?? null : null;
             else if (entry.workspace) label = workspaceNames[index] ?? null;
             else if (entry.machine) label = machineNames[index] ?? null;
             else if (value !== undefined && field) {
@@ -88,5 +90,5 @@ export function useWidgetBindingValueLabels(
             }
             return [entry.path, label];
         }));
-    }, [entries, sessionNames, workspaceNames, machineNames]);
+    }, [entries, sessionNames, workspaceNames, machineNames, isSessionVisible]);
 }

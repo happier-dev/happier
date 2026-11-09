@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { PluginDeclarativeDocumentV1 } from '@happier-dev/protocol';
+import type { PluginDeclarativeDocumentV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarative-document-authoring';
 import { act } from 'react-test-renderer';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';

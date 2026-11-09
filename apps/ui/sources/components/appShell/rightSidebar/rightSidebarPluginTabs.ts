@@ -1,3 +1,4 @@
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import {
     isPluginUiDestinationBindingAdmittedAtRuntimeV1,
     type PluginUiDestinationRuntimeFormFactorV1,
@@ -27,6 +28,11 @@ export type ResolveRightSidebarPluginTabsInput = Readonly<{
     localize?: PluginLocalizedTextResolver;
     /** Current mounted host facts for catalog admission. */
     runtimeAdmission?: RightSidebarPluginTabRuntimeAdmission;
+    /**
+     * Qualified keys of the companions the presented page names in its own items. A `reach: 'pageItems'` view is
+     * listed only when its page names it; anywhere else it does not exist as a tab.
+     */
+    pageCompanions?: ReadonlySet<string>;
 }>;
 
 function readRightSidebarMetadata(
@@ -40,6 +46,7 @@ function resolveRightSidebarPluginDestinations(input: Readonly<{
     placements?: readonly PluginUiSurfacePlacementProjection[];
     policyContext?: PluginUiPolicyEvaluationContext;
     localize?: PluginLocalizedTextResolver;
+    pageCompanions?: ReadonlySet<string>;
 }>) {
     return resolvePluginSurfaceDestinations({
         ...(input.placements ? { placements: input.placements } : {}),
@@ -50,6 +57,10 @@ function resolveRightSidebarPluginDestinations(input: Readonly<{
                 placement.binding.container !== 'rightSidebarTab'
                 || placement.binding.targetKind !== input.scope
             ) {
+                return null;
+            }
+            if (placement.display.reach === 'pageItems'
+                && input.pageCompanions?.has(buildQualifiedPluginContributionKey(placement.binding.destination)) !== true) {
                 return null;
             }
             return {
@@ -103,13 +114,16 @@ export function resolveRightSidebarPluginTabs(
         })
     ));
 
-    return Object.freeze(destinations.map((destination) => {
+    return Object.freeze(destinations.map((destination): RightSidebarPluginTabDefinition => {
         return Object.freeze({
             id: destination.id,
             owner: 'plugin',
             label: destination.label,
             icon: destination.icon,
             ...(destination.badge === undefined ? {} : { badge: destination.badge }),
+            defaultPlacement: destination.defaultPlacement ?? 'overflow',
+            ...(destination.countResourceId === undefined ? {} : { countResourceId: destination.countResourceId }),
+            ...(destination.counts === undefined ? {} : { counts: destination.counts }),
             ...(destination.requestedPlacement === undefined ? {} : { requestedPlacement: destination.requestedPlacement }),
             ...(destination.rankHint === undefined ? {} : { rankHint: destination.rankHint }),
             order: destination.order,
@@ -123,6 +137,6 @@ export function resolveRightSidebarPluginTabs(
                 pluginId: destination.placement.binding.destination.pluginId,
                 descriptorId: destination.placement.binding.destination.localId,
             }),
-        }) as RightSidebarPluginTabDefinition;
+        });
     }));
 }

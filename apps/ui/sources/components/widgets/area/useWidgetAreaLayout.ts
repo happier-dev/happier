@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { WidgetAreaReadFailureDetailsV1Schema, projectWidgetAreaReadExceptionV1 } from '@happier-dev/protocol/widgets';
 import { buildWidgetAreaActionInputV1, type PluginUiWidgetAreaOperationV1, type PluginUiWidgetAreaResultV1 } from '@happier-dev/protocol/plugins/ui';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { usePluginHostReadiness } from '@happier-dev/plugin-ui/hostApi';
@@ -8,7 +9,9 @@ import { storage, useArtifact, useActiveServerAccountScopeLifetime } from '@/syn
 import { resumeActionExecutionResult } from '@/components/approvals/actionApprovalContinuation';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { captureActiveServerAccountScopeLifetime, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, readServerAccountScopeOwnerLifetime, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import type { WidgetEntityMovementPort } from '@/sync/ops/actions/widgetEntityMovement';
 import type { WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 
@@ -20,6 +23,8 @@ import type { WidgetSurfaceContext } from '@/components/widgets/surface/widgetSu
  * resolver lives behind it here.
  */
 export type WidgetAreaPort = Readonly<{
+    /** A selected destination replaces the prior document with its loading shell. Same-document refreshes retain it. */
+    surface?: WidgetSurfaceRefV1;
     /** Writes name the still-displayed admission, not a different selection awaiting its read. */
     execute(operation: PluginUiWidgetAreaOperationV1, signal?: AbortSignal,
         target?: Readonly<{ surface: WidgetSurfaceRefV1; context: WidgetSurfaceContext }>): Promise<PluginUiWidgetAreaResultV1>;
@@ -65,6 +70,14 @@ export type WidgetAreaLayout<C> = Readonly<{
     write: (operation: PluginUiWidgetAreaOperationV1) => Promise<WidgetAreaWriteOutcome>;
 }>;
 
+// The acknowledged layout belongs to the Account, not a route mount. Keep only
+// admitted facts here; each mounted reader supplies its own currentness/effects.
+type AdmittedArea = Readonly<{
+    facts: Omit<Extract<WidgetAreaLayoutState<WidgetSurfaceContext>, { status: 'ready' }>, 'isCurrent' | 'isReadPending' | 'readFailure'>;
+    publication: unknown;
+}>;
+const accountAreas = new WeakMap<ServerAccountScopeLifetime, Map<string, AdmittedArea>>();
+
 function failureCode(result: PluginUiWidgetAreaResultV1): string | null {
     return result.ok ? null : (result.errorCode ?? 'widget_area_unavailable');
 }
@@ -98,18 +111,21 @@ function reconcile<C>(previous: WidgetAreaLayoutState<C>, next: WidgetAreaLayout
         && sameStrictJsonValue(previous.preset ?? null, next.preset ?? null)
         && sameStrictJsonValue(previous.readFailure ?? null, next.readFailure ?? null)
         && previous.context === next.context && sameStrictJsonValue(previous.surface, next.surface)) return previous;
-    return { ...next, items: sameItems ? previous.items : items, placements: samePlacements ? previous.placements : placements };
+    return { ...next, surface: sameStrictJsonValue(previous.surface, next.surface) ? previous.surface : next.surface,
+        items: sameItems ? previous.items : items, placements: samePlacements ? previous.placements : placements };
 }
 
 /**
  * The area's acknowledged layout, read through its port. It reads when mounted and again whenever
  * the host's binding changes (a new page context is admitted by that read before any widget follows
- * it), and after each of its own writes. While a read is in flight the last good layout and its
- * admitted context stay on screen; a refused write never discards them.
+ * it), and after each of its own writes. A new destination shows its loading shell; a failed refresh
+ * keeps the same destination's last authorized layout and its admitted context with a retryable notice.
  */
 export function useWidgetAreaLayout<C extends WidgetSurfaceContext>(port: WidgetAreaPort, context: C): WidgetAreaLayout<C> {
     const hostReadiness = usePluginHostReadiness();
     const lifetime = useActiveServerAccountScopeLifetime();
+    const ownerLifetime = lifetime ? readServerAccountScopeOwnerLifetime(lifetime) : null;
+    const requestedId = port.surface ? port.surface.artifactId ?? buildWidgetSurfaceArtifactIdV1(port.surface) : null;
     const interest = React.useMemo(() => ({ controller: new AbortController() }), [port, context, lifetime]);
     React.useEffect(() => {
         if (interest.controller.signal.aborted) interest.controller = new AbortController();
@@ -118,7 +134,19 @@ export function useWidgetAreaLayout<C extends WidgetSurfaceContext>(port: Widget
     }, [interest]);
     const approval = useActionApprovalContinuation({ scopeKey: JSON.stringify(lifetime?.scope ?? null),
         serverId: lifetime?.scope.serverId ?? '', onExecuted: () => {} });
-    const [state, setState] = React.useState<WidgetAreaLayoutState<C>>({ status: 'loading' });
+    const mounted = React.useRef(true);
+    const [observation, setObservation] = React.useState<Readonly<{ surface: WidgetSurfaceRefV1 | undefined; state: WidgetAreaLayoutState<C> }>>(() => {
+        const admitted = requestedId && ownerLifetime ? accountAreas.get(ownerLifetime)?.get(requestedId) : null;
+        const isCurrent = () => mounted.current && requestedId !== null && !!lifetime?.isCurrent()
+            && storage.getState().artifacts[requestedId] === admitted?.publication;
+        const state: WidgetAreaLayoutState<C> = admitted && isCurrent()
+            && sameStrictJsonValue(admitted.facts.surface, port.surface) && sameStrictJsonValue(admitted.facts.context, context)
+            ? { ...admitted.facts, context, isCurrent, isReadPending: () => false } : { status: 'loading' };
+        return { surface: port.surface, state };
+    });
+    // A previous destination's observation cannot represent the selected document, even while reading.
+    const state: WidgetAreaLayoutState<C> = port.surface && !sameStrictJsonValue(observation.surface ?? null, port.surface)
+        ? { status: 'loading' } : observation.state;
     const displayed = React.useRef(state);
     displayed.current = state;
     // The last admitted layout, kept while a refresh is transient (connecting, or a read that failed
@@ -127,11 +155,9 @@ export function useWidgetAreaLayout<C extends WidgetSurfaceContext>(port: Widget
     const artifactId = state.status === 'ready' ? state.surface.artifactId ?? buildWidgetSurfaceArtifactIdV1(state.surface) : '';
     const artifact = useArtifact(artifactId);
     const generation = React.useRef(0);
-    const mounted = React.useRef(true);
     const binding = React.useRef({ port, context });
     if (binding.current.port !== port || binding.current.context !== context) binding.current = { port, context };
     if (state.status === 'ready') lastAdmitted.current = { state, binding: binding.current };
-    else if (state.status === 'unavailable' && state.reasonCode !== 'widget_area_unavailable') lastAdmitted.current = null;
     React.useEffect(() => {
         mounted.current = true;
         return () => { mounted.current = false; };
@@ -140,26 +166,30 @@ export function useWidgetAreaLayout<C extends WidgetSurfaceContext>(port: Widget
     const read = React.useCallback(async (signal?: AbortSignal) => {
         if (binding.current.port !== port || binding.current.context !== context) return;
         const capturedBinding = binding.current;
-        const publications = storage.getState().artifacts;
         const admittedViewer = getActiveServerAccountScope();
         const admittedLifetime = captureActiveServerAccountScopeLifetime();
         const current = ++generation.current;
         const hasAuthority = () => mounted.current && (admittedLifetime ? admittedLifetime.isCurrent() : getActiveServerAccountScope() === null);
         const readPendingFor = (surface: WidgetSurfaceRefV1) => {
             const id = surface.artifactId ?? buildWidgetSurfaceArtifactIdV1(surface);
-            const publication = publications[id];
+            const publication = storage.getState().artifacts[id];
             return () => hasAuthority() && (current !== generation.current || binding.current !== capturedBinding
                 || storage.getState().artifacts[id] !== publication);
         };
         let next: WidgetAreaLayoutState<C>;
+        let failedAcquisition = false;
         try {
             const result = await port.execute({ actionId: 'widgets.item.list' }, signal);
             const refused = failureCode(result);
             const parsed = result.ok ? WidgetSurfaceReadV1Schema.safeParse(result.result) : null;
             // The shared DTO also carries Board widths; this host consumes the existing area's native contract.
             const area = parsed?.success ? WidgetAreaLayoutV1Schema.safeParse({ v: 1, surface: parsed.data.surface, items: parsed.data.items }) : null;
+            failedAcquisition = result.ok ? !parsed?.success || !area?.success
+                : refused === 'cancelled' || WidgetAreaReadFailureDetailsV1Schema.safeParse(result.details).success;
             const admittedArtifactId = parsed?.success ? parsed.data.surface.artifactId ?? buildWidgetSurfaceArtifactIdV1(parsed.data.surface) : '';
-            const admittedPublication = publications[admittedArtifactId];
+            // The read may itself publish this Artifact. Admit the settled publication,
+            // then retire it only when a later publication replaces that exact value.
+            const admittedPublication = storage.getState().artifacts[admittedArtifactId];
             // A pending observation does not retire admitted facts. Actual scope retirement or
             // a new Artifact publication does; late read results are still rejected below.
             const isCurrent = () => hasAuthority()
@@ -172,26 +202,53 @@ export function useWidgetAreaLayout<C extends WidgetSurfaceContext>(port: Widget
                     isShared: parsed.data.isShared === true, admittedViewer, context, isCurrent, isReadPending: readPendingFor(area.data.surface), documentState: parsed.data.state ?? 'present',
                     ...(parsed.data.dashboard ? { dashboard: parsed.data.dashboard } : {}), ...(parsed.data.preset ? { preset: parsed.data.preset } : {}) }
                 : { status: 'unavailable', reasonCode: 'invalid_widget_area_result' };
-        } catch {
-            next = { status: 'unavailable', reasonCode: 'widget_area_unavailable' };
+        } catch (error) {
+            const failure = projectWidgetAreaReadExceptionV1(error);
+            const reasonCode = failure.errorCode;
+            failedAcquisition = reasonCode === 'cancelled' || WidgetAreaReadFailureDetailsV1Schema.safeParse(failure.details).success;
+            next = { status: 'unavailable', reasonCode };
         }
         if (!mounted.current || signal?.aborted || current !== generation.current || binding.current !== capturedBinding) return;
-        if (admittedLifetime && !admittedLifetime.isCurrent()) next = { status: 'unavailable', reasonCode: 'widget_area_scope_retired' };
-        // A retryable read failure says nothing new about the admitted layout. Keep it while
-        // its Account and exact Artifact publication are still current; explicit refusal or
-        // retired authority still clears it through the normal unavailable state.
-        setState(previous => {
-            if (previous.status === 'ready' && previous.isCurrent()) {
-                if (next.status === 'loading') return previous;
-                if (next.status === 'unavailable' && next.reasonCode === 'widget_area_unavailable') {
+        if (admittedLifetime && !admittedLifetime.isCurrent()) {
+            next = { status: 'unavailable', reasonCode: 'widget_area_scope_retired' };
+            failedAcquisition = false;
+        }
+        const admittedOwnerLifetime = admittedLifetime ? readServerAccountScopeOwnerLifetime(admittedLifetime) : null;
+        let retained = admittedOwnerLifetime ? accountAreas.get(admittedOwnerLifetime) : undefined;
+        // Failed acquisition withdraws no write target; its canonical writer still authorizes
+        // the edit. A positive refusal, unlike a failed observation, retires that target.
+        if (next.status === 'unavailable' && !failedAcquisition) {
+            lastAdmitted.current = null;
+            if (requestedId) retained?.delete(requestedId);
+        }
+        if (next.status === 'ready' && requestedId && admittedLifetime?.isCurrent()
+            && areServerAccountScopesEqual(admittedLifetime.scope, next.surface)) {
+            if (!retained && admittedOwnerLifetime) {
+                retained = new Map();
+                accountAreas.set(admittedOwnerLifetime, retained);
+            }
+            const { isCurrent: _current, isReadPending: _pending, readFailure: _failure, ...facts } = next;
+            const previous = retained?.get(requestedId);
+            retained?.set(requestedId, { facts: previous && sameStrictJsonValue(previous.facts, facts) ? previous.facts : facts,
+                publication: storage.getState().artifacts[requestedId] });
+        }
+        // A retryable refresh says nothing new about this document. Retain only the selected
+        // destination's admission; another view's cards cannot represent a failed selection.
+        setObservation(previous => {
+            const baseline = previous.state;
+            let state = next;
+            if (baseline.status === 'ready' && (!port.surface || sameStrictJsonValue(baseline.surface, port.surface)) && baseline.isCurrent()) {
+                if (next.status === 'loading') state = baseline;
+                else if (next.status === 'unavailable' && failedAcquisition) {
                     const { status: _status, ...readFailure } = next;
-                    return { ...previous, readFailure, isReadPending: readPendingFor(previous.surface) };
+                    state = { ...baseline, readFailure, isReadPending: readPendingFor(baseline.surface) };
                 }
             }
-            return reconcile(previous, next);
+            state = reconcile(baseline, state);
+            return state === previous.state && previous.surface === port.surface ? previous : { surface: port.surface, state };
         });
         return next;
-    }, [context, port]);
+    }, [context, port, requestedId]);
 
     // The native Host API keeps its identity through Machine readiness changes. Re-observe its
     // area on settlement/re-admission, including a settled outage that does not advance revision.
@@ -202,7 +259,17 @@ export function useWidgetAreaLayout<C extends WidgetSurfaceContext>(port: Widget
     }, [read, hostReadiness.pending, hostReadiness.revision]);
 
     React.useEffect(() => {
+        const serverId = port.surface?.serverId ?? lifetime?.scope.serverId;
+        if (!serverId) return;
+        return subscribeHomeAccountChange(event => {
+            if (event.source === 'connected' && areServerProfileIdentifiersEquivalent(event.serverId, serverId)) void read();
+        }, { serverIds: [serverId], reconnect: 'refresh' });
+    }, [lifetime, port.surface?.serverId, read]);
+
+    React.useEffect(() => {
         if (!artifactId) return;
+        const admitted = displayed.current;
+        if (admitted.status === 'ready' && admitted.isCurrent()) return;
         const controller = new AbortController();
         // Canonical Artifact publication reaches both ends of an Action-driven transfer.
         void read(controller.signal);
@@ -211,7 +278,7 @@ export function useWidgetAreaLayout<C extends WidgetSurfaceContext>(port: Widget
 
     const reload = React.useCallback(async () => {
         if (!mounted.current || binding.current.port !== port || binding.current.context !== context) return;
-        setState(previous => previous.status === 'unavailable' ? { status: 'loading' } : previous);
+        setObservation(previous => previous.state.status === 'unavailable' ? { ...previous, state: { status: 'loading' } } : previous);
         return read();
     }, [context, port, read]);
 
@@ -219,8 +286,7 @@ export function useWidgetAreaLayout<C extends WidgetSurfaceContext>(port: Widget
         if (!mounted.current || binding.current.port !== port || binding.current.context !== context)
             return { kind: 'refused', errorCode: 'widget_area_unavailable' };
         const shown = displayed.current;
-        const transient = shown.status === 'loading' || (shown.status === 'unavailable' && shown.reasonCode === 'widget_area_unavailable');
-        const retained = transient && lastAdmitted.current?.binding === binding.current ? lastAdmitted.current.state : null;
+        const retained = lastAdmitted.current?.binding === binding.current ? lastAdmitted.current.state : null;
         const admitted = shown.status === 'ready' ? shown : retained;
         // A newer publication suspends mounted reads, but not a person's edit to the displayed
         // area. Its canonical writer re-reads access and the latest revision before CAS/replay.

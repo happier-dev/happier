@@ -7,7 +7,6 @@ import { DestinationInstanceHost } from './DestinationInstanceHost';
 import { Stack, useLocalSearchParams } from './destinationRoute';
 import { WorkspaceDestinationBody } from './WorkspaceDestinationBody';
 import { AppShellColumnContext } from '@/components/navigation/shell/appRail/appShellColumnContext';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { registerWorkspaceRouteContext } from './workspaceRouteContext';
 import { resolveCompactAppDestinations, resolveDestinationRefFromHref } from '../destinations/compactAppDestinationCatalog';
 
@@ -118,10 +117,10 @@ describe('workspace destination route composition', () => {
         expect(screen.root.findByType('HostedMachine').props).toMatchObject({ draft: 'Review this machine', scroll: 150 });
         expect(screen.root.findByType('HostedMachine').props.mount).toBe(mount);
     });
-    // A lazy body that is still loading says it once: beside a column, the column already speaks for the
-    // destination ("Opening Boards"), so the page waits quietly; without a column the page says it.
+    // A lazy body that is still loading draws the same loading state its mounted page shows first (the Run
+    // page's "Loading…"), beside a column too, so the main area never flashes blank before the page mounts.
     it.each([
-        [true, '/boards', 0],
+        [true, '/boards', 1],
         [false, '/boards/board-a', 1],
     ] as const)('with the column showing (%s) says a loading body %s %i time(s)', async (columnVisible, pathname, cards) => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
@@ -135,7 +134,9 @@ describe('workspace destination route composition', () => {
             </AppShellColumnContext.Provider>);
         });
         expect(renderer.root.findAllByType('HostedBoards')).toHaveLength(0);
-        expect(renderer.root.findAllByType(SurfaceStateCard)).toHaveLength(cards);
+        expect(renderer.root.findAll(node => typeof node.type === 'string'
+            && node.props.testID === 'workspace-destination-body-loading'
+            && node.props.role === 'status')).toHaveLength(cards);
         await act(async () => {});
         expect(renderer.root.findAllByType('HostedBoards')).toHaveLength(1);
         act(() => renderer.unmount());

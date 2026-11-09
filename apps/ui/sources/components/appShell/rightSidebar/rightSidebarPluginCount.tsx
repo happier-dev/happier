@@ -9,7 +9,7 @@ import { resolvePluginSurfaceLaunchAuthority } from '@/components/plugins/surfac
 import { readSelectedPluginUiResourceCapability } from '@/sync/domains/plugins/ui/resourceCapability';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { readCurrentAppShellPluginUiProjection, subscribeCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
-import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY, readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
+import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY, readPluginUiContributionOrigin, resolvePluginUiExecutionDeclaration } from '@/sync/domains/plugins/ui/projectionUnion';
 import { readPluginUiResourceProjection, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { RightSidebarPluginTabDefinition } from './rightSidebarBuiltinTabs';
@@ -40,9 +40,14 @@ export function resolvePluginRightSidebarCountBinding(input: PluginRightSidebarC
         || tab.placement.availability.state !== 'available') return null;
     const projection = isApp ? readCurrentAppShellPluginUiProjection({ scope: accountLifetime.scope, declarationsOnly: true })
         : input.runtime.pluginUiProjection;
-    const declaration = readPluginUiResourceProjection(projection?.resourcesById, {
+    const captured = readPluginUiResourceProjection(projection?.resourcesById, {
         pluginId: tab.plugin.pluginId, localId: resourceId,
     });
+    const declaration = captured?.execution?.target === 'account' ? resolvePluginUiExecutionDeclaration(captured, {
+        current: readPluginUiResourceProjection(readCurrentAppShellPluginUiProjection({
+            scope: accountLifetime.scope, declarationsOnly: true,
+        })?.resourcesById, { pluginId: tab.plugin.pluginId, localId: resourceId }),
+    }) : captured;
     if (!declaration || declaration.contentType !== 'application/json' || !declaration.scope) return null;
     const context = declaration.scope === 'global' ? { kind: 'global' as const }
         : declaration.scope === 'session' && !isApp && tab.placement.binding.targetKind === 'session' && input.sessionId
@@ -59,9 +64,11 @@ export function resolvePluginRightSidebarCountBinding(input: PluginRightSidebarC
         serverId: accountLifetime.scope.serverId, expectedCallerOccurrenceId: declaration.occurrenceId,
         accountResource: declaration, context,
     } : null;
-    const capability = readSelectedPluginUiResourceCapability(tab.placement);
+    const executionPlacement = resolvePluginUiExecutionDeclaration(tab.placement, { machineResource: declaration });
+    if (!executionPlacement) return null;
+    const capability = readSelectedPluginUiResourceCapability(executionPlacement);
     if (!capability.readable || !capability.dynamic) return null;
-    const authority = resolvePluginSurfaceLaunchAuthority({ placement: tab.placement, accountLifetime,
+    const authority = resolvePluginSurfaceLaunchAuthority({ placement: executionPlacement, accountLifetime,
         ...(isApp ? {} : { scoped: input.runtime }) });
     if (!authority?.machineId || !authority.serverId || !authority.occurrenceId
         || declaration.occurrenceId !== undefined && declaration.occurrenceId !== authority.occurrenceId) return null;
@@ -80,10 +87,14 @@ export function pluginRightSidebarCountHasContent(count: number | null, counts?:
     return counts.every(item => item.count === 0) ? false : null;
 }
 
-/** Shared accessible text for the declaration's ordered count identities. */
+/**
+ * Shared text for the declaration's ordered count identities. Only non-zero counts are named: an unknown or zero
+ * count says nothing, so a tab reads "Actions" rather than "Actions Running — · Failed —". Undefined when none is.
+ */
 export function formatPluginRightSidebarCount(count: number | null, counts?: readonly PluginRightSidebarLabelledCount[]): string | undefined {
-    return counts ? counts.map(item => `${item.label} ${item.count === null ? '—' : formatExactCount(item.count)}`).join(', ')
-        : count === null ? undefined : formatExactCount(count);
+    if (!counts) return count === null || count <= 0 ? undefined : formatExactCount(count);
+    const named = counts.flatMap(item => item.count !== null && item.count > 0 ? [`${item.label} ${formatExactCount(item.count)}`] : []);
+    return named.length === 0 ? undefined : named.join(' · ');
 }
 
 function reconcileCounts(binding: PluginSurfaceDestinationCounts, values: Readonly<Record<string, number | null>> | null,

@@ -19,6 +19,33 @@ afterEach(() => {
 });
 
 describe('current UI context Action adapter', () => {
+    it('passes a parameterized host-local command its admitted JSON payload while preserving payload-free calls', async () => {
+        const received: unknown[] = [];
+        const command: CurrentUiContextResolvedCommand = {
+            id: 'current-ui:edit-listing', retirementSignal: new AbortController().signal,
+            command: { kind: 'hostLocal', invoke: async invocation => {
+                received.push(invocation.input);
+                return { ok: true, result: invocation.input ?? null };
+            } },
+        };
+        unregister = registerCurrentUiContextActionPort(surface => createCurrentUiContextVoiceToolPort({
+            invocationSurface: surface,
+            reader: { readCurrentUiContext: () => ({ navigation: { area: 'settings', screen: 'plugin-publication' },
+                commands: [{ id: command.id, title: 'Edit listing', description: 'Provide title and keywords.' }] }),
+                resolveCurrentUiCommand: id => id === command.id ? command : null, subscribe: () => () => {} },
+            readProjection: () => EMPTY_PLUGIN_UI_PROJECTION, readNavigationBinding: () => null,
+        }));
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            uiCurrentContextAction: request => executeCurrentUiContextAction(request),
+        }));
+        const input = { title: 'Reviewed title', keywords: ['automation'] };
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: command.id, input },
+            { surface: 'agent', authority: 'account_automation' })).toEqual({ ok: true, result: input });
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: command.id },
+            { surface: 'agent', authority: 'account_automation' })).toEqual({ ok: true, result: null });
+        expect(received).toEqual([input, undefined]);
+    });
+
     it('admits declared plugin Dictation effects without granting generic current-UI reads', async () => {
         const account = { serverId: 'dictation-home', accountId: 'dictation-account' };
         const command: CurrentUiContextResolvedCommand = {

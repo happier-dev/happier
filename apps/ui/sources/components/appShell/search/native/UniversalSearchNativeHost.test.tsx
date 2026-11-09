@@ -1,10 +1,12 @@
 import * as React from 'react';
+import { layoutHitArea } from '@/dev/testkit/harness/hitFrameReach';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import type { SelectionListStep } from '@/components/ui/selectionList';
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
+import { resolveHappierMinimumInteractiveTargetSize } from '@happier-dev/plugin-ui/environment';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -245,8 +247,10 @@ describe('UniversalSearchNativeHost', () => {
 
     it('gives each capsule a real platform-minimum press frame without hit slop', async () => {
         const { UniversalSearchNativeHost } = await import('./UniversalSearchNativeHost');
-        const { resolveMinimumInteractiveTargetSize } = await import('@/components/ui/interactiveTargetSize');
-        const screen = await renderScreen(<UniversalSearchNativeHost {...(defaultProps() as any)} />);
+        const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
+        const screen = await renderScreen(<HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
+            <UniversalSearchNativeHost {...(defaultProps() as any)} />
+        </HappierUiPlatformProvider>);
         const close = screen.findHostByTestId('universal-search-native-host:close');
         const style = typeof close?.props.style === 'function'
             ? close.props.style({ pressed: false })
@@ -257,11 +261,11 @@ describe('UniversalSearchNativeHost', () => {
                 : (value as Record<string, unknown> | null) ?? {}
         );
 
-        expect(flatten(style)).toMatchObject({
-            width: resolveMinimumInteractiveTargetSize('ios'),
-            height: resolveMinimumInteractiveTargetSize('ios'),
-        });
-        expect(close?.props.hitSlop).toBeUndefined();
+        // The capsule keeps its drawn size; the iOS floor is its hit area (a web frame, not hitSlop).
+        const drawn = { width: Number(flatten(style).width), height: Number(flatten(style).height) };
+        const area = await layoutHitArea(() => screen.findHostByTestId('universal-search-native-host:close'), drawn);
+        expect(area.height).toBeGreaterThanOrEqual(resolveHappierMinimumInteractiveTargetSize('ios'));
+        expect(area.width).toBeGreaterThanOrEqual(24);
     });
 
     it('offers an accessible clear action that preserves input focus', async () => {

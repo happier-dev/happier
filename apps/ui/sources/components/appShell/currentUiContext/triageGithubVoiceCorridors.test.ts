@@ -21,11 +21,14 @@ import { defineUiSurface, usePluginHostApi } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import type { PluginUiContextEnrichmentV1 } from '@happier-dev/plugin-sdk/ui';
 import {
-  formatQualifiedPluginActionId,
-  DaemonPluginStructuredMessageActionExecuteRequestSchema,
-  PluginProjectedActionV2Schema,
+  formatQualifiedPluginActionId} from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import {
+  DaemonPluginStructuredMessageActionExecuteRequestSchema} from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import {
+  PluginProjectedActionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
   type PluginMachineExecutionOriginV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import {
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
@@ -237,8 +240,6 @@ function createTriageVoiceProjection(serverId: string) {
     actionsById: {
       [TRIAGE_ACTION_ID]: projectedAction,
     },
-
-
     resourcesById: {},
     settingsById: {},
     familiesById: {},

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
-import { renderScreen } from '@/dev/testkit';
+import { renderHook, renderScreen } from '@/dev/testkit';
+import { act } from 'react-test-renderer';
+import { useSelectionListKeyboardNav, useSelectionListRovingFocus } from '@/components/ui/selectionList/useSelectionListKeyboardNav';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -24,7 +26,7 @@ import {
     buildUniversalSearchSections,
     type BuildUniversalSearchSectionsInput,
 } from './buildUniversalSearchSections';
-import { buildUniversalSearchScopeKey } from './universalSearchResult';
+import { buildUniversalSearchOptionId, buildUniversalSearchScopeKey } from './universalSearchResult';
 import type { UniversalSearchResult } from './universalSearchResult';
 import { describeConversationSearchCoverage } from './conversationSearchCoverage';
 import { synthesizeSelectionListRenderPlan } from '@/components/ui/selectionList/SelectionListRenderPlan';
@@ -68,6 +70,145 @@ function staticOptionIds(
 }
 
 describe('buildUniversalSearchSections', () => {
+    it('keeps unchanged producer options across refinements while updating highlights and activation targets', async () => {
+        const onCommitResult = vi.fn();
+        const command = { id: 'release', title: 'Release', icon: 'file' as const, action: vi.fn() };
+        const sessionRows = [{ ...sessionEntity('visible', 1), title: 'release' },
+            { ...sessionEntity('hidden', 2), title: 'Alpha', searchText: 'release' }];
+        const settings = [{ id: 'display', title: 'Display', route: '/settings/display' }];
+        const base = input({ commands: [command], sessions: sessionRows, searchSettingsPages: () => settings, onCommitResult });
+        const before = buildUniversalSearchSections({ ...base, query: 'r' });
+        const refined = { ...base, query: 're', previousSections: before };
+        const after = buildUniversalSearchSections(refined);
+        const rows = (sections: readonly SelectionListSectionDescriptor[]) => sections.flatMap(section =>
+            section.kind === 'static' && section.id === 'sessions' ? section.options : []);
+        expect(rows(after)[1]).toBe(rows(before)[1]);
+        expect(rows(after)[0]).not.toBe(rows(before)[0]);
+        expect(rows(after)[0]?.labelHighlightQuery).toBe('re');
+        const commandRows = (sections: readonly SelectionListSectionDescriptor[]) => sections.flatMap(section =>
+            section.kind === 'static' && section.id.startsWith('commands:') ? section.options : []);
+        expect(commandRows(after)[0]).toBe(commandRows(before)[0]);
+        const settingsBefore = dynamicSections(before).find(section => section.id === 'settings')!;
+        const first = await settingsBefore.resolve('r', new AbortController().signal);
+        const settingsAfter = dynamicSections(after).find(section => section.id === 'settings')!;
+        const second = await settingsAfter.resolve('re', new AbortController().signal, undefined, first.options);
+        expect(second.options[0]).toBe(first.options[0]);
+        const retargeted = { ...base, query: 're', previousSections: after,
+            sessions: sessionRows.map(row => row.sessionId === 'hidden' ? { ...row, serverId: 'other-home' } : row) };
+        const changed = buildUniversalSearchSections(retargeted);
+        const changedRow = rows(changed)[1]!;
+        expect(changedRow).not.toBe(rows(after)[1]);
+        await changedRow.onSelect?.();
+        expect(onCommitResult).toHaveBeenLastCalledWith(expect.objectContaining({
+            target: expect.objectContaining({ sessionId: 'hidden', serverId: 'other-home' }),
+        }));
+    });
+
+    it('materializes only requested quick-open options from 54,935 Changed files and keeps the last row activatable', async () => {
+        let projectedTitles = 0;
+        let projectedResults = 0;
+        const changedFiles: UniversalSearchResult[] = Array.from({ length: 54_935 }, (_, index) => ({
+            id: `src/file-${index}.ts`, scopeKey: 'workspace', sourceId: 'files', kind: 'workspaceFile',
+            get title() { projectedTitles += 1; return `file-${index}.ts`; },
+            target: { kind: 'workspaceFile', scope: { serverId: 'home-a', machineId: 'machine-a', rootPath: '/repo' },
+                path: `src/file-${index}.ts`, workspaceRefId: 'workspace-a', sessionId: null, serverId: 'home-a', accountId: 'account-a' },
+        }));
+        const onCommitResult = vi.fn();
+        const projection = buildUniversalSearchSections(input({ source: 'files', changedFiles, onCommitResult,
+            changedFileSource: {
+                count: changedFiles.length,
+                getOptionId: index => {
+                    const result = changedFiles[index]!;
+                    return buildUniversalSearchOptionId(result.sourceId, result.scopeKey, result.id);
+                },
+                getResult: index => { projectedResults += 1; return changedFiles[index]!; },
+            },
+            filesStatusHint: 'offline' }), 'virtualized');
+        expect(projectedTitles).toBe(0);
+        expect(projectedResults).toBe(0);
+        const source = projection.virtualizedOptionSource!;
+        expect(projection.sections).toEqual([]);
+        expect(source.optionCount).toBe(54_935);
+        expect(source.getHeader(0).resultHint).toBe('offline');
+        for (let index = 0; index < 12; index += 1) expect(source.getOption(index).label).toBe(`file-${index}.ts`);
+        expect(projectedTitles).toBe(12);
+        expect(projectedResults).toBe(12);
+        const lastIndex = source.optionCount - 1;
+        const lastId = source.getOptionId(lastIndex);
+        expect(source.findOptionIndexById(lastId)).toBe(lastIndex);
+        let structuralReads = 0;
+        for (const item of source.items) {
+            const kind = item.kind;
+            Object.defineProperty(item, 'kind', { get: () => { structuralReads += 1; return kind; } });
+        }
+        expect(source.findItemIndexByOptionIndex(lastIndex)).toBe(source.items.length - 2);
+        expect(structuralReads).toBe(0);
+        expect(source.getNextFocusableOptionIndex(lastIndex - 1, 1)).toBe(lastIndex);
+        const keyboard = await renderHook(() => {
+            const params = { flatVisibleOptionIds: [], virtualizedOptionSource: source, inputValue: '' };
+            const focus = useSelectionListRovingFocus(params);
+            return useSelectionListKeyboardNav({ ...params, focus,
+                onActivate: id => source.getOption(source.findOptionIndexById(id)).onSelect?.(),
+                canPopStep: false, onPopStep: () => {}, onClearInput: () => {}, quickActionShortcuts: [] });
+        });
+        try {
+            const event = (key: string) => ({ key, preventDefault: () => {}, stopPropagation: () => {} });
+            await act(async () => { keyboard.getCurrent().handleKey(event('End')); });
+            expect(keyboard.getCurrent().focusedOptionId).toBe(lastId);
+            await act(async () => { keyboard.getCurrent().handleKey(event('Enter')); });
+        } finally { await keyboard.unmount(); }
+        expect(onCommitResult).toHaveBeenCalledWith(changedFiles[lastIndex]);
+        const changed = [...changedFiles];
+        changed[lastIndex] = { ...changedFiles[lastIndex]!, title: 'fresh.ts', fileChange: { added: 9, removed: 2 } };
+        const refreshed = buildUniversalSearchSections(input({ source: 'files', changedFiles: changed }), 'virtualized');
+        expect(refreshed.virtualizedOptionSource!.getOption(lastIndex).label).toBe('fresh.ts');
+        expect(refreshed.virtualizedOptionSource!.getOption(lastIndex).rightAccessory).toBeDefined();
+    });
+
+    it('leaves Settings matching to the query resolver instead of rebuilding it for each result batch', async () => {
+        const queries: string[] = [];
+        const searchSettingsPages = (query: string) => {
+            queries.push(query);
+            return [{ id: 'appearance', route: '/settings/appearance', title: 'Appearance' }];
+        };
+        const builds = Array.from({ length: 4 }, (_, batch) => buildUniversalSearchSections(input({
+            query: 'theme', searchSettingsPages, sessions: [sessionEntity(`arrival-${batch}`, batch)],
+        })));
+        expect(queries).toEqual([]);
+        const settings = dynamicSections(builds[3]!).find(section => section.id === 'settings');
+        expect(settings).toBeDefined();
+        const page = await settings!.resolve('security', new AbortController().signal);
+        expect(queries).toEqual(['security']);
+        expect(page.options.map(option => option.label)).toEqual(['Appearance']);
+        expect(settings?.resultFiltering).toBe('provider');
+    });
+
+    it('shows a Settings group only once the catalog has rows for the query, never an empty header while matching is pending', async () => {
+        const sections = buildUniversalSearchSections(input({
+            query: 'zzq',
+            searchSettingsPages: (query) => query === 'theme'
+                ? [{ id: 'appearance', route: '/settings/appearance', title: 'Appearance' }]
+                : [],
+        }));
+        const settings = dynamicSections(sections).find(section => section.id === 'settings')!;
+        const planFor = (state: Parameters<typeof synthesizeSelectionListRenderPlan>[0]['dynamicSectionStates'] extends ReadonlyMap<string, infer S> ? S : never) =>
+            synthesizeSelectionListRenderPlan({
+                sections, inputValue: 'zzq', filterQuery: 'zzq',
+                dynamicSectionStates: new Map([['settings', state]]),
+            }).find(section => section.id === 'settings');
+
+        expect(planFor({ status: 'idle', options: [] })).toBeUndefined();
+        expect(planFor({ status: 'loading', options: [], seed: 'zzq' })).toBeUndefined();
+        const none = await settings.resolve('zzq', new AbortController().signal);
+        expect(planFor({ status: 'success', seed: 'zzq', ...none })).toBeUndefined();
+
+        const found = await settings.resolve('theme', new AbortController().signal);
+        expect(planFor({ status: 'success', seed: 'theme', ...found })).toMatchObject({
+            title: expect.any(String),
+            options: [expect.objectContaining({ label: 'Appearance' })],
+        });
+    });
+
     it('consumes the existing unsaved symbol source and opens the committed outline row beside at its line', async () => {
         const { createWorkspaceSymbolSearchSource } = await import('./workspaceSymbolSearchSource');
         const { activateUniversalSearchResult } = await import('./activateUniversalSearchResult');
@@ -157,7 +298,7 @@ describe('buildUniversalSearchSections', () => {
             searchSettingsPages: () => [{ id: 'appearance', route: '/settings/appearance', title: 'Appearance' }],
         }));
         const ids = sections.map(section => section.id);
-        expect(ids.indexOf('sessions')).toBeLessThan(ids.indexOf('commands:0'));
+        expect(ids.indexOf('sessions')).toBeLessThan(ids.indexOf('commands:'));
         expect(ids.indexOf('sessions')).toBeLessThan(ids.indexOf('settings'));
         if (query !== 'A cedar choice') expect(ids.indexOf('projects')).toBeLessThan(ids.indexOf('settings'));
     });
@@ -309,7 +450,7 @@ describe('buildUniversalSearchSections', () => {
         const sections = dynamicSections(buildUniversalSearchSections(input({ query: 'needle', fileContent: {
             status: 'ready', resolverKey: 'ws', resolve: async () => [result],
         } })));
-        const page = await sections[0]!.resolve('needle', new AbortController().signal);
+        const page = await sections.find(section => section.id === 'fileContent')!.resolve('needle', new AbortController().signal);
         expect(page.options[0]?.subtitleContent).toBeDefined();
         expect(page.options[0]?.expandedContent).toBeUndefined();
     });
@@ -982,9 +1123,9 @@ describe('buildUniversalSearchSections', () => {
         const searchSettingsPages = () => [{ id: 'appearance', route: '/settings/appearance', title: 'New session defaults' }];
 
         const empty = buildUniversalSearchSections(input({ commands, sessions, searchSettingsPages }));
-        expect(empty.map((section) => section.id)).toEqual(['sessions', 'commands:0']);
+        expect(empty.map((section) => section.id)).toEqual(['sessions', 'commands:Actions']);
 
         const typed = buildUniversalSearchSections(input({ query: 'new', commands, sessions, searchSettingsPages }));
-        expect(typed.map((section) => section.id)).toEqual(['commands:0', 'settings', 'sessions']);
+        expect(typed.map((section) => section.id)).toEqual(['commands:Actions', 'settings', 'sessions']);
     });
 });

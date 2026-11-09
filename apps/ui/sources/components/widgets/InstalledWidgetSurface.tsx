@@ -8,12 +8,15 @@ import type {
 } from '@happier-dev/protocol/plugins/ui';
 
 import { PluginInlineSurfaceHost } from '@/components/plugins/surfaces';
-import { resolvePluginSurfaceDescriptorRenderGate } from '@/components/plugins/surfaces/PluginSurfaceHost';
+import { resolvePluginSurfaceState } from '@/components/plugins/surfaces/pluginSurfaceDestinations';
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import { useSessionPluginPolicyContext } from '@/components/sessions/plugins/useSessionPluginPolicyContext';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useProjectDashboardOwner } from '@/components/projects/overview/useProjectDashboardOwner';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { WidgetFrameLoadingBody } from '@/components/widgets/frame/WidgetFrame';
 import { useSurfaceStateCardSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { randomUUID } from '@/platform/randomUUID';
@@ -25,8 +28,10 @@ import { areSessionAddressesEqual, normalizeSessionAddress } from '@/sync/domain
 import { t } from '@/text';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import type { ConfiguredWidgetTargetResolution, WidgetInputRepairOutcome } from '@/sync/domains/widgets/widgetBinding';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { buildConnectedAccountPurposeSetupRoute } from '@/sync/domains/connectedServices/connectedAccountPurposeSetup';
+import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
+import type { ProjectSurfaceTargetV1, ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
+import { createPluginUiProjectPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 
 import {
     resolveInstalledWidgetMount,
@@ -36,7 +41,8 @@ import {
 
 /**
  * The installed-plugin arm of every widget host. Physical Home, Board and
- * Companion placements all support app and Session targets. Each host keeps its
+ * Companion placements support App and Session targets; the Project host also
+ * supplies its exact admitted Project context. Each host keeps its
  * own frame — Board cards, Home's hub section — around this one arm.
  *
  * It correlates the stable `{pluginId, localId}` reference to exactly one
@@ -76,10 +82,12 @@ export type InstalledWidgetTarget =
          */
         session?: Session;
     }>
-    | Readonly<{ kind: 'app' }>;
+    | Readonly<{ kind: 'app' }>
+    | ProjectSurfaceTargetV1;
 
 export type InstalledWidgetSurfaceProps = Readonly<{
     target: InstalledWidgetTarget;
+    projectContext?: ProjectWidgetAreaContextV1;
     /** The host record's revision; changing it retires the prior executable lifetime. */
     recordRevision: string;
     source: InstalledWidgetSource;
@@ -100,11 +108,92 @@ export type InstalledWidgetSurfaceProps = Readonly<{
     testID: string;
 }>;
 
+/** The host's About this widget, for a widget that can only explain itself; null where the host has no About. */
+export const WidgetAboutContext = React.createContext<(() => void) | null>(null);
+
+/** A saved definition the viewer cannot read: a durable access fact, not a wait. */
+const DEFINITION_FACT_CODES: ReadonlySet<string> = new Set(['widget_definition_unavailable', 'widget_definition_account_mismatch']);
+
+/**
+ * A widget that keeps its place but cannot draw (lab p-overview TEAM `unavailW`): which kind of
+ * unavailable it is, why, and About this widget where the host has it. Neutral: nothing here needs the
+ * viewer, and the rest of the surface works without it.
+ */
+function UnavailableWidgetFact(props: Readonly<{
+    testID: string;
+    kind: 'definition' | 'plugin';
+    title: string;
+    reason: string;
+    diagnosticCode: string | null;
+    action?: SurfaceStateAction;
+}>): React.ReactElement {
+    const { theme } = useUnistyles();
+    const about = React.useContext(WidgetAboutContext);
+    const aboutAction: SurfaceStateAction | undefined = about
+        ? { label: t('widgetDefinition.aboutMenu'), onPress: about, testID: `${props.testID}-about` } : undefined;
+    const primary = props.action ?? aboutAction;
+    const secondary = props.action ? aboutAction : undefined;
+    // A missing plugin is a fact about the card, not an event in it: one quiet line under the card's own
+    // title, its next step on the line. The rest of the surface works, so it asks nothing else of the person.
+    if (props.kind === 'plugin') {
+        return (
+            <SurfaceStateCard
+                testID={`${props.testID}-state`}
+                kind="unavailable"
+                size="line"
+                iconName="plug"
+                title={props.title}
+                diagnosticCode={props.diagnosticCode}
+                accessibilitySemantics="status"
+                {...(primary ? { action: primary } : {})}
+                {...(secondary ? { secondaryAction: secondary } : {})}
+            />
+        );
+    }
+    return (
+        <View style={[styles.fact, { backgroundColor: theme.colors.surface.inset }]}>
+            <SurfaceStateCard
+                testID={`${props.testID}-state`}
+                kind="unavailable"
+                size="details"
+                layout="inline"
+                iconName={props.kind === 'plugin' ? 'plug' : 'lock'}
+                title={props.title}
+                reason={props.reason}
+                diagnosticCode={props.diagnosticCode}
+                accessibilitySemantics="status"
+                {...(primary ? { action: primary } : {})}
+                {...(secondary ? { secondaryAction: secondary } : {})}
+            />
+        </View>
+    );
+}
+
+/** Names who made a private definition when that is someone else; a viewer's own unreadable copy says no name. */
+function UnavailableDefinitionFact(props: Readonly<{
+    testID: string;
+    title: string;
+    diagnosticCode: string | null;
+    owner?: Readonly<{ serverId: string; accountId: string }>;
+}>): React.ReactElement {
+    const viewer = useActiveServerAccountScope();
+    const someoneElse = props.owner && viewer?.accountId !== props.owner.accountId ? props.owner : null;
+    const owner = useProjectDashboardOwner(someoneElse?.serverId ?? '', someoneElse?.accountId ?? null);
+    // An Account without a name is not named in a sentence ("Unnamed account made this widget").
+    const shown = someoneElse ? owner?.displayName?.trim() : undefined;
+    const name = shown && shown !== t('accountDisplay.unnamed') ? shown : undefined;
+    return <UnavailableWidgetFact testID={props.testID} kind="definition" title={props.title}
+        reason={name ? t('projects.widgets.definitionUnavailableOwner', { owner: name }) : t('projects.widgets.definitionUnavailableReason')}
+        diagnosticCode={props.diagnosticCode} />;
+}
+
 export function UnavailableInstalledWidget(props: Readonly<{
     unresolved: NonNullable<InstalledWidgetMount['unresolved']>;
     testID: string;
     onManagePlugin?: () => void;
     reasonKind?: 'pluginRuntime' | 'widget';
+    /** The Account whose saved definition this is (the layout's owner), named when it is not the viewer. */
+    definitionOwner?: Readonly<{ serverId: string; accountId: string }>;
 }>): React.ReactElement {
     // One factual result, one centralized presentation projection. This adds no
     // widget-local availability enum and no widget-specific error copy.
@@ -124,6 +213,11 @@ export function UnavailableInstalledWidget(props: Readonly<{
             <WidgetBodyLoading testID={`${props.testID}-state`} diagnosticCode={presentation.diagnosticCode}
                 accessibilityLabel={presentation.card?.title ?? t('common.loading')} />
         );
+    }
+    if (props.reasonKind === 'widget' && props.unresolved.state === 'unavailable'
+        && DEFINITION_FACT_CODES.has(props.unresolved.reasonCode ?? '')) {
+        return <UnavailableDefinitionFact testID={props.testID} title={t('projects.widgets.definitionUnavailable')}
+            diagnosticCode={presentation.diagnosticCode} owner={props.definitionOwner} />;
     }
     const card = presentation.card ?? Object.freeze({
         kind: 'unavailable' as const,
@@ -224,7 +318,7 @@ function MountedSessionWidget(props: MountedWidgetProps & Readonly<{ session: Se
     );
 }
 
-function MountedAppWidget(props: MountedWidgetProps): React.ReactElement | null {
+function MountedAppWidget(props: MountedWidgetProps & Readonly<{ projectContext?: ProjectWidgetAreaContextV1; policyContext?: PluginUiPolicyEvaluationContext }>): React.ReactElement | null {
     const hostProps = useMountedWidgetHostProps(props);
     // The same app-target navigation a plugin app page receives: a widget row
     // opens the plugin's page through the one binding the shell installed.
@@ -242,6 +336,8 @@ function MountedAppWidget(props: MountedWidgetProps): React.ReactElement | null 
             placement={placement}
             inlineMount={inlineMount}
             binding={binding}
+            projectContext={props.projectContext}
+            policyContext={props.policyContext}
         />
     );
 }
@@ -255,7 +351,9 @@ function InstalledWidgetReference(props: Readonly<{
 }>): React.ReactElement {
     const placement = props.mount.placement;
     if (!placement) return <UnavailableInstalledWidget unresolved={{ state: 'unavailable', reasonCode: 'widget_surface_absent' }} testID={props.testID} />;
-    const gate = resolvePluginSurfaceDescriptorRenderGate(placement, props.policyContext);
+    const gate = resolvePluginSurfaceState(placement, props.policyContext).renderGate;
+    if (!gate.canRender && gate.state === 'loading') return <UnavailableInstalledWidget
+        unresolved={{ state: 'loading', reasonCode: gate.reason }} testID={props.testID} />;
     if (!gate.canRender) return <ConfiguredWidgetRefusal resolution={{ status: 'unavailable', reasonCode: gate.reason,
         repair: { kind: 'type_unavailable' } }} testID={props.testID} onManagePlugin={props.onManagePlugin} />;
     return <>{props.reference}</>;
@@ -267,6 +365,9 @@ function SessionInstalledWidgetReference(props: InstalledWidgetSurfaceProps & Re
 }
 
 export function InstalledWidgetSurface(props: InstalledWidgetSurfaceProps): React.ReactElement {
+    const projectPolicyContext = React.useMemo(() => props.target.kind === 'project'
+        ? createPluginUiProjectPolicyEvaluationContext({ platform: props.runtime.platform }, props.target)
+        : undefined, [props.runtime.platform, props.target]);
     const mount = React.useMemo(() => resolveInstalledWidgetMount({
         source: props.source,
         target: props.target.kind,
@@ -296,6 +397,7 @@ export function InstalledWidgetSurface(props: InstalledWidgetSurfaceProps): Reac
         props.runtime.machineId,
         props.target.kind,
         props.target.kind === 'session' ? props.target.sessionId : null,
+        props.target.kind === 'project' ? props.target.projectKey : null,
         mount.placement?.occurrenceId ?? null,
     ]);
     const mountedProps: MountedWidgetProps = {
@@ -308,10 +410,10 @@ export function InstalledWidgetSurface(props: InstalledWidgetSurfaceProps): Reac
         ...(props.onManagePlugin ? { onManagePlugin: props.onManagePlugin } : {}),
     };
 
-    if (props.target.kind === 'app') {
+    if (props.target.kind !== 'session') {
         if (props.reference !== undefined) return <InstalledWidgetReference {...props} mount={mount}
-            policyContext={{ platform: props.runtime.platform }} reference={props.reference} />;
-        return <MountedAppWidget key={lifetimeKey} {...mountedProps} />;
+            policyContext={projectPolicyContext ?? { platform: props.runtime.platform }} reference={props.reference} />;
+        return <MountedAppWidget key={lifetimeKey} {...mountedProps} projectContext={props.projectContext} policyContext={projectPolicyContext} />;
     }
 
     const session = props.target.session ?? null;
@@ -349,7 +451,7 @@ export function ConfiguredInstalledWidgetSurface(props: Omit<InstalledWidgetSurf
     // Every configured host uses the admitted source and normalized input here;
     // the installed mount adds its target, occurrence and network authority.
     return <InstalledWidgetSurface {...mounted} recordRevision={stableJsonStringify([props.source, resolution.input])}
-        target={resolution.target} runtime={resolution.runtime} input={resolution.input} />;
+        target={resolution.target} projectContext={resolution.projectContext} runtime={resolution.runtime} input={resolution.input} />;
 }
 
 /** All widget definitions retain the same factual inputs-repair presentation. */
@@ -360,7 +462,6 @@ export function ConfiguredWidgetRefusal(props: Readonly<{
     onManagePlugin?: () => void;
 }>): React.ReactElement {
     const { resolution, onRepairInputs } = props;
-    const router = useRouter();
     const stateSize = useSurfaceStateCardSize();
     if (resolution.status === 'loading') {
         return <UnavailableInstalledWidget unresolved={{ state: 'loading', reasonCode: resolution.reasonCode }} testID={props.testID} />;
@@ -370,6 +471,13 @@ export function ConfiguredWidgetRefusal(props: Readonly<{
         return <UnavailableInstalledWidget unresolved={{ state: 'loading', reasonCode: resolution.reasonCode }} testID={props.testID} />;
     }
     const repair = resolution.repair;
+    // A missing plugin with no input of its own is the widget's whole plugin: say it as a neutral fact.
+    if (repair?.kind === 'type_unavailable' && !repair.field) {
+        return <UnavailableWidgetFact testID={props.testID} kind="plugin" title={t('projects.widgets.pluginUnavailable')}
+            reason={t('projects.widgets.pluginUnavailableReason')} diagnosticCode={resolution.reasonCode}
+            {...(props.onManagePlugin ? { action: { label: t('sessionBoard.item.actions.managePlugin'),
+                onPress: props.onManagePlugin, testID: `${props.testID}-manage-plugin` } } : {})} />;
+    }
     if (!repair || resolution.reasonCode === 'widget_viewer_purpose_authority_unavailable') {
         return <UnavailableInstalledWidget reasonKind="widget" unresolved={{ state: 'unavailable', reasonCode: resolution.reasonCode }} testID={props.testID} />;
     }
@@ -397,7 +505,11 @@ export function ConfiguredWidgetRefusal(props: Readonly<{
         : t('widgetAdd.chooseAnother', { field: field.label });
     const action = repair.kind === 'connect' && repair.connection ? {
         label: t('connectedServicesSettings.connect'),
-        onPress: () => router.push(buildConnectedAccountPurposeSetupRoute(repair.connection!)),
+        onPress: (event?: unknown) => {
+            const request = repair.connection!;
+            void presentConnectSheet({ purposeRequest: request, purpose: request.purpose, scope: request.scope,
+                purposeSettlement: 'resourceDefault', anchor: resolvePressTriggerAnchor(event) });
+        },
         testID: `${props.testID}-connect`,
     } : repair.kind === 'type_unavailable' && props.onManagePlugin ? {
         label: t('sessionBoard.item.actions.managePlugin'),
@@ -420,3 +532,13 @@ export function ConfiguredWidgetRefusal(props: Readonly<{
         {...(action ? { action } : {})}
     />;
 }
+
+const styles = StyleSheet.create((theme) => ({
+    /** The fact sits on the inset fill, so it reads as the widget's place rather than a page notice (lab `.pj-ua`). */
+    fact: {
+        alignSelf: 'stretch',
+        borderRadius: theme.borderRadius.lg,
+        paddingHorizontal: theme.space.s12,
+        paddingVertical: theme.space.s10,
+    },
+}));

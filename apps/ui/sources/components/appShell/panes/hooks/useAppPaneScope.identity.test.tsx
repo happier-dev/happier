@@ -2,24 +2,53 @@ import * as React from 'react';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { storage } from '@/sync/domains/state/storage';
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
+import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
 
 import { renderHook, renderScreen } from '@/dev/testkit';
 import { AppPaneProvider, useAppPaneContext } from '../AppPaneProvider';
-import { useAppPaneScope, type AppPaneScopeApi } from './useAppPaneScope';
+import { useAppPaneScope, useOptionalDetailsRegionTabOpener, type AppPaneScopeApi } from './useAppPaneScope';
+import { useLocalSettingPreview } from '@/sync/store/settingsPreview';
 import { createSessionBoardDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const SCOPE_ID = 'session:identity-probe';
 const initialStorageState = storage.getState();
-beforeEach(() => storage.setState(initialStorageState, true));
-afterEach(() => storage.setState(initialStorageState, true));
+beforeEach(() => {
+    storage.setState(initialStorageState, true);
+    replacePersistentUiStateForTest(paneUiState, {});
+});
+afterEach(() => {
+    storage.setState(initialStorageState, true);
+    replacePersistentUiStateForTest(paneUiState, {});
+});
 
 function PaneWrapper(props: React.PropsWithChildren) {
     return <AppPaneProvider>{props.children}</AppPaneProvider>;
 }
 
 describe('useAppPaneScope identity', () => {
+    it('keeps the Details command stable while reading the current stored and preview tab preference on invocation', async () => {
+        const harness = await renderHook(() => ({
+            open: useOptionalDetailsRegionTabOpener(),
+            pane: useAppPaneScope(SCOPE_ID),
+            preview: useLocalSettingPreview('detailsPaneTabsBehavior'),
+        }), { wrapper: PaneWrapper });
+        const { act } = await import('react-test-renderer');
+        try {
+            const open = harness.getCurrent().open;
+            await act(async () => { storage.getState().applyLocalSettings({ detailsPaneTabsBehavior: 'persistent' }, { persist: false }); });
+            expect(harness.getCurrent().open).toBe(open);
+            await act(async () => { open?.(SCOPE_ID, createSessionBoardDetailsTab({ kind: 'item', itemId: 'persistent' })); });
+            expect(harness.getCurrent().pane.scopeState?.details.tabs.find(tab => tab.key === 'board:persistent')).toMatchObject({ isPinned: true });
+            await act(async () => { harness.getCurrent().preview('preview'); });
+            expect(harness.getCurrent().open).toBe(open);
+            await act(async () => { open?.(SCOPE_ID, createSessionBoardDetailsTab({ kind: 'item', itemId: 'preview' })); });
+            expect(harness.getCurrent().pane.scopeState?.details.tabs.find(tab => tab.key === 'board:preview')).toMatchObject({ isPreview: true });
+        } finally { await harness.unmount(); }
+    });
+
     it('does not render a selected Right pane for File draft and pin publications in the same scope', async () => {
         let commands!: AppPaneScopeApi;
         let commits = 0;

@@ -1,4 +1,5 @@
 import type { DetailsOpenerRegion } from '@/components/ui/panels/paneBreakpoints';
+import { readResourcePaneScopeId } from '../paneScopeIdentity';
 import type {
     DetailsTab,
     DetailsTabOpenMode,
@@ -33,10 +34,11 @@ import type {
     PluginUiInstanceKeyV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { arePaneStateJsonValuesEqual } from './paneStateStructuralEquality';
-import { readSessionTerminalWorkspace, reduceSessionTerminalWorkspace, type SessionTerminalWorkspaceCommand } from '@/components/sessions/terminal/sessionTerminalWorkspace';
 import { reconcilePersistedTerminalWorkspace } from './paneScopePersistence';
 import { placeDetailsInSideColumn } from './detailsPanePlacement';
+import { getVisibleSessionTerminalWorkspacePane, selectSessionTerminalWorkspaceHost, isSessionTerminalWorkspacePane, readSessionTerminalWorkspace, reduceSessionTerminalWorkspace, type SessionTerminalWorkspaceCommand } from '@/components/sessions/terminal/sessionTerminalWorkspace';
 import { resolveTerminalDetailsInstanceId } from '@/components/terminal/terminalDetailsTabModel';
+import { closeTerminalDetailsTabs, moveTerminalMemberToDetails, moveTerminalWorkspaceToPage, moveTerminalWorkspaceToPane } from './terminalPaneDocking';
 import { SESSION_BOARD_DESTINATION } from '@/components/sessions/board/sessionBoardDestination';
 import { fileChangesScopeOfComparison } from '@/components/workspaces/files/file/changes/fileChangesScope';
 import { buildWorkspaceFileViewPatch } from '@/components/workspaces/files/details/workspaceFileDetails/workspaceFileView';
@@ -54,6 +56,7 @@ export type PaneId = 'right' | 'details' | 'bottom';
 
 export type PaneScopeState = Readonly<{
     mainHidden: boolean;
+    /** A detail page selected in the main column; absent/null keeps the route's primary page. */
     mainTabId?: string | null;
     right: {
         isOpen: boolean;
@@ -78,6 +81,8 @@ export type InitialRightPaneState = Readonly<Pick<PaneScopeState['right'], 'isOp
 
 export type AppPaneState = Readonly<{
     activeScopeId: string | null;
+    /** The focused route's Terminal page, never a persisted pane preference. */
+    activeTerminalPageScopeId?: string | null;
     scopes: Readonly<Record<string, PaneScopeState>>;
     scopeLru: ReadonlyArray<string>;
     limits: {
@@ -86,11 +91,11 @@ export type AppPaneState = Readonly<{
 }>;
 
 export type AppPaneAction =
-    | { type: 'setDetailsTabPresentation'; scopeId: string; tabKey: string; presentation: DetailsTabState['presentation'] | null }
-    | { type: 'restoreScope'; scopeId: string; scope: PaneScopeState; selectedPaneTabKey?: string }
     | { type: 'setSelectedPanePresentation'; scopeId: string; tabKey: string; presentation: Readonly<{ windowId: string }> | null }
     | { type: 'mergePersistedScopes'; scopes: Readonly<Record<string, PaneScopeState>> }
+    | { type: 'restoreScope'; scopeId: string; scope: PaneScopeState; selectedPaneTabKey?: string }
     | { type: 'activateScope'; scopeId: string; initialRight?: InitialRightPaneState }
+    | { type: 'setTerminalPageActive'; scopeId: string; active: boolean }
     /** The page that owned the active scope left the screen: no page's panes are active until one is. */
     | { type: 'releaseScope'; scopeId: string }
     | { type: 'setMainHidden'; scopeId: string; hidden: boolean }
@@ -107,6 +112,7 @@ export type AppPaneAction =
     | { type: 'setBottomTab'; scopeId: string; tabId: string }
     | { type: 'selectBottomDestination'; scopeId: string; destination: SelectedPaneDestinationV1 }
     | { type: 'setBottomTabState'; scopeId: string; tabId: string; nextState: unknown }
+    | { type: 'hideTerminalWorkspace'; scopeId: string }
     | { type: 'terminalWorkspace'; scopeId: string; command: SessionTerminalWorkspaceCommand }
     | {
         type: 'openDetailsTab';
@@ -124,8 +130,10 @@ export type AppPaneAction =
         tab: DetailsTab;
         openAs?: DetailsTabOpenMode;
         restoreSourceOnRehydrate?: boolean;
+        openIfMissing?: boolean;
     }>
     | { type: 'setDetailsTabState'; scopeId: string; tabKey: string; nextState: unknown; persist?: boolean }
+    | { type: 'setDetailsTabPresentation'; scopeId: string; tabKey: string; presentation: DetailsTabState['presentation'] | null }
     | { type: 'patchDetailsTabState'; scopeId: string; tabKey: string; patch: Readonly<Record<string, unknown>>; persist?: boolean }
     | { type: 'pinDetailsTab'; scopeId: string; tabKey: string; persist?: boolean }
     | { type: 'unpinDetailsTab'; scopeId: string; tabKey: string }
@@ -159,6 +167,7 @@ export function createAppPaneState(options: Readonly<{
     const persistedScopes = options.persistedScopes ?? {};
     return evictScopesIfNeeded({
         activeScopeId: null,
+        activeTerminalPageScopeId: null,
         scopes: persistedScopes,
         scopeLru: Object.keys(persistedScopes),
         limits: { maxScopesInMemory: options.maxScopesInMemory },
@@ -247,7 +256,14 @@ function evictScopesIfNeeded(state: AppPaneState): AppPaneState {
     const max = state.limits.maxScopesInMemory;
     if (Object.keys(state.scopes).length <= max) return state;
 
-    const keep = new Set(state.scopeLru.slice(0, max));
+    // Retained terminals are the user's Shell inventory, not disposable pane preferences.
+    const keep = new Set(Object.entries(state.scopes).filter(([, scope]) => {
+        const terminal = scope.bottom.tabState.terminal;
+        return terminal !== undefined && readSessionTerminalWorkspace(terminal).tabs.some(tab => tab.terminals.length > 0);
+    }).map(([scopeId]) => scopeId));
+    const ordinaryScopes = state.scopeLru.filter(scopeId => !keep.has(scopeId));
+    for (const scopeId of ordinaryScopes.slice(0, max)) keep.add(scopeId);
+    if (keep.size === Object.keys(state.scopes).length) return state;
     const nextScopes: Record<string, PaneScopeState> = {};
     for (const [scopeId, scopeState] of Object.entries(state.scopes)) {
         if (keep.has(scopeId)) nextScopes[scopeId] = scopeState;
@@ -293,11 +309,6 @@ function unfoldSideColumn(details: PaneDetailsState): PaneDetailsState {
 
 export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPaneState {
     switch (action.type) {
-        case 'setDetailsTabPresentation':
-            return updateScopeDetails(state, action.scopeId, details => applyDetailsTabPresentation(details, action.tabKey, action.presentation));
-        case 'restoreScope':
-            return upsertScope(state, action.scopeId, () => placeDetailsInSideColumn(reconcilePersistedTerminalWorkspace(action.scope,
-                state.scopes[action.scopeId]?.bottom.tabState.terminal)));
         case 'setSelectedPanePresentation': {
             const prev = state.scopes[action.scopeId];
             if (!prev) return state;
@@ -325,9 +336,17 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
 
             for (const [scopeId, persistedScope] of Object.entries(incomingScopes)) {
                 const existingScope = state.scopes[scopeId];
-                if (existingScope && !isEmptyScopeState(existingScope)) continue;
-                if (existingScope && arePaneScopeStatesEqual(existingScope, persistedScope)) continue;
-                nextScopes[scopeId] = persistedScope;
+                if (existingScope && !isEmptyScopeState(existingScope)) {
+                    const reconciled = reconcilePersistedTerminalWorkspace(existingScope, persistedScope.bottom.tabState.terminal);
+                    if (reconciled !== existingScope) {
+                        nextScopes[scopeId] = reconciled;
+                        changed = true;
+                    }
+                    continue;
+                }
+                const restored = state.activeTerminalPageScopeId === scopeId ? moveTerminalWorkspaceToPage(persistedScope) : persistedScope;
+                if (existingScope && arePaneScopeStatesEqual(existingScope, restored)) continue;
+                nextScopes[scopeId] = restored;
                 if (!nextLru.includes(scopeId)) {
                     nextLru.push(scopeId);
                 }
@@ -341,14 +360,32 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                 scopeLru: nextLru,
             });
         }
+        case 'restoreScope':
+            return upsertScope(state, action.scopeId, () => placeDetailsInSideColumn(reconcilePersistedTerminalWorkspace(action.scope,
+                state.scopes[action.scopeId]?.bottom.tabState.terminal)));
         case 'activateScope': {
+            const adoptApp = action.scopeId !== 'app' && readResourcePaneScopeId(action.scopeId) === 'app'
+                && !state.scopes[action.scopeId] && state.scopes.app;
+            let scopes = state.scopes;
+            if (adoptApp) {
+                const adoptedScopes = { ...state.scopes, [action.scopeId]: adoptApp };
+                delete adoptedScopes.app;
+                scopes = adoptedScopes;
+            }
             const next = {
                 ...state,
                 activeScopeId: action.scopeId,
-                scopeLru: touchScopeLru(state.scopeLru, action.scopeId),
-                scopes: state.scopes[action.scopeId] ? state.scopes : { ...state.scopes, [action.scopeId]: createEmptyScopeState(action.initialRight) },
+                scopeLru: touchScopeLru(adoptApp ? state.scopeLru.filter(id => id !== 'app') : state.scopeLru, action.scopeId),
+                scopes: scopes[action.scopeId] ? scopes : { ...scopes, [action.scopeId]: createEmptyScopeState(action.initialRight) },
             };
             return evictScopesIfNeeded(next);
+        }
+        case 'setTerminalPageActive': {
+            if (!action.active) return state.activeTerminalPageScopeId === action.scopeId
+                ? { ...state, activeTerminalPageScopeId: null } : state;
+            if (state.activeTerminalPageScopeId === action.scopeId) return state;
+            const updated = upsertScope(state, action.scopeId, moveTerminalWorkspaceToPage);
+            return { ...updated, activeTerminalPageScopeId: action.scopeId };
         }
         case 'releaseScope': {
             if (state.activeScopeId !== action.scopeId) return state;
@@ -374,8 +411,10 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
             const nextDestination = action.tabId === undefined
                 ? prev.right.selectedDestination
                 : createBuiltinPaneDestination(action.tabId);
+            const docked = moveTerminalWorkspaceToPane(prev, nextDestination, 'right');
             if (
-                prev.right.isOpen === true
+                docked === prev
+                && prev.right.isOpen === true
                 && prev.right.activeTabId === nextTabId
                 && areSelectedPaneDestinationsEqual(prev.right.selectedDestination, nextDestination)
                 && prev.details.openedFrom !== 'main'
@@ -383,8 +422,8 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                 return state;
             }
             return upsertScope(state, action.scopeId, () => ({
-                ...prev,
-                details: unfoldSideColumn(prev.details),
+                ...docked,
+                details: unfoldSideColumn(docked.details),
                 right: {
                     ...prev.right,
                     isOpen: true,
@@ -406,14 +445,16 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
         case 'setRightTab': {
             const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
             const nextDestination = createBuiltinPaneDestination(action.tabId);
+            const docked = prev.right.isOpen ? moveTerminalWorkspaceToPane(prev, nextDestination, 'right') : prev;
             if (
-                prev.right.activeTabId === action.tabId
+                docked === prev
+                && prev.right.activeTabId === action.tabId
                 && areSelectedPaneDestinationsEqual(prev.right.selectedDestination, nextDestination)
             ) {
                 return state;
             }
             return upsertScope(state, action.scopeId, () => ({
-                ...prev,
+                ...docked,
                 right: {
                     ...prev.right,
                     activeTabId: action.tabId,
@@ -426,8 +467,10 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
             const nextActiveTabId = action.destination.kind === 'builtin'
                 ? action.destination.id
                 : prev.right.activeTabId;
+            const docked = moveTerminalWorkspaceToPane(prev, action.destination, 'right');
             if (
-                prev.right.isOpen === true
+                docked === prev
+                && prev.right.isOpen === true
                 && prev.right.activeTabId === nextActiveTabId
                 && areSelectedPaneDestinationsEqual(prev.right.selectedDestination, action.destination)
                 && prev.details.openedFrom !== 'main'
@@ -435,8 +478,8 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                 return state;
             }
             return upsertScope(state, action.scopeId, () => ({
-                ...prev,
-                details: unfoldSideColumn(prev.details),
+                ...docked,
+                details: unfoldSideColumn(docked.details),
                 right: {
                     ...prev.right,
                     isOpen: true,
@@ -467,15 +510,17 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
             const nextDestination = action.tabId === undefined
                 ? prev.bottom.selectedDestination
                 : createBuiltinPaneDestination(action.tabId);
+            const docked = moveTerminalWorkspaceToPane(prev, nextDestination, 'bottom');
             if (
-                prev.bottom.isOpen === true
+                docked === prev
+                && prev.bottom.isOpen === true
                 && prev.bottom.activeTabId === nextTabId
                 && areSelectedPaneDestinationsEqual(prev.bottom.selectedDestination, nextDestination)
             ) {
                 return state;
             }
             return upsertScope(state, action.scopeId, () => ({
-                ...prev,
+                ...docked,
                 bottom: {
                     ...prev.bottom,
                     isOpen: true,
@@ -497,14 +542,16 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
         case 'setBottomTab': {
             const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
             const nextDestination = createBuiltinPaneDestination(action.tabId);
+            const docked = prev.bottom.isOpen ? moveTerminalWorkspaceToPane(prev, nextDestination, 'bottom') : prev;
             if (
-                prev.bottom.activeTabId === action.tabId
+                docked === prev
+                && prev.bottom.activeTabId === action.tabId
                 && areSelectedPaneDestinationsEqual(prev.bottom.selectedDestination, nextDestination)
             ) {
                 return state;
             }
             return upsertScope(state, action.scopeId, () => ({
-                ...prev,
+                ...docked,
                 bottom: {
                     ...prev.bottom,
                     activeTabId: action.tabId,
@@ -517,15 +564,17 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
             const nextActiveTabId = action.destination.kind === 'builtin'
                 ? action.destination.id
                 : prev.bottom.activeTabId;
+            const docked = moveTerminalWorkspaceToPane(prev, action.destination, 'bottom');
             if (
-                prev.bottom.isOpen === true
+                docked === prev
+                && prev.bottom.isOpen === true
                 && prev.bottom.activeTabId === nextActiveTabId
                 && areSelectedPaneDestinationsEqual(prev.bottom.selectedDestination, action.destination)
             ) {
                 return state;
             }
             return upsertScope(state, action.scopeId, () => ({
-                ...prev,
+                ...docked,
                 bottom: {
                     ...prev.bottom,
                     isOpen: true,
@@ -533,6 +582,11 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                     selectedDestination: action.destination,
                 },
             }));
+        }
+        case 'hideTerminalWorkspace': {
+            const scope = state.scopes[action.scopeId];
+            const pane = scope ? getVisibleSessionTerminalWorkspacePane(scope) : null;
+            return pane ? appPaneReduce(state, { type: pane === 'right' ? 'closeRight' : 'closeBottom', scopeId: action.scopeId }) : state;
         }
         case 'terminalWorkspace': {
             const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
@@ -543,27 +597,30 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                 ? workspace.tabs.some((tab) => tab.terminals.some((terminal) => terminal.id === command.terminalId))
                 : next !== workspace && (command.type === 'open' || command.type === 'split' || command.type === 'detach');
             const terminalDestination = createBuiltinPaneDestination('terminal');
-            if (next === workspace && (!reveal || (prev.bottom.isOpen && areSelectedPaneDestinationsEqual(prev.bottom.selectedDestination, terminalDestination)))) return state;
-            const terminalSelected = prev.bottom.selectedDestination?.kind === 'builtin'
-                ? prev.bottom.selectedDestination.id === 'terminal'
-                : prev.bottom.selectedDestination == null && prev.bottom.activeTabId === 'terminal';
+            const visibleHost = selectSessionTerminalWorkspaceHost(state, action.scopeId);
+            if (next === workspace && (!reveal || visibleHost === 'page' || visibleHost === 'right' || visibleHost === 'bottom'
+                || visibleHost === 'details' && state.activeTerminalPageScopeId === action.scopeId)) return state;
             const retainedIds = new Set(next.tabs.flatMap((tab) => tab.terminals.map((terminal) => terminal.id)));
             const removedIds = new Set(workspace.tabs.flatMap((tab) => tab.terminals.map((terminal) => terminal.id)).filter((id) => !retainedIds.has(id)));
-            let details = prev.details;
-            if (removedIds.size) for (const tab of Object.values(details.tabsByKey)) {
-                const instanceId = resolveTerminalDetailsInstanceId({ resource: tab.resource, tabKey: tab.key });
-                if (instanceId && removedIds.has(instanceId)) details = applyCloseDetailsTab(details, tab.key);
-            }
-            return upsertScope(state, action.scopeId, () => ({
+            const details = removedIds.size ? closeTerminalDetailsTabs(prev.details, removedIds) : prev.details;
+            const updated: PaneScopeState = {
                 ...prev,
                 details,
                 bottom: {
                     ...prev.bottom,
-                    isOpen: next.tabs.length === 0 && terminalSelected ? false : reveal ? true : prev.bottom.isOpen,
-                    activeTabId: reveal ? 'terminal' : prev.bottom.activeTabId,
-                    selectedDestination: reveal ? terminalDestination : prev.bottom.selectedDestination,
+                    isOpen: next.tabs.length === 0 && isSessionTerminalWorkspacePane(prev.bottom) ? false : prev.bottom.isOpen,
                     tabState: { ...prev.bottom.tabState, terminal: next },
                 },
+            };
+            if (!reveal) return upsertScope(state, action.scopeId, () => updated);
+            const host = selectSessionTerminalWorkspaceHost({ ...state, scopes: { ...state.scopes, [action.scopeId]: updated } }, action.scopeId);
+            if (host === 'page' || host === 'details' && state.activeTerminalPageScopeId === action.scopeId) {
+                return upsertScope(state, action.scopeId, () => command.type === 'focus' ? updated : moveTerminalWorkspaceToPage(updated));
+            }
+            const pane = host === 'right' ? 'right' : 'bottom';
+            const docked = moveTerminalWorkspaceToPane(updated, terminalDestination, pane);
+            return upsertScope(state, action.scopeId, () => ({ ...docked,
+                [pane]: { ...docked[pane], isOpen: true, activeTabId: 'terminal', selectedDestination: terminalDestination },
             }));
         }
         case 'setBottomTabState': {
@@ -603,7 +660,9 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                     && prev.right.selectedDestination?.kind === 'builtin'
                     && prev.right.selectedDestination.id === SESSION_BOARD_DESTINATION.id
                     ? { ...prev.right, isOpen: false } : prev.right;
-                return placeDetailsInSideColumn(details === prev.details && right === prev.right ? prev : { ...prev, details, right }, action.start);
+                const next = placeDetailsInSideColumn(details === prev.details && right === prev.right ? prev : { ...prev, details, right }, action.start);
+                const terminalId = resolveTerminalDetailsInstanceId({ resource: action.tab.resource, tabKey: action.tab.key });
+                return terminalId ? moveTerminalMemberToDetails(next, terminalId) : next;
             });
         case 'replaceDetailsTab':
             return updateScopeDetails(state, action.scopeId, (details) => (
@@ -612,12 +671,15 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                     tab: action.tab,
                     openAs: action.openAs,
                     restoreSourceOnRehydrate: action.restoreSourceOnRehydrate,
+                    openIfMissing: action.openIfMissing,
                 })
             ));
         case 'setDetailsTabState':
             return updateScopeDetails(state, action.scopeId, (details) => (
                 applySetDetailsTabState(details, action.tabKey, action.nextState)
             ));
+        case 'setDetailsTabPresentation':
+            return updateScopeDetails(state, action.scopeId, details => applyDetailsTabPresentation(details, action.tabKey, action.presentation));
         case 'patchDetailsTabState':
             return updateScopeDetails(state, action.scopeId, (details) => {
                 const current = getOwnPaneTabStateEntry(details.tabState, action.tabKey);

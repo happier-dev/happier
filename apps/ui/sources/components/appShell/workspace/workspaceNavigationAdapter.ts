@@ -47,6 +47,20 @@ function isProjectDefaultOpen(target: DestinationRef): boolean {
         && Object.keys(target.params).every(key => PROJECT_DEFAULT_OPEN_PARAMS.has(key));
 }
 
+// A stored tab's canonical destination is a pure function of the catalog and its (readonly) target.
+// The workspace reducer keeps an unchanged tab's target object, so each tab normalizes once per
+// catalog instead of on every lookup: a carry asks "is this already open?" on every pointer frame.
+const normalizedTabTargets = new WeakMap<readonly CompactAppDestination[], WeakMap<DestinationRef, DestinationRef | null>>();
+function normalizedTabTarget(catalog: readonly CompactAppDestination[], target: DestinationRef): DestinationRef | null {
+    let byTarget = normalizedTabTargets.get(catalog);
+    if (!byTarget) { byTarget = new WeakMap(); normalizedTabTargets.set(catalog, byTarget); }
+    if (byTarget.has(target)) return byTarget.get(target)!;
+    const href = hrefForDestinationRef(catalog, target);
+    const normalized = href ? resolveDestinationRefFromHref(catalog, href) : null;
+    byTarget.set(target, normalized);
+    return normalized;
+}
+
 export function createWorkspaceNavigationAdapter(input: Readonly<{
     getState: () => WorkspaceState;
     getCatalog: () => readonly CompactAppDestination[];
@@ -137,8 +151,7 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             if (groupId && !state.groups[groupId]?.tabIds.includes(tab.id)) return false;
             if (singleton) return tab.target.kind === target.kind && isWorkspaceSingletonDestination(catalog, tab.target);
             if (navigationIdentity !== null) return workspaceDestinationNavigationIdentity(tab.target, catalog, scope) === navigationIdentity;
-            const href = hrefForDestinationRef(catalog, tab.target);
-            const normalized = href ? resolveDestinationRefFromHref(catalog, href) : null;
+            const normalized = normalizedTabTarget(catalog, tab.target);
             if (!normalized) return false;
             // Go to a Session retains its pane state. An addressed Details page is
             // its own destination: sharing the Session address cannot select Chat

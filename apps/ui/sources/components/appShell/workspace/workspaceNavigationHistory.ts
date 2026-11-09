@@ -1,5 +1,5 @@
 import type { DestinationRef } from '@/components/appShell/destinations/compactAppDestinationCatalog';
-import { reduceWorkspaceState, type WorkspaceAction, type WorkspaceState } from './workspaceState';
+import { reduceWorkspaceState, sameDestinationRef, type WorkspaceAction, type WorkspaceState } from './workspaceState';
 
 export type WorkspaceNavigationEntry = Readonly<{
     tabId: string;
@@ -24,9 +24,7 @@ export function recordWorkspaceNavigation(
     if (current
         && current.tabId === entry.tabId
         && current.groupId === entry.groupId
-        && current.target.kind === entry.target.kind
-        && Object.keys(current.target.params).length === Object.keys(entry.target.params).length
-        && Object.entries(current.target.params).every(([key, value]) => entry.target.params[key] === value)) {
+        && sameDestinationRef(current.target, entry.target)) {
         return history;
     }
     const entries = [...history.entries.slice(0, history.index + 1), entry];

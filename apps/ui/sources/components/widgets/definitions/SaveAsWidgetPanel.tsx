@@ -2,7 +2,7 @@ import * as React from 'react';
 import { AccessibilityInfo, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
-import type { JsonValue } from '@happier-dev/protocol';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WidgetDefinitionV1, WidgetInstanceV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { HappierPageRowFieldLayoutContext } from '@happier-dev/plugin-ui/presentation';
 

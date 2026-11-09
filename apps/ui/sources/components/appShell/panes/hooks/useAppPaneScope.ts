@@ -1,13 +1,10 @@
 import type { DetailsOpenerRegion } from '@/components/ui/panels/paneBreakpoints';
 import { usePaneRegion } from '../paneRegion';
-import { normalizeFileDetailsTab } from '../details/fileDetailsTab';
 import { usePanePresentation } from '../panePresentation';
 import { createBuiltinPaneDestination } from '../model/selectedPaneDestination';
 import { selectedPaneDestinationTabKey } from '../model/selectedPaneDestination';
 import { useOpenPaneDestinationWindow } from '../useOpenPaneDestinationWindow';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { useWorkspaceRouterFacts } from '../../workspace/WorkspaceNavigationContext';
-import { closePaneDetailsWindowGroup } from '../paneTabWindowTransfer';
 import * as React from 'react';
 import { Platform } from 'react-native';
 import { getDeviceType } from '@/utils/platform/responsive';
@@ -31,6 +28,9 @@ import type {
     PluginUiInstanceKeyV1,
 } from '@happier-dev/protocol/plugins/ui';
 import type { FocusReturnMutableRef } from '@/keyboard/focusReturn';
+import { useWorkspaceRouterFacts } from '../../workspace/WorkspaceNavigationContext';
+import { closePaneDetailsWindowGroup } from '../paneTabWindowTransfer';
+import { normalizeFileDetailsTab } from '../details/fileDetailsTab';
 
 type AppPaneScopeDetailsStateView = {
     isOpen: boolean;
@@ -90,13 +90,15 @@ export type AppPaneScopeApi = {
     replaceDetailsTab: (tabKey: string, tab: DetailsTab, options?: Readonly<{
         intent?: 'default' | 'pinned' | 'preview';
         restoreSourceOnRehydrate?: boolean;
+        /** Register navigation from an unheld empty page without revealing another pane. */
+        openIfMissing?: boolean;
     }>) => void;
     setDetailsTabState: (tabKey: string, nextState: unknown, options?: Readonly<{ persist?: boolean }>) => void;
     patchDetailsTabState: (tabKey: string, patch: Readonly<Record<string, unknown>>, options?: Readonly<{ persist?: boolean }>) => void;
     pinDetailsTab: (tabKey: string, options?: Readonly<{ persist?: boolean }>) => void;
     unpinDetailsTab: (tabKey: string) => void;
     closeDetails: () => void;
-    /** The host-owned full-bleed Details workspace overlay. */
+    /** Opens the host-owned overlay and acknowledges its accepted selection. */
     openDetailsOverlay?: (input: Readonly<{
         destination: PluginUiDestinationReferenceV1;
         instanceKey?: PluginUiInstanceKeyV1;
@@ -332,6 +334,7 @@ export function useAppPaneScope<T>(scopeId: string, selector?: (scope: PaneScope
     const replaceDetailsTab = React.useCallback((tabKey: string, tab: DetailsTab, options?: Readonly<{
         intent?: 'default' | 'pinned' | 'preview';
         restoreSourceOnRehydrate?: boolean;
+        openIfMissing?: boolean;
     }>) => {
         tab = normalizeFileDetailsTab(tab, scopeId);
         const intent = options?.intent ?? 'default';
@@ -343,6 +346,7 @@ export function useAppPaneScope<T>(scopeId: string, selector?: (scope: PaneScope
             tab,
             openAs,
             ...(options?.restoreSourceOnRehydrate ? { restoreSourceOnRehydrate: true } : {}),
+            ...(options?.openIfMissing ? { openIfMissing: true } : {}),
         });
     }, [dispatch, scopeId]);
 

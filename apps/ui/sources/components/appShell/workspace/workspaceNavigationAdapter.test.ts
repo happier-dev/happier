@@ -20,7 +20,7 @@ import {
   upsertServerProfile,
 } from '@/sync/domains/server/serverProfiles';
 import {
-  readScopedWorkspaceLayout,
+  parseWorkspaceLayout,
   serializeWorkspaceLayout,
   workspaceLayoutScopeKey,
 } from './workspacePersistence';
@@ -674,9 +674,8 @@ describe('workspace navigation adapter', () => {
       pinned: false,
     });
     const key = workspaceLayoutScopeKey({ ...scope, windowId: 'main' });
-    const saved = readScopedWorkspaceLayout(
-      JSON.parse(JSON.stringify({ [key]: serializeWorkspaceLayout(original) })),
-      key,
+    const saved = parseWorkspaceLayout(
+      JSON.parse(JSON.stringify({ [key]: serializeWorkspaceLayout(original) }))[key],
     );
     if (!saved) throw new Error('Written layout was not admitted');
     let state = saved;
@@ -934,7 +933,7 @@ describe('workspace navigation adapter', () => {
       expect(hrefForDestinationRef(h.catalog, h.active().target)).toBe(href);
     }
     const key = workspaceLayoutScopeKey({ serverId: 'home-a', accountId: 'alice', windowId: 'same-window' });
-    let restored = readScopedWorkspaceLayout(JSON.parse(JSON.stringify({ [key]: serializeWorkspaceLayout(h.state()) })), key);
+    let restored = parseWorkspaceLayout(JSON.parse(JSON.stringify({ [key]: serializeWorkspaceLayout(h.state()) }))[key]);
     if (!restored) throw new Error('Written Project layout was not admitted');
     const adapter = createWorkspaceNavigationAdapter({
       getState: () => restored!, getCatalog: () => h.catalog,

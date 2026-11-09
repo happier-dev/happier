@@ -1,9 +1,10 @@
+import type { ExecutionRunLauncherDraftSeed } from '@/components/sessions/runs/launcher/prepareExecutionRunLauncherDraft';
 import { describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
 import {
   PluginProjectedActionV2Schema,
   type PluginProjectedActionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { VoiceConversationActionResultSchema } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 
 import type { Command } from './types';
@@ -54,6 +55,22 @@ function commandTitles(cmds: readonly Command[]): string[] {
   return cmds.map((c) => c.title);
 }
 
+it('offers New Window only when the mounted desktop window owner supplies it', async () => {
+    const openNewWindow = vi.fn();
+    const build = (available: boolean) => buildCommandPaletteCommands({
+        sessionsById: {}, isDev: false, activeSessionId: null,
+        features: { executionRunsEnabled: false, voiceEnabled: false },
+        nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {},
+            ...(available ? { openNewWindow } : {}) },
+        actions: { execute: async () => ({ ok: true }) }, alert: () => {},
+    });
+    expect(build(false).find(command => command.id === 'desktop.new-window')).toBeUndefined();
+    const command = build(true).find(command => command.id === 'desktop.new-window');
+    expect(command).toBeDefined();
+    await command!.action();
+    expect(openNewWindow).toHaveBeenCalledOnce();
+});
+
 it('exposes mounted column controls with the host label and routes them through the existing column Action', async () => {
     const execute = vi.fn(async () => ({ ok: true }));
     const toggleArrangement = vi.fn();
@@ -61,7 +78,8 @@ it('exposes mounted column controls with the host label and routes them through 
     const commands = buildCommandPaletteCommands({
         sessionsById: {}, isDev: false, activeSessionId: null,
         features: { executionRunsEnabled: false, voiceEnabled: false },
-        nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+        nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }), push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
         actions: { execute }, alert: () => {},
         paneControls: { readColumn: column => column === 'main' ? { present: true, available: true, visible: mainVisible, label: 'Hide project' }
             : { present: true, available: column === 'navigation', visible: column === 'navigation' }, toggleArrangement },
@@ -86,7 +104,8 @@ it('offers Show/Hide blame only for the one active File page that supports it', 
     const build = () => buildCommandPaletteCommands({
         sessionsById: {}, isDev: false, activeSessionId: null,
         features: { executionRunsEnabled: false, voiceEnabled: false },
-        nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+        nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }), push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
         actions: { execute: async () => ({ ok: true }) }, alert: () => {},
         fileViewControls: { readActive: readActiveFileViewActionOwner, toggleBlame },
     }).find(command => command.id === 'file.blame.toggle');
@@ -130,7 +149,8 @@ it('does not advertise unavailable host destinations as invokable UI commands wh
     const commands = buildCommandPaletteCommands({
         sessionsById: {}, isDev: false, activeSessionId: null,
         features: { executionRunsEnabled: false, voiceEnabled: false },
-        nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+        nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }), push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
         compactAppDestinations: destinations, onActivateCompactAppDestination: () => {},
         actions: { execute: async () => ({ ok: true, result: {} }) }, alert: () => {},
     });
@@ -147,7 +167,8 @@ it('keeps Ask Happier manual commands and captures the selected release without 
     const commands = buildCommandPaletteCommands({
         sessionsById: {}, isDev: false, activeSessionId: null,
         features: { executionRunsEnabled: false, voiceEnabled: false },
-        nav: { push: () => {}, openNewSession, navigateToSession: () => {}, openAskHappier },
+        nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }), push: () => {}, openNewSession, navigateToSession: () => {}, openAskHappier },
         askHappierRelease: release,
         actions: { execute: async () => ({ ok: true, result: {} }) }, alert: () => {},
     });
@@ -175,7 +196,8 @@ it('exposes focused file sources through the command catalog used by UI Actions'
     const commands = buildCommandPaletteCommands({
         sessionsById: {}, isDev: false, activeSessionId: null,
         features: { executionRunsEnabled: false, voiceEnabled: false },
-        nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {}, openTextInFiles, openFiles, openSymbols },
+        nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }), push: () => {}, openNewSession: () => {}, navigateToSession: () => {}, openTextInFiles, openFiles, openSymbols },
         actions: { execute: async () => ({ ok: true, result: {} }) }, alert: () => {},
     });
     const command = commands.find((entry) => entry.id === 'search.textInFiles');
@@ -305,7 +327,8 @@ function buildCommandsWithPluginActions(input: Readonly<{
     isDev: false,
     activeSessionId: input.scope === 'session' ? 'session-command-palette' : null,
     features: { executionRunsEnabled: false, voiceEnabled: false },
-    nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+    nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }), push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
     actions: { execute: async () => ({ ok: true, result: {} }) },
     alert: async () => {},
     pluginActionPresentation: {
@@ -322,7 +345,8 @@ describe('buildCommandPaletteCommands', () => {
     const input: Parameters<typeof buildCommandPaletteCommands>[0] = {
       sessionsById: {}, isDev: false, activeSessionId: null,
       features: { executionRunsEnabled: false, voiceEnabled: false, workflowsEnabled: true },
-      nav: { push: vi.fn(), openNewSession: vi.fn(), navigateToSession: vi.fn(), openNewWorkflow, openWorkflowAgentAuthoring },
+      nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }), push: vi.fn(), openNewSession: vi.fn(), navigateToSession: vi.fn(), openNewWorkflow, openWorkflowAgentAuthoring },
       actions: { execute: vi.fn() }, alert: vi.fn(),
     };
     const commands = buildCommandPaletteCommands(input);
@@ -344,7 +368,8 @@ describe('buildCommandPaletteCommands', () => {
     const commands = buildCommandPaletteCommands({
       sessionsById: {}, isDev: false, activeSessionId: 'session-walk', activeSessionServerId: 'server-walk',
       features: { executionRunsEnabled: true, voiceEnabled: false },
-      nav: { push, openNewSession: () => {}, navigateToSession: () => {} },
+      nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }), push, openNewSession: () => {}, navigateToSession: () => {} },
       actions: { execute }, alert: async () => {},
     });
     const session = commands.find((command) => command.id === 'walkthrough:session');
@@ -371,7 +396,8 @@ describe('buildCommandPaletteCommands', () => {
     const commands = buildCommandPaletteCommands({
       sessionsById: {}, isDev: false, activeSessionId: null,
       features: { executionRunsEnabled: false, voiceEnabled: false },
-      nav: { push, openNewSession: () => {}, navigateToSession: () => {}, openHomePairingModal },
+      nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }), push, openNewSession: () => {}, navigateToSession: () => {}, openHomePairingModal },
       actions: { execute: async () => ({ ok: true, result: {} }) },
       alert: async () => {},
     });
@@ -389,7 +415,8 @@ describe('buildCommandPaletteCommands', () => {
       isDev: false,
       activeSessionId: null,
       features: { executionRunsEnabled: false, voiceEnabled: false },
-      nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+      nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }), push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
       actions: { execute: async () => ({ ok: true, result: {} }) },
       alert: async () => {},
       compactAppDestinations: SUGGESTED_BUILTIN_DESTINATIONS,
@@ -407,7 +434,8 @@ describe('buildCommandPaletteCommands', () => {
       isDev: false,
       activeSessionId: null,
       features: { executionRunsEnabled: false, voiceEnabled: false },
-      nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+      nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }), push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
       actions: { execute: async () => ({ ok: true, result: {} }) },
       alert: async () => {},
     });
@@ -424,7 +452,8 @@ describe('buildCommandPaletteCommands', () => {
       isDev: false,
       activeSessionId: null,
       features: { executionRunsEnabled: false, voiceEnabled: false },
-      nav: { push, openNewSession: () => {}, navigateToSession: () => {} },
+      nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }), push, openNewSession: () => {}, navigateToSession: () => {} },
       actions: { execute: async () => ({ ok: true, result: {} }) },
       alert: async () => {},
     });
@@ -444,6 +473,7 @@ describe('buildCommandPaletteCommands', () => {
       activeSessionId: null,
       features: { executionRunsEnabled: false, voiceEnabled: false },
       nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
         push: vi.fn(),
         openNewSession,
         navigateToSession: () => {},
@@ -481,7 +511,8 @@ describe('buildCommandPaletteCommands', () => {
       isDev: false,
       activeSessionId: null,
       features: { executionRunsEnabled: false, voiceEnabled: false },
-      nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+      nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }), push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
       actions: { execute: async () => ({ ok: true, result: {} }) },
       alert: async () => {},
     });
@@ -510,7 +541,8 @@ describe('buildCommandPaletteCommands', () => {
       isDev: false,
       activeSessionId: null,
       features: { executionRunsEnabled: false, voiceEnabled: false },
-      nav: { push: () => {}, openNewSession: () => {}, navigateToSession },
+      nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }), push: () => {}, openNewSession: () => {}, navigateToSession },
       actions: { execute: async () => ({ ok: true, result: {} }) },
       alert: async () => {},
     } as never);
@@ -690,6 +722,7 @@ describe('buildCommandPaletteCommands', () => {
       activeSessionId: null,
       features: { executionRunsEnabled: false, voiceEnabled: false },
       nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
         push: (path: string) => pushes.push(path),
         openNewSession: () => {},
         navigateToSession: () => {},
@@ -734,7 +767,8 @@ describe('buildCommandPaletteCommands', () => {
       isDev: false,
       activeSessionId: null,
       features: { executionRunsEnabled: false, voiceEnabled: false },
-      nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+      nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }), push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
       actions: { execute: async () => ({ ok: true, result: {} }) },
       alert: async () => {},
       compactAppDestinations: [{
@@ -775,6 +809,7 @@ describe('buildCommandPaletteCommands', () => {
       activeSessionServerId: 'home-b',
       features: { executionRunsEnabled: true, voiceEnabled: true },
       nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
         push: (path) => pushes.push(path),
         openNewSession: () => {},
         navigateToSession: () => {},
@@ -821,7 +856,8 @@ describe('buildCommandPaletteCommands', () => {
     const commands = buildCommandPaletteCommands({
       sessionsById: {}, isDev: false, activeSessionId: 'navigated-session', activeSessionServerId: 'home-b',
       features: { executionRunsEnabled: false, voiceEnabled: true },
-      nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+      nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }), push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
       actions: { execute: async (actionId, input) => {
         calls.push({ actionId, input });
         return { ok: true, result: VoiceConversationActionResultSchema.parse({ status: 'completed', voice: {
@@ -855,7 +891,8 @@ describe('buildCommandPaletteCommands', () => {
     const commands = buildCommandPaletteCommands({
       sessionsById: {}, isDev: false, activeSessionId: null,
       features: { executionRunsEnabled: false, voiceEnabled: true },
-      nav: { push: path => pushes.push(path), openNewSession: () => {}, navigateToSession: () => {} },
+      nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }), push: path => pushes.push(path), openNewSession: () => {}, navigateToSession: () => {} },
       actions: { execute: async () => ({ ok: true }) }, alert: () => {},
     });
     const install = commands.find(command => command.id === 'setting-operation:voiceAdvanced.installSpeechModel');
@@ -875,6 +912,7 @@ describe('buildCommandPaletteCommands', () => {
       activeSessionId: null,
       features: { executionRunsEnabled: true, voiceEnabled: false },
       nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
         push: (path) => pushes.push(path),
         openNewSession: () => {},
         navigateToSession: () => {},
@@ -906,6 +944,7 @@ describe('buildCommandPaletteCommands', () => {
       activeSessionId: 'session-1',
       features: { executionRunsEnabled: true, voiceEnabled: false },
       nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
         push: () => {},
         openNewSession: () => {},
         navigateToSession: () => {},
@@ -928,7 +967,7 @@ describe('buildCommandPaletteCommands', () => {
     const created = call[2] as any;
     expect(created?.actionId).toBe('review.start');
     expect(created?.input?.engineIds).toBeUndefined();
-    expect(created?.input?.engines).toBeUndefined();
+    expect(created?.input?.engines ?? {}).not.toHaveProperty('coderabbit');
   });
 
   it('uses execution-run permission defaults for execution-run drafts', async () => {
@@ -943,6 +982,7 @@ describe('buildCommandPaletteCommands', () => {
       activeSessionId: 'session-1',
       features: { executionRunsEnabled: true, voiceEnabled: false },
       nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
         push: () => {},
         openNewSession: () => {},
         navigateToSession: () => {},
@@ -1003,6 +1043,7 @@ describe('buildCommandPaletteCommands', () => {
       activeSessionId: 'session-1',
       features: { executionRunsEnabled: true, voiceEnabled: false },
       nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
         push: () => {},
         openNewSession: () => {},
         navigateToSession: () => {},
@@ -1040,6 +1081,7 @@ describe('buildCommandPaletteCommands', () => {
       activeSessionId: 'session-1',
       features: { executionRunsEnabled: true, voiceEnabled: false },
       nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
         push: () => {},
         openNewSession: () => {},
         navigateToSession: () => {},
@@ -1060,6 +1102,7 @@ describe('buildCommandPaletteCommands', () => {
       activeSessionId: null,
       features: { executionRunsEnabled: false, voiceEnabled: false },
       nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
         push: () => {},
         openNewSession: () => {},
         navigateToSession: () => {},
@@ -1083,6 +1126,7 @@ describe('buildCommandPaletteCommands', () => {
         'session.new': 'Cmd+P',
       },
       nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
         push: () => {},
         openNewSession: () => {},
         navigateToSession: () => {},
@@ -1109,6 +1153,7 @@ describe('buildCommandPaletteCommands', () => {
       activeSessionId: null,
       features: { executionRunsEnabled: false, voiceEnabled: false },
       nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
         push: (path) => pushes.push(path),
         openNewSession: () => {},
         navigateToSession: () => {},
@@ -1149,6 +1194,7 @@ describe('buildCommandPaletteCommands', () => {
         refreshCodexPets,
       },
       nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
         push: (path: string) => pushes.push(path),
         openNewSession: () => {},
         navigateToSession: () => {},
@@ -1198,6 +1244,7 @@ describe('buildCommandPaletteCommands', () => {
         refreshCodexPets: vi.fn(),
       },
       nav: {
+      openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => createSessionActionDraftSpy(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
         push: () => {},
         openNewSession: () => {},
         navigateToSession: () => {},

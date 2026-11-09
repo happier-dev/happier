@@ -17,9 +17,9 @@ import type { PluginPage } from '@/components/plugins/pages/pluginPages';
 import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/UniversalSearchRuntimeContext';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { resolveSessionListDensityViewState } from '@/components/sessions/shell/resolveSessionListDensityViewState';
 import { NavigationSurfacePlacementsV1Schema, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE, resolveHappierMinimumInteractiveTargetSize } from '@happier-dev/plugin-ui/environment';
 
 const routeState = vi.hoisted(() => ({ push: vi.fn(), pathname: '/' }));
 const openUniversalSearch = vi.hoisted(() => vi.fn());
@@ -163,9 +163,13 @@ describe('ColumnDestinationRows', () => {
         // Destinations are not sessions: quiet navigation rows on the column's surface, never a sheet.
         expect(sessions.findByType(ItemGroup).props.surface).toBe('none');
 
-        // A column with nothing placed in it draws no rows at all.
+        // The plugins column lists its own built-in entry (Bots), never a page placed in another column.
         const plugins = await render(<ColumnDestinationRows column="plugins" />);
-        expect(rowIds(plugins)).toEqual([]);
+        expect(rowIds(plugins)).toEqual(['compact-app-destination:store.bots']);
+
+        // A column with nothing placed in it draws no rows at all.
+        const discussions = await render(<ColumnDestinationRows column="discussions" />);
+        expect(rowIds(discussions)).toEqual([]);
     });
 
     it.each([
@@ -196,9 +200,9 @@ describe('ColumnDestinationRows', () => {
         }).rowHeight;
         // A precise pointer only owes the WCAG pointer floor, which the density grid already clears;
         // the touch floor must not lift the desktop row.
-        const pointerFloor = resolveMinimumInteractiveTargetSize('web');
+        const pointerFloor = HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE;
         expect(densityHeight).toBeGreaterThanOrEqual(pointerFloor);
-        expect(densityHeight).toBeLessThan(resolveMinimumInteractiveTargetSize('ios'));
+        expect(densityHeight).toBeLessThan(resolveHappierMinimumInteractiveTargetSize('ios'));
 
         const style = await renderActionRowStyle();
 

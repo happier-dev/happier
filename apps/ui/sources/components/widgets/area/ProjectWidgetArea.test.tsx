@@ -1,4 +1,5 @@
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 // The disconnected socket boundary must exist before `storage` (imported below) loads the sync graph.
@@ -47,13 +48,12 @@ import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { useWidgetAreaLayout } from './useWidgetAreaLayout';
 
 const windowSize = vi.hoisted(() => ({ width: 1024, height: 800 }));
-vi.mock('react-native', async () => ({
-  ...(await (
-    await import('@/dev/testkit/mocks/reactNative')
-  ).createReactNativeWebMock()),
-  // Window dimensions are the platform boundary; responsive composition stays real.
-  useWindowDimensions: () => ({ ...windowSize, scale: 1, fontScale: 1 }),
-}));
+vi.mock('react-native', async () =>
+  (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+    // The testkit keeps Dimensions and its hook on the same platform viewport.
+    useWindowDimensions: () => ({ ...windowSize, scale: 1, fontScale: 1 }),
+  }),
+);
 vi.mock('react-native-unistyles', async () =>
   (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
 );
@@ -226,6 +226,7 @@ it.each([false, true])(
   'agent selection changes the mounted Project document with route ownership=%s',
   async (routeOwned) => {
     const previous = storage.getState();
+    const artifactReads: string[] = [];
     const artifacts = createArtifactStoreBoundary({
       ownerAccountId: () => 'viewer',
       encryptionMode: 'plain',
@@ -235,7 +236,9 @@ it.each([false, true])(
       serverUrl: `https://project-layout-select-${routeOwned}.test`,
       accountId: 'viewer',
       request: async (input, init) => {
-        if (new URL(String(input)).pathname === '/v2/account/settings') {
+        const path = new URL(String(input)).pathname;
+        if (/^\/v1\/artifacts\/[^/]+$/.test(path) && (init?.method ?? 'GET') === 'GET') artifactReads.push(path);
+        if (path === '/v2/account/settings') {
           // This selection scenario needs an acknowledged document, not a
           // pending Create approval. Persist the user's waiver at the Home boundary.
           return Response.json({ content: { t: 'plain', v: { actionsSettingsV1: ActionsSettingsV1Schema.parse({
@@ -308,6 +311,7 @@ it.each([false, true])(
           status: 'ready',
         }),
       );
+      artifactReads.length = 0;
       await act(async () => {
         const selected = await executor.execute(
           'widgets.area.layout.select',
@@ -328,6 +332,8 @@ it.each([false, true])(
           placements: [],
         }),
       );
+      const selectedSurface: WidgetSurfaceRefV1 = { ...surface, owner: { kind: 'project', projectId: 'anchor', layoutId: 'empty' } };
+      expect(artifactReads.filter(path => path === `/v1/artifacts/${buildWidgetSurfaceArtifactIdV1(selectedSurface)}`)).toHaveLength(1);
       expect(hook.getCurrent().routeSelection).toBe(
         routeOwned ? 'empty' : null,
       );
@@ -391,7 +397,7 @@ it('admits a pending layout read across equivalent checkout object refreshes', a
 it('binds the authorized portable Source reactively without losing a Source-free or revoked personal checkout layout', async () => {
   const previous = storage.getState();
   const fallback = createHomeHubArtifactHttpBoundary('viewer');
-  const source: ProjectSourceV1 = {
+  const source = {
     id: 'source',
     revision: 7,
     name: 'Repository',
@@ -409,7 +415,7 @@ it('binds the authorized portable Source reactively without losing a Source-free
       repository: { nameWithOwner: 'owner/repo' },
       protocol: 'https',
     },
-  };
+  } satisfies ProjectSourceV1;
   let revoked = false;
   let holdSourceRead = false;
   let finishSourceRead: ((response: Response) => void) | undefined;
@@ -701,7 +707,11 @@ it.each(['owner', 'view'] as const)(
       const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
       const { CurrentUiContextSnapshotV1Schema } = await import('@happier-dev/protocol/plugins/ui');
       const executor = createDefaultActionExecutor();
-      const wrap = (content: React.ReactNode) => (
+      const { RetainedPanelSurface } = await import('@/components/ui/panels/RetainedPanelSurface');
+      const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+      const tabNavigation = { push: () => {}, replace: () => {}, back: () => {} };
+      // The Project page lives in a retained workspace tab, hidden and shown the way the shell does it.
+      const wrap = (content: React.ReactNode, shown = true) => (
         <AppShellPluginUiProjectionValueProvider
           value={{
             pluginUiProjection: null,
@@ -718,10 +728,16 @@ it.each(['owner', 'view'] as const)(
           }}
         >
           <InjectedAuthProvider credentials={connection.credentials}><MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
-            <CurrentUiContextActionHost />{content}
+            <CurrentUiContextActionHost />
+            <RetainedPanelSurface isActive={shown}>
+              <DestinationInstanceHost tabId="project-tab" ref={{ kind: 'project', params: {} }} pathname="/projects/project"
+                focused={shown} visible={shown} navigation={tabNavigation}>{content}</DestinationInstanceHost>
+            </RetainedPanelSurface>
           </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider></InjectedAuthProvider>
         </AppShellPluginUiProjectionValueProvider>
       );
+      // DOM geometry is the boundary: README sits inside the near-viewport window, so only its disclosure decides.
+      const contentNode = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 1000, height: 800 }) };
       const screen = await renderScreen(
         wrap(
           <ProjectOverviewDocument
@@ -730,8 +746,14 @@ it.each(['owner', 'view'] as const)(
             projectName="Project"
           />,
         ),
+        { createNodeMock: (element) => element.type === 'ScrollView' ? { getInnerViewNode: () => contentNode }
+          : element.props.testID === 'project-overview-main.widget.readme'
+            ? { getBoundingClientRect: () => ({ left: 0, top: 100, width: 600, height: 220 }) } : null },
       );
       await flushHookEffects({ cycles: 4 });
+      await vi.waitFor(() => expect(screen.findHostByTestId('project-overview-main.widget.readme')).not.toBeNull());
+      await act(async () => { screen.findHostByTestId('project-overview-main.widget.readme')!.props.onLayout(); });
+      await flushHookEffects({ cycles: 2 });
       const frame = () =>
         screen
           .findAllByType(WidgetFrame)
@@ -741,6 +763,9 @@ it.each(['owner', 'view'] as const)(
         scope: storage.getState().settingsScope,
       })).toBeDefined());
       expect(frame().props.disclosure.collapsed).toBe(true);
+      // Collapsed at rest, README builds no body and holds no read (demand follows what is shown).
+      const readmeBody = () => screen.findAllHostsByTestId('project-overview-main.widget.readme.bodyHeight');
+      expect(readmeBody()).toHaveLength(0);
       const readCommands = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
       expect(readCommands.ok).toBe(true);
       if (!readCommands.ok) throw new Error('Mounted commands unavailable');
@@ -755,6 +780,35 @@ it.each(['owner', 'view'] as const)(
       expect(await executor.execute('ui.current_context.command.invoke', { commandId: expand!.id }, { surface: 'agent' }))
         .toMatchObject({ ok: false });
       expect(frame().props.disclosure.collapsed).toBe(false);
+      // The first expand builds it; collapsing again keeps that content (no live demand) for the next expand.
+      await flushHookEffects({ cycles: 2 });
+      expect(readmeBody()).toHaveLength(1);
+      const shown = readmeBody()[0];
+      const presentation = () => screen.findAllByType(PluginSurfaceFocusEligibilityProvider)
+        .filter(node => node.findAll(child => child.props?.testID === 'project-overview-main.widget.readme.bodyHeight').length > 0)
+        .map(node => node.props.presentationActive)
+        // The widget's own provider is the innermost one around its body (the tab's providers enclose it).
+        .slice(-1);
+      expect(presentation()).toEqual([true]);
+      await act(async () => { frame().props.disclosure.onCollapsedChange(true); });
+      expect(frame().props.disclosure.collapsed).toBe(true);
+      expect(readmeBody()).toEqual([shown]);
+      expect(presentation()).toEqual([false]);
+      await act(async () => { frame().props.disclosure.onCollapsedChange(false); });
+      expect(readmeBody()).toEqual([shown]);
+      expect(presentation()).toEqual([true]);
+      // Hiding the tab keeps that body and its ⋯ (their demand withdraws with presentation), so showing
+      // the tab again rebuilds neither.
+      const readmeMenu = () => screen.findAllHostsByTestId('project-overview-main.widget.readme.menu');
+      const shownMenu = readmeMenu();
+      expect(shownMenu).toHaveLength(1);
+      const overview = (tabShown: boolean) => wrap(<ProjectOverviewDocument port={port} context={binding.context} projectName="Project" />, tabShown);
+      for (let cycle = 0; cycle < 2; cycle++) {
+        await screen.update(overview(false));
+        expect({ body: readmeBody(), menu: readmeMenu() }).toEqual({ body: [shown], menu: shownMenu });
+        await screen.update(overview(true));
+        expect({ body: readmeBody(), menu: readmeMenu() }).toEqual({ body: [shown], menu: shownMenu });
+      }
       await act(async () =>
         screen.findByTestId('project-overview')!.props.onLayout({
           nativeEvent: { layout: { x: 0, y: 0, width: 600, height: 800 } },
@@ -1602,4 +1656,73 @@ it('keeps an attached shared Project dashboard owner distinct from its viewer un
     await connection.dispose();
     storage.setState(previous);
   }
+});
+
+it('keeps a group child widget item props when the area re-renders without a layout change', async () => {
+  const fallback = createHomeHubArtifactHttpBoundary('viewer');
+  let area: ReturnType<typeof createLayoutArtifactHttpBoundary<WidgetAreaLayoutV1>> | undefined;
+  const connection = await restoreServerAccountForTest({
+    serverUrl: 'https://project-group-child-identity.test', accountId: 'viewer',
+    request: (input, init) => new URL(String(input)).pathname.startsWith('/v1/artifacts') && area
+      ? area.request(input, init) : fallback.request(input, init),
+  });
+  const restoreLoader = await installRealActionExecutorModuleLoader();
+  try {
+    const surface: WidgetSurfaceRefV1 = { serverId: connection.home.id, accountId: 'viewer',
+      owner: { kind: 'project', projectId: 'identity-project' } };
+    const instance = (id: string) => ({ v: 1 as const, id,
+      definition: { kind: 'artifact' as const, artifactId: `missing-${id}` }, bindings: {} });
+    const saved = WidgetAreaLayoutV1Schema.parse({ v: 1, surface, items: [
+      { kind: 'group', id: 'group', width: 'full', area: 'main', children: [
+        { kind: 'widget', instance: instance('first-child') },
+        { kind: 'widget', instance: instance('second-child') },
+      ] },
+    ] });
+    area = createLayoutArtifactHttpBoundary('viewer', {
+      artifactId: buildWidgetSurfaceArtifactIdV1(surface), kind: 'widget-area-layout.v1',
+      defaultLayout: saved, parseLayout: value => WidgetAreaLayoutV1Schema.parse(value),
+      buildHeader: buildWidgetSurfaceArtifactHeaderV1,
+    });
+    area.seed(saved);
+    const { ProjectWidgetArea, useProjectWidgetAreaBinding } = await import('./ProjectWidgetArea');
+    const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    // A new projection value object re-renders the area's placements without changing its layout.
+    const projectionValue = () => ({
+      pluginUiProjection: null, pluginBrowserProjection: null, phase: 'current' as const, interactionEnabled: true,
+      machineId: null, serverId: connection.home.id, platform: 'web' as const,
+      accountLifetime, clientExecutableActivation: { status: 'ready' as const },
+      reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {},
+    });
+    let republish!: () => void;
+    function MountedProject() {
+      const binding = useProjectWidgetAreaBinding({ serverId: connection.home.id, projectName: 'Project',
+        projectRef: { id: 'offline-checkout', serverId: connection.home.id, machineId: 'offline-machine',
+          rootPath: '/repo', projectKey: 'identity-project', createdAtMs: 1 } });
+      return <ProjectWidgetArea {...binding} projectName="Project" testID="project-identity" />;
+    }
+    function Host() {
+      const [value, setValue] = React.useState(projectionValue);
+      republish = () => setValue(projectionValue());
+      return <AppShellPluginUiProjectionValueProvider value={value}>
+        <InjectedAuthProvider credentials={connection.credentials}><MountedProject /></InjectedAuthProvider>
+      </AppShellPluginUiProjectionValueProvider>;
+    }
+    const screen = await renderScreen(<Host />);
+    const childItems = () => screen.root.findAll(node => node.props?.parent?.group?.id === 'group'
+      && typeof node.props?.placement?.instance?.id === 'string' && typeof node.type !== 'string');
+    await vi.waitFor(() => expect(new Set(childItems().map(node => node.props.placement.instance.id)))
+      .toEqual(new Set(['first-child', 'second-child'])));
+    await flushHookEffects();
+    const before = new Map(childItems().map(node => [node.props.placement.instance.id, node.props]));
+    await act(async () => { republish(); });
+    await flushHookEffects();
+    for (const node of childItems()) {
+      const prior = before.get(node.props.placement.instance.id)!;
+      expect(node.props.placement).toBe(prior.placement);
+      expect(node.props.parent).toBe(prior.parent);
+    }
+    await screen.unmount();
+  } finally { restoreLoader(); await connection.dispose(); }
 });

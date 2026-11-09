@@ -2,7 +2,8 @@ import 'fake-indexeddb/auto';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PluginProjectionV2Schema, makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol/sessions/external/historicalImportIdentity';
 import { createDeferred, createMachineFixture, createRootLayoutFeaturesResponse, findAllHostTestInstances, flushHookEffects, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -25,9 +26,10 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 // Legend's native scrolling is a platform boundary; the browser and paging owner remain real.
-vi.mock('@legendapp/list/react-native', async () => {
+vi.mock('@legendapp/list/react-native', async (importOriginal) => {
     const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
-    const mock = createCapturingLegendListMock({ renderItems: true, get renderItemLimit() { return viewport.limit; } });
+    // The surface also reaches `@legendapp/list/section-list`, which imports `internal` from this module.
+    const mock = createCapturingLegendListMock({ original: await importOriginal(), renderItems: true, get renderItemLimit() { return viewport.limit; } });
     viewport.list = mock.state;
     return mock.module;
 });
@@ -323,6 +325,25 @@ describe('activated external conversation results', () => {
         expect(screen.findHostByTestId('external-conversation-preview-message:source-item')?.props.numberOfLines).toBeUndefined();
     });
 
+    it('says a failed preview read on the shared alert line and reads it again on Retry', async () => {
+        boundary.page.mockRejectedValueOnce(new Error('daemon unreachable'));
+        const screen = await renderScreen(<ExternalConversationSearchResults {...props()} />);
+        await flushHookEffects({ cycles: 4, turns: 2 });
+        await act(async () => screen.findByTestId('external-conversation-results')!.props.onLayout({ nativeEvent: { layout: { width: 800 } } }));
+        await flushHookEffects();
+        const alerts = findAllHostTestInstances(screen.root, node => node.props.role === 'alert');
+        expect(alerts).toHaveLength(1);
+        expect(alerts[0].props.accessibilityLiveRegion).toBe('assertive');
+        expect(alerts[0].findAll(node => node.props.testID === 'external-conversation-preview-failed')).not.toHaveLength(0);
+        expect(screen.getTextContent()).toContain('externalSessions.browseContentPreviewFailed');
+        const reads = boundary.page.mock.calls.length;
+        await screen.pressByTestIdAsync('external-conversation-preview-retry');
+        await flushHookEffects();
+        expect(boundary.page.mock.calls.length).toBeGreaterThan(reads);
+        expect(screen.getTextContent()).toContain('Explain this failure');
+        expect(screen.findHostByTestId('external-conversation-preview-failed')).toBeNull();
+    });
+
     // F8 (r11): the sheet's footer promises ↑↓ and ↵, so the keyboard moves the highlight over the hits and opens it.
     it('moves the highlight with the arrow keys and opens it with Return, as the footer says', async () => {
         const keydown: { handler?: (event: unknown) => void } = {};
@@ -512,6 +533,14 @@ describe('activated external conversation results', () => {
         await flushHookEffects({ cycles: 4, turns: 2 });
         expect(screen.getTextContent()).toContain('externalSessions.browseAgentFailed');
         expect(screen.getTextContent()).not.toContain('private native path');
+        // The failures summary is an expandable row: it carries the canonical disclosure caret, open here
+        // because no hit is on screen, and closed again once the person closes it.
+        const caretStates = () => new Set(screen.root.findAll(node => typeof node.type !== 'string' && node.props.reducedMotion !== undefined
+            && node.props.expanded !== undefined).map(node => node.props.expanded));
+        expect(screen.root.findAll(node => node.props.name === 'caret-right')).not.toHaveLength(0);
+        expect([...caretStates()]).toEqual([true]);
+        await screen.pressByTestIdAsync('external-conversation-failures-header');
+        expect([...caretStates()]).toEqual([false]);
         expect(screen.findHostByTestId('external-conversation-none')).toBeNull();
         const retryId = 'external-conversation-retry:machine-1:codexHome';
         expect(screen.findByTestId(retryId) !== null).toBe(retryable);

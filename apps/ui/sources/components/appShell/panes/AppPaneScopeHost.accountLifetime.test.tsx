@@ -77,6 +77,10 @@ describe('AppPaneScopeHost exact Home launch lifetime', () => {
         const published: { open?: PluginSurfaceOpenHandler; lifetime?: ServerAccountScopeLifetime | null;
             right?: ReturnType<typeof useAppPaneContext>['state']['scopes'][string]['right'] } = {};
         const publishOpen = (open: PluginSurfaceOpenHandler | undefined) => { published.open = open; };
+        // This suite measures credential lifetime; the presenter is explicit so
+        // a successful selection has a real Details owner in both adapter modes.
+        const detailsPaneBuiltinAdapter = { destinationIds: ['details'], defaultDestinationId: 'details',
+            render: () => React.createElement('DetailsPresenter') };
         function PaneState() {
             const context = useAppPaneContext();
             published.right = context.state.scopes[scopeId]?.right;
@@ -87,10 +91,10 @@ describe('AppPaneScopeHost exact Home launch lifetime', () => {
             const surfaceScope = React.useMemo<PaneSurfaceScope>(() => ({ targetKind: 'session', sessionId, machineId: 'pane-machine-b', serverId: homeB.id,
                     accountLifetime: lifetime, pluginUiProjection: projection, platform: 'web',
                     projectionPhase: lifetime ? 'current' : 'unavailable', interactionEnabled: Boolean(lifetime) }), [lifetime]);
-            React.useEffect(() => adapter === 'driver' ? registerDriver({ scopeId, surfaceScope }) : undefined,
+            React.useEffect(() => adapter === 'driver' ? registerDriver({ scopeId, surfaceScope, detailsPaneBuiltinAdapter }) : undefined,
                 [registerDriver, surfaceScope]);
             return <AppPaneScopeHost scopeId={scopeId} main={<PaneState />}
-                {...(adapter === 'direct' ? { surfaceScope } : {})} onPluginSurfaceOpenChange={publishOpen} />;
+                {...(adapter === 'direct' ? { surfaceScope, detailsPaneBuiltinAdapter } : {})} onPluginSurfaceOpenChange={publishOpen} />;
         }
         function Harness() {
             const { binding: lifetime } = useServerCredentialAccountScopeBinding(homeB.id);

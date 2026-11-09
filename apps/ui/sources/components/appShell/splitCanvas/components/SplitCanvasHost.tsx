@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { useEntityDropDomBinding } from '@/components/ui/treeDragDrop/useEntityDragDomBinding';
 import { useEntityDropTargetState } from '@/components/ui/treeDragDrop';
 import { SplitCanvasDivider, SPLIT_CANVAS_DIVIDER_SIZE_PX } from './SplitCanvasDivider';
@@ -184,6 +185,8 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
         setContentSlots(current => current[leafId]?.x === x && current[leafId]?.y === y ? current : { ...current, [leafId]: { x, y } });
     }, []);
     const renderLeaf = props.retainedLeafContents === undefined ? props.renderLeaf : props.renderLeafHeader;
+    // Members hold the newest dispatch through this stable handle, so a parent's new callback does not redraw every retained tab.
+    const dispatch = useEventCallback(props.dispatch);
     const [liveRatios, setLiveRatios] = React.useState<Readonly<Record<string, number>>>({});
     const publishLiveRatio = React.useCallback((splitId: string, ratio: number | null) => {
         setLiveRatios(current => {
@@ -406,21 +409,20 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
                     const edges = leafEdges.get(member.leafId);
                     const slot = contentSlots[member.leafId];
                     const visible = Boolean(slot) && member.isActive && (!props.state.maximizedLeafId || maximized);
-                    // The shared frame has no content padding: the measured slot captures its header inset.
-                    const x = slot?.x ?? 0;
-                    const y = slot?.y ?? 0;
-                    return <View key={member.id} testID={`split-canvas-retained-content-${member.id}`}
-                        pointerEvents={visible ? 'auto' : 'none'} style={[maximized
-                            ? leafLayerFrame(HOST_ORIGIN_RECT, ALL_EDGES, { x, y })
-                            : leafLayerFrame(rect, edges ?? ALL_EDGES, { x, y }), { overflow: 'hidden' }]}>
-                        <RetainedPanelSurface isActive={visible} mode="flow" suspendWhenHidden>
-                            <SplitCanvasRetainedMemberRenderer id={member.id} leafId={member.leafId}
-                                isFocused={props.state.focusedLeafId === member.leafId} isVisible={visible}
-                                touchesLeftEdge={maximized || edges?.left === true}
-                                touchesRightEdge={maximized || edges?.right === true}
-                                render={member.render} dispatch={props.dispatch} />
-                        </RetainedPanelSurface>
-                    </View>;
+                    // A hidden member's body is `display: none`, so its frame is unobservable: it keeps one
+                    // resting frame and redraws only when it becomes visible (and on its own tab's changes).
+                    const frameRect = !visible ? HOST_ORIGIN_RECT : maximized ? HOST_ORIGIN_RECT : rect;
+                    const frameEdges = !visible || maximized ? ALL_EDGES : edges ?? ALL_EDGES;
+                    // The measured slot captures the header inset; the shared frame has no content padding.
+                    return <SplitCanvasRetainedMemberLayer key={member.id} member={member}
+                        x={frameRect.x} y={frameRect.y} width={frameRect.width} height={frameRect.height}
+                        edgeRight={frameEdges.right} edgeBottom={frameEdges.bottom}
+                        insetX={visible ? slot?.x ?? 0 : 0} insetY={visible ? slot?.y ?? 0 : 0}
+                        visible={visible}
+                        isFocused={visible && props.state.focusedLeafId === member.leafId}
+                        touchesLeftEdge={maximized || edges?.left === true}
+                        touchesRightEdge={maximized || edges?.right === true}
+                        dispatch={dispatch} />;
                 })}
                 {props.entityDrop ? leafRects.map(rect => {
                     if (props.state.maximizedLeafId && props.state.maximizedLeafId !== rect.leafId) return null;
@@ -438,6 +440,43 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
 }
 
 export const SplitCanvasHost = React.memo(SplitCanvasHostInner) as typeof SplitCanvasHostInner;
+
+/**
+ * One retained member's frame, memoized on the member object and its measured frame: a write to another tab
+ * leaves this member's layer and panel surface untouched (the host's retained list scales with open tabs).
+ */
+function SplitCanvasRetainedMemberLayerInner<TLeafPayload>(props: Readonly<{
+    member: SplitCanvasRetainedLeafContent;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    edgeRight: boolean;
+    edgeBottom: boolean;
+    insetX: number;
+    insetY: number;
+    visible: boolean;
+    isFocused: boolean;
+    touchesLeftEdge: boolean;
+    touchesRightEdge: boolean;
+    dispatch: (action: SplitCanvasAction<TLeafPayload>) => void;
+}>) {
+    const { member } = props;
+    return <View testID={`split-canvas-retained-content-${member.id}`}
+        pointerEvents={props.visible ? 'auto' : 'none'} style={[
+            leafLayerFrame({ x: props.x, y: props.y, width: props.width, height: props.height },
+                { ...ALL_EDGES, right: props.edgeRight, bottom: props.edgeBottom }, { x: props.insetX, y: props.insetY }),
+            { overflow: 'hidden' },
+        ]}>
+        <RetainedPanelSurface isActive={props.visible} mode="flow" suspendWhenHidden>
+            <SplitCanvasRetainedMemberRenderer id={member.id} leafId={member.leafId}
+                isFocused={props.isFocused} isVisible={props.visible}
+                touchesLeftEdge={props.touchesLeftEdge} touchesRightEdge={props.touchesRightEdge}
+                render={member.render} dispatch={props.dispatch} />
+        </RetainedPanelSurface>
+    </View>;
+}
+const SplitCanvasRetainedMemberLayer = React.memo(SplitCanvasRetainedMemberLayerInner) as typeof SplitCanvasRetainedMemberLayerInner;
 
 function SplitCanvasRetainedMemberRendererInner<TLeafPayload>(props: Readonly<{
     id: string;

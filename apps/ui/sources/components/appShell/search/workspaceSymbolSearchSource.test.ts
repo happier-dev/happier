@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { createWorkspaceSymbolSearchSource } from './workspaceSymbolSearchSource';
+import { createWorkspaceSymbolSearchSource, type WorkspaceSymbolSearchInput } from './workspaceSymbolSearchSource';
 import type { DocumentOutlineServerAnswer } from '@/sync/domains/workspaces/languageIntelligence/documentOutline';
 
 function fixture(serverId: string | null = 'home', serverOutline?: DocumentOutlineServerAnswer | null) {
@@ -8,7 +8,7 @@ function fixture(serverId: string | null = 'home', serverOutline?: DocumentOutli
     let current = true;
     let flushed = false;
     let flush: () => Promise<void> | void = () => { text = 'class Fresh {\n    constructor() {}\n}'; flushed = true; };
-    const source = createWorkspaceSymbolSearchSource({
+    const input: WorkspaceSymbolSearchInput = {
         target: { kind: 'workspaceFile', path: 'src/box.ts', scope: { serverId: 'home', machineId: 'machine', rootPath: '/repo' },
             accountId: 'account', serverId, workspaceRefId: 'project', sessionId: null },
         resolverKey: 'holder-1', language: 'typescript', isDark: false, unavailableHint: 'Unavailable',
@@ -17,11 +17,50 @@ function fixture(serverId: string | null = 'home', serverOutline?: DocumentOutli
         getText: () => { expect(flushed).toBe(true); return text; },
         flushPendingChange: () => flush(),
         ...(serverOutline !== undefined ? { getServerOutline: async () => serverOutline } : {}),
-    });
-    return { source, retire: () => { current = false; }, setFlush: (value: () => Promise<void>) => { flush = value; } };
+    };
+    const source = createWorkspaceSymbolSearchSource(input);
+    return { source, input, retire: () => { current = false; }, setFlush: (value: () => Promise<void>) => { flush = value; } };
 }
 
 describe('active file symbol source', () => {
+    it.each(['no_capable_server', 'update_required', 'transport_failed'] as const)('keeps the document baseline explicitly scoped when the project query is %s', async reason => {
+        const source = createWorkspaceSymbolSearchSource({ ...fixture().input,
+            baselineHint: 'Symbols in box.ts',
+            getWorkspaceSymbols: async () => ({ status: 'unavailable', reason }),
+        });
+        const page = await source.resolve('Fresh', new AbortController().signal);
+        expect(page.results.map(row => row.title)).toEqual(['Fresh']);
+        expect(page.resultHint).toBe('Symbols in box.ts');
+    });
+
+    it('queries project symbols and preserves each result file and range', async () => {
+        const range = { start: { line: 42, character: 8 }, end: { line: 42, character: 14 } };
+        const f = fixture();
+        const source = createWorkspaceSymbolSearchSource({
+            ...f.input,
+            getWorkspaceSymbols: async () => ({ status: 'ok', kind: 'workspaceSymbol', hasMore: false,
+                symbols: [{ serverId: 'ts', path: 'lib/other.ts', name: 'Remote', kind: 12, range }] }),
+        });
+        const page = await source.resolve('Remote', new AbortController().signal);
+        expect(page.results.map(row => row.title)).toEqual(['Remote']);
+        expect(page.results[0]?.target).toMatchObject({ path: 'lib/other.ts', anchor: { startLine: 43 } });
+    });
+
+    it('cancels the previous project query when a new keystroke asks for symbols', async () => {
+        const requests: Array<{ query: string; signal: AbortSignal; resolve(value: null): void }> = [];
+        const source = createWorkspaceSymbolSearchSource({ ...fixture().input,
+            getWorkspaceSymbols: (query, signal) => new Promise(resolve => requests.push({ query, signal, resolve })),
+        });
+        const first = source.resolve('R', new AbortController().signal).catch(error => error);
+        await vi.waitFor(() => expect(requests).toHaveLength(1));
+        const second = source.resolve('Re', new AbortController().signal);
+        await vi.waitFor(() => expect(requests).toHaveLength(2));
+        expect(requests[0].signal.aborted).toBe(true);
+        requests[0].resolve(null);
+        expect(await first).toMatchObject({ name: 'AbortError' });
+        requests[1].resolve(null);
+        await second;
+    });
     it('uses a passive server answer for rows and preserves an authoritative empty outline', async () => {
         const range = { start: { line: 0, character: 0 }, end: { line: 2, character: 1 } };
         const answer: DocumentOutlineServerAnswer = { capable: true, state: 'ready', loading: false, symbols: [

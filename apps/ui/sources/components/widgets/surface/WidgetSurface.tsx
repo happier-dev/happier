@@ -2,10 +2,10 @@ import * as React from 'react';
 import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext } from '@/components/widgets/frame/widgetFrameDemand';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { WidgetPresentationProvider, useWidgetPresentation } from '@happier-dev/plugin-ui';
-import type { JsonValue } from '@happier-dev/protocol';
+import { useWidgetBodyRowHeight, widgetFootprintBodyRows } from '@/components/widgets/frame/widgetFrameBody';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { getWidgetSizeFootprintV1, normalizeWidgetSizeForSurfaceV1, readBuiltinWidgetDescriptorV1, type WidgetDefinitionV1, type WidgetInputBindingsV1, type WidgetSizeV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { readWidgetDefinitionNetworkOverrideV1 } from '@happier-dev/protocol/widgets/widgetDefinitionV1';
-import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 import { ConfiguredInstalledWidgetSurface, ConfiguredWidgetRefusal, UnavailableInstalledWidget } from '@/components/widgets/InstalledWidgetSurface';
 import { BuiltinWidgetBody } from '@/components/sessions/companion/glances/BuiltinWidgetBody';
@@ -25,10 +25,13 @@ import { useSessionCallerHostedHtmlRuntime } from '@/components/ui/surfaces/host
 import type { ConfiguredWidgetTargetResolution } from '@/sync/domains/widgets/widgetBinding';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isPublicProfileWidgetSurfaceV1 } from '@happier-dev/protocol/widgets';
-import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
 import { PublicProfileWidgetSurface } from '@/components/settings/account/publicProfile/PublicProfileWidgetSurface';
+import { useProjectContext } from '@/components/projects/useProjectContext';
+import { usePluginSessionSurfaceTarget } from '@/components/plugins/surfaces/pluginSurfaceContext';
+import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
+import type { ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 
-/** Placement supplies context and presentation, never executable target facts. */
+/** The host supplies admitted context and presentation; the configured binder owns exact target admission. */
 export type WidgetSurfaceProps = Readonly<{
     scope: WidgetSurfaceRefV1;
     /** Captured only by the layout host after its actual Artifact read admits this viewer. */
@@ -38,6 +41,7 @@ export type WidgetSurfaceProps = Readonly<{
     /** Factual pending document observation, independent from effect admission. */
     isReadPending?: () => boolean;
     providedContext: Readonly<Record<string, readonly JsonValue[]>>;
+    projectContext?: ProjectWidgetAreaContextV1 | null;
     /** Value composition only; providedContext retains the host's admitted read facts. */
     groupBindings?: WidgetInputBindingsV1;
     descriptor: WidgetCandidate | null;
@@ -131,20 +135,23 @@ function AuthoredHtmlBody(props: WidgetSurfaceProps & Readonly<{
 }>): React.ReactElement {
     const sessionId = props.resolution.target.kind === 'session' ? props.resolution.target.sessionId : undefined;
     const runtime = useSessionCallerHostedHtmlRuntime(props.scope.serverId, sessionId, props.resolution.runtime, props.isCurrent);
+    const checkout = props.resolution.target.kind === 'workspace' ? props.resolution.target.checkout : null;
+    const projectContext = useProjectContext({ serverId: props.scope.serverId, projectRef: checkout, activeCheckout: checkout });
+    const sessionTarget = usePluginSessionSurfaceTarget({ serverId: props.scope.serverId, sessionId, authority: props.resolution.runtime.accountLifetime });
     const network = React.useMemo(() => props.instance.networkOverride ?? readWidgetDefinitionNetworkOverrideV1(props.definition),
         [props.instance.networkOverride, props.definition]);
     const requestedCapabilities = React.useMemo(() => network === undefined ? props.body.requestedCapabilities : {
         ...props.body.requestedCapabilities, network: network.network, networkOrigins: network.networkOrigins,
     }, [props.body.requestedCapabilities, network]);
-    if (!runtime || !props.isCurrent()) return <UnavailableInstalledWidget
+    if (!runtime || !props.isCurrent() || (checkout && !projectContext.target)) return <UnavailableInstalledWidget
         unresolved={{ state: 'unavailable', reasonCode: 'widget_scope_unavailable' }} testID={props.testID} />;
     return <HostedHtmlSurfaceAdapter sessionId={sessionId} title={props.definition.name} recordRevision={props.recordRevision}
         approvalSubject={`widget:${props.definition.id}:${props.instance.id}`} source={props.body.source}
         requestedCapabilities={requestedCapabilities} input={props.resolution.input}
         target={props.resolution.target.kind === 'workspace'
-            ? { kind: 'project', projectKey: projectWorkspaceRefV1(props.resolution.target.checkout).projectKey }
+            ? projectContext.target!
             : props.resolution.target.kind === 'session'
-                ? { kind: 'session', sessionId: props.resolution.target.sessionId }
+                ? sessionTarget ?? { kind: 'session', sessionId: props.resolution.target.sessionId }
                 : { kind: 'app' }} runtime={runtime}
         onIntrinsicHeightChange={props.onIntrinsicHeightChange} testID={props.testID} />;
 }
@@ -157,7 +164,8 @@ function AuthoredInstanceBody(props: WidgetSurfaceProps): React.ReactElement {
     const definition = opened.definition;
     const reference = props.instance.definition;
     if (!definition || (reference.kind !== 'artifact' && reference.kind !== 'inline')) return <UnavailableInstalledWidget reasonKind="widget"
-        unresolved={{ state: opened.state === 'loading' ? 'loading' : 'unavailable', reasonCode: opened.reasonCode ?? 'widget_type_unavailable' }} testID={props.testID} />;
+        unresolved={{ state: opened.state === 'loading' ? 'loading' : 'unavailable', reasonCode: opened.reasonCode ?? 'widget_type_unavailable' }}
+        definitionOwner={props.scope} testID={props.testID} />;
     const installed = definition.body.kind === 'installed' ? readWidgetDescriptor(props.appRuntime.pluginUiProjection, definition.body) : null;
     const descriptor = describeAuthoredWidgetDefinitionV1(definition, reference, installed);
     return <>
@@ -206,18 +214,23 @@ function WidgetSurfaceBody(props: WidgetSurfaceProps): React.ReactElement {
 export function WidgetSurface(props: WidgetSurfaceProps): React.ReactElement {
     const inherited = useWidgetPresentation();
     const descriptor = useWidgetInstanceDescriptor(props.scope, props.instance, props.descriptor);
-    const [geometry, setGeometry] = React.useState<Readonly<{ width: number; height: number }>>();
+    const [width, setWidth] = React.useState<number>();
     const onLayout = React.useCallback((event: LayoutChangeEvent) => {
-        const { width, height } = event.nativeEvent.layout;
-        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
-        setGeometry(previous => previous?.width === width && previous.height === height ? previous : { width, height });
+        const measured = event.nativeEvent.layout.width;
+        if (!Number.isFinite(measured) || measured <= 0) return;
+        setWidth(measured);
     }, []);
     const size = inherited ? undefined : normalizeWidgetSizeForSurfaceV1(props.scope.owner.kind, props.size, descriptor?.sizeDeclaration);
     const footprint = size ? getWidgetSizeFootprintV1(props.scope.owner.kind, size) : undefined;
+    const rowHeight = useWidgetBodyRowHeight();
     // A framed body consumes its one viewport owner unchanged (especially Board's native width×height).
-    // Only an unframed preview measures here; neither path turns measured pixels into saved intent.
-    const value = React.useMemo(() => inherited ?? (size && footprint ? { size, footprint, ...(geometry ? { geometry } : {}) } : undefined),
-        [inherited, size, footprint, geometry]);
+    // An unframed body (a saved widget's page, a setup preview) measures only its width: its room is the
+    // height its size declares on this surface, never its own box, which a chart filling that room would
+    // grow every frame. Neither path turns measured pixels into saved intent.
+    const declaredHeight = footprint ? widgetFootprintBodyRows(footprint) * rowHeight : undefined;
+    const value = React.useMemo(() => inherited ?? (size && footprint ? { size, footprint,
+        ...(width !== undefined && declaredHeight !== undefined ? { geometry: { width, height: declaredHeight } } : {}) } : undefined),
+        [inherited, size, footprint, width, declaredHeight]);
     // It fills the frame's body room, so a state that replaces the body can sit balanced in it.
     const body = <View testID={`${props.testID}.geometry`} onLayout={inherited ? undefined : onLayout} style={{ minWidth: 0, flexGrow: 1 }}>
         {!isPublicProfileWidgetSurfaceV1(props.scope) && props.instance.definition.kind === 'installed' ? <PluginSurfaceProjectionDemand

@@ -144,7 +144,7 @@ function PluginCountBadge(props: Readonly<{ action: RightSidebarRailAction; test
 }
 
 function pluginCountLabel(action: RightSidebarRailAction, count: number | null, counts?: readonly PluginRightSidebarLabelledCount[]): string {
-    const value = counts || count !== null && count > 0 ? formatPluginRightSidebarCount(count, counts) : action.pluginCount?.tab.badge?.label;
+    const value = formatPluginRightSidebarCount(count, counts) ?? action.pluginCount?.tab.badge?.label;
     return value ? `${action.label} ${value}` : action.label;
 }
 
@@ -236,8 +236,9 @@ function OverflowBadgeSignals(props: Readonly<{ actions: readonly RightSidebarRa
         });
         const labels = props.actions.flatMap(action => {
             const value = props.values.get(action.id);
-            return value !== undefined && value !== null && typeof value !== 'number'
-                ? [`${action.label} ${formatPluginRightSidebarCount(null, value)}`] : [];
+            const count = value !== undefined && value !== null && typeof value !== 'number'
+                ? formatPluginRightSidebarCount(null, value) : undefined;
+            return count ? [`${action.label} ${count}`] : [];
         });
         return <OverflowCustomBadgeSignals actions={props.actions} strongest={resolveStrongestAppRailBadge(signals)}>
             {signal => props.children(signal, labels)}

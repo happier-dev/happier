@@ -57,8 +57,10 @@ export function bindCurrentUiContextVoiceToolPortToAdmission(
         }
         : undefined;
 
+    // Host dependency observation is not part of an admitted Voice attempt.
+    const { observeAction: _observeAction, ...voicePort } = port;
     return Object.freeze({
-        ...port,
+        ...voicePort,
         readCurrentUiContext: () => isCurrent() ? port.readCurrentUiContext() : null,
         ...(port.readCurrentSessionId ? {
             readCurrentSessionId: () => isCurrent() ? port.readCurrentSessionId!() : null,

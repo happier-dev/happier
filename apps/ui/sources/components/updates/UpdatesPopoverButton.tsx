@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
+import { HappierPressable, useHappierHitArea } from '@happier-dev/plugin-ui/presentation';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -122,6 +123,9 @@ export const UpdatesPopoverButton = React.memo(function UpdatesPopoverButton(pro
     const markRef = React.useRef<View>(null);
     const [hovered, setHovered] = React.useState(false);
     const [focused, setFocused] = React.useState(false);
+    // The rail button keeps a raw pressable for the tooltip's measured anchor ref; its hit area is still the shared owner's.
+    const railHitSize = props.buttonSize ?? 28;
+    const railHitArea = useHappierHitArea({ restingStyle: () => ({ width: railHitSize, height: railHitSize }) });
     const [webAnchorRect, setWebAnchorRect] = React.useState<WebRect | null>(null);
     const close = React.useCallback(() => setOpen(false), []);
     const copy = describeUpdatesEntry(props.summary);
@@ -152,7 +156,8 @@ export const UpdatesPopoverButton = React.memo(function UpdatesPopoverButton(pro
             accessibilityRole="button"
             accessibilityLabel={copy?.a11y ?? t('updates.title')}
             accessibilityState={{ expanded: open }}
-            hitSlop={8}
+            hitSlop={railHitArea.hitSlop}
+            onLayout={railHitArea.onLayout}
             onPress={onPress}
             onHoverIn={() => setHovered(true)}
             onHoverOut={() => setHovered(false)}
@@ -165,6 +170,7 @@ export const UpdatesPopoverButton = React.memo(function UpdatesPopoverButton(pro
                 opensUpward && (hovered || open) ? styles.footerButtonActive : null,
             ]}
         >
+            {railHitArea.frame}
             <View style={[styles.railGlyph, props.variant === 'footer' && !copy?.warning ? railInk.style : null]}>
                 {mark(props.markSize ?? ICON_SIZE.sm, markColor)}
                 {copy?.count && !props.hostDrawsCount ? (
@@ -183,12 +189,11 @@ export const UpdatesPopoverButton = React.memo(function UpdatesPopoverButton(pro
             ) : null}
         </Pressable>
     ) : (
-        <Pressable
+        <HappierPressable
             testID={props.testID ?? `updates.entry.${props.variant}`}
             accessibilityRole="button"
             accessibilityLabel={copy?.a11y ?? t('updates.title')}
-            accessibilityState={{ expanded: open }}
-            hitSlop={Platform.select({ web: 6, default: 12 })}
+            expanded={open}
             onPress={onPress}
             style={({ pressed }) => [styles.pillPressable, pressed ? styles.pillPressed : null]}
         >
@@ -202,7 +207,7 @@ export const UpdatesPopoverButton = React.memo(function UpdatesPopoverButton(pro
                 accessibilityLabel={copy?.a11y}
                 labelNumberOfLines={1}
             />
-        </Pressable>
+        </HappierPressable>
     );
 
     return (

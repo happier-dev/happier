@@ -15,7 +15,7 @@ export function buildUniversalSearchWorkspaceFileResults(input: Readonly<{
     workspaceRefId: string | null;
     sessionId: string | null;
     /** Changed files' line counts by path; those rows carry their +/− (lab FB2, FB2t). */
-    changes?: ReadonlyMap<string, Readonly<{ added: number; removed: number }>>;
+    changes?: Pick<ReadonlyMap<string, Readonly<{ added: number; removed: number }>>, 'get'>;
 }>): UniversalSearchResult[] {
     const scopeKey = buildUniversalSearchScopeKey([
         input.accountId,
@@ -32,7 +32,7 @@ export function buildUniversalSearchWorkspaceFileResults(input: Readonly<{
         kind: 'workspaceFile',
         title: file.fileName,
         subtitle: file.filePath.replace(/\/+$/, '') || rootName,
-        ...(input.changes?.has(file.fullPath) ? { fileChange: input.changes.get(file.fullPath)! } : {}),
+        ...(input.changes?.get(file.fullPath) ? { fileChange: input.changes.get(file.fullPath)! } : {}),
         target: {
             kind: 'workspaceFile' as const,
             scope: input.scope,

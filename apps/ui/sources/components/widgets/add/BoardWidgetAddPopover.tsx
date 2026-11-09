@@ -1,6 +1,8 @@
 import * as React from 'react';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
 import type { View } from 'react-native';
-import type { PublicActionInputById } from '@happier-dev/protocol';
+import type { PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
 import { SESSION_BOARD_DEFAULT_ITEM_WIDTH_V1 } from '@happier-dev/protocol/sessions/board';
 import type { WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 
@@ -56,6 +58,10 @@ function OpenBoardWidgetAddPopover(props: React.ComponentProps<typeof BoardWidge
     const router = useRouter();
     const { controller, candidates, pluginRuntime, sessionId, session, testID } = props;
     const appRuntime = useAppShellPluginUiProjection();
+    const localize = usePluginLocalizedTextResolver({ projection: pluginRuntime?.pluginUiProjection });
+    const localizedCandidates = React.useMemo(() => candidates.map(candidate => candidate.surface
+        ? readWidgetDescriptor(pluginRuntime?.pluginUiProjection, candidate.surface, localize) ?? candidate : candidate),
+    [candidates, localize, pluginRuntime?.pluginUiProjection]);
     const intents = controller.addIntents;
     const snapshot = controller.snapshot;
     const run = controller.run;
@@ -66,7 +72,7 @@ function OpenBoardWidgetAddPopover(props: React.ComponentProps<typeof BoardWidge
     const canPublish = scope !== null && controller.supports('item.addWidget');
     const { candidates: yours, status, retry } = useYourWidgetCandidatesState(canPublish ? scope : null, pluginRuntime?.pluginUiProjection ?? appRuntime.pluginUiProjection);
     const pendingSections = useYourWidgetPendingSections(status, retry);
-    const allCandidates = React.useMemo(() => yours.length ? [...candidates, ...yours] : candidates, [candidates, yours]);
+    const allCandidates = React.useMemo(() => yours.length ? [...localizedCandidates, ...yours] : localizedCandidates, [localizedCandidates, yours]);
     const content = React.useMemo(() => buildBoardWidgetAddContent({
         intents,
         candidates: allCandidates,

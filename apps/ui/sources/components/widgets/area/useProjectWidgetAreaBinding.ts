@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { JsonValue } from '@happier-dev/protocol';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { buildWidgetAreaActionInputV1, PluginUiWidgetAreaResultV1Schema, pluginUiWidgetAreaOperationHasOutwardEffectV1, type PluginUiWidgetAreaResultV1 } from '@happier-dev/protocol/plugins/ui';
 import { WidgetInstanceActionInputSchemasV1, WidgetSurfaceReadV1Schema, WidgetSurfaceRefV1Schema, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
@@ -9,13 +9,12 @@ import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceR
 
 import type { WidgetSurfaceContext, WidgetSurfaceContextSlot } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { widgetProvidedContext } from '@/components/widgets/surface/widgetSurfaceSetup';
-import { readProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
+import { useProjectContext } from '@/components/projects/useProjectContext';
 import { useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { ProjectAttachedDashboardSelection } from '@/components/projects/detail/projectRouteState';
 import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
-import { useProjectSource } from '@/components/projects/sources/useProjectSources';
 import { executeWidgetEntityMovement, widgetMovementRefused } from '@/sync/ops/actions/widgetEntityMovement';
 import { t } from '@/text';
 
@@ -81,17 +80,7 @@ function hasDashboardAttachment(source: ProjectSourceV1 | null | undefined, sele
 export function useProjectWidgetAreaBinding(props: ProjectWidgetAreaBindingInput): ProjectWidgetAreaBinding {
     const lifetime = useActiveServerAccountScopeLifetime();
     const viewer = lifetime?.scope ?? null;
-    const demand = React.useMemo(() => readProjectWidgetAreaContextV1({ serverId: props.serverId, projectRef: props.projectRef, activeCheckout: props.activeCheckout }),
-        [props.activeCheckout, props.projectRef, props.serverId]);
-    const sourceRead = useProjectSource(lifetime?.isCurrent() && selectActiveServerAccountScopeForServer(viewer, props.serverId) ? lifetime : null,
-        props.attachedDashboard?.sourceId ?? demand.sourceId);
-    const nextRead = React.useMemo(() => readProjectWidgetAreaContextV1({ serverId: props.serverId, projectRef: props.projectRef,
-        activeCheckout: props.activeCheckout, source: sourceRead.source }), [props.activeCheckout, props.projectRef, props.serverId, sourceRead.source]);
-    // Snapshot publications can replace an equivalent checkout. Only a changed binding
-    // retires the area's in-flight read, not that publication's object identity.
-    const stableRead = React.useRef(nextRead);
-    if (!sameStrictJsonValue(stableRead.current, nextRead)) stableRead.current = nextRead;
-    const read = stableRead.current;
+    const read = useProjectContext({ serverId: props.serverId, projectRef: props.projectRef, activeCheckout: props.activeCheckout });
     const selectionKey = JSON.stringify([lifetime?.scope, read.projectIdentity?.projectKey]);
     const [selection, setSelection] = React.useState<Readonly<{ key: string; initial?: string; layoutId?: string }> | null>(null);
     const locallySelected = !props.onSelectLayout && selection?.key === selectionKey && selection.initial === props.layoutId;
@@ -100,15 +89,15 @@ export function useProjectWidgetAreaBinding(props: ProjectWidgetAreaBindingInput
         const project = read.providedContext.project?.[0];
         const projects = read.providedContext.projects?.[0];
         const checkout = read.providedContext.checkout?.[0];
-        return projectWidgetAreaContext({
+        return { ...projectWidgetAreaContext({
             project: project === undefined ? null : { value: project, label: props.projectName },
             projects: projects === undefined ? null : { value: projects, label: props.projectName },
             checkout: checkout === undefined ? null : { value: checkout, label: props.activeCheckoutLabel ?? props.projectName },
-        });
+        }), projectContext: read };
     }, [props.activeCheckoutLabel, props.projectName, read]);
     const attached = props.attachedDashboard;
-    const attachmentEligible = attached !== undefined && demand.sourceId === attached.sourceId
-        && hasDashboardAttachment(sourceRead.source?.source, attached, props.serverId);
+    const attachmentEligible = attached !== undefined && read.sourceId === attached.sourceId
+        && hasDashboardAttachment(read.target?.source?.source, attached, props.serverId);
     const attachedRead = useProjectDashboardDocument(attachmentEligible ? attached! : null, props.serverId);
     const sharedDashboard = attachmentEligible ? attachedRead.document ?? undefined : undefined;
     const surface = React.useMemo((): WidgetSurfaceRefV1 | null => {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createWorkspaceEmptyTab, createWorkspaceState, reduceWorkspaceState } from './workspaceState';
 import { createWorkspaceSplit, WORKSPACE_VIEW_MINIMUM } from './workspaceSplit';
 import { projectWorkspaceTabsList } from './workspaceActions';
-import { WORKSPACE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol';
+import { WORKSPACE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/workspaceActionFamily';
 
 describe('workspace measured split owner', () => {
     it('exposes the canonical nested split relationships needed to target a tab group', () => {

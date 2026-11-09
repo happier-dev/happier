@@ -7,10 +7,31 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { isWidgetFollowingSurfaceSlot, useWidgetInstanceBindingLabel } from './useWidgetInstanceBindingLabel';
 import { useWidgetBindingValueLabels } from './useWidgetBindingValueLabels';
 import { describeWidgetGroupContext, readWidgetGroupFollowedValue, widgetGroupSurfaceContext } from '../group/widgetGroupInputs';
+import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 
 vi.mock('@/sync/sync', async () => ({ sync: (await import('@/dev/testkit/mocks/sync')).createSessionListHydrationSyncBoundary() }));
 
 afterEach(() => standardCleanup());
+
+it('redacts private Session pin labels on sharing push without changing the binding and restores them', async () => {
+  const previous = storage.getState();
+  const session = createSessionFixture({ id: 'private-pin', serverId: 'home', metadata: { name: 'Secret invoices', path: '/private', host: 'host' } });
+  const bindings = { selected: { kind: 'value' as const, value: { serverId: 'home', sessionId: session.id } } };
+  storage.setState({ sessions: { [session.id]: session }, settings: { ...previous.settings,
+    sessionListHiddenTagIdsWhileRecording: { home: ['secret'] } }, sessionOrganizationTagAssignmentsBySessionKey: {
+      [buildSessionOrganizationSessionKey('home', session.id)]: { sessionId: session.id, tagIds: ['secret'] },
+    } });
+  const hook = await renderHook(() => useWidgetBindingValueLabels(bindings, { sessionInputPath: 'selected' }));
+  try {
+    expect(hook.getCurrent().selected).toBe('Secret invoices');
+    await act(async () => setScreenSharingPrivacyActive(true));
+    expect(hook.getCurrent().selected).toBeNull();
+    expect(bindings.selected.value.sessionId).toBe(session.id);
+    await act(async () => setScreenSharingPrivacyActive(false));
+    expect(hook.getCurrent().selected).toBe('Secret invoices');
+  } finally { await hook.unmount(); setScreenSharingPrivacyActive(false); storage.setState(previous, true); }
+});
 
 it('names machine pins from the exact Home inventory and updates their live display name', async () => {
   const previous = storage.getState();

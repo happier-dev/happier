@@ -204,7 +204,7 @@ function DestinationNavigationChrome(props: Readonly<{
     </DestinationHeaderOptionsContext.Provider>;
     return <DestinationHeaderOptionsContext.Provider value={updateOptions}>
         <NavigationTitleChromeProvider showsTitle={chromeShown}
-            showsBack={chromeShown && Boolean(options.headerLeft || back || canGoBack)} publisher={publisher}>
+            showsBack={chromeShown && Boolean(hasChrome) && Boolean(options.headerLeft || back || canGoBack)} publisher={publisher}>
             {chromeShown && hasChrome ? <View testID="workspace-destination-header">
                 <Header title={titleNode}
                     subtitle={(options as Readonly<{ headerSubtitle?: string }>).headerSubtitle}

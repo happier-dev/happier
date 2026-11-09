@@ -113,8 +113,10 @@ export function describeUpdatesGroupRow(
     if (group.items.some((item) => item.state === 'checking')) {
         return { title, status: t('updates.row.checking'), tone: 'pending', action: null };
     }
-    if (group.items.some((item) => item.state === 'unknown')) {
-        return { title, status: t('updates.settingsSubtitle.unknown'), tone: 'neutral', action: null };
+    const unknown = group.items.filter((item) => item.state === 'unknown');
+    if (unknown.length > 0) {
+        const item = unknown.length === 1 ? unknown[0] : null;
+        return { title, status: item?.cachedRelease ? namedItemStatus(item) : t('updates.settingsSubtitle.unknown'), tone: 'neutral', action: null };
     }
     if (group.items.some((item) => item.state === 'unchecked')) {
         return { title, status: t('updates.summary.notCheckedYet'), tone: 'neutral', action: null };
@@ -126,6 +128,7 @@ export function describeUpdatesGroupRow(
 function isQuietMachineGroup(group: UpdatesGroup): boolean {
     return group.items.every((item) => {
         if (item.state === 'running' || item.state === 'failed' || item.state === 'ready' || item.state === 'checking') return false;
+        if ((item.state === 'unknown' || item.state === 'unchecked') && item.action.kind === 'manual') return false;
         if ((item.state === 'available' || item.state === 'required') && !item.skipped) {
             // An update Happier runs, or a newer version the person installs themselves, is something to do.
             if (item.action.kind === 'run') return false;

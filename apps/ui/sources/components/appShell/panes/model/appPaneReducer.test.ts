@@ -1,12 +1,13 @@
+import { describe, expect, it } from 'vitest';
+import { appPaneReduce, createAppPaneState, type AppPaneAction } from './appPaneReducer';
+import { buildDetailsWorkspaceStateView } from '../details/workspace/detailsWorkspaceSelectors';
+import { SessionTerminalWorkspaceV1Schema } from '@happier-dev/protocol/terminal';
+import { EMPTY_TERMINAL_WORKSPACE, readSessionTerminalWorkspace } from '@/components/sessions/terminal/sessionTerminalWorkspace';
+import { createSessionBoardDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
+import { qualifyPaneScopeId } from '../paneScopeIdentity';
 import { createBotTemplateEditorDetailsTab } from '@/components/sessions/bots/templates/botTemplateEditorDestination';
 import { normalizePersistedPaneScopes, serializePersistedPaneScope } from './paneScopePersistence';
 import { PersistedPaneScopeSchema } from './paneScopePersistenceSchema';
-import { describe, expect, it } from 'vitest';
-import { appPaneReduce, createAppPaneState } from './appPaneReducer';
-import { buildDetailsWorkspaceStateView } from '../details/workspace/detailsWorkspaceSelectors';
-import { SessionTerminalWorkspaceV1Schema } from '@happier-dev/protocol/terminal';
-import { readSessionTerminalWorkspace } from '@/components/sessions/terminal/sessionTerminalWorkspace';
-import { createSessionBoardDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 
 function createFileTab(path: string) {
     return { key: `file:${path}`, kind: 'file', title: path.split('/').at(-1) ?? path, resource: { path } };
@@ -95,6 +96,189 @@ describe('appPaneReduce', () => {
         expect(state.scopes[scopeId].mainTabId).toBeNull();
         expect(state.scopes[scopeId].right.activeTabId).toBe('files');
     });
+    it('moves an app selection staged before navigation into its first destination instance', () => {
+        const scopeId = qualifyPaneScopeId('app', 'panels-tab');
+        const staged = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'openRight', scopeId: 'app', tabId: 'plugins' });
+        const original = staged.scopes.app;
+        const activated = appPaneReduce(staged, { type: 'activateScope', scopeId });
+        expect(activated.scopes[scopeId]).toBe(original);
+        expect(activated.scopes.app).toBeUndefined();
+        expect(activated.scopeLru).not.toContain('app');
+        expect(activated.activeScopeId).toBe(scopeId);
+    });
+    it('keeps a focused Terminal page as the host through New, split, detach and focus', () => {
+        const scopeId = 'session:terminal-page-owner';
+        let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'activateScope', scopeId });
+        state = appPaneReduce(state, { type: 'setTerminalPageActive', scopeId, active: true });
+        const commands: Extract<AppPaneAction, { type: 'terminalWorkspace' }>['command'][] = [
+            { type: 'open', terminal: { id: 'page-shell', target: { kind: 'workspace_shell' } } },
+            { type: 'split', terminal: { id: 'page-split', target: { kind: 'workspace_shell' } }, availableWidthPx: 1000, minimumTerminalWidthPx: 320 },
+            { type: 'detach', terminalId: 'page-split', newTabId: 'detached-page' },
+            { type: 'focus', terminalId: 'page-shell' },
+        ];
+        for (const command of commands) {
+            state = appPaneReduce(state, { type: 'terminalWorkspace', scopeId, command });
+            expect(state.scopes[scopeId].bottom.isOpen).toBe(false);
+            expect(state.scopes[scopeId].right.isOpen).toBe(false);
+            expect(readSessionTerminalWorkspace(state.scopes[scopeId].bottom.tabState.terminal).tabs.flatMap(tab => tab.terminals.map(member => member.id)))
+                .toContain('page-shell');
+        }
+    });
+
+    it('moves restored overlapping readers to the page once, preserving Shells and unrelated Details', () => {
+        const scopeId = 'session:terminal-page-restore';
+        let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'activateScope', scopeId });
+        state = appPaneReduce(state, { type: 'openDetailsTab', scopeId, tab: createTerminalTab({ key: 'terminal:embedded', cwd: '/repo' }), openAs: 'pinned' });
+        state = appPaneReduce(state, { type: 'openDetailsTab', scopeId, tab: createTerminalTab({ key: 'terminal:other', cwd: '/other' }), openAs: 'pinned' });
+        const workspace = state.scopes[scopeId].bottom.tabState.terminal;
+        const page = appPaneReduce(state, { type: 'setTerminalPageActive', scopeId, active: true });
+        expect(getDetailsView(page, scopeId).tabs.map(tab => tab.key)).toEqual(['terminal:other']);
+        expect(page.scopes[scopeId].bottom.tabState.terminal).toBe(workspace);
+        const dock = appPaneReduce(page, { type: 'openBottom', scopeId, tabId: 'terminal' });
+        expect(appPaneReduce(dock, { type: 'setTerminalPageActive', scopeId, active: true })).toBe(dock);
+        const away = appPaneReduce(dock, { type: 'setTerminalPageActive', scopeId, active: false });
+        const returned = appPaneReduce(away, { type: 'setTerminalPageActive', scopeId, active: true });
+        expect(returned.scopes[scopeId].bottom.isOpen).toBe(false);
+        expect(returned.scopes[scopeId].bottom.tabState.terminal).toBe(workspace);
+    });
+
+    it('keeps focused Details ownership but reveals a new split on the page so both members are reachable', () => {
+        const scopeId = 'session:terminal-page-split-details';
+        let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'activateScope', scopeId });
+        state = appPaneReduce(state, { type: 'setTerminalPageActive', scopeId, active: true });
+        state = appPaneReduce(state, { type: 'openDetailsTab', scopeId, tab: createTerminalTab({ key: 'terminal:embedded', cwd: '/repo' }), openAs: 'pinned' });
+        const focused = appPaneReduce(state, { type: 'terminalWorkspace', scopeId, command: { type: 'focus', terminalId: 'embedded' } });
+        expect(focused).toBe(state);
+        state = appPaneReduce(state, { type: 'terminalWorkspace', scopeId, command: { type: 'split',
+            terminal: { id: 'details-split', target: { kind: 'workspace_shell' } }, availableWidthPx: 1000, minimumTerminalWidthPx: 320 } });
+        expect(state.scopes[scopeId].bottom.isOpen).toBe(false);
+        expect(getDetailsView(state, scopeId).tabs).toEqual([]);
+        expect(readSessionTerminalWorkspace(state.scopes[scopeId].bottom.tabState.terminal).tabs[0].terminals.map(member => member.id))
+            .toEqual(['embedded', 'details-split']);
+    });
+
+    it('normalizes a late retained pane hydration into the already focused Terminal page', () => {
+        const scopeId = 'session:terminal-page-late-hydration';
+        const retained = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'openBottom', scopeId, tabId: 'terminal' });
+        let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'setTerminalPageActive', scopeId, active: true });
+        state = appPaneReduce(state, { type: 'mergePersistedScopes', scopes: retained.scopes });
+        expect(state.scopes[scopeId].bottom.isOpen).toBe(false);
+        expect(state.scopes[scopeId].bottom.tabState).toBe(retained.scopes[scopeId].bottom.tabState);
+    });
+
+    it.each(['right', 'bottom'] as const)('hides the terminal workspace in its %s host without discarding output state or closing another destination', host => {
+        const scopeId = 'project:terminal-hide-host';
+        const other = host === 'right' ? 'bottom' : 'right';
+        let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), {
+            type: 'terminalWorkspace', scopeId, command: { type: 'open', terminal: { id: 'retained-shell', target: { kind: 'workspace_shell' } } },
+        });
+        state = appPaneReduce(state, { type: host === 'right' ? 'openRight' : 'openBottom', scopeId, tabId: 'terminal' });
+        state = appPaneReduce(state, { type: other === 'right' ? 'openRight' : 'openBottom', scopeId, tabId: 'git' });
+        const before = state.scopes[scopeId];
+        const hidden = appPaneReduce(state, { type: 'hideTerminalWorkspace', scopeId });
+        expect(hidden.scopes[scopeId][host].isOpen).toBe(false);
+        expect(hidden.scopes[scopeId][other]).toBe(before[other]);
+        expect(hidden.scopes[scopeId].bottom.tabState).toBe(before.bottom.tabState);
+        expect(appPaneReduce(hidden, { type: 'hideTerminalWorkspace', scopeId })).toBe(hidden);
+        const reopened = appPaneReduce(hidden, { type: host === 'right' ? 'openRight' : 'openBottom', scopeId, tabId: 'terminal' });
+        expect(reopened.scopes[scopeId].bottom.tabState.terminal).toBe(before.bottom.tabState.terminal);
+    });
+
+    it.each(['right', 'bottom', 'unhosted'] as const)('keeps terminal workspace commands in the %s host, using bottom only when unhosted', host => {
+        const scopeId = 'project:terminal-reveal-host';
+        let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), {
+            type: 'openRight', scopeId, tabId: host === 'right' ? 'terminal' : 'git',
+        });
+        if (host !== 'right') state = appPaneReduce(state, { type: 'openBottom', scopeId, tabId: host === 'bottom' ? 'terminal' : 'tasks' });
+        const commands: Extract<AppPaneAction, { type: 'terminalWorkspace' }>['command'][] = [
+            { type: 'open', terminal: { id: 'new-shell', target: { kind: 'workspace_shell' } } },
+            { type: 'split', terminal: { id: 'split-shell', target: { kind: 'workspace_shell' } }, availableWidthPx: 1000, minimumTerminalWidthPx: 320 },
+            { type: 'detach', terminalId: 'split-shell', newTabId: 'detached-shell' },
+            { type: 'focus', terminalId: 'new-shell' },
+        ];
+        const targetPane = host === 'right' ? 'right' : 'bottom';
+        for (const command of commands) {
+            state = appPaneReduce(state, { type: 'terminalWorkspace', scopeId, command });
+            const scope = state.scopes[scopeId];
+            expect(scope[targetPane]).toMatchObject({ isOpen: true, selectedDestination: { kind: 'builtin', id: 'terminal' } });
+            if (host === 'right') expect(scope.bottom.isOpen).toBe(false);
+            else expect(scope.right).toMatchObject({ isOpen: true, selectedDestination: { kind: 'builtin', id: 'git' } });
+            const workspace = readSessionTerminalWorkspace(scope.bottom.tabState.terminal);
+            expect(workspace.tabs.flatMap(tab => tab.terminals.map(terminal => terminal.id))).toContain('new-shell');
+            if (command.type !== 'open') expect(workspace.tabs.flatMap(tab => tab.terminals.map(terminal => terminal.id))).toContain('split-shell');
+        }
+        expect(appPaneReduce(state, { type: 'terminalWorkspace', scopeId, command: { type: 'focus', terminalId: 'new-shell' } })).toBe(state);
+    });
+    it.each(['right', 'bottom'] as const)('moves an active workspace Shell from %s into Details without closing unrelated destinations', pane => {
+        const scopeId = 'project:terminal-details-owner';
+        for (const tabId of ['terminal', 'git']) {
+            let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), {
+                type: pane === 'right' ? 'openRight' : 'openBottom', scopeId, tabId,
+            });
+            const workspace = state.scopes[scopeId].bottom.tabState.terminal;
+            state = appPaneReduce(state, { type: 'openDetailsTab', scopeId,
+                tab: createTerminalTab({ key: 'terminal:embedded', cwd: '/repo' }), openAs: 'pinned' });
+            expect(state.scopes[scopeId][pane].isOpen).toBe(tabId !== 'terminal');
+            expect(state.scopes[scopeId].bottom.tabState.terminal).toBe(workspace);
+            expect(getDetailsView(state, scopeId).tabs.map(tab => tab.key)).toEqual(['terminal:embedded']);
+        }
+    });
+    it.each(['openBottom', 'selectBottomDestination', 'setBottomTab', 'openRight', 'selectRightDestination', 'setRightTab'] as const)(
+        'gives the shared terminal workspace one pane on %s and preserves other destinations', type => {
+            const scopeId = 'project:terminal-pane-owner';
+            const targetPane = type.includes('Bottom') ? 'bottom' : 'right';
+            const otherPane = targetPane === 'bottom' ? 'right' : 'bottom';
+            for (const otherTabId of ['terminal', 'git']) {
+                let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), {
+                    type: 'terminalWorkspace', scopeId, command: { type: 'focus', terminalId: 'embedded' },
+                });
+                state = appPaneReduce(state, {
+                    type: targetPane === 'bottom' ? 'openBottom' : 'openRight', scopeId, tabId: 'tasks',
+                });
+                state = appPaneReduce(state, { type: otherPane === 'bottom' ? 'openBottom' : 'openRight', scopeId, tabId: otherTabId });
+                const workspace = state.scopes[scopeId].bottom.tabState.terminal;
+                const action: AppPaneAction = type === 'selectBottomDestination' || type === 'selectRightDestination'
+                    ? { type, scopeId, destination: { kind: 'builtin', id: 'terminal' } }
+                    : { type, scopeId, tabId: 'terminal' };
+                state = appPaneReduce(state, action);
+                expect(state.scopes[scopeId][targetPane]).toMatchObject({ isOpen: true, activeTabId: 'terminal' });
+                expect(state.scopes[scopeId][otherPane].isOpen).toBe(otherTabId !== 'terminal');
+                expect(state.scopes[scopeId].bottom.tabState.terminal).toBe(workspace);
+                expect(appPaneReduce(state, action)).toBe(state);
+            }
+        },
+    );
+    it.each(['openBottom', 'selectBottomDestination', 'setBottomTab', 'terminalWorkspace'] as const)(
+        'transfers the active split terminals from Details on %s without losing other Details or terminals', type => {
+            const scopeId = 'project:terminal-redock';
+            let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'openBottom', scopeId, tabId: 'terminal' });
+            state = appPaneReduce(state, { type: 'terminalWorkspace', scopeId, command: { type: 'split', terminal: {
+                id: 'split-shell', target: { kind: 'workspace_shell' },
+            }, availableWidthPx: 1000, minimumTerminalWidthPx: 320 } });
+            state = appPaneReduce(state, { type: 'terminalWorkspace', scopeId, command: { type: 'open', terminal: {
+                id: 'other-shell', target: { kind: 'workspace_shell' },
+            } } });
+            state = appPaneReduce(state, { type: 'terminalWorkspace', scopeId, command: { type: 'focus', terminalId: 'embedded' } });
+            for (const id of ['embedded', 'split-shell', 'other-shell']) {
+                state = appPaneReduce(state, { type: 'openDetailsTab', scopeId,
+                    tab: createTerminalTab({ key: `terminal:${id}`, cwd: '/repo' }), openAs: 'pinned' });
+            }
+            state = appPaneReduce(state, { type: 'openDetailsTab', scopeId, tab: createFileTab('README.md'), openAs: 'pinned' });
+            state = appPaneReduce(state, { type: 'closeBottom', scopeId });
+            if (type === 'setBottomTab') state = appPaneReduce(state, { type: 'openBottom', scopeId, tabId: 'tasks' });
+            const retainedWorkspace = state.scopes[scopeId].bottom.tabState.terminal;
+            const action: AppPaneAction = type === 'selectBottomDestination'
+                ? { type, scopeId, destination: { kind: 'builtin', id: 'terminal' } }
+                : type === 'terminalWorkspace'
+                    ? { type, scopeId, command: { type: 'focus', terminalId: 'embedded' } }
+                    : { type, scopeId, tabId: 'terminal' };
+            state = appPaneReduce(state, action);
+            expect(state.scopes[scopeId].bottom.isOpen).toBe(true);
+            expect(state.scopes[scopeId].bottom.tabState.terminal).toBe(retainedWorkspace);
+            expect(getDetailsView(state, scopeId).tabs.map(tab => tab.key)).toEqual(['terminal:other-shell', 'file:README.md']);
+            expect(appPaneReduce(state, action)).toBe(state);
+        },
+    );
     it('applies an explicit file turn opener over the retained scope without replacing editor or reading state', () => {
         const scopeId = 'session:turn-file';
         const tab = createFileTab('src/a.ts');
@@ -757,6 +941,37 @@ describe('appPaneReduce', () => {
 
         expect(Object.keys(state.scopes).sort()).toEqual(['session:2', 'session:3']);
         expect(state.scopes['session:1']).toBeUndefined();
+    });
+
+    it.each(['cold', 'late'] as const)('retains more Shell inventories than the pane budget through %s hydration, until their last member closes', hydration => {
+        const maxScopesInMemory = 12;
+        const inventoryScopeIds = Array.from({ length: maxScopesInMemory + 1 }, (_, index) => `session:retained-shell-${index}`);
+        let retained = createAppPaneState({ maxScopesInMemory });
+        for (const scopeId of inventoryScopeIds) {
+            retained = appPaneReduce(retained, { type: 'setBottomTabState', scopeId, tabId: 'terminal', nextState: EMPTY_TERMINAL_WORKSPACE });
+            retained = appPaneReduce(retained, { type: 'terminalWorkspace', scopeId, command: { type: 'open',
+                terminal: { id: scopeId, target: { kind: 'workspace_shell' } },
+            } });
+            retained = appPaneReduce(retained, { type: 'hideTerminalWorkspace', scopeId });
+        }
+        let state = hydration === 'cold'
+            ? createAppPaneState({ maxScopesInMemory, persistedScopes: retained.scopes })
+            : appPaneReduce(createAppPaneState({ maxScopesInMemory }), { type: 'mergePersistedScopes', scopes: retained.scopes });
+        for (const scopeId of inventoryScopeIds) state = appPaneReduce(state, { type: 'activateScope', scopeId });
+        for (let index = 0; index <= maxScopesInMemory; index += 1) {
+            state = appPaneReduce(state, { type: 'activateScope', scopeId: `session:ordinary-${index}` });
+        }
+        for (const scopeId of inventoryScopeIds) {
+            expect(state.scopes[scopeId]?.bottom.tabState.terminal).toEqual(retained.scopes[scopeId].bottom.tabState.terminal);
+        }
+        expect(Object.keys(state.scopes)).toHaveLength(inventoryScopeIds.length + maxScopesInMemory);
+        expect(state.scopes['session:ordinary-0']).toBeUndefined();
+
+        const closedScope = inventoryScopeIds[0];
+        state = appPaneReduce(state, { type: 'terminalWorkspace', scopeId: closedScope, command: { type: 'close', terminalId: closedScope } });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:ordinary-after-close' });
+        expect(state.scopes[closedScope]).toBeUndefined();
+        expect(Object.keys(state.scopes)).toHaveLength(inventoryScopeIds.length - 1 + maxScopesInMemory);
     });
 
     it('retains right tab state across open/close cycles', () => {

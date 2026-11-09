@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { appPaneReduce, createAppPaneState } from './appPaneReducer';
-import { paneScopeStateSchema, EMPTY_PERSISTED_PANE_SCOPE_STATE } from '@/sync/domains/settings/registry/local/localSettingDefinitions.shared';
+import { paneScopeStateSchema, EMPTY_PERSISTED_PANE_SCOPE_STATE } from './paneScopePersistenceSchema';
 
 describe('main column persisted preference', () => {
     it('reads omitted hide state as visible and retains canonical new writes', () => {

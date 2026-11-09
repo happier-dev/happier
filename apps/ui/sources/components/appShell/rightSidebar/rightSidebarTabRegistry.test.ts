@@ -464,7 +464,7 @@ describe('rightSidebarTabRegistry', () => {
         hiddenInLauncher: true,
       });
       expect(
-        resolveRightSidebarMobileProjection({ scope: 'project', tabs }).map(
+        resolveRightSidebarMobileProjection({ scope: 'project', browserFeatureEnabled: true, tabs }).map(
           (entry) => entry.tabId,
         ),
       ).toEqual(
@@ -487,7 +487,7 @@ describe('rightSidebarTabRegistry', () => {
         presentation: 'mobile',
       });
       expect(
-        resolveRightSidebarMobileProjection({ scope: 'project', tabs }).map(
+        resolveRightSidebarMobileProjection({ scope: 'project', browserFeatureEnabled: true, tabs }).map(
           (entry) => entry.tabId,
         ),
       ).toEqual(['git', 'files', 'scripts', 'browser', 'services']);

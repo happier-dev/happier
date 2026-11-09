@@ -5,7 +5,7 @@ import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionAc
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 
-import type { PluginProjectedActionV2 } from '@happier-dev/protocol';
+import type { PluginProjectedActionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginUiActionProjection, PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/projectionUnion';

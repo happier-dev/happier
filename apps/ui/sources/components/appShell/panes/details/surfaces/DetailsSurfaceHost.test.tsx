@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
@@ -174,5 +175,26 @@ describe('DetailsSurfaceHost', () => {
         } finally {
             consoleError.mockRestore();
         }
+    });
+    it('does not re-render its content when the parent re-renders with unchanged inputs', async () => {
+        // The Details panel re-renders on every pane, store and presentation commit and rebuilds this element each
+        // time; the tab's page (a file with its header and body) must only render when the tab or its renderers change.
+        const { DetailsSurfaceHost } = await import('./DetailsSurfaceHost');
+        let renders = 0;
+        const scope = { kind: 'session', sessionId: 'session-1' } as const;
+        const renderers = [{
+            id: 'demo',
+            owner: 'session' as const,
+            order: 0,
+            canRender: () => true,
+            render: () => { renders += 1; return React.createElement('ResolvedSurface'); },
+        }];
+        const element = () => <DetailsSurfaceHost tab={tab} scope={scope} region="details" renderers={renderers} />;
+        const screen = await renderScreen(element());
+        const afterMount = renders;
+        await act(async () => { screen.update(element()); });
+        await act(async () => { screen.update(element()); });
+        expect(afterMount).toBeGreaterThan(0);
+        expect(renders).toBe(afterMount);
     });
 });

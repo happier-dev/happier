@@ -50,7 +50,11 @@ function DetailsSurfaceRendererContent(props: Readonly<{
         : <>{surface}</>;
 }
 
-export function DetailsSurfaceHost(props: Readonly<{
+/**
+ * Memoized: the Details panels rebuild this element on every pane, store and presentation commit, while a tab's
+ * page (a file's header and body) only changes with its tab, scope, renderers or callbacks.
+ */
+export const DetailsSurfaceHost = React.memo(function DetailsSurfaceHost(props: Readonly<{
     tab: DetailsTabState;
     scope: DetailsSurfaceScopeV1;
     region: DetailsSurfaceRegionV1;
@@ -90,4 +94,4 @@ export function DetailsSurfaceHost(props: Readonly<{
             <DetailsSurfaceRendererContent renderer={renderer} input={renderInput} />
         </DetailsSurfaceRenderBoundary>
     );
-}
+});

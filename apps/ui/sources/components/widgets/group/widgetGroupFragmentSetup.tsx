@@ -43,6 +43,7 @@ import { resolveWidgetGroupWidthChoices, WIDGET_GROUP_ICON } from './widgetGroup
 import { buildWidgetGroupInputsCandidate } from './widgetGroupInputs';
 import { isPublicProfileWidgetSurfaceV1 } from '@happier-dev/protocol/widgets';
 import { PublicProfileWidgetPreviewBoundary } from '@/components/settings/account/publicProfile/PublicProfileWidgetSurface';
+import type { ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 
 const NO_VIEWER_VALUES = Object.freeze({});
 
@@ -211,6 +212,7 @@ export function WidgetGroupFragmentPreview(props: Readonly<{
   candidates: readonly WidgetCandidate[];
   scope: WidgetSurfaceRefV1;
   providedContext: Readonly<Record<string, readonly JsonValue[]>>;
+  projectContext?: ProjectWidgetAreaContextV1 | null;
   phone: boolean;
   /** Inputs are still needed: each widget's body says what it waits for instead of reading. */
   waiting?: string | undefined;
@@ -251,6 +253,7 @@ export function WidgetGroupFragmentPreview(props: Readonly<{
               </View>
             ) : entry.candidate ? (
               <WidgetSetupPreview scope={props.scope} providedContext={groupContext} candidate={entry.candidate}
+                projectContext={props.projectContext}
                 draft={{ bindings: entry.child.instance.bindings, ...(size ? { size } : {}) }} testID={`${props.testID}.${id}.body`} />
             ) : null }} />
         );

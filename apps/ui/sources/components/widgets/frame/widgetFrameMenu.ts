@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 
 import type { ItemAction } from '@/components/ui/lists/itemActions';
-import { readCoarsePrimaryPointer } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
+import { useCoarsePrimaryPointer } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 
@@ -23,7 +23,8 @@ export const WIDGET_MENU_MAX_HEIGHT_PX = 520;
  */
 export function useWidgetMenuAlwaysShown(): boolean {
     const phone = useDeviceType() === 'phone';
-    return phone || Platform.OS !== 'web' || readCoarsePrimaryPointer();
+    const coarsePrimaryPointer = useCoarsePrimaryPointer();
+    return phone || Platform.OS !== 'web' || coarsePrimaryPointer;
 }
 
 function styleLabel(style: WidgetFrameStyle): string {
@@ -148,6 +149,8 @@ export function buildWidgetInstanceActions(input: Readonly<{
     editInputs?: Readonly<{ onPress: () => void; binding: string | null }> | undefined;
     onRename?: (() => void) | undefined;
     onMention?: (() => void) | undefined;
+    /** An HTML widget's network access (the Board's panel); editors only. */
+    onNetwork?: (() => void) | undefined;
 }>): ItemAction[] {
     return [
         ...(input.onMention ? [{ id: 'mentionInComposer', title: t('entityDragDrop.composer.mentionInComposer'), icon: 'at' as const, onPress: input.onMention }] : []),
@@ -159,6 +162,7 @@ export function buildWidgetInstanceActions(input: Readonly<{
             onPress: input.editInputs.onPress,
         }] : []),
         ...(input.onRename ? [{ id: 'rename', title: t('common.rename'), icon: 'text-aa' as const, onPress: input.onRename }] : []),
+        ...(input.onNetwork ? [{ id: 'network', title: t('sessionBoard.item.actions.network'), icon: 'globe' as const, onPress: input.onNetwork }] : []),
     ];
 }
 

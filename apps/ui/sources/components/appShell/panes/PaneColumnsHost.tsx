@@ -6,7 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 
 import { MultiPaneHostWithBottom } from '@/components/ui/panels/MultiPaneHostWithBottom';
-import { resolvePaneLayout, type ResolvePaneLayoutInput, type ResolvedPaneLayout, type PaneArrangement } from '@/components/ui/panels/paneBreakpoints';
+import { resolveDestinationListYields, resolvePaneLayout, type ResolvePaneLayoutInput, type ResolvedPaneLayout, type PaneArrangement } from '@/components/ui/panels/paneBreakpoints';
 import { resolveBottomPaneLayout } from '@/components/ui/panels/resolveBottomPaneLayout';
 import type { FocusReturnMutableRef } from '@/keyboard/focusReturn';
 import { getStorage, useLocalSetting } from '@/sync/domains/state/storage';
@@ -30,6 +30,7 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { AppShellTailContext, AppShellTailSlot, useAppShellTail } from '@/components/navigation/shell/appShellTail';
 import { useDestinationFocus } from '@/components/appShell/workspace/destinationInstanceContext';
 import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { ScreenBackdropBoundary } from '@/components/navigation/safeArea/HorizontalSafeArea';
 
 /**
  * The one pane primitive: a main column plus the side columns every destination shares — the
@@ -267,7 +268,9 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const baseLayout = resolvePaneLayout(paneLayoutInput);
     mainPresentationRef.current = baseLayout.main;
     const destinationDetailOnly = baseLayout.kind === 'single' && baseLayout.details === 'overlay';
-    const mainHidden = (props.resolveMainHidden?.(baseLayout) ?? requestedMainHidden) && !destinationDetailOnly;
+    // A page's list steps aside when its detail and the detail's companion cannot both dock beside it.
+    const mainHidden = ((props.resolveMainHidden?.(baseLayout) ?? requestedMainHidden)
+        || resolveDestinationListYields(baseLayout, paneLayoutInput)) && !destinationDetailOnly;
     const { kind, main: mainPresentation, right: rightPresentation, details: detailsPresentation } = applyMainHiddenLayoutOverride({
         arrangement,
         mainHidden,
@@ -596,23 +599,28 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         [props.main],
     );
     const regionRightPane = React.useMemo(
-        () => (rightPane ? <PaneRegionProvider region={rightInMain ? 'main' : 'side'}>{rightPane}</PaneRegionProvider> : null),
+        () => (rightPane ? <ScreenBackdropBoundary><PaneRegionProvider region={rightInMain ? 'main' : 'side'}>{rightPane}</PaneRegionProvider></ScreenBackdropBoundary> : null),
         [rightInMain, rightPane],
     );
     const regionRightSurfaces = React.useMemo(() => props.rightSurfaces?.map(surface => ({
         ...surface,
-        content: <PaneRegionProvider region={surface.placement === 'main' ? 'main' : 'side'}>{surface.content}</PaneRegionProvider>,
+        content: <ScreenBackdropBoundary><PaneRegionProvider region={surface.placement === 'main' ? 'main' : 'side'}>{surface.content}</PaneRegionProvider></ScreenBackdropBoundary>,
     })), [props.rightSurfaces]);
     const regionDetailsPane = React.useMemo(
-        () => (detailsPane ? <PaneRegionProvider region="details">{detailsPane}</PaneRegionProvider> : null),
+        () => (detailsPane ? <ScreenBackdropBoundary><PaneRegionProvider region="details">{detailsPane}</PaneRegionProvider></ScreenBackdropBoundary> : null),
         [detailsPane],
     );
 
+    const isolatedBottomPane = React.useMemo(
+        () => bottomPane == null ? null : <ScreenBackdropBoundary>{bottomPane}</ScreenBackdropBoundary>,
+        [bottomPane],
+    );
     const columnsContent = (
         <>
             <MultiPaneHostWithBottom
                 main={regionMain}
                 hideMain={mainHidden || (resolvedLayout.main === 'overlay' && !mainDrawerOpen)}
+                mainOwnsDetails={props.destinationOwnsDetails}
                 mirrored={mirrored}
                 detailsClosable={!mirrored}
                 mainDrawerOpen={mainDrawerOpen}
@@ -649,7 +657,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                 onCommitDetailsDockWidthPx={onCommitDetailsDockWidthPx}
                 onDragRightDockWidthPx={setRightDragWidthPx}
                 onDragDetailsDockWidthPx={onDragDetailsDockWidthPx}
-                bottomPane={bottomPane}
+                bottomPane={isolatedBottomPane}
                 bottomPresentation={effectiveBottomPresentation}
                 bottomDockHeightPx={effectiveBottomDockHeightPx}
                 bottomDockMinHeightPx={PANE_SIZING_DEFAULTS.bottom.minPx}

@@ -19,6 +19,7 @@ import {
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
+import { SidePaneBodyProvider } from '@/components/ui/lists/listPresentation';
 import { PluginReactNativeUnavailable } from '@/components/plugins/reactNative/PluginReactNativeUnavailable';
 import { getPreferredLanguage, t } from '@/text';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
@@ -26,10 +27,13 @@ import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projecti
 import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { selectPluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
-import { AppRightSidebarTabSurface, useAppRightSidebarTabs } from './appRightSidebarTabs';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { AppRightSidebarTabSurface } from './appRightSidebarTabs';
 import { RightSidebarIconTabBar } from './RightSidebarIconTabBar';
 import { RightSidebarActionRail } from './RightSidebarActionRail';
+import { usePresentedDetailNavigationChrome } from './usePresentedDetailNavigation';
+import { PluginDetailNavigationRail } from '@/components/plugins/pages/PluginDetailNavigationViews';
+import { PluginCompanionOpenedFromContext } from '@/components/plugins/pages/pluginPageNavigationContext';
 import { RightSidebarPaneHeader } from './RightSidebarPaneHeader';
 import { toggleRightSidebarTab, usePublishRightSidebarActions } from './rightSidebarActions';
 import {
@@ -79,60 +83,83 @@ const EMPTY_PLUGIN_DESTINATION: PluginUiDestinationReferenceV1 = Object.freeze({
     localId: '',
 });
 
+const AppScopeRightSidebarModelContext = React.createContext<ReturnType<typeof useAppScopeRightSidebarModel> | null>(null);
+
+/** The rail and its later pane receive one delivery from the existing App handoff owner. */
+export function AppScopeRightSidebarProvider(props: React.PropsWithChildren<AppScopeRightSidebarProps>): React.ReactElement {
+    const inheritedPaneLaunchScope = usePluginSurfacePaneLaunchScope();
+    const content = <AppScopeRightSidebarModelProvider {...props} />;
+    return inheritedPaneLaunchScope ? content : <PluginSurfacePaneLaunchScope>{content}</PluginSurfacePaneLaunchScope>;
+}
+
+function AppScopeRightSidebarModelProvider(props: React.PropsWithChildren<AppScopeRightSidebarProps>): React.ReactElement {
+    const model = useAppScopeRightSidebarModel(props);
+    return <AppScopeRightSidebarModelContext.Provider value={model}>{props.children}</AppScopeRightSidebarModelContext.Provider>;
+}
+
+function useAppScopeRightSidebarModel(props: AppScopeRightSidebarProps) {
+    const pane = useAppPaneScope(props.scopeId);
+    const runtime = useAppShellPluginUiProjection();
+    const projection = props.pluginUiProjection !== undefined ? props.pluginUiProjection : runtime.pluginUiProjection;
+    const projectionPhase = props.projectionPhase ?? runtime.phase;
+    const hasEstablishingMembers = props.projectionPhase === undefined && runtime.hasEstablishingMembers === true;
+    const locale = getPreferredLanguage();
+    const localize = usePluginLocalizedTextResolver({ projection, locale });
+    const machineId = props.machineId !== undefined ? props.machineId : runtime.machineId;
+    const serverId = props.serverId !== undefined ? props.serverId : runtime.serverId;
+    const platform = props.platform ?? runtime.platform;
+    const interactionEnabled = projectionPhase === 'current' && (props.interactionEnabled ?? runtime.interactionEnabled) === true;
+    // The provider boundary borrows the enclosing store or supplies the incumbent standalone scope.
+    const { accountLifetime, store } = usePluginSurfacePaneLaunchScope()!;
+    const placements = React.useMemo(() => projection ? selectPluginRightSidebarTabPlacements(projection, 'app') : [], [projection]);
+    // A page's own companions (`reach: 'pageItems'`) exist as tabs only while that page is presented and names them.
+    const presentedPage = usePresentedDetailNavigationChrome();
+    const pageCompanionItems = presentedPage?.rootHosted ? presentedPage.companionItems : null;
+    const pageCompanions = React.useMemo(() => pageCompanionItems
+        ? new Set(pageCompanionItems.flatMap(item => item.navigation.kind === 'page' ? [] : [item.navigation.companion]))
+        : null, [pageCompanionItems]);
+    const openedFrom = presentedPage?.rootHosted ? presentedPage.openedFrom ?? null : null;
+    const tabs = React.useMemo(() => resolveRightSidebarTabs({ scope: 'app', pluginPlacements: placements, localize,
+        ...(pageCompanions ? { pageCompanions } : {}) }), [localize, placements, pageCompanions]);
+    const selection = React.useMemo(() => resolveRightSidebarTabSelection<string>({
+        activeTabId: pane.scopeState?.right.activeTabId,
+        selectedDestination: pane.scopeState?.right.selectedDestination ?? null,
+        tabs, projectionPhase, hasEstablishingMembers, scope: 'app',
+    }), [hasEstablishingMembers, pane.scopeState?.right.activeTabId, pane.scopeState?.right.selectedDestination, projectionPhase, tabs]);
+    const activePlacement = selection.kind === 'available' && isPluginTab(selection.tab) ? selection.tab.placement : null;
+    const selectedTabId = selection.kind === 'available' ? selection.tab.id : null;
+    const activeInstanceKey = pane.scopeState?.right.selectedDestination?.kind === 'plugin'
+        ? pane.scopeState.right.selectedDestination.instanceKey : undefined;
+    const activePaneLaunch = usePluginSurfacePaneLaunch({
+        store, placement: activePlacement, targetKind: 'app', container: 'rightSidebarTab', accountLifetime,
+        destination: activePlacement?.binding.destination ?? EMPTY_PLUGIN_DESTINATION,
+        ...(activeInstanceKey === undefined ? {} : { instanceKey: activeInstanceKey }),
+    });
+    const selectTab = useAppRightSidebarTabChooser(props.scopeId, tabs);
+    return React.useMemo(() => ({ scopeId: props.scopeId, pane, projection, projectionPhase, hasEstablishingMembers,
+        machineId, serverId, platform, interactionEnabled, accountLifetime, tabs, selection, selectedTabId,
+        activeInstanceKey, activePaneLaunch, selectTab, openedFrom }), [props.scopeId, pane, projection, projectionPhase,
+        hasEstablishingMembers, machineId, serverId, platform, interactionEnabled, accountLifetime, tabs, selection,
+        selectedTabId, activeInstanceKey, activePaneLaunch, selectTab, openedFrom]);
+}
+
 /**
  * The sidebar is also reachable through the standalone Settings route. Reuse
  * the surrounding AppPane handoff scope when there is one; otherwise establish
  * the same generic scope at that route boundary.
  */
 export function AppScopeRightSidebar(props: AppScopeRightSidebarProps): React.ReactElement | null {
-    const inheritedPaneLaunchScope = usePluginSurfacePaneLaunchScope();
+    const shared = React.useContext(AppScopeRightSidebarModelContext);
     const content = <PaneHeaderSlotProvider><AppScopeRightSidebarContent {...props} /></PaneHeaderSlotProvider>;
-    return inheritedPaneLaunchScope
-        ? content
-        : (
-            <PluginSurfacePaneLaunchScope>
-                {content}
-            </PluginSurfacePaneLaunchScope>
-        );
+    return shared?.scopeId === props.scopeId ? content : <AppScopeRightSidebarProvider {...props}>{content}</AppScopeRightSidebarProvider>;
 }
 
 function AppScopeRightSidebarContent(props: AppScopeRightSidebarProps): React.ReactElement | null {
     const pathname = useDestinationPathname();
-    const pane = useAppPaneScope(props.scopeId);
+    const model = React.useContext(AppScopeRightSidebarModelContext)!;
+    const { pane, projection, projectionPhase, hasEstablishingMembers, machineId, serverId, platform, interactionEnabled, tabs, selectTab } = model;
     const hasActionRail = usePaneActionRail();
     const scopeState = pane.scopeState;
-    const pluginProjection = useAppShellPluginUiProjection();
-    const projection = props.pluginUiProjection !== undefined
-        ? props.pluginUiProjection
-        : pluginProjection.pluginUiProjection;
-    const projectionPhase = props.projectionPhase ?? pluginProjection.phase;
-    const pluginLocale = getPreferredLanguage();
-    const localizePluginText = React.useMemo(
-        () => createPluginLocalizedTextResolver({ projection, locale: pluginLocale }),
-        [pluginLocale, projection],
-    );
-    const machineId = props.machineId !== undefined ? props.machineId : pluginProjection.machineId;
-    const serverId = props.serverId !== undefined ? props.serverId : pluginProjection.serverId;
-    const platform = props.platform ?? pluginProjection.platform;
-    const interactionEnabled = projectionPhase === 'current'
-        && (props.interactionEnabled ?? pluginProjection.interactionEnabled) === true;
-    const paneLaunchScope = usePluginSurfacePaneLaunchScope();
-    if (!paneLaunchScope) {
-        // The outer route boundary always supplies the generic scope. Refuse to
-        // manufacture an unbound input store if this invariant is broken.
-        return null;
-    }
-    const { accountLifetime, store: paneLaunchStore } = paneLaunchScope;
-
-    const placements = React.useMemo(() => (
-        projection ? selectPluginRightSidebarTabPlacements(projection, 'app') : []
-    ), [projection]);
-
-    const tabs = React.useMemo(() => resolveRightSidebarTabs({
-        scope: 'app',
-        pluginPlacements: placements,
-        localize: localizePluginText,
-    }), [localizePluginText, placements]);
 
     const requestedDestinationKey = props.requestedDestination
         ? `${props.requestedDestination.pluginId}\u0000${props.requestedDestination.localId}`
@@ -151,16 +178,15 @@ function AppScopeRightSidebarContent(props: AppScopeRightSidebarProps): React.Re
         selectedDestination: effectiveSelectedDestination,
         tabs,
         projectionPhase,
-        hasEstablishingMembers: props.projectionPhase === undefined && pluginProjection.hasEstablishingMembers === true,
+        hasEstablishingMembers,
         scope: 'app',
-    }), [effectiveSelectedDestination, pluginProjection.hasEstablishingMembers, projectionPhase, props.projectionPhase, scopeState?.right.activeTabId, tabs]);
+    }), [effectiveSelectedDestination, hasEstablishingMembers, projectionPhase, scopeState?.right.activeTabId, tabs]);
     const resolvedActiveTabId = tabSelection.kind === 'available' ? tabSelection.tab.id : null;
     const activeTab = tabSelection.kind === 'available' ? tabSelection.tab : null;
     useDestinationPageTitle(pathname === PLUGIN_PANELS_ROUTE ? activeTab ? getRightSidebarTabLabel(activeTab) : null : undefined);
     const activePlacement = activeTab && isPluginTab(activeTab) ? activeTab.placement : null;
-    const activeInstanceKey = scopeState?.right.selectedDestination?.kind === 'plugin'
-        ? scopeState.right.selectedDestination.instanceKey
-        : undefined;
+    const activeInstanceKey = resolvedActiveTabId === model.selectedTabId ? model.activeInstanceKey : undefined;
+    const activePaneLaunch = resolvedActiveTabId === model.selectedTabId ? model.activePaneLaunch : null;
     React.useEffect(() => {
         const requested = props.requestedDestination;
         if (!requested || !projection) return;
@@ -182,16 +208,6 @@ function AppScopeRightSidebarContent(props: AppScopeRightSidebarProps): React.Re
         }
         pane.selectRightDestination({ kind: 'plugin', destination: requested });
     }, [pane, projection, props.requestedDestination, requestedDestinationKey, scopeState?.right.selectedDestination, tabs]);
-    const activePaneLaunch = usePluginSurfacePaneLaunch({
-        store: paneLaunchStore,
-        placement: activePlacement,
-        targetKind: 'app',
-        container: 'rightSidebarTab',
-        accountLifetime,
-        destination: activePlacement?.binding.destination ?? EMPTY_PLUGIN_DESTINATION,
-        ...(activeInstanceKey === undefined ? {} : { instanceKey: activeInstanceKey }),
-    });
-    const selectTab = useAppRightSidebarTabChooser(props.scopeId, tabs);
     // The app shell owns every app-target navigation registration, including
     // this container's, so a plugin's first `openSurface` can reach the sidebar
     // before its route is entered. This leaf is presentation-only.
@@ -240,15 +256,17 @@ function AppScopeRightSidebarContent(props: AppScopeRightSidebarProps): React.Re
                 testIDPrefix="app-scope-right-sidebar-tab"
             /> : null}
             <View style={{ flex: 1 }}>
-                <SurfaceStateSizeProvider size="pane">
+                <SurfaceStateSizeProvider size="pane"><SidePaneBodyProvider>
                 {tabSelection.kind === 'none' ? (
-                    <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ flex: 1 }} />
+                    <AppScopeRightSidebarNoneState tabs={tabs} onOpen={selectTab} testID={`${props.testID ?? 'app-scope-right-sidebar'}-none`} />
                 ) : tabSelection.kind === 'unresolved' ? (
                     <PaneLoadingFallback />
                 ) : tabSelection.kind === 'unavailable' ? (
                     <PluginReactNativeUnavailable diagnostics={[tabSelection.reason]} />
                 ) : activePlacement ? (
                     <PaneHeaderSlotScope slotKey={activeTab!.id}>
+                        {/* A page companion reads the page that opened it; any other App tab has no opener. */}
+                        <PluginCompanionOpenedFromContext.Provider value={activePlacement.display.reach === 'pageItems' ? model.openedFrom : null}>
                         <AppRightSidebarTabSurface
                             placement={activePlacement}
                             facts={{ pluginUiProjection: projection, machineId, serverId, platform, interactionEnabled }}
@@ -256,11 +274,39 @@ function AppScopeRightSidebarContent(props: AppScopeRightSidebarProps): React.Re
                             launchInput={activePaneLaunch?.input}
                             mountInstanceKey={activeInstanceKey}
                         />
+                        </PluginCompanionOpenedFromContext.Provider>
                     </PaneHeaderSlotScope>
                 ) : <PluginReactNativeUnavailable diagnostics={['plugin_destination_unavailable']} />}
-                </SurfaceStateSizeProvider>
+                </SidePaneBodyProvider></SurfaceStateSizeProvider>
             </View>
         </View>
+    );
+}
+
+/**
+ * Opened with panels but none chosen (the side toggle on a page that never picked one): the pane is never
+ * blank (lab EM1, "the column is never blank"). It invites the first available panel in rail order;
+ * the rail beside it lists the rest.
+ */
+function AppScopeRightSidebarNoneState(props: Readonly<{
+    tabs: readonly RightSidebarTabDefinition[];
+    onOpen: (tabId: string) => void;
+    testID: string;
+}>): React.ReactElement {
+    const first = props.tabs.find((tab) => !tab.disabledReason) ?? null;
+    return (
+        <SurfaceStateCard
+            testID={props.testID}
+            kind="empty"
+            iconName="sidebar-right-open"
+            title={t('pluginSurfaces.appScopeRightSidebar.noneTitle')}
+            reason={t('pluginSurfaces.appScopeRightSidebar.noneReason')}
+            action={first ? {
+                label: t('pluginSurfaces.appScopeRightSidebar.noneOpen', { name: getRightSidebarTabLabel(first) }),
+                onPress: () => props.onOpen(first.id),
+                testID: `${props.testID}-open`,
+            } : undefined}
+        />
     );
 }
 
@@ -290,19 +336,24 @@ function useAppRightSidebarTabChooser(scopeId: string, tabs: readonly RightSideb
 
 /** The desktop App rail uses the same catalog and persisted selection as its fallback strip. */
 export function AppScopeRightSidebarActionRail(props: Readonly<{ scopeId: string }>): React.ReactElement {
-    const pane = useAppPaneScope(props.scopeId);
+    const shared = React.useContext(AppScopeRightSidebarModelContext);
+    const content = <AppScopeRightSidebarActionRailContent />;
+    return shared?.scopeId === props.scopeId ? content : <AppScopeRightSidebarProvider {...props}>{content}</AppScopeRightSidebarProvider>;
+}
+
+function AppScopeRightSidebarActionRailContent(): React.ReactElement {
+    const model = React.useContext(AppScopeRightSidebarModelContext)!;
+    const detail = usePresentedDetailNavigationChrome();
     const rightPaneHiddenByDetails = usePaneActionRailRightPaneHiddenByDetails();
-    const tabs = useAppRightSidebarTabs();
-    const { phase, hasEstablishingMembers } = useAppShellPluginUiProjection();
-    const selection = resolveRightSidebarTabSelection<string>({
-        activeTabId: pane.scopeState?.right.activeTabId,
-        selectedDestination: pane.scopeState?.right.selectedDestination ?? null,
-        tabs,
-        projectionPhase: phase,
-        hasEstablishingMembers,
-        scope: 'app',
-    });
-    const selectTab = useAppRightSidebarTabChooser(props.scopeId, tabs);
+    return detail?.rootHosted && detail.companionItems.length > 0
+        ? <PluginDetailNavigationRail model={detail} pane={model.pane} rightPaneHiddenByDetails={rightPaneHiddenByDetails} />
+        : <AppScopeWorkspaceRail />;
+}
+
+function AppScopeWorkspaceRail(): React.ReactElement {
+    const model = React.useContext(AppScopeRightSidebarModelContext)!;
+    const { pane, tabs, selection, selectTab } = model;
+    const rightPaneHiddenByDetails = usePaneActionRailRightPaneHiddenByDetails();
     usePublishRightSidebarActions({
         tabs: tabs.filter(tab => !tab.disabledReason).map(tab => tab.id),
         activeTab: selection.kind === 'available' ? selection.tab.id : undefined,
@@ -312,6 +363,15 @@ export function AppScopeRightSidebarActionRail(props: Readonly<{ scopeId: string
         id: tab.id,
         label: getRightSidebarTabLabel(tab),
         icon: tab.icon,
+        defaultPlacement: tab.defaultPlacement,
+        allowedPlacements: tab.allowedPlacements,
+        pluginCount: tab.owner === 'plugin' ? { tab, runtime: {
+            pluginUiProjection: model.projection,
+            machineId: model.machineId, serverId: model.serverId,
+            accountLifetime: model.accountLifetime,
+            interactionEnabled: model.interactionEnabled,
+        }, mountInstanceKey: model.selectedTabId === tab.id ? model.activeInstanceKey : undefined,
+        launchInput: model.selectedTabId === tab.id ? model.activePaneLaunch?.input : undefined } : undefined,
         active: pane.scopeState?.right.isOpen === true && !rightPaneHiddenByDetails && selection.kind === 'available' && selection.tab.id === tab.id,
         disabled: Boolean(tab.disabledReason),
         onPress: () => toggleRightSidebarTab(pane, tab.id, selection.kind === 'available' ? selection.tab.id : null, selectTab, rightPaneHiddenByDetails),

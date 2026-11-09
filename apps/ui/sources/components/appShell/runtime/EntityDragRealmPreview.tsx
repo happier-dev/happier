@@ -1,8 +1,9 @@
 import * as React from 'react';
 
-import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import { EntityDragCarriedPreview } from '@/components/ui/treeDragDrop/ui/EntityDragCarriedPreview';
+import { Platform } from 'react-native';
+import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 
 /**
  * One carried card and cancellation boundary for every surface in the app realm. Native uses the
@@ -15,7 +16,7 @@ export const EntityDragRealmPreview = React.memo(function EntityDragRealmPreview
     return (
         <EntityDragCarriedPreview
             runtime={runtime}
-            density={isTouchPrimaryPointer() ? 'touch' : 'pointer'}
+            density={useHappierTouchPrimaryPointer(Platform.OS) ? 'touch' : 'pointer'}
             testID="entity-drag-carried-preview"
         />
     );

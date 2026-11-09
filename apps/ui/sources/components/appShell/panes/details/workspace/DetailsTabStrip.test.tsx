@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { layoutHitArea } from '@/dev/testkit/harness/hitFrameReach';
 import { Platform } from 'react-native';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
@@ -156,6 +157,20 @@ describe('DetailsTabStrip chrome absorption for browser-view tabs', () => {
             Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
         }
     });
+    it('falls back to the globe for a browser-view tab when no surface names its icon', async () => {
+        // UI-17 r5: the Session Details strip passes no browser icon resolver, so a page tab drew the
+        // generic circle instead of the globe every other browser strip shows (lab Q).
+        const { DetailsTabStrip } = await import('./DetailsTabStrip');
+        const { Icon } = await import('@/components/ui/icons/Icon');
+        const tab = browserViewTab();
+        const screen = await renderScreen(
+            <DetailsTabStrip pane={createPane()} group={group(tab)} testIds={testIds} />,
+        );
+        try {
+            expect(screen.findAllByType(Icon).map(icon => icon.props.name)).toContain('globe');
+        } finally { await screen.unmount(); }
+    });
+
     it('renders a favicon for a browser-view tab via the generic presentation hook', async () => {
         const { DetailsTabStrip } = await import('./DetailsTabStrip');
         const tab = browserViewTab();
@@ -280,29 +295,35 @@ describe('DetailsTabStrip chrome absorption for browser-view tabs', () => {
 
     it('gives a finger the platform touch floor and keeps the strip dense under a precise pointer', async () => {
         const { DetailsTabStrip } = await import('./DetailsTabStrip');
-        const { resolveTouchTargetFloorPx } = await import('@/components/ui/interactiveTargetSize');
         const originalPlatform = Platform.OS;
         const tab = { ...browserViewTab(), isPreview: true };
 
         try {
             for (const platform of ['android', 'ios', 'web'] as const) {
                 Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
+                const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
                 const screen = await renderScreen(
-                    <DetailsTabStrip
-                        pane={createPane()}
-                        group={group(tab)}
-                        testIds={testIds}
-                    />,
+                    <HappierUiPlatformProvider platform={{ platform, colorScheme: 'light' }}>
+                        <DetailsTabStrip
+                            pane={createPane()}
+                            group={group(tab)}
+                            testIds={testIds}
+                        />
+                    </HappierUiPlatformProvider>,
                 );
-                const floor = resolveTouchTargetFloorPx(platform);
+                const floor = platform === 'web' ? 24 : platform === 'android' ? 48 : 44;
 
+                // The strip stays dense under every pointer: its tab and controls keep their design size and
+                // a finger reaches the platform floor through the hit area.
                 const tabStyle = flattenStyle(screen.findByTestId('tab-browser-view_bs_bv')?.props.style);
-                expect(tabStyle.minHeight).toBe(floor ?? 28);
+                expect(tabStyle.minHeight ?? 28).toBe(28);
                 for (const testID of ['tab-pin-browser-view_bs_bv', 'tab-close-browser-view_bs_bv']) {
                     const style = flattenStyle(screen.findByTestId(testID)?.props.style);
-                    // Never below the WCAG 2.5.8 target, and the platform floor for a finger.
-                    expect(style.width ?? style.minWidth).toBe(floor ?? 24);
-                    expect(style.height ?? style.minHeight).toBe(floor ?? 24);
+                    const drawn = { width: Number(style.width ?? style.minWidth), height: Number(style.height ?? style.minHeight) };
+                    expect(drawn, `${platform} ${testID} drawn`).toEqual({ width: 24, height: 24 });
+                    const area = await layoutHitArea(() => screen.findByTestId(testID), drawn);
+                    expect(area.height, `${platform} ${testID} hit height`).toBeGreaterThanOrEqual(floor);
+                    expect(area.width, `${platform} ${testID} hit width`).toBeGreaterThanOrEqual(24);
                 }
 
                 await screen.unmount();

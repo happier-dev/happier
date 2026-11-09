@@ -1,6 +1,6 @@
 import type { TranslationKey } from '@/text';
 import type { PluginUiDestinationPlacementV1 } from '@happier-dev/protocol/plugins/ui';
-import type { PluginSurfaceDestinationBadge } from '@/components/plugins/surfaces/pluginSurfaceDestinations';
+import type { PluginSurfaceDestinationBadge, PluginSurfaceDestinationCounts } from '@/components/plugins/surfaces/pluginSurfaceDestinations';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { SESSION_BOARD_DESTINATION } from '@/components/sessions/board/sessionBoardDestination';
@@ -92,6 +92,8 @@ export type RightSidebarPluginTabDefinition = RightSidebarTabBase & Readonly<{
     label: string;
     /** Static presentation hints carried to host catalogs; they do not rank this sidebar. */
     badge?: PluginSurfaceDestinationBadge;
+    countResourceId?: string;
+    counts?: PluginSurfaceDestinationCounts;
     requestedPlacement?: PluginUiDestinationPlacementV1;
     rankHint?: number;
     placement: PluginUiSurfacePlacementProjection;
@@ -378,6 +380,7 @@ export const RIGHT_SIDEBAR_BUILTIN_TABS: readonly RightSidebarBuiltinTabDefiniti
         },
         // Session's retained Browser source docks here on desktop and opens here on phones.
         // Project Browser supplies its workspace-scoped producer on both presentations.
+        available: (input) => input.browserFeatureEnabled === true,
     },
     {
         id: 'services',

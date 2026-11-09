@@ -23,6 +23,8 @@ export function useProjectDashboardDocument(reference: Readonly<{ artifactId: st
         grants: readonly ArtifactAccessGrantRowV1[] | null }>>({
         key: '', publication: null, document: null, grants: null,
     });
+    const readRef = React.useRef(read);
+    readRef.current = read;
     React.useEffect(() => {
         if (!reference || !lifetime?.isCurrent()) return;
         const refresh = () => setWake(previous => previous + 1);
@@ -32,7 +34,7 @@ export function useProjectDashboardDocument(reference: Readonly<{ artifactId: st
             if (isArtifactOnlyHomeAccountChange(event) && event.entityIds !== undefined
                 && !event.entityIds.includes(reference.artifactId)) return;
             refresh();
-        });
+        }, { reconnect: { readNotCurrent: () => readRef.current.key !== key || readRef.current.document === null } });
         const credentialChange = subscribeHomeCredentialChange(event => {
             if (areServerProfileIdentifiersEquivalent(event.serverId, serverId)) {
                 setRead({ key: '', publication: null, document: null, grants: null });

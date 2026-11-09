@@ -368,6 +368,23 @@ describe('built-in widgets by host surface', () => {
     const everyBuiltIn = (ownerKind: 'home' | 'project') => addSections(ownerKind).filter(section => section.id.startsWith('builtins'))
         .flatMap(section => section.entries.map(entry => entry.id));
 
+    it.each([
+        { name: 'Project', owner: { kind: 'project', projectId: 'p' } as const, families: ['projects', 'machines', 'usage', 'session'] },
+        { name: 'named Project dashboard', owner: { kind: 'project', projectId: 'p', layoutId: 'release' } as const, families: ['projects', 'machines', 'usage', 'session'] },
+        { name: 'Machine', owner: { kind: 'corePage', pageId: 'machines', area: 'main' } as const, families: ['machines', 'usage', 'projects', 'session'] },
+        { name: 'Account Home', owner: { kind: 'home' } as const, families: ['machines', 'usage', 'projects', 'session'] },
+        { name: 'no context', owner: null, families: ['machines', 'usage', 'projects', 'session'] },
+    ])('ranks matching families first on $name and preserves the remaining catalog order', ({ owner, families }) => {
+        const candidates = selectBuiltinWidgetCandidates();
+        const sections = buildAccountWidgetAddSections({
+            candidates, instances: [], addInstance: vi.fn(), labels,
+            scope: owner ? { serverId: 's', accountId: 'a', owner } : null,
+        });
+        expect(sections.map(section => section.id)).toEqual([...families.map(id => `builtins:${id}`), 'builtins']);
+        const projects = sections.find(section => section.id === 'builtins:projects');
+        expect(projects?.entries.map(entry => entry.id)).toEqual(PROJECT_BUILTIN_WIDGET_IDS_V1.map(id => `plugin-builtin:${id}`));
+    });
+
     it('offers the ten Machine widgets as one built-in Machines group, apart from the other built-ins (plan 60 AGW-14)', () => {
         const sections = buildAccountWidgetAddSections({
             candidates: selectBuiltinWidgetCandidates(), instances: [], addInstance: vi.fn(), labels,

@@ -1,12 +1,13 @@
+import { resolveSessionCockpitMobileCatalog } from '@/components/workspaceCockpit/session/sessionCockpitMobileCatalog';
+import { replacePersistentUiStateForTest, PersistedPaneScopesSchema } from '@/dev/testkit/harness/persistentUiState';
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
 import 'fake-indexeddb/auto';
 import * as React from 'react';
 
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
-import { replacePersistentUiStateForTest, PersistedPaneScopesSchema } from '@/dev/testkit/harness/persistentUiState';
-import { paneUiState } from '@/sync/domains/state/filePaneUiState';
+import { createMachineFixture, createRenderCommitCounter, renderHook, renderScreen, standardCleanup, useRenderCommitCounter } from '@/dev/testkit';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -29,6 +30,11 @@ const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
+// Import the real driver graph during collection, outside the behavior deadline.
+const [{ useRegisterSessionPaneDriver }, { SessionCockpitChromeRegistryProvider, useSessionCockpitChromeRegister }] = await Promise.all([
+    import('@/components/sessions/panes/useRegisterSessionPaneDriver'),
+    import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry'),
+]);
 const { getStorage } = await import('@/sync/domains/state/storage');
 const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
 const initialState = getStorage().getState();
@@ -75,6 +81,112 @@ function PaneScopeProbe(props: Readonly<{ triggerOpenDetails?: boolean }>) {
 }
 
 describe('AppPaneProvider persistence', () => {
+    it('retains distinct window pane scopes through a stale sibling write and relaunch', async () => {
+        const { Dimensions } = await import('react-native');
+        const dimensions = Dimensions.get('window');
+        const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ ...dimensions, width: 1440, height: 900 });
+        const { AppPaneProvider, useAppPaneContext } = await import('./AppPaneProvider');
+        const wrapper = ({ children }: React.PropsWithChildren) => <AppPaneProvider>{children}</AppPaneProvider>;
+        const first = await renderHook(useAppPaneContext, { wrapper });
+        const second = await renderHook(useAppPaneContext, { wrapper });
+        try {
+            // Both realms admitted their writes before either receives the sibling's storage event.
+            await act(async () => {
+                first.getCurrent().dispatch({ type: 'openRight', scopeId: 'session:first-window', tabId: 'files' });
+                second.getCurrent().dispatch({ type: 'openBottom', scopeId: 'session:second-window', tabId: 'git' });
+                expect(paneUiState.read('session:first-window')?.right.isOpen).toBe(true);
+                expect(paneUiState.read('session:second-window')?.bottom.isOpen).toBe(true);
+            });
+            await act(async () => {
+                first.getCurrent().dispatch({ type: 'setRightTabState', scopeId: 'session:first-window', tabId: 'files', nextState: { query: 'first' } });
+                second.getCurrent().dispatch({ type: 'setRightTabState', scopeId: 'session:first-window', tabId: 'files', nextState: { query: 'last writer' } });
+            });
+            expect(paneUiState.read('session:first-window')?.right.tabState.files).toEqual({ query: 'last writer' });
+            await first.unmount();
+            await second.unmount();
+            const restored = await renderHook(useAppPaneContext, { wrapper });
+            try {
+                expect(restored.getCurrent().state.scopes['session:first-window'].right).toMatchObject({ isOpen: true, activeTabId: 'files' });
+                expect(restored.getCurrent().state.scopes['session:first-window'].right.tabState.files).toEqual({ query: 'last writer' });
+                expect(restored.getCurrent().state.scopes['session:second-window'].bottom).toMatchObject({ isOpen: true, activeTabId: 'git' });
+            } finally {
+                await restored.unmount();
+            }
+        } finally {
+            await first.unmount();
+            await second.unmount();
+            viewport.mockRestore();
+        }
+    });
+
+    it('keeps the current Shell inventory across stale sibling writes and honors explicit Close', async () => {
+        const { AppPaneProvider, useAppPaneContext } = await import('./AppPaneProvider');
+        const { EMPTY_TERMINAL_WORKSPACE, readSessionTerminalWorkspace, reduceSessionTerminalWorkspace } = await import('@/components/sessions/terminal/sessionTerminalWorkspace');
+        const { PersistedPaneScopeSchema } = await import('./model/paneScopePersistenceSchema');
+        const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
+        const scopeId = 'session:shared-shell-inventory';
+        const wrapper = ({ children }: React.PropsWithChildren) => <AppPaneProvider>{children}</AppPaneProvider>;
+        const first = await renderHook(useAppPaneContext, { wrapper });
+        const second = await renderHook(useAppPaneContext, { wrapper });
+        const savedIds = () => readSessionTerminalWorkspace(paneUiState.readStrict(scopeId, value => PersistedPaneScopeSchema.parse(value))?.bottom.tabState.terminal)
+            .tabs.flatMap(tab => tab.terminals.map(terminal => terminal.id));
+        try {
+            await act(async () => first.getCurrent().dispatch({ type: 'setBottomTabState', scopeId, tabId: 'terminal', nextState: EMPTY_TERMINAL_WORKSPACE }));
+            await act(async () => first.getCurrent().dispatch({ type: 'terminalWorkspace', scopeId,
+                command: { type: 'open', terminal: { id: 'desktop-shell', target: { kind: 'workspace_shell' } } } }));
+            const staleScope = first.getCurrent().state.scopes[scopeId];
+            await act(async () => second.getCurrent().dispatch({ type: 'terminalWorkspace', scopeId,
+                command: { type: 'open', terminal: { id: 'phone-shell', target: { kind: 'workspace_shell' } } } }));
+            expect(savedIds()).toEqual(['desktop-shell', 'phone-shell']);
+            // The older presenter still owns its layout, but must not replace newer Shell membership.
+            await act(async () => first.getCurrent().dispatch({ type: 'openRight', scopeId, tabId: 'files' }));
+            expect(savedIds()).toEqual(['desktop-shell', 'phone-shell']);
+            await act(async () => second.getCurrent().dispatch({ type: 'terminalWorkspace', scopeId,
+                command: { type: 'close', terminalId: 'desktop-shell' } }));
+            expect(savedIds()).toEqual(['phone-shell']);
+            await act(async () => first.getCurrent().dispatch({ type: 'setRightTabState', scopeId, tabId: 'files', nextState: { query: 'new query' } }));
+            expect(savedIds()).toEqual(['phone-shell']);
+            await act(async () => first.getCurrent().dispatch({ type: 'restoreScope', scopeId, scope: staleScope }));
+            expect(savedIds()).toEqual(['phone-shell']);
+            // Another browser realm writes the real adapter before its storage event is delivered.
+            const saved = paneUiState.read(scopeId)!;
+            getPersistenceStorage().set(`ui-state:pane-scopes-v1:${scopeId}`, JSON.stringify({ ...saved,
+                bottom: { ...saved.bottom, tabState: { ...saved.bottom.tabState, terminal: reduceSessionTerminalWorkspace(
+                    readSessionTerminalWorkspace(saved.bottom.tabState.terminal),
+                    { type: 'open', terminal: { id: 'other-realm-shell', target: { kind: 'workspace_shell' } } },
+                ) } },
+            }));
+            await act(async () => { expect(first.getCurrent().flushPersistence?.()).toBe(true); });
+            expect(savedIds()).toEqual(['phone-shell', 'other-realm-shell']);
+            // Both commands arrive before React can hydrate either provider from the sibling publication.
+            const reads = vi.spyOn(getPersistenceStorage(), 'getString');
+            try {
+                await act(async () => {
+                    first.getCurrent().dispatch({ type: 'terminalWorkspace', scopeId,
+                        command: { type: 'open', terminal: { id: 'desktop-new-shell', target: { kind: 'workspace_shell' } } } });
+                    second.getCurrent().dispatch({ type: 'terminalWorkspace', scopeId,
+                        command: { type: 'open', terminal: { id: 'phone-new-shell', target: { kind: 'workspace_shell' } } } });
+                    // Each real write reads its retained record once and reuses that read at persistence;
+                    // the adapter's existing idempotent-set comparison is the other backing read.
+                    expect(reads.mock.calls.filter(([key]) => key === `ui-state:pane-scopes-v1:${scopeId}`)).toHaveLength(4);
+                });
+            } finally { reads.mockRestore(); }
+            expect(savedIds()).toEqual(['phone-shell', 'other-realm-shell', 'desktop-new-shell', 'phone-new-shell']);
+            expect(readSessionTerminalWorkspace(first.getCurrent().state.scopes[scopeId].bottom.tabState.terminal)
+                .tabs.flatMap(tab => tab.terminals.map(terminal => terminal.id))).toEqual(savedIds());
+            await first.unmount();
+            await second.unmount();
+            const restored = await renderHook(useAppPaneContext, { wrapper });
+            try {
+                expect(readSessionTerminalWorkspace(restored.getCurrent().state.scopes[scopeId].bottom.tabState.terminal)
+                    .tabs.flatMap(tab => tab.terminals.map(terminal => terminal.id))).toEqual(['phone-shell', 'other-realm-shell', 'desktop-new-shell', 'phone-new-shell']);
+            } finally { await restored.unmount(); }
+        } finally {
+            await first.unmount();
+            await second.unmount();
+        }
+    });
+
     it('persists an admitted recipient selection and its rollback without overwriting source siblings', async () => {
         const { AppPaneProvider, useAppPaneContext } = await import('./AppPaneProvider');
         const { selectedPaneDestinationTabKey, selectedPaneDestinationResourceId } = await import('./model/selectedPaneDestination');
@@ -137,7 +249,7 @@ describe('AppPaneProvider persistence', () => {
         const recipient = await renderHook(() => useAppPaneScope(scopeId), { wrapper: recipientWrapper });
         await act(async () => recipient.getCurrent().patchDetailsTabState(tabKey, { editorText: 'recipient draft', scrollTop: 92 }));
         await act(async () => source.getCurrent().pane.setDetailsTabState(sibling, { text: 'source sibling draft' }));
-        await act(async () => { await setPaneTabWindowPresentation(source.getCurrent().owner, address, null); });
+        await act(async () => setPaneTabWindowPresentation(source.getCurrent().owner, address, null));
         expect(source.getCurrent().pane.scopeState?.details.tabState[tabKey]).toEqual({ accountId: 'account-a',
             isEditingFile: true, editorText: 'recipient draft', editorOriginalHash: 'base-hash', scrollTop: 92 });
         expect(source.getCurrent().pane.scopeState?.details.tabState[sibling]).toEqual({ text: 'source sibling draft' });
@@ -150,6 +262,321 @@ describe('AppPaneProvider persistence', () => {
         expect(restored.getCurrent().scopeState?.details.tabState[sibling]).toEqual({ text: 'source sibling draft' });
         expect(restored.getCurrent().scopeState?.bottom.tabState.terminal).toEqual(terminal);
         await restored.unmount();
+    });
+    it.each(['cold', 'late'] as const)('restores a duplicated terminal workspace in one desktop pane on %s hydration', async hydration => {
+        const { Dimensions } = await import('react-native');
+        const dimensions = Dimensions.get('window');
+        const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ ...dimensions, width: 1440, height: 900 });
+        const { AppPaneProvider, useAppPaneContext } = await import('./AppPaneProvider');
+        const { appPaneReduce, createAppPaneState } = await import('./model/appPaneReducer');
+        const { serializePersistedPaneScope } = await import('./model/paneScopePersistence');
+        const scopeId = 'session:restored-terminal-dock';
+        let fixture = appPaneReduce(createAppPaneState({ maxScopesInMemory: 12 }), { type: 'openBottom', scopeId, tabId: 'terminal' });
+        fixture = appPaneReduce(fixture, { type: 'terminalWorkspace', scopeId, command: { type: 'split', terminal: {
+            id: 'split-shell', target: { kind: 'workspace_shell' },
+        }, availableWidthPx: 1000, minimumTerminalWidthPx: 320 } });
+        const scope = fixture.scopes[scopeId];
+        // The old owner admitted both views of the same workspace; retain that stored shape at ingress.
+        const saved = serializePersistedPaneScope({ ...scope,
+            right: { ...scope.right, isOpen: true, activeTabId: 'terminal', selectedDestination: { kind: 'builtin', id: 'terminal' } },
+        }, { preserveDesktopVisibility: false });
+        const otherScopeId = 'session:restored-terminal-with-git';
+        const otherSaved = { ...saved, right: { ...saved.right, activeTabId: 'git', selectedDestination: { kind: 'builtin' as const, id: 'git' } } };
+        const detailsScopeId = 'session:restored-sidebar-terminal';
+        const detailsFixture = appPaneReduce(fixture, { type: 'openDetailsTab', scopeId, openAs: 'pinned', tab: {
+            key: 'terminal:embedded', kind: 'terminal', title: 'Terminal', resource: { kind: 'terminal', terminalInstanceId: 'embedded' },
+        } });
+        const detailsSaved = serializePersistedPaneScope({ ...detailsFixture.scopes[scopeId], right: saved.right }, { preserveDesktopVisibility: false });
+        const hydrate = () => {
+            paneUiState.set(scopeId, saved);
+            paneUiState.set(otherScopeId, otherSaved);
+            paneUiState.set(detailsScopeId, detailsSaved);
+        };
+        if (hydration === 'cold') hydrate();
+        const mounted = await renderHook(useAppPaneContext, { wrapper: ({ children }) => <AppPaneProvider>{children}</AppPaneProvider> });
+        try {
+            if (hydration === 'late') await act(async () => hydrate());
+            const restored = mounted.getCurrent().state.scopes[scopeId];
+            expect(restored).toMatchObject({ right: { isOpen: false }, bottom: { isOpen: true, activeTabId: 'terminal' } });
+            expect(restored.bottom.tabState.terminal).toEqual(scope.bottom.tabState.terminal);
+            expect(mounted.getCurrent().state.scopes[otherScopeId]).toMatchObject({
+                right: { isOpen: true, activeTabId: 'git' }, bottom: { isOpen: true, activeTabId: 'terminal' },
+            });
+            const sidebarRestored = mounted.getCurrent().state.scopes[detailsScopeId];
+            expect(sidebarRestored).toMatchObject({ right: { isOpen: true, activeTabId: 'terminal' }, bottom: { isOpen: false } });
+            expect(sidebarRestored.details.tabsByKey['terminal:embedded']).toBeUndefined();
+        } finally {
+            await mounted.unmount();
+            viewport.mockRestore();
+        }
+    });
+    it.each(['cold', 'late'] as const)('restores desktop pane content without opening phone sheets on %s hydration', async (hydration) => {
+        const { Dimensions } = await import('react-native');
+        const dimensions = Dimensions.get('window');
+        const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ ...dimensions, width: 1440, height: 900 });
+        const { AppPaneProvider, useAppPaneContext } = await import('./AppPaneProvider');
+        const wrapper = ({ children }: React.PropsWithChildren) => <AppPaneProvider>{children}</AppPaneProvider>;
+        const scopeId = 'session:phone-landing';
+        const tab = { key: 'file:src/a.ts', kind: 'file', title: 'a.ts', resource: { kind: 'file', path: 'src/a.ts' } };
+        const first = await renderHook(useAppPaneContext, { wrapper });
+        await act(async () => {
+            const dispatch = first.getCurrent().dispatch;
+            dispatch({ type: 'activateScope', scopeId });
+            dispatch({ type: 'openRight', scopeId, tabId: 'files' });
+            dispatch({ type: 'setRightTabState', scopeId, tabId: 'files', nextState: { query: 'retained' } });
+            dispatch({ type: 'openDetailsTab', scopeId, tab, openAs: 'pinned' });
+            dispatch({ type: 'openBottom', scopeId, tabId: 'terminal' });
+            dispatch({ type: 'setMainHidden', scopeId, hidden: true });
+        });
+        const saved = paneUiState.read(scopeId)!;
+        await first.unmount();
+        if (hydration === 'late') replacePersistentUiStateForTest(paneUiState, {});
+        viewport.mockReturnValue({ ...dimensions, width: 390, height: 844 });
+        const phone = await renderHook(useAppPaneContext, { wrapper });
+        if (hydration === 'late') await act(async () => paneUiState.set(scopeId, saved));
+        const scope = () => phone.getCurrent().state.scopes[scopeId];
+        expect(scope()).toMatchObject({ mainHidden: false,
+            right: { isOpen: false, activeTabId: 'files', tabState: { files: { query: 'retained' } } },
+            details: { isOpen: false, tabsByKey: { [tab.key]: expect.objectContaining(tab) } },
+            bottom: { isOpen: false, activeTabId: 'terminal' },
+        });
+        // Activation and content writes on a phone must not overwrite desktop layout visibility.
+        await act(async () => {
+            phone.getCurrent().dispatch({ type: 'activateScope', scopeId });
+            phone.getCurrent().dispatch({ type: 'setRightTabState', scopeId, tabId: 'files', nextState: { query: 'phone' } });
+            phone.getCurrent().dispatch({ type: 'openRight', scopeId, tabId: 'git' });
+            phone.getCurrent().dispatch({ type: 'openDetailsTab', scopeId, tab, openAs: 'pinned' });
+            phone.getCurrent().dispatch({ type: 'openBottom', scopeId, tabId: 'terminal' });
+        });
+        expect(scope()).toMatchObject({ right: { isOpen: true }, details: { isOpen: true }, bottom: { isOpen: true } });
+        await act(async () => {
+            phone.getCurrent().dispatch({ type: 'closeRight', scopeId });
+            phone.getCurrent().dispatch({ type: 'closeDetails', scopeId });
+            phone.getCurrent().dispatch({ type: 'closeBottom', scopeId });
+        });
+        // Widening may rebind a host before reload. Its lifecycle intents still
+        // belong to the phone landing and must not save its closed sheets as columns.
+        viewport.mockReturnValue({ ...dimensions, width: 1440, height: 900 });
+        await act(async () => {
+            phone.getCurrent().dispatch({ type: 'releaseScope', scopeId });
+            phone.getCurrent().dispatch({ type: 'activateScope', scopeId });
+            phone.getCurrent().dispatch({ type: 'setRightTabState', scopeId, tabId: 'files', nextState: { query: 'phone after widening' } });
+        });
+        expect(paneUiState.read(scopeId)).toMatchObject({ mainHidden: true,
+            right: { isOpen: true, activeTabId: 'git', tabState: { files: { query: 'phone after widening' } } },
+            details: { isOpen: true }, bottom: { isOpen: true },
+        });
+        await phone.unmount();
+        viewport.mockReturnValue({ ...dimensions, width: 390, height: 844 });
+        const phoneAgain = await renderHook(useAppPaneContext, { wrapper });
+        expect(phoneAgain.getCurrent().state.scopes[scopeId]).toMatchObject({
+            right: { isOpen: false }, details: { isOpen: false }, bottom: { isOpen: false },
+        });
+        await phoneAgain.unmount();
+        viewport.mockReturnValue({ ...dimensions, width: 1440, height: 900 });
+        const desktop = await renderHook(useAppPaneContext, { wrapper });
+        expect(desktop.getCurrent().state.scopes[scopeId]).toMatchObject({ mainHidden: true,
+            right: { isOpen: true, activeTabId: 'git' }, details: { isOpen: true }, bottom: { isOpen: true },
+        });
+        await desktop.unmount();
+        viewport.mockRestore();
+    });
+
+    it.each(['cold', 'late'] as const)('restores 153 tabs in one %s scope publication and stays idle', async (restore) => {
+        const { AppPaneProvider, useAppPaneContext } = await import('./AppPaneProvider');
+        const { AppPaneContext } = await import('./AppPaneContext');
+        const { appPaneReduce, createAppPaneState } = await import('./model/appPaneReducer');
+        const { serializeDetailsWorkspaceState } = await import('./details/workspace/migrateLegacyDetailsWorkspaceState');
+        const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
+        const scopeId = 'session:idle-cost';
+        let fixture = createAppPaneState({ maxScopesInMemory: 12 });
+        for (let index = 0; index < 153; index += 1) {
+            const path = `/repo/restored-${index}.ts`;
+            fixture = appPaneReduce(fixture, { type: 'openDetailsTab', scopeId, openAs: 'pinned',
+                tab: { key: `file:${path}`, kind: 'file', title: path, resource: { kind: 'file', path } } });
+        }
+        const scope = fixture.scopes[scopeId];
+        const persisted = PersistedPaneScopesSchema.parse({ [scopeId]: {
+            ...scope, details: serializeDetailsWorkspaceState(scope.details),
+        } })[scopeId];
+        if (restore === 'cold') paneUiState.set(scopeId, persisted);
+        const writes = vi.spyOn(getPersistenceStorage(), 'set');
+        const deletes = vi.spyOn(getPersistenceStorage(), 'delete');
+        // Account restore/cache writes belong to the Home harness, not pane restoration.
+        const paneWrites = () => writes.mock.calls.filter(([key]) => key.startsWith('ui-state:pane-scopes-v1:'));
+        const broadNotifications = vi.fn();
+        const keyedNotifications = vi.fn();
+        const stopBroad = paneUiState.subscribe(broadNotifications);
+        const stopKeyed = paneUiState.subscribeKey(scopeId, keyedNotifications);
+        const subscribe = paneUiState.subscribe;
+        let activeOwnerSubscriptions = 0;
+        const ownerSubscription = vi.spyOn(paneUiState, 'subscribe').mockImplementation(listener => {
+            activeOwnerSubscriptions += 1;
+            const stop = subscribe(listener);
+            return () => { activeOwnerSubscriptions -= 1; stop(); };
+        });
+        const renders = createRenderCommitCounter();
+        let publishedScopes: ReturnType<typeof createAppPaneState>['scopes'] | undefined;
+        let scopePublications = 0;
+        let callbacks = 0;
+        function Probe() {
+            const scopes = useAppPaneContext(value => value.state.scopes);
+            useRenderCommitCounter(renders);
+            const context = React.useContext(AppPaneContext);
+            React.useLayoutEffect(() => {
+                const observe = () => {
+                    callbacks += 1;
+                    const next = context?.getSnapshot().state.scopes;
+                    if (next !== publishedScopes && next?.[scopeId]) {
+                        publishedScopes = next;
+                        scopePublications += 1;
+                    }
+                };
+                return context?.subscribe(observe);
+            }, [context]);
+            return React.createElement('RestoredScope', { tabs: Object.keys(scopes[scopeId]?.details.tabsByKey ?? {}).length });
+        }
+        const screen = await renderScreen(<AppPaneProvider><Probe /></AppPaneProvider>);
+        try {
+            if (restore === 'late') {
+                renders.reset(); callbacks = 0;
+                await act(async () => paneUiState.set(scopeId, persisted));
+                expect(broadNotifications).toHaveBeenCalledTimes(1);
+                expect(keyedNotifications).toHaveBeenCalledTimes(1);
+                expect(paneWrites()).toHaveLength(1); // the incoming scope, not one write per tab
+            } else {
+                expect(broadNotifications).not.toHaveBeenCalled();
+                expect(keyedNotifications).not.toHaveBeenCalled();
+                expect(paneWrites()).toHaveLength(0); // canonical cold restore never persists again
+            }
+            expect(screen.findByType('RestoredScope').props.tabs).toBe(153);
+            expect(scopePublications).toBe(1);
+            expect(renders.read()).toEqual({ renders: 1, commits: 1 });
+            expect(activeOwnerSubscriptions).toBe(1); // aggregate provider, never one subscription per tab
+            const retainedOwnerSnapshot = paneUiState.readAll();
+            const retainedScopes = publishedScopes;
+            const retainedTabs = publishedScopes?.[scopeId].details.tabsByKey;
+            const subscriptionsBefore = ownerSubscription.mock.calls.length;
+            writes.mockClear(); broadNotifications.mockClear(); keyedNotifications.mockClear();
+            renders.reset(); callbacks = 0;
+            // Exercise the real store's Machine-arrival path without a live Account.
+            await act(async () => getStorage().getState().applyMachines([createMachineFixture({ id: 'unrelated-idle-machine' })]));
+            expect(getStorage().getState().machines['unrelated-idle-machine']).toBeDefined();
+            for (let tick = 0; tick < 50; tick += 1) await act(async () => {});
+            expect(paneWrites()).toHaveLength(0);
+            expect(writes.mock.calls.filter(([key]) => key === 'settings' || key === 'local-settings')).toHaveLength(0);
+            expect(deletes.mock.calls.filter(([key]) => key.startsWith('ui-state:pane-scopes-v1:'))).toHaveLength(0);
+            expect(broadNotifications).not.toHaveBeenCalled();
+            expect(keyedNotifications).not.toHaveBeenCalled();
+            expect(callbacks).toBe(0);
+            expect(scopePublications).toBe(1);
+            expect(renders.read()).toEqual({ renders: 0, commits: 0 });
+            expect(ownerSubscription).toHaveBeenCalledTimes(subscriptionsBefore);
+            expect(paneUiState.readAll()).toBe(retainedOwnerSnapshot);
+            expect(publishedScopes).toBe(retainedScopes);
+            expect(publishedScopes?.[scopeId].details.tabsByKey).toBe(retainedTabs);
+            expect(Object.keys(retainedTabs ?? {})).toHaveLength(153);
+            // A reconstructed equal record is also a no-op, not a reference-equality feedback loop.
+            await act(async () => paneUiState.set(scopeId, JSON.parse(JSON.stringify(persisted))));
+            expect(paneWrites()).toHaveLength(0);
+            expect(broadNotifications).not.toHaveBeenCalled();
+            expect(keyedNotifications).not.toHaveBeenCalled();
+            expect(renders.read()).toEqual({ renders: 0, commits: 0 });
+        } finally {
+            await screen.unmount();
+            expect(activeOwnerSubscriptions).toBe(0);
+            ownerSubscription.mockRestore();
+            stopBroad(); stopKeyed(); writes.mockRestore(); deletes.mockRestore();
+        }
+    });
+
+    it('opens files, switches tabs and records suggestions without writing settings', async () => {
+        const { AppPaneProvider } = await import('./AppPaneProvider');
+        const { recordFileEditorAiSuggestionUsage } = await import('@/sync/store/files/fileEditorAiSuggestionUsage');
+        const { recordWorkspaceFileOpen } = await import('@/sync/store/files/recentWorkspaceFiles');
+        const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
+        const wrapper = ({ children }: React.PropsWithChildren) => <AppPaneProvider>{children}</AppPaneProvider>;
+        const pane = await renderHook(() => useAppPaneScope('project:wr_1'), { wrapper });
+        const writes = vi.spyOn(getPersistenceStorage(), 'set');
+        try {
+            for (const name of ['first', 'second', 'first']) {
+                await act(async () => pane.getCurrent().openDetailsTab({ key: `file:/repo/${name}.ts`, kind: 'file',
+                    title: `${name}.ts`, resource: { kind: 'file', path: `/repo/${name}.ts` } }, { intent: 'pinned' }));
+            }
+            const scope = { serverId, accountId: 'account-a' };
+            expect(getStorage().getState().settingsScope).toEqual(scope);
+            recordFileEditorAiSuggestionUsage(scope, { kind: 'requested' });
+            recordWorkspaceFileOpen(scope, 'cost-contract-workspace', 'first.ts');
+            recordWorkspaceFileOpen(scope, 'cost-contract-workspace', 'second.ts');
+            expect(writes.mock.calls.filter(([key]) => key === 'local-settings' || key === 'settings')).toHaveLength(0);
+        } finally {
+            writes.mockRestore();
+            await pane.unmount();
+        }
+    });
+
+    it('keeps draft text in the editor until a lifecycle checkpoint while publishing dirty metadata once', async () => {
+        const { AppPaneProvider, useAppPaneContext } = await import('./AppPaneProvider');
+        const { AppPaneContext } = await import('./AppPaneContext');
+        const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
+        const { loadLocalSettings } = await import('@/sync/domains/state/settingsPersistence');
+        const { useWorkspaceFileEditorState } = await import('@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceFileEditorState');
+        const browser = new EventTarget();
+        vi.stubGlobal('addEventListener', browser.addEventListener.bind(browser));
+        vi.stubGlobal('removeEventListener', browser.removeEventListener.bind(browser));
+        const tabKey = 'file:/repo/typing.ts';
+        let editor!: ReturnType<typeof useWorkspaceFileEditorState>;
+        let pane!: ReturnType<typeof useAppPaneScope>;
+        let unrelatedCommits = 0;
+        let panePublications = 0;
+        function UnrelatedPane() {
+            useAppPaneContext(value => value.state.scopes['project:wr_1']?.right);
+            return null;
+        }
+        function Editor() {
+            const context = React.useContext(AppPaneContext);
+            React.useEffect(() => context?.subscribe(() => { panePublications += 1; }), [context]);
+            pane = useAppPaneScope('project:wr_1');
+            const persistDraft = React.useCallback<NonNullable<Parameters<typeof useWorkspaceFileEditorState>[0]['persistDraft']>>((draft, options) => {
+                pane.patchDetailsTabState(tabKey, draft ?? { accountId: null, isEditingFile: false, editorText: undefined }, options);
+            }, [pane.patchDetailsTabState]);
+            editor = useWorkspaceFileEditorState({ scope: { serverId, machineId: 'machine-a', rootPath: '/repo' },
+                accountId: 'account-a', filePath: 'typing.ts', displayMode: 'file', fileText: 'base', fileHash: 'hash',
+                fileWriteSupported: true, setFileWriteSupported() {}, fileEditorFeatureEnabled: true,
+                filesEditorWebMonacoEnabled: true, filesEditorNativeCodeMirrorEnabled: true,
+                filesEditorAutoSave: false, filesEditorChangeDebounceMs: 0, mountedRef: { current: true },
+                refreshAll: async () => {}, persistDraft });
+            return null;
+        }
+        const screen = await renderScreen(<AppPaneProvider><Editor /><React.Profiler id="unrelated" onRender={() => { unrelatedCommits += 1; }}><UnrelatedPane /></React.Profiler></AppPaneProvider>);
+        const mmkv = getPersistenceStorage();
+        const writes = vi.spyOn(mmkv, 'set');
+        const settings = vi.spyOn(getStorage().getState(), 'applyLocalSettings');
+        try {
+            await act(async () => pane.openDetailsTab({ key: tabKey, kind: 'file', title: 'typing.ts', resource: { kind: 'file', path: '/repo/typing.ts' } }, { intent: 'pinned' }));
+            await act(async () => editor.startEditingFile());
+            writes.mockClear(); settings.mockClear();
+            const before = unrelatedCommits;
+            const publicationsBefore = panePublications;
+            for (let index = 1; index <= 20; index += 1) {
+                await act(async () => editor.onEditorChange(`base${'x'.repeat(index)}`));
+            }
+            expect(pane.scopeState?.details.tabState[tabKey]).toMatchObject({ accountId: 'account-a', isEditingFile: true, editorText: 'basex' });
+            expect(settings).not.toHaveBeenCalled();
+            expect(writes.mock.calls.filter(([key]) => key === 'local-settings')).toHaveLength(0);
+            expect(unrelatedCommits - before).toBe(0);
+            expect(panePublications - publicationsBefore).toBe(1); // dirty transition only, never text versions
+            expect(editor.getEditorText()).toBe(`base${'x'.repeat(20)}`);
+            // The native/browser engine may be ahead of its debounced callback.
+            editor.editorHandleRef.current = { getValue: () => 'latest engine buffer', flushPendingChange: async () => {} };
+            await act(async () => { browser.dispatchEvent(new Event('pagehide')); });
+            expect(paneUiState.readAll()['project:wr_1'].details.tabState[tabKey]).toMatchObject({ editorText: 'latest engine buffer', isEditingFile: true });
+            expect(settings).not.toHaveBeenCalled();
+        } finally {
+            writes.mockRestore(); settings.mockRestore();
+            await screen.unmount();
+            vi.unstubAllGlobals();
+        }
     });
 
     it('does not disguise a pane serialization programmer error as a storage failure', async () => {
@@ -182,9 +609,9 @@ describe('AppPaneProvider persistence', () => {
         const encoding = { hasBom: false, editable: true, eol: 'lf' as const, mixedEol: false };
         const pane = await renderHook(() => {
             const currentPane = useAppPaneScope('project:wr_1');
-            const persistDraft = React.useCallback((draft: Parameters<typeof useWorkspaceFileEditorState>[0]['persistedDraft']) => {
+            const persistDraft = React.useCallback<NonNullable<Parameters<typeof useWorkspaceFileEditorState>[0]['persistDraft']>>((draft, options) => {
                 currentPane.patchDetailsTabState(tabKey, draft ?? { accountId: null, isEditingFile: false,
-                    editorOriginalHash: undefined, editorText: undefined });
+                    editorOriginalHash: undefined, editorText: undefined }, options);
             }, [currentPane.patchDetailsTabState]);
             const [fileWriteSupported, setFileWriteSupported] = React.useState(true);
             const editor = useWorkspaceFileEditorState({
@@ -219,6 +646,7 @@ describe('AppPaneProvider persistence', () => {
             expect(writeError).toBeInstanceOf(UiStatePersistenceError);
             expect(writeError).toMatchObject({ message: quota.message, cause: quota });
             await act(async () => pane.getCurrent().editor.onEditorChange(firstDraft.editorText));
+            await act(async () => { expect(await pane.getCurrent().editor.prepareEditorTransition()).toBe(false); });
             expect(pane.getCurrent().scopeState?.details.tabState[tabKey]).toEqual(firstDraft);
             expect(pane.getCurrent().persistenceFailed).toBe(true);
             expect(pane.getCurrent().editor.draftPersistenceFailed).toBe(true);
@@ -226,6 +654,7 @@ describe('AppPaneProvider persistence', () => {
             expect(pane.getCurrent().editor.isEditingFile).toBe(true);
             expect(pane.getCurrent().editor.editorStatus).toBe('dirty');
             await act(async () => pane.getCurrent().editor.onEditorChange(continuedDraft.editorText));
+            await act(async () => { await pane.getCurrent().editor.prepareEditorTransition(); });
             expect(pane.getCurrent().scopeState?.details.tabState[tabKey]).toEqual(continuedDraft);
             expect(pane.getCurrent().persistenceFailed).toBe(true);
             expect(pane.getCurrent().editor.draftPersistenceFailed).toBe(true);
@@ -234,6 +663,7 @@ describe('AppPaneProvider persistence', () => {
             set.mockImplementation(write);
             const recoveredDraft = { ...firstDraft, editorText: 'const answer = 3;' };
             await act(async () => pane.getCurrent().editor.onEditorChange(recoveredDraft.editorText));
+            await act(async () => { await pane.getCurrent().editor.prepareEditorTransition(); });
             expect(pane.getCurrent().scopeState?.details.tabState[tabKey]).toEqual(recoveredDraft);
             expect(pane.getCurrent().persistenceFailed).toBe(false);
             expect(pane.getCurrent().editor.draftPersistenceFailed).toBe(false);
@@ -251,6 +681,7 @@ describe('AppPaneProvider persistence', () => {
                 write(key, value);
             });
             await act(async () => pane.getCurrent().editor.onEditorChange(originalText));
+            await act(async () => { await pane.getCurrent().editor.prepareEditorTransition(); });
             expect(pane.getCurrent().persistenceFailed).toBe(true);
             expect(pane.getCurrent().editor.editorDirty).toBe(false);
             expect(pane.getCurrent().editor.draftPersistenceFailed).toBe(false);
@@ -278,7 +709,7 @@ describe('AppPaneProvider persistence', () => {
     it('remembers the Account and window workspace layout when the Settings Action is off', async () => {
         const { settingsParse } = await import('@/sync/domains/settings/settings');
         const { useWorkspaceState } = await import('../workspace/useWorkspaceState');
-        const { readScopedWorkspaceLayout, workspaceLayoutScopeKey } = await import('../workspace/workspacePersistence');
+        const { parseWorkspaceLayout, workspaceLayoutScopeKey } = await import('../workspace/workspacePersistence');
         getStorage().setState({ isDataReady: true, settings: settingsParse({
             actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } },
         }) });
@@ -290,7 +721,7 @@ describe('AppPaneProvider persistence', () => {
         expect(hook.getCurrent().isReady).toBe(true);
         await act(async () => hook.getCurrent().dispatch({ type: 'openTab', groupId: 'group:1', tab }));
         const { workspaceLayoutsState } = await import('@/sync/domains/state/filePaneUiState');
-        expect(readScopedWorkspaceLayout(workspaceLayoutsState.readAll(), scopeKey)?.tabs['session-a']).toEqual(tab);
+        expect(parseWorkspaceLayout(workspaceLayoutsState.read(scopeKey))?.tabs['session-a']).toEqual(tab);
         await hook.unmount();
         const restored = await renderHook(() => useWorkspaceState({ initialTab, windowId }));
         expect(restored.getCurrent().state.tabs['session-a']).toEqual(tab);
@@ -323,8 +754,6 @@ describe('AppPaneProvider persistence', () => {
     });
     it('reveals accepted terminal selections through the matching mounted session driver, never a foreign Home', async () => {
         const { AppPaneProvider, useAppPaneContext } = await import('./AppPaneProvider');
-        const { useRegisterSessionPaneDriver } = await import('@/components/sessions/panes/useRegisterSessionPaneDriver');
-        const { SessionCockpitChromeRegistryProvider, useSessionCockpitChromeRegister } = await import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry');
         const accountLifetime = captureActiveServerAccountScopeLifetime();
         if (!accountLifetime) throw new Error('Expected real Account lifetime');
         const calls: string[] = [];
@@ -333,7 +762,9 @@ describe('AppPaneProvider persistence', () => {
         function Probe(props: Readonly<{ home: string }>) {
             const register = useSessionCockpitChromeRegister();
             const switchSurface = React.useCallback((surface: string) => { calls.push(`${props.home}:${surface}`); }, [props.home]);
-            React.useEffect(() => register({ sessionId: 'same-session', serverId: props.home, activeSurface: 'chat', terminalTabAvailable: true, openDetailsTabCount: 0, switchSurface }), [props.home, register, switchSurface]);
+            const catalog = React.useMemo(() => resolveSessionCockpitMobileCatalog({ terminalTabAvailable: true }), []);
+            const readColumn = React.useCallback(() => ({ present: true, visible: true, available: true, setVisible: () => {} }), []);
+            React.useEffect(() => register({ sessionId: 'same-session', serverId: props.home, activeSurface: 'chat', terminalTabAvailable: true, catalog, readColumn, openDetailsTabCount: 0, switchSurface }), [props.home, register, switchSurface, catalog, readColumn]);
             scopeId = useRegisterSessionPaneDriver('same-session', serverId, undefined, {
                 pluginUiProjection: null, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
                 machineId: 'machine-a', serverId, platform: 'ios', accountLifetime,

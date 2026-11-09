@@ -18,6 +18,7 @@ import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFo
 import { normalizeWidgetSizeForSurfaceV1, resolveWidgetSizeChoicesV1 } from '@happier-dev/protocol/widgets';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { isPublicProfileWidgetSurfaceV1, projectWidgetPublicProfileDescriptorV1, translateWidgetPublicProfileCopyV1, resolveWidgetPublicProfileInputsV1 } from '@happier-dev/protocol/widgets';
+import type { ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 
 /**
  * One named slot a page or area fills (lab `dashboards` PG, P1): "This page" (a plugin page's
@@ -41,6 +42,8 @@ export type WidgetSurfaceContextSlot = Readonly<{
  * names them for people.
  */
 export type WidgetSurfaceContext = Readonly<{
+    /** Exact host-owned Project admission; never persisted or exposed as an editable input. */
+    projectContext?: ProjectWidgetAreaContextV1 | null;
     session?: Readonly<{ ref: Readonly<{ serverId: string; sessionId: string }>; label: string; description?: string }>;
     slots?: Readonly<Record<string, WidgetSurfaceContextSlot>>;
 }>;

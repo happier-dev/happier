@@ -1,4 +1,4 @@
-import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { PluginUiInlineSurfaceMountV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { PluginUiInlineSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';

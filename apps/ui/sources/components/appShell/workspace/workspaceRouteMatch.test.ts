@@ -24,8 +24,8 @@ describe('Expo destination route matching', () => {
         const sorting = vi.spyOn(Array.prototype, 'sort');
         try {
             for (let i = 0; i < 100; i++) {
-                expect(matchWorkspaceDestinationRoute(`/session/session-${i}/runs/new`)).toEqual({
-                    routeKey: 'session/[id]/runs/new', params: { id: `session-${i}` },
+                expect(matchWorkspaceDestinationRoute(`/session/session-${i}/runs/run-${i}`)).toEqual({
+                    routeKey: 'session/[id]/runs/[runId]', params: { id: `session-${i}`, runId: `run-${i}` },
                 });
                 expect(matchWorkspaceDestinationRoute('/settings/connected-services/connect')?.routeKey)
                     .toBe('settings/connected-services/connect');
@@ -35,15 +35,20 @@ describe('Expo destination route matching', () => {
             sorting.mockRestore();
         }
     });
-    it('resolves hosted session subpages through their canonical Expo module identity', () => {
+    it('resolves Session roots and subpages through their shared Expo route identity', () => {
+        expect(matchWorkspaceDestinationRoute('/session/a%2Fb')).toEqual({
+            routeKey: 'session/[id]', params: { id: 'a/b' },
+        });
+        expect(workspaceRouteHref('/session/a%2Fb', { id: 'a/b', serverId: 'home-a' }))
+            .toBe('/session/a%2Fb?serverId=home-a');
         expect(matchWorkspaceDestinationRoute('/external/browse?machineId=m')).toEqual({
             routeKey: 'external/browse', params: {},
         });
         expect(matchWorkspaceDestinationRoute('/session/a%20b/info')).toEqual({
             routeKey: 'session/[id]/info', params: { id: 'a b' },
         });
-        expect(matchWorkspaceDestinationRoute('/session/a/runs/new')).toEqual({
-            routeKey: 'session/[id]/runs/new', params: { id: 'a' },
+        expect(matchWorkspaceDestinationRoute('/session/a/runs/run-1')).toEqual({
+            routeKey: 'session/[id]/runs/[runId]', params: { id: 'a', runId: 'run-1' },
         });
         expect(matchWorkspaceDestinationRoute('/session/a/message/m%2F1')).toEqual({
             routeKey: 'session/[id]/message/[messageId]', params: { id: 'a', messageId: 'm/1' },

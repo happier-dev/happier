@@ -3,6 +3,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installAppPaneScopeHostCommonModuleMocks } from './appPaneScopeHostTestHelpers';
+import { DEFAULT_RIGHT_PREFERRED_PX } from '@/components/ui/panels/paneBreakpoints';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -43,10 +44,6 @@ vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
     },
 }));
 
-vi.mock('@/utils/platform/responsive', () => ({
-    useDeviceType: () => 'tablet',
-}));
-
 vi.mock('./AppPaneProvider', () => {
     const useSelectedPaneContext = (select = (value: unknown) => value) => select({
             dispatch: vi.fn(),
@@ -60,6 +57,7 @@ vi.mock('./AppPaneProvider', () => {
                 },
             },
             getDriver: () => null,
+            registerDriver: () => () => {},
             driverRegistryVersion: 1,
         });
     return { useAppPaneContext: useSelectedPaneContext, useOptionalAppPaneContext: useSelectedPaneContext };
@@ -153,7 +151,7 @@ describe('AppPaneScopeHost (docked max widths)', () => {
         expect(lastProps.rightDockWidthPx).toBe(520);
     });
 
-    it('keeps the right sidebar at its 340 px default width at every window width until the user resizes it', async () => {
+    it('keeps the right sidebar at its 380 px default width at every window width until the user resizes it', async () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
         const render = async (windowWidthPx: number, rightPaneWidthPx: number) => {
             lastProps = null;
@@ -170,9 +168,9 @@ describe('AppPaneScopeHost (docked max widths)', () => {
             await renderScreen(<AppPaneScopeHost scopeId="scope1" main={<div />} rightPaneBuiltinAdapter={rightPaneBuiltinAdapter} />);
             return lastProps.rightDockWidthPx as number;
         };
-        // The lab's side column (lane12-final `xp-side`, app-surfaces `ss-side`) is 340 px wide.
-        expect(await render(1440, 340)).toBe(340);
-        expect(await render(946, 340)).toBe(340);
+        // The lab's side panel (calm-shell `csinfo`, `csrail`) is 380 px wide.
+        expect(await render(1440, DEFAULT_RIGHT_PREFERRED_PX)).toBe(380);
+        expect(await render(946, DEFAULT_RIGHT_PREFERRED_PX)).toBe(380);
         // A width the user chose is fixed pixels; it no longer scales with the window.
         expect(await render(1440, 400)).toBe(400);
     });

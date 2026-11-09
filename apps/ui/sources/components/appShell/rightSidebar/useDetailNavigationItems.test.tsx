@@ -7,8 +7,36 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import * as owner from './detailNavigationItems';
 import { useDetailNavigationItems } from './useDetailNavigationItems';
 import type { ResolveRightSidebarTabsInput } from './rightSidebarTabRegistry';
+import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
+import { storage } from '@/sync/domains/state/storage';
+import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 afterEach(() => { standardCleanup(); vi.restoreAllMocks(); });
+
+it.each(['session', 'project'] as const)('removes and restores Browser in a mounted %s menu as its Account preference changes', async scope => {
+    const initialState = storage.getState();
+    primeServerFeaturesSnapshot({ snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({
+        features: { browser: { enabled: true } }, capabilities: {},
+    }) } });
+    storage.getState().applySettingsLocal({ featureToggles: { ...initialState.settings.featureToggles, browser: true } });
+    function Menu() {
+        const enabled = useFeatureDecision('browser', { scopeKind: 'runtime' })?.state === 'enabled';
+        const items = useDetailNavigationItems({ scope, browserFeatureEnabled: enabled });
+        return <>{items.filter(item => item.id === 'browser').map(item => <View key={item.id} testID="browser-entry" />)}</>;
+    }
+    try {
+        const screen = await renderScreen(<Menu />);
+        expect(screen.findAllByTestId('browser-entry')).toHaveLength(1);
+        await act(async () => { storage.getState().applySettingsLocal({ featureToggles: { ...storage.getState().settings.featureToggles, browser: false } }); });
+        expect(screen.findAllByTestId('browser-entry')).toHaveLength(0);
+        await act(async () => { storage.getState().applySettingsLocal({ featureToggles: { ...storage.getState().settings.featureToggles, browser: true } }); });
+        expect(screen.findAllByTestId('browser-entry')).toHaveLength(1);
+    } finally {
+        storage.setState(initialState, true);
+        resetServerFeaturesClientForTests();
+    }
+});
 
 it('resolves once per changed scope input and preserves items on equivalent renders', async () => {
     const resolve = vi.spyOn(owner, 'resolveDetailNavigationItems');

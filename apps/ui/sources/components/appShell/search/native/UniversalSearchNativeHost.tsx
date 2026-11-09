@@ -1,11 +1,10 @@
 import * as React from 'react';
-import { Keyboard, Platform, StyleSheet as RNStyleSheet, Pressable, View, useWindowDimensions } from 'react-native';
+import { Keyboard, StyleSheet as RNStyleSheet, Pressable, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSharedValue, withTiming } from 'react-native-reanimated';
 
 import { KeyboardAwareScreen } from '@/components/ui/keyboardAvoidance/KeyboardAwareScreen';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionTokens';
 import {
@@ -98,8 +97,6 @@ export function UniversalSearchNativeHost(props: UniversalSearchNativeHostProps)
     const { height: windowHeight } = useWindowDimensions();
     const keyboardHeight = useKeyboardHeight();
     const reducedMotion = useReducedMotionPreference();
-    const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
-
     // Seeded settled under Reduced Motion: the scrim carries the entrance, and a preference that
     // removes motion must not leave the plane sitting on nothing for a frame.
     const scrimProgress = useSharedValue(reducedMotion ? 1 : 0);
@@ -236,7 +233,6 @@ export function UniversalSearchNativeHost(props: UniversalSearchNativeHostProps)
                                 accessibilityLabel={t('common.clearSearch')}
                                 iconName="x"
                                 size={28}
-                                minimumInteractiveTargetSize={minimumInteractiveTargetSize}
                                 onPress={() => props.onChangeQuery('')}
                             />
                         ) : null}</View>}

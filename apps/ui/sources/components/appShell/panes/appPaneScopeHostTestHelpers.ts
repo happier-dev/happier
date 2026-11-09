@@ -43,7 +43,10 @@ export function installAppPaneScopeHostCommonModuleMocks(
 
     vi.mock('react-native', async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        const { createCapturingFlatListMock, createCapturingSectionListMock } = await import('@/dev/testkit/mocks/virtualizedList');
         return createReactNativeWebMock({
+            ...createCapturingFlatListMock().module,
+            ...createCapturingSectionListMock().module,
             Platform: {
                 OS: 'web',
                 select: (value: Record<string, unknown>) => value.web ?? value.default,

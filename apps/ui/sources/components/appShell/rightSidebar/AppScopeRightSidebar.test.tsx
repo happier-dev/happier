@@ -1,7 +1,8 @@
 import * as React from 'react';
-import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
-import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol';
+import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -32,6 +33,12 @@ import {
     useOpenAppRightSidebarTab,
     useAppScopeRightSidebarDestinationHandler,
 } from './appScopeRightSidebarNavigation';
+import type { RightSidebarRailAction } from './RightSidebarActionRail';
+import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
+import { unionPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
+import { widgetInstalledPackage } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolvePluginSidebarResourceContext } from '@/components/plugins/surfaces/pluginSurfaceMountBinding';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -279,7 +286,6 @@ async function createMountedHostApiClient(descriptorId: string) {
             target: { kind: 'app' },
         }),
         requestSurface: controller.surfaceContext,
-        requestIdPrefix: `test:${descriptorId}`,
         handleRequest: controller.hostApi.handleRequest,
         installedMethods: controller.hostApi.installedMethods,
     });
@@ -431,6 +437,27 @@ describe('AppScopeRightSidebar', () => {
 
         expect(screen.findByTestId('app-scope-right-sidebar-empty')).toBeTruthy();
         expect(latestMountFor('app-panel')).toBeNull();
+    });
+
+    it('never opens blank: with panels but none chosen, it offers to open one', async () => {
+        const { AppScopeRightSidebar } = await import('./AppScopeRightSidebar');
+
+        const screen = await renderScreen(
+            <AppScopeRightSidebar
+                scopeId={APP_PANE_SCOPE_ID}
+                pluginUiProjection={projectionWith(appSidebarPlacement)}
+                projectionPhase="current"
+                platform="web"
+                closable
+                testID="app-scope-right-sidebar"
+            />,
+        );
+
+        expect(latestMountFor('app-panel')).toBeNull();
+        expect(screen.findByTestId('app-scope-right-sidebar-none')).toBeTruthy();
+        await act(async () => { screen.pressByTestId('app-scope-right-sidebar-none-open'); });
+        expect(latestMountFor('app-panel')).toBeTruthy();
+        await screen.unmount();
     });
 
     it('keeps a restored app plugin destination pending, then tombstones it when the settled catalog lacks it', async () => {
@@ -773,6 +800,77 @@ describe('AppScopeRightSidebar', () => {
                 }),
             );
         }
+
+        it('shares one delivered instance/input between an already-mounted rail and a later pane body', async () => {
+            const sidebar = await import('./AppScopeRightSidebar');
+            const Provider = sidebar.AppScopeRightSidebarProvider;
+            const { RightSidebarActionRail } = await import('./RightSidebarActionRail');
+            const transport = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+            const reads: unknown[] = [];
+            // Only the daemon RPC boundary is replaced; context admission and the Resource store stay real.
+            const rpc = vi.spyOn(transport, 'machineRpcWithServerScope').mockImplementation(async <R, A,>(request: ServerScopedMachineRpcParams<A>): Promise<R> => {
+                let response: unknown;
+                if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
+                    reads.push(request.payload);
+                    response = { ok: true, resource: { pluginId: 'acme.preview', localId: 'issue-count' }, kind: 'config',
+                        contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`, bytesBase64: Buffer.from('{"count":2}').toString('base64') };
+                } else if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN) {
+                    const payload = request.payload as Readonly<{ subscriptionId: string }>;
+                    response = { ok: true, subscriptionId: payload.subscriptionId, digest: `sha256:${'a'.repeat(64)}` };
+                } else if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT) {
+                    return await new Promise<never>((_resolve, reject) => {
+                        const abort = () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+                        if (request.signal?.aborted) abort();
+                        else request.signal?.addEventListener('abort', abort, { once: true });
+                    });
+                } else if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE) response = { ok: true };
+                else throw new Error(`Unexpected daemon RPC: ${request.method}`);
+                return response as R; // Generic transport fixture; the real Resource RPC reader validates this response.
+            });
+            const original = withSelectedContributionOrigin(appDetailPlacement, { generation: 1, machineId: 'machine-a', materializationId: 'install-a' });
+            const placement = { ...original, runtime: { resourceCapability: { readable: true, dynamic: true } },
+                display: { title: 'Issues', defaultPlacement: 'auto' as const, countResourceId: 'issue-count' }, binding: normalizePluginUiDestinationBindingV1({
+                pluginId: 'acme.preview', destinationId: 'detail-panel', rendererId: 'detail-panel', container: 'rightSidebarTab',
+                target: { kind: 'app' },
+            })! };
+            const origin = executionOrigin({ machineId: 'machine-a', materializationId: 'install-a' });
+            const physical: PluginUiProjectionModel = { ...projectionWith(placement), installedPackagesById: {
+                'acme.preview': { ...widgetInstalledPackage('acme.preview', 'Issues'), occurrenceId: 'acme-preview-occurrence', executionOrigin: origin },
+            }, resourcesById: { [buildQualifiedPluginContributionKey({ pluginId: 'acme.preview', localId: 'issue-count' })]: {
+                id: 'issue-count', pluginId: 'acme.preview', resourceKind: 'config', contentType: 'application/json',
+                scope: 'surface', occurrenceId: 'acme-preview-occurrence',
+            } } };
+            const projected = unionPluginUiProjections([{ machineId: 'machine-a', serverId: runtime.serverId,
+                projection: physical, phase: 'current', interactionEnabled: true }], new Map([['acme.preview', origin]]));
+            const projection = projected.pluginUiProjection;
+            if (!projection) throw new Error('Expected the admitted plugin projection');
+            let binding: PluginSurfaceDestinationNavigationBinding | null = null;
+            const content = (body: boolean) => <AppShellPluginUiProjectionValueProvider value={{
+                ...projected, pluginBrowserProjection: null, platform: 'web', accountLifetime: accountLifetimeState.lifetime,
+                clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {}, reloadConnectedAccountProjection() {},
+            }}><AppTargetNavigationScope projection={projection} onBinding={next => { binding = next; }}>
+                <Provider scopeId={APP_PANE_SCOPE_ID} pluginUiProjection={projection}>
+                    <sidebar.AppScopeRightSidebarActionRail scopeId={APP_PANE_SCOPE_ID} />
+                    {body ? <sidebar.AppScopeRightSidebar scopeId={APP_PANE_SCOPE_ID} pluginUiProjection={projection} /> : null}
+                </Provider>
+            </AppTargetNavigationScope></AppShellPluginUiProjectionValueProvider>;
+            const screen = await renderScreen(content(false));
+            try {
+                await act(async () => { await binding!.openSurface({ destination: { pluginId: 'acme.preview', localId: 'detail-panel' },
+                    input: { filter: 'open' } }); });
+                const expectedContext = resolvePluginSidebarResourceContext({ binding: placement.binding, launchInput: { filter: 'open' } });
+                await vi.waitFor(() => expect(reads).toContainEqual(expect.objectContaining({ context: expectedContext })));
+                await vi.waitFor(() => expect(screen.findByTestId('app-scope-right-sidebar-rail:plugin:acme.preview:detail-panel:badge')).toBeTruthy());
+                const readCount = () => screen.tree.findByType(RightSidebarActionRail).props.actions.find((action: RightSidebarRailAction) => action.pluginCount)?.pluginCount;
+                expect(readCount()).toMatchObject({ launchInput: { filter: 'open' } });
+                expect(readCount()?.mountInstanceKey).toBeUndefined();
+                expect(latestMountFor('detail-panel')).toBeNull();
+                await screen.update(content(true));
+                expect(latestMountFor('detail-panel')).toMatchObject({ launchInput: { filter: 'open' } });
+                expect(latestMountFor('detail-panel')?.mountInstanceKey).toBeUndefined();
+                expect(readCount()?.launchInput).toEqual(latestMountFor('detail-panel')?.launchInput);
+            } finally { await screen.unmount(); rpc.mockRestore(); }
+        });
 
         it('opens an app right-sidebar destination before that route has ever mounted, then stays idempotent', async () => {
             const { AppScopeRightSidebar } = await import('./AppScopeRightSidebar');

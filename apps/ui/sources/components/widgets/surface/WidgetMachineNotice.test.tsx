@@ -7,6 +7,8 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { Text } from '@/components/ui/text/Text';
 import { storage } from '@/sync/domains/state/storageStore';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { WidgetFrameBodyNoticeContext, type WidgetFrameBodyNoticeSource } from '@/components/widgets/frame/widgetFrameBodyCaption';
 
 import { useClaimedPluginUiSurfaceNotice } from '@happier-dev/plugin-ui/advanced';
@@ -60,19 +62,31 @@ describe('WidgetMachineNoticeBoundary', () => {
         expect(screen.findByTestId('widget-machine-notice')).toBeNull();
     });
 
-    it('leaves, and returns, with the Machine: the lent wording is read again as the stores change', async () => {
-        let sentence: string | undefined = 'This operation is unavailable on this machine.';
+    it('updates the lent notice on Machine changes and removes it when the Machine becomes available', async () => {
+        const previousMachines = storage.getState().machines;
+        const machine = createMachineFixture({ id: 'notice-machine', active: false });
+        storage.setState(state => ({ machines: { ...state.machines, [machine.id]: machine } }));
+        const notice: WidgetFrameBodyNoticeSource = () => {
+            const current = storage.getState().machines[machine.id];
+            return current?.active ? undefined : { sentence: current?.metadata?.displayName ?? 'machine-name-pending' };
+        };
         const screen = await renderScreen(
-            <WidgetMachineNoticeBoundary testID="widget"><Lending notice={() => (sentence === undefined ? undefined : { sentence })} /></WidgetMachineNoticeBoundary>,
+            <WidgetMachineNoticeBoundary testID="widget"><Lending notice={notice} /></WidgetMachineNoticeBoundary>,
         );
-        await flushHookEffects({ cycles: 2 });
-        expect(screen.getTextContent()).toContain('unavailable on this machine');
-        sentence = 'This operation is unavailable on Studio Mac.';
-        await act(async () => { storage.setState((state) => ({ ...state })); });
-        expect(screen.getTextContent()).toContain('unavailable on Studio Mac');
-        sentence = undefined;
-        await act(async () => { storage.setState((state) => ({ ...state })); });
-        expect(screen.findByTestId('widget-machine-notice')).toBeNull();
+        try {
+            await flushHookEffects({ cycles: 2 });
+            const noticeCard = () => screen.tree.root.findAllByType(SurfaceStateCard)
+                .find(node => node.props.testID === 'widget-machine-notice');
+            expect(noticeCard()?.props).toMatchObject({ kind: 'warning', title: notice()?.sentence });
+            const named = { ...machine, metadata: { ...machine.metadata!, displayName: 'resolved-machine-name' } };
+            await act(async () => { storage.setState(state => ({ machines: { ...state.machines, [machine.id]: named } })); });
+            expect(noticeCard()?.props).toMatchObject({ kind: 'warning', title: named.metadata.displayName });
+            await act(async () => { storage.setState(state => ({ machines: { ...state.machines, [machine.id]: { ...named, active: true } } })); });
+            expect(noticeCard()).toBeUndefined();
+        } finally {
+            await screen.unmount();
+            storage.setState({ machines: previousMachines });
+        }
     });
 
     it('keeps the body usable and says it once: in the failure state that claims it, or else as one line with one action', async () => {

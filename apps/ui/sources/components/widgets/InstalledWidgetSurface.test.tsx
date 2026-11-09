@@ -2,20 +2,21 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { normalizePluginUiInlineSurfaceBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { t } from '@/text';
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
-import { widgetInstalledPackage, widgetProjectionOf } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
+import { widgetExecutionOrigin, widgetInstalledPackage, widgetProjectionOf } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
+import { unionPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
 import { WIDGET_ROLE } from '@/sync/domains/plugins/ui/widgetContract';
-import { AccountProfileSchema } from '@happier-dev/protocol';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { resolveWidgetViewerPurposeValuesV1, type WidgetInstanceV1, type WidgetInputDescriptorV1 } from '@happier-dev/protocol/widgets';
 import { resolveConfiguredWidgetTarget, withWidgetInputRepairOutcome } from '@/sync/domains/widgets/widgetBinding';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { ConfiguredWidgetRefusal, InstalledWidgetSurface, UnavailableInstalledWidget } from './InstalledWidgetSurface';
+import { ConfiguredWidgetRefusal, InstalledWidgetSurface, UnavailableInstalledWidget, WidgetAboutContext } from './InstalledWidgetSurface';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 
 /**
@@ -39,6 +40,7 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { push: state.push } }).module);
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
 vi.mock('@/components/plugins/surfaces', () => ({
     PluginInlineSurfaceHost: (props: Record<string, unknown>) => {
@@ -125,6 +127,43 @@ const source = {
 };
 
 describe('InstalledWidgetSurface', () => {
+    it('applies the same disabled policy to an inert widget reference as to its executable body', async () => {
+        const pluginUiProjection = widgetProjectionOf([{ pluginId: 'acme.review', localId: source.surface.localId,
+            target: 'app', disabledWhen: { fact: 'project.exists', operator: 'equals', value: true } }],
+        { 'acme.review': widgetInstalledPackage('acme.review', 'Review Assistant') });
+        const screen = await renderScreen(<InstalledWidgetSurface target={{ kind: 'app' }} recordRevision="revision-a"
+            source={source} presentation="content" runtime={runtime({ pluginUiProjection })} testID="policy-widget"
+            reference={React.createElement('Reference', { testID: 'widget-reference' })} />);
+        expect(screen.findByTestId('widget-reference')).toBeNull();
+        expect(screen.tree.findByType(SurfaceStateCard).props.diagnosticCode).toBe('policy_disabled');
+        expect(state.mounts).toEqual([]);
+    });
+
+    it('keeps an inert widget reference loading while its execution origin resolves', async () => {
+        // Only the fleet union produces resolving; daemon wire availability cannot.
+        const pluginUiProjection = unionPluginUiProjections(['machine-a', 'machine-b'].map((machineId, index) => {
+            const executionOrigin = widgetExecutionOrigin('acme.review', machineId);
+            if (!('materializationRef' in executionOrigin)) throw new Error('Fixture must name an installation');
+            return { machineId, serverId: 'home-a', phase: 'current' as const, interactionEnabled: true,
+                selectableExecutionOrigins: [executionOrigin],
+                materializationsByPluginId: { 'acme.review': { ...executionOrigin.materializationRef,
+                    serverIdentityId: executionOrigin.serverIdentityId, version: '1.0.0', sourceClass: 'registryPackage' as const,
+                    portableRelease: true, archiveDigestSha256: `sha256:${String(index + 1).repeat(64)}` as const,
+                    uiArtifacts: [], enabled: true, trustState: 'trusted' as const, observedAt: 1 } },
+                projection: widgetProjectionOf([{ pluginId: 'acme.review', localId: source.surface.localId,
+                    target: 'app', executionOrigin }],
+                { 'acme.review': { ...widgetInstalledPackage('acme.review', 'Review Assistant'), version: '1.0.0' } }),
+            };
+        })).pluginUiProjection;
+        expect(pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.review:review-status-widget']?.availability.state).toBe('resolving');
+        const screen = await renderScreen(<InstalledWidgetSurface target={{ kind: 'app' }} recordRevision="revision-a"
+            source={source} presentation="content" runtime={runtime({ pluginUiProjection })} testID="resolving-widget"
+            reference={React.createElement('Reference', { testID: 'widget-reference' })} />);
+        expect(screen.findByTestId('widget-reference')).toBeNull();
+        expect(screen.findByTestId('resolving-widget-state-rows')).toBeTruthy();
+        expect(screen.tree.findAllByType(SurfaceStateCard)).toEqual([]);
+    });
+
     it('offers current-viewer Connect on a readable shared widget without an inputs writer', async () => {
         const consumer = { pluginId: 'acme.metrics', localId: 'metrics' };
         const instance: WidgetInstanceV1 = { v: 1, id: 'shared-copy', definition: { kind: 'installed', surface: source.surface },
@@ -147,11 +186,15 @@ describe('InstalledWidgetSurface', () => {
             repairContext: { instance, descriptor, connection: { scope, machineId: 'machine-a', resources } }, readSession: () => { throw new Error('missing connection must not execute'); } });
         if (resolution.status === 'ready') throw new Error('the viewer has no connection');
         const screen = await renderScreen(<ConfiguredWidgetRefusal resolution={resolution} testID="shared-widget" />);
-        await screen.pressByTestIdAsync('shared-widget-connect');
-        expect(state.push).toHaveBeenCalledWith({ pathname: '/(app)/settings/connected-services/connect', params: {
-            purposeConsumerPlugin: consumer.pluginId, purposeConsumerId: consumer.localId, purpose: 'read',
-            purposeServerId: scope.serverId, purposeAccountId: scope.accountId, purposeMachineId: 'machine-a',
-        } });
+        const trigger = { getBoundingClientRect: () => ({ left: 80, top: 40, width: 120, height: 32 }) };
+        await act(async () => screen.findHostByTestId('shared-widget-connect')!.props.onPress({ currentTarget: trigger }));
+        const { Modal } = await import('@/modal');
+        expect(vi.mocked(Modal.show).mock.calls.at(-1)?.[0].props?.request).toMatchObject({
+            purposeRequest: { scope: { serverId: scope.serverId, accountId: scope.accountId }, machineId: 'machine-a',
+                purpose: { consumer, purpose: 'read' } },
+            purposeSettlement: 'resourceDefault', anchor: { kind: 'view', ref: { current: trigger } },
+        });
+        expect(state.push).not.toHaveBeenCalled();
         expect(screen.findByTestId('shared-widget-inputs-repair')).toBeNull();
         expect(instance.bindings).toEqual({ connection: { kind: 'viewer', purpose: 'read' } });
         expect(state.mounts).toHaveLength(0);
@@ -192,14 +235,21 @@ describe('InstalledWidgetSurface', () => {
         }
         expect(state.mounts).toHaveLength(0);
     });
-    it('says once that a widget whose plugin is missing is kept, never naming a "type for Widgets"', async () => {
+    it('says once, neutrally, that a widget whose plugin is missing keeps its place, with Manage and the host\u2019s About', async () => {
         const manage = vi.fn();
-        const screen = await renderScreen(<ConfiguredWidgetRefusal resolution={{ status: 'unavailable', reasonCode: 'widget_type_unavailable',
-            repair: { kind: 'type_unavailable' } }} testID="gone" onManagePlugin={manage} />);
+        const about = vi.fn();
+        const screen = await renderScreen(<WidgetAboutContext.Provider value={about}><ConfiguredWidgetRefusal resolution={{ status: 'unavailable', reasonCode: 'widget_type_unavailable',
+            repair: { kind: 'type_unavailable' } }} testID="gone" onManagePlugin={manage} /></WidgetAboutContext.Provider>);
         const card = screen.tree.findByType(SurfaceStateCard);
-        expect(card.props.title).toBe(t('sessionBoard.item.pluginUnavailable.title'));
-        expect(card.props.reason).toBe(t('sessionBoard.item.pluginUnavailable.reason'));
+        // Nothing here needs the viewer: an unavailable fact, not an amber warning (lab p-overview TEAM).
+        // One quiet line under the card's own title: the fact and its next steps, once.
+        expect(card.props).toMatchObject({ kind: 'unavailable', size: 'line', title: t('projects.widgets.pluginUnavailable') });
+        expect(card.props.reason).toBeUndefined();
         expect(screen.getTextContent()).not.toContain('Widgets');
+        await screen.pressByTestIdAsync('gone-manage-plugin');
+        await screen.pressByTestIdAsync('gone-about');
+        expect(manage).toHaveBeenCalledTimes(1);
+        expect(about).toHaveBeenCalledTimes(1);
     });
     it('repairs a lost pinned reference without exposing its raw value, and offers that field’s own choice', async () => {
         const instance: WidgetInstanceV1 = { v: 1, id: 'copy', definition: { kind: 'installed', surface: source.surface },

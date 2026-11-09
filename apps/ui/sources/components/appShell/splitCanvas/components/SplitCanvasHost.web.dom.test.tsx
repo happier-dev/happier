@@ -4,7 +4,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { View } from 'react-native';
-import { isWorkspaceActionId } from '@happier-dev/protocol';
+import { isWorkspaceActionId } from '@happier-dev/protocol/actions/workspaceActionFamily';
 import type { EntityDragItemV1 } from '@happier-dev/protocol/plugins/ui';
 import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropRuntime';
 import { useEntityDragDomBinding } from '@/components/ui/treeDragDrop/useEntityDragDomBinding';

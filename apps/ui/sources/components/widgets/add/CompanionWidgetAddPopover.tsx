@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { View } from 'react-native';
 import type { WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
@@ -65,11 +66,12 @@ export function CompanionWidgetAddPopover(props: Readonly<{
 
 function OpenCompanionWidgetAddPopover(props: React.ComponentProps<typeof CompanionWidgetAddPopover>): React.ReactElement {
     const { refs, snapshot, pluginProjection, pluginRuntime, addItem, renderGlancePreview, context } = props.source;
+    const localize = usePluginLocalizedTextResolver({ projection: pluginRuntime?.pluginUiProjection });
     const glanceCandidates = React.useMemo(() => (
         pluginRuntime?.phase === 'current' && pluginRuntime.pluginUiProjection
-            ? selectWidgetCandidates(pluginRuntime.pluginUiProjection)
+            ? selectWidgetCandidates(pluginRuntime.pluginUiProjection, undefined, undefined, localize)
             : selectWidgetCandidates(null)
-    ), [pluginRuntime]);
+    ), [pluginRuntime, localize]);
 
     const account = useActiveServerAccountScope();
     const session = context?.session;

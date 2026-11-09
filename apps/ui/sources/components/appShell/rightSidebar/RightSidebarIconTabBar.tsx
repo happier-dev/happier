@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { I18nManager, Platform, ScrollView, View } from 'react-native';
+import { I18nManager, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { resolveHappierTabKeySelection } from '@happier-dev/plugin-ui/presentation';
 
@@ -7,7 +7,6 @@ import { getRightSidebarTabLabel } from './rightSidebarTabRegistry';
 import type { RightSidebarTabDefinition } from './rightSidebarTabRegistry';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
 /** The drawn tab square; the platform touch floor grows only its press frame. */
 const RIGHT_SIDEBAR_TAB_SIZE_PX = 32;
@@ -61,7 +60,6 @@ export function RightSidebarIconTabBar<TTabId extends string>(props: Readonly<{
                         }}
                         variant="plain"
                         size={RIGHT_SIDEBAR_TAB_SIZE_PX}
-                        minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
                         interactiveTargetGapPx={theme.space.s6}
                         selected={active}
                         selectedBackground={false}

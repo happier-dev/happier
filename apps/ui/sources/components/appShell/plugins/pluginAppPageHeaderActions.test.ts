@@ -6,7 +6,7 @@ import { flattenTestStyle } from '@/dev/testkit';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import type {
     PluginProjectedActionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import {
     createPluginUiProjectedActionResolver,

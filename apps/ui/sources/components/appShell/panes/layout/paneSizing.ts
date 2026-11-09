@@ -55,6 +55,8 @@ export function resolveDetailsDockPreferredPx(input: Readonly<{
     budgetMaxPx: number;
 }>): number {
     if (input.destinationPreferredPx === undefined || input.storedPx !== input.storedDefaultPx) return input.storedPx;
+    // A destination that reads narrower than the default starts there and leaves the rest to the page.
+    if (input.destinationPreferredPx < input.storedPx) return input.destinationPreferredPx;
     return Math.max(input.storedPx, Math.min(input.destinationPreferredPx, input.budgetMaxPx));
 }
 

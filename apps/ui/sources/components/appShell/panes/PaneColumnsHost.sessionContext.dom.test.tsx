@@ -23,7 +23,7 @@ await import('@/sync/syncEngine');
 const { PaneColumnsHost } = await import('./PaneColumnsHost');
 const { resolveRightSidebarTabs, resolveRightSidebarTabPlacement } = await import('../rightSidebar/rightSidebarTabRegistry');
 const { SessionViewLayout } = await import('@/components/sessions/shell/view/SessionViewLayout');
-const { ChatHeaderView } = await import('@/components/sessions/transcript/ChatHeaderView');
+const { SessionPaneHeader } = await import('@/components/sessions/shell/view/SessionPaneHeader');
 const { PaneMainComposerAnchor } = await import('@/components/ui/panels/paneMainComposerAnchor');
 const { useLayoutPresentationActive, usePluginSurfaceFocusEligibility } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
 
@@ -44,7 +44,7 @@ it('withdraws the covered session body while retaining its composer and the cata
         return <input data-testid={name} defaultValue={name} />;
     }
     const main = <>
-        <ChatHeaderView title="Session" showBackButton={false} rightElement={<Control name="header" />} />
+        <SessionPaneHeader title="Session" showBackButton={false} rightElement={<Control name="header" />} />
         <SessionViewLayout content={<Control name="transcript" />} placeholder={null}
             input={<PaneMainComposerAnchor><Control name="composer" /></PaneMainComposerAnchor>}
             shouldShowCliWarning onDismissCliWarning={() => {}} isLandscape deviceType="tablet" onBackPress={() => {}} />

@@ -1,5 +1,6 @@
 import { SelectionListSectionFailure } from '@/components/ui/selectionList/selectionListSectionFailure';
 import type { WorkspaceFileContentSearchPage } from '@/sync/domains/workspaces/files/workspaceFileContentSearch';
+import { WorkspaceFileSearchUnavailableError } from '@/sync/domains/workspaces/files/workspaceFileSearch';
 import type { WorkspaceCommitSearchOutcome } from '@/scm/search/searchWorkspaceCommits';
 import { t } from '@/text';
 import type { PluginSearchResultV1 } from '@happier-dev/protocol/plugins/contributions/search-providers';
@@ -20,6 +21,21 @@ export function workspaceFolderMissingFailure(): SelectionListSectionFailure {
         causeKey: FOLDER_MISSING_CAUSE,
         retryable: false,
     });
+}
+
+/** The machine did not answer: one machine-level line, under the first group that asked, whose Retry re-runs them all. */
+const MACHINE_NOT_ANSWERING_CAUSE = 'machineNotAnswering';
+
+export function machineNotAnsweringFailure(machine: string): SelectionListSectionFailure {
+    return new SelectionListSectionFailure({ hint: t('universalSearch.machineNotAnswering', { machine }), causeKey: MACHINE_NOT_ANSWERING_CAUSE });
+}
+
+/** Files: the folder or machine causes it knows become their shared line; anything else stays the group's own failure. */
+export function presentFileSearchError(error: unknown, input: Readonly<{ machine: string }>): unknown {
+    if (!(error instanceof WorkspaceFileSearchUnavailableError)) return error;
+    if (error.errorCode === 'root_not_found') return workspaceFolderMissingFailure();
+    if (error.errorCode === 'transport_failed') return machineNotAnsweringFailure(input.machine);
+    return error;
 }
 
 /** Plugin acquisition facts use the same presentation owner as machine groups. */
@@ -52,7 +68,7 @@ export function presentContentSearchError(
         case 'ripgrep_unavailable':
             return { kind: 'failure', failure: new SelectionListSectionFailure({ hint: t('universalSearch.textUnavailableOnMachine', { machine: input.machine }) }) };
         case 'transport_failed':
-            return { kind: 'failure', failure: new SelectionListSectionFailure({ hint: t('universalSearch.content.unavailable') }) };
+            return { kind: 'failure', failure: machineNotAnsweringFailure(input.machine) };
         default:
             return { kind: 'failure', failure: new SelectionListSectionFailure({ hint: t('universalSearch.groupFailed', { group: input.group }) }) };
     }
@@ -67,6 +83,8 @@ export function presentCommitSearchFailure(
             return workspaceFolderMissingFailure();
         case 'backendUnavailable':
             return new SelectionListSectionFailure({ hint: t('universalSearch.commitsUnavailableOnMachine', { machine: input.machine }) });
+        case 'unreachable':
+            return machineNotAnsweringFailure(input.machine);
         case 'notRepository':
             return new SelectionListSectionFailure({ hint: `${input.folder} · ${t('files.notRepo')}`, retryable: false });
         case 'unsupported':
