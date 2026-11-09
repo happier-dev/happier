@@ -169,13 +169,14 @@ export function createCliWorkspaceSyncActionDeps(
       return { v: 1 as const, relationshipId: input.relationshipId,
         status: WorkspaceSyncStatusV1Schema.parse(readRecord(response).status) };
     },
-    workspaceSyncConflictResolve: async ({ actionReceiptId, input, signal }) => {
+    workspaceSyncConflictResolve: async ({ actionReceiptId, input, context, signal }) => {
       if (!params.credentials) {
         throw Object.assign(new Error('Workspace sync resolution requires an authenticated Account'), { code: 'not_authenticated' });
       }
       try {
         return WorkspaceSyncConflictResolutionResultV1Schema.parse(await callMachineAction({
           machineId: input.controllerMachineId,
+          context, effectActionId: 'workspace.sync.conflict.resolve',
           method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_RESOLVE,
           request: { actionReceiptId, actionInput: input },
           ...(signal ? { signal } : {}),
@@ -189,29 +190,32 @@ export function createCliWorkspaceSyncActionDeps(
         throw error;
       }
     },
-    workspaceSyncRelationshipsList: async ({ input, signal }) => {
+    workspaceSyncRelationshipsList: async ({ input, context, signal }) => {
       const machineId = await resolveWorkspaceSyncReadController(input, signal);
       return WorkspaceSyncRelationshipsListRpcResultV1Schema.parse(await callMachineAction({
         machineId,
         method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST,
+        context, effectActionId: 'workspace.sync.relationships.list',
         request: input.workspaceRefId ? { workspaceRefId: input.workspaceRefId } : {},
         ...(signal ? { signal } : {}),
       }));
     },
-    workspaceSyncConflictsList: async ({ input, signal }) => {
+    workspaceSyncConflictsList: async ({ input, context, signal }) => {
       const machineId = await resolveWorkspaceSyncReadController(input, signal);
       return WorkspaceSyncConflictPageV1Schema.parse(await callMachineAction({
         machineId,
         method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST,
+        context, effectActionId: 'workspace.sync.conflicts.list',
         request: { relationshipId: input.relationshipId, limit: input.limit, ...(input.cursor ? { cursor: input.cursor } : {}) },
         ...(signal ? { signal } : {}),
       }));
     },
-    workspaceSyncConflictInspect: async ({ input, signal }) => {
+    workspaceSyncConflictInspect: async ({ input, context, signal }) => {
       const machineId = await resolveWorkspaceSyncReadController(input, signal);
       return WorkspaceSyncConflictInspectRpcResultV1Schema.parse(await callMachineAction({
         machineId,
         method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_INSPECT,
+        context, effectActionId: 'workspace.sync.conflict.inspect',
         request: {
           workspaceRefId: input.workspaceRefId,
           path: input.path,

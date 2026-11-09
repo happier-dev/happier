@@ -123,7 +123,7 @@ import { SESSION_MESSAGE_REPLY_MUTATE_EVENT_V1, SessionMessageReplyMachineMutati
 import { recoverSessionMessageRepliesForMachine } from '@/session/services/sessionMessageReply';
 
 import { MachineMetadata, DaemonState, Machine, Update, UpdateMachineBody } from './types';
-import { callSocketRpc, isSocketIoAckTimeoutError, type SocketRpcContent } from '@happier-dev/sync-client';
+import { callSocketRpc, isSocketIoAckTimeoutError, markRpcRequestDisposition, type RpcRequestDisposition, type SocketRpcContent } from '@happier-dev/sync-client';
 import type { SessionActionRpcTransport } from '@/session/actions/createCliActionDeps';
 import { readRpcErrorCode, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
@@ -333,7 +333,7 @@ import {
     registerMachineConnectedAccountRpcHandlers,
     type ConnectedServicePoolSelectionRead,
 } from './machine/rpcHandlers.connectedAccounts';
-import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent, verifyManagedActivityTargetCurrent,
+import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent,
     readMachineRpcAdmissionCurrent, doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterTargetRootMatchRouting, doesWorkspaceSyncSeedRootMatchRouting,
     doesWorkspaceSyncTargetRequestMatchRouting, doesWorkspaceSyncTargetRoutingMatchWriterTarget,
     readWorkspaceSyncTargetMethod, type MachineRpcAdmissionBoundary } from './machine/machineRpcAuthorization';
@@ -1524,13 +1524,10 @@ export class ApiMachineClient {
             resolveHomeServerIdentityId: async signal => (await resolveCurrentMachineExecutionOriginContext(signal))?.serverIdentityId ?? null,
             resolveCustodianAccountId: (signal) => runWithServerHttpBaseUrl(readMachineRuntimeServerHttpBaseUrl(), () => this.getAccountId(signal)),
             resolveInstallationId: () => readInstallationIdentityIfExistsSync()?.installationId ?? null,
-            verifyMachineAdmission: async ({ context, method, managedTarget, signal, custodySubjectAccountId, workspaceSyncSourceRouting, workspaceSyncSourceExecution, workspaceSyncTargetRouting, workspaceSyncSourceWriterTargetRouting, workspaceSyncSeedRouting, callerInputAuthorization }) => {
+            verifyMachineAdmission: async ({ context, method, signal, custodySubjectAccountId, workspaceSyncSourceRouting, workspaceSyncSourceExecution, workspaceSyncTargetRouting, workspaceSyncSourceWriterTargetRouting, workspaceSyncSeedRouting, callerInputAuthorization }) => {
                 const installation = readInstallationIdentityIfExistsSync();
                 if (!installation || !workspaceSyncSourceRouting && !workspaceSyncTargetRouting && !workspaceSyncSourceWriterTargetRouting && !workspaceSyncSeedRouting
                     && installation.installationId !== context.installationId) return false;
-                if (managedTarget) return verifyManagedActivityTargetCurrent({ context, managedTarget,
-                    method: method.slice(`${context.machineId}:`.length), privateKey: installation.privateKey,
-                    daemonToken: this.token, serverHttpBaseUrl: readMachineRuntimeServerHttpBaseUrl(), ...(signal ? { signal } : {}) });
                 return readMachineRpcAdmissionCurrent({ context, method,
                     ...(workspaceSyncSeedRouting ? { workspaceSyncSeedRouting,
                         workspaceSyncSeedReceiver: { machineId: this.machine.id, installationId: installation.installationId,
@@ -4042,7 +4039,8 @@ export class ApiMachineClient {
             || input.context.machineAdmission.machineId !== this.machine.id
             || !isExternalActionAuthorizationBoundToEnvelope(authorization.binding,
                 { actionId: authorization.binding.actionId, machineId: this.machine.id, envelope: envelope.data })) {
-            throw Object.assign(new Error('Original Project SOURCE envelope is unavailable'), { code: 'peer_unavailable' });
+            throw markRpcRequestDisposition(Object.assign(new Error('Original Project SOURCE envelope is unavailable'),
+                { code: 'peer_unavailable' }), 'notSent');
         }
         const syncAction = 'materialization' in input.request && input.request.materialization.kind === 'sync'
             ? input.request.materialization.workspaceAction : undefined;
@@ -4052,16 +4050,19 @@ export class ApiMachineClient {
                 : deriveWorkspaceSyncRelationshipId(input.operationId),
             machineId: input.sourceWorkspace.machineId, workspaceRefId: input.sourceWorkspace.id });
         if (!admitted) {
-            throw Object.assign(new Error('Original Project SOURCE admission is unavailable'), { code: 'workspace_sync_source_admission_unavailable' });
+            throw markRpcRequestDisposition(Object.assign(new Error('Original Project SOURCE admission is unavailable'),
+                { code: 'workspace_sync_source_admission_unavailable' }), 'notSent');
         }
         const source = admitted.source;
         const facts = await readWorkspaceSyncChildMachineFacts({ serverId,
             serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl, machineIds: [source.machineId], purpose: 'admitted_mapping',
             relationshipId: admitted.relationshipId,
-            authorization, effectActionId: authorization.binding.actionId, signal: input.context.signal });
+            authorization, effectActionId: authorization.binding.actionId, signal: input.context.signal })
+            .catch(error => { throw markRpcRequestDisposition(error, 'notSent'); });
         const address = resolveWorkspaceSyncTransportAddress({ namespace: input.sourceWorkspace, childMachines: facts });
         if (!preparation && (!address.ok || address.address.machineId !== input.machineId)) {
-            throw Object.assign(new Error('Original Project SOURCE controller is unavailable'), { code: 'peer_unavailable' });
+            throw markRpcRequestDisposition(Object.assign(new Error('Original Project SOURCE controller is unavailable'),
+                { code: 'peer_unavailable' }), 'notSent');
         }
         const context = buildActionExecutorContextForRpc({ ...input.context, serverId,
             externalActionExecutionAuthorization: authorization, externalActionTarget: authorization.binding.target });
@@ -4358,7 +4359,10 @@ export class ApiMachineClient {
                 machineId: writerTarget.source.sourceMachineId }) : null;
         const sourceAlreadyAdmitted = admittedWriterSource !== null
             && isDeepStrictEqual(admittedWriterSource.source, admission);
-        const unavailable = () => Object.assign(new Error('Workspace source authority is unavailable'), { code: 'peer_unavailable' });
+        // Admission/signing refusals precede dispatch. A failed response binding
+        // below explicitly retains uncertainty about effects on the receiver.
+        const unavailable = (disposition: RpcRequestDisposition = 'notSent') => markRpcRequestDisposition(Object.assign(
+            new Error('Workspace source authority is unavailable'), { code: 'peer_unavailable' }), disposition);
         if (!socket?.connected || !admission || !installation || !custodianAccountId
             || forwardWork && input.context.callerInputAuthorization && !writerTarget && !seedRouting && !admittedSourceRoot
             || forwardWork && writerTarget && !jointTarget && signedBinding
@@ -4522,7 +4526,7 @@ export class ApiMachineClient {
             // only when D owns the admitted workspace; a bound D must retain
             // its independently verified P2 result instead.
             if (!jointTarget && parsed.targetWorkspace?.machineId !== destination.machineId) return parsed;
-            if (parsed.physicalEndpoint && !isDeepStrictEqual(parsed.physicalEndpoint, destination)) throw unavailable();
+            if (parsed.physicalEndpoint && !isDeepStrictEqual(parsed.physicalEndpoint, destination)) throw unavailable('outcomeUnknown');
             return { ...parsed, physicalEndpoint: destination };
         }
         let content: SocketRpcContent;

@@ -62,6 +62,7 @@ import { createWorkspaceSyncRelationshipCredentialCustody, createWorkspaceSyncSo
   type RequesterSessionMachineAdmissionBoundary } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { recoverPrivateWorkspaceSyncExecutions } from './recoverPrivateWorkspaceSyncExecutions';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { resolveWorkspaceSyncRootOwnershipDirectory } from '@/configuration/resolveWorkspaceSyncRootOwnershipDirectory';
 import { configuration } from '@/configuration';
 import {
@@ -580,15 +581,23 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   };
   input.onReadinessPublished?.({ engine: engineReadiness, carrier: carrierReadiness });
   let relationshipOwner: WorkspaceSyncRelationshipOwner | null = null;
-  const canUseInstalledRelationshipOwner = (context?: RpcHandlerContext) => !context
-    || context.machineAdmission?.actorAccountId === readAccountIdFromToken(input.credentials.token)
-      && isHostRequesterUnrestrictedOwner(selectHostRequesterExecutionIdentity({
-      rpcContext: context, hostHomeServerIdentityId: semanticServerId,
-      hostCustodianAccountId: readAccountIdFromToken(input.credentials.token),
+  const installation = readInstallationIdentityIfExistsSync();
+  const installedAccountId = readAccountIdFromToken(input.credentials.token);
+  const selectRequesterIdentity = (context: RpcHandlerContext) => selectHostRequesterExecutionIdentity({
+      actionContext: buildActionExecutorContextForRpc(context), hostHomeServerIdentityId: semanticServerId,
+      hostCustodianAccountId: installedAccountId,
+      ...(installation ? { hostExecutionTarget: { machineId: input.localMachineId,
+        installationId: installation.installationId } } : {}),
       ...(context.workspaceSyncSourceRouting?.sourceContext ? {
         verifiedReceivingChild: context.workspaceSyncSourceRouting.sourceContext.machineAdmission,
       } : {}),
-    }));
+    });
+  const canUseInstalledRelationshipOwner = (context?: RpcHandlerContext) => {
+    if (!context) return true;
+    const identity = selectRequesterIdentity(context);
+    return identity.kind !== 'unknown' && identity.requester.accountId === installedAccountId
+      && isHostRequesterUnrestrictedOwner(identity);
+  };
   const assertInstalledRelationshipOwner = (context?: RpcHandlerContext) => {
     if (!canUseInstalledRelationshipOwner(context)) {
       throw compositionError('agent_isolation_unavailable', 'Workspace Sync requires requester-private execution');
@@ -1304,16 +1313,23 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
             return input.readProjectWorkerDependencies(workspaceRefId, relationship.relationshipId);
           }
           try {
-            return z.array(ProjectWorkerDependencyV1Schema).parse(await factories.callMachineRpc({ credentials, machineId,
-              method: RPC_METHODS.DAEMON_PROJECT_WORKER_DEPENDENCIES,
-              request: { serverId, machineId, workspaceRefId, relationshipId: relationship.relationshipId } }));
+            const request = { serverId, machineId, workspaceRefId, relationshipId: relationship.relationshipId };
+            const capture = runtime?.handoffAdapter.resolvePrivateExecution?.({ relationshipId: relationship.relationshipId });
+            const target = capture ? resolveRelationshipBootstrapTarget(capture.execution.getSnapshot?.() ?? null, relationship, serverId) : null;
+            // A retained target loan admits only that physical target, never other Machines in the component.
+            const retained = target?.machineId === machineId ? await callRetainedCopyPhase(relationship, 'dependencies', request) : null;
+            const result = retained ? retained.result : await factories.callMachineRpc({ credentials, machineId,
+              method: RPC_METHODS.DAEMON_PROJECT_WORKER_DEPENDENCIES, request });
+            readMachineActionRpcResult(result);
+            return z.array(ProjectWorkerDependencyV1Schema).parse(result);
           } catch {
             throw compositionError('workspace_sync_dependencies_unavailable', 'Worker dependency observation is unavailable');
           }
         })));
       return [...new Map(dependencies.flat().map(dependency => [dependency.operationId, dependency])).values()];
     };
-  const requesterRelationshipOwner = (retained: NonNullable<ReturnType<NonNullable<WorkspaceSyncHandoffAdapter['resolvePrivateExecution']>>>): WorkspaceSyncRelationshipOwner => {
+  const requesterRelationshipOwner = (retained: NonNullable<ReturnType<NonNullable<WorkspaceSyncHandoffAdapter['resolvePrivateExecution']>>>,
+    retirementContext?: RpcHandlerContext): WorkspaceSyncRelationshipOwner => {
       const capture = retained.execution;
       const readSnapshot = async (signal?: AbortSignal) => {
         signal?.throwIfAborted();
@@ -1960,8 +1976,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   };
 
   const requesterAvailability = async (context?: RpcHandlerContext): Promise<WorkspaceSyncRequesterAvailabilityV1> => {
-    if (!context?.machineAdmission || context.signal.aborted) return { kind: 'unavailable', reason: 'requester_authority_unavailable' };
-    const identity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: semanticServerId });
+    if (!context || context.signal.aborted) return { kind: 'unavailable', reason: 'requester_authority_unavailable' };
+    const identity = selectRequesterIdentity(context);
     if (identity.kind === 'unknown') return { kind: 'unavailable', reason: 'requester_authority_unavailable' };
     const memberRequester = resolveHostRequesterAgentExecutionIdentity(identity);
     const placement = memberRequester.kind === 'isolated'
@@ -1974,7 +1990,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         return { kind: 'available', homeDir: member.identity.home, workspaceRoot: member.identity.workspaceRoot };
       } catch { return { kind: 'unavailable', reason: 'agent_isolation_unavailable' }; }
     }
-    if (context.machineAdmission.role !== 'manage') return { kind: 'unavailable', reason: 'agent_isolation_unavailable' };
+    if (!isHostRequesterUnrestrictedOwner(identity)) return { kind: 'unavailable', reason: 'agent_isolation_unavailable' };
     return { kind: 'available', homeDir: resolveMachineRpcWorkingDirectory(), workspaceRoot: null };
   };
   const createRequesterRelationship = async (request: WorkspaceSyncRelationshipCreateRpcRequestV1,
@@ -1995,7 +2011,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         relationshipOwner: requesterRelationshipOwner(existingCapture),
         ...(existingCapture.input.targetWorkspaceRefId ? { targetWorkspaceRefId: existingCapture.input.targetWorkspaceRefId } : {}) }, request, signal);
     }
-    const selected = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: semanticServerId });
+    const selected = selectRequesterIdentity(context);
     const executionIdentity = resolveHostRequesterAgentExecutionIdentity(selected);
     if (executionIdentity.kind !== 'isolated') {
       throw compositionError('agent_isolation_unavailable', 'Requester native Sync execution is unavailable');
@@ -2018,7 +2034,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         throw compositionError('workspace_ref_not_ready', 'The requester source Workspace is unavailable');
       }
       const action = { kind: 'create_relationship' as const, mode: request.actionInput.mode,
-        contentPolicy: request.actionInput.contentPolicy };
+        contentPolicy: request.actionInput.contentPolicy, flushBeforeCommit: true as const };
       const localTarget = request.actionInput.targetMachineId === input.localMachineId;
       let targetPhaseContext = context;
       {

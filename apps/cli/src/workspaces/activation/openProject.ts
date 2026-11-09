@@ -24,6 +24,7 @@ import type { WorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyn
 import { materializeWorkspaceSyncForOpen } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import { WorkspaceSyncPreparationRefusal } from '@/workspaces/sync/workspaceSyncRelationshipOwner';
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { materializeProjectCheckout } from './materializeProjectCheckout';
 import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
 import { prepareProjectSetup, type ProjectSetupPreparationInput } from '@/workspaces/projectSetup/projectSetupPreparation';
@@ -401,17 +402,22 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
           return refused('workspace_sync_update_required');
         }
         if (!requester.rows.authorization && !credentials) return refused('requester_account_unavailable');
+        const effectsBeforeSource = effectsIssued;
         effectsIssued = true;
-        const materialized = ProjectOpenSyncMaterializationResultV1Schema.safeParse(requester.rows.authorization
-          ? await runtime.callWorkspaceSource!({ machineId: remoteSyncSource, operationId: sync!.request.operationId,
+        const sourceMaterialization = await (requester.rows.authorization
+          ? runtime.callWorkspaceSource!({ machineId: remoteSyncSource, operationId: sync!.request.operationId,
             sourceWorkspace: admittedSyncSource!, request: input, context })
-          : await callExactMachineRpc({
+          : callExactMachineRpc({
           credentials: credentials!, serverUrl: runtime.serverHttpBaseUrl, machineId: remoteSyncSource,
           ...(requester.externalAction ? { externalAction: requester.externalAction } : {}),
           // Physical custody routing never erases the reviewed Source or actual child namespace.
           method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN, request: input,
           requireCurrentMachine: true, timeoutMs: null, signal: context.signal,
-        }));
+        })).catch(error => {
+          if (readRpcRequestDisposition(error) === 'notSent') effectsIssued = effectsBeforeSource;
+          throw error;
+        });
+        const materialized = ProjectOpenSyncMaterializationResultV1Schema.safeParse(sourceMaterialization);
         if (!materialized.success || materialized.data.kind === 'outcomeUnknown') return outcomeUnknown('Source Sync did not confirm materialization');
         if (materialized.data.kind === 'refused') return refused(materialized.data.code);
       }

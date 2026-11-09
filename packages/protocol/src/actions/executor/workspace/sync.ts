@@ -1,8 +1,10 @@
-import { WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncConflictsListActionInputV1Schema, WorkspaceSyncConflictInspectActionInputV1Schema, WorkspaceSyncRelationshipsListActionInputV1Schema, WorkspaceSyncRelationshipCreateActionInputV1Schema, WorkspaceSyncRelationshipDisableActionInputV1Schema, WorkspaceSyncRelationshipEnableActionInputV1Schema, WorkspaceSyncRelationshipFlushActionInputV1Schema, WorkspaceSyncRelationshipTerminateActionInputV1Schema } from '../../../sessions/control/handoff/workspaceSyncSchemas.js';
+import { isWorkspaceSyncRelationshipWriteActionId } from '../../actionIds.js';
+import type { WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncConflictsListActionInputV1Schema, WorkspaceSyncConflictInspectActionInputV1Schema, WorkspaceSyncRelationshipsListActionInputV1Schema, WorkspaceSyncRelationshipWriteActionInputV1Schema, WorkspaceSyncRelationshipDisableActionInputV1Schema, WorkspaceSyncRelationshipEnableActionInputV1Schema, WorkspaceSyncRelationshipFlushActionInputV1Schema, WorkspaceSyncRelationshipTerminateActionInputV1Schema } from '../../../sessions/control/handoff/workspaceSyncSchemas.js';
 import { completeActionResult } from '../resultProjection.js';
 import { normalizeId } from '../inputReading.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
+import type { z } from 'zod/mini';
 
 
 
@@ -18,13 +20,14 @@ export async function dispatchWorkspaceSync(inv: Pick<CoreInvocation, 'actionId'
           }
           const res = await deps.workspaceSyncConflictResolve({
             actionReceiptId: ctx.actionRequestId,
-            input: WorkspaceSyncConflictResolveActionInputV1Schema.parse(parsed.data),
+            context: ctx,
+            input: parsed.data as z.infer<typeof WorkspaceSyncConflictResolveActionInputV1Schema>,
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
           return completeActionResult(res);
         }
 
-        if (actionId === 'workspace.sync.relationship.create') {
+        if (isWorkspaceSyncRelationshipWriteActionId(actionId)) {
           if (!deps.workspaceSyncRelationshipCreate) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:workspace.sync.relationship.create' };
           }
@@ -37,7 +40,7 @@ export async function dispatchWorkspaceSync(inv: Pick<CoreInvocation, 'actionId'
             return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           }
           const res = await deps.workspaceSyncRelationshipCreate({
-            input: WorkspaceSyncRelationshipCreateActionInputV1Schema.parse(parsed.data),
+            input: parsed.data as z.infer<typeof WorkspaceSyncRelationshipWriteActionInputV1Schema>,
             operationId,
             ...(normalizeId(ctx.serverIdentityId) ? { serverIdentityId: normalizeId(ctx.serverIdentityId) } : {}),
             ...(normalizeId(ctx.serverId) ? { serverId: normalizeId(ctx.serverId) } : {}),
@@ -58,7 +61,8 @@ export async function dispatchWorkspaceSync(inv: Pick<CoreInvocation, 'actionId'
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:workspace.sync.relationship.terminate' };
           }
           const res = await deps.workspaceSyncRelationshipTerminate({
-            input: WorkspaceSyncRelationshipTerminateActionInputV1Schema.parse(parsed.data),
+            input: parsed.data as z.infer<typeof WorkspaceSyncRelationshipTerminateActionInputV1Schema>,
+            context: ctx,
             ...(normalizeId(ctx.serverId) ? { serverId: normalizeId(ctx.serverId) } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
@@ -67,21 +71,24 @@ export async function dispatchWorkspaceSync(inv: Pick<CoreInvocation, 'actionId'
 
         if (actionId === 'workspace.sync.relationship.disable') {
           if (!deps.workspaceSyncRelationshipDisable) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:workspace.sync.relationship.disable' };
-          const res = await deps.workspaceSyncRelationshipDisable({ input: WorkspaceSyncRelationshipDisableActionInputV1Schema.parse(parsed.data),
+          const res = await deps.workspaceSyncRelationshipDisable({ input: parsed.data as z.infer<typeof WorkspaceSyncRelationshipDisableActionInputV1Schema>,
+            context: ctx,
             ...(normalizeId(ctx.serverId) ? { serverId: normalizeId(ctx.serverId) } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) });
           return completeActionResult(res, { treatReturnedErrorEnvelopeAsFailure: true });
         }
 
         if (actionId === 'workspace.sync.relationship.enable') {
           if (!deps.workspaceSyncRelationshipEnable) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:workspace.sync.relationship.enable' };
-          const res = await deps.workspaceSyncRelationshipEnable({ input: WorkspaceSyncRelationshipEnableActionInputV1Schema.parse(parsed.data),
+          const res = await deps.workspaceSyncRelationshipEnable({ input: parsed.data as z.infer<typeof WorkspaceSyncRelationshipEnableActionInputV1Schema>,
+            context: ctx,
             ...(normalizeId(ctx.serverId) ? { serverId: normalizeId(ctx.serverId) } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) });
           return completeActionResult(res, { treatReturnedErrorEnvelopeAsFailure: true });
         }
 
         if (actionId === 'workspace.sync.relationship.flush') {
           if (!deps.workspaceSyncRelationshipFlush) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:workspace.sync.relationship.flush' };
-          const res = await deps.workspaceSyncRelationshipFlush({ input: WorkspaceSyncRelationshipFlushActionInputV1Schema.parse(parsed.data),
+          const res = await deps.workspaceSyncRelationshipFlush({ input: parsed.data as z.infer<typeof WorkspaceSyncRelationshipFlushActionInputV1Schema>,
+            context: ctx,
             ...(normalizeId(ctx.serverId) ? { serverId: normalizeId(ctx.serverId) } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) });
           return completeActionResult(res, { treatReturnedErrorEnvelopeAsFailure: true });
         }
@@ -91,7 +98,8 @@ export async function dispatchWorkspaceSync(inv: Pick<CoreInvocation, 'actionId'
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:workspace.sync.relationships.list' };
           }
           const res = await deps.workspaceSyncRelationshipsList({
-            input: WorkspaceSyncRelationshipsListActionInputV1Schema.parse(parsed.data),
+            context: ctx,
+            input: parsed.data as z.infer<typeof WorkspaceSyncRelationshipsListActionInputV1Schema>,
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
           return completeActionResult(res, { treatReturnedErrorEnvelopeAsFailure: true });
@@ -102,7 +110,8 @@ export async function dispatchWorkspaceSync(inv: Pick<CoreInvocation, 'actionId'
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:workspace.sync.conflicts.list' };
           }
           const res = await deps.workspaceSyncConflictsList({
-            input: WorkspaceSyncConflictsListActionInputV1Schema.parse(parsed.data),
+            context: ctx,
+            input: parsed.data as z.infer<typeof WorkspaceSyncConflictsListActionInputV1Schema>,
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
           return completeActionResult(res);
@@ -113,7 +122,8 @@ export async function dispatchWorkspaceSync(inv: Pick<CoreInvocation, 'actionId'
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:workspace.sync.conflict.inspect' };
           }
           const res = await deps.workspaceSyncConflictInspect({
-            input: WorkspaceSyncConflictInspectActionInputV1Schema.parse(parsed.data),
+            context: ctx,
+            input: parsed.data as z.infer<typeof WorkspaceSyncConflictInspectActionInputV1Schema>,
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
           return completeActionResult(res);
