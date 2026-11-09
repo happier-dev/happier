@@ -142,7 +142,7 @@ export function readTriageFilterDoneLabelV1(props: Readonly<{
     ? text('plugins.triage.surface.filters.showUnsynchronized', 'Show results · Not yet synchronized')
     : props.windowState.kind === 'unavailable' || props.windowState.kind === 'sourcesUnreachable' || props.windowState.kind === 'readFailed'
       ? text('plugins.triage.surface.filters.showUnavailable', 'Show results · Unavailable')
-      : props.windowState.kind === 'window' && props.windowState.window.coverage !== 'complete'
+      : props.windowState.kind === 'window' && props.windowState.body.coverage !== 'complete'
         ? props.resultCount === 1
           ? text('plugins.triage.surface.filters.showPartialResult', 'Show 1 result so far')
           : text('plugins.triage.surface.filters.showPartialResults', 'Show {count} results so far').replace('{count}', String(props.resultCount))

@@ -45,6 +45,9 @@ function windowState(input: Readonly<{
         refreshing: input.refreshing ?? false,
         stale: false,
         failure: input.failure ?? null,
+        body: { kind: input.failure ? 'selected-source-failure' : 'healthy-empty', coverage: input.coverage, loadMore: undefined },
+        wholeScanFailure: input.failure ?? null,
+        outsideSourcesAttention: null,
     };
 }
 

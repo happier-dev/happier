@@ -56,6 +56,13 @@ applies the active lens to appended rows. Clearing text restores retained rows.
 Universal Search's provider search uses the existing GitHub client's
 resource-specific quota parking and adds no polling or retry.
 
+Mounted list body health follows the current view's source inventory and its
+Source, Type and Scope selections. `projection/sourceHealth.ts` partitions the
+whole scan using the selection from `ui/filters/plan.ts`; selected failures and
+coverage drive the existing body states. Manage sources retains whole-scan
+health. The shell exposes `outsideSourcesAttention` as one count and the
+`manageSources` target for the status-line renderer, independently of body health.
+
 ## Attention arrivals (0.3 development source)
 
 The optional finite `readAttention` source role is a feed capability, not another

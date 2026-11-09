@@ -9,6 +9,23 @@ import { sameTriageFilterValueV1, type TriageFilterFacetValueV1 } from '../state
 import type { TriageTextResolverV1 } from '../shell/windowState.js';
 import { TRIAGE_PR_VIEW_INVENTORY_V1, type TriageListViewInventoryV1 } from '../list/viewInventory.js';
 import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
+import { sameTriageSourceIdentity as sameSource } from '../../corpus/identity/components.js';
+
+/** Source membership of the active view, before state, attention or text matches individual rows. */
+export function planTriageViewSourceSelectionV1(
+  filters: SurfaceFilterSelectionV1,
+  inventory: TriageListViewInventoryV1,
+): (instance: Readonly<{ source: PluginContributionIdentity; sourceInstanceId: string }>) => boolean {
+  const matchesConnection = (value: CorpusSourceFilterValueV1,
+    instance: Readonly<{ source: PluginContributionIdentity; sourceInstanceId: string }>) =>
+    sameSource(value.source, instance.source)
+      && (value.sourceInstanceId === undefined || value.sourceInstanceId === instance.sourceInstanceId);
+  return instance => inventory.includesSource(instance.source)
+    && (filters.sources.length === 0 || filters.sources.some(value => matchesConnection(value, instance)))
+    && (filters.types.length === 0 || filters.types.some(value => inventory.includesKind(value)
+      && sameSource(value.source, instance.source)))
+    && (filters.scopes.length === 0 || filters.scopes.some(value => matchesConnection(value, instance)));
+}
 
 /**
  * What the filter rail may offer, discovered from facts this mount already has.
@@ -69,10 +86,6 @@ const ATTENTION_LABELS = {
   none: ['plugins.triage.surface.filters.attention.none', 'Nothing for you'],
 } satisfies Record<SurfaceFilterSelectionV1['attention'][number], readonly [string, string]>;
 const ATTENTION_COPY = TRIAGE_ATTENTION_FILTER_VALUES_V1.map(value => [value, ...ATTENTION_LABELS[value]] as const);
-
-function sameSource(left: PluginContributionIdentity, right: PluginContributionIdentity): boolean {
-  return left.pluginId === right.pluginId && left.localId === right.localId;
-}
 
 /** Injective over the ordered components, like every other Triage identity key. */
 function sourceOptionKey(value: CorpusSourceFilterValueV1): string {

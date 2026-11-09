@@ -298,7 +298,7 @@ export function readTriageQuietGroupClaimV1(
 ): boolean {
     if (state.kind !== 'window') return false;
     return resolveTriageListEmptyState({
-        coverage: state.window.coverage,
+        coverage: state.body.coverage,
         failure: state.failure,
         refreshing: state.refreshing,
         narrowing,
@@ -313,7 +313,7 @@ export function readTriageListEmptyState(
 ): TriageListEmptyStateV1 | null {
     if (state.kind !== 'window' || rowCount > 0) return null;
     return resolveTriageListEmptyState({
-        coverage: state.window.coverage,
+        coverage: state.body.coverage,
         failure: state.failure,
         refreshing: state.refreshing,
         narrowing: options.narrowing,
@@ -337,7 +337,7 @@ export function readTriageListEmptyBelowPinsV1(
     if (state.kind !== 'window' || counts.pinned === 0 || counts.unpinned > 0) return null;
     if (!options.narrowing.facets && !options.narrowing.search) return null;
     return resolveTriageListEmptyState({
-        coverage: state.window.coverage,
+        coverage: state.body.coverage,
         failure: state.failure,
         refreshing: state.refreshing,
         narrowing: options.narrowing,

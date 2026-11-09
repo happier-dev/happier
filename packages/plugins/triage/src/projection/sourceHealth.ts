@@ -4,8 +4,52 @@ import type {
 } from '@happier-dev/triage-protocol/v1';
 
 import type { TriageListLaneV1 } from './listWindow.js';
-import type { TriageListWindowSnapshotV1 } from './listWindowStore.js';
+import type { TriageListLoadMoreV1, TriageListWindowSnapshotV1 } from './listWindowStore.js';
 import type { TriageListInvocationErrorV1 } from '../actions/listEntriesProtocol.js';
+
+export type TriageListBodyStateV1 = Readonly<{
+    kind: 'healthy-empty' | 'incomplete-empty' | 'rows' | 'selected-source-failure';
+    coverage: 'complete' | 'partial';
+    loadMore: TriageListLoadMoreV1 | undefined;
+}>;
+
+/** The existing Manage sources surface retains whole-scan health and per-connection recovery. */
+export type TriageOutsideSourcesAttentionV1 = Readonly<{ count: number; target: 'manageSources' }>;
+
+/** Partition already-projected health once; consumers never reinterpret lane health or view membership. */
+export function projectTriageViewSourceHealthV1<TFailure extends Readonly<{ sourceInstanceId: string }>>(
+    snapshot: TriageListWindowSnapshotV1,
+    includesSource: (instance: TriageSourceInstanceRefV1) => boolean,
+    failures: readonly TFailure[],
+): Readonly<{
+    body: TriageListBodyStateV1;
+    selectedFailures: readonly TFailure[];
+    outsideSourcesAttention: TriageOutsideSourcesAttentionV1 | null;
+    showReadWarning: boolean;
+}> {
+    const selectedIds = new Set(snapshot.configuredSources.filter(includesSource).map(source => source.sourceInstanceId));
+    const lanes = snapshot.window?.lanes ?? [];
+    // A retained lane can still name a selected source removed from configuration.
+    for (const lane of lanes) if (includesSource(lane)) selectedIds.add(lane.sourceInstanceId);
+    const selectedFailures = failures.filter(failure => selectedIds.has(failure.sourceInstanceId));
+    const outsideCount = new Set(failures.filter(failure => !selectedIds.has(failure.sourceInstanceId))
+        .map(failure => failure.sourceInstanceId)).size;
+    const selectedLanes = lanes.filter(lane => selectedIds.has(lane.sourceInstanceId));
+    const narrowed = selectedLanes.length !== lanes.length;
+    const coverage = narrowed
+        ? selectedLanes.length === selectedIds.size && selectedLanes.every(lane => lane.exhausted) ? 'complete' : 'partial'
+        : snapshot.window?.coverage ?? 'partial';
+    const rows = snapshot.window?.rows.some(row => row.observations.some(observation => selectedIds.has(observation.sourceInstanceId))) === true;
+    return Object.freeze({
+        body: Object.freeze({ kind: selectedFailures.length > 0 ? 'selected-source-failure'
+            : rows ? 'rows' : coverage === 'complete' ? 'healthy-empty' : 'incomplete-empty', coverage,
+            loadMore: coverage === 'complete' ? Object.freeze({ kind: 'exhausted' as const }) : snapshot.loadMore }),
+        selectedFailures: Object.freeze(selectedFailures),
+        outsideSourcesAttention: outsideCount === 0 ? null : Object.freeze({ count: outsideCount, target: 'manageSources' }),
+        showReadWarning: selectedFailures.length > 0 || (snapshot.freshness !== 'fresh'
+            && (snapshot.error !== undefined || selectedLanes.some(lane => lane.health.kind === 'unavailable'))),
+    });
+}
 
 /**
  * Which configured connections could not be read, named.

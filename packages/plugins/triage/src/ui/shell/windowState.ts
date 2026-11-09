@@ -3,13 +3,18 @@ import {
   type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import type { TriageListWindowV1 } from '../../projection/listWindow.js';
+import { TRIAGE_LIST_NO_FILTERS_V1, type SurfaceFilterSelectionV1, type TriageListWindowV1 } from '../../projection/listWindow.js';
 import { UNREADABLE_IN_THIS_PASS_V1, type TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
+import { TRIAGE_PR_VIEW_INVENTORY_V1, type TriageListViewInventoryV1 } from '../list/viewInventory.js';
+import { planTriageViewSourceSelectionV1 } from '../filters/plan.js';
 import { createTriageNameListFormatter } from './nameList.js';
 import {
   projectTriageFailedSourceHealth,
   projectTriageUnreadableSourceHealth,
   readTriageSourceDisplayName,
+  projectTriageViewSourceHealthV1,
+  type TriageListBodyStateV1,
+  type TriageOutsideSourcesAttentionV1,
 } from '../../projection/sourceHealth.js';
 import {
   isTriageRefreshPacingBlockActiveV1,
@@ -152,6 +157,11 @@ export type TriageListShellStateV1 =
       showReadWarning: boolean;
       /** Retained beside the rows, never instead of them. */
       failure: TriageListShellFailureV1 | null;
+      /** Selected-source body facts; the original window retains whole-scan data for detail and management. */
+      body: TriageListBodyStateV1;
+      wholeScanFailure: TriageListShellFailureV1 | null;
+      /** Typed handoff for the existing status-line owner; opens Manage sources. */
+      outsideSourcesAttention: TriageOutsideSourcesAttentionV1 | null;
     }>;
 
 /**
@@ -247,8 +257,21 @@ function readHostSentence(message: string): string | undefined {
  * was refused, because none was made. But it is still a NAMED connection the
  * reader can act on, which is what the other two arms exist to give them.
  */
-const SOURCE_UNAVAILABLE_COPY_V1 = 'This source is not installed or enabled on this machine.';
+const SOURCE_UNAVAILABLE_COPY_V1 = 'Not installed or enabled on this machine.';
 const SOURCE_UNAVAILABLE_TRANSLATION_KEY_V1 = 'plugins.triage.surface.sourceUnavailable';
+
+/** The one sentence for a source that is not installed or enabled, as its translation key and English fallback. */
+export const TRIAGE_SOURCE_UNAVAILABLE_COPY_V1: Readonly<{ key: string; fallback: string }> = Object.freeze({
+  key: SOURCE_UNAVAILABLE_TRANSLATION_KEY_V1,
+  fallback: SOURCE_UNAVAILABLE_COPY_V1,
+});
+
+/** The one sentence for a failure class, as its translation key and English fallback. */
+export function readTriageSourceFailureCopyV1(
+  failureClass: TriageSourceFailureV1['class'],
+): Readonly<{ key: string; fallback: string }> {
+  return { key: SOURCE_FAILURE_TRANSLATION_KEYS_V1[failureClass], fallback: SOURCE_FAILURE_COPY_V1[failureClass] };
+}
 
 function resolveSourceFailureReason(
   text: TriageTextResolverV1,
@@ -312,6 +335,31 @@ export function readTriageListFailureNotice(
   });
 }
 
+/** One connection's own health, for its row in Manage sources: its reason in the line's words, and what fixes it. */
+export type TriageSourceFailureRowV1 = Readonly<{
+  reason: string;
+  /** `retry` reads the sources again; `connection` opens the source's own repair; `null` when neither can help. */
+  fix: 'retry' | 'connection' | null;
+  /** The typed cause for support, shown on demand. */
+  details: string | null;
+}>;
+
+export function readTriageSourceFailureRowV1(
+  source: TriageListSourceFailureV1,
+  text: TriageTextResolverV1 = ENGLISH_TEXT,
+): TriageSourceFailureRowV1 {
+  const lineReason = source.lineReason ?? source.reason;
+  const permanent = source.retryable === false;
+  return Object.freeze({
+    reason: permanent && lineReason === SOURCE_FAILURE_COPY_V1.transient
+      ? text('plugins.triage.surface.listFailed.permanent', 'Trying again will not fix this. The details below can help support find out why.')
+      : resolveSourceFailureReason(text, lineReason),
+    fix: source.needsConnectionChange === true ? 'connection' : permanent ? null : 'retry',
+    details: source.code === undefined ? null
+      : `${source.displayName} — ${source.code}${source.retryable === undefined ? '' : ` · retryable=${source.retryable}`}`,
+  });
+}
+
 /**
  * The one line a failure takes beside listed rows: who could not be read, why when one reason covers them all, and
  * the one press that can help. Each connection's own reason and diagnostic wait in Manage sources, so the rows lead.
@@ -330,8 +378,8 @@ export function readTriageListFailureLine(
   const oneReason = first !== undefined && failure.sources.every((source) => lineReason(source) === lineReason(first))
     && !(first.retryable === false && lineReason(first) === SOURCE_FAILURE_COPY_V1.transient);
   return Object.freeze({
-    label: oneReason ? `${title}. ${resolveSourceFailureReason(text, lineReason(first))}` : `${title}.`,
-    recovery: failure.sources.some((source) => source.needsConnectionChange === true) ? 'manageSources' : 'retry',
+    label: `${title}. ${text('plugins.triage.surface.failure.retained', 'Their entries may be missing or out of date.')}${oneReason ? ` ${resolveSourceFailureReason(text, lineReason(first))}` : ''}`,
+    recovery: 'retry',
   });
 }
 
@@ -400,9 +448,7 @@ export function resolveTriageListRefreshV1(
 /**
  * Why the next read is waiting, in words.
  *
- * Three refusals, three sentences: "read a moment ago", "the source asked us to
- * wait" and "the last read failed" are different things to act on, and one
- * shared sentence would hide which is happening. The keys are the ones the
+ * The source states when it may be read again. The keys are the ones the
  * Composer picker already renders, so both surfaces say the same words about
  * the same coordinator decision.
  */
@@ -410,17 +456,9 @@ const PACING_REASON_COPY_V1: Readonly<Record<TriageRefreshPacingReasonV1, Readon
   key: string;
   fallback: string;
 }>>> = Object.freeze({
-  minimumInterval: Object.freeze({
-    key: 'plugins.triage.surface.waiting.recent',
-    fallback: 'These sources were read a moment ago.',
-  }),
   sourceRetryDeadline: Object.freeze({
     key: 'plugins.triage.surface.waiting.source',
     fallback: 'A source asked us to wait before reading it again.',
-  }),
-  failureBackoff: Object.freeze({
-    key: 'plugins.triage.surface.waiting.backoff',
-    fallback: 'A source could not be read, so the next attempt waits a moment.',
   }),
 });
 
@@ -452,23 +490,35 @@ export function resolveTriageListShellState(
      * promises that their pins still work.
      */
     durableStateReachable?: boolean;
+    /** The built-in Account task source serves Tasks, not PRs & Issues. */
+    tasks?: boolean;
+    filters?: SurfaceFilterSelectionV1;
+    inventory?: TriageListViewInventoryV1;
   }> = {},
 ): TriageListShellStateV1 {
   const window = snapshot.window;
   if (window !== undefined) {
-    if (snapshot.configuredSources.length === 0) return Object.freeze({ kind: 'configureSources' });
+    if (!snapshot.configuredSources.some(source => options.tasks === true
+      || TRIAGE_PR_VIEW_INVENTORY_V1.includesSource(source.source))) return Object.freeze({ kind: 'configureSources' });
     const stale = snapshot.freshness !== 'fresh';
-    const failure = readShellFailure(snapshot);
+    const wholeScanFailure = readShellFailure(snapshot);
+    const viewHealth = projectTriageViewSourceHealthV1(snapshot,
+      planTriageViewSourceSelectionV1(options.filters ?? TRIAGE_LIST_NO_FILTERS_V1,
+        options.inventory ?? (options.tasks === true
+          ? { includesSource: () => true, includesKind: () => true } : TRIAGE_PR_VIEW_INVENTORY_V1)),
+      wholeScanFailure?.sources ?? []);
+    const failure = viewHealth.selectedFailures.length === 0 ? null
+      : Object.freeze({ kind: 'sources' as const, sources: viewHealth.selectedFailures });
     return Object.freeze({
       kind: 'window',
       window,
       refreshing: snapshot.pending !== 'idle',
       stale,
-      showReadWarning: failure !== null || (stale && (
-        snapshot.error !== undefined
-        || window.lanes.some((lane) => lane.health.kind === 'unavailable')
-      )),
+      showReadWarning: viewHealth.showReadWarning,
       failure,
+      body: viewHealth.body,
+      wholeScanFailure,
+      outsideSourcesAttention: viewHealth.outsideSourcesAttention,
     });
   }
   // Before the first completed cycle there are no configured sources to report

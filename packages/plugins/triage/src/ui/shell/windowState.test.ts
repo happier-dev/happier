@@ -9,6 +9,11 @@ import { planTriageConfigureSourceOffersV1 } from './configureSources.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 } from '@happier-dev/triage-protocol/v1';
 import {
+  TRIAGE_LIST_NO_FILTERS_V1,
+} from '../../projection/listWindow.js';
+import { readTriageListEmptyState } from './emptyState.js';
+import { testkitEntryRef, testkitObservation } from '../../corpus/testkit/observations.test-support.js';
+import {
   readTriageListFailureLine,
   readTriageListFailureNotice,
   readTriageRefreshPacingNotice,
@@ -45,6 +50,74 @@ function snapshot(overrides: Partial<TriageListWindowSnapshotV1> = {}): TriageLi
 }
 
 describe('resolveTriageListShellState', () => {
+  // VIEW-HEALTH-1109: the selected view owns the body; the whole scan owns Manage sources.
+  it('keeps a healthy empty selected source quiet while six outside sources need attention', () => {
+    const lanes = Array.from({ length: 7 }, (_, index) => ({
+      source: SOURCE, sourceInstanceId: `connection-${index}`, exhausted: index === 0,
+      health: index === 0 ? { kind: 'walkFinished' as const }
+        : { kind: 'failed' as const, failure: { class: 'transient' as const, code: 'source_unreachable' } },
+    }));
+    const input = snapshot({ window: window({ lanes, coverage: 'partial' }), loadMore: { kind: 'available' },
+      configuredSources: lanes.map(lane => ({ ...lane, configurationRowId: lane.sourceInstanceId, available: true })) });
+    const filters = { ...TRIAGE_LIST_NO_FILTERS_V1, sources: [{ source: SOURCE, sourceInstanceId: 'connection-0' }] };
+    const state = resolveTriageListShellState(input, { filters });
+    expect(state).toMatchObject({ kind: 'window', failure: null,
+      body: { kind: 'healthy-empty', coverage: 'complete', loadMore: { kind: 'exhausted' } },
+      outsideSourcesAttention: { count: 6, target: 'manageSources' },
+      wholeScanFailure: { sources: expect.any(Array) } });
+    if (state.kind !== 'window') throw new Error('Expected a window');
+    expect(state.wholeScanFailure?.sources).toHaveLength(6);
+    expect(readTriageListEmptyState(state, 0, { narrowing: { facets: true, search: false, narrowed: true } }))
+      .toMatchObject({ kind: 'noMatch', next: ['clearFilters'] });
+    const failed = resolveTriageListShellState(input, { filters: { ...filters,
+      sources: [{ source: SOURCE, sourceInstanceId: 'connection-1' }] } });
+    expect(failed).toMatchObject({ kind: 'window', body: { kind: 'selected-source-failure' },
+      failure: { sources: [{ sourceInstanceId: 'connection-1' }] }, outsideSourcesAttention: { count: 5 } });
+    const all = resolveTriageListShellState(input);
+    expect(all).toMatchObject({ kind: 'window', body: { kind: 'selected-source-failure', coverage: 'partial' },
+      outsideSourcesAttention: null });
+    if (all.kind !== 'window') throw new Error('Expected a window');
+    expect(all.failure?.sources).toHaveLength(6);
+    const reading = resolveTriageListShellState({ ...input,
+      window: { ...input.window!, lanes: lanes.map(lane => lane.sourceInstanceId === 'connection-0'
+        ? { ...lane, exhausted: false } : lane) } }, { filters });
+    expect(reading).toMatchObject({ kind: 'window', failure: null,
+      body: { kind: 'incomplete-empty', coverage: 'partial' }, outsideSourcesAttention: { count: 6 } });
+    const recovered = resolveTriageListShellState({ ...input,
+      window: { ...input.window!, lanes: lanes.map(lane => ({ ...lane, exhausted: true, health: { kind: 'walkFinished' } })),
+        coverage: 'complete' } }, { filters });
+    expect(recovered).toMatchObject({ kind: 'window', body: { kind: 'healthy-empty' }, outsideSourcesAttention: null });
+    const observation = testkitObservation({ sourceInstanceId: 'connection-0' });
+    const row = { entryRef: testkitEntryRef({ source: SOURCE }), content: null,
+      lane: '1-open' as const, sortAtMs: 1, presence: { kind: 'present' as const, observedAtMs: 1 },
+      attention: null, selected: { kind: 'selected' as const, sourceInstanceId: 'connection-0', reason: 'onlyPresent' as const },
+      observations: [observation] };
+    const populated = resolveTriageListShellState({ ...input, window: { ...input.window!, rows: [row] } }, { filters });
+    expect(populated).toMatchObject({ kind: 'window', body: { kind: 'rows' }, failure: null,
+      outsideSourcesAttention: { count: 6 } });
+    if (populated.kind !== 'window') throw new Error('Expected a window');
+    expect(populated.window.rows[0]).toBe(row);
+  });
+
+  it('applies view membership, type and scope selection before assigning invocation and unavailable failures', () => {
+    const input = snapshot({ window: window({ coverage: 'partial', lanes: [
+      { source: SOURCE, sourceInstanceId: INSTANCE, exhausted: true, health: { kind: 'walkFinished' } },
+      { source: OTHER_SOURCE, sourceInstanceId: OTHER_INSTANCE, exhausted: false, health: { kind: 'unavailable' } },
+    ] }), configuredSources: [
+      { source: SOURCE, sourceInstanceId: INSTANCE, configurationRowId: INSTANCE, available: true },
+      { source: OTHER_SOURCE, sourceInstanceId: OTHER_INSTANCE, configurationRowId: OTHER_INSTANCE, available: false },
+    ], unreadableSources: [{ sourceInstanceId: OTHER_INSTANCE, message: 'Unavailable', code: 'source_unavailable' }] });
+    for (const options of [
+      { inventory: { includesSource: (source: Readonly<{ pluginId: string }>) => source.pluginId === SOURCE.pluginId,
+        includesKind: () => true } },
+      { filters: { ...TRIAGE_LIST_NO_FILTERS_V1, types: [{ source: SOURCE, kindId: 'issue' }] } },
+      { filters: { ...TRIAGE_LIST_NO_FILTERS_V1, scopes: [{ source: SOURCE, sourceInstanceId: INSTANCE }] } },
+    ]) {
+      expect(resolveTriageListShellState(input, options)).toMatchObject({ kind: 'window', failure: null,
+        body: { kind: 'healthy-empty', coverage: 'complete' }, outsideSourcesAttention: { count: 1 } });
+    }
+  });
+
   it('surfaces a partial-family denial in a retained window with its typed reason and remedy', () => {
     const failure = { class: 'permission' as const, code: 'insufficient_scope',
       detail: 'Dependabot alerts could not be read. Reconnect GitHub with security_events access.' };
@@ -298,7 +371,7 @@ describe('resolveTriageListShellState', () => {
     // store-wide error beside a retained window, and there is no longer a
     // reader arm that could render one: an aggregate read that fails over rows
     // names its connections, and this resolver reports only named connections.
-    expect(state).toEqual({
+    expect(state).toMatchObject({
       kind: 'window',
       window: rows,
       refreshing: false,
@@ -342,7 +415,7 @@ describe('resolveTriageListShellState', () => {
       freshness: 'stale',
     }));
 
-    expect(state).toEqual({
+    expect(state).toMatchObject({
       kind: 'window',
       window: failed,
       refreshing: false,
@@ -555,7 +628,7 @@ describe('resolveTriageListShellState', () => {
 
   it('separates a refresh in flight from staleness', () => {
     const state = resolveTriageListShellState(snapshot({ window: window(), pending: 'refresh' }));
-    expect(state).toEqual({
+    expect(state).toMatchObject({
       kind: 'window',
       window: window(),
       refreshing: true,

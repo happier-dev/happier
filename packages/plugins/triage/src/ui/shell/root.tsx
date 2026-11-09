@@ -484,9 +484,13 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * wrong fix `core/SURFACE.md` §4.3 names.
    */
   const durableStateReachable = marks.unavailableReason === null;
+  const viewInventory = React.useMemo(() => surface.filters.tasks === undefined ? TRIAGE_PR_VIEW_INVENTORY_V1
+    : planTriageTaskViewInventoryV1(source => resolveTriageSourceDescriptorV1(surfaceContext.targetedContributions, source)?.kinds),
+  [surfaceContext.targetedContributions, surface.filters.tasks]);
   const state = React.useMemo(
-    () => resolveTriageListShellState(window.snapshot, { durableStateReachable, tasks: surface.filters.tasks !== undefined }),
-    [durableStateReachable, window.snapshot, surface.filters.tasks],
+    () => resolveTriageListShellState(window.snapshot, { durableStateReachable, tasks: surface.filters.tasks !== undefined,
+      filters: surface.filters, inventory: viewInventory }),
+    [durableStateReachable, window.snapshot, surface.filters, viewInventory],
   );
   // The row-bearing facts of the state, by identity. The state wrapper is rebuilt whenever any snapshot member
   // moves (pending, freshness, pacing); the rows only when the window does, so row work keys on these.
@@ -578,7 +582,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * sources while Pinned walks another page of the reader's own marks, so they are two continuations, not one
    * "load more" that reads the wrong thing.
    */
-  const windowLoadMore = window.snapshot.loadMore;
+  const windowLoadMore = state.kind === 'window' ? state.body.loadMore : window.snapshot.loadMore;
   const pinsLoadMore = marks.loadMore;
   const loadMoreEntries = window.loadMore;
   const loadMorePins = marks.loadMorePins;
@@ -613,9 +617,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   // Pinned entries this mount has read exactly (their detail was opened): the pin then shows what the source said.
   const [exactPinReads, setExactPinReads] = React.useState<ReadonlyMap<string, TriageListRowV1>>(NO_EXACT_PIN_READS);
   const staleCompletedAtMs = listedStale ? window.snapshot.completedAtMs : undefined;
-  const viewInventory = React.useMemo(() => taskAudience === undefined ? TRIAGE_PR_VIEW_INVENTORY_V1
-    : planTriageTaskViewInventoryV1(source => resolveTriageSourceDescriptorV1(surfaceContext.targetedContributions, source)?.kinds),
-  [surfaceContext.targetedContributions, taskAudience]);
   const pinsByEntry = React.useMemo(() => indexTriagePinsByEntry(marks.pins), [marks.pins]);
   const planItems = React.useCallback((rows: readonly TriageListRowV1[], previous: readonly TriageListItemV1[] = NO_LIST_ITEMS, incremental = false) =>
     planTriageListItemsV1({
@@ -2181,7 +2182,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const renderListToolbar = (slots?: CollectionHeaderSlots, orderedByTable = false) => {
     // Coverage is the window owner's fact: a loaded subset is never said as an authoritative total.
     const filterResult = { matchedCount: rowCount, coverage: state.kind !== 'window' ? 'unavailable' as const
-      : state.window.coverage === 'complete' ? 'complete' as const : 'partial' as const };
+      : state.body.coverage === 'complete' ? 'complete' as const : 'partial' as const };
     const switchAsTitle = slots?.title != null;
     // A first run with nothing listed (lab `merged-connect`): filters, an order and List | Board could change nothing,
     // so the toolbar keeps only the page switch, the saved views and More.
@@ -2762,7 +2763,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                       source.configured.instance.source)?.displayName;
                     const subtitle = source.displayPath ?? sourceName;
                     // Each connection says its own health on its row: a quiet word and its reason, its fix at the end.
-                    const failure = listWindow?.failure?.sources.find((entry) => entry.sourceInstanceId === source.sourceInstanceId);
+                    const failure = listWindow?.wholeScanFailure?.sources.find((entry) => entry.sourceInstanceId === source.sourceInstanceId);
                     const health = failure === undefined ? null : readTriageSourceFailureRowV1(failure, text);
                     const repair = health?.fix === 'connection'
                       ? configureOffers.find((offer) => offer.destination.pluginId === source.configured.instance.source.pluginId)
