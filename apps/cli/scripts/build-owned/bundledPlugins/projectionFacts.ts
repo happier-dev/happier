@@ -104,7 +104,6 @@ export type AgentUiDescriptor = Readonly<{
     }>;
     flavorAliases: readonly string[];
     permissions: Readonly<{
-      modeGroup: string;
       promptProtocol: string;
     }>;
     sessionModes?: Readonly<{
@@ -253,13 +252,6 @@ export type AgentUiSessionModeOption = Readonly<{
   descriptionKey?: string;
 }>;
 
-export type GeneratedAgentUiProjectionSource = Readonly<{
-  agentId: string;
-  coreConst: string;
-  uiConst: string;
-  renderLines: () => readonly string[];
-}>;
-
 export type DescriptorAgentUiProjectionSource = Readonly<{
   agentId: string;
   coreConst: string;
@@ -267,7 +259,6 @@ export type DescriptorAgentUiProjectionSource = Readonly<{
   descriptor: AgentUiDescriptor;
   providerOwnedEnvironmentKeys: readonly string[];
   permissionModeMapping?: JsonObject;
-  svgIcon?: DescriptorGeneratedSvgIconSource;
 }>;
 
 export type DescriptorGeneratedSvgIconPathSource = Readonly<{

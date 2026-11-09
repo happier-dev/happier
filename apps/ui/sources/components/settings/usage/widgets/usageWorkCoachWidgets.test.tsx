@@ -293,6 +293,23 @@ describe('Work and Coach widget bodies', () => {
     expect(first.length).toBeGreaterThan(t('session.untitled').length);
     await hook.unmount();
   });
+  it('names Sessions with the same unsuffixed machine place as Projects', async () => {
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const previous = storage.getState();
+    const machine = (id: string) => {
+      const row = createMachineFixture({ id });
+      return { ...row, metadata: row.metadata && { ...row.metadata, host: 'Shared host', displayName: 'Shared host' } };
+    };
+    storage.getState().applyMachines([machine('machine-a'), machine('machine-b')]);
+    try {
+      const rows = ['a', 'b'].map(id => ({ ...contribution(id, `session-${id}`, 't'), machineId: `machine-${id}` }));
+      const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
+      const hook = await renderHook(() => useUsageWork({ ...slice, work }, query, 'home'));
+      expect(hook.getCurrent().sessionLabel('session-a')).toContain('Shared host');
+      expect(hook.getCurrent().sessionLabel('session-a')).not.toContain(' · mach');
+      await hook.unmount();
+    } finally { storage.setState(previous, true); }
+  });
   it('keeps Project names whole and includes where each ran', async () => {
     const rows: UsageWorkContribution[] = [
       { ...contribution('t1', 'twin-1', 't1'), projectKey: 'tmp-a', machineId: 'machine-a' },
@@ -312,6 +329,63 @@ describe('Work and Coach widget bodies', () => {
     expect(projectPlace('tmp-a')).not.toBe(projectPlace('tmp-b'));
     expect(projectPlace('lone-key')).not.toBe('');
     await hook.unmount();
+  });
+  it('uses human Project labels and paths without exposing anchor keys (R137)', async () => {
+    const previous = storage.getState();
+    const scope = { serverId: actionHome!.homes.work!.id, accountId: 'work-account' };
+    const keys = ['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64), 'd'.repeat(64)];
+    const { WorkspaceRefV1Schema } = await import('@/sync/domains/workspaces/workspaceRefModel');
+    const refs = ['/work/customer/apps/happier', '/work/personal/apps/happier'].map((rootPath, index) =>
+      WorkspaceRefV1Schema.parse({ id: `checkout-${index}`, projectKey: keys[index], serverId: scope.serverId,
+        machineId: 'machine-a', rootPath, createdAtMs: 0 }));
+    try {
+      storage.setState({ profileScope: scope, projectAccountRows: { scope, status: 'ready', coverage: 'complete',
+        workspaceRefs: refs, relationships: [], revisionsByPhysicalKey: {},
+        organizations: keys.map(projectKey => ({ key: { kind: 'project-organization', serverId: scope.serverId, projectKey },
+          revision: 1, value: { label: 'happier' } })) } });
+      const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: keys.map((projectKey, index) =>
+        ({ ...contribution(`human-${index}`, `session-${index}`, null), projectKey })), evidence: [] }));
+      const hook = await renderHook(() => useUsageWork({ ...slice, work }, query, scope.serverId));
+      const names = keys.map(key => hook.getCurrent().projectLabel(key));
+      expect(names[0]).toContain('customer');
+      expect(names[1]).toContain('personal');
+      expect(names.slice(2)).toEqual(['happier', 'happier']);
+      for (const key of keys) expect(names.join(' ')).not.toContain(key);
+      expect(hook.getCurrent().summary?.projects.map(row => row.projectKey).sort()).toEqual([...keys].sort());
+      await hook.unmount();
+    } finally { storage.setState({ profileScope: previous.profileScope, projectAccountRows: previous.projectAccountRows }); }
+  });
+  it('keeps repeated unnamed Projects unnamed without expanding the anchor ledger (R137)', async () => {
+    const previous = storage.getState();
+    const scope = { serverId: actionHome!.homes.work!.id, accountId: 'work-account' };
+    const namedKey = 'a'.repeat(64);
+    const unnamedKeys = ['b'.repeat(64), 'c'.repeat(64)];
+    const opaqueLabel = 'd'.repeat(64);
+    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null });
+    const rows = [namedKey, ...unnamedKeys].map(projectKey => {
+      const key = { kind: 'project-organization' as const, serverId: scope.serverId, projectKey };
+      return { key, revision: 1, content: cipher.seal({ key, value: { label: projectKey === namedKey ? 'happier' : opaqueLabel } }) };
+    });
+    const owner = createProjectAccountRowsSync({ scope, cipher, isCurrent: () => true,
+      transport: { read: async () => { throw new Error('Label read uses its census'); },
+        list: async () => ({ status: 'listed', coverage: 'complete', rows }),
+        mutate: async () => { throw new Error('Label read must not mutate Project rows'); } },
+      apply: (...args) => storage.getState().applyProjectAccountRowsForScope(scope, ...args) });
+    try {
+      storage.setState({ profileScope: scope });
+      storage.getState().activateProjectAccountRowsScope(scope);
+      const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: [namedKey, ...unnamedKeys].flatMap((projectKey, index) =>
+        [0, 1].map(part => ({ ...contribution(`anchor-${index}-${part}`, `session-${index}`, `turn-${part}`), projectKey }))), evidence: [] }));
+      const hook = await renderHook(() => useUsageWork({ ...slice, work }, query, scope.serverId));
+      await act(async () => { await owner.refresh(); });
+      expect(hook.getCurrent().projectLabel(namedKey)).toBe('happier');
+      expect(hook.getCurrent().summary?.projects).toHaveLength(2);
+      expect(hook.getCurrent().summary?.projects.map(row => ({ key: row.projectKey, amount: row.amount, unnamed: row.unnamedProjectCount })))
+        .toEqual(expect.arrayContaining([{ key: namedKey, amount: 6, unnamed: 0 }, { key: null, amount: 12, unnamed: 2 }]));
+      for (const key of unnamedKeys) expect(hook.getCurrent().projectLabel(key)).toBe(t('usage.board.work.unknownProject'));
+      expect(hook.getCurrent().projectLabel(null)).toBe(t('usage.board.work.unknownProject'));
+      await hook.unmount();
+    } finally { storage.setState({ profileScope: previous.profileScope, projectAccountRows: previous.projectAccountRows }); }
   });
   it('keeps an unanswered All Coach evaluation pending instead of claiming there are no findings', async () => {
     const allQuery = normalizeUsageQuery({ ...query, period: { relative: 'all' } });
@@ -412,6 +486,8 @@ describe('Work and Coach widget bodies', () => {
     const opaque = '84ae4f69031158170a5d5dd1f71dce833e983675d3632a33ead3592cba283061';
     const opaqueKey = { ...rowKey, projectKey: 'opaque-project' };
     const opaqueContent = cipher.seal({ key: opaqueKey, value: { label: opaque } });
+    const twinKey = { ...rowKey, projectKey: 'twin-project-anchor' };
+    const twinContent = cipher.seal({ key: twinKey, value: { label: 'Human project' } });
     const otherOpaqueKey = { ...rowKey, projectKey: 'other-opaque-project' };
     const otherOpaqueContent = cipher.seal({ key: otherOpaqueKey, value: { label: 'b'.repeat(64) } });
     const namedWork = allocateUsageOutcomes({ contributions: [...contributions,
@@ -419,7 +495,7 @@ describe('Work and Coach widget bodies', () => {
       { ...contribution('other-opaque', 'other-opaque-session', null), projectKey: otherOpaqueKey.projectKey }], evidence: [] });
     const owner = createProjectAccountRowsSync({ scope, cipher, isCurrent: () => true,
       transport: { read: async () => { throw new Error('Label read uses its census'); },
-        list: async () => ({ status: 'listed', coverage: 'complete', rows: [{ key: rowKey, revision: 1, content },
+        list: async () => ({ status: 'listed', coverage: 'complete', rows: [{ key: rowKey, revision: 1, content }, { key: twinKey, revision: 1, content: twinContent },
         { key: opaqueKey, revision: 1, content: opaqueContent }, { key: otherOpaqueKey, revision: 1, content: otherOpaqueContent }] }),
         mutate: async () => { throw new Error('Label read must not mutate Project rows'); } },
       apply: (...args) => storage.getState().applyProjectAccountRowsForScope(scope, ...args) });
@@ -433,6 +509,11 @@ describe('Work and Coach widget bodies', () => {
         profileScope: storage.getState().profileScope, rows: storage.getState().projectAccountRows,
       })).toContainEqual(expect.objectContaining({ key: rowKey, value: { label: 'Human project' } }));
       expect(screen.getTextContent()).toContain('Human project');
+      const { useUsageProjectLabels } = await import('./usageBodyKit');
+      const labels = await renderHook(() => useUsageProjectLabels(scope.serverId));
+      expect(labels.getCurrent().get(rowKey.projectKey)).toBe('Human project');
+      expect(labels.getCurrent().get(twinKey.projectKey)).toBe('Human project');
+      await labels.unmount();
       expect(screen.getTextContent()).not.toContain(opaque);
       const hook = await renderHook(() => useUsageWork(workSlice, query, scope.serverId));
       expect(hook.getCurrent().summary?.projects).toMatchObject([

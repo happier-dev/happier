@@ -8,6 +8,8 @@ import { createPackageLayoutSandbox, writeBundledPluginSourceInputs, writeCliBun
 import { serializeCanonicalPluginManifest } from '../../src/plugins/manifest/serialize';
 import { importPluginAuthorRuntimeModules, publishBundledPluginSemanticProjection } from './generateBundledPluginEntries.ts';
 import { renderUiBundledPluginEntriesTs } from './bundledPlugins/agentUi.ts';
+import { renderCliBundledPluginManifestAssets } from './bundledPlugins/registry.ts';
+import { QWEN_UI_DESCRIPTOR } from '../../../../packages/plugins/qwen/src/ui/descriptor';
 import { parseGeneratorCliArgs } from './bundledPlugins/options.ts';
 import { isRecord } from './bundledPlugins/literals.ts';
 import type { BundledPluginPackage } from './bundledPlugins/projectionFacts.ts';
@@ -96,9 +98,15 @@ describe('bundled Account declaration publication', () => {
         mkdirSync(join(packageRoot, '.happier-plugin'), { recursive: true });
         writeFileSync(join(packageRoot, '.happier-plugin/plugin.json'), serializeCanonicalPluginManifest(admitted.manifest));
         return { pluginPackageId: id, pluginId: admitted.manifest.id, packageName, packageVersion: '0.0.0',
-          manifest: admitted.manifest, ...(id === 'qwen' ? { agentId: 'qwen' } : {}) };
+          manifest: admitted.manifest, ...(id === 'qwen' ? { agentId: 'qwen', agentUiDescriptor: QWEN_UI_DESCRIPTOR } : {}) };
       });
       writeCliBundledHostPackage({ happyCliDir, bundledDependencies: pluginPackages.map(entry => entry.packageName) });
+      // Scoped publication retains peer daemon manifests from the prior publication.
+      for (const asset of renderCliBundledPluginManifestAssets({ pluginPackages })) {
+        const assetPath = join(happyCliDir, asset.relativePath);
+        mkdirSync(dirname(assetPath), { recursive: true });
+        writeFileSync(assetPath, asset.out);
+      }
       const uiPath = join(repoRoot, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts');
       mkdirSync(dirname(uiPath), { recursive: true });
       const fullUi = renderUiBundledPluginEntriesTs({ packageNames: [], pluginPackages });

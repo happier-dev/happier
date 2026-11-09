@@ -14,6 +14,9 @@ function ultracodeOption(id: string) {
 }
 
 describe('CLAUDE_STATIC_MODELS usage labels', () => {
+    it('publishes a display name for the observed Sonnet 5.5 identity', () => {
+        expect(model('claude-sonnet-5-5')).toMatchObject({ id: 'claude-sonnet-5-5', name: 'Sonnet 5.5' });
+    });
     it('publishes Haiku 5.5 under its own catalog identity', () => {
         expect(model('claude-haiku-5-5')).toMatchObject({ id: 'claude-haiku-5-5', name: 'Haiku 5.5' });
         expect(model('claude-haiku-4-5')).toMatchObject({ id: 'claude-haiku-4-5', name: 'Haiku 4.5' });

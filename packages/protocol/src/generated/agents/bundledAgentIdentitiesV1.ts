@@ -102,4 +102,8 @@ export const BUNDLED_AGENT_CONTRIBUTION_IDENTITIES_V1: Readonly<Record<
     pluginId: 'happier.agent.custom-acp',
     localId: 'custom-acp',
   }),
+  'muse': Object.freeze({
+    pluginId: 'happier.agent.muse',
+    localId: 'muse',
+  }),
 });

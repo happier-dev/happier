@@ -69,6 +69,22 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
     claude: Object.freeze({
         agentId: 'claude' as CanonicalAgentId,
         descriptor: Object.freeze({
+  "accountingSourcePresentation": [
+    {
+      "sourceId": "claude-assistant-usage",
+      "title": {
+        "fallback": "Claude responses",
+        "key": "usage.board.page.sourceClaudeResponses"
+      }
+    },
+    {
+      "sourceId": "claude-sdk-result",
+      "title": {
+        "fallback": "Claude session summaries",
+        "key": "usage.board.page.sourceClaudeSessionSummaries"
+      }
+    }
+  ],
   "askUserQuestion": {
     "dialogs": [
       {
@@ -190,13 +206,13 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
       {
         "id": "claude-auto-continue",
         "kind": "boolean",
-        "policyKey": "claudeCodeAutoContinueAtUsageLimit",
+        "policyKey": "nativeUsageLimitContinuation",
         "serviceLocalIds": [
           "claude-subscription",
           "anthropic"
         ],
-        "subtitleKey": "connectedServicesPool.claudeCodeAutoContinueAtUsageLimitSubtitle",
-        "titleKey": "connectedServicesPool.claudeCodeAutoContinueAtUsageLimitTitle"
+        "subtitleKey": "connectedServicesPool.nativeUsageLimitContinuationSubtitle",
+        "titleKey": "connectedServicesPool.nativeUsageLimitContinuationTitle"
       }
     ]
   },
@@ -330,6 +346,28 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
     codex: Object.freeze({
         agentId: 'codex' as CanonicalAgentId,
         descriptor: Object.freeze({
+  "accountingSourcePresentation": [
+    {
+      "sourceId": "codex-app-server-token-usage",
+      "title": {
+        "fallback": "usage · {agent}",
+        "key": "usage.board.page.sourceAccountingAgent",
+        "params": {
+          "agent": "Codex"
+        }
+      }
+    },
+    {
+      "sourceId": "codex-native-accounting",
+      "title": {
+        "fallback": "usage · {agent}",
+        "key": "usage.board.page.sourceAccountingAgent",
+        "params": {
+          "agent": "Codex"
+        }
+      }
+    }
+  ],
   "components": {
     "slots": []
   },
@@ -484,14 +522,6 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
         "acp",
         "appServer"
       ]
-    }
-  },
-  "permissions": {
-    "footer": {
-      "forceReadOnlyAfterStop": false,
-      "stopHandling": "denyOnly",
-      "supportsExecPolicyAmendment": true,
-      "usePermissionUpdates": false
     }
   },
   "resume": {
@@ -650,6 +680,18 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
     opencode: Object.freeze({
         agentId: 'opencode' as CanonicalAgentId,
         descriptor: Object.freeze({
+  "accountingSourcePresentation": [
+    {
+      "sourceId": "opencode-native-accounting",
+      "title": {
+        "fallback": "usage · {agent}",
+        "key": "usage.board.page.sourceAccountingAgent",
+        "params": {
+          "agent": "OpenCode"
+        }
+      }
+    }
+  ],
   "components": {
     "slots": []
   },
@@ -728,10 +770,30 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
     pi: Object.freeze({
         agentId: 'pi' as CanonicalAgentId,
         descriptor: Object.freeze({
+  "accountingSourcePresentation": [
+    {
+      "sourceId": "pi-native-accounting",
+      "title": {
+        "fallback": "usage · {agent}",
+        "key": "usage.board.page.sourceAccountingAgent",
+        "params": {
+          "agent": "Pi"
+        }
+      }
+    }
+  ],
   "components": {
     "slots": []
   },
   "descriptorId": "pi.uiBehavior.v1"
+} as const),
+    }),
+    qwen: Object.freeze({
+        agentId: 'qwen' as CanonicalAgentId,
+        descriptor: Object.freeze({
+  "components": {
+    "slots": []
+  }
 } as const),
     }),
     coderabbit: Object.freeze({

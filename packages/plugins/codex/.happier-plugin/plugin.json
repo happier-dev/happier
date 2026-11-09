@@ -333,8 +333,8 @@
               "CODEX_API_KEY"
             ],
             "suppressConnectedServiceIds": [
-              "openai-codex",
-              "openai"
+              "happier.agent.codex/openai-codex",
+              "happier.voice.openai/openai"
             ]
           },
           "credentialSupport": {
@@ -363,6 +363,11 @@
         },
         "runtime": {
           "kind": "custom"
+        },
+        "sessionModeDescriptor": {
+          "runtimeSwitch": "metadata-gating",
+          "semantics": "policy-presets",
+          "source": "acp"
         },
         "surfaces": {
           "externalSession": {
@@ -609,6 +614,17 @@
           "supported": true
         },
         "title": "ChatGPT",
+        "ui": {
+          "iconResourceId": "agent-mark",
+          "setup": {
+            "catalogDescription": {
+              "fallback": "Plus, Pro or Team plan. Sign in with a code or a browser.",
+              "key": "connectedServicesSettings.catalogChatGpt"
+            },
+            "firstRun": true,
+            "order": 1
+          }
+        },
         "usageIdentity": {
           "providerId": "openai-codex"
         }
@@ -663,7 +679,27 @@
             "launch": {
               "configOverrideArgument": "-c",
               "configOverridesEnvironmentKey": "HAPPIER_CODEX_ACP_CONFIG_OVERRIDES",
-              "kind": "codexAcp",
+              "kind": "configured_binary",
+              "legacyExecutables": [
+                {
+                  "platforms": [
+                    "win32"
+                  ],
+                  "relativePath": "node_modules/.bin/codex-acp.cmd",
+                  "requiresManagedJavaScriptRuntime": true
+                },
+                {
+                  "platforms": [
+                    "win32"
+                  ],
+                  "relativePath": "node_modules/.bin/codex-acp.exe",
+                  "requiresManagedJavaScriptRuntime": true
+                },
+                {
+                  "relativePath": "node_modules/.bin/codex-acp",
+                  "requiresManagedJavaScriptRuntime": true
+                }
+              ],
               "overrideEnvironmentKey": "HAPPIER_CODEX_ACP_BIN"
             },
             "repo": "zed-industries/codex-acp",
@@ -705,6 +741,12 @@
     "registrySources": [],
     "requestInterceptors": [],
     "resources": [
+      {
+        "contentType": "image/svg+xml",
+        "id": "agent-mark",
+        "kind": "asset",
+        "path": "assets/agent-mark.svg"
+      },
       {
         "contentType": "application/json",
         "id": "i18n-en",

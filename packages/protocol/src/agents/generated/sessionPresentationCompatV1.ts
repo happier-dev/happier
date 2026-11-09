@@ -88,6 +88,11 @@ export const GENERATED_SESSION_PRESENTATION_COMPAT_V1 = Object.freeze([
     vendorResumeIdField: 'kiroSessionId',
   }),
   Object.freeze({
+    agentId: 'muse',
+    flavorAliases: Object.freeze(['muse']),
+    vendorResumeIdField: null,
+  }),
+  Object.freeze({
     agentId: 'ohMyPi',
     flavorAliases: Object.freeze(['ohMyPi', 'oh-my-pi', 'omp']),
     vendorResumeIdField: 'ohMyPiSessionId',

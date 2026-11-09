@@ -3,6 +3,8 @@
  *
  * This bounded registry reads provider-specific metadata written by released
  * CLI 0.2.0/0.2.1 builds. It is not a current descriptor or plugin-authoring seam.
+ * runtime/identity/runtimeDescriptorReaderRegistry consumes these codecs when retained
+ * Session metadata lacks the current runtimeDescriptorV1 projection.
  *
  * This file is emitted by:
  * - `apps/cli/scripts/build-owned/generateBundledPluginEntries.ts`

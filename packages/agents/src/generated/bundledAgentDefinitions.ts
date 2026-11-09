@@ -33,6 +33,7 @@ export const BUNDLED_AGENT_DEFINITION_IDS: readonly string[] = Object.freeze([
   "kilo",
   "kimi",
   "kiro",
+  "muse",
   "ohMyPi",
   "opencode",
   "pi",
@@ -553,6 +554,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "claude-fable-5-1",
       "claude-opus-5-5",
       "claude-opus-5",
+      "claude-sonnet-5-5",
       "claude-sonnet-5",
       "claude-fable-5",
       "claude-mythos-5",
@@ -803,6 +805,10 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           }
         ],
         "name": "Opus 5"
+      },
+      {
+        "id": "claude-sonnet-5-5",
+        "name": "Sonnet 5.5"
       },
       {
         "contextWindowTokens": 1000000,
@@ -1189,6 +1195,17 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "pr-link",
       "tool_progress",
       "command_lifecycle"
+    ]
+  },
+  "requestCoverage": {
+    "equivalentCompletedReasons": [
+      "Local permission bridge stopped"
+    ],
+    "equivalentCompletedStatuses": [
+      "canceled"
+    ],
+    "equivalentSources": [
+      "claude_local_permission_bridge"
     ]
   },
   "sessionModeDescriptor": {
@@ -3167,7 +3184,29 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "core": {
     "cliSubcommand": "kimi",
     "cloudConnect": null,
-    "connectedServices": null,
+    "connectedServices": {
+      "providerStateSharing": {
+        "config": {
+          "modes": [
+            "linked",
+            "copied",
+            "isolated"
+          ],
+          "supported": true
+        },
+        "state": {
+          "modes": [
+            "isolated",
+            "shared"
+          ],
+          "sharedStatePrivacyRiskAcknowledgementRequired": true,
+          "supported": true
+        }
+      },
+      "supportedServiceIds": [
+        "kimi-code"
+      ]
+    },
     "detectKey": "kimi",
     "flavorAliases": [
       "kimi-cli"
@@ -3379,6 +3418,139 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   },
   "sessionModesKind": "acpAgentModes"
 }) as const),
+  "muse": Object.freeze(({
+  "cli": {
+    "auth": {
+      "environmentVariables": [
+        "META_API_KEY"
+      ],
+      "loginLaunches": [
+        {
+          "args": [
+            "login"
+          ],
+          "kind": "primary"
+        }
+      ],
+      "support": "login_terminal"
+    },
+    "displayName": "Muse CLI",
+    "executable": {
+      "binaryName": "muse",
+      "knownEnvironmentBinDirs": [
+        {
+          "envVar": "MUSE_INSTALL_DIR",
+          "relativeDir": "."
+        },
+        {
+          "envVar": "LOCALAPPDATA",
+          "relativeDir": "Programs/muse"
+        }
+      ],
+      "knownUserBinDirSuffixes": [
+        ".local/bin",
+        "AppData/Local/Programs/muse"
+      ],
+      "sourcePreference": "system-first"
+    },
+    "install": {
+      "docsUrl": null,
+      "guideUrl": "https://dev.meta.ai/",
+      "manual": {
+        "kind": "vendor_recipe",
+        "recipes": {
+          "darwin": [
+            {
+              "args": [
+                "-c",
+                "curl -fsSL https://dev.meta.ai/install.sh | bash"
+              ],
+              "cmd": "bash"
+            }
+          ],
+          "linux": [
+            {
+              "args": [
+                "-c",
+                "curl -fsSL https://dev.meta.ai/install.sh | bash"
+              ],
+              "cmd": "bash"
+            }
+          ],
+          "win32": [
+            {
+              "args": [
+                "-NoProfile",
+                "-Command",
+                "irm https://dev.meta.ai/install.ps1 | iex"
+              ],
+              "cmd": "powershell.exe"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "core": {
+    "cliSubcommand": "muse",
+    "cloudConnect": null,
+    "connectedServices": {
+      "supportedServiceIds": [
+        "muse-account"
+      ]
+    },
+    "detectKey": "muse",
+    "flavorAliases": [],
+    "handoff": {
+      "vendorStateTransfer": "unsupported"
+    },
+    "id": "muse",
+    "resume": {
+      "vendorResume": "unsupported"
+    },
+    "runtimeInput": {
+      "inFlightSteerSupported": false,
+      "terminalPromptInjectionSupported": false
+    },
+    "sessionCapabilities": {
+      "sessionFork": {
+        "conversation": "unsupported",
+        "fromMessage": "unsupported"
+      },
+      "sessionListing": "unsupported",
+      "sessionRollback": {
+        "conversation": "unsupported"
+      },
+      "usageReporting": "unsupported"
+    },
+    "sessionStorage": {
+      "direct": true,
+      "persisted": true
+    },
+    "tools": {
+      "delivery": "unsupported",
+      "support": "unsupported"
+    }
+  },
+  "id": "muse",
+  "modelConfig": {
+    "acpModelConfigOptionId": "model",
+    "allowedModes": [
+      "default"
+    ],
+    "defaultMode": "default",
+    "dynamicProbe": "auto",
+    "nonAcpApplyScope": "spawn_only",
+    "supportsFreeform": false,
+    "supportsSelection": true
+  },
+  "sessionModeDescriptor": {
+    "runtimeSwitch": "none",
+    "semantics": "none",
+    "source": "none"
+  },
+  "sessionModesKind": "none"
+}) as const),
   "ohMyPi": Object.freeze(({
   "cli": {
     "auth": {
@@ -3456,7 +3628,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "openai",
         "claude-subscription",
         "anthropic",
-        "gemini"
+        "gemini-account"
       ]
     },
     "detectKey": "omp",
@@ -3573,9 +3745,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "cloudConnect": null,
     "connectedServices": {
       "supportedServiceIds": [
+        "claude-subscription",
         "openai-codex",
         "openai",
-        "claude-subscription",
         "anthropic"
       ]
     },
@@ -3848,9 +4020,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         }
       },
       "supportedServiceIds": [
+        "claude-subscription",
         "openai-codex",
         "openai",
-        "claude-subscription",
         "anthropic"
       ]
     },

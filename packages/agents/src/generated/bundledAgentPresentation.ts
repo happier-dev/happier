@@ -18,6 +18,7 @@ export const BUNDLED_AGENT_PRESENTATION: Readonly<Record<string, BundledAgentPre
   'kilo': Object.freeze({ name: 'Kilo', identityColor: null }),
   'kimi': Object.freeze({ name: 'Kimi', identityColor: null }),
   'kiro': Object.freeze({ name: 'Kiro', identityColor: null }),
+  'muse': Object.freeze({ name: 'Muse', identityColor: null }),
   'ohMyPi': Object.freeze({ name: 'Oh My Pi', identityColor: null }),
   'opencode': Object.freeze({ name: 'OpenCode', identityColor: Object.freeze({"light":"#4a3aa7","dark":"#9085e9"}) }),
   'pi': Object.freeze({ name: 'Pi', identityColor: Object.freeze({"light":"#e87ba4","dark":"#d55181"}) }),

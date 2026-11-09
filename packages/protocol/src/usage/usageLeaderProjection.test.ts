@@ -300,3 +300,24 @@ it('partitions legacy contributions once per ranked surface instead of rescannin
     // Count real row reads rather than imposing a machine-dependent wall-clock budget.
     expect(dimensionReads).toBeLessThanOrEqual(count * 2);
 });
+
+it('keeps a known Codex day priced while its period total includes an unpriced day', () => {
+    const priced = { ...contribution.cost, estimatedUsd: 7.1, costSource: 'pricing_estimate' as const };
+    const rows = [
+        { ...contribution, id: 'unknown', agentId: 'codex', eventCount: 1, observedAtMs: 1 },
+        { ...contribution, id: 'known', agentId: 'codex', eventCount: 1, observedAtMs: 11, cost: priced },
+    ];
+    const raw = { eventCount: 2, tokens: contribution.tokens, cost: priced };
+    const response = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: raw, contributions: rows,
+        breakdowns: { agent: [{ key: 'codex', ...raw }] },
+        series: [0, 10].map(bucketStartMs => ({ ...raw, bucketStartMs, bucketEndMs: bucketStartMs + 10 })),
+        engineTimeline: [0, 10].map(bucketStartMs => ({ bucketStartMs, bucketEndMs: bucketStartMs + 10,
+            leaders: [{ key: 'codex', ...raw }] })),
+    });
+    const page = projectUsagePageCost(response, 'auto');
+    expect(page.amountUsd).toBeNull();
+    expect(resolveUsageCostForSelection(page.accounting.breakdowns!.agent![0]!.cost, page.selection)).toBeNull();
+    const days = page.accounting.engineTimeline!.map(day => resolveUsageCostForSelection(day.leaders[0]!.cost!, page.selection));
+    expect(days).toEqual([null, 7.1]);
+    expect(page.accounting.series!.map(day => resolveUsageCostForSelection(day.cost, page.selection))).toEqual(days);
+});

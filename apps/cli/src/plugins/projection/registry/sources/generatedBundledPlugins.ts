@@ -138,6 +138,14 @@ export const BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS: readonly BundledFi
   }),
   Object.freeze({
     identity: Object.freeze({
+      pluginId: "happier.agent.muse",
+      localId: "muse",
+    }),
+    implementationOwnerId: "muse",
+    registrationFamily: "agents",
+  }),
+  Object.freeze({
+    identity: Object.freeze({
       pluginId: "happier.agent.ohmypi",
       localId: "ohmypi",
     }),

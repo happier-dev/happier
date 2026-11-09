@@ -300,10 +300,11 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
       return binding?.kind === 'value' ? binding.value : 'tokens';
     }),
   );
-  const metric =
+  const widgetMetric =
     metrics.size === 1 ? ([...metrics][0] as 'tokens' | 'cost') : null;
   const metricLifetime = React.useMemo(() => ({ controller: new AbortController(), running: false }), [props.port, props.authority]);
-  const [pendingMetric, setPendingMetric] = React.useState<typeof metricLifetime | null>(null);
+  const [pendingMetric, setPendingMetric] = React.useState<Readonly<{ lifetime: typeof metricLifetime; metric: 'tokens' | 'cost' }> | null>(null);
+  const metric = pendingMetric?.lifetime === metricLifetime ? pendingMetric.metric : widgetMetric;
   const metricApproval = useActionApprovalContinuation({
     scopeKey: JSON.stringify(props.authority?.scope ?? null),
     serverId: props.authority?.scope.serverId ?? '',
@@ -319,7 +320,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     (next: 'tokens' | 'cost') => {
       if (!ready || !ready.isCurrent() || metricLifetime.running || metricLifetime.controller.signal.aborted) return;
       metricLifetime.running = true;
-      setPendingMetric(metricLifetime);
+      setPendingMetric({ lifetime: metricLifetime, metric: next });
       const key = `usage-metric:${JSON.stringify(ready.surface)}`;
       void setUsageWidgetMetric({
         port: props.port,
@@ -340,7 +341,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
           publishPresentationNotice({ key, severity: 'error', message: t('widgetAdd.saveFailed') });
       }).finally(() => {
         metricLifetime.running = false;
-        setPendingMetric(current => current === metricLifetime ? null : current);
+        setPendingMetric(current => current?.lifetime === metricLifetime ? null : current);
       });
     },
     [metricApproval.requestApproval, metricLifetime, props.port, ready, usageWidgets],
@@ -411,7 +412,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     [],
   );
   const preset = ready?.preset ?? null;
-  const metricPending = layoutLoading || pendingMetric === metricLifetime;
+  const metricPending = layoutLoading || pendingMetric?.lifetime === metricLifetime;
   const changeMetric = layoutLoading || (usageWidgets.length && ready?.canEdit) ? onMetricChange : null;
   const filterBar = React.useMemo(() => <UsageFilterBar
     page={page}

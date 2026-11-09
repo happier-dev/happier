@@ -12,6 +12,7 @@ export function resolveGeneratorHostProjectionOutPaths(rootDir) {
     cliOutPath: resolve(rootDir, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts'),
     cliManifestOutPath: resolve(rootDir, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'),
     uiOutPath: resolve(rootDir, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts'),
+    agentLogoSvgOutPath: resolve(rootDir, 'apps/ui/sources/agents/registry/generatedAgentLogoSvgXml.ts'),
     agentPresentationOutPath: resolve(rootDir, 'packages/agents/src/generated/bundledAgentPresentation.ts'),
     uiTranslationsOutPath: resolve(rootDir, 'apps/ui/sources/text/bundledPluginTranslations.generated.ts'),
     uiTranslationKeysOutPath: resolve(rootDir, 'apps/ui/sources/text/bundledPluginTranslationKeys.generated.ts'),

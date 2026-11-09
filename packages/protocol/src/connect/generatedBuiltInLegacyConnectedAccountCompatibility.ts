@@ -3,6 +3,8 @@
  *
  * Built-in-only host-private compatibility for supported legacy Connected Service ids.
  * Public manifests and external plugins cannot add or claim entries in this projection.
+ * legacyConnectedServiceCompatibility and connected-service bindings consume these
+ * frozen peer-operation/authentication mappings at their released-data ingress.
  *
  * Immutable released bases: server-v0.2.1 at 4913c1e533c872a0712ba1c25b3104fd470aacc2
  * and cli-v0.2.1 at b1d15a8a9c241737d1ca9b167459901e6259173a.

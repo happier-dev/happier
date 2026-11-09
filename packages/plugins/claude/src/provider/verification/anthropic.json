@@ -1,12 +1,13 @@
 {
   "v": 1,
   "contributionKey": "happier.agent.claude/anthropic",
-  "reviewedAt": "2026-10-12",
+  "reviewedAt": "2026-11-09",
   "sources": [
     { "id": "api-overview", "kind": "official-doc", "url": "https://platform.claude.com/docs/en/api/overview", "accessedAt": "2026-08-12", "revision": "current-2026-08-12" },
     { "id": "models-api", "kind": "official-doc", "url": "https://platform.claude.com/docs/en/api/models/list", "accessedAt": "2026-08-12", "revision": "current-2026-08-12" },
     { "id": "models-overview", "kind": "official-doc", "url": "https://platform.claude.com/docs/en/models/overview", "accessedAt": "2026-09-22", "revision": "current-2026-09-22" },
     { "id": "claude-curated-catalog", "kind": "repository-history", "locator": "packages/plugins/claude/src/agent/models.ts", "accessedAt": "2026-08-12", "revision": "shared-curated-fallback-at-implementation" },
+    { "id": "usage-sonnet-label", "kind": "product-decision", "locator": ".project/plans/2026-10-09-usage-insights-program/lanes/USAGE-ACCEPT-LOGIC-1109.md", "accessedAt": "2026-11-09", "revision": "user-request-observed-Sonnet-5.5-identity-and-display-name-only" },
     { "id": "usage-haiku-label", "kind": "product-decision", "locator": ".project/plans/2026-10-09-usage-insights-program/lanes/FIX-M.md", "accessedAt": "2026-10-12", "revision": "FIX-M-requested-observed-model-identity-and-catalog-label" }
   ],
   "facts": [
@@ -15,6 +16,7 @@
     { "path": "catalog.staticModels.claude-fable-5-1", "sourceIds": ["models-overview", "claude-curated-catalog"], "status": "verified" },
     { "path": "catalog.staticModels.claude-opus-5-5", "sourceIds": ["models-overview", "claude-curated-catalog"], "status": "verified" },
     { "path": "catalog.staticModels.claude-opus-5", "sourceIds": ["models-overview", "claude-curated-catalog"], "status": "verified" },
+    { "path": "catalog.staticModels.claude-sonnet-5-5", "sourceIds": ["usage-sonnet-label"], "status": "verified" },
     { "path": "catalog.staticModels.claude-sonnet-5", "sourceIds": ["models-overview", "claude-curated-catalog"], "status": "verified" },
     { "path": "catalog.staticModels.claude-fable-5", "sourceIds": ["models-overview", "claude-curated-catalog"], "status": "verified" },
     { "path": "catalog.staticModels.claude-mythos-5", "sourceIds": ["models-overview", "claude-curated-catalog"], "status": "verified" },

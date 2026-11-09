@@ -153,6 +153,12 @@
           },
           "connectedAccounts": [
             {
+              "catalogObservation": {
+                "agent": {
+                  "localId": "codex",
+                  "pluginId": "happier.agent.codex"
+                }
+              },
               "endpointTemplateIds": [
                 "cliproxyapi-openai-chat",
                 "cliproxyapi-openai-responses",
@@ -615,6 +621,12 @@
               }
             },
             {
+              "catalogObservation": {
+                "provider": {
+                  "localId": "anthropic",
+                  "pluginId": "happier.agent.claude"
+                }
+              },
               "endpointTemplateIds": [
                 "cliproxyapi-openai-chat",
                 "cliproxyapi-openai-responses",
@@ -1109,8 +1121,775 @@
                 "fallback": "Claude account or pool",
                 "key": "managedPurpose.anthropic.title"
               }
+            },
+            {
+              "endpointTemplateIds": [
+                "cliproxyapi-openai-chat",
+                "cliproxyapi-openai-responses",
+                "cliproxyapi-anthropic"
+              ],
+              "materializationKinds": [
+                "httpHeaders"
+              ],
+              "purpose": "meta-upstream",
+              "required": false,
+              "service": {
+                "localId": "muse-account",
+                "pluginId": "happier.agent.muse"
+              },
+              "staticModels": [
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "muse-spark-1.1",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "muse-spark-1.1"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "muse-spark-1.2",
+                  "modelOptions": [
+                    {
+                      "currentValue": "minimal",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Minimal",
+                          "value": "minimal"
+                        },
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "muse-spark-1.2"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "muse-spark-1.2-contributor",
+                  "modelOptions": [
+                    {
+                      "currentValue": "minimal",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Minimal",
+                          "value": "minimal"
+                        },
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "muse-spark-1.2-contributor"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "muse-spark-1.3",
+                  "modelOptions": [
+                    {
+                      "currentValue": "minimal",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Minimal",
+                          "value": "minimal"
+                        },
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "muse-spark-1.3"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "muse-spark-1.3-contributor",
+                  "modelOptions": [
+                    {
+                      "currentValue": "minimal",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Minimal",
+                          "value": "minimal"
+                        },
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "muse-spark-1.3-contributor"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "muse-wonder-1.0",
+                  "modelOptions": [
+                    {
+                      "currentValue": "minimal",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Minimal",
+                          "value": "minimal"
+                        },
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "muse-wonder-1.0"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "muse-wonder-1.0-contributor",
+                  "modelOptions": [
+                    {
+                      "currentValue": "minimal",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Minimal",
+                          "value": "minimal"
+                        },
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "muse-wonder-1.0-contributor"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "muse-wonder-full-1.0",
+                  "modelOptions": [
+                    {
+                      "currentValue": "minimal",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Minimal",
+                          "value": "minimal"
+                        },
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "muse-wonder-full-1.0"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "muse-wonder-full-1.0-contributor",
+                  "modelOptions": [
+                    {
+                      "currentValue": "minimal",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Minimal",
+                          "value": "minimal"
+                        },
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "muse-wonder-full-1.0-contributor"
+                }
+              ],
+              "title": {
+                "fallback": "Muse account or pool",
+                "key": "managedPurpose.meta.title"
+              }
+            },
+            {
+              "catalogObservation": {
+                "agent": {
+                  "localId": "gemini",
+                  "pluginId": "happier.agent.gemini"
+                }
+              },
+              "endpointTemplateIds": [
+                "cliproxyapi-openai-chat",
+                "cliproxyapi-openai-responses",
+                "cliproxyapi-anthropic"
+              ],
+              "materializationKinds": [
+                "httpHeaders"
+              ],
+              "purpose": "gemini-upstream",
+              "required": false,
+              "service": {
+                "localId": "gemini-account",
+                "pluginId": "happier.agent.gemini"
+              },
+              "staticModels": [
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gemini-2.5-flash",
+                  "name": "gemini-2.5-flash"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gemini-2.5-flash-lite",
+                  "name": "gemini-2.5-flash-lite"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gemini-2.5-pro",
+                  "name": "gemini-2.5-pro"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gemini-3-flash-preview",
+                  "modelOptions": [
+                    {
+                      "currentValue": "minimal",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Minimal",
+                          "value": "minimal"
+                        },
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gemini-3-flash-preview"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gemini-3-pro-image-preview",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gemini-3-pro-image-preview"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gemini-3-pro-preview",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gemini-3-pro-preview"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gemini-3.1-flash-image-preview",
+                  "modelOptions": [
+                    {
+                      "currentValue": "minimal",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Minimal",
+                          "value": "minimal"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gemini-3.1-flash-image-preview"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gemini-3.1-flash-lite-preview",
+                  "modelOptions": [
+                    {
+                      "currentValue": "minimal",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Minimal",
+                          "value": "minimal"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gemini-3.1-flash-lite-preview"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gemini-3.1-pro-preview",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gemini-3.1-pro-preview"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gemini-3.5-flash",
+                  "modelOptions": [
+                    {
+                      "currentValue": "minimal",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Minimal",
+                          "value": "minimal"
+                        },
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gemini-3.5-flash"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gemini-3.5-flash-lite",
+                  "modelOptions": [
+                    {
+                      "currentValue": "minimal",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Minimal",
+                          "value": "minimal"
+                        },
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gemini-3.5-flash-lite"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gemini-3.6-flash",
+                  "modelOptions": [
+                    {
+                      "currentValue": "minimal",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Minimal",
+                          "value": "minimal"
+                        },
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gemini-3.6-flash"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gemini-3.8-flash",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gemini-3.8-flash"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gemini-4-argon",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gemini-4-argon"
+                }
+              ],
+              "title": {
+                "fallback": "Gemini API key account or pool",
+                "key": "managedPurpose.gemini.title"
+              }
             }
           ],
+          "credentialRequired": true,
           "endpointTemplateIds": [
             "cliproxyapi-openai-chat",
             "cliproxyapi-openai-responses",
@@ -1138,6 +1917,27 @@
                 "origin": "https://api.anthropic.com"
               },
               "purpose": "anthropic-upstream"
+            },
+            {
+              "materialization": {
+                "headerNames": [
+                  "authorization",
+                  "x-api-version"
+                ],
+                "kind": "httpHeaders",
+                "origin": "https://api.meta.ai"
+              },
+              "purpose": "meta-upstream"
+            },
+            {
+              "materialization": {
+                "headerNames": [
+                  "x-goog-api-key"
+                ],
+                "kind": "httpHeaders",
+                "origin": "https://generativelanguage.googleapis.com"
+              },
+              "purpose": "gemini-upstream"
             }
           ],
           "sharing": "connectionMachine",

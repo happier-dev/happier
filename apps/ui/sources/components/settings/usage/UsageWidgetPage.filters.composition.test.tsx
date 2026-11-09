@@ -605,6 +605,9 @@ describe('mounted Usage page scope commands', () => {
             && node.props.diagnosticCode === 'denied').length).toBeGreaterThan(0));
         await flushHookEffects({ cycles: 30 });
         expect(posts(), 'a settled refusal does not cause an automatic second accounting read').toHaveLength(1);
+        act(() => screen.findByType(UsageFilterBar).props.onMetricChange('cost'));
+        expect(screen.findByType(UsageFilterBar).props.metricPending).toBe(true);
+        expect(screen.findByType(UsageFilterBar).props.metric).toBe('cost');
     });
 
     it('defers never-near widgets and keeps admitted content mounted through partial visibility and scroll return', async () => {

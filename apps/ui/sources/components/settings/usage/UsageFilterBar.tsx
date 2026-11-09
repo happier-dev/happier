@@ -47,6 +47,7 @@ export function UsageFilterBar(
   }>,
 ) {
   const { page } = props;
+  const shownMetric = props.metric ?? 'tokens';
   const phone = useDeviceType() === 'phone';
   // Scopes fold into the one Filters chooser only on a phone; a desktop keeps one chip per scope and wraps
   // Tokens/Cost and the cost basis onto the trailing edge of a second row when the column is narrow (lab d2filter).
@@ -196,7 +197,7 @@ export function UsageFilterBar(
           <SegmentedTabBar
             testIDPrefix={`${props.testID}.metric`}
             tabs={metricTabs}
-            activeTabId={props.metric ?? 'tokens'}
+            activeTabId={shownMetric}
             onSelectTab={props.onMetricChange}
             segmentSizing="content"
             accessibilityLabel={t('usage.board.page.metricLabel')}

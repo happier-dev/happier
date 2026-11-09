@@ -311,6 +311,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Fes servir un testimoni d’accés personal per a l’equip o projecte seleccionat. Les sandboxes també necessiten accés al pla de l’equip.",
     "machineVercel.vcpus": "CPU virtuals",
     "managedPurpose.anthropic.title": "Compte o grup de Claude",
+    "managedPurpose.gemini.title": "Compte o grup amb clau d’API de Gemini",
+    "managedPurpose.meta.title": "Compte de Muse o grup",
     "managedPurpose.openai.title": "Compte o grup de ChatGPT",
     "plugins.appContext.annotation.note": "La teva nota",
     "plugins.appContext.annotation.refused": "Ara no es pot desar aquesta nota; es conserva aquí. Si estàs editant un missatge pendent, acaba primer.",
@@ -3620,6 +3622,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.findSession": "Cerca una sessió…",
     "plugins.triage.surface.actions.form.create": "Acció nova",
     "plugins.triage.surface.actions.form.update": "Edita l’acció",
+    "plugins.triage.surface.actions.investigateRun": "Investiga aquesta execució",
     "plugins.triage.surface.actions.loading": "S'estan carregant les accions…",
     "plugins.triage.surface.actions.moveDown": "Baixa",
     "plugins.triage.surface.actions.moveUp": "Puja",
@@ -3649,6 +3652,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.subject.issue": "Incidències",
     "plugins.triage.surface.actions.subject.other": "Tota la resta",
     "plugins.triage.surface.actions.subject.pullRequest": "Pull requests",
+    "plugins.triage.surface.actions.subject.workflowRun": "Execucions de fluxos de treball",
     "plugins.triage.surface.actions.title": "Accions",
     "plugins.triage.surface.actions.unavailable": "Happier no pot accedir al teu compte ara mateix, així que les accions no es poden canviar.",
     "plugins.triage.surface.actions.unknown": "Aquesta acció ja no existeix. Es mostren les accions que tens ara.",
@@ -4716,6 +4720,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Verwende einen persönlichen Zugriffstoken für das gewählte Team oder Projekt. Sandboxes benötigen außerdem Zugriff auf den Teamtarif.",
     "machineVercel.vcpus": "Virtuelle CPUs",
     "managedPurpose.anthropic.title": "Claude-Konto oder Pool",
+    "managedPurpose.gemini.title": "Gemini-API-Schlüssel-Konto oder Pool",
+    "managedPurpose.meta.title": "Muse-Konto oder Pool",
     "managedPurpose.openai.title": "ChatGPT-Konto oder Pool",
     "plugins.appContext.annotation.note": "Deine Notiz",
     "plugins.appContext.annotation.refused": "Die Notiz kann gerade nicht gespeichert werden – sie bleibt hier erhalten. Wenn du eine wartende Nachricht bearbeitest, schließ das zuerst ab.",
@@ -8025,6 +8031,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.findSession": "Session suchen…",
     "plugins.triage.surface.actions.form.create": "Neue Aktion",
     "plugins.triage.surface.actions.form.update": "Aktion bearbeiten",
+    "plugins.triage.surface.actions.investigateRun": "Diese Ausführung untersuchen",
     "plugins.triage.surface.actions.loading": "Aktionen werden geladen …",
     "plugins.triage.surface.actions.moveDown": "Nach unten",
     "plugins.triage.surface.actions.moveUp": "Nach oben",
@@ -8054,6 +8061,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.subject.issue": "Issues",
     "plugins.triage.surface.actions.subject.other": "Alles andere",
     "plugins.triage.surface.actions.subject.pullRequest": "Pull Requests",
+    "plugins.triage.surface.actions.subject.workflowRun": "Workflow-Ausführungen",
     "plugins.triage.surface.actions.title": "Aktionen",
     "plugins.triage.surface.actions.unavailable": "Happier kann dein Konto gerade nicht erreichen. Aktionen können daher nicht geändert werden.",
     "plugins.triage.surface.actions.unknown": "Diese Aktion existiert nicht mehr. Die aktuellen Aktionen werden angezeigt.",
@@ -9109,6 +9117,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.description": "Sandboxes that keep their files between runs.",
     "machineVercel.image": "Image",
     "machineVercel.kind": "sandbox",
+    "machineVercel.nativeCredentialConfirmBody": "The selected credential key may be disclosed to Vercel’s control plane, separate from the provisioning token. Vercel keeps the key outside the guest, but the source custodian and Vercel remain trusted. Installed requests bypass Happier’s per-request authorization, body/model policy and request, token or cost limits. Vendor matchers narrow key substitution; they do not inspect model JSON or deny unmatched requests. Configure budgets and key restrictions at the Gateway/vendor; coverage is not verified here. Installed rules may continue while the controller is offline, when changes and removal cannot be guaranteed. Upstream key rotation or revocation is the independent hard stop; previously disclosed bytes cannot be recalled. Attribution is observational, not authenticated member identity or chargeback. Members sharing an OS user can read and reuse each other’s placeholders; these are not private between members.",
+    "machineVercel.nativeCredentialConfirmTitle": "Apply Vercel credential delivery?",
     "machineVercel.projectId": "Project ID",
     "machineVercel.projectIdDescription": "Required for sandboxes and project-scoped tokens. Find it in Vercel, under Project settings.",
     "machineVercel.region": "Region",
@@ -9123,6 +9133,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Use a personal access token for the selected team or project. Sandboxes also require team plan access.",
     "machineVercel.vcpus": "vCPUs",
     "managedPurpose.anthropic.title": "Claude account or pool",
+    "managedPurpose.gemini.title": "Gemini API key account or pool",
+    "managedPurpose.meta.title": "Muse account or pool",
     "managedPurpose.openai.title": "ChatGPT account or pool",
     "plugins.appContext.annotation.note": "Your note",
     "plugins.appContext.annotation.refused": "This note can’t be saved right now — it’s kept here. If you’re editing a queued message, finish that first.",
@@ -12432,6 +12444,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.findSession": "Find a Session…",
     "plugins.triage.surface.actions.form.create": "New action",
     "plugins.triage.surface.actions.form.update": "Edit action",
+    "plugins.triage.surface.actions.investigateRun": "Investigate this Run",
     "plugins.triage.surface.actions.loading": "Loading actions…",
     "plugins.triage.surface.actions.moveDown": "Move down",
     "plugins.triage.surface.actions.moveUp": "Move up",
@@ -12461,6 +12474,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.subject.issue": "Issues",
     "plugins.triage.surface.actions.subject.other": "Everything else",
     "plugins.triage.surface.actions.subject.pullRequest": "Pull requests",
+    "plugins.triage.surface.actions.subject.workflowRun": "Workflow Runs",
     "plugins.triage.surface.actions.title": "Actions",
     "plugins.triage.surface.actions.unavailable": "Happier cannot reach your account right now, so actions cannot be changed.",
     "plugins.triage.surface.actions.unknown": "That action no longer exists. Showing the actions you have now.",
@@ -13535,6 +13549,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Usa un token de acceso personal para el equipo o proyecto seleccionado. Los sandboxes también necesitan acceso al plan del equipo.",
     "machineVercel.vcpus": "CPU virtuales",
     "managedPurpose.anthropic.title": "Cuenta o grupo de Claude",
+    "managedPurpose.gemini.title": "Cuenta o grupo con clave de API de Gemini",
+    "managedPurpose.meta.title": "Cuenta de Muse o grupo",
     "managedPurpose.openai.title": "Cuenta o grupo de ChatGPT",
     "plugins.appContext.annotation.note": "Tu nota",
     "plugins.appContext.annotation.refused": "Ahora no se puede guardar esta nota; se conserva aquí. Si estás editando un mensaje pendiente, termina primero.",
@@ -16844,6 +16860,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.findSession": "Buscar una sesión…",
     "plugins.triage.surface.actions.form.create": "Nueva acción",
     "plugins.triage.surface.actions.form.update": "Editar acción",
+    "plugins.triage.surface.actions.investigateRun": "Investigar esta ejecución",
     "plugins.triage.surface.actions.loading": "Cargando acciones…",
     "plugins.triage.surface.actions.moveDown": "Bajar",
     "plugins.triage.surface.actions.moveUp": "Subir",
@@ -16873,6 +16890,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.subject.issue": "Incidencias",
     "plugins.triage.surface.actions.subject.other": "Todo lo demás",
     "plugins.triage.surface.actions.subject.pullRequest": "Pull requests",
+    "plugins.triage.surface.actions.subject.workflowRun": "Ejecuciones de flujos de trabajo",
     "plugins.triage.surface.actions.title": "Acciones",
     "plugins.triage.surface.actions.unavailable": "Happier no puede acceder a tu cuenta ahora mismo, así que no se pueden cambiar las acciones.",
     "plugins.triage.surface.actions.unknown": "Esa acción ya no existe. Mostrando las acciones que tienes ahora.",
@@ -17940,6 +17958,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Utilisez un jeton d’accès personnel pour l’équipe ou le projet choisi. Les sandboxes nécessitent aussi l’accès au forfait de l’équipe.",
     "machineVercel.vcpus": "Processeurs virtuels",
     "managedPurpose.anthropic.title": "Compte ou groupe Claude",
+    "managedPurpose.gemini.title": "Compte ou pool avec clé API Gemini",
+    "managedPurpose.meta.title": "Compte Muse ou pool",
     "managedPurpose.openai.title": "Compte ou groupe ChatGPT",
     "plugins.appContext.annotation.note": "Votre note",
     "plugins.appContext.annotation.refused": "Cette note ne peut pas être enregistrée pour l’instant — elle est conservée ici. Si vous modifiez un message en attente, terminez d’abord.",
@@ -21249,6 +21269,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.findSession": "Trouver une session…",
     "plugins.triage.surface.actions.form.create": "Nouvelle action",
     "plugins.triage.surface.actions.form.update": "Modifier l’action",
+    "plugins.triage.surface.actions.investigateRun": "Examiner cette exécution",
     "plugins.triage.surface.actions.loading": "Chargement des actions…",
     "plugins.triage.surface.actions.moveDown": "Descendre",
     "plugins.triage.surface.actions.moveUp": "Monter",
@@ -21278,6 +21299,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.subject.issue": "Tickets",
     "plugins.triage.surface.actions.subject.other": "Tout le reste",
     "plugins.triage.surface.actions.subject.pullRequest": "Pull requests",
+    "plugins.triage.surface.actions.subject.workflowRun": "Exécutions de workflows",
     "plugins.triage.surface.actions.title": "Actions",
     "plugins.triage.surface.actions.unavailable": "Happier ne peut pas joindre ton compte pour l’instant, les actions ne peuvent donc pas être modifiées.",
     "plugins.triage.surface.actions.unknown": "Cette action n’existe plus. Voici les actions que tu as maintenant.",
@@ -22345,6 +22367,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Usa un token di accesso personale per il team o progetto selezionato. Le sandbox richiedono anche l’accesso al piano del team.",
     "machineVercel.vcpus": "CPU virtuali",
     "managedPurpose.anthropic.title": "Account o pool Claude",
+    "managedPurpose.gemini.title": "Account o pool con chiave API Gemini",
+    "managedPurpose.meta.title": "Account Muse o pool",
     "managedPurpose.openai.title": "Account o pool ChatGPT",
     "plugins.appContext.annotation.note": "La tua nota",
     "plugins.appContext.annotation.refused": "Al momento non è possibile salvare la nota: resta qui. Se stai modificando un messaggio in attesa, termina prima.",
@@ -25654,6 +25678,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.findSession": "Trova una sessione…",
     "plugins.triage.surface.actions.form.create": "Nuova azione",
     "plugins.triage.surface.actions.form.update": "Modifica azione",
+    "plugins.triage.surface.actions.investigateRun": "Analizza questa esecuzione",
     "plugins.triage.surface.actions.loading": "Caricamento delle azioni…",
     "plugins.triage.surface.actions.moveDown": "Sposta giù",
     "plugins.triage.surface.actions.moveUp": "Sposta su",
@@ -25683,6 +25708,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.subject.issue": "Segnalazioni",
     "plugins.triage.surface.actions.subject.other": "Tutto il resto",
     "plugins.triage.surface.actions.subject.pullRequest": "Pull request",
+    "plugins.triage.surface.actions.subject.workflowRun": "Esecuzioni dei flussi di lavoro",
     "plugins.triage.surface.actions.title": "Azioni",
     "plugins.triage.surface.actions.unavailable": "Happier non riesce a raggiungere il tuo account in questo momento, quindi le azioni non possono essere modificate.",
     "plugins.triage.surface.actions.unknown": "Quell’azione non esiste più. Ecco le azioni che hai ora.",
@@ -26750,6 +26776,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "選択したチームまたはプロジェクトの個人アクセストークンを使用してください。サンドボックスにはチームのプランを読み取る権限も必要です。",
     "machineVercel.vcpus": "仮想 CPU 数",
     "managedPurpose.anthropic.title": "Claude アカウントまたはプール",
+    "managedPurpose.gemini.title": "Gemini API キーのアカウントまたはプール",
+    "managedPurpose.meta.title": "Muse アカウントまたはプール",
     "managedPurpose.openai.title": "ChatGPT アカウントまたはプール",
     "plugins.appContext.annotation.note": "メモ",
     "plugins.appContext.annotation.refused": "今はこのメモを保存できません。内容はここに残っています。保留中のメッセージを編集中の場合は、先に編集を終えてください。",
@@ -30059,6 +30087,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.findSession": "セッションを検索…",
     "plugins.triage.surface.actions.form.create": "新しいアクション",
     "plugins.triage.surface.actions.form.update": "アクションを編集",
+    "plugins.triage.surface.actions.investigateRun": "この実行を調査",
     "plugins.triage.surface.actions.loading": "操作を読み込んでいます…",
     "plugins.triage.surface.actions.moveDown": "下へ",
     "plugins.triage.surface.actions.moveUp": "上へ",
@@ -30088,6 +30117,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.subject.issue": "イシュー",
     "plugins.triage.surface.actions.subject.other": "その他すべて",
     "plugins.triage.surface.actions.subject.pullRequest": "プルリクエスト",
+    "plugins.triage.surface.actions.subject.workflowRun": "ワークフローの実行",
     "plugins.triage.surface.actions.title": "アクション",
     "plugins.triage.surface.actions.unavailable": "Happier は現在アカウントに接続できないため、アクションを変更できません。",
     "plugins.triage.surface.actions.unknown": "そのアクションはもう存在しません。現在のアクションを表示しています。",
@@ -31155,6 +31185,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Użyj osobistego tokenu dostępu dla wybranego zespołu lub projektu. Piaskownice wymagają też dostępu do planu zespołu.",
     "machineVercel.vcpus": "Wirtualne procesory",
     "managedPurpose.anthropic.title": "Konto lub pula Claude",
+    "managedPurpose.gemini.title": "Konto lub pula kluczy API Gemini",
+    "managedPurpose.meta.title": "Konto Muse lub pula",
     "managedPurpose.openai.title": "Konto lub pula ChatGPT",
     "plugins.appContext.annotation.note": "Twoja notatka",
     "plugins.appContext.annotation.refused": "Nie można teraz zapisać tej notatki — zostaje tutaj. Jeśli edytujesz oczekującą wiadomość, najpierw ją zakończ.",
@@ -34464,6 +34496,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.findSession": "Znajdź sesję…",
     "plugins.triage.surface.actions.form.create": "Nowa akcja",
     "plugins.triage.surface.actions.form.update": "Edytuj akcję",
+    "plugins.triage.surface.actions.investigateRun": "Zbadaj to uruchomienie",
     "plugins.triage.surface.actions.loading": "Wczytywanie akcji…",
     "plugins.triage.surface.actions.moveDown": "W dół",
     "plugins.triage.surface.actions.moveUp": "W górę",
@@ -34493,6 +34526,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.subject.issue": "Zgłoszenia",
     "plugins.triage.surface.actions.subject.other": "Wszystko inne",
     "plugins.triage.surface.actions.subject.pullRequest": "Pull requesty",
+    "plugins.triage.surface.actions.subject.workflowRun": "Uruchomienia przepływów pracy",
     "plugins.triage.surface.actions.title": "Akcje",
     "plugins.triage.surface.actions.unavailable": "Happier nie może teraz połączyć się z Twoim kontem, więc akcji nie można zmienić.",
     "plugins.triage.surface.actions.unknown": "Ta akcja już nie istnieje. Pokazujemy akcje, które masz teraz.",
@@ -35560,6 +35594,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Use um token de acesso pessoal para a equipe ou projeto selecionado. Os sandboxes também precisam de acesso ao plano da equipe.",
     "machineVercel.vcpus": "CPUs virtuais",
     "managedPurpose.anthropic.title": "Conta ou grupo do Claude",
+    "managedPurpose.gemini.title": "Conta ou grupo com chave de API Gemini",
+    "managedPurpose.meta.title": "Conta Muse ou grupo",
     "managedPurpose.openai.title": "Conta ou grupo do ChatGPT",
     "plugins.appContext.annotation.note": "Sua nota",
     "plugins.appContext.annotation.refused": "Não é possível salvar esta nota agora; ela fica guardada aqui. Se você estiver editando uma mensagem pendente, termine primeiro.",
@@ -38869,6 +38905,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.findSession": "Encontrar uma sessão…",
     "plugins.triage.surface.actions.form.create": "Nova ação",
     "plugins.triage.surface.actions.form.update": "Editar ação",
+    "plugins.triage.surface.actions.investigateRun": "Investigar esta execução",
     "plugins.triage.surface.actions.loading": "Carregando ações…",
     "plugins.triage.surface.actions.moveDown": "Descer",
     "plugins.triage.surface.actions.moveUp": "Subir",
@@ -38898,6 +38935,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.subject.issue": "Problemas",
     "plugins.triage.surface.actions.subject.other": "Tudo o resto",
     "plugins.triage.surface.actions.subject.pullRequest": "Pull requests",
+    "plugins.triage.surface.actions.subject.workflowRun": "Execuções de fluxos de trabalho",
     "plugins.triage.surface.actions.title": "Ações",
     "plugins.triage.surface.actions.unavailable": "O Happier não consegue aceder à sua conta neste momento, por isso as ações não podem ser alteradas.",
     "plugins.triage.surface.actions.unknown": "Essa ação já não existe. A mostrar as ações que tem agora.",
@@ -39965,6 +40003,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Используйте персональный токен доступа для выбранной команды или проекта. Песочницам также нужен доступ к тарифу команды.",
     "machineVercel.vcpus": "Виртуальные процессоры",
     "managedPurpose.anthropic.title": "Учётная запись или пул Claude",
+    "managedPurpose.gemini.title": "Аккаунт или пул с API-ключом Gemini",
+    "managedPurpose.meta.title": "Аккаунт Muse или пул",
     "managedPurpose.openai.title": "Учётная запись или пул ChatGPT",
     "plugins.appContext.annotation.note": "Ваша заметка",
     "plugins.appContext.annotation.refused": "Сейчас не удаётся сохранить заметку — она остаётся здесь. Если вы редактируете ожидающее сообщение, сначала завершите это.",
@@ -43274,6 +43314,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.findSession": "Найти сессию…",
     "plugins.triage.surface.actions.form.create": "Новое действие",
     "plugins.triage.surface.actions.form.update": "Изменить действие",
+    "plugins.triage.surface.actions.investigateRun": "Исследовать этот запуск",
     "plugins.triage.surface.actions.loading": "Загрузка действий…",
     "plugins.triage.surface.actions.moveDown": "Ниже",
     "plugins.triage.surface.actions.moveUp": "Выше",
@@ -43303,6 +43344,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.subject.issue": "Задачи",
     "plugins.triage.surface.actions.subject.other": "Всё остальное",
     "plugins.triage.surface.actions.subject.pullRequest": "Пул-реквесты",
+    "plugins.triage.surface.actions.subject.workflowRun": "Запуски рабочих процессов",
     "plugins.triage.surface.actions.title": "Действия",
     "plugins.triage.surface.actions.unavailable": "Happier сейчас не может связаться с вашим аккаунтом, поэтому действия нельзя изменить.",
     "plugins.triage.surface.actions.unknown": "Этого действия больше нет. Показаны действия, которые есть сейчас.",
@@ -44370,6 +44412,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "使用所选团队或项目的个人访问令牌。沙盒还需要团队套餐的读取权限。",
     "machineVercel.vcpus": "虚拟 CPU 数",
     "managedPurpose.anthropic.title": "Claude 帐户或帐户池",
+    "managedPurpose.gemini.title": "Gemini API 密钥账户或账户池",
+    "managedPurpose.meta.title": "Muse 账户或池",
     "managedPurpose.openai.title": "ChatGPT 帐户或帐户池",
     "plugins.appContext.annotation.note": "你的备注",
     "plugins.appContext.annotation.refused": "暂时无法保存此备注，内容仍保留在这里。如果你正在编辑待发送的消息，请先完成编辑。",
@@ -47679,6 +47723,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.findSession": "查找会话…",
     "plugins.triage.surface.actions.form.create": "新建操作",
     "plugins.triage.surface.actions.form.update": "编辑操作",
+    "plugins.triage.surface.actions.investigateRun": "调查此运行",
     "plugins.triage.surface.actions.loading": "正在加载操作…",
     "plugins.triage.surface.actions.moveDown": "下移",
     "plugins.triage.surface.actions.moveUp": "上移",
@@ -47708,6 +47753,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.subject.issue": "议题",
     "plugins.triage.surface.actions.subject.other": "其他所有",
     "plugins.triage.surface.actions.subject.pullRequest": "拉取请求",
+    "plugins.triage.surface.actions.subject.workflowRun": "工作流运行",
     "plugins.triage.surface.actions.title": "操作",
     "plugins.triage.surface.actions.unavailable": "Happier 现在无法访问你的账户，因此无法更改操作。",
     "plugins.triage.surface.actions.unknown": "该操作已不存在。显示你现在拥有的操作。",
@@ -48775,6 +48821,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "使用所選團隊或專案的個人存取權杖。沙盒還需要團隊方案的讀取權限。",
     "machineVercel.vcpus": "虛擬 CPU 數",
     "managedPurpose.anthropic.title": "Claude 帳戶或帳戶集區",
+    "managedPurpose.gemini.title": "Gemini API 金鑰帳戶或帳戶池",
+    "managedPurpose.meta.title": "Muse 帳戶或集區",
     "managedPurpose.openai.title": "ChatGPT 帳戶或帳戶集區",
     "plugins.appContext.annotation.note": "你的備註",
     "plugins.appContext.annotation.refused": "暫時無法儲存此備註，內容仍保留在這裡。如果你正在編輯待傳送的訊息，請先完成編輯。",
@@ -52084,6 +52132,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.findSession": "尋找工作階段…",
     "plugins.triage.surface.actions.form.create": "新增操作",
     "plugins.triage.surface.actions.form.update": "編輯操作",
+    "plugins.triage.surface.actions.investigateRun": "調查此執行",
     "plugins.triage.surface.actions.loading": "正在載入操作…",
     "plugins.triage.surface.actions.moveDown": "下移",
     "plugins.triage.surface.actions.moveUp": "上移",
@@ -52113,6 +52162,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.surface.actions.subject.issue": "議題",
     "plugins.triage.surface.actions.subject.other": "其他所有",
     "plugins.triage.surface.actions.subject.pullRequest": "拉取請求",
+    "plugins.triage.surface.actions.subject.workflowRun": "工作流程執行",
     "plugins.triage.surface.actions.title": "操作",
     "plugins.triage.surface.actions.unavailable": "Happier 目前無法存取你的帳戶，因此無法變更操作。",
     "plugins.triage.surface.actions.unknown": "該操作已不存在。顯示你現在擁有的操作。",
@@ -53170,6 +53220,8 @@ export type BundledPluginTranslationKey =
     | 'machineVercel.description'
     | 'machineVercel.image'
     | 'machineVercel.kind'
+    | 'machineVercel.nativeCredentialConfirmBody'
+    | 'machineVercel.nativeCredentialConfirmTitle'
     | 'machineVercel.projectId'
     | 'machineVercel.projectIdDescription'
     | 'machineVercel.region'
@@ -53184,6 +53236,8 @@ export type BundledPluginTranslationKey =
     | 'machineVercel.tokenDescription'
     | 'machineVercel.vcpus'
     | 'managedPurpose.anthropic.title'
+    | 'managedPurpose.gemini.title'
+    | 'managedPurpose.meta.title'
     | 'managedPurpose.openai.title'
     | 'plugins.appContext.annotation.note'
     | 'plugins.appContext.annotation.refused'
@@ -56493,6 +56547,7 @@ export type BundledPluginTranslationKey =
     | 'plugins.triage.surface.actions.findSession'
     | 'plugins.triage.surface.actions.form.create'
     | 'plugins.triage.surface.actions.form.update'
+    | 'plugins.triage.surface.actions.investigateRun'
     | 'plugins.triage.surface.actions.loading'
     | 'plugins.triage.surface.actions.moveDown'
     | 'plugins.triage.surface.actions.moveUp'
@@ -56522,6 +56577,7 @@ export type BundledPluginTranslationKey =
     | 'plugins.triage.surface.actions.subject.issue'
     | 'plugins.triage.surface.actions.subject.other'
     | 'plugins.triage.surface.actions.subject.pullRequest'
+    | 'plugins.triage.surface.actions.subject.workflowRun'
     | 'plugins.triage.surface.actions.title'
     | 'plugins.triage.surface.actions.unavailable'
     | 'plugins.triage.surface.actions.unknown'

@@ -100,7 +100,6 @@ export function useUsageWork(
     ...(summary?.projects ?? []).flatMap(row => row.machineIds).concat((summary?.sessions ?? []).flatMap(row => row.machineIds))
       .filter(id => !machines.some(machine => machine.id === id)).map(id => ({ id, absence: 'unlisted' as const }))])), [summary]));
   const machineNames = React.useMemo(() => new Map(Object.entries(selectedMachineNames)), [selectedMachineNames]);
-  const machineWords = React.useCallback((ids: readonly string[]) => ids.map(id => machineNames.get(id) ?? id).join(', '), [machineNames]);
   // A row names where it ran by the machine's own name; the suffix that tells two same-named machines apart stays out of a line about a project.
   const selectedOwnMachineNames = useAllMachines(React.useCallback(machines => Object.fromEntries(machines.map(machine => [machine.id, getMachineDisplayName(machine)])), []));
   const machinePlace = React.useCallback((ids: readonly string[]) => {
@@ -131,9 +130,9 @@ export function useUsageWork(
       if (!isSessionVisible({ sessionId: row.sessionId, serverId }) || counts.get(label)! < 2) return [row.sessionId, label] as const;
       const when = row.lastObservedAtMs > 0 ? formatUsageCalendarDate(row.lastObservedAtMs, query.timeZoneOffsetMinutes ?? 0,
         { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
-      return [row.sessionId, [label, when, machineWords(row.machineIds)].filter(Boolean).join(' · ')] as const;
+      return [row.sessionId, [label, when, machinePlace(row.machineIds)].filter(Boolean).join(' · ')] as const;
     }));
-  }, [summary, renderables, serverId, machineWords, query.timeZoneOffsetMinutes, isSessionVisible]);
+  }, [summary, renderables, serverId, machinePlace, query.timeZoneOffsetMinutes, isSessionVisible]);
   const sessionLabel = React.useCallback(
     (sessionId: string) => !isSessionVisible({ sessionId, serverId }) ? t('session.untitled')
       : displaySessionLabels.get(sessionId)

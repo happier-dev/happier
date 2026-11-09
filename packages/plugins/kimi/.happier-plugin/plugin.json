@@ -6,6 +6,24 @@
     "agents": [
       {
         "capabilities": {
+          "providerStateSharing": {
+            "config": {
+              "modes": [
+                "linked",
+                "copied",
+                "isolated"
+              ],
+              "supported": true
+            },
+            "state": {
+              "modes": [
+                "isolated",
+                "shared"
+              ],
+              "sharedStatePrivacyRiskAcknowledgementRequired": true,
+              "supported": true
+            }
+          },
           "sessions": {
             "cancel": true,
             "configuration": true,
@@ -153,6 +171,21 @@
             }
           }
         },
+        "connectedAccounts": [
+          {
+            "credentialKinds": [
+              "oauth",
+              "token"
+            ],
+            "materializationKinds": [
+              "files",
+              "environment"
+            ],
+            "purpose": "primary",
+            "required": false,
+            "service": "kimi-code"
+          }
+        ],
         "description": {
           "fallback": "Kimi coding agent (experimental)",
           "key": "profiles.aiBackend.kimiSubtitleExperimental"
@@ -161,6 +194,11 @@
         "primary": "sessions",
         "runtime": {
           "kind": "custom"
+        },
+        "sessionModeDescriptor": {
+          "runtimeSwitch": "acp-setSessionMode",
+          "semantics": "agent-modes",
+          "source": "acp"
         },
         "surfaces": {
           "externalSession": {
@@ -220,7 +258,127 @@
     "composerControls": [],
     "composerReferences": [],
     "composerRegions": [],
-    "connectedAccountDescriptors": [],
+    "connectedAccountDescriptors": [
+      {
+        "authentication": {
+          "account": {
+            "artifactId": "connected-account-authentication",
+            "exportName": "activate"
+          },
+          "defaultModeId": "device",
+          "modes": [
+            {
+              "browserReachability": "unreachable",
+              "configuration": {
+                "changeBehavior": "reconnect",
+                "fields": [
+                  {
+                    "default": "cn",
+                    "id": "region",
+                    "required": true,
+                    "schema": {
+                      "enum": [
+                        "cn",
+                        "global"
+                      ],
+                      "type": "string"
+                    },
+                    "secret": false,
+                    "title": "Kimi region"
+                  }
+                ],
+                "scope": "account"
+              },
+              "id": "device",
+              "kind": "oauthDeviceCode",
+              "outcomeReconciliation": "none",
+              "scopes": [],
+              "title": "Kimi Code subscription"
+            },
+            {
+              "apiKey": true,
+              "configuration": {
+                "changeBehavior": "reconnect",
+                "fields": [
+                  {
+                    "default": "cn",
+                    "id": "region",
+                    "required": true,
+                    "schema": {
+                      "enum": [
+                        "cn",
+                        "global"
+                      ],
+                      "type": "string"
+                    },
+                    "secret": false,
+                    "title": "Kimi region"
+                  },
+                  {
+                    "default": "code",
+                    "id": "apiKind",
+                    "required": true,
+                    "schema": {
+                      "enum": [
+                        "code",
+                        "platform"
+                      ],
+                      "type": "string"
+                    },
+                    "secret": false,
+                    "title": "API"
+                  }
+                ],
+                "scope": "account"
+              },
+              "credentialOrigin": "authentication",
+              "fields": [
+                {
+                  "id": "token",
+                  "schema": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "secret": true,
+                  "title": "API key"
+                }
+              ],
+              "id": "api-key",
+              "kind": "manual",
+              "outcomeReconciliation": "none",
+              "title": "Kimi API key"
+            },
+            {
+              "browserReachability": "unreachable",
+              "credentialOrigin": "native_import",
+              "fields": [
+                {
+                  "default": "native",
+                  "id": "source",
+                  "schema": {
+                    "enum": [
+                      "native"
+                    ],
+                    "type": "string"
+                  },
+                  "secret": false,
+                  "title": "Source"
+                }
+              ],
+              "id": "native-import",
+              "kind": "manual",
+              "outcomeReconciliation": "none",
+              "title": "Import Node Kimi login"
+            }
+          ],
+          "native": {
+            "systemTool": "kimi-cli"
+          }
+        },
+        "id": "kimi-code",
+        "title": "Kimi Code"
+      }
+    ],
     "daemonDatabases": [],
     "deploymentTargets": [],
     "dragSources": [],
@@ -473,10 +631,56 @@
         "id": "kimi-process",
         "reason": "Run the declared Kimi CLI executable.",
         "scope": {
+          "envKeys": [
+            "KIMI_CODE_HOME",
+            "HAPPIER_KIMI_ACCESS_TOKEN",
+            "KIMI_CODE_BASE_URL",
+            "KIMI_CODE_OAUTH_HOST",
+            "KIMI_OAUTH_HOST",
+            "KIMI_API_KEY",
+            "MOONSHOT_API_KEY"
+          ],
           "executables": [
             {
               "id": "kimi-cli",
               "kind": "systemTool"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "network",
+        "id": "kimi-account-network",
+        "reason": "Connect the selected Kimi account and read its models, identity and usage.",
+        "scope": {
+          "methods": [
+            "GET",
+            "POST"
+          ],
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://auth.kimi.com"
+            },
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://auth.kimi.ai"
+            },
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://api.kimi.com"
+            },
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://api.kimi.ai"
+            },
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://api.moonshot.cn"
+            },
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://api.moonshot.ai"
             }
           ]
         }
