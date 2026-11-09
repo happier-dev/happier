@@ -8,6 +8,7 @@ import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindi
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
 import { useVoiceSurfaceConversationState } from './useVoiceSurfaceConversationState';
+import { observeStorageSubscriptionDeliveries } from '@/dev/testkit/performance/storageSubscriptionCensus';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -80,6 +81,7 @@ afterEach(() => {
 describe('useVoiceSurfaceConversationState message-store subscription', () => {
     it('does not re-render on message writes to unrelated sessions', async () => {
         let renders = 0;
+        const delivery = observeStorageSubscriptionDeliveries();
 
         const hook = await renderHook(() => {
             renders += 1;
@@ -95,6 +97,7 @@ describe('useVoiceSurfaceConversationState message-store subscription', () => {
         expect(hook.getCurrent().openConversationSessionId).toBe(BOUND_CONVERSATION_SESSION_ID);
         expect(hook.getCurrent().transcriptEntries).toHaveLength(1);
         const rendersAfterMount = renders;
+        delivery.reset();
 
         for (let index = 0; index < 5; index += 1) {
             await act(async () => {
@@ -103,9 +106,17 @@ describe('useVoiceSurfaceConversationState message-store subscription', () => {
         }
 
         expect(renders - rendersAfterMount).toBe(0);
+        expect(delivery.count).toBe(0);
         expect(hook.getCurrent().transcriptEntries).toHaveLength(1);
 
+        await act(async () => { getStorage().setState(state => ({ sessionMessages: {
+            ...state.sessionMessages, [BOUND_CONVERSATION_SESSION_ID]: conversationMessages(1, 2),
+        } })); });
+        expect(delivery.count).toBeGreaterThan(0);
+        expect(hook.getCurrent().transcriptEntries).toHaveLength(2);
+
         await hook.unmount();
+        delivery.restore();
     });
 
     it('still observes writes to the bound conversation', async () => {

@@ -9,6 +9,7 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 import { registerVoiceAdapters } from '@/voice/session/voiceAdapterRegistry';
 import type { VoiceAdapterController } from '@/voice/session/types';
 import { useVoiceSurfaceConversationState } from './useVoiceSurfaceConversationState';
+import { observeStorageSubscriptionDeliveries } from '@/dev/testkit/performance/storageSubscriptionCensus';
 
 const PROVIDER_ID = 'happier.voice.elevenlabs/realtime-elevenlabs';
 const CONVERSATION_ID = 'carrier-s1';
@@ -89,16 +90,23 @@ describe('useVoiceSurfaceConversationState transcript gating (L10.T4)', () => {
 
     it('ignores sessionMessages changes while the feed is disabled (no re-projection)', async () => {
         let renders = 0;
-        const hook = await renderHook(() => { renders += 1; return surface(false); });
+        const delivery = observeStorageSubscriptionDeliveries();
+        const hook = await renderHook(({ enabled }) => { renders += 1; return surface(enabled); }, { initialProps: { enabled: false } });
         const before = hook.getCurrent();
         const rendersBeforeWrite = renders;
+        delivery.reset();
         await act(async () => {
             getStorage().setState({ sessionMessages: { [CONVERSATION_ID]: messages('hello', 'world') } });
         });
 
         expect(renders).toBe(rendersBeforeWrite);
+        expect(delivery.count).toBe(0);
         expect(hook.getCurrent().transcriptEntries).toBe(before.transcriptEntries);
         expect(hook.getCurrent().transcriptEntries).toHaveLength(0);
+        await hook.rerender({ enabled: true });
+        expect(hook.getCurrent().transcriptEntries).toHaveLength(2);
+        await hook.unmount();
+        delivery.restore();
     });
 
     it('uses a second realtime provider global control scope without host edits', async () => {

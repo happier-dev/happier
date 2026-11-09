@@ -16,6 +16,8 @@ import { readVoiceProviderConnectedServicesBinding } from '@/voice/settings/pass
 import { createVoiceSessionLifecycleController } from './voiceSessionLifecycleController';
 import {
   getVoiceSessionLifecycleController,
+  getRequestedVoiceSessionProviderId,
+  acknowledgeVoiceSessionRuntimeReady,
   setVoiceSessionLifecycleController,
 } from './voiceSessionLifecycleControllerStore';
 import {
@@ -45,7 +47,7 @@ import { useCurrentUiContextVoiceToolPort } from '@/components/appShell/currentU
 import { useForegroundVoiceTextTurnQaBridge } from '@/dev/testkit/harness/useForegroundVoiceTextTurnQaBridge';
 import { resolveAccountVoiceCredentialSourceSelection } from '@/voice/credentials/accountVoiceCredential';
 import { useVoiceExecutionMachineId } from '@/voice/credentials/useExecutionMachinePresentation';
-import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
+import { useSavedSecretReferenceResolver } from '@/components/secrets/useSavedSecretCatalog';
 import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
@@ -60,7 +62,6 @@ import { Platform } from 'react-native';
 import { resolveLocalDeviceLabel } from '@/utils/platform/resolveLocalDeviceLabel';
 import { readVoiceConversationScopeMetadata } from '@/voice/persistence/voiceConversationScopeMetadata';
 import { VoiceSetupFirstSuccessRuntime } from '@/voice/settings/setup/VoiceSetupFirstSuccessRuntime';
-import { useVoiceProviderRuntimeDemand } from './useVoiceProviderRuntimeDemand';
 import { useAppShellPluginUiDeclarationSources } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
@@ -70,10 +71,9 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
   useForegroundVoiceTextTurnQaBridge();
   const voice = useSetting('voice') as any;
   const canonicalVoiceSettings = useSetting('voiceSettingsV1');
-  const providerRuntimeDemand = useVoiceProviderRuntimeDemand();
   const declarationSources = useAppShellPluginUiDeclarationSources();
-  const savedSecretCatalog = useSavedSecretCatalog();
-  const secrets = [...savedSecretCatalog.usableSecrets];
+  // Always mounted: read only the selected credential's reference, never the Saved Secret inventory.
+  const savedSecretReferences = useSavedSecretReferenceResolver();
   const profile = useProfile(profile => ({
     connectedServicesV2: profile.connectedServicesV2,
     connectedServiceCredentialRevisionsV1: profile.connectedServiceCredentialRevisionsV1,
@@ -153,9 +153,10 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     };
     try {
       const sourceResolution = resolveAccountVoiceCredentialSourceSelection({
+        // Usable catalog material holds only shared refs, which this owner admits by format; no legacy rows apply.
         settings: {
           voiceSettingsV1: canonicalVoiceSettings,
-          secrets,
+          secrets: [],
         },
         connectedPurposes,
         contribution,
@@ -168,8 +169,7 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
       });
       const selectedSavedSecret = sourceResolution.savedSecret === null
         ? null
-        : secrets.find((candidate) => candidate.id === sourceResolution.savedSecret?.secretId)
-          ?? null;
+        : savedSecretReferences.resolve(sourceResolution.savedSecret.secretId).secret;
       return createVoiceSelectedCredentialAuthorityFingerprint({
         sourceResolution,
         selectedSavedSecret: selectedSavedSecret === null
@@ -191,7 +191,6 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     }
   })();
   const controllerRef = React.useRef<ReturnType<typeof createVoiceSessionLifecycleController> | null>(null);
-  const assemblyRef = React.useRef<ReturnType<typeof createBuiltinVoiceAdapterAssembly> | null>(null);
   const accountLifetimeRetirementRef = React.useRef<Readonly<{ dispose(): void }> | null>(null);
   const accountScopeAtLastLayoutCommitRef = React.useRef<typeof accountScope | undefined>(undefined);
   const credentialAuthorityRef = React.useRef<(VoiceCredentialRuntimeAuthoritySnapshot & Readonly<{ agentDefaultKey: string | null }>) | null>(null);
@@ -210,13 +209,13 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     const assembly = createBuiltinVoiceAdapterAssembly({
       ...(currentUiContext ? { currentUiContext } : {}),
     });
-    assemblyRef.current = assembly;
     registerVoiceAdapters(assembly.adapters);
     const continuation = createVoiceContinuationProjection();
     const controller = createVoiceSessionLifecycleController({
       retiringAttempt,
       cancelRetiringAttempt: () => retirement.abort(),
       acquireConnectivityLease: () => sync.acquireUserRequestLease(),
+      activateProvider: (id) => assembly.activateProvider(id),
       onSyncedConversationMessages: (address, messages) => {
         const observed = continuation.observe(address, messages);
         if (observed && controller.getSnapshot().sessionId === observed.controlSessionId && controller.getSnapshot().canStop) {
@@ -230,6 +229,7 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
       : null;
     controllerRef.current = controller;
     let boundCarrierSessionId: string | null = null;
+    let unsubscribeCarrier: (() => void) | undefined;
     const syncPublishedSnapshot = () => {
       const snapshot = controller.getSnapshot();
       // Persisted bindings describe other clients' control slots. Only a binding
@@ -237,7 +237,21 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
       const binding = snapshot.sessionId ? voiceConversationBindingResolver.resolveByControlSessionId({
         controlSessionId: snapshot.sessionId, adapterId: snapshot.adapterId,
       }) : null;
-      boundCarrierSessionId = binding?.conversationSessionId ?? null;
+      const nextCarrierSessionId = binding?.conversationSessionId ?? null;
+      if (nextCarrierSessionId !== boundCarrierSessionId) {
+        unsubscribeCarrier?.();
+        boundCarrierSessionId = nextCarrierSessionId;
+        // Binding changes move demand before publishing the new presentation.
+        // No bound conversation means no carrier delivery.
+        unsubscribeCarrier = nextCarrierSessionId ? storage.subscribe((state, previous) => {
+          const session = state.sessions[nextCarrierSessionId];
+          const previousSession = previous.sessions[nextCarrierSessionId];
+          if (session?.metadata === previousSession?.metadata
+            && session?.seq === previousSession?.seq
+            && session?.serverId === previousSession?.serverId) return;
+          syncPublishedSnapshot();
+        }, { sessions: [nextCarrierSessionId] }) : undefined;
+      }
       const session = binding ? storage.getState().sessions[binding.conversationSessionId] : null;
       const lifetime = captureActiveServerAccountScopeLifetime();
       const exactHome = binding && session?.serverId === binding.conversationSessionAddress.serverId
@@ -266,32 +280,21 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     };
     const unsubscribe = controller.subscribe(syncPublishedSnapshot);
     const unsubscribeBinding = voiceSessionBindingStore.subscribe(syncPublishedSnapshot);
-    // Equivalent binding refreshes are silent; scope and sequence are carrier
-    // facts. Select only the fields this publication reads from that Session.
-    const unsubscribeCarrier = storage.subscribe((state, previous) => {
-      if (!boundCarrierSessionId) return;
-      const session = state.sessions[boundCarrierSessionId];
-      const previousSession = previous.sessions[boundCarrierSessionId];
-      if (session?.metadata === previousSession?.metadata
-        && session?.seq === previousSession?.seq
-        && session?.serverId === previousSession?.serverId) return;
-      syncPublishedSnapshot();
-    });
     setVoiceSessionLifecycleController(controller);
     controller.setCurrentUiContextToolSetEnabled(currentUiContextToolSetEnabledRef.current);
     currentUiContextToolSetSyncRef.current = {
       controller,
       enabled: currentUiContextToolSetEnabledRef.current,
     };
-    controller.setConfiguredProviderId(providerId);
+    controller.setConfiguredProviderId(getRequestedVoiceSessionProviderId() ?? providerId);
     return () => {
-      if (assemblyRef.current === assembly) assemblyRef.current = null;
+      acknowledgeVoiceSessionRuntimeReady(false);
       if (currentUiContextToolSetSyncRef.current?.controller === controller) {
         currentUiContextToolSetSyncRef.current = null;
       }
       unsubscribe();
       unsubscribeBinding();
-      unsubscribeCarrier();
+      unsubscribeCarrier?.();
       nativeAudioLifecycleBridge?.dispose();
       const controllerDisposal = controller.dispose();
       void (async () => {
@@ -317,18 +320,13 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
   }, [currentUiContext]);
 
   React.useEffect(() => {
-    // Account-scoped activation belongs to AppShell's executable owner. The
-    // standalone source bridge waits for its existing declaration admission.
-    if (!declarationSources.ready || declarationSources.accountLifetime) return;
-    const assembly = assemblyRef.current;
-    if (!assembly) return;
-    for (const demandedProviderId of providerRuntimeDemand) {
-      fireAndForget(assembly.activateProvider(demandedProviderId), { tag: 'VoiceSessionRuntime.activateProvider' });
-    }
-  }, [providerRuntimeDemand, currentUiContext, declarationSources.ready, declarationSources.accountLifetime]);
+    // AppShell owns Account execution. The lifecycle admits the standalone source bridge.
+    acknowledgeVoiceSessionRuntimeReady(declarationSources.ready);
+  }, [currentUiContext, declarationSources.ready, accountScope]);
 
   React.useLayoutEffect(() => {
     const previousAccountScope = accountScopeAtLastLayoutCommitRef.current;
+    acknowledgeVoiceSessionRuntimeReady(false);
     accountScopeAtLastLayoutCommitRef.current = accountScope;
     // Capture before releasing Account A's listener: a direct Account A → B
     // capture retires A synchronously, and that exact live attempt must stop
@@ -348,6 +346,7 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     if (!lifetime) return;
 
     accountLifetimeRetirementRef.current = lifetime.onRetire(() => {
+      acknowledgeVoiceSessionRuntimeReady(false);
       controllerRef.current?.rearmAfterCredentialAuthorityChange({
         exactSessionAccountScopeChanged: true,
       });
@@ -361,7 +360,7 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
   }, []);
 
   React.useEffect(() => {
-    controllerRef.current?.setConfiguredProviderId(providerId);
+    controllerRef.current?.setConfiguredProviderId(getRequestedVoiceSessionProviderId() ?? providerId);
   }, [providerId]);
 
   React.useEffect(() => {

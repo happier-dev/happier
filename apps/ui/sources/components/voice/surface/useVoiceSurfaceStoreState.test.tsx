@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { createSessionFixture, createSessionMessagesFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import { getStorage } from '@/sync/domains/state/storage';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
+import { observeStorageSubscriptionDeliveries } from '@/dev/testkit/performance/storageSubscriptionCensus';
 
 import { useVoiceSurfaceStoreState } from './useVoiceSurfaceStoreState';
 
@@ -10,6 +12,70 @@ const initialStorageState = getStorage().getState();
 const initialBindingState = voiceSessionBindingStore.getState();
 
 describe('useVoiceSurfaceStoreState', () => {
+    it('moves leaf Session demand with its target and releases it when absent', async () => {
+        const storage = getStorage();
+        storage.setState({ sessions: {
+            first: createSessionFixture({ id: 'first' }), second: createSessionFixture({ id: 'second' }),
+        } });
+        const delivery = observeStorageSubscriptionDeliveries(paths => paths.some(path => path.length === 1 || path.length === 3));
+        const hook = await renderHook(({ sessionId }: { sessionId: string | null }) => useVoiceSurfaceStoreState({
+            activeControlSessionId: sessionId, providerId: 'local_conversation', surfaceSessionId: sessionId,
+            transcriptEnabled: false, voiceSettings: {}, voicePrivacy: { shareFilePaths: true, shareSessionSummary: true },
+        }), { initialProps: { sessionId: 'first' } });
+        const write = async (sessionId: string, seq: number) => act(async () => {
+            storage.setState(state => ({ sessions: { ...state.sessions, [sessionId]: { ...state.sessions[sessionId]!, seq } } }));
+        });
+        try {
+            await hook.rerender({ sessionId: 'second' });
+            delivery.reset();
+            await write('first', 10);
+            expect(delivery.count).toBe(0);
+            await write('second', 20);
+            expect(delivery.count).toBeGreaterThan(0);
+            expect(hook.getCurrent().activeControlSession?.seq).toBe(20);
+            expect(hook.getCurrent().currentSession?.seq).toBe(20);
+            await hook.rerender({ sessionId: null });
+            delivery.reset();
+            await write('second', 30);
+            expect(delivery.count).toBe(0);
+            expect(hook.getCurrent().currentSession).toBeNull();
+            expect(hook.getCurrent().activeControlSession).toBeNull();
+        } finally {
+            await hook.unmount();
+            delivery.restore();
+        }
+    });
+
+    it.each([true, false])('delivers only demanded Session and transcript changes (transcript enabled: %s)', async (transcriptEnabled) => {
+        const storage = getStorage();
+        storage.setState({ sessions: { surface: createSessionFixture({ id: 'surface', serverId: 'server-active' }) } });
+        // Binding discovery legitimately observes the Session collection. This
+        // census isolates the leaf selectors (including the old root bypass).
+        const delivery = observeStorageSubscriptionDeliveries(paths => paths.some(path => path.length === 1 || path.length === 3));
+        const hook = await renderHook(() => useVoiceSurfaceStoreState({
+            activeControlSessionId: null, providerId: 'local_conversation', surfaceSessionId: 'surface',
+            transcriptEnabled, voiceSettings: {}, voicePrivacy: { shareFilePaths: true, shareSessionSummary: true },
+        }));
+        try {
+            delivery.reset();
+            for (let index = 0; index < 5; index++) await act(async () => {
+                storage.setState(state => ({
+                    sessions: { ...state.sessions, unrelated: createSessionFixture({ id: 'unrelated', seq: index }) },
+                    sessionMessages: { ...state.sessionMessages, unrelated: createSessionMessagesFixture() },
+                }));
+            });
+            expect(delivery.count).toBe(0);
+            await act(async () => { storage.setState(state => ({ sessions: {
+                ...state.sessions, surface: { ...state.sessions.surface!, seq: 42 },
+            } })); });
+            expect(delivery.count).toBeGreaterThan(0);
+            expect(hook.getCurrent().currentSession?.seq).toBe(42);
+        } finally {
+            await hook.unmount();
+            delivery.restore();
+        }
+    });
+
     beforeEach(() => {
         getStorage().setState(initialStorageState, true);
         voiceSessionBindingStore.setState(initialBindingState, true);

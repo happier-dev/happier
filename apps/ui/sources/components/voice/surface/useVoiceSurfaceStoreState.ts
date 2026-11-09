@@ -2,7 +2,6 @@ import * as React from 'react';
 
 import { storage } from '@/sync/domains/state/storage';
 
-import { useStoreSnapshot } from './useStoreSnapshot';
 import { useVoiceSurfaceConversationState } from './useVoiceSurfaceConversationState';
 
 type VoiceSurfacePrivacySettings = Readonly<{
@@ -22,15 +21,15 @@ export function useVoiceSurfaceStoreState(params: Readonly<{
         typeof params.activeControlSessionId === 'string' ? params.activeControlSessionId.trim() : '';
     const surfaceSessionId = typeof params.surfaceSessionId === 'string' ? params.surfaceSessionId.trim() : '';
     const selectActiveControlSession = React.useCallback(
-        (state: any) => (activeControlSessionId ? state?.sessions?.[activeControlSessionId] ?? null : null),
+        (state: ReturnType<typeof storage.getState>) => (activeControlSessionId ? state.sessions[activeControlSessionId] ?? null : null),
         [activeControlSessionId],
     );
     const selectCurrentSession = React.useCallback(
-        (state: any) => (surfaceSessionId ? state?.sessions?.[surfaceSessionId] ?? null : null),
+        (state: ReturnType<typeof storage.getState>) => (surfaceSessionId ? state.sessions[surfaceSessionId] ?? null : null),
         [surfaceSessionId],
     );
-    const activeControlSession = useStoreSnapshot(storage as any, selectActiveControlSession);
-    const currentSession = useStoreSnapshot(storage as any, selectCurrentSession);
+    const activeControlSession = storage(selectActiveControlSession, { sessions: activeControlSessionId ? [activeControlSessionId] : [] });
+    const currentSession = storage(selectCurrentSession, { sessions: surfaceSessionId ? [surfaceSessionId] : [] });
     const {
         openConversationSessionId,
         fallbackOpenConversationControlSessionId,

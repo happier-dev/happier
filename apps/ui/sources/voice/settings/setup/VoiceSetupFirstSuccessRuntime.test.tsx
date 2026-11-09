@@ -17,6 +17,7 @@ import { VoiceAgentTurnV1Schema } from '@happier-dev/protocol/messages/structure
 import { UsageTimingBoundsV1Schema } from '@happier-dev/protocol/usage/usageWorkEvidence';
 
 import { renderScreen, waitForTestEvent } from '@/dev/testkit';
+import { observeStorageSubscriptionDeliveries } from '@/dev/testkit/performance/storageSubscriptionCensus';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
@@ -107,7 +108,8 @@ it.each([
     features.features.voice.enabled = true;
     features.features.voice.happierVoice.enabled = true;
     const machine = createPlainMachineRowFixture({ id: 'machine-1', accountId: 'completion-account' });
-    const settings = voiceSettingsParse({ providerId, providers: { [providerId]: { schemaVersion: 1, config: { billingMode: 'happier' } } } });
+    const settings = voiceSettingsParse({ providerId, executionMachine: { mode: 'fixed', machineId: machine.id },
+        providers: { [providerId]: { schemaVersion: 1, config: { billingMode: 'happier' } } } });
     let pending: z.infer<typeof pendingPostSchema> | null = null;
     let deliveryStatus: PendingDeliveryStatusV1 | null = null;
     let messageSequence = 10;
@@ -196,6 +198,8 @@ it.each([
         </>;
     }
     let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
+    const carrierDelivery = observeStorageSubscriptionDeliveries((paths, origin) =>
+        origin.includes('/voice/session/VoiceSessionRuntime.tsx') && paths.some(path => path[1] === 'sessions'));
     try {
         const session = createSessionFixture({ id: 'conversation', serverId: scope.serverId, seq: 10 });
         if (!session.metadata) throw new Error('Conversation Session metadata missing');
@@ -207,14 +211,13 @@ it.each([
         else await sync.refreshAccountSettingsFromServer(1, scope);
         setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
         screen = await renderScreen(<InjectedAuthProvider credentials={connection.credentials}><Scene /></InjectedAuthProvider>);
-        if (source === 'durable') await waitForTestEvent(getVoiceAdapterRegistry().subscribe!,
-            () => getVoiceAdapterRegistry().get(providerId), adapter => adapter !== null);
+        let starting: Promise<void> | undefined;
+        if (source === 'durable') await act(async () => { starting = voiceSessionManager.toggle(conversation); });
         await act(async () => {
             if (source === 'durable') {
+                await starting;
                 const adapter = getVoiceAdapterRegistry().get(providerId);
                 if (!adapter) throw new Error('Expected the actual provider adapter');
-                await adapter.start({ sessionId: conversation.sessionId, requestedTargetSessionAddress: conversation,
-                    initialContext: '', textOnly: true });
                 expect(adapter.getSnapshot()).toMatchObject({ status: 'connected' });
                 expect(getVoiceSessionPresentedAttemptId()).not.toBeNull();
             } else {
@@ -299,6 +302,39 @@ it.each([
         await act(async () => publish([...messages]));
         expect(events()[0]).toBe(completed[0]);
         expect(events()[1]).toBe(completed[1]);
+        if (source === 'durable' && !endBeforeReply && !replyBeforeInput) {
+            carrierDelivery.reset();
+            for (let index = 0; index < 5; index++) await act(async () => {
+                storage.setState(state => ({ sessions: { ...state.sessions,
+                    unrelated: createSessionFixture({ id: 'unrelated', serverId: scope.serverId, seq: index }),
+                } }));
+            });
+            expect(carrierDelivery.count).toBe(0);
+            const admitted = voiceSessionBindingStore.getState().getByControlSessionId(conversation.sessionId);
+            if (!admitted) throw new Error('Expected the actual mounted runtime binding');
+            const nextConversation = { serverId: scope.serverId, sessionId: 'next-conversation' };
+            await act(async () => {
+                storage.setState(state => ({ sessions: { ...state.sessions,
+                    [nextConversation.sessionId]: createSessionFixture({ id: nextConversation.sessionId, serverId: scope.serverId, seq: 20 }),
+                } }));
+                voiceSessionBindingStore.getState().bind({ ...admitted, conversationSessionId: nextConversation.sessionId,
+                    conversationSessionAddress: nextConversation, updatedAt: admitted.updatedAt + 1 });
+            });
+            const { getVoiceSessionPresentedBinding } = await import('@/voice/session/voiceSessionStore');
+            expect(getVoiceSessionPresentedBinding()?.conversationSessionAddress).toEqual(nextConversation);
+            await waitForTestEvent(storage.subscribe,
+                () => readStoredSessionMessages(storage.getState(), nextConversation.sessionId),
+                rows => rows.some(row => row.localId === transcriptWrites.at(-1)?.localId && row.realID !== undefined));
+            carrierDelivery.reset();
+            await act(async () => { storage.setState(state => ({ sessions: { ...state.sessions,
+                [conversation.sessionId]: { ...state.sessions[conversation.sessionId]!, seq: 30 },
+            } })); });
+            expect(carrierDelivery.count).toBe(0);
+            await act(async () => { storage.setState(state => ({ sessions: { ...state.sessions,
+                [nextConversation.sessionId]: { ...state.sessions[nextConversation.sessionId]!, seq: 31 },
+            } })); });
+            expect(carrierDelivery.count).toBeGreaterThan(0);
+        }
     } finally {
         const lifecycle = source === 'durable' ? getVoiceSessionLifecycleController() : null;
         await screen?.unmount();
@@ -309,6 +345,8 @@ it.each([
             conversationSessionId: conversation.sessionId, attemptIdentity: canonicalAttempt.attemptIdentity,
         });
         voiceSessionBindingStore.getState().unbind(conversation.sessionId);
+        voiceSessionBindingStore.getState().unbind('next-conversation');
+        carrierDelivery.restore();
         await resetVoiceSessionRuntimeStateForTests();
         await connection.dispose();
         locks.restore();

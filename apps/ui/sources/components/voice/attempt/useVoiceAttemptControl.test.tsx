@@ -18,6 +18,7 @@ import {
   type RenderHookResult,
 } from '@/dev/testkit';
 import { getStorage } from '@/sync/domains/state/storage';
+import { observeStorageSubscriptionDeliveries } from '@/dev/testkit/performance/storageSubscriptionCensus';
 import { renderScreen } from '@/dev/testkit';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { VOICE_SETTINGS_PROVIDER_FOCUS_TARGET } from '@/voice/settings/voiceSettingsRouteFocus';
@@ -556,6 +557,46 @@ describe('useVoiceAttemptControl start admission', () => {
       await import('@/voice/session/voiceAdapterRegistry');
     registerVoiceAdapters([]);
     getStorage().setState(initialStorageState, true);
+  });
+
+  it('does not deliver Session writes to an unbound runtime carrier', async () => {
+    const { VoiceSessionRuntime } = await import('@/voice/session/VoiceSessionRuntime');
+    const { useVoiceSetupConversationMessages } = await import('@/voice/settings/setup/useVoiceSetupItem');
+    const address = { serverId: recoveryRuntime.serverId, sessionId: 'setup-conversation' };
+    getStorage().setState(state => ({ sessions: {
+      ...state.sessions, [address.sessionId]: createSessionFixture({ id: address.sessionId, serverId: address.serverId }),
+    } }));
+    const delivery = observeStorageSubscriptionDeliveries(paths => paths.length === 1
+      && paths[0]?.[0] === 'state' && (paths[0]?.[1] === 'sessions' || paths[0]?.[1] === 'sessionMessages'));
+    const runtime = await renderScreen(React.createElement(VoiceSessionRuntime));
+    const setup = await renderHook(({ conversation }: { conversation: SessionAddress | null }) =>
+      useVoiceSetupConversationMessages(conversation), { initialProps: { conversation: address } });
+    try {
+      delivery.reset();
+      for (let index = 0; index < 5; index++) await act(async () => {
+        getStorage().setState(state => ({
+          sessions: { ...state.sessions, unrelated: createSessionFixture({ id: 'unrelated', seq: index }) },
+          sessionMessages: { ...state.sessionMessages, unrelated: createSessionMessagesFixture() },
+        }));
+      });
+      expect(delivery.count).toBe(0);
+      await act(async () => { getStorage().setState(state => ({ sessions: {
+        ...state.sessions, [address.sessionId]: { ...state.sessions[address.sessionId]!, seq: 42 },
+      } })); });
+      expect(delivery.count).toBeGreaterThan(0);
+      expect(setup.getCurrent().sessionSeq).toBe(42);
+      await setup.rerender({ conversation: null });
+      delivery.reset();
+      await act(async () => { getStorage().setState(state => ({ sessions: {
+        ...state.sessions, [address.sessionId]: { ...state.sessions[address.sessionId]!, seq: 43 },
+      } })); });
+      expect(delivery.count).toBe(0);
+      expect(setup.getCurrent().sessionSeq).toBeNull();
+    } finally {
+      await setup.unmount();
+      await runtime.unmount();
+      delivery.restore();
+    }
   });
 
   it('projects the actual attempt voice without relabeling it from a changed Account selection', async () => {
@@ -3107,6 +3148,7 @@ describe('useVoiceAttemptControl idle targeting', () => {
       const { useVoiceHistoryPendingRecovery } =
         await import('@/voice/history/useVoiceHistoryPendingRecovery');
       let renders = 0;
+      const delivery = observeStorageSubscriptionDeliveries(paths => paths.some(path => path.length === 1 || path.length === 3));
       const hook = await renderHook(() => {
         renders += 1;
         const control = useVoiceAttemptControl(GLOBAL_TARGET);
@@ -3187,6 +3229,7 @@ describe('useVoiceAttemptControl idle targeting', () => {
         ).toEqual(binding);
         await flushHookEffects();
         const baseline = renders;
+        delivery.reset();
         await act(async () =>
           getStorage().setState((state) => ({
             sessions: {
@@ -3199,6 +3242,7 @@ describe('useVoiceAttemptControl idle targeting', () => {
           })),
         );
         expect(renders).toBe(baseline);
+        expect(delivery.count).toBe(0);
         await act(async () =>
           getStorage().setState((state) => ({
             sessions: {
@@ -3250,6 +3294,7 @@ describe('useVoiceAttemptControl idle targeting', () => {
         expect(hook.getCurrent().pendingRecovery).toBeNull();
       } finally {
         await hook.unmount();
+        delivery.restore();
         voiceSessionBindingStore.getState().unbind(address.sessionId);
       }
     },

@@ -17,8 +17,10 @@ export function useVoiceSetupDismissed(): boolean {
 /** Passive exact-conversation read shared by historical setup facts and current-turn observation. */
 export function useVoiceSetupConversationMessages(address: SessionAddress | null) {
     // Only the bound conversation's slice can trigger this consumer. Reading has no hydration/RPC effects.
-    const slice = storage((state) => address ? state.sessionMessages[address.sessionId] : undefined);
-    const session = storage((state) => address ? state.sessions[address.sessionId] : undefined);
+    const slice = storage((state) => address ? state.sessionMessages[address.sessionId] : undefined,
+        { sessionMessages: address ? [address.sessionId] : [] });
+    const session = storage((state) => address ? state.sessions[address.sessionId] : undefined,
+        { sessions: address ? [address.sessionId] : [] });
     const messages = React.useMemo(() => readStoredSessionMessagesForAddress({
         sessions: address && session ? { [address.sessionId]: session } : {},
         sessionMessages: address && slice ? { [address.sessionId]: slice } : {},

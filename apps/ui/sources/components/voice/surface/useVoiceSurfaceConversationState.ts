@@ -13,7 +13,6 @@ import { resolveVoiceAdapterSurfaceCapabilities } from '@/voice/session/voiceAda
 import type { CanonicalVoiceTranscriptItem } from '@/voice/transcript/canonicalProjector';
 import { getPreferredLanguage } from '@/text';
 
-import { useStoreSnapshot } from './useStoreSnapshot';
 import {
     mergeVoiceSurfaceTranscriptEntries,
     resolveVoiceSurfaceLatestTranscriptText,
@@ -69,8 +68,8 @@ function useVoiceSurfaceConversationBinding(params: VoiceSurfaceConversationPara
      *    equivalent bindings across registered storage refreshes; real binding
      *    changes still need this reader's resolved-session selector.
      *
-     * Both are replaced by the same derived selector, so `useStoreSnapshot`'s
-     * `Object.is` bail-out ends the write: an unrelated session recomputes a
+     * Both are replaced by the same derived selector, so the external-store
+     * equality check ends the write: an unrelated session recomputes a
      * string and stops there. Both stores stay subscribed because either can
      * change the answer on its own — a runtime `bind()` never touches storage.
      *
@@ -80,7 +79,7 @@ function useVoiceSurfaceConversationBinding(params: VoiceSurfaceConversationPara
      * cannot change the answer costs one reference comparison.
      */
     const subscribeBindingSources = React.useCallback((notify: () => void) => {
-        const unsubscribeSessions = storage.subscribe(notify);
+        const unsubscribeSessions = storage.subscribe(notify, { sessions: true, sessionListRowsByServerId: true });
         const unsubscribeBindings = voiceSessionBindingStore.subscribe(notify);
         return () => {
             unsubscribeSessions();
@@ -137,7 +136,7 @@ export function useVoiceSurfaceLatestTranscriptText(params: VoiceSurfaceConversa
     const language = getPreferredLanguage();
     const subscribe = React.useCallback((notify: () => void) => {
         if (!params.transcriptEnabled || !openConversationSessionId) return () => {};
-        const unsubscribeMessages = storage.subscribe(notify);
+        const unsubscribeMessages = storage.subscribe(notify, { sessionMessages: [openConversationSessionId], sessions: [openConversationSessionId] });
         const unsubscribeCanonical = subscribeCanonicalVoiceTranscript(openConversationSessionId, notify);
         return () => {
             unsubscribeMessages();
@@ -165,18 +164,8 @@ export function useVoiceSurfaceConversationState(params: VoiceSurfaceConversatio
     const { openConversationSessionId, fallbackOpenConversationControlSessionId } = useVoiceSurfaceConversationBinding(params);
     const transcriptEnabled = params.transcriptEnabled;
     const language = getPreferredLanguage();
-    /*
-     * Subscribe to the bound conversation's own message slice, not to the whole
-     * `sessionMessages` map.
-     *
-     * The map's identity is replaced by an append in *any* session, so selecting
-     * it re-rendered the entire surface — planet, meter and transcript — once per
-     * unrelated write while the feed was open (M3: five writes, five renders).
-     * The per-session slice is the store's own subscription unit: an unrelated
-     * write leaves it untouched, so `useStoreSnapshot`'s `Object.is` bail-out
-     * ends the write there. When the feed is off, or nothing is bound yet, a
-     * stable constant keeps even that comparison out of the projection path.
-     */
+    // Exact message demand avoids delivery and projection for other Sessions;
+    // a closed feed or missing conversation has no storage demand.
     const selectConversationMessagesSlice = React.useCallback(
         (state: ReturnType<typeof storage.getState>): unknown => (
             transcriptEnabled && openConversationSessionId
@@ -185,9 +174,9 @@ export function useVoiceSurfaceConversationState(params: VoiceSurfaceConversatio
         ),
         [openConversationSessionId, transcriptEnabled],
     );
-    const conversationMessagesSlice = useStoreSnapshot(
-        storage,
+    const conversationMessagesSlice = storage(
         selectConversationMessagesSlice,
+        { sessionMessages: transcriptEnabled && openConversationSessionId ? [openConversationSessionId] : [] },
     );
     const transcriptEntries = React.useMemo(() => {
         if (!transcriptEnabled || !openConversationSessionId) return EMPTY_ENTRIES;

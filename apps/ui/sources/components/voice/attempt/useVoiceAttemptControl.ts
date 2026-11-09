@@ -11,7 +11,6 @@ import {
 import { resolveVoiceSurfaceRecovery, type VoiceRecoveryIcon } from '@/components/voice/surface/resolveVoiceSurfaceRecovery';
 import { resolveVoiceSurfaceState, type VoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
 import { resolveVoiceSurfaceStatusPresentation } from '@/components/voice/surface/resolveVoiceSurfaceStatusPresentation';
-import { useStoreSnapshot } from '@/components/voice/surface/useStoreSnapshot';
 import { useVoiceInputSourceActive } from '@/components/voice/light/VoiceEnergyAppProvider';
 import { voiceSurfaceHaptics } from '@/components/voice/surface/voiceSurfaceHaptics';
 import { useProjectedConnectedServicesRegistry, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -392,8 +391,8 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         },
         [readRecoverySession],
     );
-    const recoverySessionOwnerMetadata = useStoreSnapshot(storage, selectRecoverySessionOwnerMetadata);
-    const recoverySessionServerId = normalizeNonEmptyString(useStoreSnapshot(storage, selectRecoverySessionServerId));
+    const recoverySessionOwnerMetadata = storage(selectRecoverySessionOwnerMetadata, { sessions: recoverySessionId ? [recoverySessionId] : [] });
+    const recoverySessionServerId = normalizeNonEmptyString(storage(selectRecoverySessionServerId, { sessions: recoverySessionId ? [recoverySessionId] : [] }));
     const runtimeRecoveryTarget = React.useMemo<VoiceAttemptRecoveryRuntimeTarget | null>(() => {
         if (expectedAttempt) return resolveVoiceAttemptRecoveryRuntimeTarget({
             agentRuntime: snap.recoveryTarget?.agentRuntime ?? null,
@@ -638,7 +637,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         muted: snap.micMuted === true,
         capturing,
         startAdmitted: ownsVoiceRuntime && startAdmission.canStart,
-        hasRecovery: ownsVoiceRuntime && (recoveryAvailable || setupIncomplete),
+        hasRecovery: ownsVoiceRuntime && recoveryAction !== 'none' && (recoveryAvailable || setupIncomplete),
         canDismissFailedAttempt: canDismissVoiceSessionFailedAttempt(snap),
         /*
          * Every mount of this projection is already behind the Voice feature gate (the global off
@@ -763,8 +762,9 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         errorConnectedServiceDiagnostic: snap.errorConnectedServiceDiagnostic,
         errorProviderMessage: snap.errorProviderMessage,
         errorProviderError: snap.errorProviderError,
+        errorUsageLimit: snap.errorUsageLimit,
         serviceTitle, agentTitle, agentMachineLabel,
-    }), [control, expectedAttempt, presentedEnded, snap.errorCode, snap.errorMessage, snap.errorProviderMessage, snap.errorProviderError, snap.errorConnectedServiceDiagnostic, recoveryAction,
+    }), [control, expectedAttempt, presentedEnded, snap.errorCode, snap.errorMessage, snap.errorProviderMessage, snap.errorProviderError, snap.errorUsageLimit, snap.errorConnectedServiceDiagnostic, recoveryAction,
         recoveryContext, serviceTitle, agentTitle, agentMachineLabel]);
     const statusPresentation = resolveVoiceSurfaceStatusPresentation(surfaceState);
     const statusOverride = presentedEnded
