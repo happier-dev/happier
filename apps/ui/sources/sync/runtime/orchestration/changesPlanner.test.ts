@@ -371,7 +371,8 @@ describe('planSyncActionsFromChanges', () => {
     });
 
     it('keeps malformed settings-version hints conservative instead of claiming an unrelated settings-only change', () => {
-        for (const hint of [{}, { settingsVersion: '8' }, { settingsVersion: -1 }, { settingsVersion: 1.5 }]) {
+        for (const hint of [{}, { settingsVersion: '8' }, { settingsVersion: -1 }, { settingsVersion: 1.5 },
+            { settingsVersion: 8, otherChange: true }]) {
             const planned = planSyncActionsFromChanges([buildChange({ cursor: 1, kind: 'account', entityId: 'self', hint })]);
             expect(plannedChangesAffectSessionListQuery(planned)).toBe(true);
             expect(planned.invalidate.savedSecretResources).toBe(true);
@@ -384,6 +385,16 @@ describe('planSyncActionsFromChanges', () => {
         expect(settings.invalidate.settings).toBe(true);
         expect(settings.machineResourcesAffect).toBe(false);
         expect(settings.managedMachineInventoryAffect).toBe(false);
+        for (const changes of [
+            [buildChange({ cursor: 1, kind: 'account', entityId: 'unknown' }),
+                buildChange({ cursor: 2, kind: 'account', entityId: 'self', hint: { settingsVersion: 8 } })],
+            [buildChange({ cursor: 1, kind: 'account', entityId: 'self', hint: { settingsVersion: 8 } }),
+                buildChange({ cursor: 2, kind: 'account', entityId: 'unknown' })],
+        ]) {
+            const mixed = planSyncActionsFromChanges(changes);
+            expect(mixed.machineResourcesAffect).toBe(true);
+            expect(mixed.managedMachineInventoryAffect).toBe(true);
+        }
     });
 
     it('publishes the canonical Workflow definition query relevance for unrelated changes and recovery', async () => {

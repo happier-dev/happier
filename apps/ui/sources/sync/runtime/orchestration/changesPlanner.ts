@@ -793,8 +793,10 @@ export function planSyncActionsFromChanges(
                 continue;
             }
             invalidateSettings = true;
-            machineResourcesAffect = true;
-            managedMachineInventoryAffect = true;
+            if (readAccountSettingsVersionChangeV1(change) === null) {
+                machineResourcesAffect = true;
+                managedMachineInventoryAffect = true;
+            }
             // Private Account catalog rows live beside, not in, the Account profile; unknown
             // Account ids keep the conservative Settings + Profile recovery.
             if (!isPrivateAccountRowEntityId(change.entityId)) {
