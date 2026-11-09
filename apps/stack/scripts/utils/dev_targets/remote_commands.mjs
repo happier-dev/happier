@@ -136,10 +136,11 @@ export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
     'packages/triage-protocol': Object.freeze(['vitest.source.config.ts']),
     'packages/voice-modelpacks': Object.freeze(['vitest.direct-source.config.ts']),
     'packages/plugins/claude': Object.freeze(['vitest.mcpToolPolicy.config.ts']),
+    'packages/plugins/cliproxyapi': Object.freeze(['vitest.config.ts']),
     'packages/plugins/codex': Object.freeze(['vitest.config.ts', 'vitest.mcpApproval.config.ts', 'vitest.mcpToolPolicy.config.ts']),
     'packages/plugins/kilo': Object.freeze(['vitest.mcpToolPolicy.config.ts']),
     'packages/plugins/opencode': Object.freeze(['vitest.mcpToolPolicy.config.ts']),
-    'packages/plugins/pi': Object.freeze(['vitest.mcpApproval.config.ts', 'vitest.realOwners.config.ts', 'vitest.spawnedRealOwners.config.ts']),
+    'packages/plugins/pi': Object.freeze(['vitest.config.ts', 'vitest.mcpApproval.config.ts', 'vitest.realOwners.config.ts', 'vitest.spawnedRealOwners.config.ts']),
   }),
   // Server Vitest lanes share the workspace-source resolver. Derive their
   // configs from the package so specialized lanes also skip dist publication.

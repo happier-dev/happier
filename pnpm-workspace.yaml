@@ -55,6 +55,7 @@ supportedArchitectures:
     - glibc
     - musl
 overrides:
+  "@earendil-works/pi-coding-agent@0.81.0>@earendil-works/pi-agent-core": 0.81.0
   "@react-navigation/core": 7.21.5
   "@react-navigation/native": 7.3.8
   "@tauri-apps/api": 2.12.1

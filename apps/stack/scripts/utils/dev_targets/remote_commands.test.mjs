@@ -2059,6 +2059,7 @@ test('confirmed workspace-source configs skip dist preparation in both dispatche
   const fixture = await createTempFixture(t, { prefix: 'workspace-source-config-inventory-' });
   const artifact = fixture.path('policy.sh');
   await writeFile(artifact, renderNativeCommandPolicy());
+  const { prepareRemoteValidationWorkspace } = await import('./remote_validation_preparation.mjs');
   const components = [
     'apps/bootstrap', 'packages/agents', 'packages/deployment-protocol', 'packages/deployments',
     'packages/forge-ci', 'packages/session-core', 'packages/support', 'packages/sync-client', 'packages/triage-sources',
@@ -2073,15 +2074,27 @@ test('confirmed workspace-source configs skip dist preparation in both dispatche
     ...components.map(component => [component, 'vitest.config.ts']),
     ['packages/triage-protocol', 'vitest.source.config.ts'],
     ['packages/voice-modelpacks', 'vitest.direct-source.config.ts'],
+    ['packages/plugins/cliproxyapi', 'vitest.config.ts'],
+    ['packages/plugins/pi', 'vitest.config.ts'],
     ['packages/plugins/pi', 'vitest.realOwners.config.ts'],
     ['packages/plugins/pi', 'vitest.spawnedRealOwners.config.ts'],
   ];
   for (const [component, config] of configs) {
-    await t.test(`${component}/${config}`, () => {
+    await t.test(`${component}/${config}`, async () => {
       const args = ['pnpm', 'exec', 'vitest', 'run', '--config', config, 'src/owner.test.ts'];
       const policy = resolveRemoteCommandPolicy(args, { repoRoot: root, cwd: join(root, component) });
       assert.equal(policy.kind, 'source-test');
       assert.equal(policy.heavyClass, 'validation');
+      if (config === 'vitest.config.ts' && ['packages/plugins/pi', 'packages/plugins/cliproxyapi'].includes(component)) {
+        const prepared = await prepareRemoteValidationWorkspace({
+          repoDir: fixture.root,
+          componentRelativeDir: component,
+          validationKind: policy.kind,
+          requiredTools: policy.requiredTools,
+        });
+        assert.deepEqual(prepared.built, []);
+        assert.deepEqual(prepared.skipped, ['workspace-source-test']);
+      }
       if (process.platform === 'win32') return;
       const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2/$3; shift 3; resolve_native_command_policy "$@"; printf "%s,%s" "$policy_kind" "$policy_heavyClass"',
         'policy', artifact, root, component, ...args], { encoding: 'utf8' });
@@ -2089,7 +2102,7 @@ test('confirmed workspace-source configs skip dist preparation in both dispatche
       assert.equal(native.stdout, 'source-test,validation');
     });
   }
-  for (const component of ['packages/plugins/machine-docker-sandboxes', 'packages/plugins/pi']) {
+  for (const component of ['packages/plugins/machine-docker-sandboxes']) {
     assert.equal(resolveRemoteCommandPolicy(['pnpm', 'exec', 'vitest', 'run'], { repoRoot: root, cwd: join(root, component) }).kind, 'runtime');
   }
 });
