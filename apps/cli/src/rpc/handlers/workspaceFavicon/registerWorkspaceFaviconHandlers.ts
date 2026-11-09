@@ -7,6 +7,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import { assertFilesystemEffectCurrent } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import {
   prepareFilesystemPathAuthorizer,
   type FilesystemPathAuthorizer,
@@ -74,12 +75,14 @@ export function registerWorkspaceFaviconHandlers(
 ): void {
   rpcHandlerManager.registerHandler<unknown, WorkspaceFaviconResolveResponseV1>(
     RPC_METHODS.WORKSPACE_FAVICON_RESOLVE,
-    async (raw) => {
+    async (raw, context) => {
       const parsed = WorkspaceFaviconResolveRequestV1Schema.safeParse(raw);
       if (!parsed.success) {
         return { success: false, errorCode: 'INVALID_REQUEST', error: 'Invalid workspace favicon request' };
       }
 
+      try {
+      await assertFilesystemEffectCurrent(context);
       const authorizePath = await prepareFilesystemPathAuthorizer({
         defaultDirectory: deps.defaultDirectory,
         accessPolicy: deps.accessPolicy,
@@ -89,10 +92,16 @@ export function registerWorkspaceFaviconHandlers(
         return { success: false, errorCode: 'INVALID_WORKSPACE_PATH', error: workspace.error };
       }
 
-      return resolveWorkspaceFavicon({
+      const result = await resolveWorkspaceFavicon({
         workspacePath: workspace.resolvedPath,
         authorizePath,
       });
+      await assertFilesystemEffectCurrent(context);
+      return result;
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'filesystem_identity_custody_unavailable')) throw error;
+        return { success: false, errorCode: error.code, error: error.message };
+      }
     },
   );
 }

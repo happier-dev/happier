@@ -1,7 +1,6 @@
-import type { ActionExecuteFailure } from '@happier-dev/protocol';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { DaemonLocalServicePreviewOpenOrCreateRequestV1Schema, DaemonLocalServicePreviewOpenOrCreateResponseV1Schema, DaemonLocalServicePreviewRevokeRequestV1Schema, DaemonLocalServicePreviewRevokeResponseV1Schema, DaemonLocalServicePreviewSnapshotRequestV1Schema, DaemonLocalServicePreviewSnapshotResponseV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
-import type { DaemonLocalServicePreviewOpenOrCreateResponseV1, DaemonLocalServicePreviewRevokeResponseV1, DaemonLocalServicePreviewSnapshotResponseV1 } from '@happier-dev/protocol';
+import type { ActionExecuteFailure, DaemonLocalServicePreviewOpenOrCreateResponseV1, DaemonLocalServicePreviewRevokeResponseV1, DaemonLocalServicePreviewSnapshotResponseV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { LocalServicePreviewRoutes } from '@/daemon/local/services/preview/routes';
@@ -29,20 +28,10 @@ export type DaemonLocalServicePreviewSnapshotHandlerOptions = Readonly<{
         | null;
 }>;
 
-// A daemon lifecycle route refused the request (e.g. wrong machine, unknown inventory entry).
-// Surface the reason on the wire so the UI maps it to a stable `preview_<reason>` disabled code
-// instead of a generic transport failure.
-class DaemonLocalServicePreviewLifecycleError extends Error {
-    constructor(public readonly reasonCode: string) {
-        super(`local_service_preview_lifecycle_refused:${reasonCode}`);
-        this.name = 'DaemonLocalServicePreviewLifecycleError';
-    }
-}
-
-export function isDaemonLocalServicePreviewLifecycleError(
-    value: unknown,
-): value is DaemonLocalServicePreviewLifecycleError {
-    return value instanceof DaemonLocalServicePreviewLifecycleError;
+// Raw RPC readers retain the legacy error message; Action readers need the
+// canonical failure envelope so an honest refusal never enters a success parser.
+function previewLifecycleFailure(reasonCode: string): ActionExecuteFailure {
+    return { ok: false, errorCode: reasonCode, error: `local_service_preview_lifecycle_refused:${reasonCode}` };
 }
 
 export function registerDaemonLocalServicePreviewSnapshotHandler(
@@ -147,8 +136,4 @@ export function registerDaemonLocalServicePreviewSnapshotHandler(
             },
         );
     }
-}
-
-function previewLifecycleFailure(reasonCode: string): ActionExecuteFailure {
-    return { ok: false, errorCode: reasonCode, error: `local_service_preview_lifecycle_refused:${reasonCode}` };
 }

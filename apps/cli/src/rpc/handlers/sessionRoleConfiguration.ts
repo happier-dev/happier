@@ -25,10 +25,10 @@ export function registerSessionRoleConfigurationHandler(params: Readonly<{
   readSettingsOverrides?: (signal?: AbortSignal) => AccountRoleOverridesReadV1 | Promise<AccountRoleOverridesReadV1>;
   resolveAgentStartContext?: ActionExecutorDeps['resolveAgentStartContext'];
   sessionList?: ActionExecutorDeps['sessionList'];
+  sessionRead?: ActionExecutorDeps['sessionRead'];
   /** Current Home relation, not the copied configuration's descriptive inheritedFrom field. */
   readCurrentReportLead?: (signal: AbortSignal) => Promise<string | null>;
   readCallerWorkspaceWrites?: (context: ActionExecutorContext) => Promise<'allow' | 'deny' | null>;
-  isWorkflowAuthorizationCurrent?: (context: ActionExecutorContext) => Promise<boolean>;
 }>): void {
   params.rpcHandlerManager.registerHandler(SESSION_RPC_METHODS.SESSION_ROLES_CONFIGURATION_SET, async (input: unknown, context) => {
     const request = SessionRolesConfigurationSetRpcV1Schema.parse(input);
@@ -37,23 +37,15 @@ export function registerSessionRoleConfigurationHandler(params: Readonly<{
     }
     const authority = context?.callerAuthority ?? context?.localActionContext?.authority;
     if (!authority) return { ok: false, errorCode: 'permission_denied', error: 'permission_denied' };
-    const workflowOrigin = context?.callerInputAuthorization?.binding.workflowActionOrigin;
-    if (authority !== 'present_user' && !context?.sessionActionOrigin && !context?.localActionContext && !workflowOrigin?.sessionAuthority) {
+    if (authority !== 'present_user' && !context?.sessionActionOrigin && !context?.localActionContext) {
       return { ok: false, errorCode: 'role_rpc_origin_unavailable', error: 'role_rpc_origin_unavailable' };
     }
     context?.signal.throwIfAborted();
     let callerWrites = context?.localActionContext?.agentStartWorkspaceWrites;
-    let workflowContext: ActionExecutorContext | undefined;
     let isCopyTargetCurrent: (() => Promise<boolean>) | undefined;
-    if (context && (context.sessionActionOrigin || workflowOrigin?.sessionAuthority)) {
+    if (context?.sessionActionOrigin) {
       const callerContext = buildActionExecutorContextForRpc({ sessionActionOrigin: context.sessionActionOrigin,
         callerInputAuthorization: context.callerInputAuthorization, callerAuthority: authority, signal: context.signal });
-      if (workflowOrigin) {
-        workflowContext = callerContext;
-        if (!await params.isWorkflowAuthorizationCurrent?.(callerContext)) {
-          return { ok: false, errorCode: 'run_access_denied', error: 'run_access_denied' };
-        }
-      }
       const inheritedLead = request.configuration.inheritedFrom;
       const policy = SessionAgentSpawnPolicyV1StrictSchema.parse(callerContext.sessionAgentSpawnPolicyV1 ?? {});
       isCopyTargetCurrent = async () => {
@@ -61,15 +53,16 @@ export function registerSessionRoleConfigurationHandler(params: Readonly<{
         const resolved = await resolveActionAgentStartContextV1({
           resolveAgentStartContext: params.resolveAgentStartContext,
           ...(params.sessionList ? { sessionList: params.sessionList } : {}),
-        }, callerContext, request.sessionId);
+          ...(params.sessionRead ? { sessionRead: params.sessionRead } : {}),
+        }, callerContext, inheritedLead ? [request.sessionId, inheritedLead] : request.sessionId, { purpose: 'session_scope' });
         return authority === 'account_automation' && !!inheritedLead && currentLead === inheritedLead
-          && !!resolved && admitAgentStartV1(policy, { kind: 'session_target', targetSessionId: request.sessionId }, resolved).ok
+          && !!resolved && !('ok' in resolved) && admitAgentStartV1(policy, { kind: 'session_target', targetSessionId: request.sessionId }, resolved).ok
           && admitAgentStartV1(policy, { kind: 'session_target', targetSessionId: inheritedLead }, resolved).ok;
       };
       if (!await isCopyTargetCurrent()) {
         return { ok: false, errorCode: 'session_target_not_led', error: 'session_target_not_led' };
       }
-      const currentWrites = workflowOrigin?.sessionAuthority?.workspaceWrites ?? await params.readCallerWorkspaceWrites?.(callerContext);
+      const currentWrites = await params.readCallerWorkspaceWrites?.(callerContext);
       if (!currentWrites) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
       callerWrites = currentWrites === 'deny' || context.sessionActionOrigin?.workspaceWrites === 'deny' ? 'deny' : currentWrites;
     }
@@ -137,9 +130,6 @@ export function registerSessionRoleConfigurationHandler(params: Readonly<{
     } else if (candidate.workspaceWrites === 'deny' && candidate.previousWorkspaceWrites !== 'deny') {
       return { ok: false, errorCode: 'role_policy_unenforceable', error: 'role_policy_unenforceable' };
     }
-    if (workflowContext && !await params.isWorkflowAuthorizationCurrent?.(workflowContext)) {
-      return { ok: false, errorCode: 'run_access_denied', error: 'run_access_denied' };
-    }
     if (isCopyTargetCurrent && !await isCopyTargetCurrent()) {
       return { ok: false, errorCode: 'session_target_not_led', error: 'session_target_not_led' };
     }
@@ -153,9 +143,6 @@ export function registerSessionRoleConfigurationHandler(params: Readonly<{
         authority, surface: context?.localActionContext?.surface ?? 'rpc', ...(context?.signal ? { signal: context.signal } : {}),
       });
       if (!prepared.ok) return { ok: false, errorCode: prepared.errorCode, error: prepared.errorCode };
-      if (workflowContext && !await params.isWorkflowAuthorizationCurrent?.(workflowContext)) {
-        return { ok: false, errorCode: 'run_access_denied', error: 'run_access_denied' };
-      }
       if (isCopyTargetCurrent && !await isCopyTargetCurrent()) {
         return { ok: false, errorCode: 'session_target_not_led', error: 'session_target_not_led' };
       }

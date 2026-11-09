@@ -1,9 +1,8 @@
-import { SessionCreationMachineSetupExecutionV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
-import { MachineSetupPlanInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { SessionAuthoringCheckoutCreationDraftV1Schema } from '@happier-dev/protocol/sessions/authoring/creationFieldsV1';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
+import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions';
 import { z } from 'zod/mini';
 import { AgentSessionToolPolicyShapeV1 } from '@happier-dev/protocol/runtime/permissionIntentV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SpawnSessionTerminalSchema } from '@happier-dev/protocol/spawnSession';
 import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
@@ -11,6 +10,7 @@ import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/r
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { ConnectedServiceMaterializationIdentityV1Schema } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
 import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionAuthoringCheckoutCreationDraftV1Schema } from '@happier-dev/protocol/sessions/authoring/creationFieldsV1';
 import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { SessionInitialAccessDraftV1Schema } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 import { SessionInitialTriggerAdmissionV1Schema } from '@happier-dev/protocol/sessions/creation/sessionInitialTriggerAdmissionV1';
@@ -62,7 +62,7 @@ function asNonEmptyStringTuple<T extends string>(values: readonly T[]): [T, ...T
   return values as [T, ...T[]];
 }
 
-export const SpawnSessionPermissionModeSchema = z.enum(asNonEmptyStringTuple(PERMISSION_MODES));
+export const SpawnSessionPermissionModeSchema = lazyZodSchema(() => z.enum(asNonEmptyStringTuple(PERMISSION_MODES)));
 function parseSpawnBackendTargetCandidate(value: unknown): CanonicalSpawnBackendTarget | null {
   const backendTarget = normalizeDaemonBackendTargetV2Input(value);
   if (!backendTarget) {
@@ -196,7 +196,7 @@ function canonicalizeSpawnDaemonSessionRequestIngress(value: unknown): unknown {
     : { ...rest, ...(capabilitySelection ? { capabilitySelection } : {}) };
 }
 
-const SpawnDaemonSessionRequestCompatSchema = (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform(canonicalizeSpawnDaemonSessionRequestIngress), z.strictObject({
+const SpawnDaemonSessionRequestCompatSchema = lazyZodSchema(() => (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform(canonicalizeSpawnDaemonSessionRequestIngress), z.strictObject({
   type: z.optional(z.enum(['spawn-in-directory', 'resume-session'])),
   directory: z.string(),
   directoryKind: z.optional(z.enum(['path', 'managed'])),
@@ -218,9 +218,8 @@ const SpawnDaemonSessionRequestCompatSchema = (<I extends z.core.$ZodType, O ext
   authoringOrigin: z.optional(asHostProtocolZod(PluginUiNewSessionSeedOriginV1Schema)),
   identity: z.optional(asHostProtocolZod(SessionIdentityAdditionsV1Schema)),
   memoryEnabled: z.optional(z.boolean()),
+  approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
   promptStack: z.optional(asHostProtocolZod(SessionPromptStackV1Schema)),
-  machineSetupPlanInput: z.optional(asHostProtocolZod(MachineSetupPlanInputV1Schema)),
-  machineSetupExecution: z.optional(asHostProtocolZod(SessionCreationMachineSetupExecutionV1Schema)),
   initialAccess: z.optional(SessionInitialAccessDraftV1Schema),
   initialTriggers: z.optional(z.array(asHostProtocolZod(SessionInitialTriggerAdmissionV1Schema))),
   manager: z.optional(SessionManagerV1Schema),
@@ -287,9 +286,9 @@ const SpawnDaemonSessionRequestCompatSchema = (<I extends z.core.$ZodType, O ext
   connectedServiceMaterializationIdentityV1: z.optional(ConnectedServiceMaterializationIdentityV1Schema),
   capabilitySelection: z.optional(SessionCapabilitySelectionAuthoringV1Schema),
   transcriptStorage: z.optional(z.enum(['persisted', 'direct'])),
-}));
+})));
 
-export const SpawnDaemonSessionRequestSchema = z.pipe(SpawnDaemonSessionRequestCompatSchema, z.transform((request, ctx) => {
+export const SpawnDaemonSessionRequestSchema = lazyZodSchema(() => z.pipe(SpawnDaemonSessionRequestCompatSchema, z.transform((request, ctx) => {
   refineSessionCreateOriginFieldsV1(request, ctx);
   const freshCreation = !request.existingSessionId && request.type !== 'resume-session';
   const discussionRecipe = request.sessionCreationCorrespondence?.recipe.discussionParticipant;
@@ -306,7 +305,7 @@ export const SpawnDaemonSessionRequestSchema = z.pipe(SpawnDaemonSessionRequestC
       message: 'Discussion participant creation cannot submit initial work', input: ctx.value });
     return z.NEVER;
   }
-  if ((request.identity !== undefined || request.memoryEnabled !== undefined || request.promptStack !== undefined)
+  if ((request.identity !== undefined || request.memoryEnabled !== undefined || request.promptStack !== undefined || request.approvalProfileId !== undefined)
     && (request.existingSessionId || request.type === 'resume-session')) {
     ctx.issues.push({ code: "custom", path: ['identity'], message: 'Initial identity, memory choice and context require fresh Session creation', input: ctx.value });
     return z.NEVER;
@@ -434,7 +433,7 @@ export const SpawnDaemonSessionRequestSchema = z.pipe(SpawnDaemonSessionRequestC
     ...(modelSelection ? { modelSelection } : {}),
     ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
   };
-})) as z.ZodMiniType<SpawnDaemonSessionRequest>;
+})) as z.ZodMiniType<SpawnDaemonSessionRequest>);
 
 const SPAWN_SESSION_OPTION_KEYS = [
   'machineId',
@@ -452,13 +451,12 @@ const SPAWN_SESSION_OPTION_KEYS = [
   'spawnNonce',
   'sessionCreationTag',
   'sessionCreationCorrespondence',
-  'machineSetupPlanInput',
-  'machineSetupExecution',
   'placementOrigin',
   'initialTitle',
   'authoringOrigin',
   'identity',
   'memoryEnabled',
+  'approvalProfileId',
   'promptStack',
   'initialAccess',
   'initialTriggers',

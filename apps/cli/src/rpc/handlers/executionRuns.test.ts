@@ -33,12 +33,15 @@ import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient'
 import { createExecutionRunRpcApprovalDeps } from './executionRuns/createExecutionRunRpcApprovalDeps';
 import type { Credentials } from '@/persistence';
 
-import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
+import { createEncryptedRpcTestClient as createEncryptedRpcTestClientBase } from './encryptedRpc.testkit';
 import { registerExecutionRunHandlers as registerExecutionRunHandlersBase } from './executionRuns';
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
 import { buildExecutionRunProfileCatalog } from '@/agent/executionRuns/profiles/intentRegistry';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
-import { reloadConfiguration } from '@/configuration';
+import { configuration, reloadConfiguration } from '@/configuration';
+import { seedTestServerProfile } from '@/testkit/serverProfiles';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { clearActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { runGit } from '@/scm/rpc/__tests__/testRpcHarness';
@@ -111,7 +114,8 @@ vi.mock('@/scm/scmBackendCatalog', async (importOriginal) => {
   };
 });
 
-vi.mock('@/persistence', () => ({
+vi.mock('@/persistence', async importOriginal => ({
+  ...await importOriginal<typeof import('@/persistence')>(),
   readCredentials: vi.fn(),
   readStoredCredentials: vi.fn(async () => null),
   readDaemonState: vi.fn(async () => null),
@@ -169,7 +173,7 @@ const voiceEnabledServerSnapshot = {
 // provider start. Seed those real owners and replace only the HTTP boundary.
 async function prepareTranscriptCommitLaunch(): Promise<{ credentials: { token: string; encryption: null }; dispose(): void }> {
   transcriptLaunch?.dispose();
-  const credentials = { token: 'transcript-commit-account', encryption: null };
+  const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'execution-run-test-account' })).toString('base64url')}.signature`, encryption: null };
   setActiveAccountSettingsSnapshot({
     source: 'network', settings: accountSettingsParse({}), rawSettings: {},
     settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
@@ -181,7 +185,7 @@ async function prepareTranscriptCommitLaunch(): Promise<{ credentials: { token: 
   const { fetchSessionById } = await import('@/session/transport/http/sessionsHttp');
   vi.mocked(fetchSessionById).mockImplementation(async ({ sessionId }) => createSessionRecordFixture({
     id: sessionId, encryptionMode: 'plain',
-    metadata: JSON.stringify({ path: defaultExecutionRunTestCwd }),
+    metadata: JSON.stringify(createTestMetadata({ path: defaultExecutionRunTestCwd, machineId: 'execution-run-machine' })),
   }));
   const get = vi.spyOn(axios, 'get').mockImplementation(async (url) => {
     const path = new URL(String(url)).pathname;
@@ -192,7 +196,29 @@ async function prepareTranscriptCommitLaunch(): Promise<{ credentials: { token: 
     return { status: 200, data: { mode: 'plain', version: 0, signingKeyFingerprint: null,
       contentKeyFingerprint: null, updatedAt: 0 } };
   });
-  return { credentials, dispose: () => { get.mockRestore(); clearActiveAccountSettingsSnapshot(); } };
+  const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+    if (new URL(String(url)).pathname.startsWith('/v1/account/project-rows/')) {
+      return projectAccountRowsReadHttpResponse([], String(url), body);
+    }
+    throw new Error(`Unexpected transcript launch HTTP write: ${url}`);
+  });
+  return { credentials, dispose: () => { get.mockRestore(); post.mockRestore(); clearActiveAccountSettingsSnapshot(); } };
+}
+
+const createEncryptedRpcTestClient = createEncryptedRpcTestClientBase;
+
+function createDetachedRunRpcTestClient(options: Parameters<typeof createEncryptedRpcTestClientBase>[0]) {
+  const machineId = 'execution-run-machine';
+  const client = createEncryptedRpcTestClientBase(options);
+  // These owner tests enter through the in-process transport with already
+  // admitted Machine facts; raw encrypted admission has separate composed coverage.
+  return { ...client, async call<TResponse, TRequest>(method: string, request: TRequest): Promise<TResponse> {
+    return await client.manager.invokeLocal(method, request, { rpcContext: {
+      verifyMachineAdmissionCurrent: async () => true,
+      machineAdmission: { actorAccountId: 'execution-run-test-account', custodianAccountId: 'execution-run-test-account',
+        machineId, installationId: 'execution-run-installation', role: 'manage', encryptionMode: 'plain' },
+    } }) as TResponse;
+  } };
 }
 
 let transcriptLaunch: Awaited<ReturnType<typeof prepareTranscriptCommitLaunch>> | null = null;
@@ -223,6 +249,9 @@ const registerExecutionRunHandlers = (
     throw new Error('Missing test execution-run runtime factory');
   });
   registerExecutionRunHandlersBase(rpc, {
+    serverId: 'srv_execution_run_test',
+    machineId: 'execution-run-machine',
+    runtimeAccountId: 'execution-run-test-account',
     ...baseCtx,
     cwd,
     readPromptCredentials: baseCtx.readPromptCredentials ?? (async () => transcriptLaunch?.credentials ?? null),
@@ -264,6 +293,7 @@ beforeEach(async () => {
   defaultExecutionRunTestHome = mkdtempSync(join(tmpdir(), 'happier-execution-runs-home-'));
   vi.stubEnv('HAPPIER_HOME_DIR', defaultExecutionRunTestHome);
   reloadConfiguration();
+  await seedTestServerProfile({ id: configuration.activeServerId, homeId: 'srv_execution_run_test', serverUrl: configuration.serverUrl });
   runtimeFactoryState.current = null;
   scmBackendRegistryMockState.current = createScmBackendRegistry([createTestGitScmBackend()]);
   bridgeLifecycleHookMockState.dispatchBridgeLifecycleHookEvent.mockReset();
@@ -837,6 +867,9 @@ describe('executionRuns session RPC handlers', () => {
           createBackend: () => createStaticBackend('unused'),
           sendAcp: async () => {},
           actionExecutor,
+          serverId: undefined,
+          machineId: undefined,
+          runtimeAccountId: undefined,
         });
       },
     });
@@ -865,7 +898,7 @@ describe('executionRuns session RPC handlers', () => {
 
   it('keeps execution-run RPC method binding delegated to the generic action-spec registrar', () => {
     const source = readFileSync(
-      new URL('./executionRuns/registerExecutionRunRpcHandlers.ts', import.meta.url),
+      new URL('./executionRuns/actionRpcRegistration.ts', import.meta.url),
       'utf8',
     );
 
@@ -932,7 +965,7 @@ describe('executionRuns session RPC handlers', () => {
     }
   });
 
-  it('returns approved result-bearing execution-run RPC reads through blocking approval storage', async () => {
+  it('returns retained approval identity for result-bearing execution-run RPC reads without waiting', async () => {
     const previousActionsSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
       v: 1,
@@ -984,7 +1017,7 @@ describe('executionRuns session RPC handlers', () => {
 
       const listed = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, { limit: 1 });
 
-      expect(listed).toEqual({ runs: [] });
+      expect(listed).toEqual({ kind: 'approval_request_created', actionId: 'execution.run.list', artifactId: 'approval_1' });
       expect(approvalsCreate).toHaveBeenCalledOnce();
       expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
         request: expect.objectContaining({
@@ -999,20 +1032,8 @@ describe('executionRuns session RPC handlers', () => {
           }),
         }),
       }));
-      expect(approvalsWaitForDecision).toHaveBeenCalledWith(expect.objectContaining({
-        artifactId: 'approval_1',
-        serverId: 'home-stable-1',
-      }));
-      expect(approvalsUpdate).toHaveBeenCalledWith(expect.objectContaining({
-        artifactId: 'approval_1',
-        request: expect.objectContaining({
-          status: 'executed',
-          execution: expect.objectContaining({
-            ok: true,
-            result: { runs: [] },
-          }),
-        }),
-      }));
+      expect(approvalsWaitForDecision).not.toHaveBeenCalled();
+      expect(approvalsUpdate).not.toHaveBeenCalled();
     } finally {
       if (previousActionsSettings === undefined) {
         delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
@@ -1039,6 +1060,7 @@ describe('executionRuns session RPC handlers', () => {
         registerHandlers: (rpc) => {
           registerExecutionRunHandlers(rpc, {
             sessionId: 'sess_1',
+            serverId: undefined,
             runtimeAccountId: 'account-1',
             cwd: process.cwd(),
             parentProvider: 'claude',
@@ -1797,7 +1819,7 @@ describe('executionRuns session RPC handlers', () => {
       includeStructured: true,
     });
     expect(got.run?.retentionPolicy).toBe('resumable');
-    expect(got.run?.availableActionIds).toEqual(['review.triage', 'review.follow_up']);
+    expect(got.run?.availableActionIds).toEqual(['review.triage', 'review.follow_up', 'approval_profile.set']);
     expect(got.structuredMeta?.kind).toBe('review_findings.v2');
     expect(got.structuredMeta?.payload?.runRef?.runId).toBe(started.runId);
     // review.triage records decisions in ReviewComment (reviewComments.test.ts); it never rewrites this result.
@@ -1891,7 +1913,7 @@ describe('executionRuns session RPC handlers', () => {
       responses: [{ text: 'reply', delayMs: null }],
     });
 
-    const client = createEncryptedRpcTestClient({
+    const client = createDetachedRunRpcTestClient({
       scopePrefix: 'sess_1',
       registerHandlers: (rpc) => {
         registerExecutionRunHandlers(rpc, {
@@ -1916,6 +1938,7 @@ describe('executionRuns session RPC handlers', () => {
       ioMode: 'request_response',
     });
 
+    expect(started, JSON.stringify(started)).toMatchObject({ runId: expect.any(String) });
     await expect.poll(() => events.sendPrompts.length).toBe(1);
 
     const busy = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, {
@@ -2022,7 +2045,7 @@ describe('executionRuns session RPC handlers', () => {
       cancelRejects: true,
     });
 
-    const client = createEncryptedRpcTestClient({
+    const client = createDetachedRunRpcTestClient({
       scopePrefix: 'sess_1',
       registerHandlers: (rpc) => {
         registerExecutionRunHandlers(rpc, {
@@ -2083,7 +2106,7 @@ describe('executionRuns session RPC handlers', () => {
       supportsSteer: false,
     });
 
-    const client = createEncryptedRpcTestClient({
+    const client = createDetachedRunRpcTestClient({
       scopePrefix: 'sess_1',
       registerHandlers: (rpc) => {
         registerExecutionRunHandlers(rpc, {
@@ -2125,7 +2148,7 @@ describe('executionRuns session RPC handlers', () => {
   });
 
   it('acks detached bounded sends once the replacement turn is adopted, even if the backend never completes it', async () => {
-    const client = createEncryptedRpcTestClient({
+    const client = createDetachedRunRpcTestClient({
       scopePrefix: 'sess_1',
       registerHandlers: (rpc) => {
         registerExecutionRunHandlers(rpc, {
@@ -2170,7 +2193,7 @@ describe('executionRuns session RPC handlers', () => {
   });
 
   it('rejects detached bounded run sends after completion', async () => {
-    const client = createEncryptedRpcTestClient({
+    const client = createDetachedRunRpcTestClient({
       scopePrefix: 'sess_1',
       registerHandlers: (rpc) => {
         registerExecutionRunHandlers(rpc, {
@@ -2250,7 +2273,7 @@ describe('executionRuns session RPC handlers', () => {
     });
     expect(started.runId, JSON.stringify(started)).toMatch(/^run_/);
     // Start should propagate the chat model ID to the voice agent backend.
-    expect(createdBackends.map((b) => b.modelId)).toEqual(expect.arrayContaining(['chat']));
+    expect(createdBackends.map((b) => b.modelId), JSON.stringify(executionRunTestManagers.at(-1)?.listPublic())).toEqual(expect.arrayContaining(['chat']));
 
     const streamStart = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START, {
       runId: started.runId,
@@ -2282,7 +2305,7 @@ describe('executionRuns session RPC handlers', () => {
     vi.mocked(readStoredCredentials).mockResolvedValue({ token: 'token_1', encryption: null });
     vi.mocked(fetchSessionById).mockImplementation(async ({ sessionId }) => createSessionRecordFixture({
       id: sessionId, seq: 3, encryptionMode: 'plain',
-      metadata: JSON.stringify({ path: defaultExecutionRunTestCwd, flavor: 'claude' }),
+      metadata: JSON.stringify(createTestMetadata({ path: defaultExecutionRunTestCwd, machineId: 'execution-run-machine', flavor: 'claude' })),
     }));
     vi.mocked(fetchEncryptedTranscriptMessages).mockResolvedValue([
       {
@@ -2365,13 +2388,15 @@ describe('executionRuns session RPC handlers', () => {
       },
     });
 
-    await client.call(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START, {
+    const replayStream = await client.call(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START, {
       runId: started.runId,
       message: 'continue',
     });
-
-    expect(events.sendPrompts[0]).toContain('Cached replay summary');
-    expect(events.sendPrompts[0]).toContain('Old assistant turn');
+    expect(replayStream).toMatchObject({ streamId: expect.any(String) });
+    await vi.waitFor(() => {
+      expect(events.sendPrompts[0]).toContain('Cached replay summary');
+      expect(events.sendPrompts[0]).toContain('Old assistant turn');
+    });
   });
 
   it('falls back to on-demand replay summaries for voice runs when no cached synopsis exists', async () => {
@@ -2382,7 +2407,7 @@ describe('executionRuns session RPC handlers', () => {
     vi.mocked(readStoredCredentials).mockResolvedValue({ token: 'token_1', encryption: null });
     vi.mocked(fetchSessionById).mockImplementation(async ({ sessionId }) => createSessionRecordFixture({
       id: sessionId, seq: 2, encryptionMode: 'plain',
-      metadata: JSON.stringify({ path: defaultExecutionRunTestCwd, flavor: 'claude' }),
+      metadata: JSON.stringify(createTestMetadata({ path: defaultExecutionRunTestCwd, machineId: 'execution-run-machine', flavor: 'claude' })),
     }));
     vi.mocked(fetchEncryptedTranscriptMessages).mockResolvedValue([
       {
@@ -2460,14 +2485,16 @@ describe('executionRuns session RPC handlers', () => {
       },
     });
 
-    await client.call(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START, {
+    const replayStream = await client.call(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START, {
       runId: started.runId,
       message: 'continue',
     });
-
+    expect(replayStream).toMatchObject({ streamId: expect.any(String) });
     expect(vi.mocked(runReplaySummaryForDialog)).toHaveBeenCalledTimes(1);
-    expect(events.sendPrompts[0]).toContain('Generated replay summary');
-    expect(events.sendPrompts[0]).toContain('Assistant answered previously');
+    await vi.waitFor(() => {
+      expect(events.sendPrompts[0]).toContain('Generated replay summary');
+      expect(events.sendPrompts[0]).toContain('Assistant answered previously');
+    });
   });
 
   it('defers replay seed delivery to the first turn when voice prewarm uses a READY handshake', async () => {
@@ -2477,7 +2504,7 @@ describe('executionRuns session RPC handlers', () => {
     vi.mocked(readStoredCredentials).mockResolvedValue({ token: 'token_1', encryption: null });
     vi.mocked(fetchSessionById).mockImplementation(async ({ sessionId }) => createSessionRecordFixture({
       id: sessionId, seq: 3, encryptionMode: 'plain',
-      metadata: JSON.stringify({ path: defaultExecutionRunTestCwd, flavor: 'claude' }),
+      metadata: JSON.stringify(createTestMetadata({ path: defaultExecutionRunTestCwd, machineId: 'execution-run-machine', flavor: 'claude' })),
     }));
     vi.mocked(fetchEncryptedTranscriptMessages).mockResolvedValue([
       {
@@ -2565,13 +2592,15 @@ describe('executionRuns session RPC handlers', () => {
     expect(events.sendPrompts[0]).not.toContain('Cached replay summary');
     expect(events.sendPrompts[0]).not.toContain('Old assistant turn');
 
-    await client.call(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START, {
+    const replayStream = await client.call(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START, {
       runId: started.runId,
       message: 'continue',
     });
-
-    expect(events.sendPrompts[1]).toContain('Cached replay summary');
-    expect(events.sendPrompts[1]).toContain('Old assistant turn');
+    expect(replayStream).toMatchObject({ streamId: expect.any(String) });
+    await vi.waitFor(() => {
+      expect(events.sendPrompts[1]).toContain('Cached replay summary');
+      expect(events.sendPrompts[1]).toContain('Old assistant turn');
+    });
   });
 
   it('commits persistent voice_agent transcript turns durably via the transcript port', async () => {
@@ -3252,7 +3281,7 @@ describe('executionRuns session RPC handlers', () => {
       runId: started.runId,
       includeStructured: false,
     });
-    expect(got?.run?.availableActionIds).toEqual(['voice_agent.welcome', 'voice_agent.commit']);
+    expect(got?.run?.availableActionIds).toEqual(['voice_agent.welcome', 'voice_agent.commit', 'approval_profile.set']);
     expect(got?.run?.resumeHandle).toMatchObject({
       kind: 'voice_agent_sessions.v1',
       chatProviderSessionId: 'chat_provider_session_1',
@@ -4013,13 +4042,18 @@ describe('executionRuns session RPC handlers', () => {
 
     await expect.poll(() => sent.some((m) => (m.body as any)?.type === 'tool-result' && m.meta)).toBe(true);
 
+    await expect.poll(async () => {
+      const current = await client.call<ExecutionRunGetResponse, unknown>(SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: started.runId });
+      return current.run?.lifecycle.state;
+    }).toBe('recoverable_with_input');
+
     const ensured = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE, {
       runId: started.runId,
       resume: true,
     });
     expect(ensured).toMatchObject({
       ok: false,
-      errorCode: 'execution_run_not_allowed',
+      errorCode: 'execution_run_input_required',
     });
 
     const got = await waitForExecutionRunTerminalState(client, started.runId);

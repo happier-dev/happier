@@ -5,6 +5,8 @@ import type { MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 
 import { registerDaemonLiveStreamRelayHandlers } from './daemonLiveStreamRelay';
+import type { RpcHandlerContext, RpcHandler } from '@/api/rpc/types';
+import { createMachineLiveStreamRelayTerminator } from '@/daemon/peer/mediation/stream/relay';
 
 function createRegistrar(): { handlers: Map<string, (payload: unknown) => Promise<unknown>>; registrar: RpcHandlerRegistrar } {
     const handlers = new Map<string, (payload: unknown) => Promise<unknown>>();
@@ -64,6 +66,20 @@ function createSignedStartRequest(overrides?: Partial<MachineLiveStreamStartRequ
 }
 
 describe('daemon live-stream relay rpc handlers', () => {
+    it('refuses a Use viewer carrying the custodian grant before native capture', async () => {
+        const handlers = new Map<string, RpcHandler>();
+        let captures = 0;
+        const relay = createMachineLiveStreamRelayTerminator({ machineId: 'machine_source', nowMs: () => 2_000, emitEnvelope() {},
+            captureAdapter: { async start() { captures += 1; return { ok: true, session: { stop() {} } }; } } });
+        registerDaemonLiveStreamRelayHandlers({ registerHandler(method, handler) { handlers.set(method, handler); } }, { relay });
+        const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
+            machineAdmission: { actorAccountId: 'guest', custodianAccountId: 'account_1', machineId: 'machine_source',
+                installationId: 'installation', role: 'use', encryptionMode: 'plain' } };
+        expect(await handlers.get(RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START)?.({ protocolVersion: 1, machineId: 'machine_source',
+            startRequest: createSignedStartRequest() }, context)).toMatchObject({ result: { ok: false, reasonCode: 'capture_source_denied' } });
+        expect(captures).toBe(0);
+        await relay.dispose();
+    });
     it('starts the relay terminator from a signed startRequest delivered over machine rpc (SIM-P0-1)', async () => {
         const started: MachineLiveStreamStartRequestV1[] = [];
         const { handlers, registrar } = createRegistrar();

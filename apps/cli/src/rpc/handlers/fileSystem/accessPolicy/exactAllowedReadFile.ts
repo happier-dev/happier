@@ -74,7 +74,8 @@ export function authorizeExactAllowedReadFile(input: Readonly<{
   }
 
   return {
-    valid: false, errorCode: 'access_denied',
+    valid: false,
+    errorCode: 'access_denied',
     error: `Access denied: Path '${String(input.targetPath ?? '')}' is outside the allowed directories`,
   };
 }

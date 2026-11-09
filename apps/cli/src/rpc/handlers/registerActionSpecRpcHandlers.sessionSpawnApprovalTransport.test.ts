@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionSpawnNewInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { projectDiscussionModelParticipantLaunchV1 } from '@happier-dev/protocol/discussions/modelParticipantLaunch';
@@ -118,7 +118,7 @@ describe('session.spawn_new Action RPC deferred approval transport', () => {
         });
         expect(execute).toHaveBeenCalledWith(
             'session.spawn_new',
-            sessionSpawnInput,
+            projectSessionSpawnNewActionInputV2(sessionSpawnInput),
             { surface: 'rpc', authority: 'account_automation' },
         );
     });

@@ -1,6 +1,6 @@
 import { SESSION_SERVER_START_DAEMON_RPC_METHOD_V1, SessionServerStartDispatchRequestV1Schema, SessionServerStartDispatchResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionServerStartV1';
 import { openAutomationSessionStartRequestEnvelopeV1 } from '@happier-dev/protocol/automations/automationSessionStartRequestEnvelopeV1';
-import { sameAutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+import { sameAutomationAccountContentIdentityV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import type { AutomationRunCause, AccountEncryptionCurrentnessResponse, AccountScopedCryptoMaterialSnapshotV1, SessionServerStartDispatchResultV1, SessionSpawnNewInputV2 } from '@happier-dev/protocol';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
@@ -79,7 +79,7 @@ async function resolveCurrentTarget(params: Readonly<{
         });
         return !params.signal.aborted
             && encryption.kind === 'available'
-            && sameAutomationAccountCurrentnessWitnessV1(
+            && sameAutomationAccountContentIdentityV1(
                 params.request.start.accountCurrentness,
                 encryption.witness,
             )

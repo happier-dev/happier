@@ -1,3 +1,4 @@
+import { createServer } from 'node:http';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
@@ -9,9 +10,39 @@ import { splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connect
 import { resolveProviderConnectionForMachine } from '@/providers/registry/resolve';
 import type { ExecutionRunAdmittedPendingInputV1, ExecutionRunPendingInputBinding } from '@/api/session/client/transport/sessionClientInteractionApi';
 
+/** Exercise the real Undici control client against the fixture's HTTP router.
+ * The router still enters the real daemon app and its authorization handlers. */
+export async function createSnapshotDaemonHttpListener() {
+  const server = createServer(async (request, response) => {
+    try {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const headers = new Headers();
+      for (let index = 0; index < request.rawHeaders.length; index += 2)
+        headers.append(request.rawHeaders[index]!, request.rawHeaders[index + 1]!);
+      const reply = await globalThis.fetch(`http://127.0.0.1:${port}${request.url}`, {
+        method: request.method, headers, body: Buffer.concat(chunks).toString('utf8'),
+      });
+      response.writeHead(reply.status, Object.fromEntries(reply.headers));
+      response.end(await reply.text());
+    } catch {
+      response.writeHead(500);
+      response.end();
+    }
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Snapshot HTTP listener has no TCP address');
+  const port = address.port;
+  return { port, stop: () => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())) };
+}
+
 /** Substitute only the parent Session's persisted Pending transport. Host drain,
  * exact-input acceptance, native delivery and snapshot custody remain real. */
-export function createSnapshotSessionPendingTransport(): Pick<ApiSessionClient,
+export function createSnapshotSessionPendingTransport(authorAccountId = 'snapshot-account'): Pick<ApiSessionClient,
   'enqueueSessionUserMessageWithDisposition' | 'bindExecutionRunPendingInput'> {
   const queued = new Map<string, ExecutionRunAdmittedPendingInputV1[]>();
   const bindings = new Map<string, ExecutionRunPendingInputBinding>();
@@ -32,7 +63,7 @@ export function createSnapshotSessionPendingTransport(): Pick<ApiSessionClient,
       const inputs = queued.get(runId) ?? [];
       inputs.push({ ...UserMessageSchema.parse({ role: 'user', content: { type: 'text', text: input.text },
         localId: input.localId, ...(input.meta ? { meta: input.meta } : {}) }),
-        authorAccountId: 'snapshot-account', inputAdmissionReceipt: null, pendingProviderAction: 'send' });
+        authorAccountId, inputAdmissionReceipt: null, pendingProviderAction: 'send' });
       queued.set(runId, inputs);
       const binding = bindings.get(runId);
       if (binding) offer(binding);
@@ -71,7 +102,8 @@ export async function createSessionRunSnapshotFixture(happyHomeDir: string) {
       acceptsJavaScriptFileOverride: true, knownUserBinDirSuffixes: null },
       install: { manual: { kind: 'none' } }, auth: { support: 'unsupported', loginLaunches: [] } },
     catalog: { agentCliSystemTool: { toolId: 'snapshot-native-cli' } },
-    capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true, workspaceWrites: 'deny' },
+    capabilities: { tools: { delivery: 'native_mcp' },
+      sessions: { open: ['create'], delivery: ['newTurn'], cancel: true, workspaceWrites: 'deny' },
       structuredOutput: { formats: ['json'] } },
     providerRequirements: { acceptsProtocols: ['openai-responses'], required: { streaming: true },
       credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] },
@@ -129,11 +161,15 @@ export async function createSessionRunSnapshotFixture(happyHomeDir: string) {
                 agentId: agent.id, text: input.input.text,
               }) + '\\n');
               const review = input.input.text.includes('review-host-action-fixture');
-              if ((review || input.input.text.includes('retained-snapshot-turn')) && input.delivery.kind === 'newTurn') {
+              const secondOpinion = input.input.text.includes('second-opinion-role-fixture');
+              const approvalReviewer = input.input.text.includes('Assess this pending tool request') || input.input.text.includes('pwd');
+              if ((review || secondOpinion || approvalReviewer || input.input.text.includes('retained-snapshot-turn')) && input.delivery.kind === 'newTurn') {
                 const event = body => emit({ sessionId: request.sessionId, sequence: ++sequence, emittedAtMs: Date.now(), ...body });
                 event({ kind: 'input-accepted', inputIds: input.inputIds, delivery: input.delivery });
                 event({ kind: 'turn-start', turnId: input.delivery.turnId, startedBy: 'host' });
-                event({ kind: 'message-delta', turnId: input.delivery.turnId, channel: 'assistant', text: review
+                event({ kind: 'message-delta', turnId: input.delivery.turnId, channel: 'assistant', text: approvalReviewer
+                  ? JSON.stringify({ decision: 'allow_once', reason: 'Read-only within the task.' }) : secondOpinion
+                  ? JSON.stringify({ verdict: 'agree', confidence: 1, risks: [], missingEvidence: [], nextStep: 'Continue.' }) : review
                   ? JSON.stringify({ summary: 'Review fixture', findings: [], proposedComments: [{
                     findingId: 'snapshot-finding', body: 'Use the current daemon authority.',
                     anchor: { kind: 'file', filePath: 'native-opens.jsonl' },
@@ -177,5 +213,10 @@ export async function createSessionRunSnapshotFixture(happyHomeDir: string) {
     return { v: 1, connectionId: connection.id, connectionSecurityFingerprint: resolved.record.connectionSecurityFingerprint, confirmedAt: 1 };
   });
   const providerSettings = ProviderSettingsV1Schema.parse({ ...initial, accountGrants });
-  return { ...fixture, providerCatalog: splitProviderSettingsV1(providerSettings).catalog };
+  return { ...fixture, providerCatalog: splitProviderSettingsV1(providerSettings).catalog,
+    async dispose() {
+      try { await fixture.dispose(); }
+      finally { await controller.shutdown(); }
+    },
+  };
 }

@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto';
 import * as filesystem from 'node:fs/promises';
 import { access, chmod, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import fastify from 'fastify';
+import axios from 'axios';
 import { accountSettingsParse, createActionExecutor, decodePlainArtifactStoredContent, getActionSpec, StoredApprovalRequestSchema } from '@happier-dev/protocol';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -12,7 +13,8 @@ import { callSocketRpc } from '@happier-dev/sync-client';
 import { buildWorkspaceFileRestoreOperation } from '@happier-dev/protocol/machines/workspaceFilesReplace';
 import { DaemonWorkspaceFileReplacePreviewResponseSchema, DaemonWorkspaceFileReplaceApplyResponseSchema, WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol/machines/workspaceFiles';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import type { RpcHandler } from '@/api/rpc/types';
+import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
+import { createFilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
 import { applyWorkspaceFileReplace, previewWorkspaceFileReplace, registerWorkspaceFileReplaceHandlers } from './workspaceFileReplace';
 import { registerSessionHandlers } from './registerSessionHandlers';
@@ -27,6 +29,11 @@ import { registerAccountHomeHttp, registerPlainArtifactRoutes } from '@/session/
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { readOrCreateInstallationIdentitySync } from '@/daemon/identity/store';
+import { adoptServerProfileHomeConnectionDescriptor, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { createInstalledFilesystemMachineFixture } from '@/daemon/testkit/installedFilesystemMachineFixture';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 
 // Keep the filesystem real while exposing its write boundary as a configurable spy.
@@ -36,11 +43,34 @@ vi.mock('node:fs/promises', async () => {
 });
 
 const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+
+/** The direct test transport supplies verified Home ingress, not a new IO owner. */
+async function admittedPersonFacts(actionId: string, input: unknown, accountId = 'account', machineId = 'machine', home?: string) {
+  const installationId = readOrCreateInstallationIdentitySync().installationId;
+  const existingHome = await resolveServerProfileHomeIdentityId(configuration.activeServerId);
+  const serverIdentityId = home ?? existingHome ?? 'srv_replace_owner_fixture';
+  if (!existingHome) await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: configuration.activeServerId,
+    createIfMissing: true, observation: 'exact', descriptor: { v: 1, homeServerIdentityId: serverIdentityId,
+      canonicalServerUrl: configuration.serverUrl, revision: 1, endpoints: [{ kind: 'https', url: configuration.serverUrl }] } });
+  const target = { kind: 'machine' as const, machineId };
+  return { machineAdmission: { actorAccountId: accountId, custodianAccountId: accountId, machineId,
+    installationId, role: 'use' as const, encryptionMode: 'plain' as const }, verifyMachineAdmissionCurrent: async () => true,
+    callerInputAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-home-person', binding: {
+      accountId, authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId, machineId,
+      custodianAccountId: accountId, installationId, actionId, requestId: 'fixture-person-effect', target,
+      accountEncryptionMode: 'plain', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(
+        ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: 'fixture-person-effect', target, input })),
+    } }),
+  };
+}
 describe('registered workspace replace transport', () => {
   let root: string;
   let handlers: Map<string, RpcHandler>;
   let dispose: (() => Promise<void>) | undefined;
   const matcher = { query: 'old', replacement: 'new', matchCase: true, regex: false };
+  const personContext = (): RpcHandlerContext => ({ signal: new AbortController().signal, callerAuthority: 'present_user',
+    machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account', machineId: 'machine',
+      installationId: 'installation', role: 'use', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true });
   beforeEach(async () => {
     vi.mocked(filesystem.writeFile).mockImplementation((await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).writeFile);
     root = await mkdtemp(join(tmpdir(), 'happier-replace-'));
@@ -57,8 +87,80 @@ describe('registered workspace replace transport', () => {
     vi.mocked(filesystem.writeFile).mockImplementation((await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).writeFile);
     vi.restoreAllMocks(); await dispose?.(); await rm(root, { recursive: true, force: true });
   });
-  const preview = async (extra = {}) => DaemonWorkspaceFileReplacePreviewResponseSchema.parse(await handlers.get(RPC_METHODS.DAEMON_WORKSPACE_FILES_REPLACE_PREVIEW)!({ rootPath: root, ...matcher, ...extra }));
+  const preview = async (extra = {}) => DaemonWorkspaceFileReplacePreviewResponseSchema.parse(await handlers.get(RPC_METHODS.DAEMON_WORKSPACE_FILES_REPLACE_PREVIEW)!({ rootPath: root, ...matcher, ...extra }, personContext()));
   const apply = async (operation: unknown, signal?: AbortSignal) => DaemonWorkspaceFileReplaceApplyResponseSchema.parse(await applyWorkspaceFileReplace({ rootPath: root, operation }, root, { kind: 'osUser' }, signal ? { signal } : undefined));
+
+  it('retains a 300 KiB matching preview and its reversible receipt within the socket boundary', async () => {
+    const text = `old ${'é😀'.repeat(55_000)}`;
+    const replacement = `new ${'é😀'.repeat(55_000)}`;
+    await writeFile(join(root, 'large.txt'), text);
+    const page = await preview({ contextLines: 0, replacement });
+    expect(page).toMatchObject({ ok: true, coverage: 'complete', hasMore: false,
+      files: [{ path: 'large.txt', matches: [{ text, replacedText: text.replace('old', replacement) }] }] });
+    const result = await apply({ kind: 'replace', matcher: { ...matcher, replacement }, files: [{ path: 'large.txt', expectedHash: hash(Buffer.from(text)) }] });
+    expect(result).toMatchObject({ ok: true, results: [{ path: 'large.txt', status: 'replaced', edits: expect.any(Array) }] });
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeGreaterThan(300 * 1024);
+    expect(await readFile(join(root, 'large.txt'), 'utf8')).toBe(text.replace('old', replacement));
+    if (!result.ok) throw new Error('Expected the reversible replacement');
+    expect(await apply({ kind: 'restore', files: result.results.map(file => ({ path: file.path, expectedHash: file.hash, edits: file.edits })) }))
+      .toMatchObject({ results: [{ status: 'restored' }] });
+    expect(await readFile(join(root, 'large.txt'), 'utf8')).toBe(text);
+  });
+
+  it('finishes admitted preview and replacement after authority changes during a file read', async () => {
+    await writeFile(join(root, 'a.txt'), 'old');
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    let current = true;
+    const read = vi.spyOn(filesystem, 'readFile').mockImplementation(async (...args: Parameters<typeof filesystem.readFile>) => {
+      const bytes = await actual.readFile(...args);
+      current = false;
+      return bytes;
+    });
+    const context = { signal: new AbortController().signal, assertCurrentAuthority: async () => {
+      if (!current) throw Object.assign(new Error('Requester admission expired'), { code: 'filesystem_identity_custody_unavailable' });
+    } };
+    const previewed = await previewWorkspaceFileReplace({ rootPath: root, ...matcher }, root, { kind: 'osUser' }, context);
+    expect(previewed).toMatchObject({ ok: true, files: [{ path: 'a.txt', matchCount: 1 }] });
+    current = true;
+    const replaced = await applyWorkspaceFileReplace({ rootPath: root, operation: { kind: 'replace', matcher,
+      files: [{ path: 'a.txt', expectedHash: hash(Buffer.from('old')) }] } }, root, { kind: 'osUser' }, context);
+    expect(replaced).toMatchObject({ ok: true, results: [{ status: 'replaced' }] });
+    read.mockRestore();
+    expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('new');
+  });
+
+  it('verifies Home once for an admitted multi-file Replace and refuses the next request after revocation', async () => {
+    const f = await createInstalledFilesystemMachineFixture();
+    const replace = f.machine.createWorkspaceFileReplaceActionExecutor(f.serverId);
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), workspaceFilesReplace: replace });
+    const receiver: RpcActionExecutor = { execute: (id, input, context) => executor.execute(id, input, { ...context, serverId: f.serverId }) };
+    f.machine.setRPCHandlers({ spawnSession: async () => { throw new Error('No Session spawn expected'); },
+      stopSession: async () => true, requestShutdown() {} }, { externalActionIngressOwner: {
+      currentServerId: f.serverId, executor: receiver, resolveTarget: async () => ({ kind: 'machine', machineId: 'machine' }),
+    } });
+    for (const path of ['a.txt', 'b.txt']) await writeFile(join(f.directory, path), 'old');
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    let revoked = false;
+    const read = vi.spyOn(filesystem, 'readFile').mockImplementation(async (...args: Parameters<typeof filesystem.readFile>) => {
+      if (args[0] === join(f.directory, 'b.txt') && !revoked) {
+        expect(await actual.readFile(join(f.directory, 'a.txt'), 'utf8')).toBe('new');
+        revoked = true;
+        f.retire();
+      }
+      return actual.readFile(...args);
+    });
+    try {
+      const before = f.admissionChecks();
+      expect(await f.invoke(RPC_METHODS.DAEMON_WORKSPACE_FILES_REPLACE_APPLY, { machineId: 'machine', rootPath: f.directory,
+        operation: { kind: 'replace', matcher, files: ['a.txt', 'b.txt'].map(path => ({ path, expectedHash: hash(Buffer.from('old')) })) },
+      })).toMatchObject({ ok: true, results: [{ path: 'a.txt', status: 'replaced' }, { path: 'b.txt', status: 'replaced' }] });
+      expect(revoked).toBe(true);
+      expect(f.admissionChecks() - before).toBe(1);
+      for (const path of ['a.txt', 'b.txt']) expect(await actual.readFile(join(f.directory, path), 'utf8')).toBe('new');
+      expect(await f.invoke(RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST, { rootPath: f.directory })).toHaveProperty('errorCode');
+      expect(f.admissionChecks() - before).toBe(2);
+    } finally { read.mockRestore(); await f.machine.shutdown(); }
+  });
 
   it('refuses preview and replacement at production registration without an Action admission owner', async () => {
     handlers.clear();
@@ -94,13 +196,11 @@ describe('registered workspace replace transport', () => {
     handlers.clear();
     dispose = registerSessionHandlers({ registerHandler: (id, handler) => { handlers.set(id, handler); } }, root, {
       workspaceFileReplaceActionExecutor: receivingExecutor, workspaceFileReplaceMachineId: 'machine',
+      filesystemEffectAdmission: createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home' }),
     }).dispose;
     const outcome = await handlers.get(RPC_METHODS.DAEMON_WORKSPACE_FILES_REPLACE_PREVIEW)!({ rootPath: root, ...matcher }, {
-      signal: new AbortController().signal,
-      machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account', machineId: 'machine',
-        installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
-      verifyMachineAdmissionCurrent: async () => true,
-      localActionContext: { surface, authority: surface === 'ui' ? 'present_user' : 'account_automation', actionRequestId: 'preview-request' },
+      ...personContext(),
+      localActionContext: { surface, authority: 'present_user', actionRequestId: 'preview-request' },
     });
     expect(outcome).toMatchObject({ kind: 'approval_request_created',
       actionId: 'workspace.files.replace.preview', artifactId: 'preview-approval' });
@@ -120,13 +220,14 @@ describe('registered workspace replace transport', () => {
     });
     dispose = registerSessionHandlers({ registerHandler: (id, handler) => { handlers.set(id, handler); } }, root, {
       workspaceFileReplaceActionExecutor: executor, workspaceFileReplaceMachineId: 'machine',
+      filesystemEffectAdmission: createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home' }),
     }).dispose;
     const bytes = Buffer.from('\uFEFFold old\r\n');
     await writeFile(join(root, 'a.txt'), bytes);
     const page = await preview();
     expect(page).toMatchObject({ ok: true, files: [{ path: 'a.txt', hash: hash(bytes), matchCount: 2 }] });
     if (!page.ok) return;
-    const context = { signal: new AbortController().signal, localActionContext: { surface: 'ui', authority: 'present_user' } } as const;
+    const context = { ...personContext(), localActionContext: { surface: 'ui', authority: 'present_user' } } as const;
     const outcome = await handlers.get(RPC_METHODS.DAEMON_WORKSPACE_FILES_REPLACE_APPLY)!({ machineId: 'machine', rootPath: root,
       operation: { kind: 'replace', matcher,
         files: [{ path: 'a.txt', expectedHash: page.files[0].hash, excludedMatches: [{ line: page.files[0].matches[1].line, column16: page.files[0].matches[1].column16 }] }] },
@@ -187,42 +288,71 @@ describe('registered workspace replace transport', () => {
     } finally { await rm(outside, { recursive: true, force: true }); }
   });
 
+  it('finishes a published rename with its Undo receipt before observing Stop between files', async () => {
+    const original = Buffer.from('old');
+    await writeFile(join(root, 'a.txt'), original);
+    await writeFile(join(root, 'b.txt'), original);
+    const controller = new AbortController();
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    const renameBoundary = vi.spyOn(filesystem, 'rename').mockImplementation(async (source, destination) => {
+      await actual.rename(source, destination);
+      if (destination === join(root, 'renamed.txt')) controller.abort();
+    });
+    const edits = [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } }, text: 'new' }];
+    const outcome = await apply({ kind: 'editSet', files: [
+      { path: 'a.txt', expectedHash: hash(original), edits, renameTo: 'renamed.txt' },
+      { path: 'b.txt', expectedHash: hash(original), edits },
+    ] }, controller.signal);
+    expect(outcome).toMatchObject({ ok: true, results: [{ path: 'a.txt', status: 'replaced',
+      renameTo: 'renamed.txt', hash: hash(Buffer.from('new')), edits: expect.any(Array) }], cancelled: ['b.txt'] });
+    expect(await readFile(join(root, 'renamed.txt'), 'utf8')).toBe('new');
+    expect(await readFile(join(root, 'b.txt'))).toEqual(original);
+    renameBoundary.mockRestore();
+    if (!outcome.ok) throw new Error('Expected a retained published rename');
+    expect(await apply(buildWorkspaceFileRestoreOperation(outcome.results)))
+      .toMatchObject({ ok: true, results: [{ path: 'renamed.txt', status: 'restored', renameTo: 'a.txt' }] });
+    expect(await readFile(join(root, 'a.txt'))).toEqual(original);
+    await expect(readFile(join(root, 'renamed.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('retains the native accepted operation and partial cancellation inverse until the terminal acknowledgement', async () => {
     const bytes = Buffer.from('\uFEFFold\r\n');
     for (const path of ['a.txt', 'b.txt']) await writeFile(join(root, path), bytes);
-    const previousWorkingDirectory = process.env.HAPPIER_MACHINE_RPC_WORKING_DIRECTORY;
-    process.env.HAPPIER_MACHINE_RPC_WORKING_DIRECTORY = root;
-    const client = new ApiMachineClient('token', { id: 'machine', encryptionKey: new Uint8Array(32).fill(7),
-      encryptionVariant: 'legacy', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
-    const runtime = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
+    const f = await createInstalledFilesystemMachineFixture();
+    const client = f.machine;
+    const runtime = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'requester',
       generateOperationId: () => 'replace-operation' });
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-      workspaceFilesReplace: client.createWorkspaceFileReplaceActionExecutor('home'),
-      workspaceFilesReplacePreview: client.createWorkspaceFileReplacePreviewActionExecutor('home'),
+      workspaceFilesReplace: client.createWorkspaceFileReplaceActionExecutor(f.serverId),
+      workspaceFilesReplacePreview: client.createWorkspaceFileReplacePreviewActionExecutor(f.serverId),
       runActionOperation: runtime.runActionOperation });
     client.setRPCHandlers({ spawnSession: async () => ({ type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: 'unused' }),
       stopSession: async () => true, requestShutdown: () => {} }, { externalActionIngressOwner: {
-      currentServerId: 'home', executor, resolveTarget: async () => ({ kind: 'machine', machineId: 'machine' }),
+      currentServerId: f.serverId, executor, resolveTarget: async () => ({ kind: 'machine', machineId: 'machine' }),
     } });
-    const { writeFile: write } = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    const { rename: renameFile } = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     let cancellation: unknown;
-    // The real OS write boundary pauses the first staged file. The real
-    // operation owner cancels between files and retains the resulting inverse.
-    vi.mocked(filesystem.writeFile).mockImplementation(async (path, data, options) => {
-      await write(path, data, options);
-      // ApiMachine also publishes metadata outside this workspace; only a staged file write is the cancellation boundary.
-      if (!cancellation && typeof path === 'string' && dirname(path) === root)
+    // Cancel after the first actual publication, not during temporary staging:
+    // a cancellation before publication must now leave that file unchanged.
+    const renameBoundary = vi.spyOn(filesystem, 'rename').mockImplementation(async (source, path) => {
+      await renameFile(source, path);
+      if (!cancellation && typeof path === 'string' && path === join(root, 'a.txt'))
         cancellation = await runtime.handlers.cancel({ operationId: 'replace-operation' });
     });
     try {
       expect(await executor.execute('workspace.files.replace.preview', { machineId: 'machine', rootPath: root, ...matcher },
-        { surface: 'ui', authority: 'present_user', serverId: 'home', runtimeAccountId: 'account',
+        { ...await admittedPersonFacts('workspace.files.replace.preview', { machineId: 'machine', rootPath: root, ...matcher },
+            'requester', 'machine', f.homeServerIdentityId),
+          surface: 'ui', authority: 'present_user', serverId: f.serverId, runtimeAccountId: 'requester',
           externalActionTarget: { kind: 'machine', machineId: 'machine' } })).toMatchObject({ ok: true, result: {
             ok: true, files: [{ path: 'a.txt', hash: hash(bytes) }, { path: 'b.txt', hash: hash(bytes) }],
           } });
       const accepted = await executor.execute('workspace.files.replace', { machineId: 'machine', rootPath: root,
         operation: { kind: 'replace', matcher, files: ['a.txt', 'b.txt'].map(path => ({ path, expectedHash: hash(bytes) })) },
-      }, { surface: 'ui', authority: 'present_user', serverId: 'home', runtimeAccountId: 'account',
+      }, { ...await admittedPersonFacts('workspace.files.replace', { machineId: 'machine', rootPath: root,
+          operation: { kind: 'replace', matcher, files: ['a.txt', 'b.txt'].map(path => ({ path, expectedHash: hash(bytes) })) } },
+          'requester', 'machine', f.homeServerIdentityId),
+        surface: 'ui', authority: 'present_user', serverId: f.serverId, runtimeAccountId: 'requester',
         actionRequestId: 'replace-request', externalActionTarget: { kind: 'machine', machineId: 'machine' } });
       expect(accepted).toEqual({ ok: true, result: { operation: { operationId: 'replace-operation' } } });
       const terminal = await runtime.handlers.getV2({ operationId: 'replace-operation', waitForTerminal: true });
@@ -235,14 +365,12 @@ describe('registered workspace replace transport', () => {
       if (!result.ok) return;
       expect(await readFile(join(root, 'a.txt'))).toEqual(Buffer.from('\uFEFFnew\r\n'));
       expect(await readFile(join(root, 'b.txt'))).toEqual(bytes);
-      vi.mocked(filesystem.writeFile).mockImplementation(write);
+      renameBoundary.mockRestore();
       expect(await apply({ kind: 'restore', files: result.results.map(file => ({ path: file.path,
         expectedHash: file.hash, edits: file.edits })) })).toMatchObject({ results: [{ status: 'restored' }] });
       expect(await readFile(join(root, 'a.txt'))).toEqual(bytes);
     } finally {
       await client.shutdown();
-      if (previousWorkingDirectory == null) delete process.env.HAPPIER_MACHINE_RPC_WORKING_DIRECTORY;
-      else process.env.HAPPIER_MACHINE_RPC_WORKING_DIRECTORY = previousWorkingDirectory;
     }
   });
 
@@ -252,7 +380,7 @@ describe('registered workspace replace transport', () => {
     ['preview', 'foreign-home'], ['preview', 'foreign-input'], ['preview', 'missing-witness'], ['preview', 'retired'],
     ['preview', 'unreachable-witness'], ['preview', 'retired-during-witness'],
   ] as const)('replays approved %s through the native Machine dependency (%s)', async (kind, scenario) => {
-    const origin = 'http://replace-approval.test';
+    const origin = 'https://replace-approval.test';
     await withConfiguredDaemonTestHome({ prefix: 'happier-replace-approval-', env: {
       HAPPIER_SERVER_URL: origin, HAPPIER_WEBAPP_URL: origin, HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: root,
     } }, async () => {
@@ -295,19 +423,30 @@ describe('registered workspace replace transport', () => {
           throw new Error('Missing approval Artifact body');
         return StoredApprovalRequestSchema.parse(JSON.parse(storedBody.body));
       };
+      readOrCreateInstallationIdentitySync();
       const client = new ApiMachineClient(token, { id: machineId, encryptionKey: new Uint8Array(32).fill(7),
         encryptionVariant: 'legacy', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
       const resolveCurrentMachineExecutionOriginContext = createCurrentMachineExecutionOriginContextResolver({
         serverUrl: origin, resolveCurrentMachineId: () => machineId,
       });
+      const previewEffect = client.createWorkspaceFileReplacePreviewActionExecutor(serverId);
+      const replaceEffect = client.createWorkspaceFileReplaceActionExecutor(serverId);
+      const languageEffect = client.createLanguageIntelligenceApplyActionExecutor(serverId);
+      const filesystemEffect = client.createFilesystemActionExecutor(serverId);
       const { executor, deps } = createCliActionExecutorHarness({ token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null,
         serverId, serverIdentityId, serverHttpBaseUrl: origin,
         actionsSettingsProvider: createActionSettingsProvider({ accountSettings, allowEnvironmentOverride: false }),
       }, {
-        workspaceFilesReplacePreview: client.createWorkspaceFileReplacePreviewActionExecutor(serverId),
-        workspaceFilesReplace: client.createWorkspaceFileReplaceActionExecutor(serverId),
-        languageIntelligenceApply: client.createLanguageIntelligenceApplyActionExecutor(serverId),
-        filesystemActionExecute: client.createFilesystemActionExecutor(serverId),
+        // The direct transport supplies this Home's current Machine proof;
+        // native owners and the approved invocation's original authority stay real.
+        workspaceFilesReplacePreview: async (request, context) => previewEffect(request, { ...context,
+          ...await admittedPersonFacts('workspace.files.replace.preview', request, accountId, machineId, serverIdentityId) }),
+        workspaceFilesReplace: async (request, context) => replaceEffect(request, { ...context,
+          ...await admittedPersonFacts('workspace.files.replace', request, accountId, machineId, serverIdentityId) }),
+        languageIntelligenceApply: async (request, context) => languageEffect(request, { ...context,
+          ...await admittedPersonFacts(request.actionId, request.request, accountId, machineId, serverIdentityId) }),
+        filesystemActionExecute: async request => filesystemEffect({ ...request, context: { ...request.context,
+          ...await admittedPersonFacts(request.actionId, request.input, accountId, machineId, serverIdentityId) } }),
         isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentnessFromCredentials({ credentials,
           serverId, machineId, serverApiUrl: origin, resolveCurrentMachineExecutionOriginContext,
         }),
@@ -372,9 +511,15 @@ describe('registered workspace replace transport', () => {
         const decision = await executor.execute('approval.request.decide', { artifactId: proposal.result.artifactId, decision: 'approve' },
           { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId, serverIdentityId,
             runtimeAccountId: accountId, actionRequestId: 'replace-decision' });
+        if (scenario === 'foreign-home') {
+          expect(decision).toMatchObject({ ok: false, errorCode: 'approval_stale', effectAttempted: false,
+            details: { reason: 'home_changed' } });
+          expect(await readFile(join(root, 'a.txt'))).toEqual(bytes);
+          return;
+        }
         if (scenario !== 'current' && scenario !== 'implicit-target') {
           expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: { status: 'failed', execution: {
-            ok: false, errorCode: scenario === 'foreign-home' ? 'approval_stale' : 'target_unavailable',
+            ok: false, errorCode: 'target_unavailable',
           } } });
           expect(await readFile(join(root, 'a.txt'))).toEqual(bytes);
           return;
@@ -449,7 +594,29 @@ describe('registered workspace replace transport', () => {
     expect(await readFile(join(root, 'a.ts'), 'utf8')).toBe('old();\n');
   });
 
-  it.each(['replace', 'editSet'] as const)('refuses the entire %s when the last preview target changed on disk', async kind => {
+  it.each(['replace', 'restore'] as const)('applies valid targets in ordinary %s when another preview target changed on disk', async kind => {
+    const original = Buffer.from(kind === 'replace' ? '\uFEFFold\r\n' : '\uFEFFnew\r\n');
+    await writeFile(join(root, 'a.ts'), original);
+    await writeFile(join(root, 'b.ts'), original);
+    await writeFile(join(root, 'c.ts'), original);
+    const files = ['a.ts', 'b.ts', 'c.ts'].map(path => ({ path, expectedHash: hash(original) }));
+    await writeFile(join(root, 'b.ts'), 'agent edit\r\n');
+    const outcome = await apply(kind === 'replace'
+      ? { kind, matcher, files }
+      : { kind, files: files.map(file => ({ ...file, edits: [
+        { startUtf16: 1, deleteLength: 3, insertText: 'new', originalText: 'old' },
+      ] })) });
+    expect(outcome).toMatchObject({ ok: true, results: [
+      { path: 'a.ts', status: kind === 'replace' ? 'replaced' : 'restored' },
+      { path: 'b.ts', status: 'changed' },
+      { path: 'c.ts', status: kind === 'replace' ? 'replaced' : 'restored' },
+    ] });
+    expect(await readFile(join(root, 'a.ts'))).toEqual(Buffer.from(kind === 'replace' ? '\uFEFFnew\r\n' : '\uFEFFold\r\n'));
+    expect(await readFile(join(root, 'b.ts'), 'utf8')).toBe('agent edit\r\n');
+    expect(await readFile(join(root, 'c.ts'))).toEqual(Buffer.from(kind === 'replace' ? '\uFEFFnew\r\n' : '\uFEFFold\r\n'));
+  });
+
+  it('refuses the entire semantic edit set when the last preview target changed on disk', async () => {
     const original = Buffer.from('\uFEFFold\r\n');
     await writeFile(join(root, 'a.ts'), original);
     await writeFile(join(root, 'b.ts'), original);
@@ -458,9 +625,7 @@ describe('registered workspace replace transport', () => {
     // the later target before Apply, so even the first target must stay intact.
     await writeFile(join(root, 'b.ts'), 'agent edit\r\n');
     vi.mocked(filesystem.writeFile).mockClear();
-    const outcome = await apply(kind === 'replace'
-      ? { kind, matcher, files }
-      : { kind, files: files.map(file => ({ ...file, edits: [
+    const outcome = await apply({ kind: 'editSet', files: files.map(file => ({ ...file, edits: [
         { range: { start: { line: 0, character: 1 }, end: { line: 0, character: 4 } }, text: 'new' },
       ] })) });
     expect(outcome).toMatchObject({ ok: true, results: [
@@ -469,7 +634,7 @@ describe('registered workspace replace transport', () => {
     ] });
     expect(await readFile(join(root, 'a.ts'))).toEqual(original);
     expect(await readFile(join(root, 'b.ts'), 'utf8')).toBe('agent edit\r\n');
-    expect(filesystem.writeFile).not.toHaveBeenCalled();
+    expect((await filesystem.readdir(root)).sort()).toEqual(['a.ts', 'b.ts']);
   });
 
   it('validates every semantic target before a source move or buffer write can begin', async () => {
@@ -600,17 +765,22 @@ describe('registered workspace replace transport', () => {
   });
 
   it('continues bounded previews without losing or reselecting matches across pages', async () => {
-    for (const path of ['a.txt', 'b.txt', 'c.txt', 'd.txt']) await writeFile(join(root, path), 'old\n'.repeat(1000));
+    const text = `old ${'é'.repeat(Math.floor(WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES / 6))}\n`;
+    for (const path of ['a.txt', 'b.txt', 'c.txt', 'd.txt']) await writeFile(join(root, path), text);
     const paths: string[] = [];
+    let pages = 0;
     let cursor: { path: string } | undefined;
     do {
       const page = await preview({ contextLines: 0, ...(cursor ? { cursor } : {}) });
       expect(page.ok).toBe(true);
       if (!page.ok) return;
+      pages++;
+      expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES);
       paths.push(...page.files.map(file => file.path));
       cursor = page.cursor;
       expect(page.hasMore).toBe(Boolean(cursor));
     } while (cursor);
+    expect(pages).toBeGreaterThan(1);
     expect(paths).toEqual(['a.txt', 'b.txt', 'c.txt', 'd.txt']);
   });
 
@@ -650,6 +820,17 @@ describe('registered workspace replace transport', () => {
       files: [{ path: 'a.txt', expectedHash: hash(Buffer.from('old old')) }] });
     expect(result).toMatchObject({ results: [{ status: 'failed', reason: 'transport_ceiling' }] });
     expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('old old');
+  });
+
+  it('bounds rejected-file replies with explicit truncation before any file can be changed', async () => {
+    const outside = `../${'x'.repeat(Math.ceil(WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES / 2))}`;
+    const result = await applyWorkspaceFileReplace({ rootPath: root, operation: { kind: 'replace', matcher,
+      files: [0, 1, 2].map(index => ({ path: `${outside}${index}`, expectedHash: hash(Buffer.from('old')) })),
+    } }, root, { kind: 'osUser' });
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES);
+    expect(result).toMatchObject({ ok: true, truncated: true, results: [{ status: 'failed', reason: 'transport_ceiling' }] });
+    expect(DaemonWorkspaceFileReplaceApplyResponseSchema.safeParse(result).success).toBe(true);
+    expect(filesystem.writeFile).not.toHaveBeenCalled();
   });
 
   it('reports incomplete coverage for an indivisible oversized file while keeping readable results', async () => {

@@ -9,6 +9,7 @@ import {
     type SessionServerStartDispatchRequestV1,
 } from "@happier-dev/protocol";
 import { describe, expect, it, vi } from "vitest";
+import { createServer } from 'node:http';
 
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
@@ -18,6 +19,10 @@ import {
     registerSessionServerStartRpcHandler,
 } from "./sessionServerStart";
 import { createMachineSessionServerStartSpawnLifecycleTransport } from './sessionServerStartLifecycleAdapter';
+import { registerMachineSessionServerStartRpcHandler } from './sessionServerStartMachineBinding';
+import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { projectSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { WorkflowTargetUnavailableDetailsV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 const plainCurrentness: AccountEncryptionCurrentnessResponse = createAccountEncryptionCurrentnessFixture({
     mode: "plain",
@@ -114,6 +119,72 @@ function createRegistration(overrides?: Readonly<{
 }
 
 describe("registerSessionServerStartRpcHandler", () => {
+    it.each([
+        { outcome: 'permission_denied', includePlacement: false },
+        { outcome: 'caller_depth_unavailable', includePlacement: false },
+        { outcome: 'private_details', includePlacement: false },
+        { outcome: 'success', includePlacement: false },
+        { outcome: 'success', includePlacement: true },
+    ] as const)('retains the public Action $outcome at the real Machine server-start binding (placement=$includePlacement)', async ({ outcome, includePlacement }) => {
+        const publicResult = { type: 'success' as const, disposition: 'created' as const, sessionId: 'session-1',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' as const } };
+        const requests: string[] = [];
+        const refusal = outcome === 'caller_depth_unavailable'
+            ? { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+                details: WorkflowTargetUnavailableDetailsV1Schema.parse({ code: 'target_unavailable', reason: outcome }) }
+            : outcome === 'private_details'
+                ? { ok: false, errorCode: 'target_unavailable', error: 'PRIVATE_UPSTREAM_TEXT',
+                    details: { code: 'target_unavailable', reason: 'caller_depth_unavailable', secret: 'PRIVATE_REFUSAL_PAYLOAD' } }
+                : { ok: false, errorCode: outcome, error: outcome };
+        // Only the external Home Action endpoint is substituted. The reserved
+        // registration, credentialed executor, HTTP client and strict result parser run.
+        const home = createServer(async (incoming, response) => {
+            requests.push(`${incoming.method} ${incoming.url}`);
+            const chunks: Buffer[] = [];
+            for await (const chunk of incoming) chunks.push(Buffer.from(chunk));
+            const body: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+            const requestId = body && typeof body === 'object' && 'requestId' in body ? body.requestId : undefined;
+            response.writeHead(200, { 'content-type': 'application/json' });
+            response.end(JSON.stringify({ v: 1, actionId: 'session.spawn_new', requestId,
+                execution: outcome === 'success' ? { ok: true, result: projectSessionSpawnNewActionResultV1(publicResult) }
+                    : refusal }));
+        });
+        await new Promise<void>(resolve => home.listen(0, '127.0.0.1', resolve));
+        const address = home.address();
+        if (!address || typeof address === 'string') throw new Error('Expected fixture Home');
+        const url = `http://127.0.0.1:${address.port}`;
+        try {
+            await withConfiguredDaemonTestHome({ prefix: 'server-start-action-refusal-',
+                env: { HAPPIER_SERVER_URL: url, HAPPIER_WEBAPP_URL: url } }, async () => {
+                const handlers = new Map<string, RpcHandler>();
+                const token = 'hap_v1_11111111-1111-4111-8111-111111111111_' + 'A'.repeat(43);
+                registerMachineSessionServerStartRpcHandler({ registerHandler(method, handler) { handlers.set(method, handler); } }, {
+                    machineId: 'machine-1', token,
+                    readCredentials: async () => ({ token, encryption: null, credentialProvenance: 'api_token' }),
+                    resolveAccountId: async () => 'account-1', resolveInstallationId: () => 'installation-1',
+                    resolveAccountEncryptionCurrentness: async () => plainCurrentness,
+                    spawnLifecycleHandler: async () => { throw new Error('The public Action owns this start'); },
+                });
+                const handler = handlers.get(SESSION_SERVER_START_DAEMON_RPC_METHOD_V1);
+                if (!handler) throw new Error('Expected reserved server-start registration');
+                const { organizationPlacement: _placement, ...withoutPlacement } = validatedPlainSpawnInput;
+                const startRequest = { ...request, start: { ...request.start,
+                    requestEnvelope: { t: 'plain' as const,
+                        v: includePlacement ? validatedPlainSpawnInput : withoutPlacement } } };
+                const result = await handler(startRequest);
+                if (!includePlacement) expect(requests).toHaveLength(1);
+                expect(result).toEqual(outcome === 'success' ? publicResult
+                    : outcome === 'caller_depth_unavailable' ? { type: 'error', code: 'spawn_failed', retryable: false,
+                        launchError: { kind: 'launch_error', code: outcome, message: outcome } }
+                    : { type: 'error', code: outcome === 'private_details' ? 'target_unavailable' : outcome, retryable: false });
+                expect(requests).toHaveLength(1);
+            });
+        } finally {
+            await new Promise<void>((resolve, reject) => home.close(error => error ? reject(error) : resolve()));
+        }
+    });
+
     it("opens only the plain V2 envelope after exact target/currentness checks and stamps Automation provenance", async () => {
         const controller = new AbortController();
         const { handler, executeSessionStart } = createRegistration();
@@ -271,7 +342,7 @@ describe("registerSessionServerStartRpcHandler", () => {
         expect(executeSessionStart).not.toHaveBeenCalled();
     });
 
-    it("rechecks Account currentness immediately before the local create entrypoint", async () => {
+    it("allows unrelated Account sequence movement before the local create entrypoint", async () => {
         const { handler, executeSessionStart } = createRegistration({
             currentness: [
                 plainCurrentness,
@@ -279,12 +350,10 @@ describe("registerSessionServerStartRpcHandler", () => {
             ],
         });
 
-        await expect(handler(request)).resolves.toEqual({
-            type: "error",
-            code: "target_unavailable",
-            retryable: true,
-        });
-        expect(executeSessionStart).not.toHaveBeenCalled();
+        await expect(handler(request)).resolves.toEqual(expect.objectContaining({
+            type: "success",
+            sessionId: "session-1",
+        }));
     });
 
     it("rejects an opaque V2 request whose target does not match the server-stamped machine", async () => {

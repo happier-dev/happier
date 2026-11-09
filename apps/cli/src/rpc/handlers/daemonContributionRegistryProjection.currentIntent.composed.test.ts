@@ -5,7 +5,6 @@ import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-pro
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-
 import { DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
@@ -32,6 +31,7 @@ import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixtu
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
 
 const sockets = vi.hoisted(() => ({ io: vi.fn() }));
 vi.mock('socket.io-client', () => ({ io: sockets.io }));
@@ -244,16 +244,28 @@ describe('plugin Action current intent through the registered daemon ingress', (
         }));
         vi.spyOn(socketEvents, 'observeSessionSocketEvents').mockReturnValue({ dispose: async () => {} });
         vi.spyOn(axios, 'post').mockImplementation(async (url, input) => {
-            if (!url.endsWith('/v1/artifacts') || !input || typeof input !== 'object'
-                || typeof input.id !== 'string' || typeof input.body !== 'string') throw new Error('unexpected_artifact_create');
-            const envelope = decodePlainArtifactStoredContent(input.body);
+            const mutation = readCarrierMutation(input);
+            if (typeof mutation.body !== 'string') throw new Error('invalid_approval_body');
+            const envelope = decodePlainArtifactStoredContent(mutation.body);
             if (!envelope || typeof envelope !== 'object' || !('body' in envelope) || typeof envelope.body !== 'string') throw new Error('invalid_approval_body');
-            expect(applied).toBeUndefined();
-            stored = TargetActionApprovalRequestV1Schema.parse(JSON.parse(envelope.body));
-            artifactId = input.id;
-            rows.set(input.id, { ...input, ownerAccountId: 'account-1', access: 'owner', encryptionMode: 'plain',
-                publicAudience: 'none', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
-            return { status: 200, data: { id: input.id, headerVersion: 1, bodyVersion: 1 } };
+            const next = TargetActionApprovalRequestV1Schema.parse(JSON.parse(envelope.body));
+            if (url.endsWith('/v1/artifacts') && typeof mutation.id === 'string') {
+                expect(applied).toBeUndefined();
+                stored = next;
+                artifactId = mutation.id;
+                rows.set(artifactId, { ...mutation, ownerAccountId: 'account-1', access: 'owner', encryptionMode: 'plain',
+                    publicAudience: 'none', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+                return { status: 200, data: { id: artifactId, headerVersion: 1, bodyVersion: 1 } };
+            }
+            const row = rows.get(artifactId);
+            if (!row || !url.endsWith(`/v1/artifacts/${artifactId}`)) throw new Error('unexpected_artifact_update');
+            expect(mutation.expectedHeaderVersion).toBe(row.headerVersion);
+            expect(mutation.expectedBodyVersion).toBe(row.bodyVersion);
+            const headerVersion = Number(row.headerVersion) + 1;
+            const bodyVersion = Number(row.bodyVersion) + 1;
+            stored = next;
+            rows.set(artifactId, { ...row, ...mutation, headerVersion, bodyVersion });
+            return { status: 200, data: { success: true, headerVersion, bodyVersion } };
         });
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'account-1' } };
@@ -262,9 +274,9 @@ describe('plugin Action current intent through the registered daemon ingress', (
             if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
             const row = rows.get(url.split('/').at(-1)!);
             if (!row || !stored) throw new Error('unexpected_artifact_read');
-            const decided = TargetActionApprovalRequestV1Schema.parse({ ...stored,
+            const decided = stored.status === 'open' ? TargetActionApprovalRequestV1Schema.parse({ ...stored,
                 status: decision === 'approve' ? 'approved' : 'rejected',
-                decision: { kind: decision, decidedAtMs: Date.now() } });
+                decision: { kind: decision, decidedAtMs: Date.now() } }) : stored;
             return { status: 200, data: { ...row,
                 header: encodePlainArtifactStoredContent(buildTargetActionApprovalArtifactHeaderV1(decided)),
                 body: encodePlainArtifactStoredContent({ body: JSON.stringify(decided) }) } };

@@ -4,6 +4,7 @@ import type { HostAgentIsolationLaunchContext, HostRequesterExecutionIdentity } 
 import type { AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { logger } from '@/ui/logger';
 import type { FilesystemEffectFailureDetailsV1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 export type FilesystemEffectFailure = Readonly<{
   errorCode: 'filesystem_identity_custody_unavailable';
@@ -135,18 +136,21 @@ export function createFilesystemEffectAdmission(params: Readonly<{
       }
       const requester = await resolveRequester({ rpcContext: context });
       try {
-        const identity = requester.identity;
+        const policy = await import('@/daemon/agentIsolation/agentIsolationLaunchPolicy');
+        // Session folder preflight must run where the Agent will run. Manage
+        // file browsing retains the person's administrator placement.
+        const identity = method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT
+          ? policy.resolveHostRequesterAgentExecutionIdentity(requester.identity) : requester.identity;
         if (!context || context.signal.aborted || identity.kind === 'unknown')
           return projectFailure(refuse('requester_identity_unavailable'));
         // Ingress has already admitted this arrival. Never invoke an opaque
         // currentness callback here: only its local cancellation is relevant.
         context.signal.throwIfAborted();
-        const policy = await import('@/daemon/agentIsolation/agentIsolationLaunchPolicy');
         if (policy.isHostRequesterUnrestrictedOwner(identity) || params.readAgentIsolation && identity.kind === 'isolated'
           && policy.resolveHostRequesterAgentPlacementForHost({ identity, snapshot: params.readAgentIsolation?.() }) === 'daemon')
           return await ownerEffect();
         if (identity.kind !== 'isolated') return projectFailure(refuse('requester_identity_unavailable'));
-        try { return await params.executeNativeRpc!({ method, input, context, identity, requester }); }
+        try { return await params.executeNativeRpc!({ method, input, context, identity, requester: { ...requester, identity } }); }
         catch (error) {
           if (error && typeof error === 'object' && 'code' in error && error.code === unavailable.errorCode)
             return projectFailure(refuse('requester_identity_unavailable'));

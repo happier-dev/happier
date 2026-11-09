@@ -14,7 +14,7 @@ import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
 import { doesMachineRpcTargetMatchAdmission } from '@/api/machine/machineRpcAuthorization';
 
 export type DaemonProcessActionRequester = Readonly<{ accountId: string; isCustodian: boolean }>;
-export type DaemonProcessActionExecution = Readonly<{ signal?: AbortSignal; verifyCurrent?: () => Promise<boolean>;
+export type DaemonProcessActionExecution = Readonly<{ signal?: AbortSignal;
     rpcContext?: RpcHandlerContext; actionContext?: ReturnType<typeof buildActionExecutorContextForRpc> }>;
 export type DaemonProcessActions = Readonly<{
     executeKill(input: MachineProcessesKillInputV1, requester: DaemonProcessActionRequester, execution: DaemonProcessActionExecution): Promise<MachineProcessesActionResultV1>;
@@ -26,6 +26,7 @@ export type DaemonProcessesRoutes = Readonly<{
     view: MachineProcessesView;
     target(): Readonly<{ serverId: string; machineId: string; installationId: string; custodianAccountId: string }> | null;
     actions?: DaemonProcessActions;
+    readEnvironment?(target: Readonly<{ serverId: string; environmentId: string }>, context: RpcHandlerContext): Promise<boolean>;
 }>;
 
 /** Action RPC admission owns approval. These endpoints consume its admitted identity and never add approval policy. */
@@ -43,68 +44,66 @@ export function registerDaemonProcessesRpcHandlers(rpc: RpcHandlerRegistrar, opt
             return doesMachineRpcTargetMatchAdmission(request, admission, current, context?.reportAdmissionDenial);
         };
         if (!matches()) throw new RpcError('Machine access denied', RPC_ERROR_CODES.FORBIDDEN);
-        const assertCurrent = async () => {
-            const verified = async () => context?.verifyMachineAdmissionCurrent && await context.verifyMachineAdmissionCurrent()
-                || deny('machine_currentness');
-            if (!matches() || !await verified() || !matches()) {
-                throw new RpcError('Machine access denied', RPC_ERROR_CODES.FORBIDDEN);
-            }
+        const assertLocal = async () => {
+            if (!matches()) throw new RpcError('Machine access denied', RPC_ERROR_CODES.FORBIDDEN);
         };
         const identity = context!.machineAdmission!;
-        return { accountId: identity.actorAccountId, custodianAccountId: identity.custodianAccountId, assertCurrent };
+        return { accountId: identity.actorAccountId, custodianAccountId: identity.custodianAccountId, assertLocal,
+            async canReadEnvironment(environment: Readonly<{ serverId: string; environmentId: string }>) {
+                await assertLocal();
+                if (!context) return false;
+                const capturedRead = context.localActionContext?.processEnvironmentRead;
+                const allowed = capturedRead ? await capturedRead(environment) : await options.readEnvironment?.(environment, context) ?? false;
+                await assertLocal();
+                return allowed;
+            } };
     };
-    // Effects retain entry verification and their owning pre-effect callbacks.
-    // Passive reads already have dispatcher admission and verify at disclosure.
-    const admitted = async (request: Readonly<{ machineId: string; serverId?: string }>, context?: RpcHandlerContext) => {
-        const actor = bindAdmission(request, context);
-        await actor.assertCurrent();
-        return actor;
-    };
+    // Each finite request consumes dispatcher admission; native effects keep
+    // their exact identity/ownership checks and local cancellation below.
     rpc.registerHandler(RPC_METHODS.MACHINES_PROCESSES_LIST, async (raw: unknown, context) => {
         const input = MachineProcessesListInputV1Schema.parse(raw); const requester = bindAdmission(input, context);
         try { return MachineProcessesAnswerV1Schema.parse(await options.view.list(input, requester)); }
-        finally { await requester.assertCurrent(); }
+        finally { await requester.assertLocal(); }
     });
     rpc.registerHandler(RPC_METHODS.MACHINES_PROCESSES_GET, async (raw: unknown, context) => {
         const input = MachineProcessesGetInputV1Schema.parse(raw); const requester = bindAdmission(input, context);
         try { return MachineProcessesGetResultV1Schema.parse(await options.view.get(input, requester)); }
-        finally { await requester.assertCurrent(); }
+        finally { await requester.assertLocal(); }
     });
     rpc.registerHandler(RPC_METHODS.MACHINES_PROCESSES_CHECK, async (raw: unknown, context) => {
         const input = MachineProcessesCheckInputV1Schema.parse(raw); const requester = bindAdmission(input, context);
         try { return MachineProcessesCheckResultV1Schema.parse(await options.view.check(input, requester)); }
-        finally { await requester.assertCurrent(); }
+        finally { await requester.assertLocal(); }
     });
     rpc.registerHandler(RPC_METHODS.DAEMON_PROCESSES_WATCH, async (raw: unknown, context) => {
         const input = MachineProcessesWatchInputV1Schema.parse(raw); const requester = bindAdmission(input, context);
         try { return MachineProcessesWatchResultV1Schema.parse(await options.view.watch(input, requester, context?.signal)); }
-        finally { await requester.assertCurrent(); }
+        finally { await requester.assertLocal(); }
     });
     if (!options.actions) return;
     const actions = options.actions;
-    const execution = (input: Readonly<{ machineId: string; serverId?: string }>, actor: Awaited<ReturnType<typeof admitted>>, context?: RpcHandlerContext): DaemonProcessActionExecution => ({
+    const execution = (input: Readonly<{ machineId: string; serverId?: string }>, context?: RpcHandlerContext): DaemonProcessActionExecution => ({
         signal: context?.signal, rpcContext: context,
         actionContext: buildActionExecutorContextForRpc({ ...context, serverId: input.serverId,
             externalActionTarget: { kind: 'machine', machineId: input.machineId } }),
-        async verifyCurrent() { try { await actor.assertCurrent(); return true; } catch { return false; } },
     });
-    const requester = (identity: Awaited<ReturnType<typeof admitted>>): DaemonProcessActionRequester => ({
+    const requester = (identity: ReturnType<typeof bindAdmission>): DaemonProcessActionRequester => ({
         accountId: identity.accountId, isCustodian: identity.accountId === identity.custodianAccountId,
     });
     rpc.registerHandler(RPC_METHODS.MACHINES_PROCESSES_KILL, async (raw: unknown, context) => {
-        const input = MachineProcessesKillInputV1Schema.parse(raw); const actor = await admitted(input, context);
-        return MachineProcessesActionResultV1Schema.parse(await actions.executeKill(input, requester(actor), execution(input, actor, context)));
+        const input = MachineProcessesKillInputV1Schema.parse(raw); const actor = bindAdmission(input, context);
+        return MachineProcessesActionResultV1Schema.parse(await actions.executeKill(input, requester(actor), execution(input, context)));
     });
     rpc.registerHandler(RPC_METHODS.MACHINES_PROCESSES_STOP, async (raw: unknown, context) => {
-        const input = MachineProcessesStopInputV1Schema.parse(raw); const actor = await admitted(input, context);
-        return MachineProcessesActionResultV1Schema.parse(await actions.executeStop(input, requester(actor), execution(input, actor, context)));
+        const input = MachineProcessesStopInputV1Schema.parse(raw); const actor = bindAdmission(input, context);
+        return MachineProcessesActionResultV1Schema.parse(await actions.executeStop(input, requester(actor), execution(input, context)));
     });
     rpc.registerHandler(RPC_METHODS.MACHINES_PROCESSES_LEFT_BEHIND_CLEAN_UP, async (raw: unknown, context) => {
-        const input = MachineProcessesCleanUpInputV1Schema.parse(raw); const actor = await admitted(input, context);
-        return MachineProcessesCleanUpResultV1Schema.parse(await actions.cleanUp(input, requester(actor), execution(input, actor, context)));
+        const input = MachineProcessesCleanUpInputV1Schema.parse(raw); const actor = bindAdmission(input, context);
+        return MachineProcessesCleanUpResultV1Schema.parse(await actions.cleanUp(input, requester(actor), execution(input, context)));
     });
     rpc.registerHandler(RPC_METHODS.MACHINES_PROCESSES_START_AGAIN, async (raw: unknown, context) => {
-        const input = MachineProcessesStartAgainInputV1Schema.parse(raw); const actor = await admitted(input, context);
-        return MachineProcessesStartAgainResultV1Schema.parse(await actions.startAgain(input, requester(actor), execution(input, actor, context)));
+        const input = MachineProcessesStartAgainInputV1Schema.parse(raw); const actor = bindAdmission(input, context);
+        return MachineProcessesStartAgainResultV1Schema.parse(await actions.startAgain(input, requester(actor), execution(input, context)));
     });
 }

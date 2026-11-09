@@ -2,6 +2,7 @@ import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { z } from 'zod/mini';
 import { run as runRipgrep } from '@/integrations/ripgrep/index';
 import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
+import type { FilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
 import { authorizeFilesystemPath } from './fileSystem/accessPolicy/filesystemPathAuthorization';
 import { isSafeRelativeWorkspacePath, workspaceFileExclusionArguments } from './workspaceFilePaths';
 import { DaemonWorkspaceFileSearchRequestSchema, WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol/machines/workspaceFiles';
@@ -29,10 +30,13 @@ function responseBytes(value: unknown): number { return Buffer.byteLength(JSON.s
 export function registerWorkspaceFileSearchHandler(
     registrar: RpcHandlerRegistrar,
     workingDirectory: string,
-    opts?: Readonly<{ accessPolicy?: FilesystemAccessPolicy }>,
+    opts?: Readonly<{ accessPolicy?: FilesystemAccessPolicy; effectAdmission?: FilesystemEffectAdmission }>,
 ): void {
     registrar.registerHandler<unknown, DaemonWorkspaceFileSearchResponse>(RPC_METHODS.DAEMON_WORKSPACE_FILES_SEARCH,
         async (raw, context) => {
+            const custodyFailure = await opts?.effectAdmission?.rpc(context);
+            if (custodyFailure) return { ok: false, code: custodyFailure.errorCode,
+                message: custodyFailure.error, details: custodyFailure.details };
             const parsed = DaemonWorkspaceFileSearchRequestSchema.safeParse(raw);
             if (!parsed.success) return { ok: false, code: 'ripgrep_failed' };
             const request = parsed.data;
@@ -146,6 +150,7 @@ export function registerWorkspaceFileSearchHandler(
                     collectStdout: false, maxStderrBytes: WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES,
                     onStdoutLine: (line) => { try { return consume(line); } catch (error) { parseFailed = true; throw error; } },
                 });
+                context?.signal.throwIfAborted();
                 if (result.exitCode === 127) return { ok: false, code: 'ripgrep_unavailable' };
                 if (result.exitCode !== 0 && result.exitCode !== 1 && !result.stoppedEarly) {
                     if (request.regex && /regex parse error|error parsing regex/iu.test(result.stderr)) {

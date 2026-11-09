@@ -1,8 +1,10 @@
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { cpus, loadavg, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema,
+    DaemonContributionRegistryProjectionDescribeUnchangedResponseSchema,
     DaemonPluginUiArtifactBytesReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { computePluginUiArtifactFileSetSha256DigestV1, computePluginUiArtifactSha256DigestV1,
     verifyPluginUiArtifactFileSetIntegrityV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
@@ -13,6 +15,7 @@ import { readDeclaredConnectedAccountPurposeV1 } from '@happier-dev/protocol/con
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { RpcHandler } from '@/api/rpc/types';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { reloadConfiguration } from '@/configuration';
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -20,15 +23,127 @@ import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixtu
 import { resolveDefaultScmBackendRegistry } from '@/scm/scmBackendCatalog';
 import { createHostScmHostingProviderRuntimeServices } from '@/scm/hostingProviders/runtimeServices';
 import { runScmRoute } from '@/scm/rpc/dispatch';
-import { GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH } from '@/plugins/install/ui/generatedArtifacts';
+import { GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH, GENERATED_PLUGIN_UI_ARTIFACTS_MANIFEST_RELATIVE_PATH } from '@/plugins/install/ui/generatedArtifacts';
 import { resolveContainedPluginResourcePath } from '@/plugins/projection/resources/package/resolve';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import {
     invalidateDaemonContributionRegistryProjectionCache,
     registerDaemonContributionRegistryProjectionHandler,
+    readDaemonPluginUiArtifactBytes,
 } from './daemonContributionRegistryProjection';
 
 describe('bundled daemon contribution describe cost', () => {
+    it('preserves mounted Action executable artifacts and request locale through the registered handler', async () => {
+        const pluginId = 'acme.mounted-copy';
+        const locales = ['en', 'fr', 'de', 'es', 'it', 'ja', 'ko', 'pt', 'ru', 'zh'];
+        const artifactSource = Buffer.from('exports.activate = () => ({});');
+        const entry = 'react-native/view/entry.cjs.bundle';
+        const artifact = PluginUiArtifactsManifestEntryV2Schema.parse({
+            artifactId: 'view', tier: 'reactNative', entry,
+            files: [{ relativePath: entry, digest: computePluginUiArtifactSha256DigestV1(artifactSource),
+                byteSize: Buffer.byteLength(artifactSource) }],
+            digest: computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: entry, bytes: artifactSource }]),
+            builtWith: { bundler: 'esbuild', version: '0.25.0' }, executable: { exports: ['activate'] }, hostUiApiRange: '^1.0.0',
+        });
+        const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ coldStart: true, plugins: [{
+            manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: {
+                actions: [{ id: 'select-view', title: 'Select view', dangerLevel: 'safe', scopes: ['global'],
+                    surfaces: ['ui'], placementBindings: [], execution: { target: 'client', platforms: ['web'],
+                        client: { artifactId: 'view', exportName: 'activate' } } }],
+                ui: {
+                    translations: locales.map(locale => ({ locale, messages: { greeting: `${locale}:${'x'.repeat(2048)}` } })),
+                },
+            } }), files: {
+                'daemon.mjs': 'export function activate() { throw new Error("Projection must stay cold"); }',
+                [GENERATED_PLUGIN_UI_ARTIFACTS_MANIFEST_RELATIVE_PATH]: JSON.stringify({ version: 2, entries: [artifact] }),
+                [`${GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH}/${entry}`]: artifactSource,
+            },
+        }] });
+        try {
+            let serverFeatureReads = 0;
+            const rpc = new RpcHandlerManager({ scopePrefix: 'machine-copy', encryptionMode: 'plain', logger: () => {} });
+            registerDaemonContributionRegistryProjectionHandler(rpc, {
+                resolveRuntimeRegistry: async () => fixture.registry, resolveGeneration: async () => 1,
+                resolveInstalledPackages: async () => [],
+                resolveServerFeaturesSnapshot: () => { serverFeatureReads += 1; return undefined; },
+                resolvePluginProjectionExecutionOriginContext: () => ({ serverIdentityId: 'srv_mounted_copy', machineId: 'machine-copy' }),
+            });
+            const reply = await rpc.invokeLocal(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, {
+                machineId: 'machine-copy', selection: 'mountedActions', locale: 'fr', actions: [], callers: [{
+                    pluginId, occurrenceId: fixture.registry.readPluginOccurrenceId!(pluginId),
+                    sourceCustody: fixture.registry.readPluginSourceCustody!(pluginId),
+                }],
+            });
+            const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(reply);
+            const family = response.projection.familiesById.pluginUi;
+            const translation = family?.family === 'pluginUi' ? family.entriesById[`translations:${pluginId}`] : undefined;
+            expect(Object.keys(translation && 'bundles' in translation ? translation.bundles ?? {} : {}).sort()).toEqual(['en', 'fr']);
+            expect(response.projection.actionsById[`${pluginId}/select-view`]?.executionOrigin)
+                .toMatchObject({ serverIdentityId: 'srv_mounted_copy' });
+            expect(family?.entriesById[`reactNativeBundle:${pluginId}:select-view`]).toMatchObject({
+                generatedOwnerKind: 'clientContribution', artifactGraph: artifact,
+                occurrenceId: response.projection.actionsById[`${pluginId}/select-view`]?.occurrenceId,
+                executionOrigin: response.projection.actionsById[`${pluginId}/select-view`]?.executionOrigin,
+                runtime: { state: 'loadable', cacheIdentity: { artifactDigest: artifact.digest } },
+            });
+            expect(fixture.registry.activatedPluginIds.size).toBe(0);
+            expect(serverFeatureReads).toBe(0);
+        } finally { await fixture.dispose(); }
+    });
+    it('measures cross-Machine section sharing for real bundled describes', async () => {
+        const registry = getResolvedContributionRegistry();
+        const responses: unknown[] = [];
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now());
+        try {
+            for (let index = 0; index < 3; index += 1) {
+                const happyHomeDir = await mkdtemp(join(tmpdir(), 'gi-section-sharing-'));
+                const runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir, contributes: registry, generation: 1,
+                    resolveServerFeaturesSnapshot: () => undefined,
+                    resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }) => ({ kind: 'development',
+                        registeredRootId: `machine-${index}:${pluginId}`, canonicalRoot: rootPath, observedRevision: 1 }),
+                });
+                const rpc = new RpcHandlerManager({ scopePrefix: `machine-${index}`, encryptionMode: 'plain', logger: () => {} });
+                registerDaemonContributionRegistryProjectionHandler(rpc, {
+                    resolveRuntimeRegistry: async () => runtime, resolveGeneration: async () => 1,
+                    resolveInstalledPackages: async () => [], resolveServerFeaturesSnapshot: () => undefined,
+                    resolvePluginProjectionExecutionOriginContext: async () => ({ serverIdentityId: 'srv_sharing', machineId: `machine-${index}` }),
+                });
+                responses.push(await rpc.invokeLocal(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+                    { machineId: `machine-${index}`, locale: 'en' }));
+            }
+            const byteSize = (value: unknown) => Buffer.byteLength(JSON.stringify(value) ?? 'null');
+            const differences: Record<string, number> = {};
+            const walk = (a: unknown, b: unknown, field: string): void => {
+                if (JSON.stringify(a) === JSON.stringify(b)) return;
+                if (a && b && typeof a === 'object' && typeof b === 'object') {
+                    for (const [key, value] of Object.entries(a)) {
+                        walk(value, (b as Record<string, unknown>)[key], key);
+                    }
+                } else differences[field] = (differences[field] ?? 0) + byteSize(a);
+            };
+            walk(responses[0], responses[1], 'response');
+            const machineFields = new Set(['executionOrigin', 'contributorTargetedContributions', 'availability', 'available',
+                'authorization', 'occurrenceId', 'sourceCustody', 'projectionGeneration', 'generation', 'diagnostics',
+                'contributionIntrospection', 'targetGeneration', 'desiredGeneration']);
+            const sections = (response: unknown) => {
+                const parsed = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(response);
+                const selected: Record<string, unknown> = { ...parsed.projection,
+                    ...parsed.projection.familiesById, composerSurfaceCatalog: parsed.composerSurfaceCatalog,
+                    automationEligibleEvents: parsed.automationEligibleEvents };
+                delete selected.familiesById;
+                return Object.fromEntries(Object.entries(selected).filter(([key]) => !machineFields.has(key))
+                    .map(([key, value]) => [key, JSON.stringify(value, (key, value) => machineFields.has(key) ? undefined : value)]));
+            };
+            const a = sections(responses[0]);
+            const b = sections(responses[1]);
+            const sharedSections = Object.entries(a).filter(([key, body]) => body === b[key]);
+            const sharedBytes = sharedSections.reduce((total, [, body]) => total + Buffer.byteLength(body ?? ''), 0);
+            console.info('SECTION_SHARING_MEASUREMENT', JSON.stringify({ bytes: responses.map(byteSize), differences,
+                sharedBytes, sharedRatio: sharedBytes / byteSize(responses[0]),
+                sections: sharedSections.map(([key, body]) => [key, Buffer.byteLength(body ?? '')]) }));
+            expect(sharedBytes / byteSize(responses[0])).toBeGreaterThan(0.5);
+        } finally { clock.mockRestore(); }
+    }, 120_000);
     it('keeps authored SCM declarations cold through full describe and acquires native registrations only for an operation', async () => {
         const pluginId = 'acme.cold-scm';
         const failedPluginId = 'acme.failed-scm';
@@ -149,7 +264,6 @@ describe('bundled daemon contribution describe cost', () => {
         // Diagnostic timestamps are supplied by the system clock on every read.
         const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now());
         try {
-            const handlers = new Map<string, RpcHandler>();
             let serverFeatureReads = 0;
             let installedPackageReads = 0;
             let executionOriginContextReads = 0;
@@ -163,9 +277,8 @@ describe('bundled daemon contribution describe cost', () => {
                 blockedCatalogRead = { entered: enterCatalog, wait };
                 return { entered, release };
             };
-            registerDaemonContributionRegistryProjectionHandler({
-                registerHandler: (method, handler) => { handlers.set(method, handler); },
-            }, {
+            const rpc = new RpcHandlerManager({ scopePrefix: 'test-machine', encryptionMode: 'plain', logger: () => {} });
+            registerDaemonContributionRegistryProjectionHandler(rpc, {
                 resolveRuntimeRegistry: async () => runtime,
                 resolveGeneration: async () => 1,
                 resolveInstalledPackages: async () => {
@@ -182,7 +295,8 @@ describe('bundled daemon contribution describe cost', () => {
                 // This replaces only the server-features network boundary.
                 resolveServerFeaturesSnapshot: async () => { serverFeatureReads += 1; return undefined; },
             });
-            const handler = handlers.get(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)!;
+            const handler = (request: unknown) => rpc.invokeLocal(
+                RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, request);
             const readScmRegistrations = () => ({
                 backends: [...(runtime.scmBackendsById?.keys() ?? [])],
                 hostingProviders: [...runtime.scmHostingProvidersById.keys()],
@@ -196,7 +310,7 @@ describe('bundled daemon contribution describe cost', () => {
                 reactNativeHostRuntimeIdentity: { platform: 'ios', channel: 'internal', appVersion: '99.0.0' },
             })).toBe(settingsResponse);
             expect(settings.projection).toMatchObject({ installedPackagesById: {}, agentsById: {}, actionsById: {},
-                  resourcesById: {}, familiesById: {}, diagnostics: [] });
+                resourcesById: {}, familiesById: {}, diagnostics: [] });
             expect(settings.automationEligibleEvents).toBeUndefined();
             expect(settings.composerSurfaceCatalog).toBeUndefined();
             expect({ serverFeatureReads, installedPackageReads, executionOriginContextReads }).toEqual({
@@ -205,7 +319,7 @@ describe('bundled daemon contribution describe cost', () => {
             const initialAdmission = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(await handler({
                 machineId: 'test-machine', locale: 'fr-FR', selection: 'connectedAccountAdmission',
             }));
-            expect(initialAdmission.projection).toMatchObject({ agentsById: {},   settingsById: {}, diagnostics: [] });
+            expect(initialAdmission.projection).toMatchObject({ agentsById: {}, settingsById: {}, diagnostics: [] });
             expect(initialAdmission.automationEligibleEvents).toBeUndefined();
             expect(initialAdmission.composerSurfaceCatalog).toBeUndefined();
             expect(serverFeatureReads).toBe(0);
@@ -216,9 +330,49 @@ describe('bundled daemon contribution describe cost', () => {
             installedPackageReads = 0;
             executionOriginContextReads = 0;
             const fullResponse = await handler({
-                machineId: 'test-machine', locale: 'fr-FR',
+                machineId: 'test-machine', locale: 'fr-FR', knownProjectionDigest: 'cold-client-digest',
             });
             const full = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(fullResponse);
+            const byteSize = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
+            const families = Object.fromEntries(Object.entries(full.projection).map(([id, value]) => [id, byteSize(value)]));
+            const familySizes = Object.entries(full.projection.familiesById).map(([id, family]) => {
+                const entryFields: Record<string, number> = {};
+                for (const entry of Object.values(family.entriesById)) {
+                    for (const [field, value] of Object.entries(entry)) {
+                        if (value !== undefined) entryFields[field] = (entryFields[field] ?? 0) + byteSize(value);
+                    }
+                }
+                return { id, bytes: byteSize(family), entryFields };
+            }).sort((a, b) => b.bytes - a.bytes);
+            const largestEntries = Object.entries(full.projection.familiesById).flatMap(([familyId, family]) =>
+                Object.entries(family.entriesById).map(([id, entry]) => ({ familyId, id, bytes: byteSize(entry) })))
+                .sort((a, b) => b.bytes - a.bytes).slice(0, 20);
+            const nestedFieldBytes: Record<string, number> = {};
+            const measureNestedFields = (value: unknown): void => {
+                if (typeof value !== 'object' || value === null) return;
+                for (const [field, child] of Object.entries(value)) {
+                    if (child !== undefined && (field === 'executionOrigin' || field === 'contributorTargetedContributions')) {
+                        nestedFieldBytes[field] = (nestedFieldBytes[field] ?? 0) + byteSize(child);
+                    }
+                    measureNestedFields(child);
+                }
+            };
+            measureNestedFields(full);
+            console.info(JSON.stringify({ method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+                bytes: byteSize(full), families, familySizes, largestEntries, nestedFieldBytes,
+                automationEligibleEventsBytes: byteSize(full.automationEligibleEvents ?? null),
+                composerSurfaceCatalogBytes: byteSize(full.composerSurfaceCatalog ?? null) }));
+            const digest = (response: unknown) => {
+                if (typeof response !== 'object' || response === null) throw new Error('Expected a full RPC response');
+                const content = Object.fromEntries(Object.entries(response).filter(([field]) => field !== 'projectionDigest'));
+                return createHash('sha256').update(JSON.stringify(content)).digest('hex');
+            };
+            expect(full.projectionDigest).toBe(digest(fullResponse));
+            const unchanged = await handler({ machineId: 'test-machine', locale: 'fr-FR',
+                knownProjectionDigest: full.projectionDigest });
+            expect(Buffer.byteLength(JSON.stringify(unchanged))).toBeLessThanOrEqual(256);
+            expect(DaemonContributionRegistryProjectionDescribeUnchangedResponseSchema.parse(unchanged))
+                .toEqual({ protocolVersion: 1, unchanged: true, projectionDigest: full.projectionDigest });
             const fullAgain = await handler({ machineId: 'test-machine', locale: 'fr-FR' });
             expect.soft(fullAgain).toBe(fullResponse);
             const equivalentHostResponse = await handler({ machineId: 'test-machine', locale: 'fr-FR',
@@ -240,6 +394,17 @@ describe('bundled daemon contribution describe cost', () => {
             const selectedResponse = await handler({ machineId: 'test-machine', selection: 'agents' });
             const selected = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(selectedResponse);
             expect.soft(await handler({ machineId: 'test-machine', selection: 'agents', locale: 'ja' })).toBe(selectedResponse);
+            const beforeWorkflow = { serverFeatureReads, installedPackageReads };
+            const workflowResponse = await handler({ machineId: 'test-machine', selection: 'workflowMaterialization' });
+            const workflow = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(workflowResponse);
+            expect(await handler({ machineId: 'test-machine', selection: 'workflowMaterialization', locale: 'ja' })).toBe(workflowResponse);
+            expect({ serverFeatureReads, installedPackageReads }).toEqual(beforeWorkflow);
+            expect(workflow.projection.agentsById).toEqual(full.projection.agentsById);
+            expect(workflow.projection.actionsById).toEqual(full.projection.actionsById);
+            expect(workflow.projection).toMatchObject({ installedPackagesById: {}, settingsById: {},
+                familiesById: {}, resourcesById: {}, diagnostics: [] });
+            expect(workflow.automationEligibleEvents).toBeUndefined();
+            expect(workflow.composerSurfaceCatalog).toBeUndefined();
             expect(serverFeatureReads).toBeGreaterThan(0);
             expect(installedPackageReads).toBeGreaterThan(0);
             expect(executionOriginContextReads).toBeGreaterThan(0);
@@ -269,8 +434,6 @@ describe('bundled daemon contribution describe cost', () => {
             expect(await handler({ machineId: 'test-machine', locale: 'fr-FR',
                 reactNativeHostRuntimeIdentity: { platform: 'ios', channel: 'internal', appVersion: '99.0.0' },
             })).toEqual(fullAgain);
-            const byteSize = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
-            const families = Object.fromEntries(Object.entries(full.projection).map(([id, value]) => [id, byteSize(value)]));
             console.info(JSON.stringify({ method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
                 bytes: byteSize(full), agentSelectionBytes: byteSize(selected), equivalentFullBuildReads, equivalentFullResponses, families,
                 automationEligibleEventsBytes: byteSize(full.automationEligibleEvents ?? null),
@@ -287,6 +450,26 @@ describe('bundled daemon contribution describe cost', () => {
             expect(byteSize(settings)).toBeLessThan(byteSize(full));
             expect(byteSize(admission)).toBeLessThan(byteSize(full));
             expect(await handler({ machineId: 'test-machine', locale: 'fr-FR' })).toEqual(full);
+            const japaneseResponse = await handler({
+                machineId: 'test-machine', locale: 'ja',
+            });
+            const japanese = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(japaneseResponse);
+            expect(japanese.projectionDigest).toBe(digest(japaneseResponse));
+            expect(await handler({ machineId: 'test-machine', locale: 'ja', knownProjectionDigest: japanese.projectionDigest }))
+                .toEqual({ protocolVersion: 1, unchanged: true, projectionDigest: japanese.projectionDigest });
+            // Authority must still resolve before comparing a digest, even if
+            // the registry generation has not changed.
+            serverIdentityId = 'srv_cost_changed';
+            const changedResponse = await handler({
+                machineId: 'test-machine', locale: 'fr-FR', knownProjectionDigest: full.projectionDigest,
+            });
+            const changed = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(changedResponse);
+            expect(changed.projection.generation).toBe(full.projection.generation);
+            expect(changed.projectionDigest).not.toBe(full.projectionDigest);
+            expect(changed.projectionDigest).toBe(digest(changedResponse));
+            serverIdentityId = 'srv_cost';
+            console.info(JSON.stringify({ conditionalDescribeFullBytes: byteSize(full),
+                conditionalDescribeUnchangedBytes: byteSize(unchanged) }));
             const coldWindows = [];
             for (let repeat = 0; repeat < 5; repeat += 1) {
                 invalidateDaemonContributionRegistryProjectionCache();
@@ -311,6 +494,8 @@ describe('bundled daemon contribution describe cost', () => {
                 expect(installedPackageReads - before).toBe(1);
                 for (const response of responses) expect(response).toBe(warm);
             }
+            console.info(JSON.stringify({ measurement: 'describe-cold-amplification', basis: 'source harness, real bundled registry',
+                cores: cpus().length, load: loadavg(), coldWindows }));
             // The catalog is a filesystem boundary. A slower earlier request
             // must use the authority observed after preparation, not republish
             // the origin retired while it waited. Exercise both selected and
@@ -459,7 +644,7 @@ describe('bundled daemon contribution describe cost', () => {
             expect(responses[1]).toBe(responses[0]);
             expect(responses[2]).toBe(responses[0]);
             const request = { machineId: 'test-machine', artifactFamily: 'hostedWeb', cacheIdentity: { artifactDigest: digest } };
-            const read = () => handlers.get(RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ)!(request);
+            const read = () => readDaemonPluginUiArtifactBytes(request, { resolveRuntimeRegistry: async () => runtime });
             // Same filesystem-produced Buffer as the real RPC. Hashing a plain
             // Uint8Array instead would compare different native/JS workloads.
             // This comparator omits registry admission, so it is a lower

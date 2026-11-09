@@ -8,6 +8,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
+import { assertFilesystemEffectCurrent } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 
 type NormalizedAnchor =
   | Readonly<{
@@ -41,7 +42,7 @@ export function registerWorkspaceAnchorHandlers(
 ): void {
   rpcHandlerManager.registerHandler<unknown, WorkspaceAnchorsResolveResponseV1>(
     RPC_METHODS.WORKSPACE_ANCHORS_RESOLVE,
-    async (raw) => {
+    async (raw, context) => {
       const parsed = WorkspaceAnchorsResolveRequestV1Schema.safeParse(raw);
       if (!parsed.success) {
         return { success: false, errorCode: 'INVALID_REQUEST', error: 'Invalid workspace anchor resolution request' };
@@ -56,16 +57,22 @@ export function registerWorkspaceAnchorHandlers(
         return { success: false, errorCode: 'INVALID_WORKSPACE_PATH', error: workspace.error };
       }
 
+      try {
       const fileCache = new Map<string, Promise<FileCacheEntry>>();
       const readWorkspaceFile = (filePath: string): Promise<FileCacheEntry> => {
         const existing = fileCache.get(filePath);
         if (existing) return existing;
-        const promise = readAuthorizedWorkspaceFile({
+        const promise = (async () => {
+          await assertFilesystemEffectCurrent(context);
+          const file = await readAuthorizedWorkspaceFile({
           workspacePath: workspace.resolvedPath,
           filePath,
           defaultDirectory: deps.defaultDirectory,
           accessPolicy: deps.accessPolicy,
-        });
+          });
+          await assertFilesystemEffectCurrent(context);
+          return file;
+        })();
         fileCache.set(filePath, promise);
         return promise;
       };
@@ -110,7 +117,12 @@ export function registerWorkspaceAnchorHandlers(
         }));
       }
 
+      await assertFilesystemEffectCurrent(context);
       return { success: true, resolutions };
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'filesystem_identity_custody_unavailable')) throw error;
+        return { success: false, errorCode: error.code, error: error.message };
+      }
     },
   );
 }

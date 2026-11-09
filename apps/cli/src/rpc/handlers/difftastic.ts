@@ -4,6 +4,7 @@ import { run as runDifftastic } from '@/integrations/difftastic/index';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
 import { authorizeFilesystemPath } from './fileSystem/accessPolicy/filesystemPathAuthorization';
+import { assertFilesystemEffectCurrent } from './fileSystem/accessPolicy/filesystemEffectAdmission';
 
 interface DifftasticRequest {
     args: string[];
@@ -16,6 +17,7 @@ interface DifftasticResponse {
     stdout?: string;
     stderr?: string;
     error?: string;
+    errorCode?: string;
 }
 
 export function registerDifftasticHandler(
@@ -25,7 +27,7 @@ export function registerDifftasticHandler(
 ): void {
     const accessPolicy = opts?.accessPolicy ?? { kind: 'osUser' };
     // Difftastic handler - raw interface to difftastic
-    rpcHandlerManager.registerHandler<DifftasticRequest, DifftasticResponse>(RPC_METHODS.DIFFTASTIC, async (data) => {
+    rpcHandlerManager.registerHandler<DifftasticRequest, DifftasticResponse>(RPC_METHODS.DIFFTASTIC, async (data, context) => {
         logger.debug('Difftastic request with args:', data.args, 'cwd:', data.cwd);
 
         let cwd = workingDirectory;
@@ -35,12 +37,14 @@ export function registerDifftasticHandler(
                 defaultDirectory: workingDirectory,
                 accessPolicy,
             });
-            if (!validation.valid) return { success: false, error: validation.error };
+            if (!validation.valid) return { success: false, error: validation.error, errorCode: validation.errorCode };
             cwd = validation.resolvedPath;
         }
 
         try {
+            await assertFilesystemEffectCurrent(context);
             const result = await runDifftastic(data.args, { cwd });
+            await assertFilesystemEffectCurrent(context);
             return {
                 success: true,
                 exitCode: result.exitCode,

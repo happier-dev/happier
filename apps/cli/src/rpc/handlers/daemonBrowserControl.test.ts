@@ -8,7 +8,8 @@ import { createBrowserDaemonControlRoutes } from '@/daemon/browser/control/route
 import { createBrowserSidecarCdpControlAdapter, type BrowserSidecarCdpEventSubscriber } from '@/daemon/browser/sidecar/controlAdapter';
 import { createBrowserDaemonRuntimeActionExecutor } from '@/daemon/browser/actions/runtimeActionExecutor';
 import { createBrowserDaemonFeatureGate } from '@/daemon/browser/featureGate';
-import { registerDaemonBrowserControlHandler } from './daemonBrowserControl';
+import { registerDaemonBrowserControlHandler, registerDaemonBrowserViewWatchHandler } from './daemonBrowserControl';
+import { createBrowserDaemonViewDiscovery } from '@/daemon/browser/control/viewDiscovery';
 
 // Static CLI imports also load Socket.IO; install the canonical external boundary first.
 vi.mock('../../../../ui/sources/dev/reactNativeStub.ts', async () => {
@@ -39,6 +40,10 @@ vi.mock('@shopify/react-native-skia', async () => {
 });
 // No image is rendered in this RPC composition; mirror the testkit Voice harness's native leaf.
 vi.mock('expo-image', () => ({ Image: 'Image' }));
+vi.mock('react-native-reanimated', async () => {
+    const path = new URL('../../../../ui/sources/dev/testkit/mocks/reanimated.ts', import.meta.url).href;
+    return (await import(path)).createReanimatedModuleMock();
+});
 vi.mock('expo-file-system', async () => {
     const path = new URL('../../../../ui/sources/dev/testkit/mocks/expoFileSystem.ts', import.meta.url).href;
     const { createExpoFileSystemFileMock } = await import(path);
@@ -88,11 +93,14 @@ await Promise.all([
     import(uiPath('utils/system/runtimeFetch.ts')),
     import(uiPath('sync/domains/state/storage.ts')),
 ]);
-const { createBrowserDaemonControlCommandSender, listBrowserDaemonViewsViaMachineRpc }: {
+const { createBrowserDaemonControlCommandSender, listBrowserDaemonViewsViaMachineRpc, watchBrowserDaemonViewsViaMachineRpc }: {
     createBrowserDaemonControlCommandSender(input: { machineId: string; serverId: string }):
         (command: BrowserCommandV1, onEvents?: (events: readonly BrowserEventV1[]) => void) =>
             Promise<{ ok: true; result: BrowserCommandDispatchResultV1 } | { ok: false; reason: string }>;
     listBrowserDaemonViewsViaMachineRpc(input: { machineId: string; serverId: string; browserSessionId: string }):
+        Promise<{ ok: true; views: readonly BrowserDaemonViewV1[] } | { ok: false; reason: string }>;
+    watchBrowserDaemonViewsViaMachineRpc(input: { machineId: string; serverId: string; accountId: string;
+        browserSessionId: string; knownViewIds: readonly string[]; signal: AbortSignal }):
         Promise<{ ok: true; views: readonly BrowserDaemonViewV1[] } | { ok: false; reason: string }>;
 } = await import(uiPath('sync/domains/browser/control/machineRpc.ts'));
 const { serverScopedRpcSocketPool }: { serverScopedRpcSocketPool: { stopAll(): Promise<void> } } =
@@ -134,6 +142,7 @@ function createRuntime() {
     const execute = createBrowserDaemonRuntimeActionExecutor({ control: routes, featureGate });
     const rpc = new RpcHandlerManager({ scopePrefix: MACHINE_ID, encryptionMode: 'plain', logger: () => {} });
     registerDaemonBrowserControlHandler(rpc, { browserControl: routes });
+    registerDaemonBrowserViewWatchHandler(rpc, createBrowserDaemonViewDiscovery({ broker }));
     return { adapter, rpc, pageCommands, browserCommands, execute, featureGate };
 }
 
@@ -185,12 +194,15 @@ describe('daemon Browser control UI seam', () => {
             const scope = { machineId: MACHINE_ID, serverId: homes.homes.browser.id };
             const send = createBrowserDaemonControlCommandSender(scope);
             const events: BrowserEventV1[] = [];
+            const changed = watchBrowserDaemonViewsViaMachineRpc({ ...scope, accountId: 'browser-account',
+                browserSessionId: BROWSER_SESSION_ID, knownViewIds: [], signal: new AbortController().signal });
             expect(await send({ kind: 'openView', commandId: 'open', browserSessionId: BROWSER_SESSION_ID,
                 viewId: VIEW_ID, platform: 'web', focus: true, target: { kind: 'externalUrl', targetId: 'external',
                     url: 'https://browser.example.test/' } }, incoming => events.push(...incoming)))
                 .toMatchObject({ ok: true, result: { status: 'dispatched', adapterKind: 'chromiumSidecar' } });
             expect(events).toEqual(expect.arrayContaining([expect.objectContaining({ viewId: VIEW_ID,
                 currentUrl: 'https://browser.example.test/' })]));
+            expect(await changed).toMatchObject({ ok: true, views: [{ browserSessionId: BROWSER_SESSION_ID, viewId: VIEW_ID }] });
             expect(await send({ kind: 'navigate', commandId: 'ui_navigate', browserSessionId: BROWSER_SESSION_ID,
                 viewId: VIEW_ID, url: 'https://browser.example.test/next' }))
                 .toMatchObject({ ok: true, result: { commandId: 'ui_navigate', status: 'dispatched' } });
@@ -214,6 +226,21 @@ describe('daemon Browser control UI seam', () => {
                 await serverScopedRpcSocketPool.stopAll();
             } finally { await homes.dispose(); runtime.adapter.dispose(); }
         }
+    });
+
+    it('keeps raw-RPC controller commands a human route; agents take control through the Action policy', async () => {
+        const runtime = createRuntime();
+        try {
+            for (const kind of ['takeControl', 'handBack'] as const) {
+                const command = { kind, commandId: `agent-${kind}`, browserSessionId: BROWSER_SESSION_ID, viewId: VIEW_ID };
+                await expect(runtime.rpc.invokeLocal(RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH, { machineId: MACHINE_ID, command },
+                    { verifiedPeerAuthority: 'account_automation' })).resolves.toMatchObject({
+                        result: { status: 'failed', error: { code: 'permission_denied' } } });
+                const human = await runtime.rpc.invokeLocal(RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH,
+                    { machineId: MACHINE_ID, command: { ...command, commandId: `human-${kind}` } }, { verifiedPeerAuthority: 'present_user' });
+                expect(human).not.toMatchObject({ result: { error: { code: 'permission_denied' } } });
+            }
+        } finally { runtime.adapter.dispose(); }
     });
 
     it('rejects malformed RPC commands without touching Chromium and reports an unwired runtime', async () => {

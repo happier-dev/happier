@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { JsonValue } from '@happier-dev/protocol';
 
 import { registerApprovalRpcHandlers } from './approvals';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -22,24 +23,25 @@ const { createActionExecutorBoundaryFixture }: {
 
 function requesterApproval(family: 'built_in' | 'target') {
   const actionId = family === 'built_in' ? 'session.message.send' : 'action.invoke';
-  const actionArgs = family === 'built_in' ? { sessionId: 'destination', message: 'exact preview' }
+  const actionArgs: JsonValue = family === 'built_in' ? { sessionId: 'destination', message: 'exact preview' }
     : { action: { pluginId: 'acme.account', localId: 'write' }, input: { key: 'sample' } };
   const caller = { kind: 'session' as const, sessionId: 'bot-session', starterDepth: 0, turnDepth: 0 };
   const target = { kind: 'session' as const, sessionId: 'destination' };
   const causalPermissionAuthority = { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'yolo' as const };
+  const actionRequestAttributionV1 = { requestRef: 'bob-request', requester: { serverId: 'home', accountId: 'bob' },
+    persona: { serverId: 'home', sessionId: 'original-manager' }, origin: null };
   const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(39));
   const context: ActionExecutorContext = { surface: 'agent', authority: 'account_automation', runtimeAccountId: 'alice',
     defaultSessionId: 'bot-session', serverId: 'home', serverIdentityId: 'srv_home', actionRequestId: 'bot-request',
     actionCaller: caller, callerPermissionMode: 'yolo', causalPermissionAuthority, externalActionTarget: target,
     sessionInputSource: { sourceSessionId: 'bot-session', sourceTurnId: 'turn-1', via: 'action' },
-    actionRequestAttributionV1: { requestRef: 'bob-request', requester: { serverId: 'home', accountId: 'bob' },
-      persona: { serverId: 'home', sessionId: 'original-manager' }, origin: null },
+    actionRequestAttributionV1,
     externalActionExecutionAuthorization: { v: 1, token: 'original-bot-source', binding: {
       serverIdentityId: 'srv_home', accountId: 'alice', custodianAccountId: 'alice', machineId: 'bot-machine',
       installationId: 'installation', actionId, requestId: 'bot-request', target,
       authentication: { kind: 'account', tokenEpoch: 1 },
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId: 'bot-request', target, input: actionArgs }),
-      sessionActionOrigin: { v: 1, caller, sourceTurnId: 'turn-1', callerPermissionMode: 'yolo', causalPermissionAuthority, requestId: 'bot-request' },
+      sessionActionOrigin: { v: 1, caller, sourceTurnId: 'turn-1', callerPermissionMode: 'yolo', causalPermissionAuthority, requestId: 'bot-request', actionRequestAttributionV1 },
       sessionActionSource: { machineId: 'bot-machine', installationId: 'installation' },
     } },
     signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ authorizationToken: args.authorization.token,

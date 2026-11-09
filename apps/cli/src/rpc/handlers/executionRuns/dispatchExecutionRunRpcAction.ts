@@ -29,7 +29,7 @@ import type { BrowserDiagnosticsActionRoutes } from '@/daemon/browser/diagnostic
 import type {
   BrowserRecordingComposerAttachInput,
   BrowserRecordingComposerAttachResult,
-} from '@/daemon/browser/recording/attachToComposer';
+} from '../../../daemon/recording/attachToComposer';
 import type { LocalServicesRuntimeActionRoutes } from '@/daemon/local/services/actions/runtimeActionExecutor';
 import type { DaemonPeerMediationObservabilityRuntimeActionContext } from '@/daemon/peer/mediation/observability/runtimeActionExecutor';
 import { createDaemonRuntimeActionExecutor, type BrowserUiAutomationRouteOwner } from '@/daemon/runtimeActionExecutor';
@@ -79,6 +79,7 @@ export type ExecutionRunRpcApprovalDeps = Pick<
   | 'approvalsWaitForDecision'
   | 'isApprovalExecutionOriginCurrent'
   | 'reviewCommentAction'
+  | 'executionRunHostActionApprovalReplay'
 > & Readonly<{
   resolveReviewHostPluginAuthority?: ReviewHostPluginAuthorityReader;
   executionRunHostActionCurrentIntent?: (
@@ -276,6 +277,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       externalActionTarget?: ActionExecutorContext['externalActionTarget'];
       defaultSessionMachineId?: string;
       callerPermissionMode?: string | null;
+      approvalProfileId?: string | null;
       causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
     }>,
   ): Promise<ActionExecuteResult> {
@@ -285,6 +287,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
     runtimeActionExecutorForRunActions ??= createActionExecutor(actionDeps);
     return await runtimeActionExecutorForRunActions.execute(actionId, input, {
       defaultSessionId: context.defaultSessionId,
+      approvalProfileId: context.approvalProfileId ?? null,
       ...(context.serverId ? { serverId: context.serverId } : {}),
       ...(context.authority ? { authority: context.authority } : {}),
       ...(context.actionCaller ? { actionCaller: context.actionCaller } : {}),
@@ -515,6 +518,8 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       }
       const started = await params.manager.start({
         ...runStartRequest,
+        approvalProfileId: runStartRequest.approvalProfileId === undefined
+          ? actionOptions?.approvalProfileId ?? null : runStartRequest.approvalProfileId,
         signal: parsed.data.intent === 'voice_agent' ? actionOptions?.signal : undefined,
         ...(params.context.projectLaunchContext ? { projectLaunchContext: params.context.projectLaunchContext } : {}),
         ...(params.context.projectSetupOperation ? { projectSetupOperation: params.context.projectSetupOperation } : {}),
@@ -912,6 +917,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
           parsed.input,
           {
             defaultSessionId: sessionId,
+            approvalProfileId: runState?.approvalProfileId ?? null,
             ...(opts?.serverId ? { serverId: opts.serverId } : {}),
             ...(opts?.authority ? { authority: opts.authority } : {}),
             ...(opts?.actionCaller ? { actionCaller: opts.actionCaller } : {}),
@@ -939,8 +945,9 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       const acted = await params.manager.applyAction(parsed.runId, {
         actionId: parsed.actionId,
         input: parsed.input,
-      }, opts?.causalPermissionAuthority || opts?.effectiveCallerPermissionMode
+      }, opts?.causalPermissionAuthority || opts?.effectiveCallerPermissionMode || params.context.projectLaunchContext
         ? {
+            ...(params.context.projectLaunchContext ? { projectLaunchContext: params.context.projectLaunchContext } : {}),
             ...(opts?.causalPermissionAuthority
               ? { causalPermissionAuthority: opts.causalPermissionAuthority }
               : {}),
@@ -1038,7 +1045,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         placement: ctx.placement ?? null,
       },
     ),
-    isActionApprovalRequired: (id, ctx) => isApprovalRequiredByActionsSettings(
+    isActionApprovalRequired: (id, ctx, input, _defaultUiConfirmation, _approvedOperation, _approvalScope, defaultSafety) => isApprovalRequiredByActionsSettings(
       id,
       actionsSettingsProvider.getActionsSettings(),
       {
@@ -1046,6 +1053,9 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         authority: ctx.authority,
         presentUserConfirmation: ctx.presentUserConfirmation,
       },
+      defaultSafety,
+      undefined,
+      input,
     ),
   };
   return actionDeps;
@@ -1103,21 +1113,19 @@ export function createExecutionRunRpcActionExecutor(
           ...(projectLaunchContext ? { projectLaunchContext } : {}), ...(projectSetupOperation ? { projectSetupOperation } : {}) } })
           .execute(actionId, input, context);
       }
-      if (context?.authority === 'present_user' && isAgentStartActionV1(actionId)
+      const hostRoleStart = context?.authority === 'present_user'
+        || context?.authority === 'account_automation' && context.surface === 'rpc'
+          && (!context.actionCaller || context.actionCaller.kind === 'host');
+      if (hostRoleStart && context && isAgentStartActionV1(actionId)
         && input && typeof input === 'object' && 'roleId' in input && typeof input.roleId === 'string'
         && !context.agentStartContext) {
         let refusal: NonNullable<ExecutionRunStartFailureDetailsV1['executionRunStart']['refusal']> = {
           code: 'agent_start_context_unavailable', phase: 'agent_start_context',
         };
-        let resolved: ActionExecutorContext['agentStartContext'] | null;
+        let resolved: Awaited<ReturnType<NonNullable<ActionExecutorDeps['resolveAgentStartContext']>>> | undefined;
         let errorCode = 'target_unavailable';
         try {
-          resolved = await params.context.resolveAgentStartContext?.({ ...context,
-            recordActionStartDiagnostic: event => {
-              if (event.refusalReason) refusal = { code: event.refusalReason, phase: 'agent_start_context' };
-              context?.recordActionStartDiagnostic?.(event);
-            },
-          });
+          resolved = await params.context.resolveAgentStartContext?.(context);
         } catch (error) {
           const code = readRpcErrorCode(error) ?? (error && typeof error === 'object' && 'code' in error ? error.code : undefined);
           const reason = WorkflowTargetUnavailableReasonV1Schema.safeParse(
@@ -1128,6 +1136,8 @@ export function createExecutionRunRpcActionExecutor(
           context.recordActionStartDiagnostic?.({ phase: 'agent_start_context', refusalReason: reason.data });
           resolved = null;
         }
+        if (resolved && 'ok' in resolved) return { ...resolved,
+          details: withExecutionRunStartFailureDetails(resolved.details, 'noRunCreated') };
         if (!resolved) return { ok: false, errorCode,
           error: 'The selected role cannot be prepared for this Session. Check its Account and role availability.',
           details: withExecutionRunStartFailureDetails({ executionRunStart: {

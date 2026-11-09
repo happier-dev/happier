@@ -6,9 +6,35 @@ import { createProjectFiniteAction, readProjectFiniteIngressRefusal, type Projec
 import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { createSnapshotActionSettingsProvider, type RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 const unavailable = (result: ActionExecuteFailure): RpcActionExecutor => ({ execute: async () => result });
+
+export async function createProjectFiniteActionExecutor(
+    runtime: ProjectFiniteActionRuntime,
+    ingress: RpcHandlerContext,
+    actionsSettingsProvider?: RuntimeActionSettingsProvider,
+): Promise<RpcActionExecutor> {
+    // Signed Project runtimes retain requester custody instead of exposing raw
+    // credentials. Never substitute the Machine custodian's Account here.
+    const requester = readRequesterAccountActionContext(runtime.accountAuthorization);
+    const credentials = runtime.accountAuthorization ? requester?.credentials : runtime.credentials;
+    if (!credentials) return unavailable(readProjectFiniteIngressRefusal(ingress)
+        ?? failure('project_requester_credentials_unavailable'));
+    const accountPolicy = requester ? createSnapshotActionSettingsProvider(() => {
+        const snapshot = requester.savedSecretOperationContext.readSnapshot();
+        if (!snapshot) throw new Error('requester_account_context_retired');
+        return snapshot;
+    }) : actionsSettingsProvider;
+    return (await import('@/session/actions/createCliActionExecutorFromCredentials')).createCliActionExecutorFromCredentials({
+        credentials, serverId: runtime.serverId, serverApiUrl: runtime.serverHttpBaseUrl,
+        machineId: runtime.machineId, pluginActionExecutionOwner: 'current_process',
+        ...(accountPolicy ? { actionsSettingsProvider: accountPolicy } : {}),
+        projectAction: createProjectFiniteAction(runtime, ingress),
+    });
+}
 
 export function registerProjectFiniteRpcHandlers(registrar: RpcHandlerRegistrar, input: Readonly<{
     serverId: string;
@@ -40,11 +66,7 @@ export function registerProjectFiniteRpcHandlers(registrar: RpcHandlerRegistrar,
             if (!runtime) return unavailable(failure('project_finite_execution_unavailable'));
             if (runtime.serverId !== input.serverId || runtime.machineId !== input.machineId) return unavailable(failure('target_mismatch'));
             const executor = input.createActionExecutor ? await input.createActionExecutor(runtime, ingress)
-                : runtime.credentials ? (await import('@/session/actions/createCliActionExecutorFromCredentials')).createCliActionExecutorFromCredentials({
-                    credentials: runtime.credentials, serverId: runtime.serverId, serverApiUrl: runtime.serverHttpBaseUrl,
-                    machineId: runtime.machineId, pluginActionExecutionOwner: 'current_process',
-                    projectAction: createProjectFiniteAction(runtime, ingress),
-                }) : unavailable(failure('project_requester_credentials_unavailable'));
+                : await createProjectFiniteActionExecutor(runtime, ingress);
             return { execute: (actionId, semanticInput, context) => executor.execute(actionId, semanticInput, {
                 ...context,
                 // A raw external Home request is an API invocation, not an already-approved local RPC edge.

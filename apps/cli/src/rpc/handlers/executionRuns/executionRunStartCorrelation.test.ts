@@ -17,6 +17,9 @@ import { buildExecutionRunProfileCatalog } from '@/agent/executionRuns/profiles/
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { createTestExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/testkit';
 import { reloadConfiguration } from '@/configuration';
+import { createCapabilitiesService } from '@/capabilities/service';
+import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
+import { CHECKLIST_IDS } from '@/capabilities/checklistIds';
 
 const runtimeFactoryMock = vi.hoisted(() => ({
   createExecutionRunBridgeRuntime: vi.fn(),
@@ -123,6 +126,7 @@ describe('execution.run.start correlation freedom', () => {
   beforeEach(async () => {
     happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-start-correlation-'));
     vi.stubEnv('HAPPIER_HOME_DIR', happyHomeDir);
+    vi.stubEnv('HAPPIER_EXPERIMENTAL_EXECUTION_RUNS', '1');
     reloadConfiguration();
     runtimeFactoryMock.createExecutionRunBridgeRuntime.mockReset();
     markerWriterMock.writeExecutionRunMarker.mockClear();
@@ -154,19 +158,25 @@ describe('execution.run.start correlation freedom', () => {
     }));
     const actionRequestId = 'workflow-input-v2:reclaim-owned-input:execution-run-start';
     const expectedRunId = deriveExecutionRunIdFromActionRequestId(actionRequestId);
+    const capabilities = createCapabilitiesService({
+      capabilities: [executionRunsCapability],
+      checklists: { [CHECKLIST_IDS.NEW_SESSION]: [], [CHECKLIST_IDS.MACHINE_DETAILS]: [] },
+      buildContext: async () => { throw new Error('Effectful capability discovery is unavailable'); },
+    });
     const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
       sessionId: 'cli-global', mode: 'plain', ctx: null,
       machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async (method, input, options) => {
-        if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 2, results: {
-          'tool.executionRuns': { ok: true, data: { protocolVersion: 2, features: {
-            detachedScope: true, startAndWait: true, exactInputResults: true, runScopedAgentBindings: true,
-          } } },
-        } };
+        if (method === RPC_METHODS.CAPABILITIES_DESCRIBE) return capabilities.describe();
         const localActionContext = { ...options?.localActionContext };
         // Removing this actual in-process binding must reproduce the custody
         // split: the native owner must never trust a same-named public field.
         if (miswired) delete localActionContext.actionCaller;
-        const context = buildActionExecutorContextForRpc({ localActionContext });
+        // This native transport belongs to an already admitted Machine caller.
+        // Keep requester attribution distinct from the Workflow custody toggle.
+        const context = buildActionExecutorContextForRpc({ localActionContext, serverId: 'home-1',
+          machineAdmission: { actorAccountId: 'account-1', custodianAccountId: 'account-1',
+            machineId: 'machine-1', installationId: 'installation-1', role: 'manage', encryptionMode: 'plain' },
+        });
         const actionId = method === SESSION_RPC_METHODS.EXECUTION_RUN_START ? 'execution.run.start'
           : method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP ? 'execution.run.stop' : 'execution.run.get';
         const result = await nativeExecutor.execute(actionId, input, context);
@@ -183,7 +193,7 @@ describe('execution.run.start correlation freedom', () => {
     };
     try {
       const started = await executor.execute('execution.run.start', createDetachedTaskStartInput({ instructions: 'Keep exact input custody.' }), workflowContext);
-      expect(started).toMatchObject({ ok: true });
+      expect(started, JSON.stringify(started)).toMatchObject({ ok: true });
       const actualRunId = manager.listPublic()[0]!.runId;
       expect(actualRunId === expectedRunId).toBe(!miswired);
       expect(manager.get(actualRunId)?.status).toBe('running');
@@ -192,7 +202,7 @@ describe('execution.run.start correlation freedom', () => {
         expect(reclaimed).toMatchObject({ ok: false, errorCode: 'execution_run_not_found' });
         expect(manager.get(actualRunId)).not.toBeNull();
       } else {
-        expect(reclaimed).toMatchObject({ ok: true, result: { run: { runId: actualRunId } } });
+        expect(reclaimed, JSON.stringify(reclaimed)).toMatchObject({ ok: true, result: { run: { runId: actualRunId } } });
         await expect(executor.execute('execution.run.start', createDetachedTaskStartInput({ instructions: 'Keep exact input custody.' }), workflowContext))
           .resolves.toMatchObject({ ok: true, result: { runId: actualRunId } });
         expect(manager.listPublic()).toHaveLength(1);

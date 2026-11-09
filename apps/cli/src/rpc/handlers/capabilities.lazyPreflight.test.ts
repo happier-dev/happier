@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { accountSettingsParse, createActionExecutor, PluginManifestV2Schema, type RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
@@ -30,6 +30,9 @@ const { resolveSessionCreationAgentTarget } = await import('@/session/creation/r
 const { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } = await import('@/settings/accountSettings/activeAccountSettingsSnapshot');
 const { resolveAccountSettingsScopeKey } = await import('@/settings/accountSettings/accountSettingsScopeKey');
 const { createEncryptedRpcTestClient } = await import('./encryptedRpc.testkit');
+const { RpcHandlerManager } = await import('@/api/rpc/RpcHandlerManager');
+const { authorizeMachineRpcRequest } = await import('@/api/machine/machineRpcAuthorization');
+const { createFilesystemEffectAdmission } = await import('./fileSystem/accessPolicy/filesystemEffectAdmission');
 const { createAgentProviderCatalogObservationService } = await import('@/providers/probe/agentCatalogObservation');
 const { createProviderProbeScheduler } = await import('@/providers/probe/scheduler');
 const { createProviderProbeHttpClient } = await import('@/providers/probe/client');
@@ -96,8 +99,11 @@ describe('capability preflight with a cold Agent plugin', () => {
   });
 
   it('lists configured native models through Action normalization and selected-machine transport, refusing mis-wired observations', async () => {
+    const nativeLaunchMarker = join(home, 'configured-models-launches');
     const script = writeAcpTestAgentScript({ dir: home, fileName: 'configured-models.mjs', source: `
       import { createInterface } from 'node:readline';
+      import { appendFileSync } from 'node:fs';
+      appendFileSync(${JSON.stringify(nativeLaunchMarker)}, '1');
       createInterface({ input: process.stdin }).on('line', line => {
         const request = JSON.parse(line);
         const result = request.method === 'initialize' ? { protocolVersion: 1, agentCapabilities: {}, authMethods: [] }
@@ -108,6 +114,18 @@ describe('capability preflight with a cold Agent plugin', () => {
       });
     ` });
     const settings = accountSettingsParse({});
+    // The receiving Machine's configured-Agent probe reads its genuine stored
+    // Account source, unlike the earlier direct probe's explicit settings input.
+    const { readStoredCredentialsForServerId, writeStoredCredentialsForServerId,
+      removeStoredCredentialsForServerId } = await import('@/persistence');
+    const { configuration } = await import('@/configuration');
+    const credentialServerId = configuration.activeServerId;
+    const previousCredentials = await readStoredCredentialsForServerId(credentialServerId);
+    onTestFinished(async () => {
+      if (previousCredentials) await writeStoredCredentialsForServerId(credentialServerId, previousCredentials);
+      else await removeStoredCredentialsForServerId(credentialServerId);
+    });
+    await writeStoredCredentialsForServerId(credentialServerId, { token: 'fixture-token', encryption: null });
     setActiveAccountSettingsSnapshot({ source: 'network', settings, settingsVersion: 1,
       loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
       scopeKey: resolveAccountSettingsScopeKey({ token: 'fixture-token', encryption: null }),
@@ -151,6 +169,44 @@ describe('capability preflight with a cold Agent plugin', () => {
       backendTargetKey: 'agent:happier.agent.custom-acp/custom-acp:definition:remote-only', probe: { cwd: home } };
     const context = { surface: 'cli', authority: 'present_user' } as const;
     try {
+      const [{ RpcHandlerManager }, { authorizeMachineRpcRequest }, { createFilesystemEffectAdmission }] = await Promise.all([
+        import('@/api/rpc/RpcHandlerManager'), import('@/api/machine/machineRpcAuthorization'),
+        import('./fileSystem/accessPolicy/filesystemEffectAdmission'),
+      ]);
+      const manager = new RpcHandlerManager({ scopePrefix: 'selected-machine', localMachineId: 'selected-machine', encryptionMode: 'plain',
+        authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: 'selected-machine',
+          resolveCustodianAccountId: async () => 'owner', resolveInstallationId: () => 'installation',
+          resolveHomeServerIdentityId: async () => 'home', verifyMachineAdmission: async () => true }) });
+      registerCapabilitiesHandlers(manager, { filesystemEffectAdmission: createFilesystemEffectAdmission({
+        resolveHomeServerIdentityId: async () => 'home',
+      }) });
+      const registeredDeps = createCliActionDeps({ token: 'fixture-token', sessionId: '', mode: 'plain', ctx: null,
+        rawSession: { metadata: {}, machineId: 'cli-machine', path: home },
+        machineActionDirectTargetTransport: { machineId: 'selected-machine',
+          invoke: (method, request, options) => manager.invokeLocal(method, request, options) },
+      });
+      const registeredExecutor = createActionExecutor(registeredDeps);
+      const admittedContext = { ...context, authority: 'account_automation' as const,
+        machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'selected-machine',
+          installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const },
+        verifyMachineAdmissionCurrent: async () => true,
+      };
+      const registeredResult = await registeredExecutor.execute('agents.models.list', input, admittedContext);
+      expect(registeredResult.ok ? undefined : { code: registeredResult.errorCode, message: registeredResult.error }).toBeUndefined();
+      expect(registeredResult).toMatchObject({
+        ok: true, result: { source: 'dynamic', items: expectedItems },
+      });
+      const admittedLaunches = await readFile(nativeLaunchMarker, 'utf8');
+      expect(admittedLaunches.length).toBeGreaterThan(0);
+      for (const deniedContext of [
+        { ...admittedContext, machineAdmission: { ...admittedContext.machineAdmission, actorAccountId: 'member', role: 'manage' as const } },
+        { ...admittedContext, actionCaller: { kind: 'session' as const, sessionId: 'copied-owner', starterDepth: 0, turnDepth: 0 } },
+      ]) {
+        const refusal = await registeredExecutor.execute('agents.models.list', input, deniedContext);
+        expect(refusal).toMatchObject({ ok: false, errorCode: 'filesystem_identity_custody_unavailable' });
+        expect(refusal).not.toHaveProperty('result');
+        expect(await readFile(nativeLaunchMarker, 'utf8')).toBe(admittedLaunches);
+      }
       expect(await deps.agentsModelsList(input)).toMatchObject({ source: 'dynamic',
         items: expectedItems, probeObservation: { agentId: nativeTarget.agentId } });
       for (const selection of [{}, { agentId: 'acp:remote-only' }]) {
@@ -197,13 +253,23 @@ describe('capability preflight with a cold Agent plugin', () => {
       } }));
       for (const failure of ['foreign-agent', 'offline'] as const) {
         transport = failure;
-        expect(await executor.execute('agents.models.list', input, context)).toMatchObject({ ok: true, result: {
-          source: 'unavailable', items: [], probeObservation: { agentId: nativeTarget.agentId, source: 'unavailable' },
-        } });
-        expect(await executor.execute('action.options.resolve', { optionsSourceId: 'agents.models.available',
-          draftInput: input }, context)).toMatchObject({ ok: true, result: { options: [] } });
-        expect(await executor.execute('action.options.resolve', spawnInput, context)).toMatchObject({ ok: true,
-          result: { options: [] } });
+        const inventory = await executor.execute('agents.models.list', input, context);
+        const options = await executor.execute('action.options.resolve', { optionsSourceId: 'agents.models.available',
+          draftInput: input }, context);
+        const spawnOptions = await executor.execute('action.options.resolve', spawnInput, context);
+        if (failure === 'offline') {
+          for (const refusal of [inventory, options, spawnOptions]) {
+            expect(refusal).toMatchObject({ ok: false, errorCode: 'agent_inventory_probe_failed' });
+            expect(refusal).not.toHaveProperty('result');
+          }
+        } else {
+          expect(inventory).toMatchObject({ ok: true, result: {
+            source: 'unavailable', items: [], probeObservation: { agentId: nativeTarget.agentId, source: 'unavailable' },
+          } });
+          expect(options).toMatchObject({ ok: true, result: { options: [] } });
+          expect(spawnOptions).toMatchObject({ ok: true, result: { options: [] } });
+        }
+        expect(await readFile(nativeLaunchMarker, 'utf8')).toBe(admittedLaunches);
       }
     } finally {
       resetActiveAccountSettingsSnapshotForTests();
@@ -371,7 +437,34 @@ describe('capability preflight with a cold Agent plugin', () => {
     }
   }, 180_000);
 
-  it('exposes a refused native refresh through RPC while retaining its last catalog observation', async () => {
+  it('refreshes the native catalog through RPC while unrelated source work remains pending', async () => {
+    const nativeHome = await mkdtemp(join(home, 'claude-native-'));
+    const helperPath = join(nativeHome, 'helper.cjs');
+    const markerPath = join(nativeHome, 'helper-state');
+    await writeFile(join(home, 'selected-account-key'), 'rpc-helper-key');
+    const readyScript = `require('node:fs').writeFileSync(${JSON.stringify(markerPath)}, 'ready'); process.stdout.write(require('node:fs').readFileSync('selected-account-key', 'utf8'));`;
+    await writeFile(helperPath, readyScript);
+    await writeFile(join(nativeHome, 'settings.json'), JSON.stringify({ apiKeyHelper: `"${process.execPath}" "${helperPath}"` }));
+    await writeFile(join(nativeHome, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'other-account-login' } }));
+    const environment = {
+      CLAUDE_CONFIG_DIR: nativeHome,
+      ANTHROPIC_BASE_URL: 'https://gateway.example/proxy/anthropic',
+      ANTHROPIC_AUTH_TOKEN: undefined,
+      ANTHROPIC_API_KEY: undefined,
+      ANTHROPIC_OAUTH_TOKEN: undefined,
+      CLAUDE_CODE_OAUTH_TOKEN: 'other-account-env',
+    };
+    const previousEnvironment = Object.fromEntries(Object.keys(environment).map(key => [key, process.env[key]]));
+    for (const [key, value] of Object.entries(environment)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    onTestFinished(() => {
+      for (const [key, value] of Object.entries(previousEnvironment)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    });
     const registry = await resolveExecutablePluginRuntimeRegistry({
       happyHomeDir: home,
       generation: pluginReloadController.getState().generation + 1,
@@ -391,8 +484,9 @@ describe('capability preflight with a cold Agent plugin', () => {
     })).toMatchObject({ ok: true });
     const lease = await pluginReloadController.acquireRuntimeRegistry({ resolveRuntimeRegistry: async () => registry });
     try {
-      const scheduler = createProviderProbeScheduler({ maxConcurrentOperations: 1, maxPendingOperations: 1 });
+      const scheduler = createProviderProbeScheduler();
       let requests = 0;
+      const httpRequests: Array<{ url: string; headers: Readonly<Record<string, string>> }> = [];
       const outsideObservation = async (): Promise<never> => { throw new Error('Unexpected selected-account boundary'); };
       const bindingOwner = createConnectedAccountPurposeBindingOwner({
         store: { read: outsideObservation, update: outsideObservation, subscribe: () => ({ dispose() {} }) },
@@ -413,7 +507,8 @@ describe('capability preflight with a cold Agent plugin', () => {
         createRedactionLease: () => createProviderRedactionLease({ values: [] }),
         client: createProviderProbeHttpClient({
           resolveAddresses: async () => ['93.184.216.34'],
-          transport: async () => {
+          transport: async request => {
+            httpRequests.push({ url: request.url, headers: request.headers });
             requests += 1;
             return { status: 200, headers: { 'content-type': 'application/json' },
               body: Buffer.from(JSON.stringify({ data: [{ id: 'claude-rpc-model', display_name: 'RPC model' }] })) };
@@ -424,32 +519,54 @@ describe('capability preflight with a cold Agent plugin', () => {
       });
       const client = createEncryptedRpcTestClient({
         scopePrefix: 'machine-test', encryptionKey: new Uint8Array(32).fill(7), logger: () => undefined,
+        callerAuthority: 'present_user',
+        machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine-test',
+          installationId: 'installation', role: 'use', encryptionMode: 'plain' },
+        manager: new RpcHandlerManager({ scopePrefix: 'machine-test', encryptionKey: new Uint8Array(32).fill(7),
+          encryptionVariant: 'legacy', authorizeRequest: request => authorizeMachineRpcRequest(request, {
+            machineId: 'machine-test', resolveCustodianAccountId: async () => 'owner',
+            resolveInstallationId: () => 'installation', resolveHomeServerIdentityId: async () => 'home',
+            // Home's authenticated ingress is the transport boundary.
+            verifyMachineAdmission: async () => true,
+          }) }),
         registerHandlers: manager => registerCapabilitiesHandlers(manager, {
+          filesystemEffectAdmission: createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home' }),
           getAgentCatalogObservation: () => ({ machineId: 'machine-test', service: observation }),
-          // Native credential acquisition is an OS boundary; no real credential is read.
-          resolveNativeCatalogBearer: async () => ({ accessToken: 'fixture-native-token', credentialFingerprint: `sha256:${'a'.repeat(64)}` }),
         }),
       });
       const invoke = () => client.call(RPC_METHODS.CAPABILITIES_INVOKE, {
         id: 'cli.claude', method: 'probeModels', params: { cwd: home, bypassCache: true },
       });
       const expectedModels = [{ id: 'default', name: 'Default' }, { id: 'claude-rpc-model', name: 'RPC model' }];
-      expect(await invoke()).toMatchObject({ ok: true, result: { observedAt: 42, refreshError: false, availableModels: expectedModels } });
+      const initial = await invoke();
+      expect(initial, JSON.stringify(initial)).toMatchObject({ ok: true, result: { observedAt: 42, refreshError: false, availableModels: expectedModels } });
+      expect(httpRequests[0]).toMatchObject({
+        url: 'https://gateway.example/proxy/anthropic/v1/models?limit=1000',
+        headers: { 'x-api-key': 'rpc-helper-key', authorization: 'Bearer rpc-helper-key' },
+      });
+      expect(httpRequests[0]?.headers).not.toHaveProperty('anthropic-beta');
+      expect(await readFile(markerPath, 'utf8')).toBe('ready');
+      await writeFile(helperPath, `require('node:fs').writeFileSync(${JSON.stringify(markerPath)}, 'failed'); process.exit(1);`);
+      const failedHelper = await invoke();
+      expect(failedHelper, JSON.stringify(failedHelper)).toMatchObject({ ok: true, result: { source: 'static', refreshError: true } });
+      expect(await readFile(markerPath, 'utf8')).toBe('failed');
+      expect(requests).toBe(1);
+      await writeFile(helperPath, readyScript);
       const release = deferred<void>();
       const started = deferred<void>();
-      const active = scheduler.runCatalog<{ status: 'success' | 'error' }>('occupied-rpc', 'manual_refresh', async () => {
+      const active = Array.from({ length: 70 }, (_, index) => scheduler.runCatalog<{ status: 'success' | 'error' }>(`occupied-rpc-${index}`, 'manual_refresh', async () => {
         started.resolve(); await release.promise; return { status: 'success' as const };
-      }, { unavailable: () => ({ status: 'error' }) });
+      }, { unavailable: () => ({ status: 'error' }) }));
       await started.promise;
-      const queued = scheduler.runCatalog<{ status: 'success' | 'error' }>('queued-rpc', 'manual_refresh', async () => ({ status: 'success' as const }), { unavailable: () => ({ status: 'error' }) });
       try {
-        expect(await invoke()).toMatchObject({ ok: true, result: {
-          source: 'dynamic', observedAt: 42, refreshError: true, availableModels: expectedModels,
+        const refreshed = await invoke();
+        expect(refreshed, JSON.stringify(refreshed)).toMatchObject({ ok: true, result: {
+          source: 'dynamic', observedAt: 42, refreshError: false, availableModels: expectedModels,
         } });
-        expect(requests).toBe(1);
+        expect(requests).toBe(2);
       } finally {
         release.resolve();
-        await Promise.all([active, queued]);
+        await Promise.all(active);
       }
     } finally {
       await lease.release();

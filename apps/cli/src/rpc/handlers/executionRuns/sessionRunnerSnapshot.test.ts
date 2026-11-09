@@ -1,4 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
+import { Server as SocketServer } from 'socket.io';
+import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { createSessionClientExecutionRunService } from '@/api/session/client/executionRuns/createSessionClientExecutionRunService';
+import { createDeferred } from '@/testkit/async/deferred';
 import { FeaturesResponseSchema, AccountProfileResponseSchema, AccountSettingsSchema } from '@happier-dev/protocol';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
@@ -24,6 +29,7 @@ import { applySessionRuntimeControls } from '@/api/session/sessionRuntimeControl
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import type { ExecutionRunHostBridgeContract } from '@/agent/runtime/bridges/executionRun/executionRunBridgeContract';
+import { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
 import { readProcessIdentityByPid } from '@/daemon/processIdentity';
 import { resolveSessionRunnerEntrypointIdentityFromProcessCommand } from '@/daemon/sessionRunnerRuntime/resolveRunnerEntrypointIdentity';
 import { hashProcessCommand } from '@/daemon/sessionRegistry';
@@ -36,13 +42,13 @@ import { createRunnerExecutionRunSnapshotResolver } from '@/agent/runtime/sessio
 import { createRunnerReviewHostPluginAuthorityReader } from '@/agent/executionRuns/profiles/review/pluginAuthority';
 import type { RunnerExecutionRunSnapshotV1 } from '@/agent/runtime/session/process/executionRunSnapshotProtocol';
 import type { TrackedSession } from '@/daemon/types';
-import { writeDaemonState, writeStoredCredentialsForServerId } from '@/persistence';
+import { readStoredCredentialsForServerId, writeDaemonState, writeStoredCredentialsForServerId } from '@/persistence';
 import { createMutableApiSessionClientFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { createSessionRunSnapshotFixture, createSnapshotSessionPendingTransport } from './sessionRunnerSnapshot.fixture';
+import { createSessionRunSnapshotFixture, createSnapshotSessionPendingTransport, createSnapshotDaemonHttpListener } from './sessionRunnerSnapshot.fixture';
 import { deriveConnectedServiceRunMaterializeToken } from '@/daemon/connectedServices/runs/capabilityToken';
 import { retainExecutionRunState } from '@/daemon/executionRunRegistry';
 import { normalizeExecutionRunRpcPayload } from '@/session/services/executionRuns';
@@ -53,7 +59,7 @@ import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotFor
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { prepareActiveAccountRoleOverrides } from '@/settings/prompts/hydratePromptLibraryCatalog';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
-import { createPlainProjectAccountRefRow } from '@/workspaces/projectAccountRows.testkit';
+import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -70,6 +76,7 @@ import type { RunnerTerminationEvent } from '@/agent/runtime/lifecycle/runnerTer
 import { cleanupBackendRunResources } from '@/agent/runtime/cleanupBackendRunResources';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { connectSessionMcpClient } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { NativeAgentSessionRunToolBinding } from '@/agent/runtime/registry/engineRegistryTypes';
 import { readCurrentDaemonPluginCatalogSnapshot } from '@/plugins/daemon/currentCatalog';
@@ -90,6 +97,11 @@ import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountA
 import { createExecutionRunAccountSettingsSnapshotResolver } from '@/api/machine/resolveExecutionRunAccountSettingsSnapshot';
 import { readAccountRoleOverridesFromSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { applyRunnerMcpSessionContext } from '@/mcp/runtime/applyRunnerMcpSessionContext';
+import { readMcpExecutionSource } from '@/mcp/runtime/mcpExecutionSource';
+import { executeScmDiffSummaryAction } from '@/scm/actions/executeScmDiffSummaryAction';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createExecutionRunRpcActionDeps } from './dispatchExecutionRunRpcAction';
+import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executionRunPolicy';
 
 const transport = vi.hoisted(() => ({ app: null as unknown }));
 // Only HTTP listener/transport is substituted. Real daemon composition, ingress,
@@ -99,7 +111,8 @@ vi.mock('@/daemon/controlServer', async importOriginal => {
   return { ...actual, startDaemonControlServer: async (input: Parameters<typeof actual.startDaemonControlServer>[0]) => {
     const app = actual.createDaemonControlApp(input);
     transport.app = app;
-    return { port: 46021, stop: async () => { await app.close(); transport.app = null; } };
+    const listener = await createSnapshotDaemonHttpListener();
+    return { port: listener.port, stop: async () => { await listener.stop(); await app.close(); transport.app = null; } };
   } };
 });
 
@@ -119,16 +132,24 @@ afterEach(async () => {
   if (failures.length > 0) throw failures[0];
 });
 
-it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session-hosted Runs through tracked daemon HTTP and current MCP occurrence wiring: %s', async retirement => {
+it.each(['session_close', 'planned_refresh_then_stop', 'owner_action_starts', 'member_action_starts',
+  'reviewer_nested', 'reviewer_depth_exceeded', 'reviewer_turn_changed', 'reviewer_allowed', 'reviewer_off'] as const)('admits Session-hosted Runs through tracked daemon HTTP and current MCP occurrence wiring: %s', async retirement => {
   // Physical child exit shares this composed journey's budget. vi.waitFor's
   // one-second default is not the native supervisor's retirement contract.
   const task = getCurrentTest()!;
   const home = await mkdtemp(join(tmpdir(), 'happier-session-run-snapshot-'));
+  const reviewsPermission = retirement.startsWith('reviewer_');
+  let reviewTurn = { turnId: 'review-causing-turn',
+    workDepth: retirement === 'reviewer_nested' || retirement === 'reviewer_turn_changed' ? 3
+      : retirement === 'reviewer_depth_exceeded' ? 4 : reviewsPermission ? 2 : 0 };
   roots.push(home);
   vi.stubEnv('HAPPIER_HOME_DIR', home);
+  vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '1');
   vi.stubEnv('HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED', '1');
-  vi.stubEnv('HAPPIER_BUILD_FEATURES_ALLOW', 'execution.runs,providers');
   vi.stubEnv('HAPPIER_FEATURE_PROVIDERS__ENABLED', '1');
+  vi.stubEnv('HAPPIER_FEATURE_VOICE__ENABLED', '1');
+  vi.stubEnv('HAPPIER_FEATURE_VOICE_AGENT__ENABLED', '1');
+  vi.stubEnv('HAPPIER_BUILD_FEATURES_ALLOW', 'execution.runs,providers,voice,voice.agent');
   vi.stubEnv('HAPPIER_BUILD_FEATURES_DENY', '');
   reloadConfiguration();
   const nativeCliPaths = { parent: join(home, 'snapshot-parent-cli.cjs'), child: join(home, 'snapshot-child-cli.cjs') };
@@ -180,17 +201,22 @@ it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session
     runnerAgentInvocationContext: { cwd: home, environment: {}, providerBindingActive: false },
     agentRuntimeDaemonServiceAuthorityFilePath: authorityPath, agentRuntimeDaemonServiceCapabilityHash: issued.capabilityDigest };
   const token = Buffer.from('{"alg":"none"}').toString('base64url') + '.' + Buffer.from(JSON.stringify({
-    sub: 'snapshot-account', tokenEpoch: 1, provenance: { v: 1, kind: 'terminal', authority: 'account_automation' },
+    sub: 'snapshot-account', tokenEpoch: 1, provenance: { v: 1, kind: 'terminal',
+      authority: 'account_automation' },
   })).toString('base64url') + '.';
-  const credentials = { token, encryption: null } as const;
-  await writeStoredCredentialsForServerId(configuration.activeServerId, credentials);
+  await writeStoredCredentialsForServerId(configuration.activeServerId, { token, encryption: null });
+  const credentials = await readStoredCredentialsForServerId(configuration.activeServerId);
+  if (!credentials) throw new Error('Missing stored snapshot Account credentials');
   const installation = readOrCreateInstallationIdentitySync();
-  const settingsResponse = AccountSettingsV2GetResponseSchema.parse({ version: 1, content: { t: 'plain', v: {} } });
+  const settingsResponse = AccountSettingsV2GetResponseSchema.parse({ version: 1,
+    content: { t: 'plain', v: reviewsPermission ? { workDepthLimit: 4 } : {} } });
   const promptLibraryRows = PromptLibraryRowsListResponseV1Schema.parse({ status: 'listed',
     rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: 1,
       content: { t: 'plain', v: key === 'role-overrides' ? { key, value: { v: 1, overrides: {
         second_opinion: { roleId: 'second_opinion', instructionsOverride: 'OWNER_SECOND_OPINION_INSTRUCTIONS',
           engine: { agentTargetKey: 'agent:acme.snapshot/parent', modelId: 'snapshot-native-review' } },
+        approval_reviewer: { roleId: 'approval_reviewer',
+          engine: { agentTargetKey: 'agent:acme.snapshot/child', modelId: 'snapshot-native-review' } },
       } } } : emptyPromptLibraryRecordV1(key) } })) });
   const currentness = AccountEncryptionCurrentnessResponseSchema.parse({ mode: 'plain', version: 1,
     settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
@@ -203,12 +229,22 @@ it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session
     body: encodePlainArtifactStoredContent({ body: '{}' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
     headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
   };
-  const serverFeatures = { status: 'ready' as const, features: FeaturesResponseSchema.parse({ features: { providers: { enabled: true } },
+  const serverFeatures = { status: 'ready' as const, features: FeaturesResponseSchema.parse({ features: {
+    providers: { enabled: true }, voice: { enabled: true, agent: { enabled: true } },
+  },
     capabilities: { serverIdentity: { serverIdentityId: 'srv_snapshot_home' } } }) };
   vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
     const path = new URL(String(url)).pathname;
     homeHttpReads.push(path);
     if (path === '/v1/account/profile') return { status: 200, data: AccountProfileResponseSchema.parse({ id: 'snapshot-account' }) };
+    if (path === '/v1/machines/snapshot-machine') {
+      expect(options?.headers?.Authorization === `Bearer ${token}`).toBe(true);
+      return { status: 200, data: { machine: { id: 'snapshot-machine', installationId: installation.installationId,
+        metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0, storageMode: 'plain',
+        kind: 'persistent', keyBasis: { dataEncryptionKey: null, metadataVersion: 0, daemonStateVersion: 0 },
+        access: { custodian: { accountId: retirement === 'member_action_starts' ? 'other-custodian' : 'snapshot-account', displayName: 'Owner' }, role: 'manage',
+          resourceMode: 'plain', accessState: 'ready' } } } };
+    }
     if (path === '/v2/account/settings') return { status: 200, data: settingsResponse };
     if (path === SESSION_FOLLOW_HTTP_PATHS_V1.preferences) return { status: 200,
       data: SessionAutoFollowPreferencesResponseSchema.parse({
@@ -226,6 +262,7 @@ it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session
     if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
     if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(
       axios.getUri({ url: String(url), params: options?.params }), roleArtifactsAvailable ? [] : [unreadableRole]) };
+    if (/^\/v1\/artifacts\/[^/]+$/.test(path)) return { status: 404, data: { error: 'Artifact not found' } };
     homeHttpFailures.push('GET ' + path);
     throw new Error('Unexpected Home HTTP read: ' + path);
   });
@@ -253,8 +290,9 @@ it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session
       sessions: [createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain',
         metadata: JSON.stringify({ path: home, machineId: 'snapshot-machine' }) })],
     } };
-    if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return { status: 200,
-      data: { status: 'listed', coverage: 'complete', rows: [workspaceRow] } };
+    if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list` || path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`) {
+      return projectAccountRowsReadHttpResponse([workspaceRow], String(url), body);
+    }
     if (path === '/v1/artifacts') {
       if (!body || typeof body !== 'object' || typeof Reflect.get(body, 'body') !== 'string') {
         throw new Error('Review approval Artifact body is unavailable');
@@ -283,7 +321,7 @@ it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session
   const accountScopeKey = resolveAccountSettingsScopeKey(credentials);
   const preparedOverrides = await prepareActiveAccountRoleOverrides({ credentials, scopeKey: accountScopeKey,
     lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken() });
-  expect(preparedOverrides, JSON.stringify({ homeHttpReads, homeHttpFailures })).toMatchObject({ status: 'ready',
+  expect(preparedOverrides, JSON.stringify({ preparedOverrides, homeHttpReads, homeHttpFailures })).toMatchObject({ status: 'ready',
     overrides: { second_opinion: { roleId: 'second_opinion' } } });
   const actionsSettingsProvider = createActionSettingsProvider({ scopeKey: accountScopeKey });
   const daemon = await startDaemonSessionControlRuntime({ machineId: 'snapshot-machine', serverId: configuration.activeServerId,
@@ -305,6 +343,9 @@ it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session
     processEnv: { HAPPIER_FEATURE_PROVIDERS__ENABLED: '1', HAPPIER_BUILD_FEATURES_ALLOW: 'execution.runs,providers' },
   });
   cleanups.push(async () => await daemon.stopControlServer());
+  await publishAgentRuntimeDaemonServiceAuthority({ happyHomeDir: home,
+    publicReleaseRing: configuration.publicReleaseRing, path: authorityPath, sessionId, runner,
+    retainedAgent: parentBinding, httpPort: daemon.controlPort, capability: issued.document.capability });
   writeDaemonState({ pid: process.pid, httpPort: daemon.controlPort, controlToken: daemon.controlToken,
     startedAt: Date.now(), startedWithCliVersion: '0.0.0' });
   const authorityFile = JSON.parse(await readFile(authorityPath, 'utf8')) as { capability: string };
@@ -357,15 +398,21 @@ it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session
   expect(await readReviewAuthority('acme.snapshot')).toMatchObject({ sourceCustody: parentBinding.sourceCustody });
   expect(await createRunnerReviewHostPluginAuthorityReader('foreign-session')('acme.snapshot')).toBeNull();
   const metadata = createTestMetadata({ runtimeDescriptorV1: { v: 1, agentId: backendTarget.agentId, agent: {} },
-    path: home, machineId: 'snapshot-machine' });
+    path: home, machineId: 'snapshot-machine',
+    ...(reviewsPermission ? { approvalReviewerEnabled: retirement !== 'reviewer_off' } : {}) });
   const composition: { manager?: ExecutionRunHostBridgeContract } = {};
   const session = createMutableApiSessionClientFixture({ sessionId, metadata,
     overrides: { getBackendTarget: () => readBackendTargetRefV2(backendTarget),
+      getWorkDepth: () => reviewsPermission ? 2 : 0,
+      getServerIdentityId: () => 'srv_snapshot_home',
       ...createSnapshotSessionPendingTransport(),
       enqueueSessionEventCommitted: async () => ({ persisted: true, delivered: true }),
       // Host structured completions are committed replies; the online Session acknowledges delivery.
       enqueueAgentMessageCommitted: async () => ({ persisted: true, delivered: true }),
-      setExecutionRunWorkerUpdateSource: source => { composition.manager = source; } } });
+      setExecutionRunWorkerUpdateSource: source => {
+        if (!(source instanceof ExecutionRunHostBridge)) throw new Error('Missing registered Run bridge');
+        composition.manager = source;
+      } } });
   const controls: Partial<SessionRuntimeControls> = {};
   const permissions = new ProviderEnforcedPermissionHandler(session, { logPrefix: '[Snapshot Parent]' });
   let parentControls: SessionRuntimeControls | null = null;
@@ -374,11 +421,40 @@ it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session
   let rpc = new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain', logger: () => {} });
   // Authenticated Session RPC is the process/network boundary; admission and
   // occurrence currentness run in the real registered host handler below.
-  vi.spyOn(sessionRpcTransport, 'callSessionRpc').mockImplementation(async request => {
+  if (!reviewsPermission) vi.spyOn(sessionRpcTransport, 'callSessionRpc').mockImplementation(async request => {
     expect(request.method).toBe(`${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE_V1}`);
     return await rpc.handleRequest({ method: request.method, params: request.request, callerAuthority: 'present_user' });
   });
   let ownerCredentialsAvailable = true;
+  const stored = await readStoredCredentialsForServerId(configuration.activeServerId);
+  if (!stored) throw new Error('Missing stored Account credential custody');
+  const snapshotResolver = createExecutionRunAccountSettingsSnapshotResolver({ machineId: 'snapshot-machine',
+    serverHttpBaseUrl: configuration.apiServerUrl, readCredentials: async () => ownerCredentialsAvailable ? stored : null,
+    isOwnerCurrent: () => ownerCredentialsAvailable, onSettings: () => {} });
+  cleanups.push(snapshotResolver.dispose);
+  // The actual runHost producer is covered by piUserMcp. These registered
+  // journeys construct its host input through the same real qualification.
+  const sourceLifetime = new AbortController();
+  cleanups.push(async () => { sourceLifetime.abort(); });
+  let qualifiedSource: ReturnType<typeof readMcpExecutionSource> | undefined;
+  let sourceDemands = 0;
+  const qualifiedSnapshotResolver = Object.assign(snapshotResolver, {
+    readAgentExecutionContext: async (signal?: AbortSignal) => {
+      sourceDemands++;
+      if (!ownerCredentialsAvailable) return null;
+      qualifiedSource ??= readMcpExecutionSource({ credentials: stored, catalogCredentials: stored,
+        sessionId, machineId: 'snapshot-machine', serverHttpBaseUrl: configuration.apiServerUrl,
+        accountSession: { serverId: session.getServerBinding().serverId,
+          homeServerIdentityId: session.getServerIdentityId(), isCurrent: () => ownerCredentialsAvailable }, signal: sourceLifetime.signal });
+      const source = await qualifiedSource;
+      signal?.throwIfAborted();
+      if (!ownerCredentialsAvailable) return null;
+      if (source.kind !== 'requester' || source.identity.kind === 'owner_person') throw new Error('Account Session must retain requester custody');
+      return { requesterIdentity: source.identity, isolationEnabled: false };
+    },
+  });
+  const installRuntimeControls = (next: SessionRuntimeControls) => applySessionRuntimeControls(controls,
+    { ...next, resolveAccountSettingsSnapshot: qualifiedSnapshotResolver });
   const register = () => registerSessionClientRuntimeHandlers({ rpcHandlerManager: rpc, token,
     serverId: configuration.activeServerId, serverUrl: configuration.apiServerUrl,
     readOwnerAccountCredentials: async () => ownerCredentialsAvailable ? credentials : null, metadataPath: home, metadata, sessionId, session, actionsSettingsProvider,
@@ -429,7 +505,253 @@ it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session
     method: sessionId + ':' + SESSION_RPC_METHODS.EXECUTION_RUN_START, callerAuthority: 'present_user',
     params: requestFor(target, childSelection),
   });
+  const installCapturedSessionRoles = async () => {
+    const roleSnapshot = createExecutionRunAccountSettingsSnapshotResolver({ machineId: 'snapshot-machine',
+      serverHttpBaseUrl: configuration.apiServerUrl, readCredentials: async () => ownerCredentialsAvailable ? credentials : null,
+      isOwnerCurrent: () => ownerCredentialsAvailable, onSettings: () => {} });
+    await roleSnapshot();
+    cleanups.push(async () => await roleSnapshot.dispose());
+    const roleOperation = roleSnapshot.readOperationContext();
+    if (!roleOperation) throw new Error('Missing captured Session Role owner');
+    const roleInputs = { readMetadata: () => metadata,
+      readOrganization: async () => createSessionRecordFixture({ id: sessionId }),
+      readRoleSources: createRoleSourceReader({ accountId: 'snapshot-account',
+        artifactStore: createCredentialedAccountArtifactStore(credentials),
+        readPluginRoles: () => readPluginRoleSources(fixture.registry.contributes),
+        readRawAccountSettings: async () => roleOperation.readSnapshot()?.rawSettings ?? {},
+      }),
+      readAccountRoleOverrides: () => {
+        const snapshot = roleOperation.readSnapshot();
+        return snapshot ? readAccountRoleOverridesFromSnapshot(snapshot) : { status: 'unavailable', reason: 'scope-retired' };
+      },
+      prepareAccountRoleOverrides: async signal => { await prepareActiveAccountRoleOverrides({ credentials,
+        scopeKey: accountScopeKey, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(), signal, operationContext: roleOperation }); },
+      readOperationContext: () => roleOperation,
+      readDefaultEngine: () => ({ agentTargetKey: 'agent:acme.snapshot/parent' }),
+      readAppliedChildSelection: () => controls.readAppliedChildSelection?.() ?? { status: 'unavailable' as const },
+      // The tracked runner owns this admitted registry; the cold global
+      // plugin controller deliberately remains empty throughout this journey.
+      readAgentCatalogSnapshot: () => fixture.registry.contributes,
+    } satisfies Parameters<typeof createSessionRoleContext>[0] & {
+      readAgentCatalogSnapshot: () => typeof fixture.registry.contributes;
+    };
+    const sessionRoles = createSessionRoleContext(roleInputs);
+    applyRunnerMcpSessionContext(session, { getSessionRoleContext: () => sessionRoles,
+      // Host runtime boundary: the causing Turn can be deeper than Session birth.
+      // Use the same accessor installed by runHostSessionRuntime; admission stays real.
+      ...(reviewsPermission ? { getActiveTurnPermissionWitness: () => reviewTurn } : {}) });
+  };
   try {
+    if (reviewsPermission) {
+      await installCapturedSessionRoles();
+      // Exercise the real Session service/codec/socket and registered Run owner.
+      // Only the Home relay/authentication boundary is supplied by this fixture.
+      const http = createServer();
+      const relay = new SocketServer(http, { path: '/v1/updates/' });
+      const authorities: string[] = [];
+      relay.on('connection', client => {
+        expect(client.handshake.auth.token === token).toBe(true);
+        const authority = client.handshake.auth.authorityCeiling === 'account_automation' ? 'account_automation' : 'present_user';
+        client.on(SOCKET_RPC_EVENTS.CALL, async (payload: SocketRpcRequestPayload, reply: (result: unknown) => void) => {
+          authorities.push(authority);
+          const result = await rpc.handleRequest({ ...payload, callerAuthority: authority });
+          reply({ ok: true, result });
+        });
+      });
+      await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+      const address = http.address();
+      if (!address || typeof address === 'string') throw new Error('Missing reviewer RPC relay address');
+      const service = createSessionClientExecutionRunService({ token, sessionId,
+        serverUrl: `http://127.0.0.1:${address.port}`, getStoredContentCryptoContext: () => ({ mode: 'plain', ctx: null }) });
+      const startResult = createDeferred<Awaited<ReturnType<typeof service.start>>>();
+      Object.assign(session, { executionRuns: { ...service, start: async (request: unknown) => {
+        try {
+          const result = await service.start(request);
+          startResult.resolve(result);
+          return result;
+        } catch (error) {
+          startResult.reject(error);
+          throw error;
+        }
+      } } });
+      const installedControls = { readPermissionHandler: () => permissions,
+        readAppliedChildSelection: async () => {
+          if (retirement === 'reviewer_turn_changed') reviewTurn = { turnId: 'review-successor-turn', workDepth: 0 };
+          return { status: 'applied' as const, backendTarget,
+            modelId: 'snapshot-native-review', connectedServices: null };
+        },
+        resolveAccountSettingsSnapshot: qualifiedSnapshotResolver };
+      installRuntimeControls(installedControls);
+      parentControls = controls;
+      const pending = permissions.handleToolCall('reviewed-read', 'Bash', { command: 'pwd' });
+      const readAgentState = () => {
+        const state = session.getAgentStateSnapshot();
+        if (!state) throw new Error('Missing parent Agent state');
+        return state;
+      };
+      try {
+        await vi.waitFor(() => expect(readAgentState().requests?.['reviewed-read']).toBeDefined());
+        const reviewing = permissions.respondAsApprovalReviewer('reviewed-read');
+        if (retirement !== 'reviewer_off') {
+          const started = await startResult.promise;
+          expect(started, JSON.stringify(started)).toMatchObject(retirement === 'reviewer_depth_exceeded'
+            ? { ok: false, code: 'work_depth_exceeded', details: { executionRunStart: { runCreation: 'noRunCreated' } } }
+            : retirement === 'reviewer_turn_changed'
+              ? { ok: false, code: 'execution_run_target_unavailable',
+                details: { executionRunStart: { runCreation: 'noRunCreated' } } } : { ok: true });
+        }
+        const result = await reviewing;
+        const runs = composition.manager.listPublic();
+        if (retirement === 'reviewer_depth_exceeded' || retirement === 'reviewer_turn_changed') {
+          expect(result).toBe('escalate');
+          expect(runs).toEqual([]);
+          expect(new Set(authorities)).toEqual(new Set(['account_automation']));
+          expect(readAgentState().requests?.['reviewed-read']).toBeDefined();
+          expect(readAgentState().completedRequests?.['reviewed-read']).toBeUndefined();
+        } else if (retirement === 'reviewer_off') {
+          expect(result).toBe('escalate');
+          expect(runs).toEqual([]);
+          expect(authorities).toEqual([]);
+          expect(readAgentState().requests?.['reviewed-read']).toBeDefined();
+        } else {
+          expect({ result, runs: runs.map(run => ({ status: run.status, error: run.error?.code })) })
+            .toMatchObject({ result: 'allow_once', runs: [{ status: 'succeeded' }] });
+          expect(await pending).toMatchObject({ decision: 'approved' });
+          expect(runs[0]).toMatchObject({ backendTarget: childTarget, permissionMode: 'no_tools' });
+          expect(composition.manager.get(runs[0]!.runId)?.depth)
+            .toBe(retirement === 'reviewer_nested' ? 4 : 3);
+          expect(authorities.length).toBeGreaterThan(0);
+          // The host reviewer is automated work under its causing Session Turn.
+          expect(new Set(authorities)).toEqual(new Set(['account_automation']));
+          expect(readAgentState().completedRequests?.['reviewed-read']).toMatchObject({
+            permissionDecisionActorV1: { kind: 'approvalReviewer' },
+            permissionDecisionClaimV1: { origin: 'approvalReviewer', scope: 'request' },
+          });
+          const opens = (await readFile(join(home, 'native-opens.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+          // The admitted external plugin receives its manifest-local Agent id.
+          expect(opens).toMatchObject([{ agentId: 'child', modelId: 'snapshot-native-review' }]);
+        }
+        return;
+      } finally {
+        await permissions.reset();
+        await pending.catch(() => undefined);
+        await new Promise<void>(resolve => relay.close(() => resolve()));
+      }
+    }
+    if (retirement === 'owner_action_starts' || retirement === 'member_action_starts') {
+      const countMcpRefusals = (text: string) => text.split('\n').filter(line =>
+        line.includes('mcp_execution_admission') && line.includes('agent_isolation_unavailable')
+          && line.includes('"reason":')).length;
+      logger.flushSync();
+      const refusalsBeforeActions = countMcpRefusals(await readFile(logger.getLogPath(), 'utf8').catch(() => ''));
+      if (retirement === 'owner_action_starts') {
+        expect(await qualifiedSnapshotResolver.readAgentExecutionContext()).toMatchObject({
+          requesterIdentity: { kind: 'isolated', separationRequired: false }, isolationEnabled: false,
+        });
+      }
+      const installedControls = { readPermissionHandler: () => permissions,
+        readAppliedChildSelection: async () => ({ status: 'applied' as const, backendTarget,
+          modelId: 'snapshot-native-review', connectedServices: null }),
+        resolveAccountSettingsSnapshot: qualifiedSnapshotResolver };
+      installRuntimeControls(installedControls);
+      parentControls = controls;
+      const runActionDeps = createExecutionRunRpcActionDeps({ manager: composition.manager,
+        context: { sessionId, cwd: home, resolveAccountSettings: () => getActiveAccountSettingsSnapshot()?.settings ?? null,
+          getServerFeaturesSnapshot: () => serverFeatures },
+        policy: resolveExecutionRunPolicy({ defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+          reviewBoundedTimeoutMs: null, maxTurns: null } }), isExecutionRunsEnabled: () => true });
+      const executor = createActionExecutor({ ...runActionDeps,
+        isActionApprovalRequired: () => false,
+        executionRunStart: async (targetSessionId, request) => {
+          expect(targetSessionId).toBe(sessionId);
+          return normalizeExecutionRunRpcPayload(await rpc.handleRequest({
+            method: sessionId + ':' + SESSION_RPC_METHODS.EXECUTION_RUN_START,
+            callerAuthority: 'present_user', params: request,
+          }), { executionRunStart: true });
+        },
+      });
+      const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-owner-run-actions-' });
+      roots.push(repository.rootPath);
+      await writeFile(join(repository.rootPath, repository.trackedPath), 'Changed fixture\n');
+      const generated = await executeScmDiffSummaryAction({ sessionId, machineId: 'snapshot-machine', backendTarget: readBackendTargetRefV2(backendTarget),
+        request: { cwd: repository.rootPath, source: { kind: 'workingTree' }, outputs: ['summary'],
+          modelSelector: { modelId: 'snapshot-native-review' }, cachePolicy: { mode: 'bypass' } },
+        executeCanonicalAction: (id, input) => executor.execute(id, input, {
+          authority: 'present_user', surface: 'cli', defaultSessionId: sessionId }),
+      });
+      expect(generated, JSON.stringify({ success: generated.success,
+        errorCode: 'errorCode' in generated ? generated.errorCode : null,
+        summaryReasonCode: generated.outputs?.summary?.reasonCode,
+        runs: composition.manager?.listPublic().map(run => ({ intent: run.intent, status: run.status, code: run.error?.code })),
+        nativeCompositions: mcpOccurrences.length,
+      })).toMatchObject({ success: true, runId: expect.any(String) });
+      const delegated = await executor.execute('subagents.delegate.start', {
+        sessionId, backendTargetKeys: ['agent:acme.snapshot/parent'], instructions: 'Owner Session delegated request',
+        modelId: 'snapshot-native-review', connectedServices: null, permissionMode: 'read_only',
+      }, { authority: 'present_user', surface: 'cli', defaultSessionId: sessionId });
+      expect(delegated).toMatchObject({ ok: true });
+      await vi.waitFor(async () => {
+        const runs = composition.manager?.listPublic() ?? [];
+        expect(runs).toHaveLength(2);
+        if (retirement === 'member_action_starts') {
+          expect(runs.every(run => run.status === 'failed')).toBe(true);
+          expect(runs.map(run => run.error?.code)).toEqual(['agent_isolation_unavailable', 'agent_isolation_unavailable']);
+          expect(sourceDemands).toBeGreaterThan(0);
+          expect(await readFile(join(home, 'native-opens.jsonl'), 'utf8').catch(() => null)).toBeNull();
+          return;
+        }
+        const failed = runs.find(run => run.status === 'failed');
+        expect(failed?.error?.code).toBeUndefined();
+        const opens = (await readFile(join(home, 'native-opens.jsonl'), 'utf8')).trim().split('\n');
+        expect(opens).toHaveLength(2);
+        expect(runs.every(run => composition.manager?.get(run.runId)?.sessionId === sessionId)).toBe(true);
+        expect(mcpOccurrences).toHaveLength(2);
+      }, { timeout: 10_000 });
+      const summary = composition.manager?.listPublic().find(run => run.intent === 'scm_diff_summary');
+      expect(summary).toMatchObject({ runClass: 'long_lived', retentionPolicy: 'resumable', ioMode: 'streaming' });
+      // Voice's chat runtime must spend the identical original Session carrier,
+      // not reconstruct Account authority in VoiceAgentManager's start wrapper.
+      const voice = await executor.execute('execution.run.start', { sessionId,
+        intent: 'voice_agent', backendTarget, instructions: 'Owner Session voice request', permissionMode: 'read_only',
+        chatModelId: 'snapshot-native-review', commitModelId: 'snapshot-native-review', bootstrapMode: 'none',
+        retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', intentInput: {},
+      }, { authority: 'present_user', surface: 'cli', defaultSessionId: sessionId });
+      if (retirement === 'owner_action_starts') {
+        expect(voice, JSON.stringify({ ok: voice.ok, code: voice.ok ? null : voice.errorCode })).toMatchObject({ ok: true });
+        await vi.waitFor(async () => {
+          const ownedVoice = composition.manager?.listPublic().find(run => run.intent === 'voice_agent');
+          const voiceObservation = { status: ownedVoice?.status, code: ownedVoice?.error?.code,
+            runIntents: composition.manager?.listPublic().map(run => run.intent),
+            sourceDemands, nativeCompositions: mcpOccurrences.length, homeHttpFailures,
+            envelopeKind: voice.ok && voice.result && typeof voice.result === 'object' && 'kind' in voice.result ? voice.result.kind : null };
+          expect(ownedVoice?.error?.code, JSON.stringify(voiceObservation)).toBeUndefined();
+          expect((await readFile(join(home, 'native-opens.jsonl'), 'utf8')).trim().split('\n'),
+            JSON.stringify(voiceObservation)).toHaveLength(3);
+          expect(ownedVoice).toMatchObject({ status: 'running' });
+          expect(ownedVoice && composition.manager?.get(ownedVoice.runId)?.sessionId).toBe(sessionId);
+        }, { timeout: 10_000 });
+      } else {
+        expect(voice).toMatchObject({ ok: true });
+        await vi.waitFor(() => expect(composition.manager?.listPublic().find(run => run.intent === 'voice_agent'))
+          .toMatchObject({ status: 'failed' }), { timeout: 10_000 });
+        expect(await readFile(join(home, 'native-opens.jsonl'), 'utf8').catch(() => null)).toBeNull();
+        logger.flushSync();
+        const fileLog = await readFile(logger.getLogPath(), 'utf8');
+        // Qualification belongs to the original Account source and is shared
+        // across these three Runs, including its one logged refusal.
+        expect(countMcpRefusals(fileLog) > refusalsBeforeActions, JSON.stringify({
+          before: refusalsBeforeActions, after: countMcpRefusals(fileLog),
+          reasons: fileLog.split('\n').filter(line => line.includes('mcp_execution_admission'))
+            .map(line => line.match(/"reason":"([a-z_]+)"/)?.[1] ?? 'unprojected'),
+        })).toBe(true);
+        expect(fileLog.includes('Owner Session voice request')).toBe(false);
+        // Voice keeps its established public wrapper. The original source's
+        // file-only record above identifies the underlying MI-1 refusal.
+        expect(composition.manager?.listPublic().find(run => run.intent === 'voice_agent')?.error?.code)
+          .toBe('VOICE_AGENT_START_FAILED');
+      }
+      return;
+    }
     let inherited: unknown;
     if (retirement === 'session_close') {
       const snapshotDiagnostics = vi.spyOn(logger, 'warnLocalFile');
@@ -489,7 +811,7 @@ it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session
       });
       await vi.waitFor(() => expect(waitingForInstallation || inheritedRefusal !== undefined).toBe(true), { timeout: 10_000 });
       expect(waitingForInstallation, JSON.stringify(inheritedRefusal)).toBe(true);
-      applySessionRuntimeControls(controls, { readPermissionHandler: () => permissions, readAppliedChildSelection: async () => ({ status: 'applied', backendTarget,
+      installRuntimeControls({ readPermissionHandler: () => permissions, readAppliedChildSelection: async () => ({ status: 'applied', backendTarget,
         modelId: 'parent-applied-model', connectedServices: null }) });
       finishInstallation(true);
       inherited = await pendingInherited;
@@ -527,7 +849,7 @@ it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session
       expect(waitingForPermissions, JSON.stringify(earlyRefusal ?? readEarlyRun())).toBe(true);
       // Explicit selection needs the permission owner, but does not need an applied
       // parent model. Use the same real handler installed by the Session runtime.
-      applySessionRuntimeControls(controls, { readPermissionHandler: () => permissions });
+      installRuntimeControls({ readPermissionHandler: () => permissions });
       parentControls = controls;
       finishPermissionInstallation(true);
       const defaulted = await pendingDefaulted;
@@ -567,13 +889,24 @@ it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session
       expect(admittedChild.json()).toMatchObject({ ok: true, result: { kind: 'action.execution' } });
       expect((await childAction('replaced-occurrence')).statusCode).toBe(403);
       expect((await childAction(childOccurrence.occurrenceId, 'parent-turn')).statusCode).toBe(403);
-      const mcpArgs = mcpBindings.get(childRunId)?.mcpServers?.happier?.args;
+      const childMcpBinding = mcpBindings.get(childRunId);
+      const childMcpServer = childMcpBinding?.mcpServers?.happier;
+      const mcpArgs = childMcpServer?.args;
       const mcpUrl = mcpArgs?.[mcpArgs.indexOf('--url') + 1];
-      if (!mcpUrl) throw new Error('Missing child MCP endpoint');
-      const childClient = new Client({ name: 'snapshot-child-approval', version: '1' });
+      const childConnection = childMcpBinding?.sessionMcpContext
+        ? await connectSessionMcpClient(childMcpBinding.sessionMcpContext)
+        : await (async () => {
+          if (!mcpUrl) throw new Error('Missing child MCP endpoint: ' + JSON.stringify({
+            hasBinding: Boolean(childMcpBinding), serverNames: Object.keys(childMcpBinding?.mcpServers ?? {}),
+            hasLocalContext: Boolean(childMcpBinding?.sessionMcpContext),
+            supportedReads: childMcpBinding?.supportedSessionReadActions,
+          }));
+          const client = new Client({ name: 'snapshot-child-approval', version: '1' });
+          await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl)));
+          return { client, close: () => client.close() };
+        })();
       try {
-        await childClient.connect(new StreamableHTTPClientTransport(new URL(mcpUrl)));
-        const commentEdit = await childClient.callTool({ name: 'action_execute', arguments: { actionId: 'reviews.comments.edit', input: {
+        const commentEdit = await childConnection.client.callTool({ name: 'action_execute', arguments: { actionId: 'reviews.comments.edit', input: {
           workspace: { machineId: 'snapshot-machine', path: home }, commentId: 'snapshot-comment',
           nextBody: 'Reviewed child edit', expectedBodyVersion: 1, expectedServerRevision: 1, clientMutationId: 'snapshot-child-edit',
         } } });
@@ -582,7 +915,7 @@ it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session
           runId: childRunId, runOccurrenceId: childOccurrence.occurrenceId,
           sessionId, actionId: 'reviews.comments.edit',
         });
-      } finally { await childClient.close(); }
+      } finally { await childConnection.close(); }
       parentControls = null;
       waitForRuntimeControls = async () => false;
       const withdrawn = await start(childTarget, 'agentDefault');
@@ -591,7 +924,7 @@ it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session
         details: { executionRunStart: { runCreation: 'noRunCreated' } } });
       waitForRuntimeControls = undefined;
       parentControls = controls;
-      applySessionRuntimeControls(controls, { readPermissionHandler: () => permissions, readAppliedChildSelection: async () => ({ status: 'applied', backendTarget,
+      installRuntimeControls({ readPermissionHandler: () => permissions, readAppliedChildSelection: async () => ({ status: 'applied', backendTarget,
         modelId: 'snapshot-provider-model', modelSelection: ProviderBoundModelRefSchema.parse({ agentTargetKey: 'agent:acme.snapshot/parent',
           providerConnectionId: 'snapshot-provider', modelId: 'snapshot-provider-model' }), connectedServices: null }) });
       const providerChild = await start(childTarget);
@@ -607,42 +940,19 @@ it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session
       expect(daemonRequests.some(request => request.operation.kind === 'execution_run.provider.admit_v1')).toBe(true);
       expect(daemonRequests.some(request => request.operation.kind === 'execution_run.provider.prepare_v1')).toBe(true);
       expect(pluginReloadController.getState().activeRegistry).toBeNull();
-      applySessionRuntimeControls(controls, { readPermissionHandler: () => permissions, readAppliedChildSelection: async () => ({ status: 'applied', backendTarget,
+      installRuntimeControls({ readPermissionHandler: () => permissions, readAppliedChildSelection: async () => ({ status: 'applied', backendTarget,
         modelId: 'snapshot-provider-model', modelSelection: ProviderBoundModelRefSchema.parse({ agentTargetKey: 'agent:acme.snapshot/parent',
           providerConnectionId: 'snapshot-unverified-provider', modelId: 'snapshot-provider-model' }), connectedServices: null }) });
       const unverifiedProviderChild = await start(childTarget);
       expect(unverifiedProviderChild, JSON.stringify(unverifiedProviderChild)).toMatchObject({ ok: false,
         errorCode: 'execution_run_child_choice_required', details: { childChoice: { parentRouteCompatibility: 'unverified' },
           executionRunStart: { runCreation: 'noRunCreated' } } });
-      applySessionRuntimeControls(controls, { readPermissionHandler: () => permissions, readAppliedChildSelection: async () => ({ status: 'applied', backendTarget,
+      installRuntimeControls({ readPermissionHandler: () => permissions, readAppliedChildSelection: async () => ({ status: 'applied', backendTarget,
         modelId: 'parent-applied-model', connectedServices: null }) });
       // A public role start must use this Session's captured Account, even when
       // another Account is focused. Real registration, role policy and installed
       // plugin execution remain composed; only Home/native boundaries are fixtures.
-      const roleSnapshot = createExecutionRunAccountSettingsSnapshotResolver({ machineId: 'snapshot-machine',
-        serverHttpBaseUrl: configuration.apiServerUrl, readCredentials: async () => ownerCredentialsAvailable ? credentials : null,
-        isOwnerCurrent: () => ownerCredentialsAvailable, onSettings: () => {} });
-      await roleSnapshot();
-      cleanups.push(async () => await roleSnapshot.dispose());
-      const roleOperation = roleSnapshot.readOperationContext();
-      if (!roleOperation) throw new Error('Missing captured Session Role owner');
-      const sessionRoles = createSessionRoleContext({ readMetadata: () => metadata,
-        readOrganization: async () => ({ manager: null, origin: null }),
-        readRoleSources: createRoleSourceReader({ accountId: 'snapshot-account',
-          artifactStore: createCredentialedAccountArtifactStore(credentials),
-          readPluginRoles: () => readPluginRoleSources(fixture.registry.contributes),
-          readRawAccountSettings: async () => roleOperation.readSnapshot()?.rawSettings ?? {},
-        }),
-        readAccountRoleOverrides: () => {
-          const snapshot = roleOperation.readSnapshot();
-          return snapshot ? readAccountRoleOverridesFromSnapshot(snapshot) : { status: 'unavailable', reason: 'scope-retired' };
-        },
-        prepareAccountRoleOverrides: async signal => { await prepareActiveAccountRoleOverrides({ credentials,
-          scopeKey: accountScopeKey, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(), signal, operationContext: roleOperation }); },
-        readOperationContext: () => roleOperation,
-        readDefaultEngine: () => ({ agentTargetKey: 'agent:acme.snapshot/parent' }),
-      });
-      applyRunnerMcpSessionContext(session, { getSessionRoleContext: () => sessionRoles });
+      await installCapturedSessionRoles();
       const focusedSnapshot = { scopeKey: 'unrelated-focused-account', source: 'network' as const,
         settings: AccountSettingsSchema.parse({}), rawSettings: {}, settingsVersion: 99, loadedAtMs: Date.now(), settingsSecretsReadKeys: [] };
       setActiveAccountSettingsSnapshot(focusedSnapshot);
@@ -787,7 +1097,7 @@ it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session
         errorMessage: 'Execution-run connected services runner identity is not current',
       });
     } else {
-      applySessionRuntimeControls(controls, { readPermissionHandler: () => permissions });
+      installRuntimeControls({ readPermissionHandler: () => permissions });
       parentControls = controls;
     }
     // Complete a retained turn and send another through the real native loader
@@ -935,14 +1245,16 @@ it.each(['session_close', 'planned_refresh_then_stop'] as const)('admits Session
     // A replacement between the actual daemon response and consumer admission
     // cannot publish an acquired snapshot. Exit cleanup reclaims its old lease.
     replaceAuthorityAfterAcquisition = true;
-    await expect(resolver()).rejects.toMatchObject({ code: 'execution_run_contribution_snapshot_unavailable' });
+    await expect(resolver()).rejects.toMatchObject({ code: 'native_agent_privileged_effect_authority_unavailable' });
     await daemon.onChildExited(launcherPid, { reason: 'process-exited', code: 0, signal: null });
     expect(trackedSessions.has(launcherPid)).toBe(false);
     expect(await readReviewAuthority('acme.snapshot')).toBeNull();
     await vi.waitFor(() => expect(replacementDisposed).toHaveBeenCalledTimes(1));
-    await expect(resolver()).rejects.toMatchObject({ code: 'execution_run_contribution_snapshot_unavailable' });
+    await expect(resolver()).rejects.toMatchObject({ code: 'native_agent_privileged_effect_authority_unavailable' });
   } finally {
     await composition.manager?.dispose?.(); await registration.dispose(); await daemon.stopControlServer(); await fixture.dispose();
+    sourceLifetime.abort();
+    await snapshotResolver.dispose();
     applySessionRuntimeControls(controls, null);
     cleanups.splice(0);
   }

@@ -9,6 +9,8 @@ import { ApprovalRequestV2Schema, buildApprovalRequesterConfirmationV1 } from '@
 import { buildApprovalExecutionOriginV1, createActionExecutor, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { createLiveCliApprovalOrigin } from '@/session/actions/approvals/liveOrigin';
+import type { Socket } from 'socket.io-client';
 import { registerApprovalRpcHandlers } from './approvals';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '../../../../ui/sources/dev/testkit/harness/homeGovernanceHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary,
@@ -47,12 +49,29 @@ afterAll(() => browserStorage.restore());
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const outgoing: SocketRpcRequestPayload[] = [];
+const liveOrigins = new Map<string, Socket>();
 let decisionReceiver: ((input: unknown) => Promise<unknown>) | null = null;
 installDisconnectedServerSocketBoundary(socket => {
   configureConnectedServerSocketBoundary(socket);
+  // Home's register/forward boundary; the CLI manager and both codecs stay real.
+  vi.spyOn(socket, 'emit').mockImplementation((event: string, ...args: unknown[]) => {
+    const packet = args[0];
+    if (event === SOCKET_RPC_EVENTS.REGISTER && packet && typeof packet === 'object' && 'method' in packet
+      && typeof packet.method === 'string') {
+      liveOrigins.set(packet.method, socket);
+      queueMicrotask(() => { for (const listener of socket.listeners(SOCKET_RPC_EVENTS.REGISTERED)) listener(packet); });
+    }
+    return socket;
+  });
   vi.spyOn(socket, 'timeout').mockReturnValue(socket);
   vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: SocketRpcRequestPayload) => {
     if (event === SOCKET_RPC_EVENTS.CALL) outgoing.push(payload);
+    const origin = event === SOCKET_RPC_EVENTS.CALL ? liveOrigins.get(payload.method) : undefined;
+    if (origin) return { ok: true, result: await new Promise(resolve => {
+      for (const listener of origin.listeners(SOCKET_RPC_EVENTS.REQUEST)) {
+        listener({ ...payload, callerAuthority: 'present_user' }, resolve);
+      }
+    }) };
     return { ok: true, result: decisionReceiver && event === SOCKET_RPC_EVENTS.CALL
       ? await decisionReceiver(payload.params) : { ok: true } };
   });
@@ -95,6 +114,7 @@ beforeEach(async () => {
   getStorage().setState({ sessions: { s1: createSessionFixture({ id: 's1', serverId: connection.serverId, active: true }) } });
   executor = createDefaultActionExecutor({ resolveServerIdForSessionId: () => homeId });
   outgoing.length = 0;
+  liveOrigins.clear();
   decisionReceiver = null;
 });
 
@@ -200,5 +220,38 @@ describe('authenticated requester approval transport from the app to its origina
       ...(surface === 'voice' ? { decidedVia: 'voice' } : {}) });
     if (decision === 'cancel') expect(remoteStored.decision).toBeUndefined();
     else if (surface === 'ui') expect(remoteStored.decision).not.toHaveProperty('decidedVia');
+  });
+});
+
+
+it('delivers browser consent through the real live CLI origin and returns its execution receipt', async () => {
+  const artifactId = 'live-cli-account-connect';
+  const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'cli' }, actionId: 'connectedServices.authentication.beginReconnect',
+    actionArgs: { account: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'profile' } },
+    summary: 'Review', approval: { flow: 'blocking', result: 'required' },
+    executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+      serverId: 'cli-profile', serverIdentityId: 'srv_approval_home', accountId: 'account-a',
+      actionId: 'connectedServices.authentication.beginReconnect', requestId: 'live-connect-request' },
+  });
+  const { captureLazyActionAccountContext } = await import('../../../../ui/sources/sync/ops/actions/actionAccountContext');
+  const { replayLiveCliApproval } = await import('../../../../ui/sources/sync/ops/actions/liveCliApprovalReplay');
+  const account = await captureLazyActionAccountContext(homeId);
+  const token = homes.findByServerUrl('https://requester-approval.test')!.token;
+  let executed = false;
+  const origin = createLiveCliApprovalOrigin({ token, accountId: 'account-a', serverUrl: 'https://requester-approval.test',
+    decide: async input => {
+      expect(input).toMatchObject({ artifactId, decision: 'approve' });
+      executed = true;
+      return { ok: true, result: { status: 'executed', operationId: 'operation-live-connect' } };
+    } });
+  await origin.run({ surface: 'cli', authority: 'account_automation' }, async () => {
+    await origin.publish({ request }, async () => ({ artifactId }));
+    origin.waiterReady(artifactId);
+    expect(await replayLiveCliApproval({ account, artifactId, request, decision: 'approve',
+      context: { surface: 'ui', authority: 'present_user' } })).toMatchObject({ ok: true,
+        result: { status: 'executed', operationId: 'operation-live-connect' } });
+    expect(executed).toBe(true);
+    expect(outgoing).toHaveLength(1);
   });
 });

@@ -1,3 +1,5 @@
+import { configuration } from '@/configuration'
+
 type MachineFileBrowserConfig = Readonly<{
   maxEntries: number
   statConcurrency: number
@@ -15,7 +17,7 @@ function parsePositiveIntEnv(
 
 export function resolveMachineFileBrowserConfig(env: NodeJS.ProcessEnv = process.env): MachineFileBrowserConfig {
   return {
-    maxEntries: parsePositiveIntEnv(env.HAPPIER_MACHINE_PATH_BROWSER_MAX_ENTRIES, 200, { min: 1, max: 5_000 }),
+    maxEntries: parsePositiveIntEnv(env.HAPPIER_MACHINE_PATH_BROWSER_MAX_ENTRIES, configuration.filesDirectoryListMaxEntries, { min: 1, max: 5_000 }),
     statConcurrency: parsePositiveIntEnv(env.HAPPIER_MACHINE_PATH_BROWSER_STAT_CONCURRENCY, 16, { min: 1, max: 128 }),
   }
 }

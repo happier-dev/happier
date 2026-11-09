@@ -1,10 +1,12 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { DaemonBrowserDiagnosticsSnapshotRequestV1Schema, DaemonBrowserDiagnosticsSnapshotResponseV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
-import type { DaemonBrowserDiagnosticsSnapshotResponseV1 } from '@happier-dev/protocol';
+import type { DaemonBrowserDiagnosticsSnapshotResponseV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { resolveBrowserDiagnosticsPersonDestination } from '@happier-dev/protocol/browser/diagnostics/egress/classifier';
 
 import type { BrowserDiagnosticsRoutes } from '@/daemon/browser/diagnostics/routes';
+import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
+import { createBrowserRawRequestAdmission } from './daemonBrowserRequestAdmission';
 import {
     redactBrowserDiagnosticsSnapshotForViewer,
     type BrowserDiagnosticsViewerParty,
@@ -12,6 +14,7 @@ import {
 
 export type DaemonBrowserDiagnosticsSnapshotHandlerOptions = Readonly<{
     browserDiagnostics?: BrowserDiagnosticsRoutes | null;
+    resolveBrowserControl?: () => BrowserDaemonControlRoutes | null | undefined;
 }>;
 
 export function registerDaemonBrowserDiagnosticsSnapshotHandler(
@@ -25,6 +28,8 @@ export function registerDaemonBrowserDiagnosticsSnapshotHandler(
             if (!options.browserDiagnostics) {
                 throw new Error('Browser diagnostics runtime is unavailable');
             }
+            const admission = createBrowserRawRequestAdmission(options.resolveBrowserControl, context);
+            if (request.view) admission.requireTarget(request.view);
             const destination = resolveBrowserDiagnosticsPersonDestination(context?.callerAuthority);
             const party: BrowserDiagnosticsViewerParty = destination === 'localOwner'
                 ? 'owner' : 'agent';
@@ -46,8 +51,11 @@ export function registerDaemonBrowserDiagnosticsSnapshotHandler(
                 return DaemonBrowserDiagnosticsSnapshotResponseV1Schema.parse({ protocolVersion: 1,
                     revision: result.revision, snapshot: redactBrowserDiagnosticsSnapshotForViewer(result.snapshot, party) });
             }
+            const globalSnapshot = await options.browserDiagnostics.getSnapshot();
             const snapshot = redactBrowserDiagnosticsSnapshotForViewer(
-                await options.browserDiagnostics.getSnapshot(),
+                { ...globalSnapshot, events: globalSnapshot.events.filter(admission.allowsTarget),
+                    diagnostics: globalSnapshot.diagnostics.filter(diagnostic => typeof diagnostic.browserSessionId !== 'string'
+                        || admission.allowsTarget({ browserSessionId: diagnostic.browserSessionId })) },
                 party,
             );
             return DaemonBrowserDiagnosticsSnapshotResponseV1Schema.parse({

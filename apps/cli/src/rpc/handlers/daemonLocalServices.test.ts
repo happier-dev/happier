@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
+import { createServer } from 'node:http';
 import type { Socket } from 'socket.io-client';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -20,6 +21,8 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { createLocalServiceInventoryRegistry } from '@/daemon/local/services/inventory/registry';
 import { createLocalServicePreviewRegistry, registerLocalServicePreview } from '@/daemon/local/services/preview/registry';
+import { createLocalServicePreviewRoutes } from '@/daemon/local/services/preview/routes';
+import { createLocalServicePublicPreviewServerRoutes } from '@/daemon/local/services/public/routes';
 import { createLocalServiceLauncherFeed } from '@/daemon/local/services/launch/feed';
 import { createLocalServiceLauncherRoutes } from '@/daemon/local/services/launch/routes';
 import { createLocalServiceActionRoutes } from '@/daemon/local/services/actions/routes';
@@ -33,6 +36,7 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { discoverLocalServiceRunTargets } from '@/daemon/local/services/launch/runTargets';
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { DaemonLocalServiceLauncherSnapshotResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
@@ -144,6 +148,91 @@ const publicPreviewSnapshot: LocalServicePublicPreviewSnapshotV1 = {
 };
 
 describe('daemon local services machine rpc handlers', () => {
+    it.each(['preview', 'public'] as const)('admits the %s credential-bound read once, completes its captured response and refuses the next request', async kind => {
+        let current = true;
+        let withdrawDuringRead = false;
+        let admissionRequests = 0;
+        let statusRequests = 0;
+        const credentialHeaders: Array<string | undefined> = [];
+        // Home admission and public status are real HTTP boundaries. The RPC
+        // manager, authorization, credential custody and route owners stay real.
+        const home = createServer((request, response) => {
+            credentialHeaders.push(request.headers.authorization);
+            response.setHeader('content-type', 'application/json');
+            if (request.headers.authorization !== 'Bearer custodian-token') {
+                response.writeHead(401).end(JSON.stringify({ current: false }));
+                return;
+            }
+            if (request.url === '/admission') {
+                admissionRequests++;
+                const admitted = current;
+                if (withdrawDuringRead && kind === 'preview') current = false;
+                response.end(JSON.stringify({ current: admitted }));
+                return;
+            }
+            if (request.url === '/v1/local-services/public/status' && request.method === 'POST') {
+                statusRequests++;
+                if (withdrawDuringRead) current = false;
+                response.end(JSON.stringify({ protocolVersion: 1, snapshot: publicPreviewSnapshot }));
+                return;
+            }
+            response.writeHead(404).end('{}');
+        });
+        await new Promise<void>(resolve => home.listen(0, '127.0.0.1', resolve));
+        const address = home.address();
+        if (!address || typeof address === 'string') throw new Error('Missing admitted Home boundary');
+        const serverBaseUrl = `http://127.0.0.1:${address.port}`;
+        try {
+            const rpc = new RpcHandlerManager({ scopePrefix: 'machine_1', localMachineId: 'machine_1',
+                encryptionMode: 'plain', logger() {}, authorizeRequest: request => authorizeMachineRpcRequest(request, {
+                    machineId: 'machine_1', resolveCustodianAccountId: async () => 'custodian',
+                    resolveInstallationId: () => 'installation_1', verifyMachineAdmission: async () => {
+                        const response = await fetch(`${serverBaseUrl}/admission`, { headers: { Authorization: 'Bearer custodian-token' } });
+                        const result: unknown = await response.json();
+                        return response.ok && typeof result === 'object' && result !== null && 'current' in result && result.current === true;
+                    },
+                }) });
+            const registry = createLocalServicePreviewRegistry();
+            const privatePreview = { previewId: 'preview_1', diagnostics: [],
+                resource: { previewId: 'preview_1', machineId: 'machine_1', owner: { kind: 'user' as const, id: 'custodian' },
+                    target: { scheme: 'http' as const, host: '127.0.0.1', port: 5173 }, initialPath: { pathname: '/', search: '' },
+                    display: { title: 'Web', addressLabel: 'localhost:5173' }, originMode: 'host' as const },
+                accessUrl: 'https://private.example.test/?previewToken=held-viewer', expiresAt: 601_000 };
+            registry.previewsById.set(privatePreview.previewId, privatePreview);
+            registerDaemonLocalServicesMachineRpcHandlers(rpc, { accountId: 'custodian', machineId: 'machine_1',
+                ...(kind === 'preview' ? { localServicesPreview: createLocalServicePreviewRoutes({ machineId: 'machine_1',
+                    accountId: 'custodian', registry, server: { token: 'custodian-token', serverBaseUrl } }) }
+                    : { localServicesPublicPreview: createLocalServicePublicPreviewServerRoutes({ accountId: 'custodian',
+                        token: 'custodian-token', serverBaseUrl }) }),
+            });
+            const method = kind === 'preview' ? RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT
+                : RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_STATUS;
+            const request = { method: `machine_1:${method}`, params: { machineId: 'machine_1',
+                ...(kind === 'public' ? { sessionId: 'session_1', previewId: 'preview_1' } : {}) },
+                machineAdmission: { actorAccountId: 'custodian', custodianAccountId: 'custodian', machineId: 'machine_1',
+                    installationId: 'installation_1', role: 'manage', encryptionMode: 'plain' } satisfies SocketRpcMachineAdmissionContextV1 };
+            const visible = { protocolVersion: 1, snapshot: kind === 'preview'
+                ? { previews: [expect.objectContaining({ resource: privatePreview.resource, accessUrl: privatePreview.accessUrl })] }
+                : publicPreviewSnapshot };
+            expect(await rpc.handleRequest(request)).toMatchObject(visible);
+            expect.soft(admissionRequests).toBe(1);
+            expect(statusRequests).toBe(kind === 'public' ? 1 : 0);
+            admissionRequests = 0;
+            withdrawDuringRead = true;
+            expect.soft(await rpc.handleRequest(request)).toMatchObject(visible);
+            expect.soft(admissionRequests).toBe(1);
+            expect(current).toBe(false);
+            const completedStatusRequests = statusRequests;
+            expect(await rpc.handleRequest(request)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+            expect.soft(admissionRequests).toBe(2);
+            expect(statusRequests).toBe(completedStatusRequests);
+            expect(credentialHeaders.every(header => header === 'Bearer custodian-token')).toBe(true);
+        } finally {
+            home.closeAllConnections();
+            await new Promise<void>(resolve => home.close(() => resolve()));
+        }
+    });
+
     it('reads the runtime summary through RPC and Action without scanning or starting observation', async () => {
         const scan = vi.fn(async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }));
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine_1', startLoop: false,
@@ -167,11 +256,13 @@ describe('daemon local services machine rpc handlers', () => {
         RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT,
         RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH,
         RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH,
-    ])('refuses foreign requester disclosure of accepted private Workspace provenance through %s', async method => {
+    ])('admits private Workspace reads once and refuses foreign requester disclosure through %s', async method => {
         const workspace = { id: 'private-workspace', serverId: 'private-home', machineId: 'machine_1',
             rootPath: process.cwd(), createdAtMs: 1, projectKey: 'private-project' };
         let current = true;
+        let verificationRequests = 0;
         let now = 1_000;
+        let command = 'private-web';
         let retireDuringScan = false;
         const runtime = createLocalServicesDaemonRuntime({ machineId: workspace.machineId, startLoop: false,
             processEnv: {}, now: () => now,
@@ -185,7 +276,7 @@ describe('daemon local services machine rpc handlers', () => {
                 await Promise.resolve();
                 if (retireDuringScan) current = false;
                 return { listeners: [{ address: '127.0.0.1', port: 43170, protocol: 'tcp' as const, pid: 1234567 }],
-                    processes: new Map([[1234567, { pid: 1234567, cwd: workspace.rootPath, command: 'private-web', processOwnership: 'self' as const }]]),
+                    processes: new Map([[1234567, { pid: 1234567, cwd: workspace.rootPath, command, processOwnership: 'self' as const }]]),
                     workspaces: [], diagnostics: [] };
             },
         });
@@ -194,7 +285,7 @@ describe('daemon local services machine rpc handlers', () => {
             const rpc = new RpcHandlerManager({ scopePrefix: workspace.machineId, localMachineId: workspace.machineId,
                 encryptionMode: 'plain', logger() {}, authorizeRequest: request => authorizeMachineRpcRequest(request, {
                     machineId: workspace.machineId, resolveCustodianAccountId: async () => 'custodian',
-                    resolveInstallationId: () => 'installation_1', verifyMachineAdmission: async () => current,
+                    resolveInstallationId: () => 'installation_1', verifyMachineAdmission: async () => { verificationRequests++; return current; },
                 }) });
             const boundCredential = { accountId: 'custodian' };
             registerDaemonLocalServicesMachineRpcHandlers(rpc, { ...boundCredential, machineId: workspace.machineId,
@@ -209,6 +300,7 @@ describe('daemon local services machine rpc handlers', () => {
             })] } };
             const admittedResponse = await rpc.handleRequest(request);
             expect(admittedResponse).toMatchObject(visible);
+            expect(verificationRequests).toBe(1);
             const admittedSnapshot = (() => {
                 if (method !== RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
                     return DaemonLocalServiceInventorySnapshotResponseV1Schema.parse(admittedResponse).snapshot;
@@ -224,12 +316,15 @@ describe('daemon local services machine rpc handlers', () => {
             expect(await rpc.handleRequest({ ...request, machineAdmission: { ...machineAdmission,
                 actorAccountId: 'foreign-account', role: 'use' } })).toMatchObject({ error: 'requester_credentials_unavailable' });
             if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
+                verificationRequests = 0;
                 const pending = rpc.handleRequest({ ...request, params: { machineId: workspace.machineId, sinceGeneratedAt: now } });
                 await vi.waitFor(() => expect(runtime.inventoryRoutes.watcherCount()).toBe(1));
                 current = false;
                 now += 1;
+                command = 'private-web-updated';
                 await runtime.inventoryRoutes.refreshSnapshot();
-                expect(await pending).toMatchObject({ error: 'requester_credentials_unavailable' });
+                expect(await pending).toMatchObject(visible);
+                expect(verificationRequests).toBe(1);
                 expect(runtime.inventoryRoutes.watcherCount()).toBe(0);
                 current = true;
                 // Socket.IO is the network boundary; its CANCEL event reaches the real Manager and watch owner.
@@ -242,10 +337,13 @@ describe('daemon local services machine rpc handlers', () => {
                 expect(await cancelled).toMatchObject({ error: 'requester_credentials_unavailable' });
                 expect(runtime.inventoryRoutes.watcherCount()).toBe(0);
             } else {
-                // Let an actual awaited OS scan outlive the current Home admission.
+                // Already admitted reads follow local cancellation through the
+                // real scan; later Home state does not trigger another request.
                 now += DEFAULT_LOCAL_SERVICE_CAPABILITIES.inventory.refreshIntervalMs;
                 retireDuringScan = true;
-                expect(await rpc.handleRequest(request)).toMatchObject({ error: 'requester_credentials_unavailable' });
+                verificationRequests = 0;
+                expect(await rpc.handleRequest(request)).toMatchObject(visible);
+                expect(verificationRequests).toBe(1);
             }
         } finally { await runtime.stop(); }
     });
@@ -385,9 +483,17 @@ describe('daemon local services machine rpc handlers', () => {
         },
     );
 
-    it('keeps a host-admitted Agent launcher start waiting on its canonical approval artifact until an actual decision', async () => {
+    it('retains a host-admitted Agent launcher start in its canonical approval artifact until an actual decision', async () => {
+        const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine_1',
+            installationId: 'installation_1', role: 'use' as const, encryptionMode: 'plain' as const };
         const rpc = new RpcHandlerManager({ scopePrefix: 'machine_1', localMachineId: 'machine_1',
-            encryptionMode: 'plain', logger: () => {} });
+            encryptionMode: 'plain', logger: () => {}, authorizeRequest: request => authorizeMachineRpcRequest(request, {
+                machineId: machineAdmission.machineId, resolveInstallationId: () => machineAdmission.installationId,
+                resolveCustodianAccountId: async () => machineAdmission.custodianAccountId,
+                resolveHomeServerIdentityId: async () => 'home-a',
+                // Only Home's installed-Machine currentness is the substituted boundary.
+                verifyMachineAdmission: async () => true,
+            }) });
         const feed = createLocalServiceLauncherFeed({ machineId: 'machine_1',
             inventoryRegistry: createLocalServiceInventoryRegistry(), previewRegistry: createLocalServicePreviewRegistry() });
         const launcher = createLocalServiceLauncherRoutes({ feed });
@@ -398,10 +504,8 @@ describe('daemon local services machine rpc handlers', () => {
             }, capabilities: {} }),
         }) });
         await gate.refresh();
-        let approvalAction: string | undefined;
-        let decide!: () => void;
-        const decision = new Promise<void>(resolve => { decide = resolve; });
-        let awaitingDecision = false;
+        let stored: ReturnType<typeof ApprovalRequestV2Schema.parse> | undefined;
+        let launcherExecutor: ReturnType<typeof createActionExecutor> | undefined;
         registerDaemonLocalServicesMachineRpcHandlers(rpc, { machineId: 'machine_1', localServicesLauncher: launcher,
             resolveLauncherActionExecutor: ({ ingress }) => {
                 const executor = createActionExecutor({
@@ -410,35 +514,34 @@ describe('daemon local services machine rpc handlers', () => {
                     normalizeActionsSettingsV1(null), { surface: context.surface ?? null, authority: context.authority }),
                 // Artifact persistence is the external Account boundary. Policy and dispatch remain real.
                 approvalsCreate: async ({ request }) => {
-                    approvalAction = request.actionId;
+                    stored = ApprovalRequestV2Schema.parse(request);
                     return { artifactId: 'service-start-approval' };
                 },
-                approvalsUpdate: async () => ({ ok: true }),
-                approvalsWaitForDecision: async ({ request }) => {
-                    awaitingDecision = true;
-                    await decision;
-                    return { decision: 'reject' as const, request, decisionAuthority: 'present_user' as const };
-                },
+                approvalsGet: async () => stored ?? null,
+                approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
                 runtimeActionExecute: createLocalServicesDaemonRuntimeActionExecutor({
                     featureGate: gate, ingress, routes: { launcherRoutes: launcher },
                 }),
                 });
+                launcherExecutor = executor;
                 // The actual receiving credential factory binds this Home, not Action input.
                 return { execute: (actionId, input, context) => executor.execute(actionId, input, { serverId: 'home-a', ...context }) };
             },
         });
-        let settled = false;
-        const pending = rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START,
+        const proposed = await rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START,
             { machineId: 'machine_1', targetId: 'unavailable-declaration' },
-            { localActionContext: { surface: 'agent', authority: 'account_automation', actionRequestId: 'service-approval-request' } })
-            .finally(() => { settled = true; });
-        await vi.waitFor(() => expect(awaitingDecision).toBe(true));
-        expect(approvalAction).toBe('localServices.launcher.start');
-        expect(settled).toBe(false);
-        decide();
-        expect(await pending).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+            { signal: new AbortController().signal, rpcContext: { machineAdmission,
+                verifyMachineAdmissionCurrent: async () => true, callerAuthority: 'account_automation' },
+                localActionContext: { surface: 'agent', authority: 'account_automation', actionRequestId: 'service-approval-request' } });
+        expect(proposed).toMatchObject({ kind: 'approval_request_created', artifactId: 'service-start-approval' });
+        expect(stored).toMatchObject({ actionId: 'localServices.launcher.start', status: 'open', approval: { flow: 'deferred' } });
+        if (!launcherExecutor) throw new Error('Missing admitted launcher executor');
+        expect(await launcherExecutor.execute('approval.request.decide', { artifactId: 'service-start-approval', decision: 'reject' },
+            { serverId: 'home-a', surface: 'ui', authority: 'present_user', runtimeAccountId: 'owner' }))
+            .toMatchObject({ ok: true, result: { status: 'rejected' } });
+        expect(stored).toMatchObject({ status: 'rejected' });
     });
-    it.each(['direct', 'action'] as const)('preserves receiving Machine admission through asynchronous %s launcher resolution', async ingressKind => {
+    it.each(['direct', 'action'] as const)('finishes admitted %s launcher resolution and refuses the next arrival after withdrawal', async ingressKind => {
         const machineAdmission = {
             actorAccountId: 'requester', custodianAccountId: 'custodian', machineId: 'machine_1',
             installationId: 'installation_1', role: 'use' as const, encryptionMode: 'plain' as const,
@@ -459,13 +562,12 @@ describe('daemon local services machine rpc handlers', () => {
         const launcher = createLocalServiceLauncherRoutes({
             feed,
             async resolveStartTarget(_request, ingress?: RpcHandlerContext) {
-                if (!ingress?.machineAdmission || !ingress.verifyMachineAdmissionCurrent) {
+                if (!ingress?.machineAdmission) {
                     return { ok: false, reasonCode: 'machine_admission_required' } as const;
                 }
                 await Promise.resolve();
                 current = false;
-                return { ok: false, reasonCode: await ingress.verifyMachineAdmissionCurrent()
-                    ? 'launcher_target_unknown' : 'machine_admission_changed' } as const;
+                return { ok: false, reasonCode: 'launcher_target_unknown' } as const;
             },
         });
             const featureGate = createLocalServicesDaemonFeatureGate({ env: {},
@@ -490,11 +592,13 @@ describe('daemon local services machine rpc handlers', () => {
         else registerActionSpecRpcHandlers({ rpcHandlerManager: rpc, actionIds: ['localServices.launcher.start'],
             targetMachineId: 'machine_1', defaultMachineTarget: true, resolveActionExecutor });
 
-        expect(await rpc.handleRequest({
+        const request = {
             method: `machine_1:${RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START}`,
             params: { machineId: 'machine_1', targetId: 'unavailable-declaration' },
             machineAdmission,
-        })).toMatchObject({ status: 'denied', reasonCode: 'machine_admission_changed' });
+        };
+        expect(await rpc.handleRequest(request)).toMatchObject({ status: 'denied', reasonCode: 'launcher_target_unknown' });
+        expect(await rpc.handleRequest(request)).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
         expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START,
             { machineId: 'machine_1', targetId: 'unavailable-declaration' }))
             .toMatchObject({ status: 'denied', reasonCode: 'machine_admission_required' });

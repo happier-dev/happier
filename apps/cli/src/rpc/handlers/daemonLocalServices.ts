@@ -191,6 +191,7 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
                 // per-request scope structurally impossible.
                 const feedRequest = {
                     ...(requesterManagedServices ? { requesterManagedServices } : {}),
+                    ...(context?.signal ? { signal: context.signal } : {}),
                     ...(request.projection ? { projection: request.projection } : {}),
                     ...(request.sessionId ? { sessionId: request.sessionId } : {}),
                     ...(request.scope ? { scope: request.scope } : {}),

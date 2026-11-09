@@ -10,7 +10,6 @@ import {
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 
 import {
-    isDaemonLocalServicePreviewLifecycleError,
     registerDaemonLocalServicePreviewSnapshotHandler,
 } from './daemonLocalServicePreviewSnapshot';
 import { createLocalServicePreviewRoutes } from '@/daemon/local/services/preview/routes';
@@ -273,7 +272,7 @@ describe('daemon local service preview snapshot rpc handler', () => {
         expect(response.snapshot.previews).toHaveLength(0);
     });
 
-    it('maps a daemon route refusal to a lifecycle error carrying the reason code', async () => {
+    it('returns a typed daemon refusal while preserving the legacy raw RPC message', async () => {
         const { handlers, registrar } = createRegistrar();
         registerDaemonLocalServicePreviewSnapshotHandler(registrar, {
             localServicesPreview: createLifecycleRoutes(),
@@ -283,9 +282,7 @@ describe('daemon local service preview snapshot rpc handler', () => {
         await expect(dispatch?.({
             machineId: 'a-different-machine',
             inventoryEntryId: 'entry-vite',
-        })).rejects.toSatisfy((error: unknown) => (
-            isDaemonLocalServicePreviewLifecycleError(error)
-            && error.reasonCode === 'wrong_machine'
-        ));
+        })).resolves.toMatchObject({ ok: false, errorCode: 'wrong_machine',
+            error: 'local_service_preview_lifecycle_refused:wrong_machine' });
     });
 });

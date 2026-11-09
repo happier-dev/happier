@@ -1,4 +1,4 @@
-import type { RpcHandlerRegistrar, RpcHandlerContext } from '@/api/rpc/types';
+import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { run as runRipgrep } from '@/integrations/ripgrep/index';
@@ -21,6 +21,9 @@ const responseBytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value
 type ApplySuccess = Extract<DaemonWorkspaceFileReplaceApplyResponse, { ok: true }>;
 type FileResult = ApplySuccess['results'][number];
 type PreviewSuccess = Extract<DaemonWorkspaceFileReplacePreviewResponse, { ok: true }>;
+type FilesystemEffectContext = Readonly<{
+  signal?: AbortSignal;
+}>;
 
 function readErrorCode(error: unknown): string | undefined {
   return error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
@@ -43,7 +46,7 @@ export async function previewWorkspaceFileReplace(
   raw: unknown,
   workingDirectory: string,
   accessPolicy: FilesystemAccessPolicy,
-  context?: Pick<RpcHandlerContext, 'signal'>,
+  context?: FilesystemEffectContext,
 ): Promise<DaemonWorkspaceFileReplacePreviewResponse> {
     const parsed = DaemonWorkspaceFileReplacePreviewRequestSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, code: 'invalid_pattern' };
@@ -58,6 +61,7 @@ export async function previewWorkspaceFileReplace(
     try {
       // Validate even an empty corpus through the one JavaScript matcher.
       computeFileReplacement(new Uint8Array(), matcher);
+      context?.signal?.throwIfAborted();
       // Rust and JavaScript regexes can disagree even when both compile (for
       // example Unicode word boundaries), and rg omits empty files from queried
       // results. Inventory regex candidates so the JS owner alone decides hits.
@@ -67,6 +71,7 @@ export async function previewWorkspaceFileReplace(
           ...(!matcher.matchCase ? ['--ignore-case'] : []), '--', request.query, '.'])], {
         cwd: root.resolvedPath, signal: context?.signal, maxStderrBytes: WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES,
       });
+      context?.signal?.throwIfAborted();
       if (discovery.exitCode === 127) return { ok: false, code: 'ripgrep_unavailable' };
       if (discovery.exitCode !== 0 && discovery.exitCode !== 1) {
         if (discovery.exitCode !== 2 || !discovery.stdout) return { ok: false, code: 'ripgrep_failed' };
@@ -79,14 +84,16 @@ export async function previewWorkspaceFileReplace(
       const envelopeBytes = responseBytes({ ok: true, files: [], skipped: { notText: paths.length }, hasMore: false, coverage: 'complete', cursor: { path: longestCursor } });
       let filesBytes = 0;
       for (const path of paths) {
-        context?.signal.throwIfAborted();
+        context?.signal?.throwIfAborted();
         if (request.cursor && path <= request.cursor.path) continue;
         const authorization = isSafeRelativeWorkspacePath(path)
           ? authorizeFilesystemPathWithinRoot({ targetPath: path, rootPath: root.resolvedPath, defaultDirectory: workingDirectory, accessPolicy })
           : { valid: false as const };
         if (!authorization.valid) { coverage = 'partial'; lastPath = path; continue; }
         let bytes: Buffer;
+        context?.signal?.throwIfAborted();
         try { bytes = await readFile(authorization.resolvedPath); } catch { coverage = 'partial'; lastPath = path; continue; }
+        context?.signal?.throwIfAborted();
         const replacement = computeFileReplacement(bytes, matcher);
         if (replacement.kind === 'skip') { skipped.notText++; coverage = 'partial'; lastPath = path; continue; }
         if (!replacement.matches.length) { lastPath = path; continue; }
@@ -111,13 +118,15 @@ export async function previewWorkspaceFileReplace(
         }
         const additionBytes = fileBytes + (files.length ? 1 : 0);
         if (envelopeBytes + filesBytes + additionBytes > WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES) {
+          context?.signal?.throwIfAborted();
           return { ok: true, files, skipped, hasMore: true, coverage: 'partial', cursor: { path: lastPath! } };
         }
         files.push(file); filesBytes += additionBytes; lastPath = path;
       }
+      context?.signal?.throwIfAborted();
       return { ok: true, files, skipped, hasMore: false, coverage };
     } catch (error) {
-      if (context?.signal.aborted || error instanceof Error && error.name === 'AbortError') throw error;
+      if (context?.signal?.aborted || error instanceof Error && error.name === 'AbortError') throw error;
       if (readErrorCode(error) === 'WORKSPACE_ROOT_NOT_FOUND') return { ok: false, code: 'root_not_found' };
       return { ok: false, code: error instanceof SyntaxError ? 'invalid_pattern' : 'ripgrep_failed' };
     }
@@ -148,13 +157,28 @@ export async function applyWorkspaceFileReplace(
   raw: unknown,
   workingDirectory: string,
   accessPolicy: FilesystemAccessPolicy,
-  context?: Pick<RpcHandlerContext, 'signal'>,
+  context?: FilesystemEffectContext,
 ): Promise<DaemonWorkspaceFileReplaceApplyResponse> {
     const parsed = DaemonWorkspaceFileReplaceApplyRequestSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, code: 'invalid_request' };
     const { rootPath, operation } = parsed.data;
     const root = authorizeFilesystemPath({ targetPath: rootPath, defaultDirectory: workingDirectory, accessPolicy });
     if (!root.valid) return { ok: false, code: 'root_not_allowed' };
+    // If even the paths' refusal receipts cannot travel, publish no writes.
+    // The caller retains the requested paths and can show the omitted refusals
+    // from this explicit truncation fact without losing any applied inverse.
+    const refusals: FileResult[] = [];
+    let refusalBytes = responseBytes({ ok: true, results: [], truncated: true });
+    for (const file of operation.files) {
+      const refusal: FileResult = { path: file.path, status: 'failed', reason: 'transport_ceiling' };
+      const nextBytes = responseBytes(refusal) + (refusals.length ? 1 : 0);
+      if (refusalBytes + nextBytes > WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES) {
+        return { ok: true, results: refusals, truncated: true };
+      }
+      refusals.push(refusal);
+      refusalBytes += nextBytes;
+    }
+    if (context?.signal?.aborted) return { ok: true, results: [], cancelled: operation.files.map(file => file.path) };
     if (operation.kind === 'replace') {
       try { computeFileReplacement(new Uint8Array(), { ...operation.matcher, matchCase: operation.matcher.matchCase ?? false, regex: operation.matcher.regex ?? false }); }
       catch (error) { if (error instanceof SyntaxError) return { ok: false, code: 'invalid_pattern' }; throw error; }
@@ -169,7 +193,7 @@ export async function applyWorkspaceFileReplace(
       for (let index = 0; index < operation.files.length; index++) {
         const file = operation.files[index];
         if (!file.renameTo || file.renameTo === file.path) continue;
-        if (context?.signal.aborted) return { ok: true, results: [], cancelled: operation.files.map(file => file.path) };
+        if (context?.signal?.aborted) return { ok: true, results: [], cancelled: operation.files.map(file => file.path) };
         const destination = isSafeRelativeWorkspacePath(file.renameTo)
           ? authorizeFilesystemPathWithinRoot({ targetPath: file.renameTo, rootPath: root.resolvedPath, defaultDirectory: workingDirectory, accessPolicy })
           : { valid: false as const };
@@ -198,7 +222,9 @@ export async function applyWorkspaceFileReplace(
       const authorization = authorizeFilesystemPathWithinRoot({ targetPath: file.path, rootPath: root.resolvedPath, defaultDirectory: workingDirectory, accessPolicy });
       if (!authorization.valid) return { path: file.path, status: 'failed', reason: 'path_not_allowed' };
       try {
+        context?.signal?.throwIfAborted();
         const bytes = await readFile(authorization.resolvedPath);
+        context?.signal?.throwIfAborted();
         if (hashBytes(bytes) !== file.expectedHash) return { path: file.path, status: 'changed' };
         let newBytes: Uint8Array;
         let result: FileResult;
@@ -244,12 +270,14 @@ export async function applyWorkspaceFileReplace(
     const publishFile = async (file: PreparedFile): Promise<FileResult> => {
       const { result, sourcePath, destinationPath, expectedHash, newBytes } = file;
       try {
+        context?.signal?.throwIfAborted();
         if (result.renameTo) {
           const moved = await commitGuardedFileReplace({ destPath: destinationPath, expectation: null,
             source: { kind: 'move', path: sourcePath, expectedHash } });
           if (!moved.success) return { path: result.path, status: isFilesystemWriteGuardErrorCode(moved.errorCode) ? 'changed' : 'failed', reason: moved.errorCode };
         }
-        const write = await commitGuardedFileReplace({ destPath: destinationPath, expectation: expectedHash, source: { kind: 'bytes', bytes: newBytes } });
+        const write = await commitGuardedFileReplace({ destPath: destinationPath, expectation: expectedHash,
+          source: { kind: 'bytes', bytes: newBytes } });
         if (write.success) return { ...result, hash: write.hash };
         // A rename is already observable even if its subsequent text write
         // fails. Preserve its real hash and inverse move instead of losing Undo.
@@ -258,15 +286,17 @@ export async function applyWorkspaceFileReplace(
         return { path: result.path, status: isFilesystemWriteGuardErrorCode(write.errorCode) ? 'changed' : 'failed', reason: write.errorCode ?? 'write_failed' };
       } catch (error) { return failedFile(result.path, error); }
     };
-    if (operation.kind !== 'restore') {
-      // A preview is one reviewed set. Prepare every target before publishing
-      // any file or move, retaining only bounded reply receipts, not all file
-      // bodies. Publication re-reads a target and the writer checks it again.
+    if (operation.kind === 'editSet') {
+      // Semantic edits form one dependent set. Prepare every target before
+      // publishing any file or move, retaining only bounded reply receipts,
+      // not all file bodies. Ordinary Replace and restore report per file.
+      // Publication re-reads a target and the writer checks it again.
       const admitted: FileResult[] = [];
       let refused = false;
       for (let index = 0; index < operation.files.length; index++) {
-        if (context?.signal.aborted) return { ok: true, results: [], cancelled: operation.files.map(file => file.path) };
+        if (context?.signal?.aborted) return { ok: true, results: [], cancelled: operation.files.map(file => file.path) };
         const file = await prepareFile(index, admitted);
+        if (context?.signal?.aborted) return { ok: true, results: [], cancelled: operation.files.map(file => file.path) };
         if (!('newBytes' in file)) refused = true;
         admitted.push('newBytes' in file ? file.result : file);
       }
@@ -274,7 +304,7 @@ export async function applyWorkspaceFileReplace(
         file.status === 'replaced' ? { path: file.path, status: 'skipped', reason: 'edit_set_aborted' } : file) };
     }
     for (let index = 0; index < operation.files.length; index++) {
-      if (context?.signal.aborted) return { ok: true, results, cancelled: operation.files.slice(index).map(file => file.path) };
+      if (context?.signal?.aborted) return { ok: true, results, cancelled: operation.files.slice(index).map(file => file.path) };
       const previous = results.at(-1);
       if (dependentEditSet && previous && (!['replaced', 'restored'].includes(previous.status) || previous.reason !== undefined)) {
         return { ok: true, results: [...results, ...operation.files.slice(index).map(file => ({
@@ -284,6 +314,7 @@ export async function applyWorkspaceFileReplace(
       // Inverse receipts may visit a path repeatedly in reverse time order;
       // each restore must read the bytes produced by its preceding receipt.
       const file = await prepareFile(index, results);
+      if (context?.signal?.aborted) return { ok: true, results, cancelled: operation.files.slice(index).map(file => file.path) };
       results.push('newBytes' in file ? await publishFile(file) : file);
     }
     return { ok: true, results };

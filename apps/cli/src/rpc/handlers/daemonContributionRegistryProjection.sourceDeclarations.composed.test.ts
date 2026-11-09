@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DaemonPluginUiTargetedContributionsReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
-import { createManifestTargetedContributionsService, requireAdmittedTargetedOperationExecutionBinding } from '@happier-dev/plugin-sdk/host/registration';
+import { createManifestTargetedContributionsService, requireAdmittedTargetedOperationExecutionBinding } from '@happier-dev/cli-common/plugins/registration';
 import { PLUGIN_MANIFEST as TRIAGE_MANIFEST, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '@happier-dev/plugins-triage/manifest';
 import type { RpcHandler } from '@/api/rpc/types';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';

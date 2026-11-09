@@ -1,8 +1,5 @@
-import { listBrowserCookieSources, readBrowserCookieSource } from '@/daemon/browser/profiles/cookieSources';
-import { BrowserCookieSourceReadV1Schema, BrowserCookieSourceResultV1Schema, BrowserCookieApplyV1Schema,
-    BrowserPasskeysApplyV1Schema, BrowserLoginSourcesResultV1Schema, BrowserProfileLoginsImportResultV1Schema } from '@happier-dev/protocol/browser/profile/v1';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
-import { DaemonBrowserControlDispatchRequestV1Schema, DaemonBrowserControlDispatchResponseV1Schema, DaemonBrowserViewListRequestV1Schema, DaemonBrowserViewListResponseV1Schema } from '@happier-dev/protocol/browser/control/v1';
+import { DaemonBrowserControlDispatchRequestV1Schema, DaemonBrowserControlDispatchResponseV1Schema, DaemonBrowserViewListRequestV1Schema, DaemonBrowserViewListResponseV1Schema, DaemonBrowserViewWatchRequestV1Schema } from '@happier-dev/protocol/browser/control/v1';
 import type { DaemonBrowserControlDispatchResponseV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
@@ -11,7 +8,13 @@ import { createBrowserProfilePasskeyImporter } from '@/daemon/browser/profiles/i
 import { createBrowserProfileCookieImporter } from '@/daemon/browser/profiles/importCookies';
 import type { ReverseCaptureMachineRpcClient } from '@/daemon/browser/recording/reverseChannel/desktopReverseCaptureUiCall';
 import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
+import type { BrowserDaemonViewDiscovery } from '@/daemon/browser/control/viewDiscovery';
+import { browserCommandDispatchFailure, browserCommandScope } from '@/daemon/browser/control/types';
 import { resolveManagedBrowserSidecarCandidate } from '@/daemon/browser/sidecar/source';
+import { listBrowserCookieSources, readBrowserCookieSource } from '@/daemon/browser/profiles/cookieSources';
+import { BrowserCookieSourceReadV1Schema, BrowserCookieSourceResultV1Schema, BrowserCookieApplyV1Schema,
+    BrowserPasskeysApplyV1Schema, BrowserLoginSourcesResultV1Schema, BrowserProfileLoginsImportResultV1Schema } from '@happier-dev/protocol/browser/profile/v1';
+import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
 
 async function unavailableBrowserControl(): Promise<never> {
     // Explain the absent owner through the same source that startup/provisioning uses. Discovery
@@ -38,6 +41,17 @@ export type DaemonBrowserControlHandlerOptions = Readonly<{
     browserControl?: BrowserDaemonControlRoutes | null;
     getNativeClient?: () => ReverseCaptureMachineRpcClient | null | undefined;
 }>;
+
+/** Registered before the optional Chromium runtime exists, through the same Machine transport. */
+export function registerDaemonBrowserViewWatchHandler(rpc: RpcHandlerRegistrar, discovery: BrowserDaemonViewDiscovery): void {
+    rpc.registerHandler(RPC_METHODS.DAEMON_BROWSER_VIEW_WATCH, async (raw: unknown, context?: RpcHandlerContext) => {
+        const request = DaemonBrowserViewWatchRequestV1Schema.parse(raw);
+        const views = await discovery.watchViews({ browserSessionId: request.browserSessionId,
+            knownViewIds: request.knownViewIds, signal: context?.signal,
+            scope: browserCommandScope(buildActionExecutorContextForRpc(context ?? {})) });
+        return DaemonBrowserViewListResponseV1Schema.parse({ protocolVersion: 1, views });
+    });
+}
 
 export function registerDaemonBrowserControlHandler(
     rpc: RpcHandlerRegistrar,
@@ -66,11 +80,11 @@ export function registerDaemonBrowserControlHandler(
         if (!request.success) return { status: 'unavailable', code: 'import_failed' };
         return BrowserProfileLoginsImportResultV1Schema.parse(await importCookies(request.data, context?.signal));
     });
-    rpc.registerHandler(RPC_METHODS.DAEMON_BROWSER_VIEW_LIST, async (raw: unknown) => {
+    rpc.registerHandler(RPC_METHODS.DAEMON_BROWSER_VIEW_LIST, async (raw: unknown, context?: RpcHandlerContext) => {
         const request = DaemonBrowserViewListRequestV1Schema.parse(raw);
         if (!options.browserControl) return unavailableBrowserControl();
         return DaemonBrowserViewListResponseV1Schema.parse({ protocolVersion: 1,
-            views: options.browserControl.listViews(request.browserSessionId) });
+            views: options.browserControl.listViews(request.browserSessionId, buildActionExecutorContextForRpc(context ?? {})) });
     });
     rpc.registerHandler(
         RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH,
@@ -79,10 +93,14 @@ export function registerDaemonBrowserControlHandler(
             if (!options.browserControl) {
                 return unavailableBrowserControl();
             }
-            const result = await options.browserControl.dispatchCommand(request.command, {
-                authority: context?.callerAuthority ?? 'account_automation',
-                signal: context?.signal,
-            });
+            const command = request.command;
+            // This raw route is the human Browser surface. Agents take or hand back control only
+            // through the browser.control Actions, whose approval policy owns Ask/Allow.
+            const result = (command.kind === 'takeControl' || command.kind === 'handBack')
+                && context?.callerAuthority !== 'present_user'
+                ? browserCommandDispatchFailure({ commandId: command.commandId, code: 'permission_denied',
+                    message: 'Browser controller commands from this route require the present user.' })
+                : await options.browserControl.dispatchCommand(command, buildActionExecutorContextForRpc(context ?? {}));
             return DaemonBrowserControlDispatchResponseV1Schema.parse({
                 protocolVersion: 1,
                 result,

@@ -2,7 +2,7 @@ import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { run as runRipgrep } from '@/integrations/ripgrep/index';
 import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
 import { authorizeFilesystemPath } from './fileSystem/accessPolicy/filesystemPathAuthorization';
-import { DaemonWorkspaceFileListRequestSchema, WORKSPACE_FILE_LIST_MAX_RESPONSE_UTF8_BYTES, WORKSPACE_FILE_LIST_MAX_RESULTS } from '@happier-dev/protocol/machines/workspaceFiles';
+import { DaemonWorkspaceFileListRequestSchema, WORKSPACE_FILE_LIST_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol/machines/workspaceFiles';
 import type { DaemonWorkspaceFileListResponse } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isSafeRelativeWorkspacePath, workspaceFileExclusionArguments } from './workspaceFilePaths';
@@ -43,7 +43,7 @@ function buildWorkspaceFileListArguments(query: string | undefined, includeHidde
 function selectBoundedPaths(input: Readonly<{
     stdout: string;
     stdoutTruncated: boolean;
-    limit: number;
+    limit?: number;
 }>): Readonly<{ paths: string[]; truncated: boolean }> {
     const rawPaths = input.stdout.split('\n');
     // A byte limit or deadline can bisect the final record. Even a normal exit
@@ -60,7 +60,7 @@ function selectBoundedPaths(input: Readonly<{
             truncated = true;
             continue;
         }
-        if (paths.length >= input.limit) {
+        if (input.limit !== undefined && paths.length >= input.limit) {
             truncated = true;
             break;
         }
@@ -99,6 +99,7 @@ export function registerWorkspaceFileListHandler(
             if (!authorization.valid) return { ok: false, errorCode: 'path_not_allowed' };
 
             try {
+                context?.signal.throwIfAborted();
                 const result = await runRipgrep(buildWorkspaceFileListArguments(
                     parsed.data.query,
                     parsed.data.includeHidden === true,
@@ -114,6 +115,7 @@ export function registerWorkspaceFileListHandler(
                         deadlineAtMs: (context?.requestStartedAtMs ?? Date.now()) + parsed.data.budgetMs,
                     }),
                 });
+                context?.signal.throwIfAborted();
                 if (result.deadlineExceeded) logger.infoFile('[WORKSPACE FILE LIST] Budget exhausted');
                 if (result.exitCode === 127) return { ok: false, errorCode: 'ripgrep_unavailable' };
                 const osErrorCodes = [...new Set([...result.stderr.matchAll(/\(os error (\d+)\)/gu)]
@@ -128,7 +130,7 @@ export function registerWorkspaceFileListHandler(
                     // Exit 2 includes traversal failures (for example an unreadable
                     // sibling). Usable paths remain valid, but coverage is partial.
                     stdoutTruncated: result.stdoutTruncated === true || result.exitCode === 2,
-                    limit: parsed.data.limit ?? WORKSPACE_FILE_LIST_MAX_RESULTS,
+                    limit: parsed.data.limit,
                 });
                 if (result.exitCode !== 0 && !isEmptyResult && !result.stdoutTruncated) {
                     if (result.exitCode !== 2 || (bounded.paths.length === 0 && !traversalIncomplete)) {

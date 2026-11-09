@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
+import { describe, expect, it, vi } from 'vitest';
+import axios, { AxiosHeaders } from 'axios';
+import tweetnacl from 'tweetnacl';
+import type { RpcHandlerContext } from '@/api/rpc/types';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent, type MachineRpcAdmissionBoundary } from '@/api/machine/machineRpcAuthorization';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
@@ -9,6 +14,7 @@ import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
 import { createWorkspaceExecutionConfigClientV1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigClientV1';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { registerActionSpecRpcHandlers, unwrapActionResultForRpc } from './registerActionSpecRpcHandlers';
+import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 describe('registered finite Action Machine admission', () => {
   it('preserves only the actual retirement dependency and uncertain-outcome facts across the public RPC failure', () => {
@@ -45,28 +51,50 @@ describe('registered finite Action Machine admission', () => {
         createInvocation: () => { throw new Error('No native invocation is admitted'); } },
       terminalSessions,
     };
-    const handlers = new Map<string, RpcHandler>();
+    const keys = tweetnacl.sign.keyPair();
+    // Only Home HTTP is substituted; the receiver signs and verifies arrival
+    // admission before its real registered factory can use Account/process ports.
+    const network = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { v: 1, ok: true },
+      statusText: 'OK', headers: {}, config: { headers: new AxiosHeaders() } });
+    const boundary: MachineRpcAdmissionBoundary = { machineId: 'machine',
+      resolveInstallationId: () => 'installation', resolveCustodianAccountId: async () => 'owner',
+      resolveHomeServerIdentityId: async () => 'home',
+      verifyMachineAdmission: input => verifyMachineRpcAdmissionCurrent({ ...input, privateKey: keys.secretKey,
+        daemonToken: 'receiver', serverHttpBaseUrl: 'https://home.invalid' }) };
+    const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger: () => {},
+      authorizeRequest: request => authorizeMachineRpcRequest(request, boundary) });
     registerActionSpecRpcHandlers<'projects.prepare'>({
-      rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
+      rpcHandlerManager: rpc,
       targetMachineId: 'machine', actionIds: ['projects.prepare'],
       resolveActionExecutor: request => ({ execute: async (actionId, input, context) => {
-        const result = await createProjectFiniteAction(runtime, request.ingress ?? { signal })({ actionId, input,
+        const ingress = request.ingress ?? { signal };
+        const result = await createProjectFiniteAction({ ...runtime,
+          requesterIdentity: selectHostRequesterExecutionIdentity({ rpcContext: ingress, hostHomeServerIdentityId: 'home' }) }, ingress)({ actionId, input,
           context: { ...context, serverId: 'home' } });
         return result && typeof result === 'object' && 'ok' in result
           ? result as import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteResult
           : { ok: true, result };
       } }),
     });
-    const handler = handlers.get(PROJECT_FINITE_ACTION_RPC_METHODS_V1['projects.prepare'])!;
     const input = { workspace: { serverId: 'home', machineId: 'machine', rootPath: '/accepted', workspaceId: 'accepted' }, phase: 'setup' };
-    await expect(handler(input, { signal })).resolves.toMatchObject({ ok: false, errorCode: 'machine_admission_required' });
-    const ingress: RpcHandlerContext = { signal, machineAdmission: { actorAccountId: 'teammate', custodianAccountId: 'owner',
-      machineId: 'machine', installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
-      verifyMachineAdmissionCurrent: async () => true };
-    await expect(handler(input, ingress)).resolves.toMatchObject({ ok: false, errorCode: 'project_requester_credentials_unavailable' });
-    await expect(handler(input, { ...ingress, machineAdmission: { ...ingress.machineAdmission!, actorAccountId: 'owner' },
-      verifyMachineAdmissionCurrent: async () => false })).resolves.toMatchObject({ ok: false, errorCode: 'machine_admission_changed' });
-    expect(runtime.workerAdmission.dependencies()).toEqual([]);
-    terminalSessions.dispose();
+    const request = { method: `machine:${PROJECT_FINITE_ACTION_RPC_METHODS_V1['projects.prepare']}`,
+      params: input, callerAuthority: 'present_user' as const };
+    const machineAdmission: NonNullable<RpcHandlerContext['machineAdmission']> = { actorAccountId: 'teammate', custodianAccountId: 'owner',
+      machineId: 'machine', installationId: 'installation', role: 'manage', encryptionMode: 'plain' };
+    try {
+      await expect(rpc.handleRequest(request)).resolves.toMatchObject({ ok: false, errorCode: 'machine_admission_required' });
+      await expect(rpc.handleRequest({ ...request, machineAdmission }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'project_requester_credentials_unavailable' });
+      expect(network).toHaveBeenCalledTimes(1);
+      await expect(rpc.handleRequest({ ...request, machineAdmission: { ...machineAdmission, installationId: 'replaced-installation' } }))
+        .resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      expect(network).toHaveBeenCalledTimes(1);
+      network.mockResolvedValue({ status: 403, data: { v: 1, ok: false }, statusText: 'Forbidden',
+        headers: {}, config: { headers: new AxiosHeaders() } });
+      await expect(rpc.handleRequest({ ...request, machineAdmission: { ...machineAdmission, actorAccountId: 'owner' } }))
+        .resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      expect(network).toHaveBeenCalledTimes(2);
+      expect(runtime.workerAdmission.dependencies()).toEqual([]);
+    } finally { network.mockRestore(); terminalSessions.dispose(); }
   });
 });

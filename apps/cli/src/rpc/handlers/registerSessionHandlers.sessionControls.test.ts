@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type { Metadata } from '@/api/types';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
@@ -192,7 +192,6 @@ describe('registerSessionHandlers session controls', () => {
       outboundShapeLogger: { log: () => undefined },
       getSocket: () => ({ connected: false, emit: () => undefined }),
       getLatestTurnSnapshot: () => null,
-      getActiveLocalTurnProgressAt: () => null,
       getSessionConnectionSupervisor: () => null,
       getMetadataSnapshot: () => null,
       updateAgentState: async () => undefined,
@@ -1190,6 +1189,7 @@ describe('registerSessionHandlers session controls', () => {
 
   it('bounds a never-settling recovery control and never delivers after its late result', async () => {
     vi.useFakeTimers();
+    onTestFinished(() => { vi.useRealTimers(); });
     const registerSessionHandlers = await loadRegisterSessionHandlers();
     const { handlers, registrar } = createRegistrar();
     let resolveRecovery!: (value: { ok: true; status: 'ready' }) => void;
@@ -1221,7 +1221,6 @@ describe('registerSessionHandlers session controls', () => {
 
     expect(handleUserMessage).not.toHaveBeenCalled();
     expect(enqueueSessionUserMessage).not.toHaveBeenCalled();
-    vi.useRealTimers();
   });
 
   it('owns one complete outcome per exact localId and fails payload collisions closed', async () => {
@@ -1274,7 +1273,11 @@ describe('registerSessionHandlers session controls', () => {
       ok: false,
       errorCode: 'session_user_message_id_payload_conflict',
     });
-    expect(handleUserMessage).toHaveBeenCalledTimes(1_005);
+    // The oldest terminal result was evicted, so this id admits a fresh payload.
+    // An unbounded Map would reject it as a collision instead.
+    await expect(handler({ text: 'new after eviction', localId: 'completed-0', meta: {} }))
+      .resolves.toEqual({ ok: true, localId: 'completed-0' });
+    expect(handleUserMessage).toHaveBeenCalledTimes(1_006);
   });
 
   it('never evicts in-flight outcomes when the registry is full', async () => {

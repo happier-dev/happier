@@ -7,12 +7,21 @@ import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { RPC_METHODS, resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/rpc';
 import { DaemonWorkspaceFileSearchResponseSchema, WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol';
 import { registerWorkspaceFileSearchHandler } from './workspaceFileSearch';
+import { createFilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { DaemonWorkspaceFileSearchRequest } from '@happier-dev/protocol/machines/workspaceFiles';
 
 describe('workspace file content search through the registered daemon owner', () => {
+    it('retains a matching file above 256 KiB within the Socket.IO reply boundary', async () => {
+        const text = `needle ${'é😀'.repeat(55_000)}`;
+        await writeFile(join(root, 'large.txt'), `${text}\n`);
+        const result = DaemonWorkspaceFileSearchResponseSchema.parse(await handler({ rootPath: root, query: 'needle', contextLines: 0 }));
+        expect(result).toMatchObject({ ok: true, coverage: 'complete', hasMore: false,
+            files: [{ path: 'large.txt', matches: [{ text }] }] });
+        expect(Buffer.byteLength(JSON.stringify(result))).toBeGreaterThan(300 * 1024);
+    });
     let root: string;
     let handler: RpcHandler;
     let lifetime: AbortController;
@@ -26,6 +35,49 @@ describe('workspace file content search through the registered daemon owner', ()
         handler = (request, context) => registered(request, { signal: lifetime.signal, ...context });
     });
     afterEach(async () => { lifetime.abort(); vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); });
+
+    it('refuses an arbitrary member root before native search and preserves the typed search envelope', async () => {
+        await writeFile(join(root, 'private.txt'), 'needle');
+        const handlers = new Map<string, RpcHandler>();
+        registerWorkspaceFileSearchHandler({ registerHandler: (method, next) => { handlers.set(method, next); } }, root, {
+            effectAdmission: createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home' }),
+        });
+        const search = handlers.get(RPC_METHODS.DAEMON_WORKSPACE_FILES_SEARCH)!;
+        const native = vi.spyOn(ripgrep, 'run');
+        const response = DaemonWorkspaceFileSearchResponseSchema.parse(await search({ rootPath: root, query: 'needle' }, {
+            signal: lifetime.signal, callerAuthority: 'present_user',
+            machineAdmission: { actorAccountId: 'member', custodianAccountId: 'owner', machineId: 'machine',
+                installationId: 'installation', role: 'use', encryptionMode: 'plain' },
+            verifyMachineAdmissionCurrent: async () => true,
+        }));
+        expect(response).toMatchObject({ ok: false, code: 'filesystem_identity_custody_unavailable',
+            details: { reason: 'requester_identity_unavailable' } });
+        expect(native).not.toHaveBeenCalled();
+    });
+
+    it.each(['present_user', 'account_automation'] as const)('finishes an admitted %s search after authority changes during native work', async callerAuthority => {
+        await writeFile(join(root, 'ordinary.txt'), 'needle');
+        const handlers = new Map<string, RpcHandler>();
+        registerWorkspaceFileSearchHandler({ registerHandler: (method, next) => { handlers.set(method, next); } }, root, {
+            effectAdmission: createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home' }),
+        });
+        let current = true;
+        const nativeRun = ripgrep.run;
+        // Preserve the real native search, changing only its completion timing
+        // relative to the host's externally supplied admission-current fact.
+        vi.spyOn(ripgrep, 'run').mockImplementationOnce(async (...args) => {
+            const result = await nativeRun(...args);
+            current = false;
+            return result;
+        });
+        const response = await handlers.get(RPC_METHODS.DAEMON_WORKSPACE_FILES_SEARCH)!({ rootPath: root, query: 'needle' }, {
+            signal: lifetime.signal, callerAuthority,
+            machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+                installationId: 'installation', role: 'use', encryptionMode: 'plain' },
+            verifyMachineAdmissionCurrent: async () => current,
+        });
+        expect(response).toMatchObject({ ok: true, files: [{ path: 'ordinary.txt', matches: [{ text: 'needle' }] }] });
+    });
 
     it('runs code definition and text-reference Actions through the registered search owner and native rg', async () => {
         await mkdir(join(root, 'src'));
@@ -123,8 +175,9 @@ describe('workspace file content search through the registered daemon owner', ()
         expect(result.files.map((file) => file.path)).toEqual(['c.txt']);
         expect(result.hasMore).toBe(false);
 
-        await writeFile(join(root, 'a.txt'), `${'needle\n'.repeat(1700)}`);
-        await writeFile(join(root, 'a', 'file.txt'), `${'needle\n'.repeat(1700)}`);
+        const pageText = `needle ${'é'.repeat(Math.floor(WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES / 3))}\n`;
+        await writeFile(join(root, 'a.txt'), pageText);
+        await writeFile(join(root, 'a', 'file.txt'), pageText);
         const first = DaemonWorkspaceFileSearchResponseSchema.parse(await handler({ rootPath: root, query: 'needle', contextLines: 0 }));
         expect(first.ok).toBe(true);
         if (!first.ok) return;
@@ -133,7 +186,8 @@ describe('workspace file content search through the registered daemon owner', ()
         const includedLargeFiles = first.files.filter((file) => file.path !== 'c.txt');
         expect(includedLargeFiles).toHaveLength(1);
         expect(['a.txt', 'a/file.txt']).toContain(includedLargeFiles[0].path);
-        expect(includedLargeFiles[0].matches).toHaveLength(1700);
+        expect(includedLargeFiles[0].matches).toHaveLength(1);
+        expect(includedLargeFiles[0].matches[0].text).toBe(pageText.trimEnd());
         expect(Buffer.byteLength(JSON.stringify(first))).toBeLessThanOrEqual(WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES);
     });
 

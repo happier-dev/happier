@@ -44,6 +44,254 @@ async function setup(nativeIo?: ProjectNativeCommandIo, reviewInput?: (root: str
 }
 
 describe('project definition Actions through registered Machine RPC', () => {
+  it('keeps all 6230 Script summaries compact and performs no native discovery for the author document', async () => {
+    const resolveTool = vi.fn(async () => ({ executablePath: '/installed/pnpm', version: '10' }));
+    const h = await setup({ resolveTool });
+    const scripts = Object.fromEntries(Array.from({ length: 6230 }, (_, index) => [`check-${index}`, `echo ${index}`]));
+    await writeFile(join(h.root, 'package.json'), JSON.stringify({ scripts }));
+    const inspect = h.handlers.get('daemon.projects.inspect.v1')!;
+    const compact = ProjectDefinitionInspectOutputSchema.parse(await inspect({ workspace: h.workspace, read: { kind: 'scripts' } }));
+    // The Scripts list carries every found reference (name, package file), never a per-row
+    // native resolution: an opened row asks for its own `detail`.
+    expect(compact.detection.entries).toHaveLength(6230);
+    expect(compact.importCandidates).toHaveLength(0);
+    expect(resolveTool).not.toHaveBeenCalled();
+    expect.soft(compact.tools?.length ?? 0).toBe(0);
+    const listBytes = Buffer.byteLength(JSON.stringify(compact.detection.entries));
+    expect(Buffer.byteLength(JSON.stringify(compact))).toBeLessThan(listBytes + 2048);
+    const opened = ProjectDefinitionInspectOutputSchema.parse(await inspect({ workspace: h.workspace,
+      read: { kind: 'detail', sources: [compact.detection.entries[42]!] } }));
+    expect(opened.importCandidates).toMatchObject([{ source: { target: 'check-42' }, availability: 'available' }]);
+    await mkdir(join(h.root, '.happier'));
+    const bytes = '{"version":1,"future":{"retained":true}}';
+    await writeFile(join(h.root, '.happier/project.json'), bytes);
+    resolveTool.mockClear();
+    const editor = ProjectDefinitionInspectOutputSchema.parse(await inspect({ workspace: h.workspace, read: { kind: 'editor' } }));
+    expect(editor.definition.document).toMatchObject({ bytes, original: { future: { retained: true } } });
+    expect.soft(editor.detection.entries.length).toBe(0);
+    expect.soft(editor.importCandidates.length).toBe(0);
+    expect.soft(editor.commands?.length ?? 0).toBe(0);
+    expect.soft(resolveTool).not.toHaveBeenCalled();
+    resolveTool.mockClear();
+    const guidance = ProjectDefinitionInspectOutputSchema.parse(await inspect({ workspace: h.workspace, read: { kind: 'guidance' } }));
+    expect(guidance.detectionSummary).toMatchObject({ total: 6230, scripts: 6230, services: 0,
+      files: [{ file: 'package.json', total: 6230, scripts: 6230, services: 0 }] });
+    expect(guidance.detection.entries.length).toBe(0);
+    expect(guidance.importCandidates.length).toBe(0);
+    expect(guidance.commands?.length ?? 0).toBe(0);
+    expect(guidance.tools?.length ?? 0).toBe(0);
+    expect(resolveTool).not.toHaveBeenCalled();
+    expect(Buffer.byteLength(JSON.stringify(guidance))).toBeLessThan(1024);
+  });
+  it('resends no Scripts body for an unchanged checkout and a full one after a package.json change', async () => {
+    const h = await setup({ resolveTool: async () => ({ executablePath: '/installed/npm', version: '10' }) });
+    const scripts = Object.fromEntries(Array.from({ length: 2000 }, (_, index) => [`check-${index}`, `echo ${index}`]));
+    await writeFile(join(h.root, 'package.json'), JSON.stringify({ scripts }));
+    const inspect = h.handlers.get('daemon.projects.inspect.v1')!;
+    const first = ProjectDefinitionInspectOutputSchema.parse(await inspect({ workspace: h.workspace, read: { kind: 'scripts' } }));
+    expect(first.detection.entries).toHaveLength(2000);
+    const revisit = await inspect({ workspace: h.workspace, read: { kind: 'scripts' }, ifRevision: first.revision });
+    expect(revisit).toEqual({ unchanged: true, revision: first.revision });
+    expect(Buffer.byteLength(JSON.stringify(revisit))).toBeLessThan(128);
+    await writeFile(join(h.root, 'package.json'), JSON.stringify({ scripts: { ...scripts, added: 'echo added' } }));
+    const changed = ProjectDefinitionInspectOutputSchema.parse(await inspect({ workspace: h.workspace, read: { kind: 'scripts' }, ifRevision: first.revision }));
+    expect(changed.detection.entries).toHaveLength(2001);
+    expect(changed.revision).not.toBe(first.revision);
+  });
+  it('keeps explicit Create preselection complete and its document lossless for all 6230 native offers', async () => {
+    const h = await setup({ resolveTool: async () => ({ executablePath: '/installed/npm', version: '10' }) });
+    const scripts = Object.fromEntries(Array.from({ length: 6230 }, (_, index) => [`check-${index}`, `echo ${index}`]));
+    await writeFile(join(h.root, 'package.json'), JSON.stringify({ scripts }));
+    await mkdir(join(h.root, '.happier'));
+    const bytes = '{"version":1,"future":{"retained":true}}';
+    await writeFile(join(h.root, '.happier/project.json'), bytes);
+    const created = ProjectDefinitionInspectOutputSchema.parse(await h.handlers.get('daemon.projects.inspect.v1')!({
+      workspace: h.workspace, read: { kind: 'create' },
+    }));
+    expect(created.importCandidates).toHaveLength(6230);
+    expect(created.importCandidates.every(candidate => candidate.preselected && candidate.invocation !== undefined)).toBe(true);
+    expect(created.definition.document).toMatchObject({ bytes, original: { future: { retained: true } } });
+  });
+  it('keeps named Script availability compact and excludes all 6230 already-declared native offers', async () => {
+    const resolveTool = vi.fn(async () => ({ executablePath: '/installed/npm', version: '10' }));
+    const h = await setup({ resolveTool });
+    const scripts = Object.fromEntries(Array.from({ length: 6230 }, (_, index) => [`check-${index}`, `echo ${index}`]));
+    await writeFile(join(h.root, 'package.json'), JSON.stringify({ scripts }));
+    await mkdir(join(h.root, '.happier'));
+    await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ version: 1,
+      scripts: Object.fromEntries(Object.keys(scripts).map(name => [name, {
+        source: { target: name, file: 'package.json', tool: 'package_script', kind: 'native' },
+      }])) }));
+    const declared = ProjectDefinitionInspectOutputSchema.parse(await h.handlers.get('daemon.projects.inspect.v1')!({
+      workspace: h.workspace, read: { kind: 'scripts' },
+    }));
+    expect(declared.importCandidates).toHaveLength(0);
+    expect(declared.detection.entries).toHaveLength(0);
+    expect(declared.detectionSummary).toMatchObject({ total: 0, scripts: 0, services: 0, files: [] });
+    expect(declared.commands).toHaveLength(6230);
+    expect(declared.commands?.every(command => command.availability === 'available' && command.invocation === undefined)).toBe(true);
+    expect(resolveTool).toHaveBeenCalledTimes(1);
+  });
+  it('reads only selected native details without sending a 6230-declaration manifest and observes the next source change', async () => {
+    const resolveTool = vi.fn(async (tool: string) => ({ executablePath: `/installed/${tool}`, version: '1' }));
+    const h = await setup({ resolveTool });
+    await mkdir(join(h.root, '.happier'));
+    const native = { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } as const;
+    await writeFile(join(h.root, 'Makefile'), 'check:\n\techo current\n');
+    await writeFile(join(h.root, 'justfile'), 'other:\n  echo unrelated\n');
+    await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ version: 1,
+      scripts: Object.fromEntries(Array.from({ length: 6230 }, (_, index) => [`declaration-${index}`, { source: native }])) }));
+    const inspect = h.handlers.get('daemon.projects.inspect.v1')!;
+    const request = { workspace: h.workspace, read: { kind: 'detail', sources: [{ source: native, usage: 'script' }] } };
+    const detail = ProjectDefinitionInspectOutputSchema.parse(await inspect(request));
+    expect(detail).toMatchObject({ definitionScope: 'statusOnly', definition: { document: { manifest: { version: 1 } } },
+      importCandidates: [{ source: native, availability: 'available', invocation: { tool: 'make', args: ['-f', 'Makefile', 'check'] } }] });
+    expect(detail.definition.document?.status === 'valid' && detail.definition.document.manifest.scripts).toBeUndefined();
+    expect(detail.importCandidates).toHaveLength(1);
+    expect(detail.commands?.length ?? 0).toBe(0);
+    expect(resolveTool.mock.calls.map(([tool]) => tool)).toEqual(['make']);
+    expect(Buffer.byteLength(JSON.stringify(detail))).toBeLessThan(2048);
+    await writeFile(join(h.root, 'Makefile'), 'changed:\n\techo fresh\n');
+    expect(ProjectDefinitionInspectOutputSchema.parse(await inspect(request))).toMatchObject({
+      importCandidates: [{ source: native, availability: 'unavailable', code: 'native_target_missing' }],
+    });
+  });
+  it('rejects service-only native detail requests with finite usage at input admission', async () => {
+    const h = await setup({ resolveTool: async tool => ({ executablePath: `/installed/${tool}` }) });
+    await writeFile(join(h.root, 'Procfile'), 'web: echo service\n');
+    const inspect = h.handlers.get('daemon.projects.inspect.v1')!;
+    expect(await inspect({ workspace: h.workspace, read: { kind: 'detail', sources: [{
+      source: { kind: 'native', tool: 'procfile', file: 'Procfile', target: 'web' }, usage: 'script',
+    }] } })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+  });
+  it('separates all-usage import offers and toolchain facts from authoring and setup-readiness demand', async () => {
+    let readinessReads = 0;
+    const resolveTool = vi.fn(async (tool: string) => ({ executablePath: `/installed/${tool}`, version: '1' }));
+    const h = await setup({ resolveTool }, root => {
+      readinessReads++;
+      const workspace = { id: 'workspace-a', serverId: 'home-a', machineId: 'machine-a', rootPath: root, projectKey: 'project', createdAtMs: 1 };
+      return { workspace, projectAssociation: { workspace, project: { serverId: 'home-a', projectId: 'project' } },
+        requester: { credentials: { token: 'fixture-requester', encryption: null }, serverHttpBaseUrl: 'https://requester.example' },
+        purpose: 'setup', platform: { os: process.platform, arch: process.arch }, nativeIo: { resolveTool }, successHomeDir: root };
+    });
+    await writeFile(join(h.root, 'package.json'), JSON.stringify({ scripts: { check: 'echo checked', dev: 'node server.js' } }));
+    await writeFile(join(h.root, 'Procfile'), 'web: node server.js\n');
+    await writeFile(join(h.root, 'mise.toml'), '[tools]\nnode="1"\n');
+    const inspect = h.handlers.get('daemon.projects.inspect.v1')!;
+    const imports = ProjectDefinitionInspectOutputSchema.parse(await inspect({ workspace: h.workspace, read: { kind: 'imports' } }));
+    expect(imports.importCandidates.some(candidate => candidate.usage === 'script')).toBe(true);
+    expect(imports.importCandidates.some(candidate => candidate.usage === 'service')).toBe(true);
+    expect(imports.importCandidates.every(candidate => candidate.invocation === undefined)).toBe(true);
+    expect(imports.detection.toolchains).toEqual([]);
+    expect(imports.tools ?? []).toEqual([]);
+    resolveTool.mockClear();
+    const tools = ProjectDefinitionInspectOutputSchema.parse(await inspect({ workspace: h.workspace, read: { kind: 'tools' } }));
+    expect(tools.tools).toEqual(expect.arrayContaining([
+      { tool: 'node', file: 'mise.toml', requestedVersion: '1', availability: 'available', version: '1' },
+      { tool: 'npm', file: 'package.json', availability: 'available', version: '1' },
+    ]));
+    expect(tools.detection.toolchains).toEqual(expect.arrayContaining([{ kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' }]));
+    expect(tools.importCandidates).toHaveLength(0);
+    expect(tools.detection.entries).toHaveLength(0);
+    expect(tools.commands?.length ?? 0).toBe(0);
+    expect(resolveTool.mock.calls.map(([tool]) => tool)).toContain('npm');
+    for (const read of [{ kind: 'editor' }, { kind: 'create' }, { kind: 'detail', sources: [] }, { kind: 'guidance' }] as const) {
+      await inspect({ workspace: h.workspace, read });
+    }
+    expect(readinessReads).toBe(0);
+    await inspect({ workspace: h.workspace, read: { kind: 'scripts' } });
+    expect(readinessReads).toBe(1);
+    await mkdir(join(h.root, '.happier'));
+    await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ version: 1,
+      services: { existing: { source: { kind: 'native', tool: 'package_script', file: 'package.json', target: 'check' } },
+        worker: { source: { kind: 'native', tool: 'procfile', file: 'Procfile', target: 'web' } } },
+      workspace: { setup: [{ target: 'dev', file: 'package.json', tool: 'package_script', kind: 'native' }] } }));
+    const declaredElsewhere = ProjectDefinitionInspectOutputSchema.parse(await inspect({ workspace: h.workspace, read: { kind: 'scripts' } }));
+    expect(declaredElsewhere.detection.entries).toHaveLength(0);
+    expect(declaredElsewhere.importCandidates).toHaveLength(0);
+    expect(declaredElsewhere.detectionSummary).toMatchObject({ total: 0, scripts: 0, services: 0 });
+  });
+  it('keeps unrelated declared Services out of compact Scripts reads while preserving their own consumers', async () => {
+    const h = await setup();
+    const services = Object.fromEntries(Array.from({ length: 64 }, (_, index) => [`worker-${index}`,
+      { source: { kind: 'command', command: `echo ${'service-body'.repeat(128)}` } }]));
+    const manifest = { version: 1, toolchain: { kind: 'host' },
+      environmentVariables: [{ name: 'MODE', kind: 'config', required: true }],
+      workspace: { setup: [{ kind: 'command', command: 'echo configure' }] },
+      scripts: { verify: { execution: 'portable', source: { kind: 'command', command: 'echo checked' } } }, services };
+    const bytes = JSON.stringify(manifest);
+    await mkdir(join(h.root, '.happier'));
+    await writeFile(join(h.root, '.happier/project.json'), bytes);
+    const inspect = h.handlers.get('daemon.projects.inspect.v1')!;
+    for (const kind of ['overview', 'rail'] as const) {
+      const result = ProjectDefinitionInspectOutputSchema.parse(await inspect({
+        workspace: h.workspace, read: { kind, detectedRows: 3 },
+      }));
+      expect(result.definition.document).toMatchObject({ status: 'valid', manifest: {
+        scripts: manifest.scripts, workspace: manifest.workspace,
+        toolchain: manifest.toolchain, environmentVariables: manifest.environmentVariables,
+      } });
+      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(4096);
+      expect(result.definition.document?.status === 'valid' && result.definition.document.manifest.services).toBeUndefined();
+    }
+    for (const read of [{ kind: 'services' }, { kind: 'scripts' }, { kind: 'editor' },
+      { kind: 'execution', command: { usage: 'script', name: 'verify' } }] as const) {
+      const result = ProjectDefinitionInspectOutputSchema.parse(await inspect({ workspace: h.workspace, read }));
+      expect(result.definition.document).toMatchObject({ status: 'valid', manifest: { services } });
+      if (read.kind === 'editor') expect(result.definition.document).toMatchObject({ bytes });
+    }
+  });
+  it('keeps Overview file metadata proportional to displayed groups and distinct file names', async () => {
+    const h = await setup({ resolveTool: async () => ({ executablePath: '/installed/npm' }) });
+    for (let index = 0; index < 64; index++) {
+      const path = join(h.root, `packages/package-${index}`);
+      await mkdir(path, { recursive: true });
+      await writeFile(join(path, 'package.json'), JSON.stringify({ scripts: { check: 'echo checked' } }));
+    }
+    const output = ProjectDefinitionInspectOutputSchema.parse(await h.handlers.get('daemon.projects.inspect.v1')!({
+      workspace: h.workspace, read: { kind: 'overview', detectedRows: 3 },
+    }));
+    expect(Buffer.byteLength(JSON.stringify(output))).toBeLessThan(4096);
+    expect(output.detectionSummary?.total).toBe(64);
+    expect(output.detectionSummary?.files).toHaveLength(3);
+    expect(output.detectionSummary?.sourceFiles).toEqual(['package.json']);
+    expect(output.detection.entries).toHaveLength(3);
+    expect(output.importCandidates.every(candidate => candidate.availability === 'ambiguous')).toBe(true);
+    expect(output.importCandidates.every(candidate => !candidate.preselected)).toBe(true);
+  });
+  it('returns only the presented Overview rows at scale while keeping counts, fresh invocations and editor text', async () => {
+    const h = await setup({ resolveTool: async () => ({ executablePath: '/installed/pnpm', version: '10' }) });
+    const scripts = Object.fromEntries(Array.from({ length: 1024 }, (_, index) => [`check-${index}`, `echo ${index}`]));
+    await writeFile(join(h.root, 'package.json'), JSON.stringify({ scripts }));
+    const inspect = h.handlers.get('daemon.projects.inspect.v1')!;
+    const input = { workspace: h.workspace, read: { kind: 'overview', detectedRows: 3 } };
+    const result = ProjectDefinitionInspectOutputSchema.parse(await inspect(input));
+    expect(result.detection.entries).toHaveLength(3);
+    expect(result.importCandidates).toHaveLength(3);
+    expect(result.detectionSummary).toMatchObject({ total: 1024, scripts: 1024,
+      files: [{ file: 'package.json', total: 1024, scripts: 1024 }] });
+    // A frame's read must not grow with the unseen inventory. The bound is the full
+    // three-row projection plus its single file count, not a production payload cap.
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(4096);
+    await writeFile(join(h.root, 'package.json'), JSON.stringify({ scripts: { refreshed: 'echo changed' } }));
+    expect(ProjectDefinitionInspectOutputSchema.parse(await inspect(input))).toMatchObject({
+      detection: { entries: [{ source: { target: 'refreshed' } }] }, detectionSummary: { total: 1 },
+      importCandidates: [{ invocation: { args: ['run', 'refreshed'] } }],
+    });
+    await mkdir(join(h.root, '.happier'));
+    const bytes = JSON.stringify({ version: 1, future: { text: 'preserve me' }, scripts: {
+      declared: { source: { kind: 'native', tool: 'package_script', file: 'package.json', target: 'refreshed' } },
+    } });
+    await writeFile(join(h.root, '.happier/project.json'), bytes);
+    const declared = ProjectDefinitionInspectOutputSchema.parse(await inspect(input));
+    expect(declared.detection.entries).toHaveLength(0);
+    expect(declared.importCandidates).toHaveLength(0);
+    expect(declared.commands).toMatchObject([{ name: 'declared', invocation: { args: ['run', 'refreshed'] } }]);
+    expect(declared.definition.document).not.toHaveProperty('bytes');
+    expect(declared.definition.document).not.toHaveProperty('original');
+    const editor = ProjectDefinitionInspectOutputSchema.parse(await inspect({ workspace: h.workspace, read: { kind: 'editor' } }));
+    expect(editor.definition.document).toMatchObject({ bytes, original: { future: { text: 'preserve me' } } });
+  });
   it.each(['projects.inspect', 'projects.manifest.update'] as const)('emits the registered %s contract from real files with unicode, long commands and unknown author fields', async actionId => {
     const h = await setup({ resolveTool: async tool => tool === 'make' ? { executablePath: '/installed/make' } : null });
     await writeFile(join(h.root, 'Makefile'), 'check:\n\techo 世界\n');
@@ -150,7 +398,7 @@ describe('project definition Actions through registered Machine RPC', () => {
     if (reviewed.kind !== 'reviewed') throw new Error(reviewed.code);
     await createProjectSetupSuccessStore({ homeDir: root }).recordCompletion({ serverId: workspace.serverId, machineId: workspace.machineId, workspaceRefId: workspace.workspaceId },
       { v: 1, workspaceRefId: workspace.workspaceId, completedAtMs: 123, ...reviewed.plan.successBasis });
-    const result = ProjectDefinitionInspectOutputSchema.parse(await inspect({ workspace }));
+    const result = ProjectDefinitionInspectOutputSchema.parse(await inspect({ workspace, read: { kind: 'setup' } }));
     expect(result).toMatchObject({ setupReadiness: { kind: 'current', completedAtMs: 123, reviewedEffectDigest: reviewed.plan.reviewedEffectDigest } });
     expect(result.setupReview).toMatchObject({ reviewedEffectDigest: reviewed.plan.reviewedEffectDigest, reviewedEffect: {
       commands: [{ kind: 'command', command: 'touch must-not-execute' }, { source: { tool: 'make', target: 'bootstrap' } }],
@@ -173,7 +421,7 @@ describe('project definition Actions through registered Machine RPC', () => {
     await writeFile(join(root, '.happier/project.json'), JSON.stringify({ version: 1, scripts: {
       verify: { source: { kind: 'native', tool: 'package_script', file: 'package.json', target: 'test' } },
     } }));
-    const result = await handlers.get('daemon.projects.inspect.v1')!({ workspace });
+    const result = await handlers.get('daemon.projects.inspect.v1')!({ workspace, read: { kind: 'create' } });
     expect(result).toMatchObject({
       importCandidates: [{ invocation: { tool: 'yarn', args: ['run', 'test'], cwd: root }, availability: 'available' }],
       commands: [{ name: 'verify', usage: 'script', availability: 'available', invocation: { tool: 'yarn', args: ['run', 'test'], cwd: root } }],
@@ -186,7 +434,7 @@ describe('project definition Actions through registered Machine RPC', () => {
     expect(ProjectDefinitionInspectOutputSchema.safeParse(result).success).toBe(true);
     await expect(readFile(join(root, 'must-not-execute'))).rejects.toMatchObject({ code: 'ENOENT' });
     await writeFile(join(root, 'package.json'), JSON.stringify({ packageManager: 'yarn@99.0.0', scripts: { test: 'touch must-not-execute' } }));
-    expect(await handlers.get('daemon.projects.inspect.v1')!({ workspace })).toMatchObject({
+    expect(await handlers.get('daemon.projects.inspect.v1')!({ workspace, read: { kind: 'create' } })).toMatchObject({
       commands: [{ availability: 'unavailable', code: 'native_tool_version_mismatch', invocation: { tool: 'yarn', args: ['run', 'test'] } }],
       tools: expect.arrayContaining([{ tool: 'yarn', file: 'package.json', requestedVersion: '99.0.0', availability: 'available', version: '4.6.0' }]),
     });
@@ -196,7 +444,7 @@ describe('project definition Actions through registered Machine RPC', () => {
     const { root, workspace, handlers } = await setup({ resolveTool: async tool => tool === 'make' ? { executablePath: join(tmpdir(), 'installed-make') } : null });
     await writeFile(join(root, 'Makefile'), 'check:\n\techo must-not-run\n');
     await writeFile(join(root, 'justfile'), 'other:\n  echo must-not-run\n');
-    expect(await handlers.get('daemon.projects.inspect.v1')!({ workspace })).toMatchObject({ importCandidates: [
+    expect(await handlers.get('daemon.projects.inspect.v1')!({ workspace, read: { kind: 'imports' } })).toMatchObject({ importCandidates: [
       { source: { tool: 'make', target: 'check' }, availability: 'available', preselected: true },
       { source: { tool: 'just', target: 'other' }, availability: 'unavailable', preselected: false },
     ] });
@@ -212,23 +460,24 @@ describe('project definition Actions through registered Machine RPC', () => {
     await writeFile(join(root, 'input.txt'), 'ordinary input');
     await mkdir(join(root, '.happier'));
     await writeFile(join(root, '.happier/project.json'), JSON.stringify({ version: 1,
-      environment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
+      toolchain: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
       scripts: { verify: { execution: 'portable', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } },
     }));
     const inspect = handlers.get('daemon.projects.inspect.v1')!;
     const hash = (bytes: string) => createHash('sha256').update(bytes).digest('hex');
-    const initial = await inspect({ workspace });
+    const request = { workspace, read: { kind: 'execution', command: { usage: 'script', name: 'verify' } } };
+    const initial = await inspect(request);
     expect(initial).toEqual(expect.objectContaining({ commands: [expect.objectContaining({ name: 'verify', usage: 'script', availability: 'unavailable',
       executionInputs: [{ file: 'Makefile', hash: hash(make) }] })],
-      environmentExecutionInputs: [{ file: 'mise.toml', hash: hash(environment) }],
+      toolchainExecutionInputs: [{ file: 'mise.toml', hash: hash(environment) }],
     }));
     expect(ProjectDefinitionInspectOutputSchema.safeParse(initial).success).toBe(true);
     await writeFile(join(root, 'input.txt'), 'fresh ordinary input');
-    expect(await inspect({ workspace })).toEqual(initial);
+    expect(await inspect(request)).toEqual(initial);
     const changed = 'check:\n\ttouch changed-must-not-execute\n';
     await writeFile(join(root, 'Makefile'), changed);
-    expect(await inspect({ workspace })).toMatchObject({ commands: [{ executionInputs: [{ file: 'Makefile', hash: hash(changed) }] }],
-      environmentExecutionInputs: [{ file: 'mise.toml', hash: hash(environment) }],
+    expect(await inspect(request)).toMatchObject({ commands: [{ executionInputs: [{ file: 'Makefile', hash: hash(changed) }] }],
+      toolchainExecutionInputs: [{ file: 'mise.toml', hash: hash(environment) }],
     });
     await expect(readFile(join(root, 'must-not-execute'))).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(readFile(join(root, 'changed-must-not-execute'))).rejects.toMatchObject({ code: 'ENOENT' });
@@ -243,20 +492,21 @@ describe('project definition Actions through registered Machine RPC', () => {
     await writeFile(executablePath, 'original selected executable');
     await mkdir(join(root, '.happier'));
     await writeFile(join(root, '.happier/project.json'), JSON.stringify({ version: 1,
-      environment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
+      toolchain: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
       scripts: { verify: { execution: 'portable', source: { kind: 'command', command: 'echo checked' } } },
     }));
     const hash = (bytes: string) => createHash('sha256').update(bytes).digest('hex');
     const inspect = handlers.get('daemon.projects.inspect.v1')!;
-    expect(await inspect({ workspace })).toEqual(expect.objectContaining({ environmentExecutionInputs: [
+    const request = { workspace, read: { kind: 'execution', command: { usage: 'script', name: 'verify' } } };
+    expect(await inspect(request)).toEqual(expect.objectContaining({ toolchainExecutionInputs: [
       { file: 'mise.toml', hash: hash(config) }, { file: 'project-mise', hash: hash('original selected executable') },
     ] }));
     await writeFile(executablePath, 'changed selected executable');
-    expect(await inspect({ workspace })).toMatchObject({ environmentExecutionInputs: [
+    expect(await inspect(request)).toMatchObject({ toolchainExecutionInputs: [
       { file: 'mise.toml', hash: hash(config) }, { file: 'project-mise', hash: hash('changed selected executable') },
     ] });
     executablePath = join(tmpdir(), 'system-mise');
-    expect(await inspect({ workspace })).toMatchObject({ environmentExecutionInputs: [{ file: 'mise.toml', hash: hash(config) }] });
+    expect(await inspect(request)).toMatchObject({ toolchainExecutionInputs: [{ file: 'mise.toml', hash: hash(config) }] });
   });
   it('inspects native references and preserves exact raw bytes while refusing a stale or absent basis', async () => {
     const { root, workspace, handlers } = await setup();

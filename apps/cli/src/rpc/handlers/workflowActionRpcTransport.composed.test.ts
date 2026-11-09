@@ -85,6 +85,7 @@ const semanticInput = {
     },
 };
 const run = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+    attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
     id: runId,
     origin: { kind: 'direct' as const },
     state: 'queued' as const,

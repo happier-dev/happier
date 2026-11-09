@@ -340,14 +340,14 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     });
     const observe = vi.fn();
     const observeNative = vi.fn();
-    const resolveNativeCatalogBearer = vi.fn();
+    const resolveNativeCatalogTarget = vi.fn();
 
     const result = await createCall({
       getAgentCatalogObservation: () => ({
         machineId: 'machine-test',
         service: { observe, observeNative },
       }),
-      resolveNativeCatalogBearer,
+      resolveNativeCatalogTarget,
     })(RPC_METHODS.CAPABILITIES_INVOKE, {
       id: 'cli.claude',
       method: 'probeModels',
@@ -355,7 +355,7 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     });
 
     expect(result).toMatchObject({ ok: true, result: { source: 'static' } });
-    expect(resolveNativeCatalogBearer).not.toHaveBeenCalled();
+    expect(resolveNativeCatalogTarget).not.toHaveBeenCalled();
     expect(observe).not.toHaveBeenCalled();
     expect(observeNative).not.toHaveBeenCalled();
   });

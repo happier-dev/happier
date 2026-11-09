@@ -14,6 +14,8 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { createLinuxVitalsFixture } from '@/daemon/vitals/readers/linux.testkit';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/socketRpc';
+import { MachineResourceSummaryV1Schema, projectMachineResourceSummaryV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
+import { MachineResourcesPolicyV1Schema, type MachineMonitoringPolicyV1 } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 
 describe('Machine vitals Machine admission', () => {
     const directories: string[] = [];
@@ -27,12 +29,13 @@ describe('Machine vitals Machine admission', () => {
         vi.useRealTimers();
         await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
     });
-    async function setup(options: { readers?: MachineVitalsReader; target?: () => typeof identity } = {}) {
+    async function setup(options: { readers?: MachineVitalsReader; target?: () => typeof identity; monitoring?: Partial<MachineMonitoringPolicyV1> } = {}) {
         const directory = await mkdtemp(join(tmpdir(), 'happier-vitals-rpc-'));
         directories.push(directory);
         const historyStore = await createMinuteHistoryStore({ directory });
+        const policy = MachineResourcesPolicyV1Schema.parse({ v: 1, monitoring: options.monitoring ?? {} });
         const sampler = createMachineVitalsSampler({ readers: options.readers ?? createLinuxMachineVitalsReader({ root: directory }), historyStore,
-            monotonicMs: () => Date.now() - initialTime });
+            monotonicMs: () => Date.now() - initialTime, readPolicy: () => policy });
         samplers.push(sampler);
         // Match the canonical erased heterogeneous RPC transport registry.
         const handlers: RpcHandlerMap = new Map();
@@ -47,7 +50,7 @@ describe('Machine vitals Machine admission', () => {
         // The real RPC transport also fails current-admission verification closed on cancellation.
         }, verifyMachineAdmissionCurrent: async () => !controller.signal.aborted && await verify() && !controller.signal.aborted };
     }
-    async function sampledSetup(readFails = () => false) {
+    async function sampledSetup(readFails = () => false, monitoring: Partial<MachineMonitoringPolicyV1> = {}) {
         vi.useFakeTimers();
         vi.setSystemTime(initialTime);
         const reads: MachineVitalsReaderInput[] = [];
@@ -74,12 +77,16 @@ describe('Machine vitals Machine admission', () => {
                     network: { interfaceIds: ['eth0'], rxBytes: input.monotonicMs, txBytes: input.monotonicMs / 2 } },
             };
         } };
-        const result = await setup({ readers });
+        const result = await setup({ readers, monitoring });
         await result.sampler.start();
         return { ...result, reads };
     }
     async function advance(sampler: ReturnType<typeof createMachineVitalsSampler>, ms: number) {
         await vi.advanceTimersByTimeAsync(ms);
+        await sampler.start();
+        // A minute append is real filesystem IO. Its completion may arm an
+        // already-due base tick after the fake clock's initial advance ended.
+        await vi.advanceTimersByTimeAsync(0);
         await sampler.start();
     }
     it('composes native vitals through the real RPC manager, route registration and current Machine admission', async () => {
@@ -103,13 +110,15 @@ describe('Machine vitals Machine admission', () => {
             expect(MachineVitalsSnapshotV1Schema.parse(response)).toEqual(response);
             expect(response).toMatchObject({ state: 'reporting', sample: { memory: { totalBytes: 102_400_000, availableBytes: 40_960_000 } } });
             const summary = MachineVitalsSnapshotV1Schema.parse(response);
+            expect(MachineResourceSummaryV1Schema.parse(projectMachineResourceSummaryV1(summary, sampler.host() ?? undefined)).cpu)
+                .toMatchObject({ load1: expect.any(Number), logicalCores: summary.sample?.cpu.reported ? sampler.host()?.logicalCores : undefined });
             expect(summary.sample?.memory).toMatchObject({ composition: expect.any(Array) });
             if (summary.sample?.memory.reported) expect(summary.sample.memory.composition?.reduce((sum, part) => sum + part.bytes, 0)).toBe(summary.sample.memory.usedBytes);
             current = false;
             expect(await manager.handleRequest(request)).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
         } finally { await sampler.stop(); await native.cleanup(); }
     });
-    it('verifies each parked watch only at dispatch and disclosure, including revocation between them', async () => {
+    it('authorizes each parked watch once at dispatch and re-admits only the next request', async () => {
         const { sampler } = await sampledSetup();
         let current = true;
         let verifications = 0;
@@ -128,21 +137,33 @@ describe('Machine vitals Machine admission', () => {
             const pending = manager.handleRequest(request(sampler.latest()!.sampledAt));
             await advance(sampler, 0);
             const parkedVerifications = verifications - before;
-            await advance(sampler, 15_000);
-            expect(MachineVitalsWatchResultV1Schema.parse(await pending)).toMatchObject({ changed: true });
             expect(parkedVerifications).toBe(1);
-            expect(verifications - before).toBe(2);
+            await advance(sampler, 60_000);
+            expect(MachineVitalsWatchResultV1Schema.parse(await pending)).toMatchObject({ changed: true });
+            expect(verifications - before).toBe(1);
         }
         const beforeRevocation = verifications;
         const pending = manager.handleRequest(request(sampler.latest()!.sampledAt));
         await advance(sampler, 0);
         current = false;
-        await advance(sampler, 15_000);
-        expect(await pending).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
-        expect(verifications - beforeRevocation).toBe(2);
+        await advance(sampler, 60_000);
+        expect(MachineVitalsWatchResultV1Schema.parse(await pending)).toMatchObject({ changed: true });
+        expect(verifications - beforeRevocation).toBe(1);
         const beforeDenied = verifications;
         expect(await manager.handleRequest(request(sampler.latest()!.sampledAt))).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
         expect(verifications - beforeDenied).toBe(1);
+    });
+    it('retains producer sample identity through typed Overview snapshot and watch replies', async () => {
+        const { sampler, handlers } = await sampledSetup();
+        const sample = sampler.latest();
+        const snapshot = await handlers.get(RPC_METHODS.MACHINES_VITALS_GET)!(
+            { machineId: 'm', view: 'overview' }, context('recipient', 'use'));
+        if (!snapshot || typeof snapshot !== 'object' || !('sample' in snapshot)) throw new Error('Missing snapshot sample');
+        expect(snapshot.sample).toBe(sample);
+        const watch = await handlers.get(RPC_METHODS.DAEMON_VITALS_WATCH)!(
+            { machineId: 'm', view: 'overview', sinceSampledAt: initialTime - 1 }, context('recipient', 'use'));
+        if (!watch || typeof watch !== 'object' || !('samples' in watch) || !Array.isArray(watch.samples)) throw new Error('Missing watch samples');
+        expect(watch.samples[0]).toBe(sample);
     });
     it('admits custodians and Use recipients to content-free machine facts', async () => {
         const { handlers } = await setup();
@@ -159,22 +180,22 @@ describe('Machine vitals Machine admission', () => {
         expect(await handlers.get(RPC_METHODS.MACHINES_VITALS_GET)!({ serverId: 'browser-home', machineId: 'm' }, admitted))
             .toMatchObject({ state: 'reporting', sample: null });
     });
-    it('refuses missing admission, another exact target and revoked access', async () => {
+    it('refuses missing admission and another exact target while consuming dispatch admission', async () => {
         const { handlers } = await setup();
         const read = handlers.get(RPC_METHODS.MACHINES_VITALS_GET)!;
         await expect(read({ machineId: 'm' })).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
         await expect(read({ machineId: 'other' }, context('recipient', 'use'))).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
-        await expect(read({ machineId: 'm' }, context('recipient', 'use', async () => false))).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
-        await expect(read({ serverId: 'browser-home', machineId: 'm' }, context('recipient', 'use', async () => false))).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
+        expect(await read({ machineId: 'm' }, context('recipient', 'use', async () => false))).toMatchObject({ sample: null });
+        expect(await read({ serverId: 'browser-home', machineId: 'm' }, context('recipient', 'use', async () => false))).toMatchObject({ sample: null });
         for (const patch of [{ installationId: 'other' }, { custodianAccountId: 'other' }, { machineId: 'other' }, { actorAccountId: '' }]) {
             const admitted = context('recipient', 'use');
             await expect(read({ machineId: 'm' }, { ...admitted, machineAdmission: { ...admitted.machineAdmission!, ...patch } }))
                 .rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
         }
-        await expect(read({ machineId: 'm' }, { ...context('recipient', 'use'), verifyMachineAdmissionCurrent: undefined }))
-            .rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
+        expect(await read({ machineId: 'm' }, { ...context('recipient', 'use'), verifyMachineAdmissionCurrent: undefined }))
+            .toMatchObject({ sample: null });
     });
-    it('reports the failed target or currentness predicate without private identity values', async () => {
+    it('reports failed local target predicates without private identity values', async () => {
         const { handlers } = await setup();
         const read = handlers.get(RPC_METHODS.MACHINES_VITALS_GET)!;
         const reportAdmissionDenial = vi.fn();
@@ -186,9 +207,8 @@ describe('Machine vitals Machine admission', () => {
             .rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
         expect(reportAdmissionDenial.mock.calls).toEqual([['machine_installation']]);
         reportAdmissionDenial.mockClear();
-        await expect(read({ machineId: 'm' }, { ...admitted, verifyMachineAdmissionCurrent: async () => false }))
-            .rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
-        expect(reportAdmissionDenial.mock.calls).toEqual([['machine_currentness']]);
+        expect(await read({ machineId: 'm' }, { ...admitted, verifyMachineAdmissionCurrent: async () => false })).toMatchObject({ sample: null });
+        expect(reportAdmissionDenial.mock.calls).toEqual([]);
         expect(JSON.stringify(reportAdmissionDenial.mock.calls)).not.toContain('private-');
     });
     it('rejects unknown or malformed inputs for every vitals entry point', async () => {
@@ -205,42 +225,42 @@ describe('Machine vitals Machine admission', () => {
             issues: expect.arrayContaining([expect.objectContaining(issue)]),
         });
     });
-    it('rechecks installation and home binding after admission verification awaits', async () => {
+    it('rejects a changed installation before consuming the admitted target', async () => {
         let target = identity;
         const { handlers } = await setup({ target: () => target });
-        for (const replacement of [{ ...identity, installationId: 'replaced' }, { ...identity, serverId: 'another-home' }]) {
+        for (const replacement of [{ ...identity, installationId: 'replaced' }]) {
             target = identity;
-            let resolveVerification!: (valid: boolean) => void;
-            const verification = new Promise<boolean>(resolve => { resolveVerification = resolve; });
-            const pending = handlers.get(RPC_METHODS.MACHINES_VITALS_GET)!({ serverId: 's', machineId: 'm' }, context('recipient', 'use', () => verification));
-            const rejected = expect(pending).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
             target = replacement;
-            resolveVerification(true);
-            await rejected;
+            await expect(handlers.get(RPC_METHODS.MACHINES_VITALS_GET)!({ serverId: 's', machineId: 'm' }, context('recipient', 'use')))
+                .rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
         }
     });
     it('does not acquire sampling demand for immediate get or history reads', async () => {
-        const { sampler, handlers, reads } = await sampledSetup();
+        const { sampler, handlers, reads } = await sampledSetup(undefined, { mode: 'while_viewing' });
         const admitted = context('recipient', 'use');
         await handlers.get(RPC_METHODS.MACHINES_VITALS_GET)!({ machineId: 'm', view: 'overview' }, admitted);
         await handlers.get(RPC_METHODS.MACHINES_VITALS_HISTORY_GET)!({ machineId: 'm', range: '1h' }, admitted);
         await advance(sampler, 59_000);
-        expect(reads.map(input => input.sampledAt)).toEqual([initialTime]);
+        expect(reads).toHaveLength(0);
         await advance(sampler, 1000);
-        expect(reads.at(-1)).toMatchObject({ sampledAt: initialTime + 60_000, intervalMs: 60_000, overviewExtras: false });
+        expect(reads).toHaveLength(0);
+        const pending = handlers.get(RPC_METHODS.DAEMON_VITALS_WATCH)!({ machineId: 'm', view: 'overview', sinceSampledAt: initialTime }, admitted);
+        await advance(sampler, 0);
+        expect(await pending).toMatchObject({ changed: true });
+        expect(reads).toHaveLength(1);
+        expect(reads[0]).toMatchObject({ sampledAt: initialTime + 60_000, intervalMs: 2_000, overviewExtras: true });
     });
-    it('keeps the five-minute wire series continuous when summary demand speeds up the minute cadence', async () => {
+    it('keeps the five-minute wire series continuous at the minute cadence for summary demand', async () => {
         const { sampler, handlers } = await sampledSetup();
-        await advance(sampler, 45_000);
         const release = sampler.demand('summary');
         try {
-            await advance(sampler, 15_000);
+            for (let minute = 0; minute < 3; minute++) await advance(sampler, 60_000);
             const snapshot = MachineVitalsSnapshotV1Schema.parse(await handlers.get(RPC_METHODS.MACHINES_VITALS_GET)!(
                 { machineId: 'm', view: 'summary' }, context('recipient', 'use')));
-            expect(sampler.samplesSince(initialTime - 1).map(sample => sample.intervalMs)).toEqual([60_000, 15_000, 15_000]);
+            expect(sampler.samplesSince(initialTime - 1).map(sample => sample.intervalMs)).toEqual(Array(4).fill(60_000));
             for (const points of Object.values(snapshot.series5m)) {
                 const live = points.filter(point => point.t >= initialTime);
-                expect(live.map(point => point.t)).toEqual([initialTime, initialTime + 45_000, initialTime + 60_000]);
+                expect(live.map(point => point.t)).toEqual(Array.from({ length: 4 }, (_, index) => initialTime + index * 60_000));
                 expect(live.every(point => point.y !== null)).toBe(true);
             }
         } finally { release(); }
@@ -261,22 +281,19 @@ describe('Machine vitals Machine admission', () => {
             expect(points.at(-1)?.y).not.toBeNull();
         }
     });
-    it('rechecks revocation after a changed sample and releases parked demand', async () => {
-        const { sampler, handlers, reads } = await sampledSetup();
+    it('finishes an admitted changed-sample watch and releases parked demand', async () => {
+        const { sampler, handlers, reads } = await sampledSetup(undefined, { mode: 'while_viewing' });
         let valid = true;
         const pending = handlers.get(RPC_METHODS.DAEMON_VITALS_WATCH)!({ machineId: 'm', view: 'summary', sinceSampledAt: initialTime }, context('recipient', 'use', async () => valid));
-        const rejected = expect(pending).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
         await advance(sampler, 0);
         valid = false;
-        await advance(sampler, 15_000);
-        await rejected;
-        await advance(sampler, 44_000);
-        expect(reads.at(-1)?.sampledAt).toBe(initialTime + 15_000);
-        await advance(sampler, 1000);
+        await advance(sampler, 60_000);
+        expect(await pending).toMatchObject({ changed: true });
+        await advance(sampler, 61_000);
         expect(reads.at(-1)?.sampledAt).toBe(initialTime + 60_000);
     });
     it('releases cadence and extras demand when the RPC transport cancels a parked watch', async () => {
-        const { sampler, handlers, reads } = await sampledSetup();
+        const { sampler, handlers, reads } = await sampledSetup(undefined, { mode: 'while_viewing' });
         const controller = new AbortController();
         const admitted = context('recipient', 'use', async () => true, controller);
         const pending = handlers.get(RPC_METHODS.DAEMON_VITALS_WATCH)!({ machineId: 'm', view: 'overview', sinceSampledAt: initialTime }, admitted);
@@ -287,7 +304,8 @@ describe('Machine vitals Machine admission', () => {
         await advance(sampler, 59_000);
         expect(reads.at(-1)?.sampledAt).toBe(initialTime);
         await advance(sampler, 1000);
-        expect(reads.at(-1)).toMatchObject({ sampledAt: initialTime + 60_000, overviewExtras: false });
+        expect(reads).toHaveLength(1);
+        expect(sampler.minutes(initialTime)).toEqual([]);
     });
     it('does not resolve summary watches on two-second live ticks', async () => {
         const { sampler, handlers } = await sampledSetup();
@@ -307,7 +325,7 @@ describe('Machine vitals Machine admission', () => {
         const { sampler, handlers } = await sampledSetup();
         const releaseOverview = sampler.demandOverview();
         try {
-            await advance(sampler, 0);
+            await advance(sampler, 2_000);
             const admitted = context('recipient', 'use');
             const overview = MachineVitalsSnapshotV1Schema.parse(await handlers.get(RPC_METHODS.MACHINES_VITALS_GET)!({ machineId: 'm', view: 'overview' }, admitted));
             expect(overview.sample).toMatchObject({ gpu: [{ name: 'gpu' }], battery: { pct: 80 }, thermal: { state: 'nominal' },
@@ -326,10 +344,10 @@ describe('Machine vitals Machine admission', () => {
             }
         } finally { releaseOverview(); }
     });
-    it('keeps the fifteen-second extras budget across normal Overview watch re-arms', async () => {
+    it('keeps the slow-fact tick budget across normal Overview watch re-arms', async () => {
         const { sampler, handlers, reads } = await sampledSetup();
         let cursor = initialTime;
-        for (let cycle = 0; cycle < 8; cycle++) {
+        for (let cycle = 0; cycle < 9; cycle++) {
             const pending = handlers.get(RPC_METHODS.DAEMON_VITALS_WATCH)!({ machineId: 'm', view: 'overview', sinceSampledAt: cursor }, context('recipient', 'use'));
             await advance(sampler, 0);
             await advance(sampler, 2000);
@@ -338,7 +356,7 @@ describe('Machine vitals Machine admission', () => {
             if (!result.changed) throw new Error('Expected Overview samples');
             cursor = result.samples.at(-1)!.sampledAt;
         }
-        expect(reads.filter(input => input.overviewExtras).map(input => input.sampledAt)).toEqual([initialTime, initialTime + 15_000]);
+        expect(reads.filter(input => input.overviewExtras).map(input => input.sampledAt)).toEqual([initialTime + 2_000, initialTime + 18_000]);
     });
 
     it.each([false, true])('serves the real minute sample between Overview re-arms (summary demand: %s)', async (summary) => {
@@ -348,22 +366,22 @@ describe('Machine vitals Machine admission', () => {
         await advance(sampler, 59_800);
         const cursor = sampler.latest()!.sampledAt;
         releaseOverview();
-        // Delivery/re-arm crosses the mandatory wall-minute read, with no parked Overview.
+        // Delivery/re-arm crosses a base tick at the minute, with no parked Overview.
         await advance(sampler, 500);
         const watch = handlers.get(RPC_METHODS.DAEMON_VITALS_WATCH)!;
         const admitted = context('recipient', 'use');
         const catchUp = MachineVitalsWatchResultV1Schema.parse(await watch({ machineId: 'm', view: 'overview', sinceSampledAt: cursor }, admitted));
-        expect(catchUp).toMatchObject({ changed: true, samples: [{ sampledAt: initialTime + 60_000, intervalMs: summary ? 15_000 : 60_000 }] });
+        expect(catchUp).toMatchObject({ changed: true, samples: [{ sampledAt: initialTime + 60_000, intervalMs: 2_000 }] });
         const returning = watch({ machineId: 'm', view: 'overview', sinceSampledAt: initialTime + 60_000 }, admitted);
-        await advance(sampler, 0);
-        expect(MachineVitalsWatchResultV1Schema.parse(await returning)).toMatchObject({ changed: true, samples: [{ sampledAt: initialTime + 60_300, intervalMs: 2_000 }] });
+        await advance(sampler, 1_700);
+        expect(MachineVitalsWatchResultV1Schema.parse(await returning)).toMatchObject({ changed: true, samples: [{ sampledAt: initialTime + 62_000, intervalMs: 2_000 }] });
         expect(reads.filter(read => read.sampledAt >= initialTime + 59_800).map(read => read.sampledAt))
-            .toEqual([initialTime + 60_000, initialTime + 60_300]);
+            .toEqual([initialTime + 60_000, initialTime + 62_000]);
         releaseSummary();
     });
 
     it('keeps another Overview live when a concurrent watcher cancels', async () => {
-        const { sampler, handlers, reads } = await sampledSetup();
+        const { sampler, handlers, reads } = await sampledSetup(undefined, { mode: 'while_viewing' });
         const watch = handlers.get(RPC_METHODS.DAEMON_VITALS_WATCH)!;
         const controller = new AbortController();
         const cancelled = watch({ machineId: 'm', view: 'overview', sinceSampledAt: initialTime }, context('owner', 'manage', async () => true, controller));

@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
-import { mkdtempSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 import { configuration } from '@/configuration';
 import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
@@ -78,6 +79,50 @@ function createEncryptedUploadChunkRequest(input: Readonly<{
 }
 
 describe('file transfers (upload)', () => {
+  it('denies Account automation caller-path uploads while preserving present-person uploads', async () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'happier-upload-raw-authority-'));
+    const workspace = join(fixture, 'workspace');
+    mkdirSync(workspace);
+    const path = join(fixture, 'daemon-sentinel');
+    const mgr = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain', logger: () => {},
+      // Authenticated Home/current Machine admission is the network boundary;
+      // receiving RPC, target resolution, encrypted chunks and publication stay real.
+      authorizeRequest: async () => ({ ok: true }),
+    });
+    const registration = registerFileSystemHandlers(mgr, workspace);
+    const upload = async (callerAuthority: 'present_user' | 'account_automation', content: string) => {
+      const request = (method: string, params: unknown) => mgr.handleRequest({
+        method: `machine:${method}`, params, callerAuthority,
+        machineAdmission: { actorAccountId: 'actor', custodianAccountId: 'actor', machineId: 'machine',
+          installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+      });
+      const initialized = await request(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT, {
+        t: 'session_file_upload_v1', path, sizeBytes: Buffer.byteLength(content), overwrite: true,
+      });
+      if (!initialized || typeof initialized !== 'object' || !('uploadId' in initialized)
+        || typeof initialized.uploadId !== 'string' || !('recipientPublicKeyBase64' in initialized)
+        || typeof initialized.recipientPublicKeyBase64 !== 'string') return { initialized };
+      await expect(request(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK, createEncryptedUploadChunkRequest({
+        uploadId: initialized.uploadId, index: 0, payload: Buffer.from(content),
+        recipientPublicKeyBase64: initialized.recipientPublicKeyBase64,
+      }))).resolves.toMatchObject({ success: true });
+      return { initialized, finalized: await request(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE, { uploadId: initialized.uploadId }) };
+    };
+    try {
+      await expect(upload('present_user', 'person-upload')).resolves.toMatchObject({
+        initialized: { success: true }, finalized: { success: true },
+      });
+      expect(readFileSync(path, 'utf8')).toBe('person-upload');
+      const result = await upload('account_automation', 'automated-raw-upload');
+      expect({ result, contents: readFileSync(path, 'utf8') }).toMatchObject({
+        result: { initialized: { errorCode: RPC_ERROR_CODES.FORBIDDEN } }, contents: 'person-upload',
+      });
+    } finally {
+      await registration.dispose();
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it('uploads a file in chunks and creates parent directories', async () => {
     const workspace = mkdtempSync(join(tmpdir(), 'happier-files-upload-'));
     const mgr = createRpcHandlerManager();
@@ -184,8 +229,7 @@ describe('file transfers (upload)', () => {
     }));
     const done = await finalize({ uploadId });
 
-    expect(done).toMatchObject({ success: false });
-    expect(done.error).toMatch(/directory/i);
+    expect(done).toMatchObject({ success: false, errorCode: 'file_replace_failed' });
 
     // Verify directory and its contents are preserved
     expect(statSync(join(workspace, 'existingdir')).isDirectory()).toBe(true);
@@ -310,8 +354,7 @@ describe('file transfers (upload)', () => {
     }));
 
     const firstFinalize = await finalize({ uploadId });
-    expect(firstFinalize).toMatchObject({ success: false });
-    expect(firstFinalize.error).toMatch(/exists/i);
+    expect(firstFinalize).toMatchObject({ success: false, errorCode: 'EEXIST' });
     expect(readFileSync(join(workspace, 'file.txt'), 'utf8')).toBe('old\n');
     const pending = store.getUploadSession(uploadId) as UploadSessionHandle | null;
     expect(pending).not.toBeNull();

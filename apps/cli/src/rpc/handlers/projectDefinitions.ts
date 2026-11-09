@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { PROJECT_DEFINITION_ACTION_IDS, PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS, type ProjectDefinitionActionId, type ProjectDefinitionWorkspace } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import type { ProjectDefinitionDetectionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
@@ -17,6 +18,7 @@ import type { ProjectSetupInspection } from '@/workspaces/projectSetup/projectSe
 import { projectSetupInspectionFailure } from '@/workspaces/projectSetup/projectSetupInspectionFailure';
 import { isReviewedServiceMoveChild } from '@/api/externalActionExecutionAuthorization';
 import { logger } from '@/ui/logger';
+import { selectProjectDefinitionRead } from '@/workspaces/projectSetup/projectDefinitionRead';
 
 type NativeInspectionRuntimeLease = Readonly<{
   registry: Pick<ResolvedExecutablePluginRuntimeRegistry, 'contributes' | 'resolveProjectNativeAdapter'>;
@@ -60,7 +62,7 @@ async function inspectNativeAdapters(root: string, detection: ProjectDefinitionD
           signal?.throwIfAborted();
           if (!selected.lease.isCurrent()) { diagnose(files[0]!.file, 'native_adapter_retired'); continue; }
           detection.entries.push(...detected.entries);
-          detection.environments.push(...detected.environments);
+          detection.toolchains.push(...detected.toolchains);
           detection.devcontainers.push(...detected.devcontainers);
           detection.diagnostics.push(...detected.diagnostics);
           if (detected.tools) (detection.tools ??= []).push(...detected.tools);
@@ -115,22 +117,45 @@ export function createProjectDefinitionAction(params: Readonly<{
       const request = PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS[actionId].parse(input);
       return await updateProjectManifest({ root, expectedBasis: request.expectedBasis, bytes: request.bytes });
     }
-    const [definition, detection] = await phase('definition_files', () => Promise.all([readProjectManifest({ root }), inspectProjectDefinitions(root)]));
+    const request = PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS['projects.inspect'].parse(input);
+    const needsDiscovery = !['editor', 'detail', 'setup', 'placement', 'execution'].includes(request.read?.kind ?? 'scripts');
+    const [definition, detection] = await phase('definition_files', () => Promise.all([readProjectManifest({ root }),
+      needsDiscovery ? inspectProjectDefinitions(root) : Promise.resolve<ProjectDefinitionDetectionV1>({
+        entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [],
+      })]));
     context.signal?.throwIfAborted();
-    if (params.acquirePluginRuntime) await phase('native_adapters', () => inspectNativeAdapters(root, detection, params.acquirePluginRuntime!, context.signal));
+    if (needsDiscovery && params.acquirePluginRuntime) await phase('native_adapters', () => inspectNativeAdapters(root, detection, params.acquirePluginRuntime!, context.signal));
     context.signal?.throwIfAborted();
-    const facts = await phase('execution_facts', () => inspectProjectDefinitionExecutionFacts({ root, detection, io: params.nativeIo ?? projectNativeSystemIo,
-      ...(definition.document?.status === 'valid' ? { manifest: definition.document.manifest } : {}),
-      ...(context.signal ? { signal: context.signal } : {}) }));
+    const selection = selectProjectDefinitionRead(definition, detection, request.read);
+    const facts = selection.candidateEntries.length > 0 || selection.commandManifest || selection.includeTools || selection.includeExecutionInputs
+      ? await phase('execution_facts', () => inspectProjectDefinitionExecutionFacts({ root,
+      detection: { ...selection.detection, entries: request.read?.kind === 'detail' ? selection.entries : detection.entries },
+      io: params.nativeIo ?? projectNativeSystemIo,
+      ...(selection.commandManifest ? { manifest: selection.commandManifest } : {}),
+      entries: selection.candidateEntries, includeTools: selection.includeTools, includeExecutionInputs: selection.includeExecutionInputs,
+      includeInvocation: selection.includeInvocation,
+      ...(request.read?.kind === 'execution' && request.read.command ? { command: request.read.command } : {}),
+      ...(context.signal ? { signal: context.signal } : {}) })) : { importCandidates: [], commands: [], tools: [] };
     context.signal?.throwIfAborted();
     let setup: ProjectSetupInspection = { setupReadiness: { kind: 'unknown', code: 'project_setup_requester_review_unavailable' } };
-    if (params.inspectSetup) {
+    if (params.inspectSetup && (selection.includeSetup || request.reviewSetupConsent)) {
       try { setup = await phase('setup_readiness', () => params.inspectSetup!({ workspace, root, context,
         ...('reviewSetupConsent' in parsed.data && parsed.data.reviewSetupConsent ? { reviewSetupConsent: true as const } : {}) })); }
       catch (error) { setup = projectSetupInspectionFailure(error, context.signal); }
     }
     context.signal?.throwIfAborted();
-    return { definition, detection, ...facts, ...setup };
+    const { setupReadiness, setupReview, setupConsent } = setup;
+    const output = { definition: selection.definition, ...(selection.definitionScope ? { definitionScope: selection.definitionScope } : {}), detection: selection.detection,
+      ...(selection.read.kind === 'scripts' || selection.read.kind === 'guidance'
+        || (selection.read.kind === 'overview' || selection.read.kind === 'rail') && definition.document?.status !== 'valid'
+        ? { detectionSummary: selection.detectionSummary } : {}), ...facts,
+      ...(selection.read.kind === 'tools' ? { importCandidates: [], commands: [] } : {}),
+      ...(selection.includeSetup || request.reviewSetupConsent ? { setupReadiness } : {}),
+      ...(request.reviewSetupConsent || selection.read.kind === 'setup' ? { setupReview, setupConsent } : {}) };
+    // Revalidation still observes the checkout afresh; an equal projection is not resent. The
+    // hash covers the serialized bytes this producer would send, in its fixed field order.
+    const revision = `sha256:${createHash('sha256').update(JSON.stringify(output)).digest('hex')}`;
+    return request.ifRevision === revision ? { unchanged: true as const, revision } : { revision, ...output };
   };
 }
 

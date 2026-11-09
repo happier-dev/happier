@@ -124,10 +124,12 @@ describe('validatePath', () => {
         expect(validatePath('file.txt', '')).toEqual({
             valid: false,
             error: 'Access denied: Invalid working directory',
+            errorCode: 'access_denied',
         });
         expect(validatePath('file.txt', null as unknown as string)).toEqual({
             valid: false,
             error: 'Access denied: Invalid working directory',
+            errorCode: 'access_denied',
         });
     });
 });
@@ -144,6 +146,7 @@ describe('validateWorkspaceInspectionPath', () => {
         expect(validateWorkspaceInspectionPath('./demo')).toEqual({
             valid: false,
             error: 'Attached workspace candidate path must be absolute',
+            errorCode: 'access_denied',
         });
     });
 
@@ -151,6 +154,7 @@ describe('validateWorkspaceInspectionPath', () => {
         expect(validateWorkspaceInspectionPath('/tmp/demo\0repo')).toEqual({
             valid: false,
             error: 'Attached workspace candidate path contains invalid characters',
+            errorCode: 'access_denied',
         });
     });
 });

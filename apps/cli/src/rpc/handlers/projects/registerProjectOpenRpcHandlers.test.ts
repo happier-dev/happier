@@ -1,28 +1,41 @@
 import axios from 'axios';
-import { mkdtemp, mkdir, writeFile, readFile, access, rm } from 'node:fs/promises';
+import tweetnacl from 'tweetnacl';
+import { mkdtemp, mkdir, writeFile, readFile, copyFile, access, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ProjectAccountRowMutationRequestV1Schema, type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { projectAccountRowReadResponse } from '@/testkit/http/projectAccountRows';
+import { createProjectAccountSnapshotMutation, readProjectAccountRows, withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
-import { readProjectAccountRows, withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ProjectOpenRuntime } from '@/workspaces/activation/openProject';
-import { readSettings, readStoredCredentialsForServerId, updateSettings } from '@/persistence';
+import { readSettings, readStoredCredentials, readStoredCredentialsForServerId, updateSettings } from '@/persistence';
 import { registerProjectOpenRpcHandlers } from './registerProjectOpenRpcHandlers';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
-import { OpenProjectResultV1Schema, type OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
-import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
+import { OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema, type OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
+import { ApprovalRequestV2Schema, StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ApprovalRequestPublicReadSchema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
+import { projectSettledApprovalExecution } from '@happier-dev/protocol/actions/executor/approvalResults';
+import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
+import { projectApprovalRequestForPublicRead } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
+import { AccountEncryptionCurrentnessResponseSchema, AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
+import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { WorkspaceSyncController } from '@/workspaces/sync/workspaceSyncController';
 import { createWorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import { createWorkspaceRootOwnershipManager } from '@/workspaces/sync/workspaceSyncRootOwnership';
+import { createWorkspaceSyncMutagenAdapter } from '@/workspaces/sync/workspaceSyncMutagenAdapter';
+import { createWorkspaceSyncRelationshipOwner } from '@/workspaces/sync/workspaceSyncRelationshipOwner';
+import { workspaceSyncTargetBootstrap } from '@/workspaces/sync/workspaceSyncTargetBootstrap';
+import type { MutagenSessionSummaryV1 } from '@/workspaces/sync/transport/workspaceSyncBrokerProtocol';
+import { BrokerProtocolError } from '@/workspaces/sync/transport/workspaceSyncBrokerProtocol';
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -34,7 +47,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { openProject, materializeProjectSyncOnSource } from '@/workspaces/activation/openProject';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createPluginRegistrationScope } from '@happier-dev/plugin-sdk/host/registration';
+import { createPluginRegistrationScope } from '@/plugins/runtime/api/registrationScope';
 import { createGithubRepositoryProvisioningAdapter } from '../../../../../../packages/plugins/scm-github/src/repositoryProvisioning/createRepositoryWithAuthFallback';
 import { createGithubRepositoryRestAdapter } from '../../../../../../packages/plugins/scm-github/src/repositoryProvisioning/githubRepositoryRestAdapter';
 import { createHostScmHostingProviderRuntimeServices } from '@/scm/hostingProviders/runtimeServices';
@@ -170,6 +183,120 @@ describe('Project Open RPC', () => {
   });
   afterEach(() => { nativeBoundary.reset(); nativeSyncFiles.source = ''; vi.restoreAllMocks(); vi.unstubAllGlobals(); socketIo.mockReset(); withdrawActiveProjectAccountRowsSnapshot(); });
 
+  it.each(['plain', 'e2ee'] as const)('opens an ordinary Account folder with admitted Home projections across a saved profile alias (%s)', async mode => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-open-account-binding-'));
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const profileId = 'ordinary-owner-local-profile';
+    const homeId = 'srv_ordinary_owner_home';
+    await seedTestServerProfile({ id: profileId, homeId, serverUrl: 'https://ordinary-owner.example' });
+    const material = mode === 'plain' ? null : { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+    const cipher = createProjectAccountRowCipherV1({ mode, material, randomBytes: n => new Uint8Array(n).fill(3) });
+    let current = true;
+    const admitted: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'admitted-account-root', binding: {
+      accountId: 'account', custodianAccountId: 'account', serverIdentityId: homeId,
+      machineId: 'machine', installationId: 'installation', actionId: 'projects.open', accountEncryptionMode: mode,
+      authentication: { kind: 'account', tokenEpoch: 0 }, requestId: 'ordinary-folder-open',
+      requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+    }, requesterAccountProjection: {
+      accountId: 'account', serverId: homeId, accountEncryptionMode: mode, projectAccountRowCipher: cipher,
+      projectTrustRowCipher: createProjectSetupTrustRowCipher({ mode, material }),
+      resolveMachineContentEncryptionContext: () => ({ encryptionMode: 'plain' }),
+      isCurrent: async () => current, readArtifact: async () => null,
+    } };
+    Object.defineProperty(admitted, 'requesterAccountProjection', {
+      value: admitted.requesterAccountProjection, enumerable: false,
+    });
+    // Account content and installation are admitted host facets; the real HTTP
+    // projection owns signing/currentness. Only authenticated Home I/O is supplied.
+    const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: admitted,
+      serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: 'https://ordinary-owner.example',
+      target: admitted.binding.target, installationId: 'installation', privateKey: tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(4)).secretKey,
+      rootAdmitted: true, isCurrent: async () => current });
+    if (!authorization) throw new Error('Canonical Account HTTP projection was not constructed');
+    const rows: ProjectAccountRowV1[] = [];
+    vi.spyOn(axios, 'get').mockImplementation(plainMachineRead);
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+      expect(config?.headers).toHaveProperty(EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, admitted.token);
+      if (url.endsWith('/project-trust/read')) return { status: 200, data: { status: 'absent' } };
+      if (url.endsWith('/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
+      if (url.endsWith('/read')) return projectAccountRowReadResponse(rows, body);
+      const mutation = ProjectAccountRowMutationRequestV1Schema.parse(body);
+      const changed = mutation.mutations.map(item => ({ key: item.key, revision: 0, content: item.content }));
+      rows.push(...changed);
+      return { status: 200, data: { status: 'updated', cursor: 1, rows: changed } };
+    });
+    const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
+      callerInputAuthorization: authorization, machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account',
+        machineId: 'machine', installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+      verifyMachineAdmissionCurrent: async () => true };
+    const handler = register(RPC_METHODS.PROJECTS_OPEN, { serverId: profileId, serverHttpBaseUrl: 'https://ordinary-owner.example',
+      machineId: 'machine', accountId: 'account', readCredentials: async () => { throw new Error('Admitted Open must not borrow login credentials'); } });
+    const input = { serverId: homeId, machineId: 'machine', source: { kind: 'folder', path: root },
+      materialization: { kind: 'attach' } };
+    const opened = await handler(input, context);
+    expect(opened, JSON.stringify(opened)).toMatchObject({ kind: 'opened', directory: root, setup: 'notRequired' });
+    expect(rows.some(row => row.key.kind === 'workspace-ref')).toBe(true);
+    current = false;
+    post.mockClear();
+    const diagnostic = vi.spyOn(logger, 'warnLocalFile');
+    expect(await handler(input, context)).toMatchObject({ kind: 'refused', code: 'requester_authority_unavailable', effectAttempted: false });
+    expect(diagnostic).toHaveBeenCalledWith('[Project Open] Refused', {
+      code: 'requester_authority_unavailable', reason: 'requester_projection_not_current', phase: 'requester_projection',
+    });
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it.each(['attach', 'worktree'] as const)('accepts a native Git worktree under its main Project before daemon registration (%s)', async kind => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-open-git-family-'));
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const main = join(root, 'z-main');
+    const linked = join(root, 'a-linked');
+    const git = promisify(execFile);
+    await git('git', ['init', '-b', 'main', main]);
+    await git('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'initial'], { cwd: main });
+    if (kind === 'attach') await git('git', ['worktree', 'add', '-b', 'feature', linked], { cwd: main });
+    const rows: ProjectAccountRowV1[] = [];
+    const mainRef = { id: 'accepted-main', projectKey: 'hidden-main-project', serverId: 'srv_test_home', machineId: 'machine', rootPath: main, createdAtMs: 1 };
+    if (kind === 'worktree') {
+      const key = { kind: 'workspace-ref' as const, serverId: mainRef.serverId, id: mainRef.id };
+      rows.push({ key, revision: 0, content: { t: 'plain', v: { key, value: mainRef } } });
+    }
+    vi.spyOn(axios, 'get').mockImplementation(plainMachineRead);
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (url.endsWith('/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
+      if (url.endsWith('/read')) return projectAccountRowReadResponse(rows, body);
+      const request = ProjectAccountRowMutationRequestV1Schema.parse(body);
+      const changed = request.mutations.map(mutation => ({ key: mutation.key, revision: 0, content: mutation.content }));
+      for (const row of changed) {
+        const index = rows.findIndex(existing => JSON.stringify(existing.key) === JSON.stringify(row.key));
+        if (index < 0) rows.push(row); else rows[index] = row;
+      }
+      return { status: 200, data: { status: 'updated', rows: changed, cursor: 1 } };
+    });
+    const registration = createGitScmBackendRuntimeRegistration();
+    if (!registration.runtime) throw new Error('Git runtime unavailable');
+    const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({ definition: { id: 'git', kind: 'git' },
+      qualifiedId: 'happier.scm.git/git', executableDefinition: registration.runtime, registration })]);
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
+    const handler = register(RPC_METHODS.PROJECTS_OPEN, { serverId: 'srv_test_home', machineId: 'machine', registry,
+      serverHttpBaseUrl: 'https://home.example', accountId: 'account', readCredentials: async () => ({ token, encryption: null }) });
+    const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
+      machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account', machineId: 'machine',
+        installationId: 'installation', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
+    const opened = await handler({ serverId: 'srv_test_home', machineId: 'machine',
+      source: kind === 'attach' ? { kind: 'folder', path: linked } : { kind: 'workspace', workspaceId: mainRef.id },
+      materialization: kind === 'attach' ? { kind: 'attach' } : { kind: 'worktree', targetPath: linked,
+        checkout: { kind: 'git_worktree', displayName: 'feature', baseRef: 'main', branchMode: 'new' } } }, context);
+    expect(opened).toMatchObject({ kind: 'opened', directory: linked });
+    const refs = rows.flatMap(row => row.content?.t === 'plain' && row.content.v.key.kind === 'workspace-ref'
+      && 'id' in row.content.v.value ? [row.content.v.value] : []);
+    const acceptedMain = refs.find(ref => ref.rootPath === main);
+    const acceptedLinked = refs.find(ref => ref.rootPath === linked);
+    expect(acceptedMain).toBeDefined();
+    expect(acceptedLinked?.projectKey).toBe(acceptedMain?.projectKey);
+    if (kind === 'worktree') expect(acceptedLinked?.projectKey).toBe(mainRef.projectKey);
+  });
+
   it('refuses a deleted worktree branch or missing base ref before creating files or accepting rows', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-open-missing-ref-'));
     const source = join(root, 'source');
@@ -203,7 +330,7 @@ describe('Project Open RPC', () => {
         const result = await handler({ serverId: 'srv_test_home', machineId: 'machine', source: { kind: 'folder', path: source },
           ref: 'gone', materialization: { kind: 'worktree', targetPath: target,
             checkout: { kind: 'git_worktree', displayName: 'gone', baseRef: 'gone', branchMode } } }, context);
-        expect(OpenProjectResultV1Schema.parse(result)).toEqual({ kind: 'refused', code: 'ref_unavailable' });
+        expect(OpenProjectResultV1Schema.parse(result)).toMatchObject({ kind: 'refused', code: 'ref_unavailable', effectAttempted: false });
         await expect(access(join(root, branchMode))).rejects.toMatchObject({ code: 'ENOENT' });
       }
       // A later add failure can already have created the parent directory.
@@ -220,7 +347,9 @@ describe('Project Open RPC', () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
-  it.each(['opened', 'refused', 'outcomeUnknown'] as const)('retains the original Open settlement in Action Operations (%s)', async settlement => {
+  it.each(['opened', 'refused', 'outcomeUnknown', 'receipt metadata without requester custody'] as const)('retains the original Open settlement in Action Operations (%s)', async scenario => {
+    const receiptOnly = scenario === 'receipt metadata without requester custody';
+    const settlement = receiptOnly ? 'refused' : scenario;
     const root = await mkdtemp(join(tmpdir(), 'happier-open-operation-'));
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
     const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
@@ -256,27 +385,82 @@ describe('Project Open RPC', () => {
     try {
       const handler = handlers.get(RPC_METHODS.PROJECTS_OPEN)!;
       const input = { serverId: 'srv_test_home', machineId: 'machine', source: { kind: 'folder' as const,
-        path: settlement === 'refused' ? join(root, 'missing') : root }, materialization: { kind: 'attach' as const } };
-      const observed = await operations.runActionOperation({ actionId: 'projects.open', input,
+        path: scenario === 'refused' ? join(root, 'missing') : root }, materialization: { kind: 'attach' as const } };
+      const pending = receiptOnly ? operations.observeExecution({ actionId: 'projects.open', input,
+        actionRequestId: context.transportRequestId, rpcContext: context,
+        execute: async owned => {
+          expect(owned.operationAcceptance).toMatchObject({ actionId: 'projects.open' });
+          return { ok: true, result: await handler(input, { ...context,
+          // A real receipt is not requester custody. The receiving handler
+          // must refuse this missing projection, never join its own invocation.
+          localActionContext: { operationAcceptance: owned.operationAcceptance },
+          }) };
+        },
+      }) : operations.runActionOperation({ actionId: 'projects.open', input,
         context: { actionRequestId: context.transportRequestId, signal: context.signal },
         // Machine relay calls carry authenticated ingress, not the invoking
         // adapter's private local Action context. Installed signed calls are
         // exercised by the composed external Action approval keepers.
         execute: async () => ({ ok: true, result: await handler(input, context) }),
       });
+      const observed = await pending;
       expect(observed.ok).toBe(true);
       if (!observed.ok) throw new Error(observed.errorCode);
       const result = observed.result;
       expect(result).toMatchObject({ kind: settlement, ...(settlement === 'outcomeUnknown' ? { operationId: 'original-open-operation' } : {}) });
+      if (receiptOnly) {
+        expect(result).toMatchObject({ kind: 'refused', code: 'requester_authority_unavailable', effectAttempted: false });
+        expect(mutations).toBe(0);
+      }
       const found = await operations.handlers.getV2({ operationId: 'original-open-operation' }, context);
       expect(found).toMatchObject({ kind: 'found', operation: { actionId: 'projects.open', scope: { accountId: 'account', machineId: 'machine' },
         result } });
+      expect(found).toMatchObject({ operation: settlement === 'outcomeUnknown'
+        ? { state: 'running', observation: { kind: 'outcome_uncertain' } }
+        : { state: settlement === 'refused' ? 'failed' : 'succeeded' } });
       expect((await operations.handlers.listV2({}, context)).items).toHaveLength(1);
       const beforeCheck = mutations;
       await operations.handlers.getV2({ operationId: 'original-open-operation' }, context);
       expect(mutations).toBe(beforeCheck);
       expect(await operations.handlers.getV2({ operationId: 'original-open-operation' }, { ...context,
         machineAdmission: { ...context.machineAdmission!, actorAccountId: 'other-account' } })).toEqual({ kind: 'not_found' });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('finishes an accepted Open after revocation and refuses the next Open before effects', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-open-admission-'));
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
+    let admitted = true;
+    let admissionReads = 0;
+    let mutations = 0;
+    const rows: ProjectAccountRowV1[] = [];
+    const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
+      machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account', machineId: 'machine',
+        installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+      verifyMachineAdmissionCurrent: async () => { admissionReads += 1; return admitted; } };
+    vi.spyOn(axios, 'get').mockImplementation(plainMachineRead);
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (url.endsWith('/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
+      if (url.endsWith('/read')) return projectAccountRowReadResponse(rows, body);
+      const request = ProjectAccountRowMutationRequestV1Schema.parse(body);
+      const changed = request.mutations.map(mutation => ({ key: mutation.key, revision: 0, content: mutation.content }));
+      rows.push(...changed);
+      mutations += 1;
+      // Revocation after acceptance cannot make an acknowledged Open unknown.
+      admitted = false;
+      return { status: 200, data: { status: 'updated', rows: changed, cursor: 1 } };
+    });
+    const handler = register(RPC_METHODS.PROJECTS_OPEN, { serverId: 'srv_test_home', machineId: 'machine',
+      serverHttpBaseUrl: 'https://home.example', accountId: 'account', readCredentials: async () => ({ token, encryption: null }) });
+    const input = { serverId: 'srv_test_home', machineId: 'machine', source: { kind: 'folder', path: root },
+      materialization: { kind: 'attach' } };
+    try {
+      expect(await handler(input, context)).toMatchObject({ kind: 'opened', directory: root });
+      expect(admissionReads).toBe(1); // One admission for this finite Open, before effects.
+      expect(mutations).toBe(1);
+      expect(await handler(input, context)).toEqual({ kind: 'refused', code: 'machine_access_denied', effectAttempted: false });
+      expect(admissionReads).toBe(2);
+      expect(mutations).toBe(1);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
@@ -287,10 +471,10 @@ describe('Project Open RPC', () => {
     const seed = join(root, 'seed');
     const scope = createEnvKeyScope(['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']);
     const provider = { id: 'happier.scm.forge.github/github', kind: 'github' as const, displayName: 'GitHub', baseUrl: 'https://github.com' };
-    const source: ProjectSourceV1 = { id: 'cmv06f8oh0002tm6db61h8svg', revision: 2, name: 'Q1 Round 4 Source',
+    const source = { id: 'cmv06f8oh0002tm6db61h8svg', revision: 2, name: 'Q1 Round 4 Source',
       createdByAccountId: 'account', audience: [], defaultRef: 'master', subdir: '.',
       repository: { provider, repository: { nameWithOwner: 'octocat/Hello-World',
-        webUrl: 'https://github.com/octocat/Hello-World', cloneUrl: 'https://github.com/octocat/Hello-World' }, protocol: 'https' } };
+        webUrl: 'https://github.com/octocat/Hello-World', cloneUrl: 'https://github.com/octocat/Hello-World' }, protocol: 'https' } } satisfies ProjectSourceV1;
     // GitHub HTTP and Git's remote are the system boundaries; discovery, dispatch,
     // clone/publication, Source admission and Account row acceptance remain real.
     let rateLimited: 'timed' | 'unhinted' | null = null;
@@ -301,9 +485,11 @@ describe('Project Open RPC', () => {
         headers: new Headers({ 'x-ratelimit-remaining': '0', ...(rateLimited === 'timed'
           ? { 'x-ratelimit-reset': String(retryAt / 1000) } : {}) }),
         json: async () => ({ message: 'API rate limit exceeded' }), text: async (): Promise<string> => '' };
-      return { ok: true, status: 200, statusText: 'OK', json: async () => ({ full_name: 'octocat/Hello-World',
+      const repository = { full_name: 'octocat/Hello-World',
         html_url: 'https://github.com/octocat/Hello-World', clone_url: 'https://github.com/octocat/Hello-World.git',
-        visibility: 'public', default_branch: 'master' }), text: async (): Promise<string> => '' };
+        visibility: 'public', default_branch: 'master' };
+      return { ok: true, status: 200, statusText: 'OK', json: async () => repository,
+        text: async () => JSON.stringify(repository) };
     });
     const hostingDefinition = GITHUB_PLUGIN_MANIFEST.contributes.scmHostingProviders?.[0];
     if (!hostingDefinition) throw new Error('GitHub did not declare its hosting provider');
@@ -364,6 +550,30 @@ describe('Project Open RPC', () => {
     const input = { serverId: 'srv_test_home', machineId: 'machine', source: { kind: 'source' as const, id: source.id, revision: 2,
       selector: source.repository, defaultRef: 'master', subdir: '.' },
       materialization: { kind: 'clone' as const, destinationParentPath: root, destinationDirectoryName: 'checkout' } };
+    const publicSettlement = (actionArgs: OpenProjectInputV1, result: unknown) => {
+      const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'executing', createdAtMs: 1, updatedAtMs: 2,
+        createdBy: { surface: 'cli' }, requestedSurface: 'ui', actionId: 'projects.open', actionArgs,
+        summary: 'Open repository', decision: { kind: 'approve', decidedAtMs: 2 },
+        executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
+          serverId: runtime.serverId, accountId: runtime.accountId, machineId: runtime.machineId,
+          actionId: 'projects.open', requestId: 'open-repository' } });
+      const settled = projectSettledApprovalExecution({ request, actionId: 'projects.open',
+        exec: { ok: true, result }, dispatchEffectAttempted: true, executedAtMs: 3 });
+      const stored = StoredApprovalRequestSchema.parse(settled.request);
+      return ApprovalRequestPublicReadSchema.parse(projectApprovalRequestForPublicRead(stored));
+    };
+    const observeOpen = async (actionArgs: OpenProjectInputV1, requestId: string) => {
+      const operations = createHostActionOperationRuntime({ serverId: runtime.serverId, machineId: runtime.machineId,
+        resolveAccountId: async () => runtime.accountId, generateOperationId: () => requestId });
+      const execution = await operations.observeExecution({ actionId: 'projects.open', input: actionArgs,
+        actionRequestId: requestId, execute: async () => ({ ok: true, result: await handler(actionArgs, context) }) });
+      if (!execution.ok) throw new Error('Initial Open execution must return its typed domain result');
+      const operation = await executeActionOperationActionV1({ actionId: 'action.operations.get',
+        input: { serverId: runtime.serverId, machineId: runtime.machineId, operationId: requestId },
+        transport: async ({ payload }) => operations.handlers.getV2(payload) });
+      return { result: execution.result, operation };
+    };
+    const clock = vi.spyOn(Date, 'now');
     try {
       await mkdir(seed);
       await git('git', ['init', '-b', 'master'], { cwd: seed });
@@ -384,21 +594,41 @@ describe('Project Open RPC', () => {
       await git('git', ['clone', '--bare', seed, remote]);
       scope.patch({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.${remote}.insteadOf`,
         GIT_CONFIG_VALUE_0: 'https://github.com/octocat/Hello-World.git' });
-      const missingParent = { ...input, materialization: { ...input.materialization, destinationParentPath: join(root, 'missing') } };
-      expect(await handler(missingParent, context)).toEqual({ kind: 'refused', code: 'invalid_directory' });
-      await expect(access(join(root, 'missing'))).rejects.toMatchObject({ code: 'ENOENT' });
+      const fileAsParent = { ...input, materialization: { ...input.materialization, destinationParentPath: join(seed, 'README.md') } };
+      expect(await handler(fileAsParent, context)).toMatchObject({ kind: 'refused', code: 'invalid_directory', effectAttempted: false,
+        failureCause: { phase: 'projects.open', errorClass: 'Error' } });
       expect(diagnostic.mock.calls.length).toBeGreaterThan(0);
       const noBackend = register(RPC_METHODS.PROJECTS_OPEN, { ...runtime, registry: createScmBackendRegistry([]) });
-      expect(await noBackend(input, context)).toEqual({ kind: 'refused', code: 'FEATURE_UNSUPPORTED' });
+      expect(await noBackend(input, context)).toMatchObject({ kind: 'refused', code: 'FEATURE_UNSUPPORTED', effectAttempted: false,
+        failureCause: { phase: 'projects.open', errorClass: 'Error' } });
       for (const limit of ['timed', 'unhinted'] as const) {
         rateLimited = limit;
-        const refusal = await handler(input, context);
-        expect(refusal).toEqual({ kind: 'refused', code: 'REMOTE_RATE_LIMITED',
-          ...(limit === 'timed' ? { retryNotBeforeMs: retryAt } : {}),
+        const { result: refusal, operation } = await observeOpen(input, `rate-limit-${limit}`);
+        expect.soft(operation).toMatchObject({ kind: 'found', operation: { state: 'failed', error: {
+          errorCode: 'REMOTE_RATE_LIMITED',
+          failureCause: { phase: 'projects.open', errorClass: 'Error', errorCode: null, httpStatus: null },
+          details: { kind: 'refused', code: 'REMOTE_RATE_LIMITED', effectAttempted: false,
+            retryNotBeforeMs: limit === 'timed' ? retryAt : expect.any(Number),
+            remediation: { kind: 'retry', action: 'connect_github' } },
+        } } });
+        expect.soft(publicSettlement(input, refusal)).toMatchObject({ status: 'failed', execution: {
+          ok: false, errorCode: 'REMOTE_RATE_LIMITED', effectAttempted: false,
+          failureCause: { phase: 'projects.open', errorClass: 'Error', errorCode: null, httpStatus: null },
+          details: { kind: 'refused', code: 'REMOTE_RATE_LIMITED', effectAttempted: false,
+            retryNotBeforeMs: limit === 'timed' ? retryAt : expect.any(Number),
+            remediation: { kind: 'retry', action: 'connect_github' } },
+        } });
+        expect.soft(refusal).toEqual({ kind: 'refused', code: 'REMOTE_RATE_LIMITED',
+          effectAttempted: false,
+          failureCause: { phase: 'projects.open', errorClass: 'Error', errorCode: null, httpStatus: null },
+          retryNotBeforeMs: limit === 'timed' ? retryAt : expect.any(Number),
           remediation: { kind: 'retry', action: 'connect_github' } });
-        expect(OpenProjectResultV1Schema.parse(refusal)).toEqual(refusal);
+        const parsed = OpenProjectResultV1Schema.parse(refusal);
+        expect(parsed).toEqual(refusal);
         await expect(access(join(root, 'checkout'))).rejects.toMatchObject({ code: 'ENOENT' });
         expect(rows).toEqual([]);
+        // Let the real GitHub owner release its throttle before the next scenario.
+        if (parsed.kind === 'refused' && parsed.retryNotBeforeMs !== undefined) clock.mockReturnValue(parsed.retryNotBeforeMs);
       }
       rateLimited = null;
       scope.patch({ GIT_CONFIG_KEY_0: `url.${join(root, 'absent.git')}.insteadOf` });
@@ -422,18 +652,38 @@ describe('Project Open RPC', () => {
       expect((await git('git', ['rev-parse', 'HEAD'], { cwd: starter })).stdout.trim()).toBe(pin);
       expect((await git('git', ['rev-parse', 'main'], { cwd: starter })).stdout.trim()).toBe(pin);
       expect((await git('git', ['rev-parse', 'main'], { cwd: seed })).stdout.trim()).toBe(upstreamHead);
+      const detached = join(root, 'detached');
+      expect(await handler({ ...input, source: { kind: 'repository', selector: source.repository }, ref: pin,
+        materialization: { ...input.materialization, destinationDirectoryName: 'detached' } }, context))
+        .toMatchObject({ kind: 'opened', directory: detached });
+      expect((await git('git', ['branch', '--show-current'], { cwd: detached })).stdout.trim()).toBe('');
+      expect((await git('git', ['rev-parse', 'HEAD'], { cwd: detached })).stdout.trim()).toBe(pin);
+      expect((await git('git', ['rev-parse', 'master'], { cwd: detached })).stdout.trim()).toBe(upstreamHead);
+      expect((await git('git', ['rev-parse', 'origin/main'], { cwd: detached })).stdout.trim()).toBe(upstreamHead);
+      const acceptedRows = rows.length;
       diagnostic.mockClear();
-      expect(await handler({ ...input, ref: 'missing-ref', materialization: { ...input.materialization, destinationDirectoryName: 'missing-ref' } }, context))
-        .toEqual({ kind: 'outcomeUnknown' });
+      const missingRefInput = { ...input, ref: 'missing-ref',
+        materialization: { ...input.materialization, destinationDirectoryName: 'missing-ref' } };
+      const { result: missingRef, operation: missingRefOperation } = await observeOpen(missingRefInput, 'missing-ref');
+      expect(missingRefOperation).toMatchObject({ kind: 'found', operation: { state: 'failed', error: {
+        errorCode: 'COMMAND_FAILED', failureCause: { phase: 'project_open.checkout_ref', errorCode: null },
+        details: { kind: 'refused', code: 'COMMAND_FAILED', effectAttempted: true },
+      } } });
+      expect(missingRef).toMatchObject({ kind: 'refused', code: 'COMMAND_FAILED', effectAttempted: true,
+          failureCause: { phase: 'project_open.checkout_ref', errorCode: null } });
+      expect(publicSettlement(missingRefInput, missingRef)).toMatchObject({ status: 'failed', execution: {
+        ok: false, errorCode: 'COMMAND_FAILED', effectAttempted: true,
+        failureCause: { phase: 'project_open.checkout_ref', errorCode: null },
+        details: { kind: 'refused', code: 'COMMAND_FAILED', effectAttempted: true,
+          failureCause: { phase: 'project_open.checkout_ref', errorCode: null } },
+      } });
       await access(join(root, 'missing-ref', '.git'));
-      expect(diagnostic.mock.calls.flatMap(([, details]) => details)).toEqual(expect.arrayContaining([
-        expect.objectContaining({ effectsIssued: true, error: expect.stringContaining('missing-ref') }),
-      ]));
+      expect(rows).toHaveLength(acceptedRows);
       loseAcknowledgement = true;
       expect(await handler({ ...input, materialization: { ...input.materialization, destinationDirectoryName: 'lost-ack' } }, context))
         .toEqual({ kind: 'outcomeUnknown' });
       await access(join(root, 'lost-ack', '.git'));
-    } finally { scope.restore(); await rm(root, { recursive: true, force: true }); }
+    } finally { clock.mockRestore(); scope.restore(); await rm(root, { recursive: true, force: true }); }
   });
 
   it('establishes a credential-seeded profile identity before Project Open while refusing wrong targets', async () => {
@@ -444,14 +694,25 @@ describe('Project Open RPC', () => {
     const serverId = 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN';
     const machineId = '931c4d58-b484-4284-b5b8-f3ef2500d7ec';
     const serverUrl = 'http://happier-agent-qa-l12-a.localhost:3010';
-    const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
-    const source: ProjectSourceV1 = { id: 'cmv06f8oh0002tm6db61h8svg', revision: 2,
+    const provenance = AuthTokenProvenanceSchema.parse({ v: 1, kind: 'terminal', authority: 'account_automation' });
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'account', session: 'OPEN-TESTS-terminal', provenance })).toString('base64url')}.signature`;
+    const source = { id: 'cmv06f8oh0002tm6db61h8svg', revision: 2,
       name: 'Q1 Round 4 Source', createdByAccountId: 'account', audience: [], defaultRef: 'master', subdir: '.',
       repository: { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
-        repository: { nameWithOwner: 'octocat/Hello-World', cloneUrl: 'https://github.com/octocat/Hello-World', webUrl: 'https://github.com/octocat/Hello-World' }, protocol: 'https' } };
+        repository: { nameWithOwner: 'octocat/Hello-World', cloneUrl: 'https://github.com/octocat/Hello-World', webUrl: 'https://github.com/octocat/Hello-World' }, protocol: 'https' } } satisfies ProjectSourceV1;
     const rows: ProjectAccountRowV1[] = [];
     const read = vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { ok: true, source, canManage: true } });
-    vi.spyOn(axios, 'get').mockImplementation(plainMachineRead);
+    // The installed Machine authenticates its Account through Home, rather
+    // than trusting a JWT subject. Keep that HTTP fixture schema-valid too.
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (url.endsWith('/v1/account/profile')) return { status: 200,
+        data: AccountProfileResponseSchema.parse({ id: 'account' }) };
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200,
+        data: AccountEncryptionCurrentnessResponseSchema.parse({ mode: 'plain', version: 1, updatedAt: 0,
+          signingKeyFingerprint: null, contentKeyFingerprint: null }) };
+      return plainMachineRead(url);
+    });
+    socketIo.mockImplementation(() => createApiSessionSocketStub());
     const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
       if (url.endsWith('/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
       if (url.endsWith('/read')) return projectAccountRowReadResponse(rows, body);
@@ -467,6 +728,9 @@ describe('Project Open RPC', () => {
       reloadConfiguration();
       await mkdir(root);
       await writeCredentialsTokenOnlyForServerId(profileId, { token });
+      // Exercise the credential reader the installed CLI also consumes. A
+      // retired Account bearer is not a valid terminal-sign-in fixture.
+      expect(await readStoredCredentials()).toMatchObject({ token, credentialProvenance: 'stored_session' });
       const runtime: ProjectOpenRuntime = { serverId: profileId, machineId, serverHttpBaseUrl: serverUrl,
         accountId: 'account', readCredentials: async () => ({ token, encryption: null }) };
       const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
@@ -475,8 +739,8 @@ describe('Project Open RPC', () => {
       const target = { serverId: profileId, machineId };
       const handler = register(RPC_METHODS.PROJECTS_OPEN, runtime, target);
       const folder = { serverId, machineId, source: { kind: 'folder' as const, path: root }, materialization: { kind: 'attach' as const } };
-      expect(await handler(folder, context)).toEqual({ kind: 'refused', code: 'target_mismatch' });
-      expect(await handler({ ...folder, serverId: profileId }, context)).toEqual({ kind: 'refused', code: 'target_mismatch' });
+      expect(await handler(folder, context)).toMatchObject({ kind: 'refused', code: 'target_mismatch' });
+      expect(await handler({ ...folder, serverId: profileId }, context)).toMatchObject({ kind: 'refused', code: 'target_mismatch' });
       // Only the Home HTTP boundary is mocked. Start from the predecessor/Stack
       // URL-only profile and pass the provisioned credential through real startup verification.
       const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: serverId } },
@@ -516,13 +780,14 @@ describe('Project Open RPC', () => {
         if (!(registeredHandlers instanceof Map)) throw new Error('Missing registered RPC handlers');
         const installed: RpcHandler<unknown, unknown> | undefined = registeredHandlers.get(`${machineId}:${RPC_METHODS.PROJECTS_OPEN}`);
         if (!installed) throw new Error('Project Open was not installed by the machine composition');
-        expect(OpenProjectResultV1Schema.parse(await installed({ ...folder, serverId: profileId }, context))).toMatchObject({ kind: 'opened',
+        const opened = OpenProjectResultV1Schema.parse(await installed({ ...folder, serverId: profileId }, context));
+        expect(opened, JSON.stringify(opened)).toMatchObject({ kind: 'opened',
           workspace: { serverId, machineId, rootPath: root } });
-      } finally { await registration.dispose(); }
+      } finally { await registration.dispose(); await client.shutdown(); }
       // Counterfactual wiring: the same exact Home without its Project runtime
       // remains unavailable. The composed opened assertion above detects this omission.
       expect(await register(RPC_METHODS.PROJECTS_OPEN, undefined, target)(folder, context))
-        .toEqual({ kind: 'refused', code: 'project_open_unavailable' });
+        .toMatchObject({ kind: 'refused', code: 'project_open_unavailable' });
       expect(await handler(folder, context)).toMatchObject({ kind: 'opened', directory: root,
         workspace: { serverId, machineId, rootPath: root } });
       const workspaceRow = rows.find(row => row.key.kind === 'workspace-ref');
@@ -543,16 +808,16 @@ describe('Project Open RPC', () => {
       expect(await materializeProjectSyncOnSource(copy, runtime, context)).toEqual({ kind: 'materialized' });
       read.mockClear(); post.mockClear();
       for (const wrong of [{ ...folder, serverId: 'srv_other_home' }, { ...folder, machineId: 'other-machine' }]) {
-        expect(await handler(wrong, context)).toEqual({ kind: 'refused', code: 'target_mismatch' });
-        expect(await openProject(wrong, runtime, context)).toEqual({ kind: 'refused', code: 'target_mismatch' });
+        expect(await handler(wrong, context)).toMatchObject({ kind: 'refused', code: 'target_mismatch' });
+        expect(await openProject(wrong, runtime, context)).toMatchObject({ kind: 'refused', code: 'target_mismatch' });
       }
       expect(read).not.toHaveBeenCalled(); expect(post).not.toHaveBeenCalled();
       expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime, { serverId: profileId, machineId: 'other-machine' })(folder, context))
-        .toEqual({ kind: 'refused', code: 'target_mismatch' });
-      expect(await handler(folder)).toEqual({ kind: 'refused', code: 'machine_admission_unavailable' });
+        .toMatchObject({ kind: 'refused', code: 'target_mismatch' });
+      expect(await handler(folder)).toMatchObject({ kind: 'refused', code: 'machine_admission_unavailable', effectAttempted: false });
       expect(await sourceHandler(copy)).toEqual({ kind: 'refused', code: 'machine_admission_unavailable' });
       expect(await handler(folder, { ...context, callerAuthority: 'account_automation' }))
-        .toEqual({ kind: 'refused', code: 'requester_authority_unavailable' });
+        .toMatchObject({ kind: 'refused', code: 'requester_authority_unavailable' });
       expect(await sourceHandler(copy, { ...context, callerAuthority: 'account_automation' }))
         .toEqual({ kind: 'refused', code: 'requester_authority_unavailable' });
       expect(read).not.toHaveBeenCalled(); expect(post).not.toHaveBeenCalled();
@@ -560,7 +825,7 @@ describe('Project Open RPC', () => {
       const { checkout: _checkout, ...cloneSource } = captured.source;
       expect(await handler({ serverId, machineId, source: cloneSource,
         materialization: { kind: 'clone', destinationParentPath: '/home/ubuntu', destinationDirectoryName: 'q1-round5-hello-world' } }, context))
-        .toEqual({ kind: 'refused', code: 'source_unavailable' });
+        .toMatchObject({ kind: 'refused', code: 'source_unavailable' });
       expect(post).not.toHaveBeenCalled();
       expect(configuration.activeServerId).toBe(profileId);
       const profile = (await readSettings()).servers![profileId]!;
@@ -574,9 +839,9 @@ describe('Project Open RPC', () => {
                 id: scenario === 'duplicate' ? 'second-profile' : serverId } } };
         });
         read.mockClear(); post.mockClear();
-        expect(await handler(folder, context), scenario).toEqual({ kind: 'refused', code: 'target_mismatch' });
-        expect(await openProject(folder, runtime, context), scenario).toEqual({ kind: 'refused', code: 'target_mismatch' });
-        expect(await handler({ ...folder, serverId: profileId }, context), scenario).toEqual({ kind: 'refused', code: 'target_mismatch' });
+        expect(await handler(folder, context), scenario).toMatchObject({ kind: 'refused', code: 'target_mismatch' });
+        expect(await openProject(folder, runtime, context), scenario).toMatchObject({ kind: 'refused', code: 'target_mismatch' });
+        expect(await handler({ ...folder, serverId: profileId }, context), scenario).toMatchObject({ kind: 'refused', code: 'target_mismatch' });
         expect(await sourceHandler(copy, context), scenario).toEqual({ kind: 'refused', code: 'target_mismatch' });
         expect(read).not.toHaveBeenCalled(); expect(post).not.toHaveBeenCalled();
       }
@@ -589,6 +854,9 @@ describe('Project Open RPC', () => {
     { mode: 'plain', action: 'create_relationship', fault: 'endpoint_write_failure' },
     { mode: 'plain', action: 'create_relationship', fault: 'enabled_graph_ack' },
     { mode: 'plain', action: 'create_relationship', fault: 'remote_source_ack' },
+    { mode: 'plain', action: 'create_relationship', fault: 'engine_refusal' },
+    { mode: 'plain', action: 'create_relationship', fault: 'engine_refusal_cleanup' },
+    { mode: 'plain', action: 'create_relationship', fault: 'engine_refusal_cancelled' },
   ] as const)('keeps a scoped Use requester Source on member execution without custodian credentials ($mode/$action/$fault)', async ({ mode, action, fault }) => {
     const syncing = action !== 'attach';
     socketIo.mockImplementation((await vi.importActual<typeof import('socket.io-client')>('socket.io-client')).io);
@@ -597,6 +865,10 @@ describe('Project Open RPC', () => {
       managedHappierBinaryPath: '/opt/happier/cli/current/happier',
       read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1',
         status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [] }),
+      readMember: async input => {
+        if (!memberPreparation) throw new Error('Member preparation fixture is not ready');
+        return memberPreparation.members.read(input);
+      },
       prepareMember: async input => {
         if (!memberPreparation) throw new Error('Member preparation fixture is not ready');
         const result = await memberPreparation.members.prepare(input);
@@ -696,6 +968,7 @@ describe('Project Open RPC', () => {
     const verifyMachineAdmissionRequest = vi.mocked(axios.post).getMockImplementation();
     let endpointWriteFailed = false;
     let graphAcknowledgementLost = false;
+    let nativeEngineRefused = false;
     const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
       if (syncing && url.endsWith('/v1/machines/machine/admission/verify')) {
         expect(config?.headers).toMatchObject({ Authorization: `Bearer ${installed.bootstrap.credentials.token}` });
@@ -708,6 +981,10 @@ describe('Project Open RPC', () => {
       if (url.endsWith('/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
       if (url.endsWith('/read')) return projectAccountRowReadResponse(rows, body);
       const request = ProjectAccountRowMutationRequestV1Schema.parse(body);
+      if (fault === 'engine_refusal_cleanup' && nativeEngineRefused
+        && request.mutations.some(mutation => mutation.key.kind === 'relationship-graph')) {
+        throw new Error('Relationship rollback acknowledgement is unavailable');
+      }
       const changed = request.mutations.map(mutation => ({ key: mutation.key,
         revision: mutation.expectedRevision === 'absent' ? 0 : mutation.expectedRevision + 1, content: mutation.content }));
       for (const row of changed) { const index = rows.findIndex(existing => JSON.stringify(existing.key) === JSON.stringify(row.key));
@@ -757,7 +1034,14 @@ describe('Project Open RPC', () => {
     nativeSyncFiles.source = syncing ? root : '';
     const policyFields = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
     const contentPolicy = { ...policyFields, policyDigest: computeWorkspaceSyncPolicyDigest(policyFields) };
-    const nativeSyncBoundary = createWorkspaceSyncNativeProcessTestBoundary();
+    const nativeSyncBoundary = createWorkspaceSyncNativeProcessTestBoundary({ onCommand: async command => {
+      if ((fault === 'engine_refusal' || fault === 'engine_refusal_cleanup' || fault === 'engine_refusal_cancelled')
+        && command.t === 'resume') {
+        nativeEngineRefused = true;
+        if (fault === 'engine_refusal_cancelled') ingress.abort();
+        throw new BrokerProtocolError('engine_unavailable', 'External synchronization agent version handshake failed: version mismatch');
+      }
+    } });
     const productionSyncInput = { happyHomeDir: installed.directory,
       activeServerDir: configuration.activeServerDir, activeServerId: installed.serverId,
       homeTarget: await resolveCurrentCliHomeTarget(), localMachineId: 'machine', releaseChannel: 'publicdev',
@@ -832,7 +1116,7 @@ describe('Project Open RPC', () => {
       });
       expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime)(input, { ...context,
         callerInputAuthorization: foreignHomeAuthorization }))
-        .toEqual({ kind: 'refused', code: 'requester_authority_unavailable' });
+        .toMatchObject({ kind: 'refused', code: 'requester_authority_unavailable', effectAttempted: false });
       expect(post).not.toHaveBeenCalled();
       expect(nativeBoundary.runAsUsers).toEqual([]);
       if (syncing && input.materialization.kind === 'sync') {
@@ -868,6 +1152,22 @@ describe('Project Open RPC', () => {
         && config?.headers?.Authorization === `Bearer ${token}`).length;
       const initialMachineReads = machineReads();
       const opened = await register(RPC_METHODS.PROJECTS_OPEN, runtime)(input, context);
+      if (fault === 'engine_refusal_cleanup' || fault === 'engine_refusal_cancelled') {
+        expect(nativeEngineRefused).toBe(true);
+        expect(opened).toEqual({ kind: 'outcomeUnknown' });
+        return;
+      }
+      if (fault === 'engine_refusal') {
+        expect(nativeEngineRefused).toBe(true);
+        expect(opened, JSON.stringify(admissionDiagnostics?.mock.calls)).toMatchObject({ kind: 'refused',
+          code: 'engine_unavailable', effectAttempted: true });
+        const graph = rows.find(row => row.key.kind === 'relationship-graph');
+        if (!graph?.content) throw new Error('Expected the acknowledged rollback graph');
+        expect(cipher.open(graph.key, graph.content).value).toMatchObject({ relationships: [] });
+        expect(productionSync?.handoffAdapter.listPrivateExecutions?.()).toEqual([]);
+        expect(nativeSyncBoundary.commands.some(command => command.t === 'terminate')).toBe(true);
+        return;
+      }
       if (fault === 'remote_source_ack') {
         expect(remoteTargetPrepared, JSON.stringify(admissionDiagnostics?.mock.calls)).toBe(true);
         expect(opened).toEqual({ kind: 'outcomeUnknown' });
@@ -940,15 +1240,22 @@ describe('Project Open RPC', () => {
           expect(await captured?.[0]?.execution.accountRowsCustody.isCurrent()).toBe(true);
           await productionSync.stop();
           const recoveredBoundary = createWorkspaceSyncNativeProcessTestBoundary();
-          const recovered = await createProductionDaemonWorkspaceSyncRuntime(productionSyncInput, recoveredBoundary.factories);
+          let resolveRecoveredReady: (() => void) | undefined;
+          const recoveredReady = new Promise<void>(resolve => { resolveRecoveredReady = resolve; });
+          const recovered = await createProductionDaemonWorkspaceSyncRuntime({ ...productionSyncInput,
+            onReadinessPublished: readiness => {
+              if (readiness.engine.state === 'ready') resolveRecoveredReady?.();
+            },
+          }, recoveredBoundary.factories);
           recoveredSync = recovered;
           onTestFinished(() => recovered.stop());
-          const recoveredCapture = recovered.handoffAdapter.resolvePrivateExecution?.({ relationshipId });
-          expect(recoveredCapture?.execution.executionIdentity).toEqual(capturedIdentity);
-          expect(recoveredCapture?.execution.credentials.token).toBe(token);
+          await recoveredReady;
           await writeFile(join(root, 'payload.txt'), 'member recovered transfer');
           const recoveredLaunches = nativeBoundary.runAsUsers.length;
           await recovered.workspaceSync.controller.flush(relationshipId);
+          const recoveredCapture = recovered.handoffAdapter.resolvePrivateExecution?.({ relationshipId });
+          expect(recoveredCapture?.execution.executionIdentity).toEqual(capturedIdentity);
+          expect(recoveredCapture?.execution.credentials.token).toBe(token);
           expect(nativeBoundary.runAsUsers.slice(recoveredLaunches)).toEqual(['mutagen-member-source', 'mutagen-member-target']);
           expect(await nativeBoundary.identity.run('member', () => readFile(join(targetRoot, 'payload.txt'), 'utf8')))
             .toBe('member recovered transfer');
@@ -970,7 +1277,7 @@ describe('Project Open RPC', () => {
       current = false;
       post.mockClear();
       expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime)(input, { ...context, signal: new AbortController().signal }))
-        .toEqual({ kind: 'refused', code: 'requester_authority_unavailable' });
+        .toMatchObject({ kind: 'refused', code: 'requester_authority_unavailable', effectAttempted: false });
       expect(post).not.toHaveBeenCalled();
       await expect(access(join(root, 'not-executed'))).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
@@ -1101,14 +1408,15 @@ describe('Project Open RPC', () => {
       if (opened.kind !== 'opened') throw new Error('Actual child was not admitted');
       parentOnline = true;
       const fields = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
-      const snapshot = await readProjectAccountRows({ serverId: homeId, credentials: { token, encryption: null } });
+      const snapshot = await readProjectAccountRows({ serverId: homeId, credentials: { token, encryption: null },
+        selection: { kinds: ['workspace-ref'], serverId: homeId } });
       const noEffect = async (): Promise<never> => { throw new Error('A bind mapping to the same bytes must not copy or launch a process'); };
       const sync = new WorkspaceSyncController({ localServerId: homeId, localMachineId: 'machine',
         resolveWorkspaceRef: id => { const resolved = resolveWorkspaceRefV1(snapshot.workspaceRefs, { serverId: homeId, id });
           return resolved.kind === 'resolved' ? resolved.ref : null; },
         rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(root, 'locks') }),
         lifecycle: { start: noEffect, stop: noEffect }, adapter: { discoverCopyOnceRecoveries: noEffect, rehydrate: noEffect,
-          ensure: noEffect, copyOnce: noEffect, get: noEffect, list: noEffect, flush: noEffect, pause: noEffect,
+          ensure: noEffect, copyOnce: noEffect, get: noEffect, waitForChange: noEffect, list: noEffect, flush: noEffect, pause: noEffect,
           resume: noEffect, terminate: noEffect, listConflicts: noEffect, diagnoseSelection: noEffect } });
       const copiedOpen = await register(RPC_METHODS.PROJECTS_OPEN, { serverId: homeId,
         serverHttpBaseUrl: 'https://home.example', machineId: 'machine', accountId: 'account',
@@ -1142,13 +1450,14 @@ describe('Project Open RPC', () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
-  it.each(['metadata', 'override', 'selector', 'revoked'] as const)('admits a captured Source before checkout effects (%s)', async change => {
+  it.each(['metadata', 'override', 'selector', 'revoked', 'repository_removed'] as const)('admits a captured Source before checkout effects (%s)', async change => {
     const root = await mkdtemp(join(tmpdir(), 'happier-source-open-'));
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
-    const source: ProjectSourceV1 = { id: 'source', revision: 1, name: 'Original', createdByAccountId: 'account', audience: [],
+    const source = { id: 'source', revision: 1, name: 'Original', createdByAccountId: 'account', audience: [],
       repository: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://forge.example' },
-        repository: { nameWithOwner: 'group/repo', cloneUrl: 'https://forge.example/group/repo.git' }, protocol: 'https' }, subdir: 'packages/app' };
-    const current: ProjectSourceV1 = { ...source, revision: 9, name: 'Renamed', attachments: [],
+        repository: { nameWithOwner: 'group/repo', cloneUrl: 'https://forge.example/group/repo.git' }, protocol: 'https' }, subdir: 'packages/app' } satisfies ProjectSourceV1;
+    const { repository: _repository, ...withoutRepository } = source;
+    const current: ProjectSourceV1 = change === 'repository_removed' ? withoutRepository : { ...source, revision: 9, name: 'Renamed', attachments: [],
       ...(change === 'override' ? { subdir: 'other' } : {}),
       ...(change === 'selector' ? { repository: { ...source.repository, repository: { nameWithOwner: 'group/other', cloneUrl: 'https://forge.example/group/other.git' } } } : {}) };
     const key = { kind: 'workspace-ref' as const, serverId: 'srv_test_home', id: 'checkout' };
@@ -1182,7 +1491,7 @@ describe('Project Open RPC', () => {
         machineId: 'machine', accountId: 'account', readCredentials: async () => ({ token, encryption: null }) })({
         serverId: 'srv_test_home', machineId: 'machine', source: { kind: 'source', id: source.id, revision: source.revision,
           selector: source.repository, subdir: source.subdir, checkout: { serverId: 'srv_test_home', workspaceId: 'checkout', machineId: 'machine', rootPath: root } },
-        ...(change === 'override' ? { subdir: 'packages/app' } : {}), materialization: change === 'selector' || change === 'revoked'
+        ...(change === 'override' ? { subdir: 'packages/app' } : {}), materialization: change === 'selector' || change === 'revoked' || change === 'repository_removed'
           ? { kind: 'clone', destinationParentPath: root, destinationDirectoryName: 'must-not-exist' } : { kind: 'attach' },
       }, context);
       expect(reads).toEqual(['https://home.example/v1/projects/sources/source?serverId=srv_test_home']);
@@ -1190,7 +1499,8 @@ describe('Project Open RPC', () => {
         expect(result).toMatchObject({ kind: 'opened', directory: join(root, 'packages/app'), facts: { source: { sourceId: 'source', revision: 9 } } });
         expect(writes.length).toBeGreaterThan(0);
       } else {
-        expect(result).toEqual({ kind: 'refused', code: change === 'selector' ? 'source_selection_changed' : 'source_unavailable' });
+        expect(result).toMatchObject({ kind: 'refused', code: change === 'repository_removed' ? 'needs_repository'
+          : change === 'selector' ? 'source_selection_changed' : 'source_unavailable', effectAttempted: false });
         expect(writes).toEqual([]);
         await expect(access(join(root, 'must-not-exist'))).rejects.toMatchObject({ code: 'ENOENT' });
       }
@@ -1258,7 +1568,7 @@ describe('Project Open RPC', () => {
         provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://forge.example' },
         repository: { nameWithOwner: 'group/repo' }, protocol: 'https' } },
       materialization: { kind: 'clone', destinationParentPath: '/not-created', destinationDirectoryName: 'repo' } }, context))
-      .toEqual({ kind: 'refused', code: requester === 'foreign' ? 'requester_account_unavailable' : 'requester_authority_unavailable' });
+      .toMatchObject({ kind: 'refused', code: requester === 'foreign' ? 'requester_account_unavailable' : 'requester_authority_unavailable', effectAttempted: false });
     expect(request).not.toHaveBeenCalled();
   });
 
@@ -1283,7 +1593,7 @@ describe('Project Open RPC', () => {
       readCredentials: () => readStoredCredentialsForServerId('srv_test_home'),
     };
     const input = { serverId: 'srv_test_home', machineId: 'machine', source: { kind: 'folder', path: '/not-created' }, materialization: { kind: 'attach' } };
-    expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime)(input)).toEqual({ kind: 'refused', code: 'machine_admission_unavailable' });
+    expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime)(input)).toEqual({ kind: 'refused', code: 'machine_admission_unavailable', effectAttempted: false });
     expect(await register(RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN, runtime)(input)).toEqual({ kind: 'refused', code: 'invalid_materialization' });
   });
 
@@ -1315,50 +1625,181 @@ describe('Project Open RPC', () => {
     expect(post).not.toHaveBeenCalled();
   });
 
-  it('rechecks Source copy authority for a new destination without dereferencing an absent accepted target', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-source-copy-open-'));
+  it('encodes a rolled-back native engine refusal on the SOURCE materialization RPC', async () => {
+    socketIo.mockImplementation((await vi.importActual<typeof import('socket.io-client')>('socket.io-client')).io);
+    const installed = await createInstalledFilesystemMachineFixture();
+    const homeId = installed.homeServerIdentityId;
+    const root = join(installed.directory, 'source-checkout');
+    const targetPath = join(installed.directory, 'target-checkout');
+    await mkdir(root);
+    await writeFile(join(root, 'payload.txt'), 'SOURCE preparation bytes');
+    const workspace = { id: 'source-checkout', serverId: homeId, machineId: 'machine', rootPath: root, createdAtMs: 1 };
+    const key = { kind: 'workspace-ref' as const, serverId: homeId, id: workspace.id };
+    const rows: ProjectAccountRowV1[] = [{ key, revision: 0, content: { t: 'plain', v: { key, value: workspace } } }];
+    const rowsHttp = createProjectAccountRowsHttpBoundary(rows);
+    const admissionHttp = vi.mocked(axios.post).getMockImplementation();
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+      if (url.endsWith('/v1/machines/machine/admission/verify')) {
+        if (!admissionHttp) throw new Error('Missing installed Machine admission HTTP boundary');
+        return admissionHttp(url, body, config);
+      }
+      return rowsHttp(url, body);
+    });
+    let nativeRefused = false;
+    const native = createWorkspaceSyncNativeProcessTestBoundary({ onCommand: async command => {
+      if (command.t === 'resume') {
+        nativeRefused = true;
+        throw new BrokerProtocolError('engine_unavailable', 'External synchronization agent version handshake failed: version mismatch');
+      }
+    } });
+    await readProjectAccountRows({ credentials: installed.bootstrap.credentials, serverId: installed.serverId, publication: 'installed' });
+    const production = await createProductionDaemonWorkspaceSyncRuntime({ happyHomeDir: installed.directory,
+      activeServerDir: configuration.activeServerDir, activeServerId: installed.serverId,
+      homeTarget: await resolveCurrentCliHomeTarget(), localMachineId: 'machine', releaseChannel: 'publicdev',
+      credentials: installed.bootstrap.credentials, isCurrent: async () => installed.isHomeCurrent() }, native.factories);
+    onTestFinished(() => production.stop());
+    const runtime: ProjectOpenRuntime = { serverId: installed.serverId, serverHttpBaseUrl: installed.serverHttpBaseUrl,
+      machineId: 'machine', accountId: 'requester', readCredentials: async () => installed.bootstrap.credentials,
+      workspaceSyncAdapter: production.handoffAdapter };
+    const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
+      machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'requester', machineId: 'machine',
+        installationId: installed.installation.installationId, role: 'manage', encryptionMode: 'plain' },
+      verifyMachineAdmissionCurrent: async () => true };
+    const fields = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const input = { serverId: homeId, machineId: 'machine', source: { kind: 'workspace', workspaceId: workspace.id,
+      checkout: { serverId: homeId, workspaceId: workspace.id, machineId: 'machine', rootPath: root } },
+      materialization: { kind: 'sync', targetPath, workspaceAction: { kind: 'create_relationship', mode: 'keep_synced',
+        contentPolicy: { ...fields, policyDigest: computeWorkspaceSyncPolicyDigest(fields) }, flushBeforeCommit: true } } } satisfies OpenProjectInputV1;
+    const diagnostic = vi.spyOn(logger, 'warnLocalFile');
+    const result = await register(RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN, runtime)(input, context);
+    expect(nativeRefused, JSON.stringify(diagnostic.mock.calls)).toBe(true);
+    // The existing wire result carries the refusal across Machines without Error identity.
+    expect(ProjectOpenSyncMaterializationResultV1Schema.parse(JSON.parse(JSON.stringify(result))))
+      .toEqual({ kind: 'refused', code: 'engine_unavailable' });
+    const graph = rows.find(row => row.key.kind === 'relationship-graph');
+    expect(graph?.content).toMatchObject({ t: 'plain', v: { value: { relationships: [] } } });
+    expect(native.commands.some(command => command.t === 'terminate')).toBe(true);
+  });
+
+  it('finishes an admitted Source copy to a new destination after revocation and refuses the next Open before effects', async () => {
+    const diagnostic = vi.spyOn(logger, 'warnLocalFile');
+    const fixture = await mkdtemp(join(tmpdir(), 'OPEN-TESTS-source-copy-'));
+    const root = join(fixture, 'source');
+    const targetPath = join(fixture, 'target');
+    await mkdir(root);
+    await writeFile(join(root, 'content.txt'), 'admitted Source bytes');
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
     const workspace = { id: 'checkout', serverId: 'srv_test_home', machineId: 'machine', rootPath: root, createdAtMs: 1 };
     const key = { kind: 'workspace-ref' as const, serverId: 'srv_test_home', id: workspace.id };
-    const source: ProjectSourceV1 = { id: 'source', revision: 9, name: 'Repository', createdByAccountId: 'account', audience: [],
+    const source = { id: 'source', revision: 9, name: 'Repository', createdByAccountId: 'account', audience: [],
       repository: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://forge.example' },
-        repository: { nameWithOwner: 'group/repo' }, protocol: 'https' } };
+        repository: { nameWithOwner: 'group/repo' }, protocol: 'https' } } satisfies ProjectSourceV1;
     let current = true;
+    let admissionReads = 0;
+    let copies = 0;
+    let mutations = 0;
     vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { ok: true, source, canManage: true } });
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       const response = await plainMachineRead(url);
       if (url.includes('/v1/machines/machine')) current = false;
       return response;
     });
-    const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { status: 'listed', coverage: 'complete',
-      rows: [{ key, revision: 0, content: { t: 'plain', v: { key, value: workspace } } }] } });
-    // Mutagen/process effects are the external boundary. The Sync controller,
-    // handoff adapter and root custody remain real and must never reach it.
-    const noEffect = async (): Promise<never> => { throw new Error('Retired copy must not launch a process or mutate bytes'); };
+    const rows: ProjectAccountRowV1[] = [{ key, revision: 0, content: { t: 'plain', v: { key, value: workspace } } }];
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (url.endsWith('/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
+      if (url.endsWith('/read')) return projectAccountRowReadResponse(rows, body);
+      const request = ProjectAccountRowMutationRequestV1Schema.parse(body);
+      const changed = request.mutations.map(mutation => ({ key: mutation.key,
+        revision: mutation.expectedRevision === 'absent' ? 0 : mutation.expectedRevision + 1, content: mutation.content }));
+      for (const row of changed) {
+        const index = rows.findIndex(existing => JSON.stringify(existing.key) === JSON.stringify(row.key));
+        if (index < 0) rows.push(row); else rows[index] = row;
+      }
+      mutations += 1;
+      return { status: 200, data: { status: 'updated', rows: changed, cursor: mutations } };
+    });
+    const credentials = { token, encryption: null };
+    const accountRows = { credentials, serverId: 'srv_test_home' };
+    const readSnapshot = () => readProjectAccountRows({ ...accountRows,
+      selection: { kinds: ['workspace-ref', 'relationship-graph'] } });
+    const resolveWorkspaceRef = async (id: string) => {
+      const snapshot = await readSnapshot();
+      const resolved = resolveWorkspaceRefV1(snapshot.workspaceRefs, { serverId: 'srv_test_home', id });
+      return resolved.kind === 'resolved' ? resolved.ref : null;
+    };
+    const rootOwnershipManager = createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'locks') });
+    let native: MutagenSessionSummaryV1 | null = null;
+    // Only the external Mutagen command transport is simulated. The adapter,
+    // controller, endpoint writer and physical target bootstrap remain real.
+    const adapter = createWorkspaceSyncMutagenAdapter({ resolveWorkspaceRef, send: async command => {
+      if (command.t === 'list') return { sessions: native ? [native] : [], nextCursor: null };
+      if (command.t === 'create') {
+        const state = { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 };
+        native = { identifier: 'OPEN-TESTS-native-copy', name: command.session.name, labels: command.session.labels,
+          alpha: { protocol: 'external', host: new URL(command.session.alpha).hostname, path: '', state },
+          beta: { protocol: 'external', host: new URL(command.session.beta).hostname, path: '', state },
+          mode: command.session.mode, paused: true, status: 'watching', successfulCycles: 0, conflictCount: 0 };
+      } else if (command.t === 'resume' && native) native = { ...native, paused: false };
+      else if (command.t === 'flush' && native) {
+        await copyFile(join(root, 'content.txt'), join(targetPath, 'content.txt'));
+        copies += 1;
+        native = { ...native, successfulCycles: 1 };
+      } else if (command.t === 'terminate') { native = null; return null; }
+      else throw new Error(`Unexpected native command ${command.t}`);
+      return native;
+    } });
     const sync = new WorkspaceSyncController({ localServerId: 'srv_test_home', localMachineId: 'machine',
-      resolveWorkspaceRef: id => { const resolved = resolveWorkspaceRefV1([workspace], { serverId: 'srv_test_home', id });
-        return resolved.kind === 'resolved' ? resolved.ref : null; },
-      rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(root, 'locks') }),
-      lifecycle: { start: noEffect, stop: noEffect }, adapter: { discoverCopyOnceRecoveries: noEffect, rehydrate: noEffect,
-        ensure: noEffect, copyOnce: noEffect, get: noEffect, list: noEffect, flush: noEffect, pause: noEffect,
-        resume: noEffect, terminate: noEffect, listConflicts: noEffect, diagnoseSelection: noEffect } });
+      resolveWorkspaceRef, rootOwnershipManager, adapter,
+      lifecycle: { start: async () => undefined, stop: async () => undefined } });
+    const unusedRelationshipOperation = async (): Promise<never> => { throw new Error('Copy must not create a relationship'); };
+    const relationshipOwner = createWorkspaceSyncRelationshipOwner({ localMachineId: 'machine',
+      readProjectSnapshot: readSnapshot, mutateProjectSnapshot: createProjectAccountSnapshotMutation(accountRows),
+      // Dynamic fixture resolvers consume acknowledged Home rows directly.
+      waitForProjectReconciliation: async () => {
+        expect((await readSnapshot()).workspaceRefs).toEqual(expect.arrayContaining([expect.objectContaining({ rootPath: targetPath })]));
+      }, ensureRelationship: unusedRelationshipOperation,
+      flushRelationship: unusedRelationshipOperation, commitRelationshipTarget: unusedRelationshipOperation,
+      terminateRelationshipRuntime: unusedRelationshipOperation });
+    const handoff = createWorkspaceSyncHandoffAdapter({ sync, relationshipOwner, bootstrap: async input => {
+      if (input.action.kind !== 'copy_once' || !input.targetWorkspaceRefId) throw new Error('Copy endpoint unavailable');
+      const target = await workspaceSyncTargetBootstrap({ rootPath: input.targetRootPath, sourceRootPath: input.sourceRootPath,
+        relationshipId: input.operationId, endpointRole: 'beta', targetWorkspaceRefId: input.targetWorkspaceRefId,
+        policyDigest: input.action.contentPolicy.policyDigest, contentSelection: 'all_files',
+        materializationDirectory: join(fixture, 'materialization'), rootOwnershipManager,
+        createIfMissing: true, targetBootstrap: 'materialize_from_source_workspace' });
+      return { ownershipHandles: target.ownershipHandles, release: async reason => {
+        if (reason === 'commit') await target.publishReady();
+        await target.release();
+      } };
+    } });
     const runtime: ProjectOpenRuntime = { serverId: 'srv_test_home', serverHttpBaseUrl: 'https://home.example', machineId: 'machine', accountId: 'account',
-      readCredentials: async () => ({ token, encryption: null }), workspaceSyncAdapter: createWorkspaceSyncHandoffAdapter({ sync, bootstrap: noEffect }) };
+      readCredentials: async () => credentials, workspaceSyncAdapter: handoff };
     const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
       machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account', machineId: 'machine', installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
-      verifyMachineAdmissionCurrent: async () => current };
+      verifyMachineAdmissionCurrent: async () => { admissionReads += 1; return current; } };
     const fields = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
-    const targetPath = join(root, 'not-created');
+    const input = { serverId: 'srv_test_home', machineId: 'machine',
+      source: { kind: 'source' as const, id: source.id, revision: 9, selector: source.repository,
+        checkout: { serverId: 'srv_test_home', workspaceId: workspace.id, machineId: 'machine', rootPath: root } },
+      materialization: { kind: 'sync' as const, targetPath, workspaceAction: { kind: 'copy_once' as const,
+        contentPolicy: { ...fields, policyDigest: computeWorkspaceSyncPolicyDigest(fields) } } } };
+    const handler = register(RPC_METHODS.PROJECTS_OPEN, runtime);
     try {
-      expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime)({ serverId: 'srv_test_home', machineId: 'machine',
-        source: { kind: 'source', id: source.id, revision: 1, selector: source.repository,
-          checkout: { serverId: 'srv_test_home', workspaceId: workspace.id, machineId: 'machine', rootPath: root } },
-        materialization: { kind: 'sync', targetPath, workspaceAction: { kind: 'copy_once',
-          contentPolicy: { ...fields, policyDigest: computeWorkspaceSyncPolicyDigest(fields) } } },
-      }, context)).toEqual({ kind: 'refused', code: 'machine_access_denied' });
-      expect(post.mock.calls.every(([url]) => url.endsWith('/list'))).toBe(true);
-      await expect(access(targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
-    } finally { await rm(root, { recursive: true, force: true }); }
+      const opened = await handler(input, context);
+      expect(opened, JSON.stringify(diagnostic.mock.calls)).toMatchObject({ kind: 'opened', directory: targetPath,
+        workspace: { serverId: 'srv_test_home', machineId: 'machine', rootPath: targetPath } });
+      expect(current).toBe(false);
+      expect(admissionReads).toBe(1);
+      expect(copies).toBe(1);
+      expect(await readFile(join(targetPath, 'content.txt'), 'utf8')).toBe('admitted Source bytes');
+      const writesBeforeRefusal = mutations;
+      post.mockClear();
+      expect(await handler(input, context)).toEqual({ kind: 'refused', code: 'machine_access_denied', effectAttempted: false });
+      expect(admissionReads).toBe(2);
+      expect(post).not.toHaveBeenCalled();
+      expect(copies).toBe(1);
+      expect(mutations).toBe(writesBeforeRefusal);
+    } finally { await sync.shutdown(); await rm(fixture, { recursive: true, force: true }); }
   });
 
   it('reauthorizes Source selection on the private copy host before Sync effects', async () => {
@@ -1383,24 +1824,31 @@ describe('Project Open RPC', () => {
     expect(post).not.toHaveBeenCalled();
   });
 
-  it('reports known cancellation when final Home verification aborts before checkout effects', async () => {
+  it('reports known cancellation when the caller aborts during the Home read before checkout effects', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'OPEN-TESTS-cancel-'));
+    const targetPath = join(root, 'not-created');
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
     const controller = new AbortController();
-    let snapshotRead = false;
     vi.spyOn(axios, 'get').mockImplementation(plainMachineRead);
-    const post = vi.spyOn(axios, 'post').mockImplementation(async () => {
-      snapshotRead = true;
+    const post = vi.spyOn(axios, 'post').mockImplementation(async url => {
+      if (!url.endsWith('/list')) throw new Error('Cancelled Open must not submit Account rows');
+      controller.abort();
       return { status: 200, data: { status: 'listed', coverage: 'complete', rows: [] } };
     });
     const runtime: ProjectOpenRuntime = { serverId: 'srv_test_home', serverHttpBaseUrl: 'https://home.example', machineId: 'machine', accountId: 'account',
       readCredentials: async () => ({ token, encryption: null }) };
     const context: RpcHandlerContext = { signal: controller.signal, callerAuthority: 'present_user',
       machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account', machineId: 'machine', installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
-      verifyMachineAdmissionCurrent: async () => { if (snapshotRead) controller.abort(); return !controller.signal.aborted; } };
-    expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime)({ serverId: 'srv_test_home', machineId: 'machine',
-      source: { kind: 'folder', path: '/not-created' }, materialization: { kind: 'worktree',
-        checkout: { kind: 'git_worktree', displayName: 'feature', baseRef: null } } }, context))
-      .toEqual({ kind: 'refused', code: 'cancelled' });
-    expect(post.mock.calls.every(([url]) => url.endsWith('/list'))).toBe(true);
+      verifyMachineAdmissionCurrent: async () => true };
+    try {
+      expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime)({ serverId: 'srv_test_home', machineId: 'machine',
+        source: { kind: 'folder', path: root }, materialization: { kind: 'worktree', targetPath,
+          checkout: { kind: 'git_worktree', displayName: 'feature', baseRef: null } } }, context))
+        .toEqual({ kind: 'refused', code: 'cancelled', effectAttempted: false });
+      expect(controller.signal.aborted).toBe(true);
+      expect(post.mock.calls.every(([url]) => url.endsWith('/list'))).toBe(true);
+      expect(post).toHaveBeenCalledOnce();
+      await expect(access(targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 });

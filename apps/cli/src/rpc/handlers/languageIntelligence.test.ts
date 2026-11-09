@@ -1,32 +1,74 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm, symlink, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
-import type { Machine } from '@/api/types';
-import { ApiMachineClient } from '@/api/apiMachine';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DaemonLspQueryResponseSchema, DaemonLspRestartResponseSchema, DaemonLspSyncResponseSchema, DaemonLspWatchResponseSchema } from '@happier-dev/protocol/machines/languageIntelligence';
 import { registerSessionHandlers } from './registerSessionHandlers';
 import { registerLanguageIntelligenceHandlers } from './languageIntelligence';
-import { createLanguageServerHost } from '@/lsp/languageServerHost';
+import { configureLanguageServerHost, createLanguageServerHost, disposeLanguageServerHost, readLanguageServerProcessRoots,
+  type LanguageServerHostOptions } from '@/lsp/languageServerHost';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
+import type { PluginProtocolClientHandle } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
-import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
-import { configuration } from '@/configuration';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
-import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/socketRpc';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createFilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
+import { createInstalledFilesystemMachineFixture } from '@/daemon/testkit/installedFilesystemMachineFixture';
 
 describe('language intelligence registered Machine transport', () => {
   const roots: string[] = [];
   afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
+
+  it('settles the registered LSP watch after its finite 25 second window', async () => {
+    vi.useFakeTimers();
+    const rootPath = await mkdtemp(join(tmpdir(), 'happier-lsp-finite-watch-'));
+    roots.push(rootPath);
+    const host = createLanguageServerHost({ readCurrentContributionRegistry: () => null });
+    const handlers = new Map<string, RpcHandler>();
+    registerLanguageIntelligenceHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, rootPath, { host });
+    const watch = handlers.get(RPC_METHODS.DAEMON_LSP_WATCH)!;
+    try {
+      const initial = DaemonLspWatchResponseSchema.parse(await watch({ rootPath }));
+      if (initial.status !== 'ok') throw new Error('Missing initial LSP watch snapshot');
+      let settled = false;
+      const pending = Promise.resolve(watch({ rootPath, sinceRevision: initial.revision })).then(response => {
+        settled = true;
+        return DaemonLspWatchResponseSchema.parse(response);
+      });
+      await vi.advanceTimersByTimeAsync(24_999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await pending).toMatchObject({ status: 'ok', revision: initial.revision });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { await host.dispose(); vi.useRealTimers(); }
+  });
+
+  it('preserves the filesystem admission cause through every strict LSP response reader', async () => {
+    const handlers = new Map<string, RpcHandler>();
+    registerLanguageIntelligenceHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, '/workspace', {
+      effectAdmission: createFilesystemEffectAdmission(),
+    });
+    for (const [method, schema] of [
+      [RPC_METHODS.DAEMON_LSP_SYNC, DaemonLspSyncResponseSchema],
+      [RPC_METHODS.DAEMON_LSP_QUERY, DaemonLspQueryResponseSchema],
+      [RPC_METHODS.DAEMON_LSP_WATCH, DaemonLspWatchResponseSchema],
+      [RPC_METHODS.DAEMON_LSP_RESTART, DaemonLspRestartResponseSchema],
+    ] as const) {
+      const response = await handlers.get(method)!({ rootPath: '/workspace' });
+      expect(schema.parse(response)).toMatchObject({ status: 'error', errorCode: 'filesystem_identity_custody_unavailable',
+        details: { reason: 'requester_identity_unavailable' } });
+    }
+  });
 
   async function fixture() {
     const rootPath = await mkdtemp(join(tmpdir(), 'happier-lsp-rpc-'));
@@ -108,55 +150,38 @@ describe('language intelligence registered Machine transport', () => {
   });
 
   it('settles admitted language mutations through the credentialed CLI factories and native guarded writer', async () => {
-    await withConfiguredDaemonTestHome({ prefix: 'happier-lsp-native-action-' }, async () => {
-      const rootPath = await mkdtemp(join(tmpdir(), 'happier-lsp-native-action-'));
-      roots.push(rootPath);
+      const f = await createInstalledFilesystemMachineFixture();
+      const rootPath = join(f.directory, 'workspace');
+      await mkdir(rootPath);
       await writeFile(join(rootPath, 'a.ts'), 'old');
-      const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
-      const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
-      const client = new ApiMachineClient(token, { id: 'machine', encryptionKey: new Uint8Array(32).fill(7),
-        encryptionVariant: 'legacy', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+      const credentials = f.bootstrap.credentials;
+      const client = f.machine;
       const nativeEffect = {
-        languageIntelligenceApply: client.createLanguageIntelligenceApplyActionExecutor(configuration.activeServerId),
+        languageIntelligenceApply: client.createLanguageIntelligenceApplyActionExecutor(f.serverId),
       } satisfies Pick<ActionExecutorDeps, 'languageIntelligenceApply'>;
       const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
-        'code.rename.apply': ['ui'], 'code.file.rename.apply': ['ui'], 'code.codeAction.apply': ['ui'],
+        'code.rename.apply': ['rpc'], 'code.file.rename.apply': ['rpc'], 'code.codeAction.apply': ['rpc'],
       } });
       const accountSettings = accountSettingsParse({ actionsSettingsV1: actionsSettings });
       const executor = createCliActionExecutorFromCredentials({ credentials, ...nativeEffect,
         readCredentials: async () => credentials,
-        serverId: configuration.activeServerId, serverApiUrl: 'http://127.0.0.1:1',
+        serverId: f.serverId, serverApiUrl: f.serverHttpBaseUrl,
         actionsSettingsProvider: { getActionsSettings: () => actionsSettings, getAccountSettings: () => accountSettings },
         machineActionDirectTargetTransport: { machineId: 'machine', invoke: client.invokeLocalMachineAction.bind(client) },
       });
       client.setRPCHandlers({ spawnSession: async () => ({ type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: 'unused' }),
         stopSession: async () => true, requestShutdown: () => {} }, { externalActionIngressOwner: {
-        currentServerId: configuration.activeServerId, executor, resolveTarget: async () => ({ kind: 'machine', machineId: 'machine' }),
+        currentServerId: f.serverId, executor, resolveTarget: async () => ({ kind: 'machine', machineId: 'machine' }),
       } });
-      const controller = new AbortController();
-      const invoke = (method: string, request: unknown) => client.invokeLocalMachineAction(method,
-        createTargetedActionRpcRequestV1(request, { kind: 'machine', machineId: 'machine' }),
-        { signal: controller.signal, localActionContext: { surface: 'ui', authority: 'present_user' },
-          // The authenticated Home ingress is the boundary fixture. Action input
-          // cannot supply this requester identity; all dispatch/effects stay real.
-          rpcContext: { machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: 'owner',
-            custodianAccountId: 'owner', machineId: 'machine', installationId: '11111111-1111-4111-8111-111111111111',
-            role: 'manage', encryptionMode: 'plain' }) },
-        });
+      const invoke = (method: string, request: unknown) => f.invoke(method,
+        createTargetedActionRpcRequestV1(request, { kind: 'machine', machineId: 'machine' }));
       const hash = (text: string) => createHash('sha256').update(text).digest('hex');
       const file = { path: 'a.ts', expectedHash: hash('old'), edits: [
         { range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } }, text: 'next' },
       ] };
-      let pending: Promise<unknown> | undefined;
       try {
-        let outcome: unknown;
-        pending = invoke(RPC_METHODS.DAEMON_LSP_RENAME_APPLY, { rootPath, path: 'a.ts', operation: { kind: 'rename', files: [file] } })
-          .then(result => { outcome = result; });
-        // Observe settlement before awaiting the request, so a recursive self-RPC
-        // fails as an unresolved Action and can still be cancelled in cleanup.
-        await vi.waitFor(() => expect(outcome, `Native apply outcome: ${JSON.stringify(outcome)}`)
-          .toMatchObject({ ok: true, results: [{ status: 'replaced' }] }));
-        await pending;
+        expect(await invoke(RPC_METHODS.DAEMON_LSP_RENAME_APPLY, { rootPath, path: 'a.ts', operation: { kind: 'rename', files: [file] } }))
+          .toMatchObject({ ok: true, results: [{ status: 'replaced' }] });
         expect(await readFile(join(rootPath, 'a.ts'), 'utf8')).toBe('next');
         expect(await invoke(RPC_METHODS.DAEMON_LSP_FILE_RENAME_APPLY, { rootPath, path: 'a.ts', operation: { kind: 'fileRename',
           files: [{ path: 'a.ts', expectedHash: hash('next'), edits: [], renameTo: 'moved.ts' }],
@@ -167,12 +192,58 @@ describe('language intelligence registered Machine transport', () => {
             range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } }, files: [] },
         } })).toMatchObject({ status: 'error', errorCode: 'stale_query' });
         expect(await readFile(join(rootPath, 'moved.ts'), 'utf8')).toBe('next');
-      } finally {
-        controller.abort();
-        try { await pending; }
-        finally { await client.shutdown(); }
-      }
-    });
+
+        // The preview host obtains the real opaque code Action. Applying it
+        // starts a new native server through the credentialed Action factory.
+        await disposeLanguageServerHost();
+        await writeFile(join(rootPath, 'b.ts'), 'old');
+        const registry = createResolvedContributionRegistry({ languageServers: [{
+          provenance: 'external', source: { kind: 'path' }, pluginId: 'fixture.language',
+          identity: { pluginId: 'fixture.language', localId: 'language' }, manifestPath: join(rootPath, 'plugin.json'),
+          definition: { id: 'language', title: 'Fixture language', languageIds: { typescript: 'typescript' },
+            executable: { kind: 'systemTool', id: 'native' }, args: [] },
+        }] });
+        let holdApply = false;
+        let actionHandle: PluginProtocolClientHandle<'jsonRpc'> | undefined;
+        const nativeLog = join(rootPath, 'lsp-action.jsonl');
+        const hostOptions = { readCurrentContributionRegistry: () => registry, async openProtocol(input) {
+          const exec = createStablePluginExecService({ signal: input.signal, processOwner: input.processOwner,
+            isOccurrenceCurrent: () => !input.signal.aborted,
+            resolveExecutable: async () => ({ command: process.execPath, args: [resolve('src/lsp/__fixtures__/languageServer.cjs'),
+              nativeLog, JSON.stringify({ semanticEdits: true,
+                ...(holdApply ? { delayMethod: 'textDocument/codeAction' } : {}) })] }),
+            resolvePath: async () => rootPath });
+          actionHandle = await exec.clients.spawn({ kind: 'jsonRpc', framing: 'contentLength', cancellationMethod: '$/cancelRequest',
+            launch: { executable: input.definition.executable, cwd: rootPath } });
+          return actionHandle;
+        } } satisfies LanguageServerHostOptions;
+        const preview = createLanguageServerHost(hostOptions);
+        let queried: Awaited<ReturnType<typeof preview.query>>;
+        try {
+          queried = await preview.query({ rootPath, path: 'moved.ts', kind: 'codeActions',
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } } });
+        } finally { await preview.dispose(); }
+        if (queried.status !== 'ok' || queried.kind !== 'codeActions' || !queried.actions[0]) throw new Error('Native code Action unavailable');
+        await writeFile(nativeLog, '');
+        holdApply = true;
+        configureLanguageServerHost(hostOptions);
+        const applying = invoke(RPC_METHODS.DAEMON_LSP_CODE_ACTION_APPLY, { rootPath, path: 'moved.ts', operation: {
+          kind: 'codeAction', expectedHash: hash('next'), action: queried.actions[0],
+        } });
+        try {
+          await vi.waitFor(async () => expect(await readFile(nativeLog, 'utf8')).toContain('textDocument/codeAction'));
+          expect(readLanguageServerProcessRoots()).toContainEqual(expect.objectContaining({ requesterWorkAttributionV1: {
+            serverId: f.homeServerIdentityId, accountId: 'requester', machineId: f.machineId,
+            installationId: f.installation.installationId,
+          } }));
+        } finally {
+          await actionHandle?.client.notify('fixture/release', { method: 'textDocument/codeAction' });
+          await applying;
+        }
+        expect(await applying).toMatchObject({ ok: true, results: [{ path: 'b.ts', status: 'replaced' }] });
+        expect(await readFile(join(rootPath, 'b.ts'), 'utf8')).toBe('fixed');
+        expect(readLanguageServerProcessRoots()).toEqual([]);
+      } finally { await disposeLanguageServerHost(); await client.shutdown(); }
   });
 
   it('exposes typed no-server behavior through the transport and real process host', async () => {
@@ -189,19 +260,11 @@ describe('language intelligence registered Machine transport', () => {
   });
 
   it('serves LSP on the Machine ingress but never installs it on a foreground Session', async () => {
-    const rootPath = await mkdtemp(join(tmpdir(), 'happier-lsp-machine-rpc-'));
-    roots.push(rootPath);
-    const previousWorkingDirectory = process.env.HAPPIER_MACHINE_RPC_WORKING_DIRECTORY;
-    const machine: Machine = {
-      id: 'machine-lsp-test', encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'legacy',
-      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
-    };
+    const f = await createInstalledFilesystemMachineFixture();
+    const rootPath = f.directory;
     const session = new RpcHandlerManager({ scopePrefix: 'session-lsp-test', encryptionMode: 'plain' });
     const registration = registerSessionHandlers(session, rootPath, { sessionId: 'session-lsp-test' });
-    let client: ApiMachineClient | undefined;
     try {
-      process.env.HAPPIER_MACHINE_RPC_WORKING_DIRECTORY = rootPath;
-      client = new ApiMachineClient('test-token', machine);
       const requests = [
         [RPC_METHODS.DAEMON_LSP_SYNC, { rootPath,
           op: { op: 'open', path: 'file.p7-no-server', languageId: 'p7-no-server', version: 0, text: '', unsaved: false } }],
@@ -209,7 +272,7 @@ describe('language intelligence registered Machine transport', () => {
         [RPC_METHODS.DAEMON_LSP_WATCH, { rootPath }],
         [RPC_METHODS.DAEMON_LSP_RESTART, { rootPath }],
       ] as const;
-      const rpc = { invokeLocal: client.invokeLocalMachineAction.bind(client) };
+      const rpc = { invokeLocal: f.invoke };
       expect(DaemonLspSyncResponseSchema.parse(await rpc.invokeLocal(...requests[0])))
         .toEqual({ status: 'unavailable', reason: 'no_capable_server' });
       expect(DaemonLspQueryResponseSchema.parse(await rpc.invokeLocal(...requests[1])))
@@ -222,10 +285,8 @@ describe('language intelligence registered Machine transport', () => {
         expect(await session.invokeLocal(method, request)).toMatchObject({ errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
       }
     } finally {
-      await client?.shutdown();
+      await f.machine.shutdown();
       await registration.dispose();
-      if (previousWorkingDirectory === undefined) delete process.env.HAPPIER_MACHINE_RPC_WORKING_DIRECTORY;
-      else process.env.HAPPIER_MACHINE_RPC_WORKING_DIRECTORY = previousWorkingDirectory;
     }
   });
 

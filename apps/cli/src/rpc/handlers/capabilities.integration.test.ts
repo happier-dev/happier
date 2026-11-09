@@ -141,6 +141,7 @@ describe('createCliCapabilitiesService installable dependencies', () => {
         vi.doUnmock('@/agent/catalog/registry');
         vi.doUnmock('@/capabilities/probes/resolvePreflightSessionControlsProbeAdapter');
         vi.doUnmock('@/plugins/projection/registry/createResolvedContributionRegistry');
+        vi.doUnmock('@/plugins/projection/registry/builtIn/snapshot');
         vi.resetModules();
     });
 
@@ -163,7 +164,7 @@ describe('createCliCapabilitiesService installable dependencies', () => {
         vi.doMock('@/capabilities/probes/resolvePreflightSessionControlsProbeAdapter', () => ({
             resolvePreflightSessionControlsProbeAdapter: async () => null,
         }));
-        vi.doMock('@/plugins/projection/registry/createResolvedContributionRegistry', () => {
+        vi.doMock('@/plugins/projection/registry/builtIn/snapshot', () => {
             const agent = Object.freeze({
                 id: 'acmeExternal',
                 provenance: 'external',
@@ -178,9 +179,13 @@ describe('createCliCapabilitiesService installable dependencies', () => {
             });
             return {
                 getResolvedContributionRegistry: () => registry,
-                resolveMergedContributionRegistry: async () => registry,
             };
         });
+        vi.doMock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
+            resolveMergedContributionRegistry: async () => (
+                await import('@/plugins/projection/registry/builtIn/snapshot')
+            ).getResolvedContributionRegistry(),
+        }));
 
         const { createCliCapabilitiesService: createService } = await import('./capabilities');
         const service = await createService({ readPluginCatalog: async () => [] });

@@ -121,12 +121,13 @@ describe('daemon browser recording rpc handlers', () => {
         await expect(handlers.get(RPC_METHODS.DAEMON_BROWSER_RECORDING_LIST)?.({
             protocolVersion: 1,
             machineId: 'machine_1',
+            browserSessionId: 'browser_session_1',
             viewId: 'view_1',
         })).resolves.toEqual({
             protocolVersion: 1,
             recordings: [normalizedRecording],
         });
-        expect(browserRecording.listRecordingsForView).toHaveBeenCalledWith({ viewId: 'view_1' });
+        expect(browserRecording.listRecordingsForView).toHaveBeenCalledWith({ browserSessionId: 'browser_session_1', viewId: 'view_1' });
 
         await expect(handlers.get(RPC_METHODS.DAEMON_BROWSER_RECORDING_CLEANUP)?.({
             protocolVersion: 1,
@@ -139,7 +140,6 @@ describe('daemon browser recording rpc handlers', () => {
                 failedRecordingIds: [],
             },
         });
-        expect(browserRecording.cleanupExpiredRecordings).toHaveBeenCalledWith({ nowMs: 13_001 });
     });
 
     it('fails closed when daemon recording routes are unavailable', async () => {

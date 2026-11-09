@@ -10,6 +10,9 @@ import { createCliActionExecutor } from '@/session/actions/createCliActionExecut
 import { createCliActionExecutorFromCredentials, type CliActionMachineAdmissionTransport } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { registerSessionSpawnNewRpcHandlers } from './sessionLifecycle';
+import { createMachineSessionDirectTargetTransport } from './sessionServerStartLifecycleAdapter';
+import { createSpawnNewSessionLifecycleActionHandler } from '@/session/actions/lifecycle/createSpawnNewSessionLifecycleActionHandler';
+import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { cmdSessionCreate } from '@/cli/commands/session/create';
 import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
@@ -148,6 +151,86 @@ describe('daemon RPC to protected Session input admission composition', () => {
       connectedServices: { v: 2, bindingsByServiceId: {} }, initialInput: { text: 'first protected prompt' },
     });
   }
+
+  it.each([
+    { requester: 'owner', currentness: 'current' },
+    { requester: 'owner', currentness: 'withdrawn' },
+    { requester: 'member', currentness: 'current' },
+  ] as const)('retains original $requester Machine admission through public Team Session creation ($currentness at launch)', async ({ requester, currentness }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-spawn-requester-seam-'));
+    const launched: SpawnSessionOptions[] = [];
+    let admissionCurrent = true;
+    try {
+      release = installDaemonMachineAdmissionTransport({ serverId: configuration.activeServerId, transport });
+      const handlers = new Map<string, RpcHandler>();
+      const lifecycle = createSpawnNewSessionLifecycleActionHandler({
+        serverId: configuration.activeServerId,
+        // OS launch is the boundary. RPC admission, Action execution, creation,
+        // direct transport and lifecycle attribution all use their real owners.
+        spawnSession: async options => {
+          launched.push(options);
+          boundary.fetchSession.mockResolvedValue(createSessionRecordFixture({
+            id: sessionId, active: true, encryptionMode: 'e2ee',
+            metadata: encodeBase64(encrypt(secret, 'legacy', {
+              machineId, permissionMode: 'yolo', sessionCreationCorrespondenceV1: options.sessionCreationCorrespondence,
+            })),
+          }));
+          return { type: 'success', sessionId,
+            sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } };
+        },
+      });
+      registerSessionSpawnNewRpcHandlers({
+        rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
+        sessionSpawnDirectTargetTransport: createMachineSessionDirectTargetTransport({ machineId,
+          spawnLifecycleHandler: async (request, context) => {
+            // Withdraw after real target/creation preparation, immediately before
+            // lifecycle admission: the original verifier must still govern launch.
+            admissionCurrent = currentness === 'current';
+            return await lifecycle(request, context);
+          },
+        }),
+      });
+      const spawn = handlers.get(RPC_METHODS.SESSION_SPAWN_NEW);
+      if (!spawn) throw new Error('Expected public Session creation RPC');
+      const machineAdmission = {
+        actorAccountId: requester === 'owner' ? 'account-admission-test' : 'member-admission-test',
+        custodianAccountId: 'account-admission-test',
+        machineId, installationId: 'installation-admission-test', role: 'manage', encryptionMode: 'e2ee',
+      } as const;
+      const response = await spawn({
+        ...spawnInput(), directory: { kind: 'path', path: directory },
+        primaryTeamId: 'team-admission-test',
+        teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' },
+          resourceId: '11111111-1111-4111-8111-111111111111', expectedResourceRevision: 0,
+          deliveryMode: 'brokered', teamId: 'team-admission-test' }],
+      }, {
+        signal: new AbortController().signal, callerAuthority: 'present_user',
+        machineAdmission, verifyMachineAdmissionCurrent: async () => admissionCurrent,
+      });
+      if (requester === 'member') {
+        expect(response).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+        expect(launched).toEqual([]);
+        expect(admitted).toEqual([]);
+        return;
+      }
+      const result = SessionSpawnNewResultV1Schema.parse(response);
+      if (currentness === 'withdrawn') {
+        expect(result).toMatchObject({ type: 'error', code: 'incompatible_target',
+          incompatibleTarget: { reason: 'daemon_rpc_unavailable' }, retryable: false });
+        expect(launched).toEqual([]);
+        expect(admitted).toEqual([]);
+        return;
+      }
+      expect(result).toMatchObject({ type: 'success', sessionId, initialInput: { status: 'accepted' } });
+      expect(launched).toHaveLength(1);
+      expect(launched[0]).toMatchObject({ requesterWorkAttributionV1: {
+        serverId: configuration.activeServerId, accountId: machineAdmission.actorAccountId,
+        machineId, installationId: machineAdmission.installationId,
+      }, verifyRequesterMachineAdmissionCurrent: expect.any(Function) });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 120_000);
 
   it('settles wrapper startup through canonical readiness, then produces strict success with admitted input', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-spawn-readiness-seam-'));

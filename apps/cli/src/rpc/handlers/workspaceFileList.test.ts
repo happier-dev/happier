@@ -7,10 +7,12 @@ import { promisify } from 'node:util';
 
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { DaemonWorkspaceFileListResponseSchema } from '@happier-dev/protocol/machines/workspaceFiles';
+import { DaemonWorkspaceFileListResponseSchema, DaemonWorkspaceFileSearchResponseSchema } from '@happier-dev/protocol/machines/workspaceFiles';
+import { createFilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { logger } from '@/ui/logger';
 import { registerSessionHandlers } from './registerSessionHandlers';
+import { createInstalledFilesystemMachineFixture } from '@/daemon/testkit/installedFilesystemMachineFixture';
 
 const runRipgrepMock = vi.hoisted(() => vi.fn());
 
@@ -34,6 +36,29 @@ function createHandler(): RpcHandler {
 }
 
 describe('registerWorkspaceFileListHandler', () => {
+    it('retains more than 5000 paths and a corpus above the old tunnel-frame limit', async () => {
+        const paths = Array.from({ length: 6000 }, (_, index) => `src/${String(index).padStart(5, '0')}-${'component'.repeat(8)}.ts`);
+        runRipgrepMock.mockResolvedValue({ exitCode: 0, stdout: `${paths.join('\n')}\n`, stderr: '' });
+        const result = DaemonWorkspaceFileListResponseSchema.parse(await createHandler()({ rootPath: '/repo' }));
+        expect(result).toEqual({ ok: true, paths, truncated: false });
+        expect(Buffer.byteLength(JSON.stringify(result))).toBeGreaterThan(300 * 1024);
+    });
+    it('preserves filesystem admission cause through registered workspace readers without running native search', async () => {
+        const rpc = new RpcHandlerManager({ scopePrefix: 'workspace-reasons', encryptionMode: 'plain' });
+        const registration = registerSessionHandlers(rpc, '/workspace', { filesystemEffectAdmission: createFilesystemEffectAdmission() });
+        try {
+            for (const [method, schema, codeField] of [
+                [RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST, DaemonWorkspaceFileListResponseSchema, 'errorCode'],
+                [RPC_METHODS.DAEMON_WORKSPACE_FILES_SEARCH, DaemonWorkspaceFileSearchResponseSchema, 'code'],
+            ] as const) {
+                const response = schema.parse(await rpc.handleRequest({ method: `workspace-reasons:${method}`,
+                    params: { rootPath: '/workspace', query: 'needle' } }));
+                expect(response).toMatchObject({ ok: false, [codeField]: 'filesystem_identity_custody_unavailable',
+                    details: { reason: 'requester_identity_unavailable' } });
+            }
+            expect(runRipgrepMock).not.toHaveBeenCalled();
+        } finally { await registration.dispose(); }
+    });
     let fixtureRoot: string | undefined;
     let deniedDirectory: string | undefined;
     beforeEach(() => runRipgrepMock.mockReset());
@@ -78,18 +103,15 @@ describe('registerWorkspaceFileListHandler', () => {
         // Assert the consumed filename operation, not a particular native output
         // mode: a framing correction can fix the owner without changing
         // upstream --null buffering. Registration and strict consumer stay real.
-        const rpc = new RpcHandlerManager({ scopePrefix: 'fixture', encryptionMode: 'plain' });
-        const registration = registerSessionHandlers(rpc, fixtureRoot);
+        const machine = await createInstalledFilesystemMachineFixture();
         try {
-            const response = await rpc.handleRequest({
-                method: `fixture:${RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST}`,
-                params: { rootPath: fixtureRoot, query: 'needle', budgetMs: 1_000 },
-            });
+            const response = await machine.invoke(RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST,
+                { rootPath: fixtureRoot, query: 'needle', budgetMs: 1_000 });
             expect(DaemonWorkspaceFileListResponseSchema.parse(response)).toEqual({
                 ok: true, paths: ['needle.txt'], truncated: true,
             });
         } finally {
-            await registration.dispose();
+            await machine.machine.shutdown();
         }
     });
 
@@ -109,20 +131,15 @@ describe('registerWorkspaceFileListHandler', () => {
             runRipgrepMock.mockImplementation(run);
 
             const diagnostics = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
-            const rpc = new RpcHandlerManager({ scopePrefix: 'fixture', encryptionMode: 'plain' });
-            const registration = registerSessionHandlers(rpc, fixtureRoot);
+            const machine = await createInstalledFilesystemMachineFixture();
             try {
-                const readableResponse = await rpc.handleRequest({
-                    method: `fixture:${RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST}`,
-                    params: { rootPath: fixtureRoot, query: 'needle' },
-                });
+                const readableResponse = await machine.invoke(RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST,
+                    { rootPath: fixtureRoot, query: 'needle' });
                 expect(DaemonWorkspaceFileListResponseSchema.parse(readableResponse)).toEqual({
                     ok: true, paths: ['needle.txt'], truncated: true,
                 });
-                const response = await rpc.handleRequest({
-                    method: `fixture:${RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST}`,
-                    params: { rootPath: fixtureRoot, query: 'absent' },
-                });
+                const response = await machine.invoke(RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST,
+                    { rootPath: fixtureRoot, query: 'absent' });
                 expect(DaemonWorkspaceFileListResponseSchema.parse(response)).toEqual({
                     ok: true, paths: [], truncated: true,
                 });
@@ -131,7 +148,7 @@ describe('registerWorkspaceFileListHandler', () => {
                 }]);
                 expect(JSON.stringify(diagnostics.mock.calls)).not.toContain(fixtureRoot);
             } finally {
-                await registration.dispose();
+                await machine.machine.shutdown();
                 diagnostics.mockRestore();
             }
         },

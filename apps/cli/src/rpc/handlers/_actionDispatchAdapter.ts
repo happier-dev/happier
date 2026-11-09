@@ -5,9 +5,13 @@ import type { RpcLocalActionContext, RpcHandlerContext } from '@/api/rpc/types';
 import type { SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
 import { WorkspaceSyncSourceContextV1Schema } from '@happier-dev/protocol/socketRpc';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
-import { readProjectServiceMoveChildEffectV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
 import type { VerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import type { ActionOperationCancellation } from '@/daemon/actionOperations/actionOperationTypes';
+import type { ExternalSessionOperationAccountAdmission } from '@/session/actions/externalSessions/operationRecordStore';
+import { admitExternalActionRequesterInvocationAttributionV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 type CliActionExecutorParams = Parameters<typeof createCliActionExecutor>[0];
 
@@ -15,7 +19,7 @@ type HostRequesterContext = Pick<RpcHandlerContext, 'machineAdmission' | 'verify
     | 'requesterApprovalDecision'
     | 'requesterSessionBootstrap' | 'sessionActionOrigin' | 'callerInputAuthorization' | 'callerInputConstraints'
     | 'workspaceSyncSourceRouting' | 'workspaceSyncTargetRouting' | 'workspaceSyncSourceWriterTargetRouting' | 'workspaceSyncSeedRouting'
-    | 'originalActionEnvelope' | 'workspaceSyncSourceExecution' | 'deadlineAtMs' | 'requestStartedAtMs'>;
+    | 'originalActionEnvelope' | 'workspaceSyncSourceExecution' | 'deadlineAtMs' | 'requestStartedAtMs' | 'reviewedChildActionContext'>;
 
 export type RpcActionExecutorContext = ActionExecutorContext & HostRequesterContext & Readonly<{
     authenticatedLocalRootCustody?: RpcLocalActionContext['authenticatedLocalRootCustody'];
@@ -23,8 +27,11 @@ export type RpcActionExecutorContext = ActionExecutorContext & HostRequesterCont
     signal?: AbortSignal;
     operationProgress?: NonNullable<RpcLocalActionContext['operationProgress']>;
     operationOwnerUpdate?: NonNullable<RpcLocalActionContext['operationOwnerUpdate']>;
+    operationCancellation?: ActionOperationCancellation;
     requesterWorkAttributionV1?: RpcLocalActionContext['requesterWorkAttributionV1'];
     operationReview?: RpcLocalActionContext['operationReview'];
+    /** In-process external-operation authority; not accepted from RPC input. */
+    externalSessionOperationAdmission?: ExternalSessionOperationAccountAdmission;
 }>;
 
 /** Transport projection of an already admitted Action context; it creates no authority. */
@@ -58,6 +65,8 @@ export type RpcActionDispatchRequest<TActionId extends ActionId = ActionId> = Ho
     signal?: AbortSignal;
     localActionContext?: RpcLocalActionContext;
     callerAuthority?: ActionExecutorContext['authority'];
+    /** Validated targeted-Session envelope after Home Account-owner admission. */
+    transportPluginCaller?: Extract<NonNullable<ActionExecutorContext['actionCaller']>, { kind: 'plugin' }>;
     sessionActionOrigin?: SessionActionRpcOriginV1;
     rpcSessionAuthorization?: ActionExecutorContext['rpcSessionAuthorization'];
     runtimeAccountId?: ActionExecutorContext['runtimeAccountId'];
@@ -75,7 +84,7 @@ function normalizeOptionalString(value: string | null | undefined): string | und
 }
 
 export function buildActionExecutorContextForRpc(
-    params: Pick<RpcActionDispatchRequest, 'defaultSessionId' | 'serverId' | 'externalActionTarget' | 'signal' | 'localActionContext' | 'callerAuthority' | 'sessionActionOrigin' | 'rpcSessionAuthorization' | 'runtimeAccountId' | 'externalActionExecutionAuthorization' | keyof HostRequesterContext>
+    params: Pick<RpcActionDispatchRequest, 'defaultSessionId' | 'serverId' | 'externalActionTarget' | 'signal' | 'localActionContext' | 'callerAuthority' | 'transportPluginCaller' | 'sessionActionOrigin' | 'rpcSessionAuthorization' | 'runtimeAccountId' | 'externalActionExecutionAuthorization' | keyof HostRequesterContext>
         & Partial<Pick<RpcActionDispatchRequest, 'actionId'>>,
 ): RpcActionExecutorContext {
     const defaultSessionId = normalizeOptionalString(params.defaultSessionId);
@@ -92,9 +101,17 @@ export function buildActionExecutorContextForRpc(
     );
     const requesterAuthorization = params.callerInputAuthorization?.requesterAccountProjection
         ? params.callerInputAuthorization : undefined;
+    const externalActionExecutionAuthorization = params.externalActionExecutionAuthorization
+        ?? localActionContext?.externalActionExecutionAuthorization ?? requesterAuthorization;
     const requesterInvocation = requesterAuthorization && !params.sessionActionOrigin
         && !requesterAuthorization.binding.workflowActionOrigin
         ? readRequesterAccountActionContext(requesterAuthorization)?.invocation : undefined;
+    const privateInvocation = readRequesterAccountActionContext(requesterAuthorization)?.invocation;
+    const invocationAttribution = admitExternalActionRequesterInvocationAttributionV1(
+        privateInvocation, requesterAuthorization?.binding, params.transportPluginCaller ?? privateInvocation?.caller);
+    if (!invocationAttribution.ok) {
+        throw new RpcError('forbidden', RPC_ERROR_CODES.FORBIDDEN);
+    }
     const workflowAuthorization = params.callerInputAuthorization;
     const workflowBinding = workflowAuthorization?.binding;
     const workflowOrigin = workflowBinding?.workflowActionOrigin;
@@ -119,16 +136,23 @@ export function buildActionExecutorContextForRpc(
     const workspaceSourceContext = params.workspaceSyncSourceWriterTargetRouting?.source.sourceContext
         ?? params.workspaceSyncSeedRouting?.sourceWriterTarget.source.sourceContext;
     const movePacket = params.workspaceSyncSourceExecution;
-    const admittedMoveChild = (requesterAuthorization?.binding.actionId === 'projects.service.relocate'
-      || requesterAuthorization?.binding.actionId === 'discussion.second_opinion.start'
+    const admittedStopChild = requesterAuthorization && movePacket && params.actionId === 'session.stop'
+        && params.verifyMachineAdmissionCurrent && params.machineAdmission
+        && params.machineAdmission.actorAccountId === requesterAuthorization.binding.accountId
+        && movePacket.method === `${params.machineAdmission.machineId}:${RPC_METHODS.STOP_SESSION}`
+        && movePacket.externalActionExecution.authorization.token === requesterAuthorization.token
+        && isSessionStopChildV1({ rootActionId: requesterAuthorization.binding.actionId,
+            effectActionId: movePacket.externalActionExecution.effectActionId, method: RPC_METHODS.STOP_SESSION,
+            target: movePacket.externalActionExecution.target, params: movePacket.params });
+    const admittedSecondOpinionChild = (requesterAuthorization?.binding.actionId === 'discussion.second_opinion.start'
         && movePacket?.method === `${params.machineAdmission?.machineId}:${RPC_METHODS.SESSION_SPAWN_NEW}`)
         && movePacket?.originalActionEnvelope && params.verifyMachineAdmissionCurrent && params.machineAdmission
         && params.machineAdmission.actorAccountId === requesterAuthorization.binding.accountId
         && movePacket.externalActionExecution.authorization.token === requesterAuthorization.token
-        && params.actionId === (requesterAuthorization.binding.actionId === 'discussion.second_opinion.start' ? 'session.spawn_new'
-            : readProjectServiceMoveChildEffectV1(movePacket.method.slice(movePacket.method.indexOf(':') + 1)));
+        && params.actionId === 'session.spawn_new';
 
     return {
+        ...params.reviewedChildActionContext,
         ...(params.requesterApprovalDecision ? { requesterApprovalDecision: params.requesterApprovalDecision } : {}),
         ...(params.deadlineAtMs === undefined ? {} : { deadlineAtMs: params.deadlineAtMs }),
         ...(params.requestStartedAtMs === undefined ? {} : { requestStartedAtMs: params.requestStartedAtMs }),
@@ -149,8 +173,8 @@ export function buildActionExecutorContextForRpc(
         ...(params.externalActionTarget ? { externalActionTarget: params.externalActionTarget } : {}),
         ...(params.rpcSessionAuthorization ? { rpcSessionAuthorization: params.rpcSessionAuthorization } : {}),
         ...(params.runtimeAccountId ? { runtimeAccountId: params.runtimeAccountId } : {}),
-        ...(params.externalActionExecutionAuthorization
-            ? { externalActionExecutionAuthorization: params.externalActionExecutionAuthorization } : {}),
+        ...(externalActionExecutionAuthorization
+            ? { externalActionExecutionAuthorization } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
         ...(localActionContext?.authenticatedLocalRootCustody
             ? { authenticatedLocalRootCustody: localActionContext.authenticatedLocalRootCustody } : {}),
@@ -195,7 +219,7 @@ export function buildActionExecutorContextForRpc(
             ? { executionRunTargetMachineId: localActionContext.executionRunTargetMachineId }
             : {}),
         surface,
-        ...(admittedMoveChild && params.actionId ? { bypassApprovals: true,
+        ...(admittedSecondOpinionChild && params.actionId ? { bypassApprovals: true,
             presentUserConfirmation: { actionId: params.actionId } } : {}),
         authority: params.callerAuthority ?? localActionContext?.authority ?? 'account_automation',
         // The installed TARGET hop retains the Home-admitted SOURCE ceilings.
@@ -215,6 +239,10 @@ export function buildActionExecutorContextForRpc(
         ...(localActionContext?.actionCaller
             ? { actionCaller: localActionContext.actionCaller }
             : {}),
+        ...(params.transportPluginCaller ? {
+            actionCaller: params.transportPluginCaller,
+            authority: 'account_automation' as const,
+        } : {}),
         ...(hasLocalCallerPermissionMode
             ? { callerPermissionMode: localActionContext?.callerPermissionMode ?? null }
             : {}),
@@ -230,7 +258,8 @@ export function buildActionExecutorContextForRpc(
             actionRequestId: requesterAuthorization.binding.requestId,
             serverId: requesterAuthorization.requesterAccountProjection!.serverId,
             serverIdentityId: requesterAuthorization.binding.serverIdentityId,
-            externalActionTarget: requesterAuthorization.binding.target,
+            externalActionTarget: admittedStopChild && movePacket
+                ? movePacket.externalActionExecution.target : requesterAuthorization.binding.target,
         } : {}),
         ...(requesterAuthorization && !params.sessionActionOrigin ? {
             surface: 'authentication' in requesterAuthorization.binding ? 'ui' as const : 'api' as const,
@@ -245,6 +274,7 @@ export function buildActionExecutorContextForRpc(
             } } : {}),
         } : {}),
         ...(requesterInvocation ? {
+            ...(invocationAttribution.actionRequestAttributionV1 ? { actionRequestAttributionV1: invocationAttribution.actionRequestAttributionV1 } : {}),
             surface: requesterInvocation.surface,
             authority: requesterInvocation.authority === 'account_automation' ? 'account_automation' as const
                 : params.callerAuthority ?? 'account_automation',
@@ -265,8 +295,12 @@ export function buildActionExecutorContextForRpc(
             actionRequestId: params.sessionActionOrigin.requestId,
             callerPermissionMode: params.sessionActionOrigin.callerPermissionMode,
             causalPermissionAuthority: params.sessionActionOrigin.causalPermissionAuthority ?? null,
+            ...(params.sessionActionOrigin.actionRequestAttributionV1
+                ? { actionRequestAttributionV1: params.sessionActionOrigin.actionRequestAttributionV1 } : {}),
             sessionInputSource: { sourceSessionId: params.sessionActionOrigin.caller.sessionId,
-                sourceTurnId: params.sessionActionOrigin.sourceTurnId, via: 'action' as const },
+                sourceTurnId: params.sessionActionOrigin.sourceTurnId,
+                ...(params.sessionActionOrigin.sourceInputId ? { sourceInputId: params.sessionActionOrigin.sourceInputId } : {}),
+                via: 'action' as const },
             ...(params.sessionActionOrigin.workspaceWrites ? { workspaceWrites: params.sessionActionOrigin.workspaceWrites } : {}),
         } : {}),
         ...(workflowAuthorization ? projectExternalActionWorkflowSessionLeafContextV1(workflowAuthorization) : {}),
@@ -285,6 +319,10 @@ export function buildActionExecutorContextForRpc(
             serverIdentityId: workflowBinding.serverIdentityId,
             runtimeAccountId: workflowBinding.accountId,
             defaultSessionId: workflowWitness.runOriginSessionId ?? null,
+        } : {}),
+        ...(params.reviewedChildActionContext ? {
+            // Preserve the issuer's exact credential object across adapter projection.
+            externalActionCredential: params.reviewedChildActionContext.externalActionCredential,
         } : {}),
     };
 }

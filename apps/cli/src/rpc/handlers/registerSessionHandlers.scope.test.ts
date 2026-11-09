@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import * as credentialPersistence from '@/persistence';
 
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import {
@@ -10,6 +11,31 @@ import {
 import { registerSessionHandlers } from './registerSessionHandlers';
 
 describe('shared RPC registration scope', () => {
+    it('serves the mediated pending read at the production Session address without borrowing unauthenticated credentials', async () => {
+        // Credential storage and the incoming RPC are system boundaries; the
+        // production registrar and Action transport admission remain real.
+        const credentials = vi.spyOn(credentialPersistence, 'readStoredCredentials').mockResolvedValue(null);
+        const handlers = new Map<string, RpcHandler>();
+        const registration = registerSessionHandlers({
+            registerHandler(method, handler) { handlers.set(method, handler); },
+        }, process.cwd(), { sessionId: 'session-1' });
+        try {
+            const result = await handlers.get('session.permission.remote.pending.list')?.({
+                kind: 'targeted_action_rpc', v: 1,
+                target: { kind: 'session', sessionId: 'session-1' },
+                pluginCaller: { pluginId: 'happier.channels', contributionLocalId: 'outward-delivery' },
+                input: { sessionId: 'session-1', sourceRef: 'channels:binding:binding-1', sourceRevisionOrEpoch: '1:1' },
+            }, {
+                signal: new AbortController().signal,
+                authorization: { kind: 'session.write', sessionId: 'session-1' },
+            });
+            expect(result).toMatchObject({ ok: false, errorCode: 'not_authenticated' });
+        } finally {
+            await registration.dispose();
+            credentials.mockRestore();
+        }
+    });
+
     it('registers Session-only methods only with a bound Session, preserving common machine methods', async () => {
         const machine = new Map<string, RpcHandler>();
         const session = new Map<string, RpcHandler>();

@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { DaemonPluginUiTargetedContributionsReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema, DaemonPluginUiTargetedContributionsReadResponseSchema, shareDaemonPluginUiTargetedContributionsReadResponse } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
 import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
+import { parseDaemonPluginUiTargetedContributionsReadResponse } from '../../../../ui/sources/sync/api/daemon/daemonContributionRegistryProjectionProtocol';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
@@ -15,6 +17,82 @@ import {
 } from './daemonContributionRegistryProjection';
 
 describe('targeted detail execution origins through admitted runtime publication', () => {
+    it('sends each demanded Surface input contract and contributor snapshot once through the real UI reader', async () => {
+        const fixture = await createAdmittedPluginRuntimeFixture({ runtimeOptions: {
+            resolveCurrentMachineId: () => 'machine-targeted-cost',
+        } });
+        try {
+            const handlers = new Map<string, RpcHandler>();
+            registerDaemonContributionRegistryProjectionHandler({ registerHandler(method, handler) { handlers.set(method, handler); } }, {
+                resolveRuntimeRegistry: async () => fixture.registry,
+                resolveInstalledPackages: async () => { throw new Error('Exact target read must not describe the inventory'); },
+                resolvePluginProjectionExecutionOriginContext: () => ({ serverIdentityId: 'srv_targeted_cost', machineId: 'machine-targeted-cost' }),
+            });
+            const handler = handlers.get(RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ);
+            if (!handler) throw new Error('Expected real targeted-contributions RPC');
+            const raw = await handler({ machineId: 'machine-targeted-cost', pluginId: 'happier.triage' });
+            const response = parseDaemonPluginUiTargetedContributionsReadResponse(raw);
+            if (response?.status !== 'current') throw new Error('Expected current real bundled target');
+            const serialized = JSON.stringify(raw);
+            const schemas = new Map(response.targetedSurfaceMounts.map(mount => [JSON.stringify(mount.inputSchema), mount.inputSchema]));
+            expect(response.targetedSurfaceMounts.length).toBeGreaterThan(1);
+            expect(schemas.size).toBe(1);
+            const schemaBody = JSON.stringify([...schemas.values()][0]);
+            // Cost is unique demanded bodies, independent of the mounted contributor count.
+            expect(serialized.split(schemaBody).length - 1).toBe(1);
+            const ownSnapshot = JSON.stringify(response.targetedContributions);
+            expect(serialized.split(ownSnapshot).length - 1).toBe(1);
+            expect(serialized).not.toContain('happier.voice.local');
+            const inline = { ...response, targetedSurfaceMounts: response.targetedSurfaceMounts };
+            expect(parseDaemonPluginUiTargetedContributionsReadResponse(inline)).toEqual(response);
+            const shared = shareDaemonPluginUiTargetedContributionsReadResponse(response);
+            expect(raw).toEqual(shared);
+            for (const malformed of [
+                { ...shared, targetedSurfaceMountBodies: { ...shared.targetedSurfaceMountBodies, inputContracts: [] } },
+                { ...shared, targetedSurfaceMountBodies: { ...shared.targetedSurfaceMountBodies,
+                    inputContracts: [...shared.targetedSurfaceMountBodies.inputContracts, ...shared.targetedSurfaceMountBodies.inputContracts] } },
+                { ...shared, targetedSurfaceMounts: shared.targetedSurfaceMounts.map((mount, index) => index === 0
+                    ? { ...mount, contributor: { ...mount.contributor, occurrenceId: 'unadmitted-source' } } : mount) },
+            ]) expect(parseDaemonPluginUiTargetedContributionsReadResponse(malformed)).toBeNull();
+            // Match mountedTargetedContributions' complete caller/operation union,
+            // including Actions declared by child callers rather than only the target.
+            const snapshots = [response.targetedContributions,
+                ...response.targetedSurfaceMounts.map(mount => mount.contributorTargetedContributions)];
+            const callers = [...new Map(snapshots.map(snapshot => [snapshot.target.pluginId, snapshot.target])).values()];
+            const callerPluginIds = new Set(callers.map(caller => caller.pluginId));
+            const actions = [...new Map([
+                ...fixture.registry.contributes.actions.filter(action => callerPluginIds.has(action.pluginId)).map(action => action.identity),
+                ...snapshots.flatMap(snapshot => snapshot.points.flatMap(point => point.protocols.flatMap(protocol =>
+                    protocol.contributions.flatMap(contribution => contribution.operations.map(operation => operation.action))))),
+            ].map(action => [buildQualifiedPluginContributionKey(action), action])).values()];
+            const describe = handlers.get(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
+            if (!describe) throw new Error('Expected real mounted Action RPC');
+            const mountedReply = await describe({ machineId: 'machine-targeted-cost', selection: 'mountedActions', callers, actions, locale: 'en' });
+            const mounted = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(mountedReply).projection;
+            expect(Object.keys(mounted.actionsById).sort()).toEqual(actions.map(buildQualifiedPluginContributionKey).sort());
+            expect(Object.keys(mounted.familiesById)).toEqual(['pluginUi']);
+            expect(JSON.stringify(mountedReply)).not.toContain('happier.voice.local');
+            const actionFields: Record<string, number> = {};
+            for (const action of Object.values(mounted.actionsById)) {
+                for (const [field, value] of Object.entries(action)) {
+                    if (value !== undefined) actionFields[field] = (actionFields[field] ?? 0) + Buffer.byteLength(JSON.stringify(value));
+                }
+                expect(action).not.toHaveProperty('inputSchema');
+                expect(action).not.toHaveProperty('resultSchema');
+            }
+            console.info('targeted payload bytes', JSON.stringify({
+                wire: Buffer.byteLength(serialized), inline: Buffer.byteLength(JSON.stringify(inline)),
+                mounts: response.targetedSurfaceMounts.length, schema: Buffer.byteLength(schemaBody),
+                snapshot: Buffer.byteLength(ownSnapshot),
+                mountedActions: { bytes: Buffer.byteLength(JSON.stringify(mountedReply)), callers: callers.length, actions: actions.length, actionFields,
+                    fields: Object.fromEntries(Object.entries(mounted).map(([key, value]) => [key, Buffer.byteLength(JSON.stringify(value))])) },
+            }));
+        } finally {
+            invalidateDaemonContributionRegistryProjectionCache();
+            await fixture.dispose();
+        }
+    }, 120_000);
+
     it('publishes complete external Resource declarations with targeted handles and follows source replacement and withdrawal', async () => {
         const targetId = 'acme.resource-host';
         const contributorId = 'acme.resource-source';
@@ -185,7 +263,7 @@ describe('targeted detail execution origins through admitted runtime publication
             })).then((result) => { independentTarget = result; });
             try {
                 await vi.waitFor(() => {
-                    expect(independentTarget).toEqual(response);
+                    expect(parseDaemonPluginUiTargetedContributionsReadResponse(independentTarget)).toEqual(response);
                 });
             } finally {
                 releaseCatalog();

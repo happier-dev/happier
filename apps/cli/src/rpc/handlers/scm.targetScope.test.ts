@@ -10,6 +10,16 @@ import { createTestRpcManager } from '@/scm/rpc/__tests__/testRpcHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
 describe('registered SCM target scope', () => {
+    it('refuses Agent local dispatch before an arbitrary SCM root while preserving trusted host dispatch', async () => {
+        await withTempDir('scm-local-requester-', async workingDirectory => {
+            const receiver = createTestRpcManager({ workingDirectory, registry: createScmBackendRegistry([]) });
+            await expect(receiver.invokeLocal(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: workingDirectory }, {
+                localActionContext: { authority: 'account_automation' },
+            })).resolves.toMatchObject({ errorCode: 'agent_isolation_unavailable' });
+            await expect(receiver.invokeLocal(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: workingDirectory }))
+                .resolves.toMatchObject({ success: true });
+        });
+    });
     it('refuses a misbound envelope and a Machine-denied or project-escaping root before dispatch, preserving valid and raw defaults', async () => {
         await withTempDir('scm-target-scope-', async directory => {
             const machineId = 'scm-scope-machine';

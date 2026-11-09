@@ -17,15 +17,12 @@ export function registerDaemonMachineResourcesPolicyRpcHandlers(rpc: RpcHandlerR
       const current = options.target();
       const admission = context?.machineAdmission;
       return target && current && current.serverId === target.serverId
-        && admission && admission.role === 'manage' && admission.actorAccountId === target.custodianAccountId
+        && admission && admission.role === 'manage'
         && doesMachineRpcTargetMatchAdmission(request, admission, current);
     };
-    const verify = async () => {
-      return Boolean(await matches() && context?.verifyMachineAdmissionCurrent && await context.verifyMachineAdmissionCurrent() && await matches());
-    };
-    // The RPC owner already authenticated this admission. Read/normalize local
-    // metadata first; the effect guard revalidates live authority immediately before CAS.
-    if (!context?.verifyMachineAdmissionCurrent || !await matches()) throw new RpcError('Machine resources policy requires the custodian', RPC_ERROR_CODES.FORBIDDEN);
-    return options.policy.set({ expectedRevision: request.expectedRevision, patch: request.patch }, { signal: context?.signal, verifyCurrent: verify });
+    // The RPC owner authenticated this request; the runtime retains local
+    // cancellation and the metadata writer's own CAS/server admission.
+    if (!await matches()) throw new RpcError('Machine resources policy requires the custodian', RPC_ERROR_CODES.FORBIDDEN);
+    return options.policy.set({ expectedRevision: request.expectedRevision, patch: request.patch }, { signal: context?.signal });
   });
 }

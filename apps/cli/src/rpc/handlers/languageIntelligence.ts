@@ -11,6 +11,8 @@ import { authorizeFilesystemPath } from './fileSystem/accessPolicy/filesystemPat
 import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
 import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { createProviderInlineSuggestionQuery, type ProviderInlineSuggestionDependencies } from '@/providers/inlineSuggestions';
+import { createFilesystemEffectRpcRegistrar, type FilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
 
 type TransportFailure = Readonly<{ status: 'error'; errorCode: 'invalid_request' | 'path_not_allowed' | 'cancelled' | 'request_failed' }>;
 
@@ -18,16 +20,23 @@ type TransportFailure = Readonly<{ status: 'error'; errorCode: 'invalid_request'
 export function registerLanguageIntelligenceHandlers(
   registrar: RpcHandlerRegistrar,
   workingDirectory: string,
-  options?: Readonly<{ accessPolicy?: FilesystemAccessPolicy; host?: LanguageServerHost; machineId?: string; serverId?: string; resolveActionExecutor?: () => RpcActionExecutor | null }>,
+  options?: Readonly<{ accessPolicy?: FilesystemAccessPolicy; host?: LanguageServerHost; machineId?: string; serverId?: string; resolveActionExecutor?: () => RpcActionExecutor | null;
+    resolveHomeServerIdentityId?: (signal?: AbortSignal) => Promise<string | null>;
+    inlineSuggestionDependencies?: ProviderInlineSuggestionDependencies; effectAdmission?: FilesystemEffectAdmission }>,
 ): void {
   const accessPolicy = options?.accessPolicy ?? { kind: 'osUser' };
+  const effectRegistrar = options?.effectAdmission
+    ? createFilesystemEffectRpcRegistrar(registrar, options.effectAdmission, failure => ({ status: 'error',
+      errorCode: failure.errorCode, details: failure.details }))
+    : registrar;
+  const inlineSuggestionQuery = createProviderInlineSuggestionQuery(options?.inlineSuggestionDependencies);
   function register<Request extends { rootPath: string }, Response>(
     method: string,
     schema: z.ZodMiniType<Request>,
     paths: (request: Request) => readonly string[],
     invoke: (host: LanguageServerHost, request: Request, context: Parameters<LanguageServerHost['sync']>[1]) => Promise<Response>,
   ): void {
-    registrar.registerHandler<unknown, Response | TransportFailure>(method, async (raw, context) => {
+    effectRegistrar.registerHandler<unknown, Response | TransportFailure>(method, async (raw, context) => {
       const parsed = schema.safeParse(raw);
       if (!parsed.success) return { status: 'error', errorCode: 'invalid_request' };
       try {
@@ -41,9 +50,13 @@ export function registerLanguageIntelligenceHandlers(
           if (!document.valid) return { status: 'error', errorCode: 'path_not_allowed' };
         }
         if (context?.signal.aborted) return { status: 'error', errorCode: 'cancelled' };
-        return await invoke(options?.host ?? getLanguageServerHost(), { ...parsed.data, rootPath: root.resolvedPath }, {
-          signal: context?.signal, requesterWorkAttributionV1: projectRpcRequesterWorkAttribution(context, options?.serverId),
+        const homeServerIdentityId = context?.machineAdmission
+          ? await options?.resolveHomeServerIdentityId?.(context.signal) : undefined;
+        const result = await invoke(options?.host ?? getLanguageServerHost(), { ...parsed.data, rootPath: root.resolvedPath }, {
+          signal: context?.signal, requesterWorkAttributionV1: projectRpcRequesterWorkAttribution(context, homeServerIdentityId ?? undefined),
         });
+        context?.signal.throwIfAborted();
+        return result;
       } catch (error) {
         return { status: 'error', errorCode: context?.signal.aborted || (error instanceof Error && error.name === 'AbortError')
           ? 'cancelled' : 'request_failed' };
@@ -54,13 +67,15 @@ export function registerLanguageIntelligenceHandlers(
     ({ op }) => op.op === 'external' ? op.paths : op.op === 'close' ? [] : [op.path],
     (host, request, context) => host.sync(request, context));
   register(RPC_METHODS.DAEMON_LSP_QUERY, DaemonLspQueryRequestSchema, (request) => [request.path],
-    (host, request, context) => host.query(request, context));
+    (host, request, context) => request.kind === 'ai.inlineSuggest' || request.kind === 'ai.nextEdit'
+      ? inlineSuggestionQuery(request, options?.machineId, context?.signal)
+      : host.query(request, context));
   register(RPC_METHODS.DAEMON_LSP_WATCH, DaemonLspWatchRequestSchema, () => [],
     (host, request, context) => host.watch(request, context));
   register(RPC_METHODS.DAEMON_LSP_RESTART, DaemonLspRestartRequestSchema, () => [],
     (host, request, context) => host.restart(request, context));
   registerActionSpecRpcHandlers({
-    rpcHandlerManager: registrar, actionIds: ['code.rename.apply', 'code.file.rename.apply', 'code.codeAction.apply', 'code.format.apply', 'code.imports.organize'],
+    rpcHandlerManager: effectRegistrar, actionIds: ['code.rename.apply', 'code.file.rename.apply', 'code.codeAction.apply', 'code.format.apply', 'code.imports.organize'],
     ...(options?.machineId ? { targetMachineId: options.machineId, defaultMachineTarget: true } : {}),
     resolveActionExecutor: () => options?.resolveActionExecutor?.() ?? { execute: async () => ({ ok: false, errorCode: 'language_intelligence_action_owner_unavailable', error: 'Language Action admission is unavailable' }) },
   });

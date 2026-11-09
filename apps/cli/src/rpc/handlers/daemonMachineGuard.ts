@@ -25,10 +25,10 @@ export type DaemonMachineGuardRoutes = Readonly<{
   guard: Pick<ReturnType<typeof createGuardWatch>, 'readView' | 'watch'>;
   activity: ActivityLog;
   keepRunning: (input: Readonly<{ sessionId?: string; terminalKey?: string }>, requester: GuardViewRequester,
-    signal?: AbortSignal, verifyCurrent?: () => Promise<boolean>) => Promise<Readonly<{ status: 'kept' | 'not_pending' }>>;
+    signal?: AbortSignal) => Promise<Readonly<{ status: 'kept' | 'not_pending' }>>;
   /** The existing Session metadata owner and native scope owner apply one override together. */
   setSessionCeiling?: (input: Readonly<{ sessionId: string; bytes: number | null }>, requester: GuardViewRequester,
-    signal?: AbortSignal, verifyCurrent?: () => Promise<boolean>) => Promise<MachineGuardSessionCeilingSetResultV1>;
+    signal?: AbortSignal) => Promise<MachineGuardSessionCeilingSetResultV1>;
   /** Receiving-host outer Action dispatch; never accepted from transported input. */
   dispatchUndoAction?: (input: unknown, context: RpcHandlerContext) => Promise<ActionExecuteResult>;
   nowMs?: () => number;
@@ -50,42 +50,32 @@ export function registerDaemonMachineGuardRpcHandlers(rpc: RpcHandlerRegistrar, 
       if (current.custodianAccountId !== target.custodianAccountId) return deny('machine_custodian');
       if (!doesMachineRpcTargetMatchAdmission(request, admission, target, context?.reportAdmissionDenial)) return false;
       if (admission.role !== 'use' && admission.role !== 'manage') return deny('machine_role');
-      if (manage && (admission.role !== 'manage' || admission.actorAccountId !== target.custodianAccountId)) return deny('machine_custodian');
+      if (manage && admission.role !== 'manage') return deny('machine_custodian');
       if (context?.signal.aborted) return deny('request_cancelled');
       return true;
     };
-    const verify = async () => {
-      const verified = async () => context?.verifyMachineAdmissionCurrent && await context.verifyMachineAdmissionCurrent()
-        || deny('machine_currentness');
-      return Boolean(matches() && await verified() && matches());
-    };
-    const assertCurrent = async () => {
-      if (!await verify()) throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
+    const assertLocal = async () => {
+      if (!matches()) throw new RpcError('Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
     };
     if (!matches()) throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
     if (!target || !admission || !context) throw new RpcError('Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
     const requester: GuardViewRequester = { serverId: target.serverId, accountId: admission.actorAccountId,
       machineId: target.machineId, installationId: target.installationId,
       isCustodian: admission.actorAccountId === target.custodianAccountId };
-    return { target, context, requester, verify, assertCurrent };
+    return { target, context, requester, assertLocal };
   };
-  // Effects keep their entry/effect checks. Passive reads already have the
-  // dispatcher's Home admission and verify again only before disclosure.
-  const admit = async (request: Readonly<{ serverId?: string; machineId: string }>, context: RpcHandlerContext | undefined, manage: boolean) => {
-    const admitted = bindAdmission(request, context, manage);
-    await admitted.assertCurrent();
-    return admitted;
-  };
+  // Reads and finite effects consume dispatcher admission. Keep local
+  // cancellation/target binding and the original child Action's admission.
   rpc.registerHandler(RPC_METHODS.MACHINES_GUARD_GET, async (raw: unknown, context?: RpcHandlerContext) => {
     const admitted = bindAdmission(MachineGuardGetInputV1Schema.parse(raw), context, false);
     try { return MachineGuardViewV1Schema.parse(await options.guard.readView(admitted.requester, context?.signal)); }
-    finally { await admitted.assertCurrent(); }
+    finally { await admitted.assertLocal(); }
   });
   rpc.registerHandler(RPC_METHODS.DAEMON_GUARD_WATCH, async (raw: unknown, context?: RpcHandlerContext) => {
     const request = MachineGuardWatchInputV1Schema.parse(raw);
     const admitted = bindAdmission(request, context, false);
     try { return MachineGuardWatchResultV1Schema.parse(await options.guard.watch({ ...request, serverId: admitted.target.serverId }, admitted.requester, context?.signal)); }
-    finally { await admitted.assertCurrent(); }
+    finally { await admitted.assertLocal(); }
   });
   const readActivity = (request: Pick<ActivityLogListInput, 'range' | 'filter'>, requester: GuardViewRequester) => options.activity.list({
     range: request.range, ...(request.filter ? { filter: request.filter } : {}),
@@ -97,7 +87,7 @@ export function registerDaemonMachineGuardRpcHandlers(rpc: RpcHandlerRegistrar, 
     const admitted = bindAdmission(request, context, false);
     try {
       return await readActivity(request, admitted.requester);
-    } finally { await admitted.assertCurrent(); }
+    } finally { await admitted.assertLocal(); }
   });
   rpc.registerHandler(RPC_METHODS.DAEMON_GUARD_ACTIVITY_WATCH, async (raw: unknown, context?: RpcHandlerContext) => {
     const request = MachineGuardActivityWatchInputV1Schema.parse(raw);
@@ -109,29 +99,29 @@ export function registerDaemonMachineGuardRpcHandlers(rpc: RpcHandlerRegistrar, 
       return MachineGuardActivityWatchResultV1Schema.parse(answer.changed ? {
         changed: true, since: answer.snapshot, list: await readActivity(request, admitted.requester),
       } : { changed: false });
-    } finally { await admitted.assertCurrent(); }
+    } finally { await admitted.assertLocal(); }
   });
   rpc.registerHandler(RPC_METHODS.MACHINES_GUARD_IDLE_STOP_KEEP_RUNNING, async (raw: unknown, context?: RpcHandlerContext) => {
     const request = MachineGuardKeepRunningInputV1Schema.parse(raw);
-    const admitted = await admit(request, context, true);
-    const result = await options.keepRunning(request, admitted.requester, context?.signal, admitted.verify);
-    await admitted.assertCurrent();
+    const admitted = bindAdmission(request, context, false);
+    const result = await options.keepRunning(request, admitted.requester, context?.signal);
+    await admitted.assertLocal();
     return MachineGuardKeepRunningResultV1Schema.parse(result);
   });
   rpc.registerHandler(RPC_METHODS.MACHINES_GUARD_SESSION_CEILING_SET, async (raw: unknown, context?: RpcHandlerContext) => {
     const request = MachineGuardSessionCeilingSetInputV1Schema.parse(raw);
-    const admitted = await admit(request, context, true);
+    const admitted = bindAdmission(request, context, true);
     if (!options.setSessionCeiling) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
     const result = await options.setSessionCeiling({ sessionId: request.sessionId, bytes: request.bytes }, admitted.requester,
-      context?.signal, admitted.verify);
-    await admitted.assertCurrent();
+      context?.signal);
+    await admitted.assertLocal();
     return MachineGuardSessionCeilingSetResultV1Schema.parse(result);
   });
   const undo = async (raw: unknown, context: RpcHandlerContext, executeCanonicalAction: GuardRestorationExecute) => {
     const request = MachineGuardActivityUndoInputV1Schema.parse(raw);
-    const admitted = await admit(request, context, true);
+    const admitted = bindAdmission(request, context, true);
     const entry = await options.activity.read(request.entryId);
-    await admitted.assertCurrent();
+    await admitted.assertLocal();
     const wayBack = entry?.undoneAt === undefined ? entry?.wayBack?.find(isMachineGuardRestorationWayBackV1) : undefined;
     const failure = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
     if (!wayBack) return failure('activity_entry_unavailable');
@@ -145,9 +135,9 @@ export function registerDaemonMachineGuardRpcHandlers(rpc: RpcHandlerRegistrar, 
       : recordedInput;
     const input = spec.inputSchema.safeParse(boundInput);
     if (!input.success) return failure('invalid_action_input');
-    await admitted.assertCurrent();
+    await admitted.assertLocal();
     const result = await executeCanonicalAction(wayBack.actionId, input.data);
-    await admitted.assertCurrent();
+    await admitted.assertLocal();
     if (!result.ok) return result;
     const nestedFailure = ActionExecuteFailureSchema.safeParse(result.result);
     if (nestedFailure.success) return nestedFailure.data;
@@ -161,19 +151,19 @@ export function registerDaemonMachineGuardRpcHandlers(rpc: RpcHandlerRegistrar, 
       && BrowserCommandDispatchResultV1Schema.parse(output.data).status !== 'dispatched') return output.data;
     if (wayBack.actionId === 'localServices.launcher.start'
       && DaemonLocalServiceLauncherStartResponseV1Schema.parse(output.data).status !== 'succeeded') return output.data;
-    await admitted.assertCurrent();
+    await admitted.assertLocal();
     await options.activity.markUndone({ id: randomUUID(), at: (options.nowMs ?? Date.now)(), ref: entry!.id,
       attribution: { serverId: admitted.target.serverId, accountId: admitted.requester.accountId,
         machineId: admitted.target.machineId, installationId: admitted.target.installationId } });
-    await admitted.assertCurrent();
+    await admitted.assertLocal();
     return output.data;
   };
   rpc.registerHandler(RPC_METHODS.MACHINES_GUARD_ACTIVITY_UNDO, async (raw: unknown, context?: RpcHandlerContext) => {
     const request = MachineGuardActivityUndoInputV1Schema.parse(raw);
-    const admitted = await admit(request, context, true);
+    const admitted = bindAdmission(request, context, true);
     if (!options.dispatchUndoAction) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
     const result = await options.dispatchUndoAction(request, admitted.context);
-    await admitted.assertCurrent();
+    await admitted.assertLocal();
     return result.ok ? result.result : result;
   });
   return async args => {

@@ -1,5 +1,3 @@
-import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
-import * as credentialPersistence from '@/persistence';
 import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -24,12 +22,15 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import * as credentialPersistence from '@/persistence';
 
 import {
   registerAutomationReplyHandoffRpcHandler,
   type AutomationReplyHandoffRpcRegistrationOptions,
 } from './automationReplyHandoff';
 
+const emptyContributions = createResolvedContributionRegistry({});
 let runtimeFixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => {
   const credentials = vi.spyOn(credentialPersistence, 'readStoredCredentials').mockResolvedValue(null);
@@ -40,8 +41,6 @@ beforeAll(async () => {
   } finally { credentials.mockRestore(); }
 });
 afterAll(async () => { await runtimeFixture?.dispose(); });
-
-const emptyContributions = createResolvedContributionRegistry({});
 
 type AutomationReplyHandoffActionExecutor = NonNullable<
   AutomationReplyHandoffRpcRegistrationOptions['executeContributedAction']
@@ -209,6 +208,11 @@ function createRuntimeRegistry(): ResolvedExecutablePluginRuntimeRegistry {
   return {
     ...runtimeFixture.registry,
     claimReleaseLessDeclarations: async () => undefined,
+    startConfiguredActivation: async () => undefined,
+    activatePluginsForValidation: async () => [],
+    recordPluginActivationFailure: () => { throw new Error('Activation failure is outside this fixture'); },
+    prepareDaemonDatabases: async () => { throw new Error('Daemon databases are outside this fixture'); },
+    quiesceDaemonDatabases: async () => { throw new Error('Daemon databases are outside this fixture'); },
     projectManagedServices: createManagedServicesOwner({
       processSupervisorHost: { custodyOwner: 'daemon', bind: () => { throw new Error('No native service process is available in this fixture'); } },
       dependencies: { status: unavailableDependency, ensure: unavailableDependency, update: unavailableDependency, remove: unavailableDependency },
@@ -710,26 +714,25 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
     expect(executeContributedAction).not.toHaveBeenCalled();
   });
 
-  it('returns staleClaim before opening when claim-time Account authority has moved', async () => {
+  it('delivers the frozen handoff after unrelated Account sequence movement', async () => {
     const newerCurrentness: AccountEncryptionCurrentnessResponse = {
       ...plainCurrentness,
       version: plainCurrentness.version + 1,
       updatedAt: plainCurrentness.updatedAt + 1,
     };
-    const { handler, executeContributedAction } = createRegistration({
+    const { handler } = createRegistration({
       currentnessSequence: [newerCurrentness],
     });
 
     await expect(handler(request)).resolves.toEqual({
       kind: 'settled',
-      settlement: { kind: 'staleClaim' },
+      settlement: { kind: 'accepted' },
       accountCurrentness: {
         mode: 'plain',
         version: newerCurrentness.version,
         contentKeyFingerprint: null,
       },
     });
-    expect(executeContributedAction).not.toHaveBeenCalled();
   });
 
   it('reports a stale claim for missing or rekeyed E2EE material before a plugin effect', async () => {

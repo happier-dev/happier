@@ -35,6 +35,12 @@ import type {
   ExternalActionExecutor,
   ResolveExternalActionTarget,
 } from '@/daemon/externalActions/executeExternalAction';
+import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { withTempDir } from '@/testkit/fs/tempDir';
+import { createFilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
+import { createReadFileRpcActionExecutor } from './fileSystem/readFileHandler';
 
 const SESSION_SPAWN_PENDING_RESULT = {
   type: 'pending',
@@ -90,10 +96,137 @@ function expectPreparedRelayResponse(raw: unknown, response: unknown): void {
   expect(parsed?.kind).toBe('response');
   if (!parsed || parsed.kind !== 'response') throw new Error('expected a prepared relay response');
   expect(parsed.prepared.response).toEqual(response);
-  expect(parsed.prepared.body).toBe(JSON.stringify(response));
+  expect(parsed.prepared.body).toBe(JSON.stringify(parsed.prepared.response));
 }
 
 describe('registerExternalActionRpcHandler', () => {
+  it.each(['placement', 'custodian', 'installation', 'requester_context'] as const)(
+    'retains the content-free receiving %s phase on a protected target refusal', async branch => {
+      const { handlers, registrar } = registerHandlerForTest();
+      const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(9) };
+      const target = { kind: 'machine' as const, machineId: 'machine-1' };
+      const principal = { accountId: 'account-1', principalId: 'principal-1', credentialId: '00000000-0000-4000-8000-000000000001',
+        grant: API_TOKEN_FULL_GRANT_V1, authority: 'account_automation' as const };
+      const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: 'srv_reserved',
+        accountId: principal.accountId, credentialId: principal.credentialId, actionId: 'action.spec.get',
+        requestId: 'phase-request', target }, material, input: { id: 'private-target-canary' }, randomBytes: tweetnacl.randomBytes });
+      const request = authorizedDispatch({ actionId: 'action.spec.get', envelope, principal,
+        placement: { machineId: target.machineId, target } });
+      registerExternalActionRpcHandler(registrar, {
+        machineId: branch === 'placement' ? 'other-machine' : target.machineId, currentServerId: 'home-profile',
+        resolveAccountId: async () => ['custodian', 'requester_context'].includes(branch) ? 'other-account' : principal.accountId,
+        resolveInstallationId: () => branch === 'installation' ? 'other-installation' : 'installation-1',
+        verifyExecutionAuthorization: async () => true, externalActionMachineRequestPrivateKey: installationIdentity.secretKey,
+        resolveTarget: async () => { throw new Error('Refusal must precede target IO'); },
+        executor: { execute: async () => { throw new Error('Refusal must precede execution'); } },
+      });
+      const dispatch = branch === 'requester_context' ? { ...request, executionAuthorization: {
+        ...request.executionAuthorization, binding: { ...request.executionAuthorization.binding, custodianAccountId: 'other-account' },
+      } } : request;
+      const result = await handlers.get(EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1)?.(dispatch, {
+        authorization: ACTION_API_SERVER_ORIGIN, signal: new AbortController().signal,
+      });
+      expect(result).toEqual({ kind: 'invalid_request', errorCode: 'target_not_local', requestId: envelope.requestId,
+        phase: `target_${branch}` });
+      expect(JSON.stringify(result)).not.toContain('private-target-canary');
+    });
+
+  it('retains original verified file custody across receipt-free Action RPC and refuses proof substitutions', async () => {
+    await withTempDir('external-action-custody-', async directory => {
+      const path = join(directory, 'private.txt');
+      const expectedContent = Buffer.from('synthetic-private-file-custody').toString('base64');
+      await writeFile(path, Buffer.from(expectedContent, 'base64'), { mode: 0o600 });
+      let reads = 0;
+      let current = true;
+      let withdrawAtEffect = false;
+      const admission = createFilesystemEffectAdmission({
+        resolveHomeServerIdentityId: async () => 'server-reserved-rpc',
+        resolveHostIdentity: async () => {
+          if (withdrawAtEffect) current = false;
+          return { custodianAccountId: 'account-1', machineId: 'machine-1', installationId: 'installation-1' };
+        },
+      });
+      const reader = createReadFileRpcActionExecutor({ workingDirectory: directory,
+        accessPolicy: { kind: 'osUser' }, getAdditionalAllowedReadDirs: () => [] });
+      const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+        filesystemActionExecute: async request => {
+          const failure = await admission.action(request.context);
+          if (failure) return { ok: false, ...failure };
+          reads++;
+          const result = await reader.execute(request.actionId, request.input, request.context);
+          return result.ok ? result.result : result;
+        },
+      });
+      const { handlers, registrar } = registerHandlerForTest();
+      registerExternalActionRpcHandler(registrar, {
+        machineId: 'machine-1', currentServerId: 'server-reserved-rpc',
+        resolveAccountId: async () => 'account-1', resolveInstallationId: () => 'installation-1',
+        verifyExecutionAuthorization: async verification => {
+          expect(verification.effectActionId).toBe('daemon.filesystem.readFile');
+          expect(verification.target).toEqual({ kind: 'machine', machineId: 'machine-1' });
+          return current;
+        },
+        externalActionMachineRequestPrivateKey: installationIdentity.secretKey,
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'boundary-token', encryption: null } }),
+        executor,
+      });
+      const handler = handlers.get(EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1)!;
+      const target = { kind: 'machine' as const, machineId: 'machine-1' };
+      const envelope = { v: 1 as const, requestId: 'custody-read', target, input: { rootPath: directory, path } };
+      const request = authorizedDispatch({ actionId: 'daemon.filesystem.readFile', envelope,
+        principal: { accountId: 'account-1', authentication: { kind: 'account' as const, tokenEpoch: 1 },
+          authority: 'present_user' as const }, placement: { machineId: 'machine-1', target } });
+      const ingress = { authorization: ACTION_API_SERVER_ORIGIN, signal: new AbortController().signal };
+      const succeeds = (raw: unknown) => {
+        const parsed = parseExternalActionDaemonDispatchResultV1(raw);
+        if (parsed?.kind !== 'response' || parsed.prepared.response.v !== 1) return false;
+        const execution = parsed.prepared.response.execution;
+        return execution.ok && execution.result !== null && typeof execution.result === 'object'
+          && 'content' in execution.result && execution.result.content === expectedContent;
+      };
+      const refusalCode = (raw: unknown) => {
+        const parsed = parseExternalActionDaemonDispatchResultV1(raw);
+        if (parsed?.kind !== 'response' || parsed.prepared.response.v !== 1) return null;
+        const execution = parsed.prepared.response.execution;
+        return execution.ok ? null : execution.errorCode;
+      };
+      const first = await handler(request, ingress);
+      const firstParsed = parseExternalActionDaemonDispatchResultV1(first);
+      const firstExecution = firstParsed?.kind === 'response' && firstParsed.prepared.response.v === 1
+        ? firstParsed.prepared.response.execution : null;
+      expect(succeeds(first), JSON.stringify({ kind: firstParsed?.kind,
+        code: firstExecution && !firstExecution.ok ? firstExecution.errorCode
+          : first && typeof first === 'object' && 'errorCode' in first ? first.errorCode : undefined, reads })).toBe(true);
+      expect(succeeds(await handler({ ...request, principal: { ...request.principal, authority: 'account_automation' } }, ingress))).toBe(true);
+      expect(reads).toBe(2);
+
+      const mismatch = { actorAccountId: 'other', custodianAccountId: 'account-1', machineId: 'machine-1',
+        installationId: 'installation-1', role: 'manage' as const, encryptionMode: 'plain' as const };
+      expect(refusalCode(await handler(request, { ...ingress, machineAdmission: mismatch })))
+        .toBe('filesystem_identity_custody_unavailable');
+      const origin = { v: 1 as const, caller: { kind: 'session' as const, sessionId: 'owner-agent', starterDepth: 0, turnDepth: 0 },
+        sourceTurnId: 'agent-turn', callerPermissionMode: null, requestId: request.envelope.requestId };
+      const agentRequest = { ...request, principal: { ...request.principal, authority: 'account_automation' as const, sessionActionOrigin: origin },
+        executionAuthorization: { ...request.executionAuthorization, binding: { ...request.executionAuthorization.binding,
+          sessionActionOrigin: origin, sessionActionSource: { machineId: 'machine-1', installationId: 'installation-1' } } } };
+      expect(refusalCode(await handler(agentRequest, ingress))).toBe('filesystem_identity_custody_unavailable');
+      expect(reads).toBe(2);
+
+      withdrawAtEffect = true;
+      expect(succeeds(await handler(request, ingress))).toBe(true);
+      expect(reads).toBe(3);
+      current = false;
+      withdrawAtEffect = false;
+      expect(refusalCode(await handler(request, ingress))).toBe('not_authenticated');
+      expect(reads).toBe(3);
+      const local = await executeExternalAction({ actionId: request.actionId, envelope,
+        principal: { authority: 'present_user' }, currentMachineId: 'machine-1', currentServerId: 'server-reserved-rpc',
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'boundary-token', encryption: null } }), executor });
+      expect(local.kind === 'response' && local.response.v === 1 && !local.response.execution.ok
+        ? local.response.execution.errorCode : null).toBe('filesystem_identity_custody_unavailable');
+      expect(reads).toBe(3);
+    });
+  });
   it.each(['plain', 'e2ee'] as const)('creates and reads recipient confirmation on a non-hub Machine over %s Action RPC', async mode => {
     const { handlers, registrar } = registerHandlerForTest();
     const peer = 'peer-machine';
@@ -191,7 +324,7 @@ describe('registerExternalActionRpcHandler', () => {
       authorization: ACTION_API_SERVER_ORIGIN, signal: new AbortController().signal,
     });
     expectPreparedRelayResponse(result, { v: 1, actionId: 'session.spawn_new', requestId: 'installation-replaced',
-      execution: { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' } });
+      execution: { ok: false, effectAttempted: false, errorCode: 'not_authenticated', error: 'not_authenticated' } });
     expect(sessionSpawnNew).not.toHaveBeenCalled();
   });
 
@@ -220,14 +353,14 @@ describe('registerExternalActionRpcHandler', () => {
       authorization: ACTION_API_SERVER_ORIGIN, signal: new AbortController().signal,
     });
     expectPreparedRelayResponse(result, { v: 1, actionId: 'session.spawn_new', requestId: 'bob-start',
-      execution: { ok: false, errorCode: 'target_not_local', error: 'target_not_local' } });
+      execution: { ok: false, errorCode: 'target_not_local', error: 'target_not_local', details: { phase: 'target_requester_context' } } });
     const wrongInstallation = { ...dispatch, executionAuthorization: { ...dispatch.executionAuthorization,
       binding: { ...dispatch.executionAuthorization.binding, installationId: 'replacement' } } };
     const replaced = await handlers.get(EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1)?.(wrongInstallation, {
       authorization: ACTION_API_SERVER_ORIGIN, signal: new AbortController().signal,
     });
     expectPreparedRelayResponse(replaced, { v: 1, actionId: 'session.spawn_new', requestId: 'bob-start',
-      execution: { ok: false, errorCode: 'target_not_local', error: 'target_not_local' } });
+      execution: { ok: false, errorCode: 'target_not_local', error: 'target_not_local', details: { phase: 'target_installation' } } });
   });
 
   it('admits only the server-stamped exact-machine dispatch into the canonical ingress', async () => {
@@ -487,6 +620,7 @@ describe('registerExternalActionRpcHandler', () => {
       kind: 'invalid_request',
       errorCode: 'target_not_local',
       requestId: 'rpc-wrong-placement',
+      phase: 'target_placement',
     });
     expect(execute).not.toHaveBeenCalled();
   });

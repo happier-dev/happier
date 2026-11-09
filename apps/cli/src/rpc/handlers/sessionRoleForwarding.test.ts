@@ -98,6 +98,8 @@ describe('Session role RPC provenance', () => {
       resolveAgentStartContext: async (context) => resolveCliAgentStartContextV1({ sessionId: 'lead', machineId: 'source-machine',
         directory: '/repo', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         metadata: createTestMetadata(), starterDepth: 2, turnDepth: 3, settings: null,
+        // A notes edit needs caller scope, not an invented native baseline.
+        roles: {},
         accountRoleOverrides: { status: 'ready', overrides: {} },
         roleSourceInventory: await createRoleSourceReaderV1({})(),
         callerPermissionMode: context.callerPermissionMode ?? null }),

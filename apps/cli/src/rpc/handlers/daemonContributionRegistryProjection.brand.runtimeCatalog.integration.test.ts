@@ -100,13 +100,16 @@ describe('portable plugin brand projection handler', () => {
                 };
         });
         const runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry = {
+            ...managedServicesFixture.registry,
             claimReleaseLessDeclarations: async () => undefined,
+            startConfiguredActivation: async () => undefined,
+            activatePluginsForValidation: async () => [],
+            recordPluginActivationFailure: () => { throw new Error('Activation failure is outside this fixture'); },
+            prepareDaemonDatabases: async () => { throw new Error('Daemon databases are outside this fixture'); },
+            quiesceDaemonDatabases: async () => { throw new Error('Daemon databases are outside this fixture'); },
             contributes: registry,
             declarationContributes: registry,
             projectManagedServices: managedServicesFixture.registry.projectManagedServices,
-            targetActionInvocations: managedServicesFixture.registry.targetActionInvocations,
-    readPluginOccurrenceId: managedServicesFixture.registry.readPluginOccurrenceId,
-    isPluginOccurrenceCurrent: managedServicesFixture.registry.isPluginOccurrenceCurrent,
             generation: 7,
             hookHandlersByHookId: new Map(),
             agentRuntimesByAgentId: new Map(),

@@ -11,6 +11,7 @@ import {
   sealAccountScopedBlobCiphertext,
   QualifiedConnectedAccountListResponseV4Schema,
   QualifiedConnectedAccountCredentialSnapshotV4Schema,
+  QualifiedConnectedAccountGroupV4Schema,
   PluginManifestV2Schema,
   buildBackendTargetKeyV2,
   getActionSpec,
@@ -28,28 +29,10 @@ import type { PreparedPluginDevelopmentActivationGraph } from '@/plugins/authori
 import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/plugins/testkit/samplePackage';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 
-// Platform styling is outside the inventory contract; reuse the UI's native
-// boundary so importing its real Action dependencies needs no mounted app.
+// Device storage is outside the inventory contract; reuse the UI's native boundary.
 await vi.hoisted(async () => {
   const { installVitestRnShim } = await import(new URL('../../../../ui/sources/dev/vitestRnShim.ts', import.meta.url).href);
   installVitestRnShim();
-});
-vi.mock('../../../../ui/node_modules/react-native-unistyles/lib/module/index.js', async () => {
-  const { createUnistylesMock } = await import(new URL('../../../../ui/sources/dev/testkit/mocks/unistyles.ts', import.meta.url).href);
-  return createUnistylesMock();
-});
-vi.mock('../../../../ui/node_modules/expo-updates/build/index.js', async () => {
-  const { createExpoUpdatesMock } = await import(new URL('../../../../ui/sources/dev/testkit/mocks/expoUpdates.ts', import.meta.url).href);
-  return createExpoUpdatesMock();
-});
-vi.mock('../../../../ui/node_modules/@shopify/react-native-skia/lib/module/index.js', async () => {
-  const { createReactNativeSkiaMock } = await import(new URL('../../../../ui/sources/dev/testkit/mocks/reactNativeSkia.ts', import.meta.url).href);
-  return createReactNativeSkiaMock();
-});
-vi.mock('../../../../ui/node_modules/expo-image/src/index.ts', () => ({ Image: 'Image' }));
-vi.mock('../../../../ui/node_modules/expo-file-system/src/index.ts', async () => {
-  const { createExpoFileSystemFileMock } = await import(new URL('../../../../ui/sources/dev/testkit/mocks/expoFileSystem.ts', import.meta.url).href);
-  return createExpoFileSystemFileMock().module;
 });
 const uiCapabilityTransport = vi.hoisted(() => ({
   invoke: vi.fn<typeof import('../../../../ui/sources/sync/ops/capabilities')['machineCapabilitiesInvoke']>(),
@@ -68,8 +51,7 @@ const malformedSelectionModules = [
   await import('./capabilities'), await import('./encryptedRpc.testkit'),
   await import('@/configuration'), await import('@/persistence'),
 ] as const;
-// The real UI inventory graph is shared across native cases. Loading it inside
-// a timed operation can leave its import pending across the next module reset.
+// Load only the admitted probe adapter, below the UI Action executor/component graph.
 const { probeAgentModelsForActions } = await import('../../../../ui/sources/sync/ops/actions/agentInventoryProbe');
 const { parseCapabilitiesInvokeResponse } = await import('../../../../ui/sources/sync/api/capabilities/capabilitiesProtocol');
 const { createCliActionInventoryDeps } = await import('@/session/actions/cliActionDeps/createCliActionInventoryDeps');
@@ -205,7 +187,7 @@ describe('capabilities.invoke connected-service preflight', () => {
     },
   );
 
-  it.each(['codex', 'opencode', 'external'] as const)('materializes the selected personal account for %s native model inventory without borrowing an unselected catalog', async (targetId) => {
+  it.each(['codex', 'opencode', 'external', 'codex-pool-refusal'] as const)('materializes the selected personal account for %s native model inventory without borrowing an unselected catalog', async (targetId) => {
     let phase = 'prepare native fixture';
     let complete = false;
     onTestFinished(() => { if (!complete) console.error('Native catalog fixture failure phase', targetId, phase); });
@@ -213,7 +195,8 @@ describe('capabilities.invoke connected-service preflight', () => {
     tempDir = mkdtempSync(join(tmpdir(), 'happier-capability-connected-preflight-'));
     const nativeHome = join(tempDir, 'native-codex');
     mkdirSync(join(nativeHome, 'sessions'), { recursive: true });
-    const agentId = targetId === 'external' ? `${SAMPLE_PLUGIN_ID}/sample-provider` : targetId;
+    const agentId = targetId === 'external' ? `${SAMPLE_PLUGIN_ID}/sample-provider`
+      : targetId === 'codex-pool-refusal' ? 'codex' : targetId;
     const fixture = join(tempDir, `${targetId}.mjs`);
     const fixtureSource = readFileSync(fileURLToPath(new URL('./__fixtures__/fakeCodexPreflightAppServer.mjs', import.meta.url)), 'utf8');
     // The real declared-tool launch clears PATH; the simulated OS executable
@@ -337,14 +320,31 @@ describe('capabilities.invoke connected-service preflight', () => {
     // HTTP is the external boundary. V4 parsing, encrypted credential opening,
     // purpose authority, plugin invocation and launch-file materialization stay real.
     const credentialReads: string[] = [];
+    const metadataReads: string[] = [];
+    let poolRefusal: 'missing' | 'reauth' | 'switch-required' | null = null;
+    const selectedPool = QualifiedConnectedAccountGroupV4Schema.parse({
+      v: 1, ref: { service, groupId: 'codex-pool' }, incarnation: 'reload81-fixture', displayName: 'Codex pool',
+      policy: { autoSwitch: false }, activeConnectedAccountId: account.accountId,
+      generation: 1, runtimeStateRevision: 0, state: {}, createdAt: 1, updatedAt: 1,
+      members: [{ v: 1, connectedAccountId: account.accountId, priority: 0, enabled: true,
+        state: {}, createdAt: 1, updatedAt: 1 }],
+    });
     vi.spyOn(axios, 'get').mockImplementation(async (url) => {
       const path = new URL(String(url)).pathname;
+      if (path === '/v4/connect/qualified/accounts' || path === '/v4/connect/qualified/group') metadataReads.push(path);
       if (path === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: {
         schemaVersion: 6, connectedServicesProviderStateSharingSettingsV1: {
           v: 1, defaults: { configMode: 'linked', stateMode: 'shared' }, byAgentId: { codex: { stateMode: 'shared' } },
         },
       } } } };
-      if (path === '/v4/connect/qualified/accounts') return { status: 200, data: accounts };
+      if (path === '/v4/connect/qualified/accounts') return { status: 200, data: poolRefusal === 'reauth' || poolRefusal === 'switch-required'
+        ? QualifiedConnectedAccountListResponseV4Schema.parse({ ...accounts, accounts: accounts.accounts.map(profile =>
+          profile.ref.accountId === account.accountId ? { ...profile, status: 'needs_reauth' } : profile) }) : accounts };
+      if (path === '/v4/connect/qualified/group') return poolRefusal === 'missing'
+        ? { status: 404, data: {} } : { status: 200, data: { group: poolRefusal === 'switch-required'
+          ? { ...selectedPool, policy: { ...selectedPool.policy, autoSwitch: true },
+            members: [...selectedPool.members, { ...selectedPool.members[0], connectedAccountId: 'unselected', priority: 1 }] }
+          : selectedPool } };
       if (path === '/v4/connect/qualified/credential') {
         credentialReads.push(path);
         return { status: 200, data: snapshot };
@@ -363,7 +363,8 @@ describe('capabilities.invoke connected-service preflight', () => {
     reloadConfiguration();
     const { pluginReloadController } = await import('@/plugins/runtime/reload/singleton');
     const { resolveExecutablePluginRuntimeRegistry } = await import('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry');
-    const { getResolvedContributionRegistry, createResolvedContributionRegistry, resolveMergedContributionRegistry } = await import('@/plugins/projection/registry/createResolvedContributionRegistry');
+    const { createResolvedContributionRegistry, resolveMergedContributionRegistry } = await import('@/plugins/projection/registry/createResolvedContributionRegistry');
+    const { getResolvedContributionRegistry } = await import('@/plugins/projection/registry/builtIn/snapshot');
     const { createQualifiedConnectedAccountEstablishedRuntimeOwner } = await import('@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner');
     const { createDaemonConnectedAccountPurposeBindingRuntime } = await import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime');
     const { bindPluginRuntimeSourceAuthority } = await import('@/plugins/runtime/sourceAuthority');
@@ -405,6 +406,7 @@ describe('capabilities.invoke connected-service preflight', () => {
       reloadController: pluginReloadController, establishedRuntimeOwner: established,
       resolveQualifiedConnectedAccountV4Support: () => 'advertised',
       qualifiedApi: {
+        listAccountsForServices: async services => ({ services, accounts: accounts.accounts }),
         listAccounts: async () => accounts,
         listGroups: async () => ({ groups: [] }), readGroup: async () => null,
       },
@@ -462,16 +464,66 @@ describe('capabilities.invoke connected-service preflight', () => {
     }
     const { registerCapabilitiesHandlers } = await import('./capabilities');
     const { createEncryptedRpcTestClient } = await import('./encryptedRpc.testkit');
+    const [{ RpcHandlerManager }, { authorizeMachineRpcRequest }, { createFilesystemEffectAdmission }] = await Promise.all([
+      import('@/api/rpc/RpcHandlerManager'), import('@/api/machine/machineRpcAuthorization'),
+      import('./fileSystem/accessPolicy/filesystemEffectAdmission'),
+    ]);
     const { call } = createEncryptedRpcTestClient({
       scopePrefix: 'machine-test',
       encryptionKey: new Uint8Array(32).fill(7),
       logger: () => undefined,
+      ...(targetId === 'codex-pool-refusal' ? {
+        callerAuthority: 'present_user' as const,
+        machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine-test',
+          installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const },
+        manager: new RpcHandlerManager({ scopePrefix: 'machine-test', encryptionKey: new Uint8Array(32).fill(7),
+          encryptionVariant: 'legacy', logger: () => undefined,
+          authorizeRequest: request => authorizeMachineRpcRequest(request, {
+            machineId: 'machine-test', resolveCustodianAccountId: async () => 'owner',
+            resolveInstallationId: () => 'installation', resolveHomeServerIdentityId: async () => 'home',
+            // Home-authenticated ingress is the transport boundary; admission stays real.
+            verifyMachineAdmission: async () => true,
+          }) }),
+      } : {}),
       registerHandlers: (manager) => registerCapabilitiesHandlers(manager, {
         createApiClient: async () => api,
         activatePurposeBindings: purposeRuntime.activatePurposeBindings,
+        ...(targetId === 'codex-pool-refusal' ? { filesystemEffectAdmission: createFilesystemEffectAdmission({
+          resolveHomeServerIdentityId: async () => 'home',
+        }) } : {}),
       }),
     });
 
+    if (targetId === 'codex-pool-refusal') {
+      // Exact reload81 binding, with discriminating metadata-only HTTP failures.
+      // No pool credential or native process may be opened on these refusals.
+      const input = { agentId: 'codex', backendTargetKey: 'agent:happier.agent.codex/codex',
+        machineId: '4af70cb8-88bb-4f41-86d7-94455e4f7e29', probe: { cwd: '/home/happier', connectedServices: {
+          v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': {
+            source: 'connected', selection: 'group', groupId: 'codex-pool',
+          } },
+        } } };
+      const inventory = createCliActionInventoryDeps({ token: credentials.token, sessionId: '', mode: 'plain', ctx: null,
+        callMachineAction: async request => call(request.method, request.request) });
+      for (const [refusal, errorCode] of [
+        ['missing', 'connected_service_auth_group_authority_group_missing'],
+        ['reauth', 'connected_service_credential_reconnect_required'],
+        ['switch-required', 'connected_service_auth_group_switch_unavailable_auth_expired'],
+      ] as const) {
+        phase = `reload81 pool ${refusal}`;
+        poolRefusal = refusal;
+        metadataReads.length = 0;
+        expect.soft(await inventory.agentsModelsList(input))
+          .toEqual({ ok: false, errorCode, error: errorCode,
+            ...(refusal === 'reauth' ? { details: { retryable: false } } : {}) });
+        expect(metadataReads).toContain('/v4/connect/qualified/group');
+        if (refusal !== 'missing') expect(metadataReads).toContain('/v4/connect/qualified/accounts');
+        expect(credentialReads).toEqual([]);
+      }
+      poolRefusal = null;
+      complete = true;
+      return;
+    }
     phase = 'probe selected native catalog';
     const response = await call(RPC_METHODS.CAPABILITIES_INVOKE, {
       id: `cli.${agentId}`,

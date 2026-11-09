@@ -1,6 +1,7 @@
 import type { StoredCredentials } from '@/persistence';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
+import { createExecutionRunHostActionApprovalDecision } from '@happier-dev/protocol/actions';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import type { ReviewCommentPrincipalHeaderV1 } from '@happier-dev/protocol';
@@ -49,6 +50,10 @@ export function createExecutionRunRpcApprovalDeps(params: Readonly<{
   };
 
   return {
+    executionRunHostActionApprovalReplay: createExecutionRunHostActionApprovalDecision({
+      read: async artifactId => (await resolveStore()).executionRunHostActionApprovalsGet({ artifactId }),
+      update: async args => (await resolveStore()).executionRunHostActionApprovalsUpdate(args),
+    }),
     resolveReviewHostPluginAuthority,
     ...(params.isApprovalExecutionOriginCurrent
       ? { isApprovalExecutionOriginCurrent: params.isApprovalExecutionOriginCurrent }
@@ -60,7 +65,7 @@ export function createExecutionRunRpcApprovalDeps(params: Readonly<{
         const store = createCliApprovalsArtifactStore({ credentials });
         const serverUrl = resolveServerHttpBaseUrl();
         return await runWithServerHttpBaseUrl(serverUrl, () => createExecutionRunHostActionCurrentIntentAdapter({
-          create: (request) => store.executionRunHostActionApprovalsCreate({ request }),
+          create: (request, onReady) => store.executionRunHostActionApprovalsCreate({ request, onReady }),
           read: (artifactId) => store.executionRunHostActionApprovalsGet({ artifactId }),
           subscribeChanges: (artifactId, onChange, onError) => observeAccountChanges({
             token: credentials.token,

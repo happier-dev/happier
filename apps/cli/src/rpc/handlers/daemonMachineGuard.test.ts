@@ -24,6 +24,8 @@ import { ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant'
 import type { ExternalActionIngressOwner } from './externalAction';
 import type { RpcActionExecutorContext } from './_actionDispatchAdapter';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { MachineGuardActivityListV1Schema, type MachineGuardActivityEntryV1 } from '@happier-dev/protocol/machines/guard/activityV1';
 import { createActivityLog } from '@/daemon/guard/activityLog';
 import { createGuardRuntime } from '@/daemon/guard/guardRuntime';
@@ -52,6 +54,7 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/socketRpc';
+import { registerMachineTerminalRpcHandlers } from '@/api/machine/rpcHandlers.terminal';
 
 const identity = { serverId: 'home', machineId: 'machine', installationId: 'install', custodianAccountId: 'owner' };
 const now = Date.UTC(2026, 9, 10, 12);
@@ -60,7 +63,9 @@ const cleanup: Array<() => Promise<void> | void> = [];
 type TransportHandler = { invoke(data: unknown, context?: RpcHandlerContext): unknown }['invoke'];
 afterEach(async () => { for (const release of cleanup.splice(0).reverse()) await release(); });
 function context(actorAccountId = 'owner', role: 'use' | 'manage' = 'manage', admittedIdentity = identity): RpcHandlerContext {
-  return { signal: new AbortController().signal, machineAdmission: { ...admittedIdentity, actorAccountId, role, encryptionMode: 'plain' },
+  return { signal: new AbortController().signal, machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse({
+    machineId: admittedIdentity.machineId, installationId: admittedIdentity.installationId,
+    custodianAccountId: admittedIdentity.custodianAccountId, actorAccountId, role, encryptionMode: 'plain' }),
     verifyMachineAdmissionCurrent: async () => true, localActionContext: { surface: 'cli', authority: 'present_user' } };
 }
 function entry(id: string, patch: Partial<MachineGuardActivityEntryV1> = {}): MachineGuardActivityEntryV1 {
@@ -71,7 +76,7 @@ function entry(id: string, patch: Partial<MachineGuardActivityEntryV1> = {}): Ma
       { label: 'resume', actionId: 'session.open', input: { sessionId: id } }], ...patch };
 }
 async function setup(useDefaultApiOwner = false, withCeilingOwner = false,
-  machineTerminalAction?: ActionExecutorDeps['machineTerminalAction'], initialTarget = identity) {
+  machineTerminalAction?: ActionExecutorDeps['machineTerminalAction'], initialTarget = identity, ceilingAccountId = 'owner') {
   const directory = await mkdtemp(join(tmpdir(), 'happier-guard-rpc-'));
   cleanup.push(() => rm(directory, { recursive: true, force: true }));
   // Native reader and Account metadata transport are system boundaries; all owners beneath them are real.
@@ -104,6 +109,7 @@ async function setup(useDefaultApiOwner = false, withCeilingOwner = false,
     readLeftBehind: () => ({ count: 0, footprintBytes: 0 }), subscribe: runtime.subscribe, nowMs: () => now });
   cleanup.push(() => guard.dispose());
   let output: unknown = { opened: true };
+  let onSessionOpen: (() => void) | undefined;
   const opened: string[] = [];
   const serverSnapshot = { status: 'ready' as const, features: FeaturesResponseSchema.parse({ features: {
     browser: { enabled: true, viewTargets: { enabled: true }, internal: { enabled: true }, sidecar: { enabled: true } },
@@ -131,7 +137,7 @@ async function setup(useDefaultApiOwner = false, withCeilingOwner = false,
   let guardLocalAction: NonNullable<ActionExecutorDeps['machineGuardAction']>;
   const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
     ...(machineTerminalAction ? { machineTerminalAction } : {}),
-    sessionOpen: async request => { opened.push(request.sessionId); return output; },
+    sessionOpen: async request => { opened.push(request.sessionId); onSessionOpen?.(); return output; },
     // Session metadata RPC is the system boundary; the permission/grant admission below is real.
     sessionPermissionModeSet: async () => { opened.push('permission-change'); return { applied: true }; },
     machineGuardAction: args => guardLocalAction(args),
@@ -154,7 +160,7 @@ async function setup(useDefaultApiOwner = false, withCeilingOwner = false,
       readSessions: async () => [{ tracked, root: { owner: { kind: 'session', sessionId: 'session' }, pid: 42,
         start: { startTimeMs: 20 }, live: true, ownerCreatedAtMs: 0,
         containment: { kind: 'linux_unit', prefix: `/user.slice/happier-jobs.slice/${unit}` } },
-        label: 'Session', metadata: {}, attribution: { serverId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'install' } }],
+        label: 'Session', metadata: {}, attribution: { serverId: 'home', accountId: ceilingAccountId, machineId: 'machine', installationId: 'install' } }],
       readEligibility: async runner => evaluateSessionEligibility({ tracked: runner, inventory: { coverage: 'complete', items: [] },
         draft: { status: 'absent' }, resume: { sessionId: 'session', rawSession: { machineId: 'machine', path: '/project' },
           metadata: { machineId: 'machine', path: '/project', flavor: 'codex', codexSessionId: 'native' } } }),
@@ -196,6 +202,7 @@ async function setup(useDefaultApiOwner = false, withCeilingOwner = false,
       localActionContext: { surface: args.context.surface, authority: args.context.authority } }),
   }) });
   return { activity, routes, handlers, opened, client, executor, settings, ceilingWrites, setOutput: (value: unknown) => { output = value; },
+    onSessionOpen: (effect: () => void) => { onSessionOpen = effect; },
     setActivityNow: (value: number) => { activityNow = value; },
     beforeNativeRead: (read: () => void) => { beforeNativeRead = read; },
     setCredentialCurrent: (value: boolean) => { credentialCurrent = value; },
@@ -204,6 +211,83 @@ async function setup(useDefaultApiOwner = false, withCeilingOwner = false,
 }
 
 describe('Machine guard current admission and original Action restoration', () => {
+  it('settles admitted Undo after its child effect without reauthorization and refuses the next revoked request', async () => {
+    const f = await setup();
+    await f.activity.append(entry('finite-undo'));
+    let current = true;
+    let verifications = 0;
+    const manager = new RpcHandlerManager({ scopePrefix: identity.machineId, localMachineId: identity.machineId,
+      encryptionMode: 'plain', logger: () => {},
+      authorizeRequest: request => authorizeMachineRpcRequest(request, {
+        machineId: identity.machineId, resolveCustodianAccountId: async () => identity.custodianAccountId,
+        resolveInstallationId: () => identity.installationId,
+        // Home authorization and Session open are genuine network boundaries.
+        verifyMachineAdmission: async () => { verifications++; return current; },
+      }) });
+    registerDaemonMachineGuardRpcHandlers(manager, f.routes);
+    f.onSessionOpen(() => { current = false; });
+    const request = { method: `${identity.machineId}:${RPC_METHODS.MACHINES_GUARD_ACTIVITY_UNDO}`,
+      params: { machineId: identity.machineId, entryId: 'finite-undo' }, callerAuthority: 'present_user' as const,
+      machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse({ machineId: identity.machineId,
+        installationId: identity.installationId, custodianAccountId: identity.custodianAccountId,
+        actorAccountId: 'owner', role: 'manage', encryptionMode: 'plain' }) };
+    expect(await manager.handleRequest(request)).toEqual({ opened: true });
+    expect(f.opened).toEqual(['finite-undo']);
+    expect((await f.activity.read('finite-undo'))?.undoneAt).toBe(now);
+    expect(verifications).toBe(1);
+    expect(await manager.handleRequest(request)).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
+    expect(verifications).toBe(2);
+    expect(f.opened).toEqual(['finite-undo']);
+  });
+  it('reopens an automatically closed terminal through the real local Action transport and terminal admission', async () => {
+    await withTempDir('guard-terminal-reopen-', async directory => {
+      const terminal = await createIdleTerminalPolicyFixture(cleanup);
+      const terminalTarget = { ...identity, installationId: 'installation' };
+      const terminalEpoch = terminal.nowMs();
+      terminal.now(now - terminalEpoch - 120_000);
+      terminal.enable();
+      expect((await terminal.terminals.ensure({ terminalKey: 'reopen-through-owner', cwd: directory,
+        custody: { ...terminalTarget, requesterAccountId: 'owner', kind: 'machine', rootPath: directory } })).ok).toBe(true);
+      terminal.now(now - terminalEpoch);
+      await (await terminal.readPlan()).run?.();
+      expect(terminal.terminals.list()).toEqual([]);
+      const receipt = (await terminal.activityLog.list({ range: 'today' })).entries.find(row => row.kind === 'closed_terminal');
+      if (!receipt) throw new Error('Expected terminal close receipt');
+      const rpc = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain',
+        authorizeRequest: request => authorizeMachineRpcRequest(request, {
+          machineId: terminalTarget.machineId, resolveInstallationId: () => terminalTarget.installationId,
+          resolveCustodianAccountId: async () => terminalTarget.custodianAccountId,
+          resolveHomeServerIdentityId: async () => terminalTarget.serverId,
+          // Only Home/network verification is substituted; local terminal admission remains real.
+          verifyMachineAdmission: async () => true,
+        }) });
+      const registration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: rpc, deps: {
+        serverId: identity.serverId, resolveHostHomeServerIdentityId: async () => terminalTarget.serverId,
+        env: { SHELL: '/bin/bash' }, workingDirectory: directory,
+        accessPolicy: { kind: 'restrictedRoots', roots: [directory] }, sessionManager: terminal.terminals,
+      } });
+      cleanup.push(() => registration.dispose());
+      const credentials = { token: 'token', encryption: null };
+      const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'global', mode: 'plain', ctx: null,
+        serverId: identity.serverId, serverHttpBaseUrl: 'https://home.example.test',
+        machineActionDirectTargetTransport: { machineId: identity.machineId,
+          invoke: (method, input, options) => rpc.invokeLocal(method, input, options) } });
+      const f = await setup(true, false, deps.machineTerminalAction, terminalTarget);
+      if (!f.settings.approvalWaivedSurfaces) throw new Error('Expected fixture approval waivers');
+      f.settings.approvalWaivedSurfaces['machines.terminal.open'] = ['ui'];
+      await f.activity.append(receipt);
+      const restored = await f.client.execute('machines.guard.activity.undo', { serverId: identity.serverId,
+        machineId: identity.machineId, entryId: receipt.id }, { surface: 'ui', authority: 'present_user', serverId: identity.serverId });
+      expect(restored, restored.ok ? undefined : restored.errorCode)
+        .toMatchObject({ ok: true, result: { ok: true, reused: false } });
+      expect(terminal.terminals.list()).toMatchObject([{ terminalKey: 'reopen-through-owner', cwd: directory }]);
+      expect((await f.activity.read(receipt.id))?.undoneAt).toBe(now);
+      // The same local transport cannot create interactive authority for an unadmitted caller.
+      await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_ENSURE,
+        { terminalKey: 'unadmitted', cwd: directory })).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+    });
+  });
+
   it('parks Activity-only reads on durable appends without Guard census work', async () => {
     const f = await setup(true);
     let censuses = 0;
@@ -237,7 +321,7 @@ describe('Machine guard current admission and original Action restoration', () =
     expect(censuses).toBe(0);
   });
 
-  it('filters parked Activity answers for recipients and refuses revoked disclosure', async () => {
+  it('filters parked Activity answers for recipients and finishes admitted reads', async () => {
     const f = await setup();
     const watch = f.handlers.get(RPC_METHODS.DAEMON_GUARD_ACTIVITY_WATCH)!;
     const input = { machineId: identity.machineId, range: '7d' };
@@ -256,10 +340,10 @@ describe('Machine guard current admission and original Action restoration', () =
     const revoked = watch({ ...input, since: ownAnswer.since }, { ...guest, verifyMachineAdmissionCurrent: async () => current });
     current = false;
     await f.activity.append(entry('revoked'));
-    await expect(revoked).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
+    expect(await revoked).toMatchObject({ changed: true, list: { entries: [{ id: 'own' }], counts: { others: 2 } } });
   });
 
-  it('refreshes Activity at UTC midnight, sliding expiry and future-record visibility without appends or census demand', async () => {
+  it('changes the Activity watch revision only on append, not midnight, expiry or future-row visibility', async () => {
     const f = await setup();
     let censuses = 0;
     f.beforeNativeRead(() => { censuses++; });
@@ -269,26 +353,31 @@ describe('Machine guard current admission and original Action restoration', () =
     const request = { machineId: identity.machineId, range: '7d' };
     type Answer = { changed: true; since: number; list: unknown };
     const initial = await watch(request, context()) as Answer;
+    const revision = f.activity.revision();
     expect(MachineGuardActivityListV1Schema.parse(initial.list).entries).toMatchObject([{ id: 'expiring' }]);
     f.setActivityNow(now + 500);
     expect((await f.activity.list({ range: '7d' })).entries).toMatchObject([{ id: 'expiring' }]);
     f.setActivityNow(now + 501);
     expect((await f.activity.list({ range: '7d' })).entries).toEqual([]);
-    const expired = await watch({ ...request, since: initial.since }, context()) as Answer;
-    expect(expired.since).not.toBe(initial.since);
-    expect(MachineGuardActivityListV1Schema.parse(expired.list).entries).toEqual([]);
+    expect(f.activity.revision()).toBe(revision);
     f.setActivityNow(now + 1000);
-    const visible = await watch({ ...request, since: expired.since }, context()) as Answer;
+    const visible = await watch(request, context()) as Answer;
     expect(MachineGuardActivityListV1Schema.parse(visible.list).entries).toMatchObject([{ id: 'future' }]);
-    const today = await watch({ ...request, range: 'today' }, context()) as Answer;
+    expect(visible.since).toBe(initial.since);
+    await watch({ ...request, range: 'today' }, context());
     f.setActivityNow(Date.UTC(2026, 9, 11));
-    const nextDay = await watch({ ...request, range: 'today', since: today.since }, context()) as Answer;
-    expect(nextDay.since).not.toBe(today.since);
+    const nextDay = await watch({ ...request, range: 'today' }, context()) as Answer;
+    expect(nextDay.since).toBe(initial.since);
     expect(MachineGuardActivityListV1Schema.parse(nextDay.list).entries).toEqual([]);
+    expect(f.activity.revision()).toBe(revision);
+    await f.activity.append(entry('new-day', { at: Date.UTC(2026, 9, 11) }));
+    const changed = await watch({ ...request, range: 'today', since: initial.since }, context()) as Answer;
+    expect(changed.since).not.toBe(initial.since);
+    expect(MachineGuardActivityListV1Schema.parse(changed.list).entries).toMatchObject([{ id: 'new-day' }]);
     expect(censuses).toBe(0);
   });
 
-  it('verifies passive reads at dispatch and disclosure, refusing revocation during real native observation', async () => {
+  it('admits passive reads once and observes revocation only on the next request', async () => {
     const f = await setup();
     let current = true;
     let verifications = 0;
@@ -307,8 +396,9 @@ describe('Machine guard current admission and original Action restoration', () =
         installationId: identity.installationId, custodianAccountId: identity.custodianAccountId,
         actorAccountId: 'owner', role: 'manage', encryptionMode: 'plain' }) });
     f.beforeNativeRead(() => { current = false; });
-    expect(await manager.handleRequest(request(RPC_METHODS.MACHINES_GUARD_GET))).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
-    expect(verifications).toBe(2);
+    const admittedRead = await manager.handleRequest(request(RPC_METHODS.MACHINES_GUARD_GET));
+    expect(verifications).toBe(1);
+    expect(admittedRead).toMatchObject({ policyRevision: 1, idle: [] });
     const beforeDenied = verifications;
     expect(await manager.handleRequest(request(RPC_METHODS.MACHINES_GUARD_GET))).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
     expect(verifications - beforeDenied).toBe(1);
@@ -323,7 +413,7 @@ describe('Machine guard current admission and original Action restoration', () =
       const before = verifications;
       const response = await manager.handleRequest(request(method, params));
       expect(response).toMatchObject(expected);
-      expect(verifications - before).toBe(2);
+      expect(verifications - before).toBe(1);
     }
   });
   it('reads the paired-owner Guard through a caller-local Home label with current admission', async () => {
@@ -340,43 +430,61 @@ describe('Machine guard current admission and original Action restoration', () =
         const f = await setup(); f.setTarget({ ...identity, serverId: profile.id });
         const get = f.handlers.get(RPC_METHODS.MACHINES_GUARD_GET)!;
         const input = { machineId: identity.machineId, serverId: 'browser-home' };
-        await expect(get(input, { ...context(), verifyMachineAdmissionCurrent: async () => false })).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
+        expect(await get(input, { ...context(), verifyMachineAdmissionCurrent: async () => false })).toMatchObject({ policyRevision: 1 });
         await expect(get(input, { ...context(), machineAdmission: { ...context().machineAdmission!, installationId: 'stale' } }))
           .rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
         expect(await get(input, context())).toMatchObject({ policyRevision: 1, idle: [], recentActivity: [] });
         const watch = f.handlers.get(RPC_METHODS.DAEMON_GUARD_WATCH)!;
-        await expect(watch(input, { ...context(), verifyMachineAdmissionCurrent: async () => false })).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
+        expect(await watch(input, { ...context(), verifyMachineAdmissionCurrent: async () => false })).toMatchObject({ changed: true });
         await expect(watch(input, { ...context(), machineAdmission: { ...context().machineAdmission!, installationId: 'stale' } }))
           .rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
         expect(await watch(input, context())).toMatchObject({ changed: true, view: { policyRevision: 1, idle: [] } });
       });
     } finally { env.restore(); reloadConfiguration(); }
   });
-  it('cancels and reanchors the actual pending PTY warning through the terminal-target Action', async () => {
+  it.each(['owner', 'alice'])('cancels and reanchors %s own PTY warning through admitted Machine RPC without cancelling another recipient warning', async accountId => {
     const f = await setup();
     const terminal = await createIdleTerminalPolicyFixture(cleanup);
     terminal.enable(); terminal.foreground(102);
     const target = { ...identity, installationId: 'installation' };
     await terminal.terminals.ensure({ terminalKey: 'command', cwd: '/project',
-      custody: { ...target, requesterAccountId: 'owner', kind: 'machine', rootPath: '/project' } });
+      custody: { ...target, requesterAccountId: accountId, kind: 'machine', rootPath: '/project' } });
     terminal.now(90_000); await (await terminal.readPlan()).run?.();
     expect(terminal.terminals.list()[0]).toHaveProperty('terminalGuardStateV1');
-    registerDaemonMachineGuardRpcHandlers({ registerHandler: (method, handler) => { f.handlers.set(method, handler); } },
+    const manager = new RpcHandlerManager({ scopePrefix: target.machineId, localMachineId: target.machineId,
+      encryptionMode: 'plain', logger: () => {},
+      authorizeRequest: request => authorizeMachineRpcRequest(request, {
+        machineId: target.machineId, resolveInstallationId: () => target.installationId,
+        resolveCustodianAccountId: async () => target.custodianAccountId,
+        resolveHomeServerIdentityId: async () => target.serverId,
+        // Home admission verification is the network boundary; all local authorization remains real.
+        verifyMachineAdmission: async () => true,
+      }) });
+    registerDaemonMachineGuardRpcHandlers(manager,
       { ...f.routes, target: () => target,
         keepRunning: (input, requester, signal) => terminal.owner.keepRunning({ terminalKey: input.terminalKey! }, requester, signal) });
-    const client = createActionExecutor({ ...createUnavailableActionTransportDeps(), machineGuardAction: args => executeMachineGuardAction({
-      actionId: args.actionId, input: args.input, serverId: 'home', assertCurrent: async () => {},
-      call: async request => f.handlers.get(request.method)!(request.input, { ...context(),
-        machineAdmission: { ...context().machineAdmission!, installationId: 'installation' } }),
-    }) });
-    expect(await client.execute('machines.guard.idleStop.keepRunning', { machineId: 'machine', terminalKey: 'command' },
-      { surface: 'cli', authority: 'present_user', serverId: 'home' })).toEqual({ ok: true, result: { status: 'kept' } });
+    const callFor = (caller: string) => manager.handleRequest({
+      method: `${target.machineId}:${RPC_METHODS.MACHINES_GUARD_IDLE_STOP_KEEP_RUNNING}`,
+      params: { machineId: target.machineId, terminalKey: 'command' }, callerAuthority: 'present_user',
+      machineAdmission: context(caller, caller === 'owner' ? 'manage' : 'use', target).machineAdmission,
+    });
+    expect(await callFor(accountId)).toEqual({ status: 'kept' });
     expect(terminal.terminals.list()[0]).not.toHaveProperty('terminalGuardStateV1');
     expect(terminal.readPolicy().idleTerminals.afterMs).toBe(120_000);
     expect(terminal.terminals.readGuardResources()[0]?.lastActivityAtMs).toBe(terminal.nowMs());
     expect((await terminal.readPlan()).nextAt).toBe(terminal.nowMs() + terminal.readPolicy().idleTerminals.afterMs - terminal.readPolicy().idleTerminals.warnBeforeMs);
-    terminal.now(120_000); await (await terminal.readPlan()).run?.();
+    terminal.now(180_000); await (await terminal.readPlan()).run?.();
+    expect(terminal.terminals.list()[0]).toHaveProperty('terminalGuardStateV1');
+    const warning = terminal.terminals.list()[0]?.terminalGuardStateV1;
+    const receipts = (await terminal.activityLog.list({ range: 'today' })).entries;
+    expect(await callFor('bob')).toEqual({ status: 'not_pending' });
+    expect(terminal.terminals.list()[0]?.terminalGuardStateV1).toEqual(warning);
+    expect((await terminal.activityLog.list({ range: 'today' })).entries).toEqual(receipts);
+    // A custodian may also cancel a recipient's warning, through the same admitted RPC.
+    expect(await callFor('owner')).toEqual({ status: 'kept' });
+    terminal.now(210_000); await (await terminal.readPlan()).run?.();
     expect(terminal.processes[0]?.kills).toBe(0);
+    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.MACHINES_GUARD_IDLE_STOP_KEEP_RUNNING).sharedMachineAccess).toBe('use');
   });
   it('applies and removes a Session ceiling through canonical Action and actual native owner', async () => {
     const f = await setup(true, true);
@@ -386,13 +494,52 @@ describe('Machine guard current admission and original Action restoration', () =
     expect(f.ceilingWrites.map(write => write.bytes)).toEqual([2048, null]);
     expect(new Set(f.ceilingWrites.map(write => write.unit)).size).toBe(1);
   });
+  it.each(['owner', 'member'])('allows admitted %s Manage Guard mutations while refusing Use and foreign targets before effects', async actorAccountId => {
+    const f = await setup(false, true, undefined, identity, actorAccountId);
+    await f.activity.append(entry('managed-undo', { attribution: { serverId: identity.serverId, accountId: actorAccountId,
+      machineId: identity.machineId, installationId: identity.installationId } }));
+    const manager = new RpcHandlerManager({ scopePrefix: identity.machineId, localMachineId: identity.machineId,
+      encryptionMode: 'plain', logger: () => {},
+      authorizeRequest: request => authorizeMachineRpcRequest(request, {
+        machineId: identity.machineId, resolveCustodianAccountId: async () => identity.custodianAccountId,
+        resolveInstallationId: () => identity.installationId,
+        // Home admission is the network boundary; Guard, restoration and native ceiling owners remain real.
+        verifyMachineAdmission: async () => true,
+      }) });
+    registerDaemonMachineGuardRpcHandlers(manager, f.routes);
+    for (const [method, input] of [
+      [RPC_METHODS.MACHINES_GUARD_SESSION_CEILING_SET, { sessionId: 'session', bytes: 2048 }],
+      [RPC_METHODS.MACHINES_GUARD_ACTIVITY_UNDO, { entryId: 'managed-undo' }],
+    ] as const) {
+      const request = { method: `${identity.machineId}:${method}`, params: { machineId: identity.machineId, ...input },
+        callerAuthority: 'present_user' as const, machineAdmission: context(actorAccountId).machineAdmission! };
+      expect(await manager.handleRequest({ ...request, machineAdmission: context(actorAccountId, 'use').machineAdmission }))
+        .toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
+      expect(await manager.handleRequest({ ...request, params: { ...request.params, machineId: 'foreign' } }))
+        .toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
+      expect(await manager.handleRequest({ ...request, machineAdmission: { ...request.machineAdmission, installationId: 'foreign' } }))
+        .toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
+      expect(f.opened).toEqual([]);
+      expect(f.ceilingWrites).toEqual([]);
+      expect((await f.activity.read('managed-undo'))?.undoneAt).toBeUndefined();
+    }
+    expect(await manager.handleRequest({ method: `${identity.machineId}:${RPC_METHODS.MACHINES_GUARD_SESSION_CEILING_SET}`,
+      params: { machineId: identity.machineId, sessionId: 'session', bytes: 2048 }, callerAuthority: 'present_user',
+      machineAdmission: context(actorAccountId).machineAdmission })).toEqual({ status: 'applied', appliesAt: 'now' });
+    expect(f.ceilingWrites.map(write => write.bytes)).toEqual([2048]);
+    expect(await manager.handleRequest({ method: `${identity.machineId}:${RPC_METHODS.MACHINES_GUARD_ACTIVITY_UNDO}`,
+      params: { machineId: identity.machineId, entryId: 'managed-undo' }, callerAuthority: 'present_user',
+      machineAdmission: context(actorAccountId).machineAdmission })).toEqual({ opened: true });
+    expect(f.opened).toEqual(['managed-undo']);
+    expect((await f.activity.read('managed-undo'))?.undoneAt).toBe(now);
+  });
   it('fails the ceiling Action closed when its native and Session owner is unavailable', async () => {
     const f = await setup(true);
     expect(await f.client.execute('machines.guard.sessionCeiling.set', { machineId: 'machine', sessionId: 'session', bytes: 1024 },
       { surface: 'cli', authority: 'present_user', serverId: 'home' }))
       .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
     expect(f.opened).toEqual([]);
-    await expect(f.handlers.get(RPC_METHODS.MACHINES_GUARD_SESSION_CEILING_SET)!({ machineId: 'machine', sessionId: 'session', bytes: null }, context('reader', 'manage')))
+    await expect(f.handlers.get(RPC_METHODS.MACHINES_GUARD_SESSION_CEILING_SET)!({ machineId: 'machine', sessionId: 'session', bytes: null }, context('reader', 'use')))
       .rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
   });
   it('restores the original UI-only Browser Action through CLI Undo without changing caller exposure', async () => {
@@ -495,7 +642,7 @@ describe('Machine guard current admission and original Action restoration', () =
       { surface: 'cli', authority: 'present_user', serverId: 'home' })).toMatchObject({ ok: false, errorCode: 'machine_target_mismatch' });
     expect((await f.activity.read('wrong-child-target'))?.undoneAt).toBeUndefined();
   });
-  it('filters Activity to the exact current recipient and keeps all effects custodian-only', async () => {
+  it('filters Activity to the exact current recipient and keeps restorative effects Manage-only', async () => {
     const f = await setup();
     await f.activity.append(entry('own', { attribution: { serverId: 'home', accountId: 'reader', machineId: 'machine', installationId: 'install' } }));
     await f.activity.append(entry('private'));
@@ -505,15 +652,19 @@ describe('Machine guard current admission and original Action restoration', () =
       .toMatchObject({ entries: [{ id: 'own' }], counts: { others: 2 } });
     const full = await list({ machineId: 'machine', range: 'today' }, context());
     expect(full).toMatchObject({ counts: { stopped: 3, others: 0 } });
+    for (const method of [RPC_METHODS.MACHINES_RESOURCES_POLICY_SET, RPC_METHODS.MACHINES_GUARD_SESSION_CEILING_SET,
+      RPC_METHODS.MACHINES_GUARD_ACTIVITY_UNDO]) {
+      expect(resolveMachineRpcRoutePolicy(method).sharedMachineAccess).toBe('manage');
+    }
     for (const [method, input] of [[RPC_METHODS.MACHINES_GUARD_ACTIVITY_UNDO, { entryId: 'private' }],
-      [RPC_METHODS.MACHINES_GUARD_IDLE_STOP_KEEP_RUNNING, { sessionId: 'private' }]] as const) {
-      await expect(f.handlers.get(method)!({ machineId: 'machine', ...input }, context('reader', 'manage')))
+      [RPC_METHODS.MACHINES_GUARD_SESSION_CEILING_SET, { sessionId: 'private', bytes: null }]] as const) {
+      await expect(f.handlers.get(method)!({ machineId: 'machine', ...input }, context('reader', 'use')))
         .rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
     }
     const get = f.handlers.get(RPC_METHODS.MACHINES_GUARD_GET)!;
     await expect(get({ machineId: 'other', serverId: 'browser-home' }, context())).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
-    await expect(get({ machineId: 'machine' }, { ...context(), verifyMachineAdmissionCurrent: async () => false }))
-      .rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
+    expect(await get({ machineId: 'machine' }, { ...context(), verifyMachineAdmissionCurrent: async () => false }))
+      .toMatchObject({ policyRevision: 1 });
     expect(await f.handlers.get(RPC_METHODS.MACHINES_GUARD_IDLE_STOP_KEEP_RUNNING)!({ machineId: 'machine', sessionId: 'absent' }, context()))
       .toEqual({ status: 'not_pending' });
   });
@@ -580,9 +731,7 @@ describe('Machine guard current admission and original Action restoration', () =
     cache.attachApiMachineForSessions(replacement as never);
     const get = f.handlers.get(RPC_METHODS.MACHINES_GUARD_GET)!;
     expect(await get({ machineId: 'machine' }, context())).toMatchObject({ recentActivity: [{ id: 'retained' }] });
-    const changing = { ...context(), verifyMachineAdmissionCurrent: async () => {
-      f.setTarget({ ...identity, installationId: 'replacement' }); return true;
-    } };
-    await expect(get({ machineId: 'machine' }, changing)).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
+    f.beforeNativeRead(() => { f.setTarget({ ...identity, installationId: 'replacement' }); });
+    await expect(get({ machineId: 'machine' }, context())).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
   });
 });

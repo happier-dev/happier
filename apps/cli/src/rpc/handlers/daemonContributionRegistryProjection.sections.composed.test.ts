@@ -31,14 +31,13 @@ it.each(['generation', 'activation diagnostics', 'another handler', 'projection 
             resolveInstalledPackages: async () => [],
             resolveServerFeaturesSnapshot: () => undefined,
         });
-        const request = { machineId: 'section-machine', deferredSections: true, supportedSectionFrameVersions: [2] };
+        const request = { machineId: 'section-machine', deferredSections: true };
         const read = (extra: object = {}) => rpc.invokeLocal(
             RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, { ...request, ...extra });
         try {
             invalidateDaemonContributionRegistryProjectionCache();
             const manifest = DaemonProjectionDeferredSectionsResponseSchema.parse(await read());
-            const pageRequest = { sectionFrameVersion: 2,
-                sectionRead: { digest: manifest.sections.base!, offset: 0 } };
+            const pageRequest = { sectionRead: { digest: manifest.sections.base!, offset: 0 } };
             const original = DaemonProjectionSectionBodyResponseSchema.parse(await read(pageRequest));
             if (change === 'activation diagnostics') {
                 await fixture.registry.activateContributionsOnDemand([{ pluginId, family: 'actions', localId: 'probe' }]);
@@ -66,11 +65,53 @@ it.each(['generation', 'activation diagnostics', 'another handler', 'projection 
             expect(DaemonProjectionSectionBodyResponseSchema.parse(await read(pageRequest))).toEqual(original);
             const current = DaemonProjectionDeferredSectionsResponseSchema.parse(await read());
             expect(current.projectionDigest).not.toBe(manifest.projectionDigest);
-            expect(DaemonProjectionSectionBodyResponseSchema.safeParse(await read({ sectionFrameVersion: 2,
-                sectionRead: { digest: current.sections.base!, offset: 0 } })).success).toBe(true);
+            expect(DaemonProjectionSectionBodyResponseSchema.safeParse(await read({ sectionRead: { digest: current.sections.base!, offset: 0 } })).success).toBe(true);
         } finally {
             invalidateDaemonContributionRegistryProjectionCache();
             await fixture.dispose();
         }
     },
 );
+
+it('advertises exact Search Action bodies in the narrow Search section', async () => {
+    const pluginId = 'acme.search-selection';
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ coldStart: true, plugins: [{
+        manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: {
+            actions: ['query', 'unrelated'].map(id => ({ id, title: id, scopes: ['global'], surfaces: ['ui'],
+                execution: { target: 'daemon' as const }, dangerLevel: 'safe' as const, placementBindings: [] })),
+            searchProviders: [{ id: 'entries', action: 'query' }],
+        } }), files: { 'daemon.mjs': 'export function activate() {}' },
+    }] });
+    const rpc = new RpcHandlerManager({ scopePrefix: 'search-machine', encryptionMode: 'plain', logger: () => {} });
+    registerDaemonContributionRegistryProjectionHandler(rpc, {
+        resolveRuntimeRegistry: async () => fixture.registry,
+        resolveGeneration: async () => fixture.registry.generation,
+        resolveInstalledPackages: async () => [], resolveServerFeaturesSnapshot: () => undefined,
+    });
+    const read = (extra: object = {}) => rpc.invokeLocal(
+        RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+        { machineId: 'search-machine', deferredSections: true, ...extra });
+    try {
+        invalidateDaemonContributionRegistryProjectionCache();
+        const current = DaemonProjectionDeferredSectionsResponseSchema.parse(await read());
+        expect(current.sections.searchProviders).toBeDefined();
+        const indexPage = DaemonProjectionSectionBodyResponseSchema.parse(await read({ sectionRead: { digest: current.sections.searchProviders!, offset: 0 } }));
+        expect(indexPage.nextOffset).toBeNull();
+        const index = DaemonContributionRegistryProjectionSectionsResponseSchema.parse(JSON.parse(indexPage.chunk));
+        const bodies = new Map<string, readonly string[]>();
+        for (const part of index.parts) {
+            if (typeof part === 'string') continue;
+            const page = DaemonProjectionSectionBodyResponseSchema.parse(await read({ sectionRead: { digest: part.digest, offset: 0 } }));
+            expect(page.nextOffset).toBeNull();
+            bodies.set(part.digest, JSON.parse(page.chunk));
+        }
+        expect(reassembleDaemonProjectionSections(index, bodies)?.response).toMatchObject({ projection: {
+            actionsById: { [`${pluginId}/query`]: { id: 'query' } }, familiesById: { pluginUi: { entriesById: {
+                [`searchProvider:${pluginId}:entries`]: { action: { pluginId, localId: 'query' } },
+            } } },
+        } });
+        const assembled = reassembleDaemonProjectionSections(index, bodies)?.response;
+        expect(JSON.stringify(assembled)).not.toContain(`${pluginId}/unrelated`);
+        expect(fixture.registry.activatedPluginIds.size).toBe(0);
+    } finally { invalidateDaemonContributionRegistryProjectionCache(); await fixture.dispose(); }
+});

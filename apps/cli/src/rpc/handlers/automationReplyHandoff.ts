@@ -2,7 +2,7 @@ import { AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1, AutomationReplyHandoffDi
 import { AutomationResultDeliveryInputV1Schema, AutomationResultDeliveryResultV1Schema } from '@happier-dev/protocol/automations/result-delivery';
 import { isAutomationReplyHandoffIdForRunV1 } from '@happier-dev/protocol/automations/automationReplyHandoffIdentityV1';
 import { openAutomationConversationReplyContextStoredEnvelopeV1, openAutomationRunResultStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationReplyHandoffStoredContent';
-import { sameAutomationAccountContentIdentityV1, sameAutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+import { sameAutomationAccountContentIdentityV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import type { AccountEncryptionCurrentnessResponse, AccountScopedCryptoMaterialSnapshotV1, AutomationAccountCurrentnessWitnessV1, AutomationConversationReplyContextCorrespondenceV1, AutomationReplyHandoffDispatchResultV1, AutomationReplyHandoffSettlementV1, AutomationRunResultCorrespondenceV1 } from '@happier-dev/protocol';
 import { openWorkflowFinalResultStoredEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { resolveWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
@@ -218,7 +218,7 @@ export function registerAutomationReplyHandoffRpcHandler(
         if (encryptionAtOpen.kind === 'unavailable') return unavailable('targetUnavailable');
         if (encryptionAtOpen.kind === 'retry') {
             return settled({
-                settlement: sameAutomationAccountCurrentnessWitnessV1(
+                settlement: sameAutomationAccountContentIdentityV1(
                     request.handoff.accountCurrentness,
                     encryptionAtOpen.witness,
                 )
@@ -227,7 +227,7 @@ export function registerAutomationReplyHandoffRpcHandler(
                 accountCurrentness: encryptionAtOpen.witness,
             });
         }
-        if (!sameAutomationAccountCurrentnessWitnessV1(request.handoff.accountCurrentness, encryptionAtOpen.witness)) {
+        if (!sameAutomationAccountContentIdentityV1(request.handoff.accountCurrentness, encryptionAtOpen.witness)) {
             return settled({
                 settlement: { kind: 'staleClaim' },
                 accountCurrentness: encryptionAtOpen.witness,
@@ -251,7 +251,7 @@ export function registerAutomationReplyHandoffRpcHandler(
             if (workflowCensus.runId !== request.handoff.runId || workflowCensus.ownerAccountId !== accountId) {
                 return unavailable('targetMismatch');
             }
-            if (!sameAutomationAccountCurrentnessWitnessV1(
+            if (!sameAutomationAccountContentIdentityV1(
                 workflowCensus.ownerAccountCurrentness,
                 encryptionAtOpen.witness,
             )) {
@@ -320,7 +320,7 @@ export function registerAutomationReplyHandoffRpcHandler(
             }
             if (encryptionAfterOpenFailure.kind === 'retry') {
                 return settled({
-                    settlement: sameAutomationAccountCurrentnessWitnessV1(
+                    settlement: sameAutomationAccountContentIdentityV1(
                         request.handoff.accountCurrentness,
                         encryptionAfterOpenFailure.witness,
                     )
@@ -329,7 +329,7 @@ export function registerAutomationReplyHandoffRpcHandler(
                     accountCurrentness: encryptionAfterOpenFailure.witness,
                 });
             }
-            if (!sameAutomationAccountCurrentnessWitnessV1(encryptionAtOpen.witness, encryptionAfterOpenFailure.witness)) {
+            if (!sameAutomationAccountContentIdentityV1(encryptionAtOpen.witness, encryptionAfterOpenFailure.witness)) {
                 return settled({
                     settlement: { kind: 'staleClaim' },
                     accountCurrentness: encryptionAfterOpenFailure.witness,
@@ -389,7 +389,7 @@ export function registerAutomationReplyHandoffRpcHandler(
             if (encryptionBeforeInvoke.kind === 'unavailable') return unavailable('targetUnavailable');
             if (
                 encryptionBeforeInvoke.kind !== 'available'
-                || !sameAutomationAccountCurrentnessWitnessV1(encryptionAtOpen.witness, encryptionBeforeInvoke.witness)
+                || !sameAutomationAccountContentIdentityV1(encryptionAtOpen.witness, encryptionBeforeInvoke.witness)
             ) {
                 return settled({
                     settlement: { kind: 'retry', retryAfterMs: 0 },

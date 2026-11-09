@@ -277,10 +277,10 @@ export function registerSessionHandlers(
         browserControl: opts?.browserControl ?? null,
     });
     registerDaemonBrowserDiagnosticsSnapshotHandler(rpcHandlerManager, {
-        browserDiagnostics: opts?.browserDiagnostics ?? null,
+        browserDiagnostics: opts?.browserDiagnostics ?? null, resolveBrowserControl: () => opts?.browserControl ?? null,
     });
     registerDaemonBrowserRecordingHandlers(rpcHandlerManager, {
-        browserRecording: opts?.browserRecording ?? null,
+        browserRecording: opts?.browserRecording ?? null, resolveBrowserControl: () => opts?.browserControl ?? null,
     });
     registerDaemonSimulatorPreviewHandlers(rpcHandlerManager, {
         simulatorPreview: opts?.simulatorPreview ?? null,

@@ -182,4 +182,10 @@ describe('capabilities.invoke native preflight catalogs', () => {
       .toMatchObject({ok:false,error:{code:'profile-preflight-failed'}});
     expect(existsSync(capture)).toBe(false);
   });
+  it('rejects malformed configuration override ids and values at the capability boundary', async () => {
+    for (const configOptionOverrides of [{ ' ': 'value' }, { provider: { value: 'gateway' } }]) {
+      expect(await invoke({ configOptionOverrides })).toMatchObject({ ok: false, error: { code: 'invalid_params' } });
+    }
+    expect(existsSync(capture)).toBe(false);
+  });
 });

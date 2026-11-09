@@ -30,6 +30,7 @@ function starterRuntime() {
     const runId = '99999999-9999-4999-8999-999999999999';
     let acceptedEnvelope: string | undefined;
     const run = WorkflowRunSummaryV1Schema.parse({ id: runId, sourceArtifactId: null,
+        attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
         ownerAccountId: 'account-1', visibleTeamId: null, origin: { kind: 'direct' }, state: 'queued', revision: 0,
         machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
         availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },

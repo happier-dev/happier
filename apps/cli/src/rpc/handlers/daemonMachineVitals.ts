@@ -1,13 +1,12 @@
 import type { RpcAdmissionPredicate, RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { MachineVitalsSampler } from '@/daemon/vitals/createMachineVitalsSampler';
 import { parkWatch } from '@/daemon/lifecycle/parkWatch';
-import type { MachineResourceAttentionV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
+import { appendMachineVitalsSeriesV1, type MachineResourceAttentionV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 import type { MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 import {
     MachineVitalsGetInputV1Schema, MachineVitalsHistoryGetInputV1Schema, MachineVitalsWatchInputV1Schema,
-    MachineVitalsSnapshotV1Schema, MachineVitalsWatchResultV1Schema, type MachineVitalsSnapshotV1,
+    type MachineVitalsSnapshotV1, type MachineVitalsWatchResultV1,
 } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
-import { MachineVitalsHistoryV1Schema } from '@happier-dev/protocol/machines/vitals/machineVitalsHistoryV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { doesMachineRpcTargetMatchAdmission } from '@/api/machine/machineRpcAuthorization';
@@ -50,18 +49,7 @@ function fiveMinuteSeries(sampler: MachineVitalsSampler): MachineVitalsSnapshotV
             minute?.mem != null && memoryTotal !== undefined ? Math.max(0, memoryTotal - minute.mem) : null,
             minute?.rx != null ? minute.rx / 60 : null, minute?.tx != null ? minute.tx / 60 : null);
     }
-    let previous: MachineVitalsSampleV1 | undefined;
-    for (const sample of live) {
-        // Opening/closing a watched surface changes cadence; only missed samples at the slower cadence are a gap.
-        if (previous && sample.sampledAt - previous.sampledAt > 2 * Math.max(previous.intervalMs, sample.intervalMs)) {
-            add(previous.sampledAt + previous.intervalMs, null, null, null, null);
-        }
-        add(sample.sampledAt, sample.cpu.reported ? sample.cpu.busyPct : null,
-            sample.memory.reported ? sample.memory.availableBytes : null,
-            sample.network.reported ? sample.network.rxBps : null, sample.network.reported ? sample.network.txBps : null);
-        previous = sample;
-    }
-    return series;
+    return appendMachineVitalsSeriesV1(series, null, live);
 }
 
 export function registerDaemonMachineVitalsRpcHandlers(rpc: RpcHandlerRegistrar, options: DaemonMachineVitalsRoutes): void {
@@ -78,41 +66,38 @@ export function registerDaemonMachineVitalsRpcHandlers(rpc: RpcHandlerRegistrar,
             return doesMachineRpcTargetMatchAdmission(request, admission, current, context?.reportAdmissionDenial);
         };
         if (!matches()) throw new RpcError('Machine access denied', RPC_ERROR_CODES.FORBIDDEN);
-        const assertCurrent = async () => {
-            const verified = async () => context?.verifyMachineAdmissionCurrent && await context.verifyMachineAdmissionCurrent()
-                || deny('machine_currentness');
-            if (!matches() || !await verified() || !matches()) {
+        const assertLocal = async () => {
+            if (!matches()) {
                 throw new RpcError('Machine access denied', RPC_ERROR_CODES.FORBIDDEN);
             }
         };
-        // The dispatcher owns initial Home admission. This passive owner keeps
-        // local binding checks and one fresh verification at disclosure.
-        return assertCurrent;
+        // The dispatcher admits each request once; returns retain only local binding and cancellation.
+        return assertLocal;
     };
     rpc.registerHandler(RPC_METHODS.MACHINES_VITALS_GET, async (raw: unknown, context) => {
         const request = MachineVitalsGetInputV1Schema.parse(raw);
-        const assertCurrent = bindAdmission(request, context);
+        const assertLocal = bindAdmission(request, context);
         try {
             const latest = options.sampler.latest();
             const state = options.sampler.state();
             const attention = options.readAttention?.();
-            return MachineVitalsSnapshotV1Schema.parse({
+            return {
                 ...state, sample: latest ? sampleForView(latest, request.view ?? 'summary') : null,
                 series5m: latest || options.sampler.minutes(0).length ? fiveMinuteSeries(options.sampler)
                     : { cpu: [], memory: [], networkRx: [], networkTx: [] },
                 ...(attention ? { attention } : {}),
-            });
-        } finally { await assertCurrent(); }
+            } satisfies MachineVitalsSnapshotV1;
+        } finally { await assertLocal(); }
     });
     rpc.registerHandler(RPC_METHODS.MACHINES_VITALS_HISTORY_GET, async (raw: unknown, context) => {
         const request = MachineVitalsHistoryGetInputV1Schema.parse(raw);
-        const assertCurrent = bindAdmission(request, context);
-        try { return MachineVitalsHistoryV1Schema.parse(options.sampler.history(request.range)); }
-        finally { await assertCurrent(); }
+        const assertLocal = bindAdmission(request, context);
+        try { return options.sampler.history(request.range); }
+        finally { await assertLocal(); }
     });
     rpc.registerHandler(RPC_METHODS.DAEMON_VITALS_WATCH, async (raw: unknown, context) => {
         const request = MachineVitalsWatchInputV1Schema.parse(raw);
-        const assertCurrent = bindAdmission(request, context);
+        const assertLocal = bindAdmission(request, context);
         const cursor = request.sinceSampledAt ?? options.sampler.latest()?.sampledAt ?? 0;
         const newer = () => options.sampler.samplesSince(cursor, request.view);
         try {
@@ -126,8 +111,8 @@ export function registerDaemonMachineVitalsRpcHandlers(rpc: RpcHandlerRegistrar,
                 },
                 signal: context?.signal,
             });
-            return MachineVitalsWatchResultV1Schema.parse(parked.changed
-                ? { changed: true, samples: parked.snapshot } : { changed: false });
-        } finally { await assertCurrent(); }
+            return (parked.changed
+                ? { changed: true, samples: parked.snapshot } : { changed: false }) satisfies MachineVitalsWatchResultV1;
+        } finally { await assertLocal(); }
     });
 }

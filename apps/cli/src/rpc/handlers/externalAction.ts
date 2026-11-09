@@ -1,11 +1,10 @@
-import type { RpcHandlerContext } from '@/api/rpc/types';
 import { createExternalActionDaemonDispatchResponse, ExternalActionDaemonDispatchRequestSchema, EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, prepareExternalActionResponseEnvelopeV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ActionExecuteResult, ExternalActionDaemonDispatchRequest, ExternalActionDaemonDispatchResultV1 } from '@happier-dev/protocol';
 import type { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { isSocketRpcActionApiServerOriginAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 
-import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type {
   ExternalActionExecutor,
   ResolveExternalActionTarget,
@@ -15,7 +14,15 @@ import type {
 } from '@/daemon/externalActions/executeExternalAction';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
 import { traceExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
+import type { ExternalActionTargetRefusalPhase } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { isOriginalSessionInputAccountActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { isManagedControllerCodecActionV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+
+/** Receiving custody is host-private and never replaces the approved origin. */
+export type ExternalActionApprovalReplay = (
+  args: Parameters<ReturnType<typeof createActionExecutor>['replayApprovedApprovalRequest']>[0],
+  machineIngress?: Pick<RpcHandlerContext, 'signal' | 'machineAdmission' | 'verifyMachineAdmissionCurrent'>,
+) => ReturnType<ReturnType<typeof createActionExecutor>['replayApprovedApprovalRequest']>;
 
 export type ExternalActionRpcRegistrationOptions = Readonly<{
   machineId: string;
@@ -28,7 +35,7 @@ export type ExternalActionRpcRegistrationOptions = Readonly<{
   verifyExecutionAuthorization: VerifyExternalActionExecutionAuthorization;
   resolveTarget: ResolveExternalActionTarget;
   executor: ExternalActionExecutor & Partial<Pick<ReturnType<typeof createActionExecutor>,
-    'replayApprovedApprovalRequest' | 'continueConfidentialApprovalRequest'>>;
+    'continueConfidentialApprovalRequest'>> & Readonly<{ replayApprovedApprovalRequest?: ExternalActionApprovalReplay }>;
   resolveEncryption?: ResolveExternalActionEncryption;
   prepareRequesterAccountContext?: PrepareExternalActionRequesterAccountContext;
   invokeResource?: Parameters<typeof executeExternalAction>[0]['invokeResource'];
@@ -70,6 +77,7 @@ type ExternalActionDaemonRelayAdmissionResult = ExternalActionDaemonRelayRespons
   kind: 'invalid_request';
   errorCode: 'target_not_local';
   requestId: string;
+  phase: ExternalActionTargetRefusalPhase;
 }>;
 
 function response(
@@ -86,18 +94,20 @@ function response(
   );
 }
 
-function targetNotLocal(request: ExternalActionDaemonDispatchRequest): ExternalActionDaemonRelayAdmissionResult {
+function targetNotLocal(request: ExternalActionDaemonDispatchRequest, phase: ExternalActionTargetRefusalPhase): ExternalActionDaemonRelayAdmissionResult {
   if (request.envelope.v === 2) {
     return {
       kind: 'invalid_request',
       errorCode: 'target_not_local',
       requestId: request.envelope.requestId,
+      phase,
     };
   }
   return response(request, {
     ok: false,
     errorCode: 'target_not_local',
     error: 'target_not_local',
+    details: { phase },
   });
 }
 
@@ -121,7 +131,7 @@ export function registerExternalActionRpcHandler(
       request.placement.machineId !== options.machineId
       || request.placement.target.machineId !== options.machineId
     ) {
-      return targetNotLocal(request);
+      return targetNotLocal(request, 'target_placement');
     }
     if (!request.executionAuthorization || !options.externalActionMachineRequestPrivateKey) {
       return forbidden();
@@ -137,17 +147,18 @@ export function registerExternalActionRpcHandler(
     }
     trace('rpc.account_resolution.end');
     const installationId = options.resolveInstallationId();
-    if (
-      signal?.aborted
-      || accountId !== request.executionAuthorization.binding.custodianAccountId
-      || installationId !== request.executionAuthorization.binding.installationId
-      // Shared execution remains closed until its Account-scoped dependency
-      // ports preserve the actor independently of the daemon custodian.
-      || (accountId !== request.principal.accountId
+    const refusedTargetPhase = signal?.aborted ? 'target_cancelled'
+      : accountId !== request.executionAuthorization.binding.custodianAccountId ? 'target_custodian'
+      : installationId !== request.executionAuthorization.binding.installationId ? 'target_installation'
+      // Shared Account effects need requester-owned dependency ports. Managed
+      // effects instead open their exact invocation-only controller codec in
+      // the execution owner below; they must not require requester Account keys.
+      : (accountId !== request.principal.accountId
+        && !isManagedControllerCodecActionV1(request.executionAuthorization.binding)
         && (!options.prepareRequesterAccountContext || !request.executionAuthorization.requesterAccountContext
-          && !isOriginalSessionInputAccountActionCustody(request.executionAuthorization.binding)))
-    ) {
-      return targetNotLocal(request);
+          && !isOriginalSessionInputAccountActionCustody(request.executionAuthorization.binding))) ? 'target_requester_context' : null;
+    if (refusedTargetPhase) {
+      return targetNotLocal(request, refusedTargetPhase);
     }
 
     const result = await executeExternalAction({
@@ -187,8 +198,3 @@ export function registerExternalActionRpcHandler(
     return createExternalActionDaemonDispatchResponse(result.prepared);
   });
 }
-
-export type ExternalActionApprovalReplay = (
-  args: Parameters<ReturnType<typeof createActionExecutor>['replayApprovedApprovalRequest']>[0],
-  machineIngress?: Pick<RpcHandlerContext, 'signal' | 'machineAdmission' | 'verifyMachineAdmissionCurrent'>,
-) => ReturnType<ReturnType<typeof createActionExecutor>['replayApprovedApprovalRequest']>;

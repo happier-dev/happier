@@ -55,7 +55,7 @@ afterAll(async () => {
 });
 function context(actorAccountId = 'owner', role: 'use' | 'manage' = 'manage'): RpcHandlerContext {
     return { signal: new AbortController().signal, machineAdmission: { ...identity, actorAccountId, role, encryptionMode: 'plain' },
-        callerAuthority: 'present_user', verifyMachineAdmissionCurrent: async () => true, verifyMachineAuthorityCurrent: async () => true };
+        callerAuthority: 'present_user', verifyMachineAdmissionCurrent: async () => true };
 }
 function setup(input: Readonly<{
     target?: () => typeof identity;

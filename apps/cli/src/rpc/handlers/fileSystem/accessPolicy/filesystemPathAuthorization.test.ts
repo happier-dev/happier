@@ -46,9 +46,9 @@ describe('authorizeFilesystemPath', () => {
     symlinkSync(join(allowed, 'missing.json'), insideLink);
     const accessPolicy = { kind: 'restrictedRoots' as const, roots: [allowed] };
     const asyncAuthorize = await prepareFilesystemPathAuthorizer({ defaultDirectory: allowed, accessPolicy });
-    expect(authorizeFilesystemPath({ targetPath: outsideLink, defaultDirectory: allowed, accessPolicy })).toMatchObject({ valid: false });
-    expect(validatePath(outsideLink, allowed)).toMatchObject({ valid: false });
-    await expect(asyncAuthorize(outsideLink)).resolves.toMatchObject({ valid: false });
+    expect(authorizeFilesystemPath({ targetPath: outsideLink, defaultDirectory: allowed, accessPolicy })).toMatchObject({ valid: false, errorCode: 'access_denied' });
+    expect(validatePath(outsideLink, allowed)).toMatchObject({ valid: false, errorCode: 'access_denied' });
+    await expect(asyncAuthorize(outsideLink)).resolves.toMatchObject({ valid: false, errorCode: 'access_denied' });
     expect(authorizeFilesystemPath({ targetPath: insideLink, defaultDirectory: allowed, accessPolicy })).toMatchObject({ valid: true });
     expect(validatePath(insideLink, allowed)).toMatchObject({ valid: true });
     await expect(asyncAuthorize(insideLink)).resolves.toMatchObject({ valid: true });
