@@ -16,10 +16,9 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { motionTokens } from '@/components/ui/motion';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useLocalSettingMutable } from '@/sync/domains/state/storage';
-import { DEFAULT_THEME_PROFILES_LOCAL_STATE } from '@/theme/profiles/themeProfilePersistence';
+import { useThemeProfiles } from '@/sync/store/useThemeProfiles';
 import { t } from '@/text';
 import { readHappierPointerModifiers, resolveHappierPointerPlatform } from '@happier-dev/plugin-ui/presentation';
-import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
 
 /**
  * The same Appearance entry in the title strip and phone header. Ordinary, long and secondary
@@ -61,7 +60,6 @@ function ThemeToggleButton(props: Readonly<{
                 testID="app-shell-theme-toggle"
                 variant="plain"
                 size={props.buttonSize}
-                minimumInteractiveTargetSize={resolveTouchTargetFloorPx() ?? undefined}
                 interactiveTargetGapPx={props.interactiveTargetGapPx}
                 accessibilityLabel={label}
                 tooltip={label}
@@ -103,7 +101,7 @@ function AppearancePopoverContent(props: Readonly<{ onClose: () => void; onHide:
     const router = useRouter();
     const applyThemeSelection = useApplyThemeSelection();
     const [themePreference] = useLocalSettingMutable('themePreference');
-    const [themeProfiles] = useLocalSettingMutable('themeProfiles');
+    const themeProfiles = useThemeProfiles();
     const openAppearance = () => {
         props.onClose();
         router.push({ pathname: '/settings/appearance', params: {} });
@@ -120,7 +118,7 @@ function AppearancePopoverContent(props: Readonly<{ onClose: () => void; onHide:
                 { id: 'adaptive', label: t('settingsAppearance.themeToggle.matchSystem') },
             ]}
             value={resolveThemeMode(themePreference)}
-            onChange={mode => applyThemeSelection(mode, themeProfiles ?? DEFAULT_THEME_PROFILES_LOCAL_STATE)}
+            onChange={mode => applyThemeSelection(mode, themeProfiles)}
         />
         <GlassAppearanceControls presentation="compact" />
         <Item testID="appearance-more-settings" title={t('settingsAppearance.glassControls.moreSettings')} onPress={openAppearance} />

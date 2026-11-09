@@ -9,13 +9,32 @@ import { createSignInServiceFeaturesResponse } from '@/dev/testkit/fixtures/feat
 import { initializeTerminalRouteRuntimeForTests } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
 
 installTokenStorageWebPlatformMocks();
-const navigation = vi.hoisted(() => ({ pathname: '/', params: {} as Record<string, string>, replace: vi.fn() }));
+vi.mock('expo-constants', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('expo-constants')>();
+    return { ...actual, default: { ...actual.default, expoConfig: {
+        ...actual.default.expoConfig,
+        extra: { ...actual.default.expoConfig?.extra, app: { postHogKey: 'ph_home_entry_test' } },
+    } } };
+});
+// PostHog is an external SDK; keep selection and feature discovery real.
+vi.mock('posthog-react-native', () => ({
+    default: class PostHogBoundary {
+        optIn = vi.fn(async () => {});
+        optOut = vi.fn(async () => {});
+        identify = vi.fn();
+        group = vi.fn();
+        capture = vi.fn();
+        reset = vi.fn();
+        flush = vi.fn(async () => {});
+    },
+}));
+const navigation = vi.hoisted(() => ({ pathname: '/', segments: ['index'], params: {} as Record<string, string>, replace: vi.fn() }));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({
         pathname: () => navigation.pathname,
         params: () => navigation.params,
-        segments: ['index'],
+        segments: () => navigation.segments,
         router: { replace: (href) => {
             navigation.replace(href);
             navigation.pathname = String(href).split('?')[0];
@@ -41,12 +60,16 @@ describe('supplied Home admission before shell mount', () => {
     let storage: ReturnType<typeof installLocalStorageMock>;
     let locks: ReturnType<typeof installWebLockManagerMock>;
 
-    beforeEach(() => {
+    beforeEach(async () => {
+        // The real connection owner stays live across cases; retain its generation lifetime.
         storage = installLocalStorageMock();
         locks = installWebLockManagerMock();
+        const { resetServerProfilesRuntimeForTests } = await import('@/sync/domains/server/serverProfiles');
+        resetServerProfilesRuntimeForTests({ preserveGenerations: true });
         runtimeFetch.mockReset();
         runtimeFetch.mockImplementation(async () => new Response('', { status: 503 }));
         navigation.pathname = '/';
+        navigation.segments = ['index'];
         navigation.params = {};
         navigation.replace.mockReset();
     });
@@ -57,11 +80,11 @@ describe('supplied Home admission before shell mount', () => {
         vi.unstubAllGlobals();
     });
 
-    async function mountFor(address: string, onMount: (serverUrl: string) => void, withNavigation = false, historyState: unknown = null) {
+    async function mountFor(address: string, onMount: (serverUrl: string) => void, withNavigation = false, historyState: unknown = null, fragment = '', source: 'location' | 'route' = 'location') {
         // Match the app entry: the real Sync runtime must be registered before
         // Router admission can switch a Home. resetModules retires that runtime.
         await import('@/sync/syncEngine');
-        const location = { href: `https://app.example.test${navigation.pathname}?server=${encodeURIComponent(address)}&tab=work` };
+        const location = { href: `https://app.example.test${navigation.pathname}?${source === 'location' ? `server=${encodeURIComponent(address)}&` : ''}tab=work${fragment}` };
         // Browser history is the external boundary. Apply writes so assertions
         // observe the retained URL/state rather than only an incidental call.
         const history = {
@@ -87,7 +110,8 @@ describe('supplied Home admission before shell mount', () => {
             return null;
         }
         const shell = withNavigation ? <RootLayoutRedirectGate><ShellProbe /></RootLayoutRedirectGate> : <ShellProbe />;
-        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><WebServerOverrideGate>{shell}</WebServerOverrideGate></InjectedAuthProvider>);
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><WebServerOverrideGate
+            {...(source === 'route' ? { serverUrlOverride: address } : {})}>{shell}</WebServerOverrideGate></InjectedAuthProvider>);
         return { screen, replaceRelativeUrl, profiles, location, history };
     }
 
@@ -116,6 +140,135 @@ describe('supplied Home admission before shell mount', () => {
         } finally {
             releaseHealth();
             await screen.unmount();
+        }
+    });
+
+    it.each(['location', 'route'] as const)('selects the signed-in Artifact link Home from %s before mounting its signed-out landing and preserves the fragment for capture', async source => {
+        const address = 'https://signed-link-destination.test';
+        navigation.pathname = '/share/artifact/invite';
+        navigation.segments = ['(app)', 'share', 'artifact', '[lookupId]'];
+        runtimeFetch.mockImplementation(async rawUrl => Response.json(String(rawUrl).endsWith('/health')
+            ? { status: 'ok' } : createSignInServiceFeaturesResponse(address)));
+        const mountedHomes: string[] = [];
+        const secret = 'c'.repeat(43);
+        const { screen, location } = await mountFor(address, serverUrl => { mountedHomes.push(serverUrl); }, true, null, `#k=${secret}`, source);
+        try {
+            await vi.waitFor(() => expect(mountedHomes).toEqual([address]));
+            expect(navigation.replace).not.toHaveBeenCalled();
+            expect(new URL(location.href).hash).toBe(`#k=${secret}`);
+            expect(new URL(location.href).searchParams.has('server')).toBe(false);
+        } finally { await screen.unmount(); }
+    });
+
+    it('mounts the real sign-in surface with the admitted entry after query cleanup and zero requests to other Homes', async () => {
+        const address = 'http://happier-entry.localhost:3033';
+        const bakedDefault = 'https://owner-entry.example.test:8443';
+        const previousDefault = process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
+        process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL = bakedDefault;
+        const profiles = await import('@/sync/domains/server/serverProfiles');
+        profiles.resetServerProfilesRuntimeForTests({ preserveGenerations: true });
+        const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+        const location = { href: `http://happier-entry.localhost:19364/?server=${encodeURIComponent(address)}` };
+        vi.stubGlobal('window', { localStorage: globalThis.localStorage, location,
+            history: { state: null, replaceState: (_state: unknown, _title: string, url: string) => {
+                location.href = new URL(url, location.href).href;
+            } } });
+        runtimeFetch.mockImplementation(async (rawUrl) => {
+            const url = new URL(String(rawUrl));
+            if (url.pathname === '/health') return Response.json({ status: 'ok' });
+            if (url.pathname === '/v1/auth/entry') return new Response('', { status: 404 });
+            return Response.json(createSignInServiceFeaturesResponse(address));
+        });
+        const { AuthProvider } = await import('@/auth/context/AuthContext');
+        const { AppPaneModalProvider } = await import('@/components/appShell/providers/AppPaneModalProvider');
+        const { WebServerOverrideGate } = await import('./RootLayoutRedirectGate');
+        const { PreAuthOnboardingWizardEntry } = await import('@/components/onboarding/preAuth/PreAuthOnboardingWizardEntry');
+        const screen = await renderScreen(<AuthProvider initialCredentials={null}><AppPaneModalProvider>
+            <WebServerOverrideGate><PreAuthOnboardingWizardEntry /></WebServerOverrideGate>
+        </AppPaneModalProvider></AuthProvider>);
+        try {
+            await vi.waitFor(async () => {
+                await act(async () => {});
+                const urls = runtimeFetch.mock.calls.map(([url]) => String(url));
+                expect(urls, JSON.stringify({ urls, snapshot: profiles.getActiveServerSnapshot(), href: location.href })).toContain(`${address}/v1/auth/entry`);
+            });
+            expect(new URL(location.href).searchParams.has('server')).toBe(false);
+            expect(profiles.readWebServerEntry()).toEqual({ serverUrl: address, isAdmitted: true });
+            expect(screen.findHostByTestId('unauth-shell-route-welcome')).not.toBeNull();
+            expect(runtimeFetch.mock.calls.filter(([url]) => new URL(String(url)).origin !== address)).toEqual([]);
+        } finally {
+            await screen.unmount();
+            if (previousDefault === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
+            else process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL = previousDefault;
+            profiles.resetServerProfilesRuntimeForTests({ preserveGenerations: true });
+        }
+    });
+
+    it.each([true, false])('sends no requests to the baked or advertised Home with analytics mounted before explicit URL confirmation (useCanonical=%s)', async (useCanonical) => {
+        const address = 'http://happier-qa.localhost:3033';
+        const bakedDefault = 'https://baked-default.example.test';
+        const previousDefault = process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+        const previousCurrentDefault = process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = bakedDefault;
+        process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL = bakedDefault;
+        const profiles = await import('@/sync/domains/server/serverProfiles');
+        profiles.resetServerProfilesRuntimeForTests({ preserveGenerations: true });
+        const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+        const location = { href: `http://happier-qa.localhost:19364/?server=${encodeURIComponent(address)}` };
+        vi.stubGlobal('window', {
+            localStorage: globalThis.localStorage,
+            location,
+            history: { state: null, replaceState: vi.fn() },
+        });
+        const { Modal } = await import('@/modal');
+        let confirmAddress!: (accepted: boolean) => void;
+        const confirmation = new Promise<boolean>((resolve) => { confirmAddress = resolve; });
+        const confirm = vi.spyOn(Modal, 'confirm').mockReturnValue(confirmation);
+        runtimeFetch.mockImplementation(async (rawUrl) => {
+            const url = new URL(String(rawUrl));
+            if (url.pathname === '/health') return Response.json({ status: 'ok' });
+            if (url.pathname === '/v1/auth/entry') return new Response('', { status: 404 });
+            return Response.json(createSignInServiceFeaturesResponse(bakedDefault));
+        });
+        const { AuthProvider } = await import('@/auth/context/AuthContext');
+        const { useAuthEntryOptions } = await import('@/components/account/auth/useAuthEntryOptions');
+        const { WebServerOverrideGate } = await import('./RootLayoutRedirectGate');
+        const { AppPaneModalProvider } = await import('@/components/appShell/providers/AppPaneModalProvider');
+        const { SettingsAnalyticsRuntime } = await import('@/track/settingsAnalytics/SettingsAnalyticsRuntime');
+        const { config } = await import('@/config');
+        const { tracking } = await import('@/track/tracking');
+        expect(config.postHogKey).toBe('ph_home_entry_test');
+        expect(tracking).not.toBeNull();
+        function SignIn(): null {
+            useAuthEntryOptions();
+            return null;
+        }
+        const screen = await renderScreen(<>
+            {tracking ? <SettingsAnalyticsRuntime /> : null}
+            <AuthProvider initialCredentials={null}><AppPaneModalProvider><WebServerOverrideGate><SignIn /></WebServerOverrideGate></AppPaneModalProvider></AuthProvider>
+        </>);
+        try {
+            await vi.waitFor(() => expect(confirm).toHaveBeenCalled());
+            expect(runtimeFetch.mock.calls.map(([url]) => new URL(String(url)).origin)).not.toContain(bakedDefault);
+            expect(runtimeFetch.mock.calls.some(([url]) => new URL(String(url)).origin === address)).toBe(true);
+            await act(async () => { confirmAddress(useCanonical); });
+            const admittedAddress = useCanonical ? bakedDefault : address;
+            await vi.waitFor(async () => {
+                await act(async () => {});
+                const urls = runtimeFetch.mock.calls.map(([url]) => String(url));
+                expect(urls, JSON.stringify({ urls, snapshot: profiles.getActiveServerSnapshot(), href: location.href })).toContain(`${admittedAddress}/v1/auth/entry`);
+            });
+            if (!useCanonical) expect(runtimeFetch.mock.calls.map(([url]) => new URL(String(url)).origin)).not.toContain(bakedDefault);
+        } finally {
+            confirmAddress(true);
+            await screen.unmount();
+            if (previousDefault === undefined) delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+            else process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = previousDefault;
+            if (previousCurrentDefault === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
+            else process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL = previousCurrentDefault;
+            profiles.resetServerProfilesRuntimeForTests({ preserveGenerations: true });
         }
     });
 
@@ -149,7 +302,7 @@ describe('supplied Home admission before shell mount', () => {
         const mountedHomes: string[] = [];
         const { screen, replaceRelativeUrl } = await mountFor(address, (serverUrl) => { mountedHomes.push(serverUrl); });
         try {
-            expect(mountedHomes).toEqual(['https://retained.example.test']);
+            expect(mountedHomes).toEqual(['']);
             expect(runtimeFetch).not.toHaveBeenCalled();
             const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
             await act(async () => {

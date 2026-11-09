@@ -8,7 +8,6 @@ import { installNavigationShellCommonModuleMocks } from './navigationShellTestHe
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPushSpy = vi.hoisted(() => vi.fn());
-const setSessionsListStorageFilterSpy = vi.hoisted(() => vi.fn());
 
 const sessionListState = vi.hoisted(() => ({
     data: [] as any[] | null,
@@ -27,7 +26,7 @@ const mainAppTabStateMock = vi.hoisted(() => ({
 }));
 
 const localSettingsState = vi.hoisted(() => ({
-    sessionsListStorageFilter: 'all' as 'all' | 'persisted' | 'direct',
+    source: 'all' as 'all' | 'persisted' | 'direct',
 }));
 const gettingStartedState = vi.hoisted(() => ({
     kind: 'create_session' as 'create_session' | 'connect_machine' | 'start_daemon' | 'select_session' | 'loading',
@@ -52,13 +51,7 @@ installNavigationShellCommonModuleMocks({
             useFriendRequests: () => [],
             useSocketStatus: () => ({ status: 'connected' }),
             useRealtimeStatus: () => ({ status: 'idle' }),
-            useLocalSettingMutable: (name: string) => {
-                if (name === 'navigationSurfacePlacementsV1') return actual.useLocalSettingMutable(name);
-                if (name === 'sessionsListStorageFilter') {
-                    return [localSettingsState.sessionsListStorageFilter, setSessionsListStorageFilterSpy] as const;
-                }
-                throw new Error(`Unexpected local setting: ${name}`);
-            },
+            useLocalSettingMutable: (name: string) => actual.useLocalSettingMutable(name as never),
         });
     },
 });
@@ -108,13 +101,10 @@ vi.mock('@/hooks/inbox/useInboxAvailable', () => ({
     useInboxAvailable: () => mainAppTabStateMock.activeTab === 'inbox',
 }));
 
-vi.mock('@/components/sessions/model/useSessionListStorageKind', () => ({
-    useSessionListStorageKind: () => ({
-        externalSessionsEnabled: externalSessionsFeatureState.enabled,
-        storageKind: externalSessionsFeatureState.enabled
-            ? localSettingsState.sessionsListStorageFilter
-            : 'persisted',
-        setStorageKind: setSessionsListStorageFilterSpy,
+vi.mock('@/components/sessions/shell/search/useSessionListViewFilterController', () => ({
+    useSessionListViewFilterController: () => ({
+        sourceAvailable: externalSessionsFeatureState.enabled,
+        displayFilters: { source: localSettingsState.source },
     }),
 }));
 
@@ -227,10 +217,9 @@ describe('MainView sidebar actions', () => {
 
     beforeEach(() => {
         routerPushSpy.mockReset();
-        setSessionsListStorageFilterSpy.mockReset();
         sessionListState.data = [];
         externalSessionsFeatureState.enabled = false;
-        localSettingsState.sessionsListStorageFilter = 'all';
+        localSettingsState.source = 'all';
         gettingStartedState.kind = 'create_session';
         mainAppTabStateMock.shouldThrow = false;
         mainAppTabStateMock.activeTab = 'sessions';
@@ -354,7 +343,7 @@ describe('MainView sidebar actions', () => {
 
     it('renders the unified external browse action without the retired storage tabs', async () => {
         externalSessionsFeatureState.enabled = true;
-        localSettingsState.sessionsListStorageFilter = 'direct';
+        localSettingsState.source = 'direct';
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
@@ -365,7 +354,7 @@ describe('MainView sidebar actions', () => {
 
     it('keeps the external browse action visible when the unified list shows all sessions', async () => {
         externalSessionsFeatureState.enabled = true;
-        localSettingsState.sessionsListStorageFilter = 'all';
+        localSettingsState.source = 'all';
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<MainView variant="sidebar" />)).tree;

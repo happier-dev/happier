@@ -6,6 +6,8 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { primeServerFeaturesSnapshot, deleteServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { UpdatesPopoverButton } from '@/components/updates/UpdatesPopoverButton';
+import { layoutHitArea } from '@/dev/testkit/harness/hitFrameReach';
+import { HappierUiPlatformProvider } from '@happier-dev/plugin-ui/environment';
 
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -72,6 +74,20 @@ describe('HomeHeader Workflows button', () => {
         });
 
         expect(routerPushSpy).toHaveBeenCalledWith('/workflows');
+    });
+
+    it('reaches a finger without growing the button, and never back into the logo it abuts', async () => {
+        const { HomeHeader } = await import('./HomeHeader');
+        const screen = await renderScreen(
+            <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}><HomeHeader /></HappierUiPlatformProvider>,
+        );
+        const area = await layoutHitArea(
+            () => screen.tree.root.findAll((node) => node.props.accessibilityLabel === 'Open Workflows' && typeof node.props.onLayout === 'function')[0],
+            { width: 32, height: 32 },
+        );
+        expect(area.drawn).toEqual({ width: 32, height: 32 });
+        expect(area.insets.left).toBe(0);
+        expect(area.height).toBe(44);
     });
 
     it('hides the Workflows button when the server denies the destination', async () => {

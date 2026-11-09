@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 import type { ExtendedStackNavigationOptions } from 'expo-router/build/layouts/StackClient';
 import { t } from '@/text';
 import { createFriendsStackScreenOptions, createInboxStackScreenOptions } from '@/utils/navigation/createSocialStackScreenOptions';
-import { resolveNewSessionSecretRequirementRoutePresentation } from '@/components/sessions/new/navigation/newSessionPresentation';
+import { resolveNewSessionPickerRoutePresentation, resolveNewSessionSecretRequirementRoutePresentation } from '@/components/sessions/new/navigation/newSessionPresentation';
 
 type StackScreenOptions = ExtendedStackNavigationOptions;
 const MAIN_TAB_STACK_SCREEN_OPTIONS = { animation: 'none' } as const;
@@ -43,6 +43,12 @@ export function createRootStackRouteOptions(newSessionPresentationMode: 'auto' |
                 ...MAIN_TAB_STACK_SCREEN_OPTIONS,
             },
             hiddenHeader,
+            // Presentation belongs to the declaration: clearing a mounted
+            // screen's options must not move it between Expo's card/modal trees.
+            newPicker: {
+                ...blankBack,
+                presentation: resolveNewSessionPickerRoutePresentation({ mode: newSessionPresentationMode, platformOs: Platform.OS }),
+            },
             settings: {
                 // Nested navigator; per-settings-screen headers are configured in `settings/_layout.tsx`.
                 // Settings is a destination on every form factor: the phone's tab, and the app rail's
@@ -122,14 +128,10 @@ export function createRootStackRouteOptions(newSessionPresentationMode: 'auto' |
                 headerTitle: t('settings.sessions'),
                 headerBackTitle: back,
             },
-            terminalIndex: {
-                headerTitle: t('navigation.connectTerminal'),
-            },
-            // The main sidebar's Plugins page: the same screens as Settings → Plugin marketplace,
-            // hosted as an app page.
+            // The main sidebar's Store destination (Discover, kinds, Installed); Settings keeps "Plugins".
             pluginsIndex: {
                 headerShown: true,
-                headerTitle: t('settingsPlugins.surfaces.navigationTitle'),
+                headerTitle: t('settingsPlugins.surfaces.storeTitle'),
                 headerBackTitle: back,
             },
             pluginsListing: {
@@ -224,12 +226,15 @@ export function createRootStackRouteOptions(newSessionPresentationMode: 'auto' |
         'discussions/[discussionId]': options.visibleBlankBack,
         'oauth/[provider]': options.hiddenHeader,
         'oauth/mcp/callback': options.hiddenHeader,
+        'oauth/connected-account/callback': options.hiddenHeader,
         'settings': options.settings,
         'dev': options.hiddenHeader,
         'plugins/index': options.pluginsIndex,
         'plugins/listing': options.pluginsListing,
         // A Store kind page reached from the Bots popover: the Store's bar and its way back, like the Store's other kinds.
         'plugins/bots': options.pluginsIndex,
+        // A saved browser profile's Extensions, pushed from a Store Installed extension row: the Store's bar and its way back.
+        'plugins/browser-profile': options.pluginsIndex,
         'plugins/[pluginId]': options.pluginsDetail,
         'desktop/activity-overlay': options.desktopActivityOverlay,
         'automations/index': options.automationsIndex,
@@ -253,6 +258,7 @@ export function createRootStackRouteOptions(newSessionPresentationMode: 'auto' |
         'projects/[workspaceRefId]/changes': options.hiddenHeader,
         'projects/[workspaceRefId]/scripts': options.hiddenHeader,
         'projects/[workspaceRefId]/services': options.hiddenHeader,
+        'projects/[workspaceRefId]/deployments': options.hiddenHeader,
         'projects/[workspaceRefId]/context': options.hiddenHeader,
         'projects/[workspaceRefId]/memory': options.hiddenHeader,
         'session/recent': options.sessionRecent,
@@ -261,7 +267,7 @@ export function createRootStackRouteOptions(newSessionPresentationMode: 'auto' |
         'teams/[teamId]/sign-in': options.hiddenHeader,
         'join/[token]': options.hiddenHeader,
         'terminal/connect': options.hiddenHeader,
-        'terminal/index': options.terminalIndex,
+        'terminal/index': options.hiddenHeader,
         'scan/terminal': options.hiddenHeader,
         'scan/account': options.hiddenHeader,
         'homes/sign-in': options.hiddenHeader,
@@ -281,15 +287,20 @@ export function createRootStackRouteOptions(newSessionPresentationMode: 'auto' |
         'artifacts/index': options.artifactsIndex,
         'artifacts/[id]': options.artifactsId,
         'artifacts/new': options.artifactsNew,
+        'bot-template': options.visibleBlankBack,
         'artifacts/edit/[id]': options.artifactsEdit,
         'friends/manage': options.friendsManage,
         'friends/search': options.friendsSearch,
         'user/[id]': options.userId,
-        'new/pick/machine': options.blankBack,
-        'new/pick/path': options.blankBack,
-        'new/pick/profile': options.blankBack,
-        'new/pick/server': options.blankBack,
-        'new/pick/profile-edit': options.blankBack,
+        'new/pick/machine': options.newPicker,
+        'new/pick/path': options.newPicker,
+        'new/pick/profile': options.newPicker,
+        'new/pick/server': options.newPicker,
+        'new/pick/profile-edit': options.newPicker,
+        'new/pick/preview-machine': options.newPicker,
+        'new/pick/secret': options.newPicker,
+        'new/pick/resume': options.newPicker,
+        'new/pick/resume-browse': options.newPicker,
         'new/pick/secret-requirement': options.newPickSecretRequirement,
         'zen/index': options.zenIndex,
         'zen/new': options.zenNew,

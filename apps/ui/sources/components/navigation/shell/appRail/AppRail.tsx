@@ -4,7 +4,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
-import { useActivateAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { resolveAppRailBand, useActivateAppDestination, type AppRailBand } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -22,7 +22,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
-import { t } from '@/text';
+import { t, type TranslationKeyNoParams } from '@/text';
 import { useSharedUpdatesSummary } from '@/updates/useUpdatesSummary';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -63,12 +63,24 @@ import { moveAppRailBot } from './useAppRailBotReorder';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { usePaneRegionFocusBoundary } from '@/components/appShell/panes/paneRegion';
 
-/** A rail-pinned Bot, standing right under the Bots entry among the top items. */
-type AppRailTopGroup = AppRailPlacementItem['group'] | 'bots';
-type WithTopGroup<T> = T extends unknown ? Omit<T, 'group'> & Readonly<{ group: AppRailTopGroup }> : never;
+/** The top of the rail: destinations and, right under the Bots entry, the rail-pinned Bots. */
 type AppRailTopItem =
-    | WithTopGroup<AppRailPlacementItem>
-    | Readonly<{ kind: 'botPin'; id: string; group: 'bots'; bot: AppRailBotEntry }>;
+    | AppRailPlacementItem
+    | Readonly<{ kind: 'botPin'; id: string; group: 'app'; bot: AppRailBotEntry }>;
+
+const APP_RAIL_BAND_TITLE_KEYS = {
+    work: 'navigationPlacement.railBandWork',
+    together: 'navigationPlacement.railBandTogether',
+    library: 'navigationPlacement.railBandLibrary',
+    plugins: 'navigationPlacement.railBandPlugins',
+    account: 'navigationPlacement.railBandFooter',
+} as const satisfies Record<AppRailBand, TranslationKeyNoParams>;
+
+/** The band an item stands in (owner Q8): a hairline between bands on the rail, a name in its customizer. */
+function appRailItemBand(item: AppRailTopItem): AppRailBand {
+    if (item.kind === 'botPin') return 'together';
+    return item.kind === 'destination' ? resolveAppRailBand(item.entry) : 'account';
+}
 
 const renderUsageIcon = (open: boolean) => <AppRailIcon name="speedometer" active={open} />;
 const renderUsage = (content: SidebarFooterPopoverContentProps) => <SidebarUsagePopoverContent {...content} />;
@@ -94,9 +106,11 @@ export const AppRail = React.memo(function AppRail() {
 
     const items = React.useMemo(() => buildAppRailPlacementItems(entries, updatesVisible), [entries, updatesVisible]);
     const customize = React.useCallback(() => {
+        // The customizer names the rail's bands (owner Q8); a move stays inside its band.
+        const banded = items.map(item => ({ ...item, group: t(APP_RAIL_BAND_TITLE_KEYS[appRailItemBand(item)]) }));
         fireAndForget(import('@/components/ui/navigation/NavigationPlacementCustomizer').then(({ NavigationPlacementCustomizer }) => {
             Modal.show({ component: NavigationPlacementCustomizer,
-                props: { surfaceId: 'appRail', items, testID: 'app-rail-customizer' } });
+                props: { surfaceId: 'appRail', items: banded, testID: 'app-rail-customizer' } });
         }), { tag: 'AppRail.customize' });
     }, [items]);
     return <AppRailSurface entries={entries} activeId={activeId} onOpen={open} preferences={preferences}
@@ -138,19 +152,21 @@ export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly
     const placements = resolveNavigationPlacements(items, props.preferences);
     // Bots pinned to the rail stand right under the one Bots entry, in the person's order (60s3). A pin
     // is its own explicit placement: when the Bots entry is in overflow or hidden, the pins close the top.
-    const botPins = entries.bots.map((bot): AppRailTopItem => ({ kind: 'botPin', id: bot.id, group: 'bots', bot }));
+    const botPins = entries.bots.map((bot): AppRailTopItem => ({ kind: 'botPin', id: bot.id, group: 'app', bot }));
     const isBotsEntry = (item: AppRailPlacementItem) => item.kind === 'destination' && item.entry.activation === 'botsRoster';
     const topItems = placements.pinned.filter(item => item.group !== 'account');
     const top: AppRailTopItem[] = [
-        // The Bots entry and its pins stand apart, a hairline above them (lab `b-rail A`).
-        ...topItems.flatMap((item): AppRailTopItem[] => isBotsEntry(item) ? [{ ...item, group: 'bots' as const }, ...botPins] : [item]),
+        ...topItems.flatMap((item): AppRailTopItem[] => isBotsEntry(item) ? [item, ...botPins] : [item]),
         ...(topItems.some(isBotsEntry) ? [] : botPins),
     ];
     const bottom = placements.pinned.filter(item => item.group === 'account');
-    // The anchored group has priority when space is short. Giving it the first top group's
-    // geometry avoids counting a divider between the footer and the top: only top groups divide.
-    const priority: AppRailTopItem[] = [...bottom.map(item => ({ ...item, group: top[0]?.group ?? 'app' })), ...top];
-    const fitted = resolveNavigationOverflow<AppRailTopItem>(priority, placements.overflow, {
+    // The anchored footer has priority when space is short. Measuring it in the first top band avoids
+    // counting a divider between the footer and the top: only top bands divide.
+    const firstBand = top[0] ? appRailItemBand(top[0]) : 'work';
+    const fitted = resolveNavigationOverflow([
+        ...bottom.map(item => ({ id: item.id, group: firstBand })),
+        ...top.map(item => ({ id: item.id, group: appRailItemBand(item) })),
+    ], placements.overflow.map(item => ({ id: item.id, group: appRailItemBand(item) })), {
         availableSize: availableHeight, itemSize: APP_RAIL_ITEM_SLOT_PX, separatorSize: RAIL_SEPARATOR_SIZE_PX,
     });
     const shownIds = new Set(fitted.shown.map(item => item.id));
@@ -179,7 +195,8 @@ export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly
             >
             <View testID="app-rail-destinations" style={styles.topArea}>
                 {shownTop.map((item, index) => <React.Fragment key={item.id}>
-                    {index > 0 && shownTop[index - 1]?.group !== item.group ? <View style={styles.separator} /> : null}
+                    {index > 0 && appRailItemBand(shownTop[index - 1]!) !== appRailItemBand(item)
+                        ? <View testID="app-rail-band-separator" style={styles.separator} /> : null}
                     {item.kind === 'botPin'
                         ? <AppRailBotPin bot={item.bot}
                             previousBotSessionId={botNeighbors.get(item.id)?.previous}

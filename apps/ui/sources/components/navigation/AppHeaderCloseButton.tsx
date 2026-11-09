@@ -1,11 +1,11 @@
 import * as React from 'react';
-import { StyleSheet, TouchableOpacity } from 'react-native';
+import { StyleSheet } from 'react-native';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
-
-const HEADER_CLOSE_BUTTON_HIT_SLOP = { top: 12, bottom: 12, left: 12, right: 12 } as const;
 
 type AppHeaderCloseButtonProps = Readonly<{
     onPress: () => void;
@@ -23,11 +23,10 @@ export const AppHeaderCloseButton = React.memo(function AppHeaderCloseButton(pro
     const { theme } = useUnistyles();
 
     return (
-        <TouchableOpacity
+        <HappierPressable
             testID={props.testID}
             onPress={props.onPress}
-            hitSlop={HEADER_CLOSE_BUTTON_HIT_SLOP}
-            style={styles.button}
+            style={({ pressed }) => [styles.button, pressed ? { opacity: motionTokens.press.opacity } : null]}
             accessibilityRole="button"
             accessibilityLabel={props.accessibilityLabel ?? t('common.cancel')}
         >
@@ -38,7 +37,7 @@ export const AppHeaderCloseButton = React.memo(function AppHeaderCloseButton(pro
             ) : (
                 <Icon name="x" size={20} color={theme.colors.chrome.header.foreground} />
             )}
-        </TouchableOpacity>
+        </HappierPressable>
     );
 });
 

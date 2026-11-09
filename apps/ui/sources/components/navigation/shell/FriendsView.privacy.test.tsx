@@ -1,0 +1,47 @@
+import * as React from 'react';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
+
+installSettingsViewCommonModuleMocks({ storage: 'real' });
+vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/utils/platform/responsive')>(),
+    useDeviceType: () => 'phone',
+}));
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+const { storage } = await import('@/sync/domains/state/storageStore');
+const { FriendsView } = await import('./FriendsView');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+const previous = storage.getState();
+beforeEach(async () => { await homes.reset(); });
+
+// People left the tabs (owner Q4): More opens it with no tab bar and no native header, so its head is the way out.
+it('gives the People page its own Back on a phone', async () => {
+    const screen = await renderScreen(<InjectedAuthProvider credentials={null}><FriendsView /></InjectedAuthProvider>);
+    expect(screen.findHostByTestId('people:back')).not.toBeNull();
+});
+afterEach(async () => { setScreenSharingPrivacyActive(false); standardCleanup(); storage.setState(previous, true); await homes.reset(); });
+
+it('withdraws private shared Sessions from People and restores them after sharing', async () => {
+    const serverId = await homes.addHome({ name: 'People', serverUrl: 'https://people-privacy.test', accountId: 'viewer' });
+    await homes.selectHomes([serverId]);
+    storage.setState({ isDataReady: true, profile: { ...previous.profile, id: 'viewer' }, sessions: {
+        private: createSessionFixture({ id: 'private', serverId, owner: 'friend', metadata: { name: 'Secret launch', path: '/secret' } }),
+        public: createSessionFixture({ id: 'public', serverId, owner: 'friend', metadata: { name: 'Public plan', path: '/public' } }),
+    } });
+    const screen = await renderScreen(<InjectedAuthProvider credentials={null}><FriendsView /></InjectedAuthProvider>);
+    expect(screen.getTextContent()).toContain('Secret launch');
+    await act(async () => {
+        storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [serverId]: ['private'] } });
+        storage.getState().setSessionTagAssignmentsOptimistic(serverId, 'private', ['private']);
+        setScreenSharingPrivacyActive(true);
+    });
+    expect(screen.getTextContent()).not.toContain('Secret launch');
+    expect(screen.getTextContent()).toContain('Public plan');
+    await act(async () => setScreenSharingPrivacyActive(false));
+    expect(screen.getTextContent()).toContain('Secret launch');
+});

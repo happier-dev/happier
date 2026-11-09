@@ -1,7 +1,7 @@
 import React from 'react';
 import 'fake-indexeddb/auto';
 import { JSDOM } from 'jsdom';
-import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
@@ -9,6 +9,7 @@ import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHel
 import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { installOptionalNativeModuleForTests } from '@/dev/expoModulesCoreStub';
 
 import { installNavigationShellCommonModuleMocks } from './navigationShellTestHelpers';
 
@@ -38,7 +39,7 @@ installNavigationShellCommonModuleMocks({
         View: (props: any) => React.createElement('View', props, props.children),
         Pressable: (props: any) => React.createElement('Pressable', props, props.children),
         PanResponder: {
-            create: () => ({ panHandlers: {} }),
+            create: (handlers: Record<string, unknown>) => ({ panHandlers: handlers }),
         },
         Dimensions: {
             get: () => ({
@@ -76,10 +77,18 @@ installNavigationShellCommonModuleMocks({
     storage: importOriginal => importOriginal(),
 });
 
+// Only the Expo native view is substituted; fold normalization and context remain real.
+const restoreFoldModule = installOptionalNativeModuleForTests('HappierWindowFoldMetrics', {});
+afterAll(restoreFoldModule);
+hoistedState.mockPlatformOS = 'ios';
+const { WindowFoldMetricsProvider } = await import('@/utils/platform/useWindowFoldMetrics');
+hoistedState.mockPlatformOS = 'web';
+
 // Install the OS/transport boundaries before any real owner can import React Native.
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { settingsParse } = await import('@/sync/domains/settings/settings');
 const { SIDEBAR_DOCK_MIN_WIDTH_PX } = await import('./sidebarSizing');
+const { APP_RAIL_WIDTH_PX } = await import('./appRail/appRailMetrics');
 const { createSecretSettingsTestHarness } = await import('@/components/settings/secrets/secretSettingsTestHarness');
 const initialStorage = storage.getState();
 
@@ -152,6 +161,83 @@ function installResizePointerBoundary() {
 }
 
 describe('SidebarNavigator (collapsed sidebar)', () => {
+  it('does not save a fold width when the crease appears during an active resize', async () => {
+    hoistedState.mockPlatformOS = 'ios';
+    const { SidebarNavigator } = await import('./SidebarNavigator');
+    const { ResizableDockedPane } = await import('@/components/ui/panels/ResizableDockedPane');
+    const screen = await renderScreen(<WindowFoldMetricsProvider><SidebarNavigator /></WindowFoldMetricsProvider>);
+    const handle = getResizableSidebarPane(screen.tree).findByProps({ accessibilityRole: 'adjustable' });
+    await act(async () => { handle.props.onPanResponderGrant(); });
+    await act(async () => { handle.props.onPanResponderMove({}, { dx: 80, dy: 0 }); });
+    const release = handle.props.onPanResponderRelease;
+    await act(async () => {
+      screen.tree.findByType('HappierWindowFoldMetrics').props.onMetricsChange({
+        nativeEvent: { width: 1000, height: 800, divisions: [{ x: 500, y: 0, width: 0, height: 800 }] },
+      });
+    });
+    expect(widthOf(screen.tree.findByType(ResizableDockedPane).findAllByType('View')[0]!)).toBe(500 - APP_RAIL_WIDTH_PX);
+    await act(async () => { release(); });
+    expect(mockLocalSettingsStore.sidebarWidthPx).toBe(320);
+    expect(mockLocalSettingsStore.sidebarCollapsed).toBe(false);
+  });
+
+  it('aligns the rail and expanded column to native crease updates without changing the preferred width', async () => {
+    hoistedState.mockPlatformOS = 'ios';
+    const { HorizontalSafeAreaProvider } = await import('@/components/navigation/safeArea/HorizontalSafeArea');
+    const { SidebarNavigator } = await import('./SidebarNavigator');
+    const { AppShellMaterialFrame } = await import('./AppShellMaterialFrame');
+    const { ResizableDockedPane } = await import('@/components/ui/panels/ResizableDockedPane');
+    const screen = await renderScreen(
+      <WindowFoldMetricsProvider>
+        <HorizontalSafeAreaProvider value={{ left: 84, right: 0, padded: true }}>
+          <SidebarNavigator />
+        </HorizontalSafeAreaProvider>
+      </WindowFoldMetricsProvider>,
+    );
+    const emitCrease = async (x: number | null) => {
+      await act(async () => {
+        screen.tree.findByType('HappierWindowFoldMetrics').props.onMetricsChange({
+          nativeEvent: { width: 1000, height: 800, divisions: x === null ? [] : [{ x, y: 0, width: 0, height: 800 }] },
+        });
+      });
+    };
+    for (const x of [500, 530]) {
+      await emitCrease(x);
+      const width = x - 84 - APP_RAIL_WIDTH_PX;
+      expect(widthOf(getSidebar(screen.tree))).toBe(width);
+      expect(screen.tree.findByType(AppShellMaterialFrame).props.leftOffsetPx + 84).toBe(x);
+      const pane = screen.tree.findByType(ResizableDockedPane);
+      expect(pane.props.minWidthPx).toBe(width);
+      expect(pane.props.maxWidthPx).toBe(width);
+      expect(pane.findAllByProps({ accessibilityRole: 'adjustable' })).toHaveLength(0);
+      expect(mockLocalSettingsStore.sidebarWidthPx).toBe(320);
+    }
+    // An invalid crease restores the preference and the existing resize interaction.
+    await emitCrease(84 + APP_RAIL_WIDTH_PX + SIDEBAR_DOCK_MIN_WIDTH_PX - 1);
+    expect(widthOf(getSidebar(screen.tree))).toBe(320);
+    expect(getResizableSidebarPane(screen.tree).findAllByProps({ accessibilityRole: 'adjustable' })).not.toHaveLength(0);
+    await emitCrease(null);
+    expect(widthOf(getSidebar(screen.tree))).toBe(320);
+    expect(mockLocalSettingsStore.sidebarWidthPx).toBe(320);
+  });
+
+  it.each(['collapsed', 'absent'] as const)('keeps rail-only geometry when the navigation column is %s during a fold', async (state) => {
+    hoistedState.mockPlatformOS = 'ios';
+    if (state === 'collapsed') mockLocalSettingsStore.setSidebarCollapsed(true);
+    else hoistedState.mockPathname = '/search';
+    const { SidebarNavigator } = await import('./SidebarNavigator');
+    const { AppShellMaterialFrame } = await import('./AppShellMaterialFrame');
+    const screen = await renderScreen(<WindowFoldMetricsProvider><SidebarNavigator /></WindowFoldMetricsProvider>);
+    await act(async () => {
+      screen.tree.findByType('HappierWindowFoldMetrics').props.onMetricsChange({
+        nativeEvent: { width: 1000, height: 800, divisions: [{ x: 500, y: 0, width: 0, height: 800 }] },
+      });
+    });
+    expect(screen.findByTestId('navigation-sidebar')).toBeNull();
+    expect(screen.tree.findByType(AppShellMaterialFrame).props.leftOffsetPx).toBe(APP_RAIL_WIDTH_PX);
+    expect(mockLocalSettingsStore.sidebarWidthPx).toBe(320);
+  });
+
   it('runs the sidebar keyboard command through the same admitted toggle', async () => {
     const { KeyboardShortcutProvider, useKeyboardCommand } = await import('@/keyboard/KeyboardShortcutProvider');
     const { SidebarNavigator } = await import('./SidebarNavigator');

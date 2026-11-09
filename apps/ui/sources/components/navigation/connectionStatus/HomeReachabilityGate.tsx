@@ -27,7 +27,7 @@ function subscribeApplied(listener: () => void): () => void {
 }
 
 /** The Home whose health the connection summary reports: the applied one, else the requested one. */
-function useReportedHomeServerId(): string | null {
+export function useReportedHomeServerId(): string | null {
     const requestedServerId = useActiveServerSnapshot().serverId;
     const appliedServerId = React.useSyncExternalStore(subscribeApplied, getAppliedActiveServerId, getAppliedActiveServerId);
     return appliedServerId || requestedServerId || null;
@@ -62,7 +62,9 @@ function readAppliedHomeSummaryKind() {
 }
 
 function subscribeAppliedHomeSummary(listener: () => void): () => void {
-    const unsubscribe = storage.subscribe(listener);
+    const unsubscribe = storage.subscribe(listener, {
+        syncError: true, machineListStatusByServerId: true, socketStatus: true, endpointStatus: true, endpointReason: true,
+    });
     const unsubscribeApplied = subscribeAppliedActiveServer(listener);
     const unsubscribeAvailability = subscribeAppliedActiveServerRuntimeAvailability(listener);
     return () => { unsubscribe(); unsubscribeApplied(); unsubscribeAvailability(); };

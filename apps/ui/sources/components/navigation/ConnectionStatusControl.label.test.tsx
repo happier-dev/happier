@@ -105,7 +105,8 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: 'StatusDot',
 }));
 
-vi.mock('@/components/ui/popover', () => ({
+vi.mock('@/components/ui/popover', async (importOriginal) => ({
+    ...await importOriginal<Record<string, unknown>>(),
     Popover: () => null,
     PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
@@ -122,9 +123,13 @@ const profilesMock = vi.hoisted(() => ({
     current: [{ id: 'srv-1', name: 'Happier Cloud', serverUrl: 'https://cloud.example.test' }] as Array<Record<string, unknown>>,
 }));
 
-vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => ({
+vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
     // The Home name rule (`readServerProfileHomeName`) stays real; only the stored profiles are fixtures.
-    ...await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>(),
+    const original = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
+    return {
+    ...original,
+    // The Home label owner decides "This Home" from the active-Home snapshot, so it names the fixture Home too.
+    getActiveServerSnapshot: () => ({ ...original.getActiveServerSnapshot(), serverId: 'srv-1' }),
     areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '').trim() === String(right ?? '').trim(),
     getActiveServerHomeCarrier: () => null,
     getActiveServerId: () => 'srv-1',
@@ -133,7 +138,8 @@ vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => ({
     listServerProfiles: () => profilesMock.current,
     resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) => profile.serverIdentityId ?? profile.id,
     setActiveServerId: vi.fn(),
-}));
+    };
+});
 
 vi.mock('@/hooks/server/useServerProfilesGeneration', () => ({
     useServerProfilesGeneration: () => 1,
@@ -243,22 +249,19 @@ describe('ConnectionStatusControl (label)', () => {
         expect(trigger.props.accessibilityLabel).toBe('Happier Cloud, connectionStatus.summary.connected');
         // Header activation navigates to the existing full-screen Homes surface;
         // only the desktop/sidebar trigger owns an expandable popover state.
-        expect(trigger.props.accessibilityState).toBeUndefined();
-        expect(flattenStyle(trigger.props.style).minHeight).toBeGreaterThanOrEqual(44);
+        expect(trigger.props['aria-expanded']).toBeUndefined();
     });
 
-    // Under a tab title in the phone's 56px header, the status line keeps its 44px target but lays
-    // out as one text line (the target reaches into the header's padding), so title and status fit:
-    // at full height the block was 62px and pushed "Sessions" above the logo row.
-    it('lays the header status line out as one text line while keeping a 44px target', async () => {
+    // Under a tab title in the phone's 56px header, the status line is drawn as one text line (its
+    // hit area, not its box, reaches the finger target), so title and status fit: at a 44px box the
+    // block was 62px and pushed "Sessions" above the logo row.
+    it('draws the header status line as one text line without a touch-sized box', async () => {
         const { ConnectionStatusControl } = await import('./ConnectionStatusControl');
         const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'header' }));
 
         const style = flattenStyle(screen.findByProps({ accessibilityRole: 'button' }).props.style);
-        const minHeight = Number(style.minHeight);
-        expect(minHeight).toBeGreaterThanOrEqual(44);
-        const laidOutHeight = minHeight + Number(style.marginTop ?? 0) + Number(style.marginBottom ?? 0);
-        expect(laidOutHeight).toBeLessThanOrEqual(20);
+        expect(style.minHeight).toBeUndefined();
+        expect(style.marginBottom).toBeUndefined();
     });
 
     it('uses a single-line tail ellipsis contract for long sidebar server labels', async () => {

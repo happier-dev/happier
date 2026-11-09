@@ -10,6 +10,7 @@ import { createSessionFixture, createMachineFixture, createSessionMessagesFixtur
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import type { StorageState } from '@/sync/store/types';
+import { createInboxItemRoute } from '@/components/inbox/inboxItemFocus';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
 
@@ -17,6 +18,8 @@ import { buildSessionListRenderableFromSession } from '@/sync/domains/session/li
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const pushSpy = vi.hoisted(() => vi.fn());
+const replaceSpy = vi.hoisted(() => vi.fn());
+const windowState = vi.hoisted(() => ({ width: 390 }));
 const pendingRequestObservedAt = Date.now();
 const inboxFixtureState = vi.hoisted(() => ({
     includeHiddenVoiceTranscriptPermission: false,
@@ -189,12 +192,14 @@ async function renderAttentionScreen(element: React.ReactElement) {
 
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+// The recycler is a renderer/platform boundary: this substitute draws every row it is given.
+vi.mock('@legendapp/list/react-native', async () => (await import('@/dev/testkit/mocks/legendList')).createLegendListModuleMock());
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
-    useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
+    useWindowDimensions: () => ({ width: windowState.width, height: 844, scale: 1, fontScale: 1 }),
 }));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
-    router: { push: pushSpy },
+    router: { push: pushSpy, replace: replaceSpy },
 }).module);
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({ translate: key => key }));
 vi.mock('expo-image', () => ({ Image: 'Image' }));
@@ -212,6 +217,8 @@ await import('./InboxView');
 describe('InboxView session attention', () => {
     beforeEach(() => {
         pushSpy.mockReset();
+        replaceSpy.mockReset();
+        windowState.width = 390;
         inboxFixtureState.includeHiddenVoiceTranscriptPermission = false;
         inboxFixtureState.includeHiddenVoiceLateResult = false;
         inboxFixtureState.contentReady = true;
@@ -296,6 +303,71 @@ describe('InboxView session attention', () => {
 
         await tree.pressByTestIdAsync('inbox.session_attention.server-a.hidden-voice');
         expect(pushSpy).toHaveBeenCalledWith('/session/hidden-voice?serverId=server-a');
+    });
+
+    it('selects a request card beside the list and draws it open, instead of leaving the Inbox', async () => {
+        windowState.width = 1440;
+        const { InboxView } = await import('./InboxView');
+        const focusedItem = { kind: 'session', serverId: 'server-a', id: 'session-1' } as const;
+        const screen = await renderAttentionScreen(<InboxView />);
+        await renderer.act(async () => screen.findHostByTestId('inbox.layout')!.props.onLayout({ nativeEvent: { layout: { width: 1384, height: 800 } } }));
+        const header = 'inbox.session_attention.server-a.session-1';
+        expect(screen.findHostByTestId(header)?.props['aria-current']).toBeUndefined();
+        await screen.tree.pressByTestIdAsync(header);
+        expect(pushSpy).not.toHaveBeenCalled();
+        expect(replaceSpy.mock.calls[0]?.[0]).toEqual(createInboxItemRoute(focusedItem, 'needs_you'));
+        await screen.update(<AppPaneProvider><InboxView focusedItem={focusedItem} /></AppPaneProvider>);
+        await renderer.act(async () => screen.findHostByTestId('inbox.layout')!.props.onLayout({ nativeEvent: { layout: { width: 1384, height: 800 } } }));
+        expect(screen.findHostByTestId(header)?.props['aria-current']).toBe('page');
+    });
+
+    describe('moving through the list with the arrow keys', () => {
+        const arrowDown = () => {
+            const event = new Event('keydown', { cancelable: true });
+            for (const [name, value] of Object.entries({ key: 'ArrowDown', code: 'ArrowDown', altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, repeat: false })) {
+                Object.defineProperty(event, name, { value });
+            }
+            window.dispatchEvent(event);
+        };
+        beforeEach(() => {
+            vi.stubGlobal('window', new EventTarget());
+            vi.stubGlobal('navigator', { platform: 'Linux' });
+        });
+        afterEach(() => { vi.unstubAllGlobals(); });
+        const renderWithKeys = async (listWidth: number) => {
+            windowState.width = listWidth + 56;
+            const { InboxView } = await import('./InboxView');
+            const { KeyboardShortcutProvider } = await import('@/keyboard/KeyboardShortcutProvider');
+            const screen = await renderAttentionScreen(<KeyboardShortcutProvider handlers={{}}><InboxView /></KeyboardShortcutProvider>);
+            await renderer.act(async () => screen.findHostByTestId('inbox.layout')!.props.onLayout({ nativeEvent: { layout: { width: listWidth, height: 800 } } }));
+            return screen;
+        };
+
+        it('selects the first item where it opens beside the list', async () => {
+            await renderWithKeys(1384);
+            await renderer.act(async () => arrowDown());
+            expect(replaceSpy).toHaveBeenCalledTimes(1);
+        });
+
+        it('offers the key hints only beside the detail pane and only over rows to move through', async () => {
+            vi.stubGlobal('window', Object.assign(new EventTarget(), { matchMedia: () => ({ matches: true }) }));
+            vi.stubGlobal('navigator', { platform: 'Linux', maxTouchPoints: 0 });
+            const withKeys = await renderWithKeys(1384);
+            expect(withKeys.findByTestId('inbox.key_hints')).not.toBeNull();
+            // Mentions holds nothing here: no keys to teach over an empty page.
+            await renderer.act(async () => { withKeys.findByTestId('inbox.view:mentions')!.props.onPress?.(); });
+            expect(withKeys.findByTestId('inbox.key_hints')).toBeNull();
+            await withKeys.unmount();
+            const whole = await renderWithKeys(700);
+            expect(whole.findByTestId('inbox.key_hints')).toBeNull();
+        });
+
+        it('does not walk away to the item\'s own page where the list is the whole page', async () => {
+            await renderWithKeys(700);
+            await renderer.act(async () => arrowDown());
+            expect(replaceSpy).not.toHaveBeenCalled();
+            expect(pushSpy).not.toHaveBeenCalled();
+        });
     });
 
     it('navigates an unread hidden post-Voice result to its exact scoped session', async () => {

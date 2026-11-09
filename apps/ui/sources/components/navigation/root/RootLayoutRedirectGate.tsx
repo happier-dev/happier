@@ -1,4 +1,5 @@
-import { Redirect, router, useGlobalSearchParams, usePathname, useSegments } from 'expo-router';
+import { Redirect, router, useSegments } from 'expo-router';
+import { useCurrentRouteParams, useCurrentRoutePathname } from '@/components/appShell/workspace/currentRouteLocation';
 import * as React from 'react';
 import { Platform } from 'react-native';
 import { useAuth } from '@/auth/context/AuthContext';
@@ -14,7 +15,10 @@ import { resolveWebServerUrlOverrideAction } from '@/sync/domains/server/url/res
 import {
     commitWebServerUrlOverride,
     consumeWebServerUrlOverrideFromLocation,
+    readWebDestinationServerIdFromLocation,
+    resolveWebServerEntrySignInRoute,
 } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
+import { KnownHomeGate } from '@/components/sessions/access/KnownHomeGate';
 import { resolveUniqueServerProfileByUrl } from '@/sync/domains/server/serverProfiles';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { connectHomeAtAddress } from '@/sync/ops/home/connectHomeAtAddress';
@@ -51,8 +55,8 @@ export function RootLayoutRedirectGate({ children }: { children: React.ReactNode
     const auth = useAuth();
     const isAuthenticated = auth.isAuthenticated;
     const segments = useSegments();
-    const pathname = usePathname();
-    const globalSearchParams = useGlobalSearchParams();
+    const pathname = useCurrentRoutePathname();
+    const globalSearchParams = useCurrentRouteParams();
     const endpointConnectivity = useEndpointConnectivity();
     const syncError = useSyncError();
     const activeServerSnapshot = useActiveServerSnapshot();
@@ -103,10 +107,19 @@ export function RootLayoutRedirectGate({ children }: { children: React.ReactNode
         return null;
     }
     if (shouldRedirect) {
-        return <Redirect href="/" />;
+        const destinationServerId = Platform.OS === 'web' ? readWebDestinationServerIdFromLocation() : null;
+        return destinationServerId
+            ? <UnauthenticatedDestinationHome serverId={destinationServerId} />
+            : <Redirect href={resolveWebServerEntrySignInRoute() as never} />;
     }
 
     return <>{children}</>;
+}
+
+/** Boot refuses unknown Home credentials; retain that refusal without mounting the protected route. */
+function UnauthenticatedDestinationHome({ serverId }: Readonly<{ serverId: string }>): React.ReactElement {
+    // Profile knowledge cannot override boot's credential-adoption decision, including first-key custody.
+    return <KnownHomeGate serverId={serverId} testIDPrefix="root-destination"><Redirect href={resolveWebServerEntrySignInRoute() as never} /></KnownHomeGate>;
 }
 
 /** Keep routes registered while withholding protected scenes during a redirect. */
@@ -115,7 +128,10 @@ export function renderRootLayoutRedirectGate(props: { children: React.ReactNode 
 }
 
 /** Admit a supplied Home below modal ownership and before shell or cache consumers mount. */
-export function WebServerOverrideGate({ children }: { children: React.ReactNode }): React.ReactElement | null {
+export function WebServerOverrideGate({ children, serverUrlOverride }: Readonly<{
+    children: React.ReactNode;
+    serverUrlOverride?: string | null;
+}>): React.ReactElement | null {
     const { refreshFromActiveServer: refreshAuth } = useAuth();
     const activeServerSnapshot = useActiveServerSnapshot();
     const bootstrappedServerUrlRef = React.useRef(activeServerSnapshot.serverUrl ?? null);
@@ -123,7 +139,7 @@ export function WebServerOverrideGate({ children }: { children: React.ReactNode 
     const onboardingJourneyOwnsTransientDemoServer = doesOnboardingJourneyOwnTransientDemoServer(onboardingJourneyActive);
     const [isApplyingWebServerOverride, setIsApplyingWebServerOverride] = React.useState(() =>
         !onboardingJourneyOwnsTransientDemoServer
-        && resolveWebServerUrlOverrideAction({ bootstrappedServerUrl: bootstrappedServerUrlRef.current }).kind === 'switch_server',
+        && resolveWebServerUrlOverrideAction({ bootstrappedServerUrl: bootstrappedServerUrlRef.current, serverUrlOverride }).kind === 'switch_server',
     );
     const webServerOverrideHandledRef = React.useRef(false);
     const [draftHref, setDraftHref] = React.useState<string | null>(null);
@@ -140,6 +156,7 @@ export function WebServerOverrideGate({ children }: { children: React.ReactNode 
         const overrideAction = resolveWebServerUrlOverrideAction({
             bootstrappedServerUrl:
                 bootstrappedServerUrlRef.current,
+            serverUrlOverride,
         });
         if (overrideAction.kind === 'none') {
             setIsApplyingWebServerOverride(false);
@@ -221,7 +238,7 @@ export function WebServerOverrideGate({ children }: { children: React.ReactNode 
             }
         })(), { tag: 'WebServerOverrideGate' });
         return () => { cancelled = true; controller.abort(); };
-    }, [onboardingJourneyOwnsTransientDemoServer, refreshAuth]);
+    }, [onboardingJourneyOwnsTransientDemoServer, refreshAuth, serverUrlOverride]);
 
     if (isApplyingWebServerOverride && !onboardingJourneyOwnsTransientDemoServer) {
         return null;

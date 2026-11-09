@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -28,6 +28,7 @@ import type { CompactAppDestination } from '@/components/appShell/destinations/c
 import { WorkspaceTitleBar } from '@/components/appShell/workspace/titleBar/WorkspaceTitleBar';
 import { WORKSPACE_BAR_CONTROL_GAP_PX } from '@/components/appShell/workspace/titleBar/workspaceBarGeometry';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * The strip across the top of the window (lab `xrail-R1`): the window's own controls where the host
@@ -112,15 +113,14 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
         <View {...dragProps} testID="app-shell-title-strip" style={styles.strip} onLayout={onStripLayout}>
             <DesktopShellWindowControlsHost>{windowControls}</DesktopShellWindowControlsHost>
             <View style={styles.logoSlot}>
-                <Pressable
+                <HappierPressable
                     testID="app-shell-logo"
                     accessibilityRole="button"
                     accessibilityLabel={t('common.home')}
-                    hitSlop={8}
                     onPress={home}
                 >
                     <HeaderLogo size={20} />
-                </Pressable>
+                </HappierPressable>
             </View>
             <View style={styles.controls} onLayout={onClusterLayout}>
                 <IconButton
@@ -168,6 +168,7 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
                 <ActionOperationActivityButton
                     testID="app-shell-action-operations"
                     buttonSize={DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_TARGET_SIZE_PX}
+                    interactiveTargetGapPx={TITLE_STRIP_CONTROL_GAP_PX}
                     iconSize={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}
                 />
             </View>

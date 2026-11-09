@@ -56,13 +56,13 @@ describe('ConnectionStatusControl retry progress', () => {
         await act(async () => {
             storage.setState({ endpointStatus: 'connecting', endpointNextRetryAt: null });
         });
-        const pending = screen.findAllByTestId('connection-popover-primary-action').some(
-            node => typeof node.type === 'string' && node.props.accessibilityState?.busy === true,
-        );
-        expect(pending).toBe(true);
-        expect(accountPage.findAllByTestId(homeRetryId).some(
-            node => typeof node.type === 'string' && node.props.accessibilityState?.busy === true,
-        )).toBe(true);
+        // A Home being retried keeps Retry pressable: a user's retry supersedes a silent dial or probe.
+        const isPressable = (nodes: ReadonlyArray<{ type: unknown; props: { accessibilityState?: { busy?: boolean; disabled?: boolean } } }>) => {
+            const hosts = nodes.filter(node => typeof node.type === 'string');
+            return hosts.length > 0 && hosts.every(node => node.props.accessibilityState?.busy !== true && node.props.accessibilityState?.disabled !== true);
+        };
+        expect(isPressable(screen.findAllByTestId('connection-popover-primary-action'))).toBe(true);
+        expect(isPressable(accountPage.findAllByTestId(homeRetryId))).toBe(true);
         expect(screen.findByTestId('connection-popover-next-retry')).toBeNull();
 
         await act(async () => {

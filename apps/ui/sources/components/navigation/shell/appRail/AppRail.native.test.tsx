@@ -12,8 +12,10 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 // Portal measurement is a platform boundary; the rail, menu and placement owner stay real.
-vi.mock('@/components/ui/popover', () => ({ Popover: (props: { children: (layout: { maxHeight: number; maxWidth: number }) => React.ReactNode }) =>
-    <>{props.children({ maxHeight: 600, maxWidth: 400 })}</> }));
+vi.mock('@/components/ui/popover', async (importOriginal) => {
+    const { createInlinePopoverModuleMock } = await import('@/dev/testkit/mocks/popover');
+    return createInlinePopoverModuleMock(importOriginal, { maxHeight: 600, maxWidth: 400, placement: 'bottom' });
+});
 
 afterEach(() => {
     standardCleanup();

@@ -20,6 +20,8 @@ import type { SessionListRowStateByServerId } from '@/sync/domains/session/listi
 import { buildServerScopedSessionKey } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 import type { SessionSwitcherEntry, SessionSwitcherSection } from '@/sync/domains/session/navigation/sessionSwitcherOrder';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { SessionRecordingVisibility } from '@/sync/domains/session/listing/recordingPrivacy';
+import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
 import { getExistingSessionDraftProjection } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { getSessionName, getSessionStatus } from '@/utils/sessions/sessionUtils';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
@@ -132,14 +134,17 @@ export function readSessionSwitcherRows(params: Readonly<{
     tabsById: ReadonlyMap<string, SessionSwitcherTabPresentation>;
     draftScope: ServerAccountScope | null;
     nowMs: number;
+    isSessionVisible?: SessionRecordingVisibility;
 }>): SessionSwitcherRow[] {
     const rows: SessionSwitcherRow[] = [];
+    const isSessionVisible = params.isSessionVisible ?? readSessionRecordingVisibility();
     for (const entry of params.entries) {
         const tab = entry.tabId ? params.tabsById.get(entry.tabId) ?? null : null;
         const address = entry.sessionKey ? params.addressByKey.get(entry.sessionKey) ?? tab?.session ?? null : tab?.session ?? null;
         if (address) {
+            if (!isSessionVisible(address)) continue;
             const session = readSession(params.state, address);
-            const status = session ? getSessionStatus(session as never, params.nowMs, { workingTextMode: 'static' }) : null;
+            const status = session ? getSessionStatus(session as never, params.nowMs) : null;
             const activityAt = session ? resolveSessionListRenderableMeaningfulActivityAt(session) : 0;
             const draft = params.draftScope && params.draftScope.serverId === address.serverId
                 ? getExistingSessionDraftProjection(params.draftScope, address.sessionId)

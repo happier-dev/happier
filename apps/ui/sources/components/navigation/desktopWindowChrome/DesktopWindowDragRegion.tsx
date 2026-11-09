@@ -1,4 +1,7 @@
+import { useDesktopWindowChromePolicy } from '@/hooks/ui/useDesktopWindowChromePolicy';
+import { desktopWindowChromeUsesAppDragRegions } from '@/utils/platform/desktopWindowBridge';
 import * as React from 'react';
+import { desktopHostKind } from '@/utils/platform/desktopHost';
 import { Platform } from 'react-native';
 import {
     startDesktopWindowDragging,
@@ -32,6 +35,7 @@ type ClosestCapableTarget = Readonly<{
 
 export type DesktopWindowDragMouseProps = Readonly<{
     onMouseDown?: (event: DesktopWindowPointerLikeEvent) => void;
+    dataSet?: Readonly<{ desktopWindowDragRegion: 'true' }>;
 }>;
 
 export type DesktopWindowTitlebarMouseAction = 'drag' | 'toggleMaximize' | 'none';
@@ -68,13 +72,15 @@ function resolveMouseDetail(event: DesktopWindowPointerLikeEvent): number | unde
     return event.detail ?? event.nativeEvent?.detail;
 }
 
-function isNonDraggableTarget(target: unknown): boolean {
+function isNonDraggableTarget(target: unknown, dragRegion: unknown): boolean {
     const candidate = target as ClosestCapableTarget | null | undefined;
     if (!candidate || typeof candidate.closest !== 'function') {
         return false;
     }
 
-    return candidate.closest(NON_DRAGGABLE_TARGET_SELECTOR) != null;
+    const control = candidate.closest(NON_DRAGGABLE_TARGET_SELECTOR);
+    // A keyboard-focusable drag surface is chrome; controls nested inside it remain interactive.
+    return control != null && control !== dragRegion;
 }
 
 function isPrimaryTitlebarMouseEvent(event: DesktopWindowPointerLikeEvent): boolean {
@@ -90,7 +96,7 @@ function isPrimaryTitlebarMouseEvent(event: DesktopWindowPointerLikeEvent): bool
 export function resolveDesktopWindowTitlebarMouseAction(
     event: DesktopWindowPointerLikeEvent,
 ): DesktopWindowTitlebarMouseAction {
-    if (event.defaultPrevented || !isPrimaryTitlebarMouseEvent(event) || isNonDraggableTarget(resolveMouseTarget(event))) {
+    if (event.defaultPrevented || !isPrimaryTitlebarMouseEvent(event) || isNonDraggableTarget(resolveMouseTarget(event), event.currentTarget)) {
         return 'none';
     }
 
@@ -120,18 +126,35 @@ export function handleDesktopWindowTitlebarMouseAction(
     return action;
 }
 
-export function useDesktopWindowDragMouseProps(enabled = true): DesktopWindowDragMouseProps {
-    return React.useMemo(() => {
-        if (Platform.OS !== 'web' || !enabled) {
-            return {};
-        }
+/** Tauri exposes an explicit drag command; Electron delegates non-client hit testing to Chromium. */
+export function useDesktopWindowDragMode(enabled = true): 'none' | 'command' | 'css' {
+    const policy = useDesktopWindowChromePolicy();
+    const active = enabled && Platform.OS === 'web' && desktopWindowChromeUsesAppDragRegions(policy);
+    const mode = !active ? 'none' : desktopHostKind() === 'electron' ? 'css' : 'command';
+    React.useEffect(() => {
+        if (mode !== 'css' || typeof document === 'undefined') return;
+        if (document.getElementById('happier-electron-window-drag-regions')) return;
+        // One stylesheet lives with this webview. The native policy removes the region markers
+        // when it uses the conventional frame. Interactive exclusions share the pointer owner.
+        const style = document.createElement('style');
+        style.id = 'happier-electron-window-drag-regions';
+        style.textContent = `[data-desktop-window-drag-region="true"] { -webkit-app-region: drag; }
+            :is(${NON_DRAGGABLE_TARGET_SELECTOR}), :is(${NON_DRAGGABLE_TARGET_SELECTOR}) * { -webkit-app-region: no-drag; }`;
+        document.head.appendChild(style);
+    }, [mode]);
+    return mode;
+}
 
-        // Mouse down carries the click count. Starting native drag on pointer down
-        // can consume that event before a double click reaches the titlebar owner.
+export function useDesktopWindowDragMouseProps(enabled = true): DesktopWindowDragMouseProps {
+    const mode = useDesktopWindowDragMode(enabled);
+    return React.useMemo(() => {
+        if (mode === 'none') return {};
+        if (mode === 'css') return { dataSet: { desktopWindowDragRegion: 'true' } };
+        // Mouse down carries click count; starting a Tauri drag on pointer down can consume it.
         return {
             onMouseDown: (event: DesktopWindowPointerLikeEvent) => {
                 handleDesktopWindowTitlebarMouseAction(event, 'DesktopWindowDragRegion.mouseDown');
             },
         };
-    }, [enabled]);
+    }, [mode]);
 }

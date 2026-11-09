@@ -12,12 +12,11 @@ import Animated, {
   ZoomIn,
   ZoomOut,
 } from 'react-native-reanimated';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { useShallow } from 'zustand/react/shallow';
 
-import { readBotActivity } from '@/components/sessions/bots/botActivity';
 import { BotMarkerFeedback } from '@/components/sessions/bots/botMarkerFeedback';
-import { useBotsHomeServerIds, useBotsSummary } from '@/components/sessions/bots/botsSummary';
+import { useBotActivity, useBotsHomeServerIds, useBotsSummary } from '@/components/sessions/bots/botsSummary';
 import {
   forgetRailPinOrigin,
   measureWindowRect,
@@ -30,8 +29,8 @@ import { useOptionalBotsRosterRuntime } from '@/components/sessions/bots/BotsRos
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { Avatar } from '@/components/ui/avatar/Avatar';
+import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
+import { BotFaceMarker } from '@/components/sessions/bots/BotFaceMarker';
 import { motionTokens } from '@/components/ui/motion';
 import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionTokens';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
@@ -232,8 +231,8 @@ function useRailPinLanding(
 }
 
 /**
- * One Bot the person pinned to the rail (lab `b-rail A`, 60s3): its seeded avatar, a thin ring while
- * it works, the attention dot when it needs you. It lands on the rail after the accepted pin
+ * One Bot the person pinned to the rail (lab `b-rail A`, 60s3): its seeded avatar, whose "…" mouth
+ * says it works, and the attention dot when it needs you. It lands on the rail after the accepted pin
  * (`successMoment` travel + land) and leaves faster; reduced motion cross-fades. Pins present when
  * the rail mounts do not animate.
  */
@@ -245,7 +244,6 @@ export const AppRailBotPin = React.memo(function AppRailBotPin(
     nextBotSessionId?: string;
   }>,
 ) {
-  const { theme } = useUnistyles();
   const reducedMotion = useReducedMotionPreference();
   const navigateToSession = useNavigateToSession();
   const pathname = useDestinationPathname();
@@ -253,7 +251,7 @@ export const AppRailBotPin = React.memo(function AppRailBotPin(
   const reorder = useAppRailBotReorder(bot);
   const [orderMenuOpen, setOrderMenuOpen] = React.useState(false);
   const name = getSessionName(bot.session, bot.serverId);
-  const activity = readBotActivity(bot.session, Date.now());
+  const activity = useBotActivity(bot);
   const href = buildScopedSessionRouteHref({
     sessionId: bot.sessionId,
     serverId: bot.serverId,
@@ -282,12 +280,7 @@ export const AppRailBotPin = React.memo(function AppRailBotPin(
     : ZoomOut.duration(motionTokens.overlay.popover.exitMs);
   return (
     <Animated.View entering={entering} exiting={exiting} ref={reorder.ref} style={landing.style}>
-      <AppRailSlot href={href} existingMenu dragSource={false} badge={activity === 'needsYou' ? (
-          <AppRailBadge
-            testID={`app-rail:${bot.id}-badge`}
-            signal={{ kind: 'dot', tone: 'attention' }}
-          />
-        ) : null}>
+      <AppRailSlot href={href} existingMenu dragSource={false}>
         {actions => <>
         <DropdownMenu
           testID={`app-rail:${bot.id}.order-menu`}
@@ -338,20 +331,13 @@ export const AppRailBotPin = React.memo(function AppRailBotPin(
           }}
           icon={
             <View style={styles.pin}>
-              {activity === 'working' ? (
-                <View style={styles.ring} pointerEvents="none">
-                  <ActivitySpinner
-                    size={PIN_RING_SIZE_PX}
-                    color={theme.colors.text.tertiary}
-                    animationEnabled={!reducedMotion}
-                  />
-                </View>
-              ) : null}
               <View ref={landing.avatarRef} collapsable={false} onLayout={landing.onAvatarLayout}>
-                <Avatar
-                  id={bot.avatarId}
+                <BotFaceMarker
+                  facts={bot.face}
                   size={PIN_AVATAR_SIZE_PX}
-                  monochrome={bot.session.active !== true}
+                  activity={activity}
+                  motion
+                  dotTestID={`app-rail:${bot.id}-badge`}
                 />
               </View>
             </View>
@@ -371,11 +357,13 @@ export const AppRailBotPin = React.memo(function AppRailBotPin(
 export function AppRailBotMenuIcon(
   props: Readonly<{ bot: AppRailBotEntry; size: number }>,
 ) {
+  const activity = useBotActivity(props.bot);
   return (
-    <Avatar
-      id={props.bot.avatarId}
+    <SessionBotFace
+      facts={props.bot.face}
       size={props.size}
-      monochrome={props.bot.session.active !== true}
+      mood={activity}
+      motion
     />
   );
 }
@@ -384,12 +372,6 @@ const styles = StyleSheet.create(() => ({
   pin: {
     width: PIN_RING_SIZE_PX,
     height: PIN_RING_SIZE_PX,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  ring: {
-    position: 'absolute',
-    inset: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },

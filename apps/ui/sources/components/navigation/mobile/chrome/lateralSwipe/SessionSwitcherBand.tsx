@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Keyboard, Platform, Pressable, StyleSheet as RNStyleSheet, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
+import { Platform, Pressable, StyleSheet as RNStyleSheet, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     useAnimatedReaction,
@@ -22,8 +22,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import type { SessionNavigationDirection } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 import { useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
-import { useDeviceType } from '@/utils/platform/responsive';
-import { useOptionalModal } from '@/modal';
+import { useSessionSwitcherInputEnabled } from './useSessionSwitcherInputEnabled';
 
 import {
     SESSION_SWITCHER_ACTIVATION_PX,
@@ -125,8 +124,7 @@ export function SessionSwitcherBand(props: Readonly<{
 }>): React.ReactElement {
 
     const router = useRouter();
-    const deviceType = useDeviceType();
-    const modalOwnsInput = useOptionalModal()?.isKeyboardLiftSuppressedByModal === true;
+    const inputEnabled = useSessionSwitcherInputEnabled();
     const window = useWindowDimensions();
     const insets = useChromeSafeAreaInsets();
     const reducedMotion = useReducedMotionPreference();
@@ -140,17 +138,7 @@ export function SessionSwitcherBand(props: Readonly<{
     const shared = useSessionSwitcherState();
     const { open, ghost, lift, index, scroll } = shared;
 
-    // The gesture must not arm over a raised keyboard: the bar sits on it and the room belongs to text.
-    const [keyboardVisible, setKeyboardVisible] = React.useState(false);
-    React.useEffect(() => {
-        const shown = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => setKeyboardVisible(true));
-        const hidden = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => setKeyboardVisible(false));
-        return () => { shown.remove(); hidden.remove(); };
-    }, []);
-
-    // Native phones only: on mobile web the browser owns the edges and the bottom of the screen.
-    const gestureEnabled = Platform.OS !== 'web' && deviceType === 'phone' && !keyboardVisible && !modalOwnsInput
-        && (sidewaysEnabled || dragUpEnabled || flickEnabled || holdEnabled);
+    const gestureEnabled = inputEnabled && (sidewaysEnabled || dragUpEnabled || flickEnabled || holdEnabled);
 
     const [panel, setPanel] = React.useState<PanelState | null>(null);
     const [selected, setSelected] = React.useState<SessionSwitcherRow | null>(null);
@@ -254,6 +242,15 @@ export function SessionSwitcherBand(props: Readonly<{
         setPanel({ mode, docked, prepared, layout, viewportHeight: height });
         if (!docked) frame.setActive(true);
     }, [contentHeight, count, frame, measureViewport, prepare, reveal, rowBottoms, syncOn, viewportHeight]);
+
+    React.useLayoutEffect(() => {
+        const current = panelRef.current;
+        if (!current) return;
+        prepare();
+        index.value = -1;
+        setSelected(null);
+        showPanel(current.mode, current.docked);
+    }, [index, prepare, showPanel]);
 
     const hidePanel = React.useCallback(() => {
         frame.setActive(false);

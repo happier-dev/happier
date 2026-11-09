@@ -9,11 +9,11 @@ import { StatusPill, type StatusPillVariant } from '@/components/ui/status/Statu
 import { Popover } from '@/components/ui/popover';
 import { readPressFocusReturnTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
-import { useSocketStatus, useSyncError, useLastSyncAt } from '@/sync/domains/state/storage';
+import { storage, useSocketStatus, useSyncError, useLastSyncAt } from '@/sync/domains/state/storage';
 import { useHomeViewSelectionSettingsMutable } from '@/hooks/server/useHomeViewSelectionSettings';
 import { useAuth } from '@/auth/context/AuthContext';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { usePathname, useRouter } from 'expo-router';
+import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { offerThisComputerConnectionToHome } from '@/components/serverProfiles/offerThisComputerConnectionToHome';
 import { Typography } from '@/constants/Typography';
@@ -38,6 +38,7 @@ import { resolveSocketErrorClassification } from '@/sync/runtime/connectivity/re
 import { selectSyncErrorForServer } from '@/sync/runtime/connectivity/syncErrorScope';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -70,13 +71,13 @@ import {
     type HomeConnectionStatusKey,
 } from '@/components/navigation/connectionStatus/resolveHomeConnectionSummary';
 import { resolveMachineConnectionStatusKey } from '@/components/navigation/connectionStatus/connectionHealthPresentation';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import {
     sanitizeDoctorDiagnosticText,
     type DoctorSnapshotHomeTransportDiagnostics,
 } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
-import { HOMES_ADD_ROUTE } from '@/components/settings/server/collection/homeCollectionModel';
+import { openAddHome } from '@/components/homes/add/openAddHome';
 import { buildHomeRecoveryHref } from '@/components/settings/server/navigation/serverSettingsRouteParams';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 
@@ -468,7 +469,6 @@ const ConnectionPopoverStatusRow = React.memo(function ConnectionPopoverStatusRo
     statusVariant: StatusPillVariant;
     divided?: boolean;
     onRetry?: () => void;
-    retryBusy?: boolean;
 }>) {
     const styles = stylesheet;
     return (
@@ -497,7 +497,6 @@ const ConnectionPopoverStatusRow = React.memo(function ConnectionPopoverStatusRo
                         size={DENSE_POINTER_TARGET_SIZE}
                         iconSize={16}
                         accessibilityLabel={t('common.retry')}
-                        busy={props.retryBusy}
                         onPress={props.onRetry}
                     />
                 ) : null}
@@ -535,6 +534,12 @@ export type ConnectionStatusTriggerState = Readonly<{
     accountService: HomeAccountServiceSummary;
 }>;
 
+/** The last sync moves on every sync: only the shown details read it, never the closed trigger. */
+function LastSyncTime(props: Readonly<{ style: React.ComponentProps<typeof Text>['style'] }>) {
+    const lastSyncAt = useLastSyncAt();
+    return <Text style={props.style}>{formatTime(lastSyncAt)}</Text>;
+}
+
 export const ConnectionStatusControl = React.memo(function ConnectionStatusControl(props: {
     variant: Variant;
     textSize?: number;
@@ -556,7 +561,6 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const auth = useAuth();
     const socketStatus = useSocketStatus();
     const syncError = useSyncError();
-    const lastSyncAt = useLastSyncAt();
     const connectionHealth = useActiveHomeConnectionHealth();
     const {
         serverSelectionGroups,
@@ -598,6 +602,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     // The pending target row carries the connecting state, so cached/live facts
     // from the current Home are never presented under the requested Home's name.
     const displayServerId = appliedServerId || activeServerId;
+    const writeClipboard = useClipboardWrite(displayServerId, { enabled: open || props.variant === 'fullScreen' || props.variant === 'page' });
     const displayUsesActiveSnapshot = areServerProfileIdentifiersEquivalent(displayServerId, activeServerId);
     const activeSyncError = React.useMemo(() => {
         return selectSyncErrorForServer(syncError, displayServerId);
@@ -685,6 +690,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const usableServerIds = useUsableHomeServerIds();
     const serverTargets = React.useMemo(() => {
         return listServerSelectionTargets({
+            currentServerId: activeServerId,
             serverProfiles: servers.map((profile) => ({
                 ...profile,
                 id: resolveServerProfileScopeId(profile),
@@ -692,7 +698,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             groupProfiles: normalizeStoredServerSelectionGroups(serverSelectionScopeSettings.serverSelectionGroups),
             usableServerIds,
         });
-    }, [usableServerIds, serverSelectionScopeSettings.serverSelectionGroups, servers]);
+    }, [activeServerId, usableServerIds, serverSelectionScopeSettings.serverSelectionGroups, servers]);
 
     const resolvedTarget = React.useMemo(() => {
         return resolveActiveServerSelectionFromRawSettings({
@@ -795,16 +801,16 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             ...transportDetailRows.map((row) => `${row.label}: ${row.value}`),
             `${t('systemStatus.ui.socket')}: ${socketStatus.status}`,
             `${t('settings.machines')}: ${machineSubtitle}`,
-            `${t('connectionStatus.labels.lastSync')}: ${formatTime(lastSyncAt)}`,
+            `${t('connectionStatus.labels.lastSync')}: ${formatTime(storage.getState().lastSyncAt)}`,
             ...(syncErrorPresentation ? [`${t('connectionStatus.labels.lastError')}: ${syncErrorPresentation.message}`] : []),
         ].join('\n');
-        fireAndForget(setClipboardStringSafe(sanitizeDoctorDiagnosticText(report)).then((copied) => {
+        fireAndForget(writeClipboard(sanitizeDoctorDiagnosticText(report)).then((copied) => {
             if (copied) setDiagnosticsCopied(true);
         }), { tag: 'ConnectionStatusControl.copyDiagnostics' });
     }, [
         activeServerLabel,
+        writeClipboard,
         homeSummary.statusLabelKey,
-        lastSyncAt,
         machineSubtitle,
         socketStatus.status,
         syncErrorPresentation,
@@ -857,7 +863,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     // Add a Home is Settings → Homes' draft: the same form everywhere, pushed on a phone.
     const handleOpenAddHome = React.useCallback(() => {
         runPopoverAction('navigates', () => {
-            const result = runGuardedNavigation(() => router.push(HOMES_ADD_ROUTE as never));
+            const result = runGuardedNavigation(() => openAddHome(router));
             if (result !== true) fireAndForget(result, { tag: 'ConnectionStatusControl.nav.addHome' });
         });
     }, [router, runPopoverAction]);
@@ -971,7 +977,6 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                         title={primaryActionLabel}
                         size="mini"
                         display="secondary"
-                        loading={isRetrying}
                         onPress={homeSummary.action === 'restore' ? handleRestoreAccount : handleRetry}
                         accessibilityLabel={primaryActionLabel}
                     />
@@ -997,7 +1002,6 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                         dotColor={relayPresentation.dotColor}
                         statusVariant={relayPresentation.pillVariant}
                         onRetry={canRetryRelayConnection ? handleRetry : undefined}
-                        retryBusy={isRetrying}
                     />
                 </View>
             ) : null}
@@ -1007,9 +1011,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                     <Text style={styles.statusMetaLabel}>
                         {t('connectionStatus.labels.lastSync')}
                     </Text>
-                    <Text style={styles.statusMetaValue}>
-                        {formatTime(lastSyncAt)}
-                    </Text>
+                    <LastSyncTime style={styles.statusMetaValue} />
                 </View>
                 {nextRetryAt ? (
                     <View style={styles.statusMetaRow}>
@@ -1082,11 +1084,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                 style={styles.detailsDisclosure}
             >
                 <Text style={styles.detailsDisclosureText}>{t('common.details')}</Text>
-                <Icon
-                    name={detailsExpanded ? 'caret-up' : 'caret-down'}
-                    size={14}
-                    color={theme.colors.text.secondary}
-                />
+                <DisclosureCaret expanded={detailsExpanded} size={14} />
             </HappierPressable>
 
             {detailsExpanded ? detailsBody : null}

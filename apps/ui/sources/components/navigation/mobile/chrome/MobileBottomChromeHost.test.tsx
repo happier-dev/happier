@@ -164,6 +164,15 @@ describe('MobileBottomChromeHost mounted chrome', () => {
         expect(screen.findByType(MainAppTabBar).props.activeTab).toBe('workflows');
         expect(screen.findByType(MainAppTabBar).props.trailingAccessory).toBeUndefined();
     });
+    it('keeps the bar on a More destination without claiming Sessions is here (QA-PHONE P1)', async () => {
+        const screen = await renderScreen(<Harness />);
+        await navigateTo('/machines');
+        await screen.update(<Harness />);
+        await finishAnimations();
+        expect(screen.findByType(MainAppTabBar)).toBeTruthy();
+        expect(screen.findByTestId('tabbar-tab-sessions').props.selected).toBe(false);
+        expect(screen.findByType(MainAppTabBar).props.trailingAccessory).toBeUndefined();
+    });
     it('offers More from the bar itself on Sessions and on a tab with its own route', async () => {
         const screen = await renderScreen(<Harness />);
         expect(screen.findByTestId('phone-launcher-button')).toBeTruthy();

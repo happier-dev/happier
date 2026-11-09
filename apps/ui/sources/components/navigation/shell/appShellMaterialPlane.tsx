@@ -2,8 +2,9 @@ import * as React from 'react';
 import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { GlassSurface } from '@/components/ui/glass/GlassSurface';
+import { GlassSurface, useContainingGlassSurfaceGroup } from '@/components/ui/glass/GlassSurface';
 import type { GlassSurfaceGroup } from '@/components/ui/glass/glassMaterial';
+import { useAtmospherePictureShown } from '@/components/atmosphere/atmosphereStage';
 
 /**
  * The shell's sheet geometry: every sheet on the canvas (the page, and with the `canvas` placement the
@@ -26,6 +27,12 @@ export function AppShellMaterialPlane(
     children?: React.ReactNode;
   }>,
 ) {
+  const containingGroup = useContainingGlassSurfaceGroup();
+  const pictureShown = useAtmospherePictureShown();
+  // Every main area shares Sessions' existing reading material. Inner page planes inherit it,
+  // including a Settings shell, so the reading coat is never stacked or recalibrated by a page.
+  const inheritsContent = props.group === 'content' && containingGroup === 'content';
+  const atmosphereCoat = props.group === 'content' && pictureShown ? 'reading' : undefined;
   if (props.pointerEvents === 'none')
     return (
       <View
@@ -35,6 +42,8 @@ export function AppShellMaterialPlane(
       >
         <GlassSurface
           plane
+          noCoat={inheritsContent}
+          atmosphereCoat={atmosphereCoat}
           surfaceGroup={props.group}
           solidColor={props.color}
           translucentColor={props.translucentColor}
@@ -49,6 +58,8 @@ export function AppShellMaterialPlane(
   return (
     <GlassSurface
       plane
+      noCoat={inheritsContent}
+      atmosphereCoat={atmosphereCoat}
       testID={props.testID}
       surfaceGroup={props.group}
       solidColor={props.color}

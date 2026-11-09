@@ -15,7 +15,6 @@ const buildPolicyState = vi.hoisted(() => ({
     decision: 'neutral' as 'allow' | 'deny' | 'neutral',
 }));
 
-const setSessionsListStorageFilterSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -48,12 +47,6 @@ installNavigationShellCommonModuleMocks({
             useFriendRequests: () => [],
             useSocketStatus: () => ({ status: 'connected' }),
             useRealtimeStatus: () => ({ status: 'idle' }),
-            useLocalSettingMutable: (name: string) => {
-                if (name === 'sessionsListStorageFilter') {
-                    return ['all', setSessionsListStorageFilterSpy] as const;
-                }
-                throw new Error(`Unexpected local setting: ${name}`);
-            },
             useSetting: (key: string) => {
                 if (key === 'serverSelectionGroups') return [];
                 if (key === 'serverSelectionActiveTargetKind') return 'main_selection';
@@ -73,12 +66,8 @@ vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
     ),
 }));
 
-vi.mock('@/components/sessions/model/useSessionListStorageKind', () => ({
-    useSessionListStorageKind: () => ({
-        externalSessionsEnabled: false,
-        storageKind: 'persisted',
-        setStorageKind: vi.fn(),
-    }),
+vi.mock('@/components/sessions/shell/search/useSessionListViewFilterController', () => ({
+    useSessionListViewFilterController: () => ({ sourceAvailable: false, displayFilters: { source: 'all' } }),
 }));
 
 vi.mock('@/hooks/inbox/useInboxAvailable', () => ({
@@ -213,7 +202,6 @@ describe('MainView (tablet primary pane)', () => {
     beforeEach(() => {
         sessionListState.data = [];
         buildPolicyState.decision = 'neutral';
-        setSessionsListStorageFilterSpy.mockReset();
     });
 
     it('shows the home hub instead of a blank view', async () => {

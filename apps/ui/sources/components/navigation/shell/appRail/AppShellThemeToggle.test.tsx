@@ -111,7 +111,7 @@ describe('AppShellThemeToggle', () => {
         expect(screen.findAllByProps({ title: 'settingsAppearance.glassControls.effectiveBrowser' }).length).toBeGreaterThan(0);
         expect(screen.findByTestId('appearance-desktop-download')).not.toBeNull();
         await screen.pressByTestIdAsync('appearance-material:solid');
-        expect(screen.findAllByProps({ title: 'settingsAppearance.glassControls.effectiveBrowserSolid' }).length).toBeGreaterThan(0);
+        await vi.waitFor(() => expect(screen.findAllByProps({ title: 'settingsAppearance.glassControls.effectiveBrowserSolid' }).length).toBeGreaterThan(0));
         expect(screen.findByTestId('appearance-desktop-download')).not.toBeNull();
     });
 
@@ -121,9 +121,9 @@ describe('AppShellThemeToggle', () => {
         const screen = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ desktopWindow: true }}><GlassAppearanceSection /></GlassRuntimeEnvironmentProvider>);
         expect(screen.findAllByProps({ title: 'settingsAppearance.glassControls.effectiveUnavailable' }).length).toBeGreaterThan(0);
         await screen.pressByTestIdAsync('appearance-material:solid');
-        expect(screen.findAllByProps({ title: 'settingsAppearance.glassControls.effectiveSolid' }).length).toBeGreaterThan(0);
+        await vi.waitFor(() => expect(screen.findAllByProps({ title: 'settingsAppearance.glassControls.effectiveSolid' }).length).toBeGreaterThan(0));
         await screen.pressByTestIdAsync('appearance-material:everywhere');
-        expect(screen.findAllByProps({ title: 'settingsAppearance.glassControls.effectiveUnavailable' }).length).toBeGreaterThan(0);
+        await vi.waitFor(() => expect(screen.findAllByProps({ title: 'settingsAppearance.glassControls.effectiveUnavailable' }).length).toBeGreaterThan(0));
     });
 
     it('describes a Custom browser material without claiming background blur when it is off', async () => {
@@ -191,14 +191,16 @@ describe('AppShellThemeToggle', () => {
         expect(screen.findByTestId('appearance-material:everywhere')).not.toBeNull();
         await screen.pressByTestIdAsync('appearance-material:solid');
         const { storage } = await import('@/sync/domains/state/storage');
-        expect(storage.getState().settings.glassBlurEnabled).toBe(false);
-        const blur = screen.findByTestId('appearance-blur:regular');
-        expect(blur?.props.accessibilityState?.disabled ?? blur?.props.disabled).toBe(true);
+        await vi.waitFor(() => expect(storage.getState().settings.glassBlurEnabled).toBe(false));
+        await vi.waitFor(() => {
+            const blur = screen.findByTestId('appearance-blur:regular');
+            expect(blur?.props.accessibilityState?.disabled ?? blur?.props.disabled).toBe(true);
+        });
         await screen.pressByTestIdAsync('appearance-material:everywhere');
-        expect(storage.getState().settings.glassSurfaceMaterials?.content.blur).not.toBe('off');
+        await vi.waitFor(() => expect(storage.getState().settings.glassSurfaceMaterials?.content.blur).not.toBe('off'));
         await screen.pressByTestIdAsync('appearance-material:clear');
-        expect(storage.getState().settings.glassSurfaceMaterials?.floating).toEqual({ blur: 'strong', opacity: 0.02 });
-        expect(storage.getState().settings.glassBlurIntensity).toBe('strong');
+        await vi.waitFor(() => expect(storage.getState().settings.glassSurfaceMaterials?.floating).toEqual({ blur: 'strong', opacity: 0.02 }));
+        await vi.waitFor(() => expect(storage.getState().settings.glassBlurIntensity).toBe('strong'));
     });
     it.each(['light', 'dark', 'adaptive'] as const)('marks only the stored %s mode as selected', async (mode) => {
         const { storage } = await import('@/sync/domains/state/storage');
@@ -245,12 +247,13 @@ describe('AppShellThemeToggle', () => {
         const { storage } = await import('@/sync/domains/state/storage');
         const { readGlassPreset, readGlassMaterials } = await import('@/components/ui/glass/glassMaterial');
         expect(readGlassPreset(storage.getState().settings)).toBe('auto');
-        expect(readGlassMaterials(storage.getState().settings).card).toEqual({ blur: 'off', opacity: 1 });
+        await vi.waitFor(() => expect(readGlassMaterials(storage.getState().settings).card).toEqual({ blur: 'off', opacity: 1 }));
         await screen.pressByTestIdAsync('appearance-card:glass');
+        await vi.waitFor(() => expect(readGlassMaterials(storage.getState().settings).card.blur).not.toBe('off'));
         expect(readGlassPreset(storage.getState().settings)).toBe('auto');
         await screen.pressByTestIdAsync('appearance-sidebar:solid');
-        expect(readGlassPreset(storage.getState().settings)).toBe('custom');
-        expect(readGlassMaterials(storage.getState().settings).sidebar).toEqual({ blur: 'off', opacity: 1 });
+        await vi.waitFor(() => expect(readGlassPreset(storage.getState().settings)).toBe('custom'));
+        await vi.waitFor(() => expect(readGlassMaterials(storage.getState().settings).sidebar).toEqual({ blur: 'off', opacity: 1 }));
     });
 
     it('sets Tint as a whole number from the slider (default 12 + one step) and keeps it disabled for Solid', async () => {
@@ -259,8 +262,9 @@ describe('AppShellThemeToggle', () => {
         const screen = await renderScreen(<GlassAppearanceSection />);
         const slider = screen.findByTestId('appearance-tint');
         await act(async () => { slider?.props.onAccessibilityAction({ nativeEvent: { actionName: 'increment' } }); });
-        expect(storage.getState().settings.glassTintIntensity).toBe(13);
+        await vi.waitFor(() => expect(storage.getState().settings.glassTintIntensity).toBe(13));
         await screen.pressByTestIdAsync('appearance-material:solid');
+        await vi.waitFor(() => expect(storage.getState().settings.glassBlurEnabled).toBe(false));
         await act(async () => { screen.findByTestId('appearance-tint')?.props.onAccessibilityAction({ nativeEvent: { actionName: 'increment' } }); });
         expect(storage.getState().settings.glassTintIntensity).toBe(13);
     });

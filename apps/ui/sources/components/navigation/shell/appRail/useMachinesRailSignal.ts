@@ -9,13 +9,14 @@ import {
 import type { MachineResourceAutomaticActionV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { useMachineResourceFleetAttention, type MachineResourceFleetAttention } from '@/sync/domains/machines/resources/useMachineResourceFleetAttention';
-import { useLocalSetting, useMachinePresenceCounts } from '@/sync/domains/state/storage';
+import { useMachinePresenceCounts } from '@/sync/domains/state/storage';
+import { useMachinesRailSeen } from '@/sync/domains/state/machineAdministrationUiState';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 
 import { resolveAppRailBadgeTone, type AppRailBadgeSignal } from './AppRailBadge';
 
-/** What this device has seen of the machines' reasons (`machinesRailSeenV1`). */
+/** What this device has seen within one exact Account and Home. */
 export type MachinesRailSeen = Readonly<{ look: Readonly<Record<string, readonly string[]>>; guardSeenAt: number }>;
 
 export type MachinesRailLevel = 'needs_you' | 'look' | 'guard';
@@ -47,7 +48,7 @@ export function resolveMachinesRailSignal(input: Readonly<{ fleet: MachineResour
  * What opening the popover records (MPG-16): every current "worth a look" reason per machine (a machine
  * whose reasons are gone is dropped, so a later recurrence badges again) and the moment of opening.
  */
-/** A fresh record to store (the local setting holds plain arrays), readable wherever `MachinesRailSeen` is. */
+/** A fresh device-local navigation record, readable wherever `MachinesRailSeen` is. */
 export function buildMachinesRailSeen(fleet: MachineResourceFleetAttention, nowMs: number): { look: Record<string, string[]>; guardSeenAt: number } {
     const look: Record<string, string[]> = {};
     for (const entry of fleet.look) (look[entry.machineKey] ??= []).push(entry.reasonKey);
@@ -83,7 +84,7 @@ export function useMachinesRailSignal(): Readonly<{
     fleet: MachineResourceFleetAttention;
 }> {
     const fleet = useMachineResourceFleetAttention();
-    const seen = useLocalSetting('machinesRailSeenV1');
+    const seen = useMachinesRailSeen(fleet.accountScope);
     const counts = useMachinePresenceCounts();
     const { level, signal } = React.useMemo(() => resolveMachinesRailSignal({ fleet, seen }), [fleet, seen]);
     // The one machine the tooltip names: the headline (needs you or the look shown), or the guard's latest.

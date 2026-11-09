@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { findAllHostTestInstances } from '@/dev/testkit/render/renderScreen';
 import { createUsageNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
+import { seedAdmittedArtifactRows } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { INBOX_ARTIFACT_KINDS } from '@/sync/domains/artifacts/inboxArtifacts';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
@@ -12,20 +14,23 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 // The scroll instance is a renderer/platform boundary; the model and store remain real.
 const scrollOwner = vi.hoisted(() => ({ mounts: 0, unmounts: 0, offset: 0 }));
 const routeBoundary = vi.hoisted(() => ({ resetParams: () => {} }));
-vi.mock('react-native', async () => {
+// The page's one scroll owner is the windowed recycler, a renderer/platform boundary; the model and store stay real.
+vi.mock('@legendapp/list/react-native', async () => {
     const ReactModule = await import('react');
-    return (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
-        useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
-        ScrollView: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => {
-            ReactModule.useEffect(() => {
-                scrollOwner.mounts += 1;
-                scrollOwner.offset = 0;
-                return () => { scrollOwner.unmounts += 1; };
-            }, []);
-            return ReactModule.createElement('ScrollView', props, children);
-        },
-    });
+    const legend = await (await import('@/dev/testkit/mocks/legendList')).createLegendListModuleMock();
+    const Recycler = legend.LegendList;
+    return { ...legend, LegendList: ReactModule.forwardRef((props: Record<string, unknown>, ref) => {
+        ReactModule.useEffect(() => {
+            scrollOwner.mounts += 1;
+            scrollOwner.offset = 0;
+            return () => { scrollOwner.unmounts += 1; };
+        }, []);
+        return ReactModule.createElement(Recycler, { ...props, ref });
+    }) };
 });
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+    useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
+}));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('expo-router', async () => {
     const boundary = (await import('@/dev/testkit/mocks/router')).createExpoRouterMock();
@@ -40,7 +45,7 @@ vi.mock('@/track/tracking', () => ({ tracking: null }));
 const initialState = storage.getState();
 const notice = createUsageNoticeArtifactFixture();
 async function setContent(populated: boolean) {
-    await act(async () => storage.setState({ artifacts: populated ? { [notice.id]: notice } : {} }));
+    await act(async () => seedAdmittedArtifactRows(populated ? [notice] : [], storage));
 }
 
 describe('InboxView scroll owner stability', () => {
@@ -50,8 +55,9 @@ describe('InboxView scroll owner stability', () => {
         scrollOwner.unmounts = 0;
         scrollOwner.offset = 0;
         storage.setState(initialState, true);
-        storage.setState({ isDataReady: true, artifacts: { [notice.id]: notice },
+        storage.setState({ isDataReady: true, artifactInventoryKindsLoaded: INBOX_ARTIFACT_KINDS,
             profileScope: { serverId: getActiveServerSnapshot().serverId, accountId: 'account-a' } });
+        seedAdmittedArtifactRows([notice], storage);
     });
     afterEach(() => {
         standardCleanup();
@@ -61,7 +67,7 @@ describe('InboxView scroll owner stability', () => {
     it('keeps one scroll container across a populated -> caught-up -> populated cycle', async () => {
         const { InboxView } = await import('./InboxView');
         const screen = await renderScreen(<InboxView />);
-        const scrollViews = () => findAllHostTestInstances(screen.tree.root, node => node.type === 'ScrollView');
+        const scrollViews = () => findAllHostTestInstances(screen.tree.root, node => node.type === 'LegendList');
         expect(scrollViews()).toHaveLength(1);
         expect(scrollOwner.mounts).toBe(1);
         // Usage notices are updates; the Inbox opens on Needs you.
@@ -80,10 +86,10 @@ describe('InboxView scroll owner stability', () => {
     });
 
     it('renders the caught-up state as content inside the scroll container', async () => {
-        storage.setState({ artifacts: {} });
+        seedAdmittedArtifactRows([], storage);
         const { InboxView } = await import('./InboxView');
         const screen = await renderScreen(<InboxView />);
-        const scrollView = findAllHostTestInstances(screen.tree.root, node => node.type === 'ScrollView')[0];
+        const scrollView = findAllHostTestInstances(screen.tree.root, node => node.type === 'LegendList')[0];
         expect(scrollView).toBeDefined();
         expect(scrollView!.findAll(node => node.props.testID === 'inbox.empty')).not.toHaveLength(0);
         expect(screen.getTextContent()).toContain('inbox.emptyTitle');

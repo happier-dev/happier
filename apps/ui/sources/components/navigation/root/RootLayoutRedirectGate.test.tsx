@@ -95,6 +95,15 @@ function NavProbe({ counter }: { counter: Counter }): null {
 }
 
 describe('RootLayoutRedirectGate', () => {
+    it('mounts the signed-in Artifact landing while signed out so the route can retain its transient fragment', async () => {
+        authState.isAuthenticated = false;
+        setNav('/share/artifact/invite', ['(app)', 'share', 'artifact', '[lookupId]']);
+        const screen = await renderGateScreen(<RootLayoutRedirectGate><div data-testid="signed-artifact-landing" /></RootLayoutRedirectGate>);
+        try {
+            expect(screen.findAll(node => node.props['data-testid'] === 'signed-artifact-landing')).toHaveLength(1);
+            expect(screen.findAllByType('Redirect' as never)).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
     let locks: ReturnType<typeof installWebLockManagerMock>;
     beforeEach(() => {
         dispatchRedirects = false;
@@ -109,6 +118,16 @@ describe('RootLayoutRedirectGate', () => {
     });
 
     afterEach(() => { locks.restore(); });
+
+    it('preserves the explicit Home when redirecting a protected route to sign-in', async () => {
+        authState.isAuthenticated = false;
+        setNav('/settings', ['settings']);
+        const serverUrl = 'https://selected-entry.example.test';
+        vi.stubGlobal('window', { location: { href: `https://app.example.test/settings?server=${encodeURIComponent(serverUrl)}` } });
+        const screen = await renderGateScreen(<RootLayoutRedirectGate><></></RootLayoutRedirectGate>);
+        try { expect(screen.findByType('Redirect').props.href).toBe(`/?server=${encodeURIComponent(serverUrl)}`); }
+        finally { await screen.unmount(); }
+    });
 
     it('settles a signed-out first machine deep link through the registered Home navigator without mounting protected content', async () => {
         authState.isAuthenticated = false;
@@ -214,6 +233,30 @@ describe('RootLayoutRedirectGate', () => {
             expect(screen.findAllByType('Redirect' as never).length).toBe(1);
             expect(screen.findAllByType('Redirect' as never)[0]?.props.href).toBe('/');
             expect(shell.n).toBe(0);
+        } finally {
+            await screen.unmount();
+        }
+    });
+
+    it('keeps the redirected Home chooser and connection draft mounted after sign-out', async () => {
+        authState.isAuthenticated = false;
+        setNav('/server', ['(app)', 'server']);
+        const screen = await renderGateScreen(
+            <RootLayoutRedirectGate><div data-testid="home-connection-screen" /></RootLayoutRedirectGate>,
+        );
+        try {
+            for (const [pathname, segments] of [
+                ['/settings/server', ['(app)', 'settings', 'server']],
+                ['/settings/server/add', ['(app)', 'settings', 'server', 'add']],
+                ['/settings/server/saved-home', ['(app)', 'settings', 'server', '[homeId]']],
+            ] as const) {
+                await act(async () => setNav(pathname, [...segments]));
+                expect(screen.findByTestId('home-connection-screen')).not.toBeNull();
+                expect(screen.findAllByType('Redirect' as never)).toHaveLength(0);
+            }
+            await act(async () => setNav('/settings/account', ['(app)', 'settings', 'account']));
+            expect(screen.findByTestId('home-connection-screen')).toBeNull();
+            expect(screen.findAllByType('Redirect' as never)).toHaveLength(1);
         } finally {
             await screen.unmount();
         }

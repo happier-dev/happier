@@ -48,6 +48,7 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('@/utils/platform/desktopHost', () => ({
     isDesktopHost: () => true,
+    desktopHostKind: () => 'tauri',
     invokeDesktopHost: (command: string) => command === 'desktop_get_window_chrome_policy'
         ? Promise.resolve({ strategy: 'native-macos-traffic-lights' })
         : desktopWindowBridgeState.invoke(command),

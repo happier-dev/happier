@@ -1,11 +1,10 @@
+import { useDesktopWindowChromePolicy } from '@/hooks/ui/useDesktopWindowChromePolicy';
 import * as React from 'react';
 import {
     closeDesktopWindow,
-    getDesktopWindowChromePolicy,
     listenDesktopWindowState,
     minimizeDesktopWindow,
     toggleDesktopWindowMaximize,
-    type DesktopWindowChromeStrategy,
     type DesktopWindowState,
 } from '@/utils/platform/desktopWindowBridge';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -24,12 +23,11 @@ export function useResolvedDesktopWindowControls(
     params: UseResolvedDesktopWindowControlsParams,
 ): React.ReactNode {
     const hasDesktopWindowControlsOverride = params.hasDesktopWindowControlsOverride === true;
-    const [chromeStrategy, setChromeStrategy] = React.useState<DesktopWindowChromeStrategy>('none');
+    const { strategy: chromeStrategy } = useDesktopWindowChromePolicy(!hasDesktopWindowControlsOverride);
     const [windowState, setWindowState] = React.useState<DesktopWindowState>({ isMaximized: false, isFullscreen: false });
 
     React.useEffect(() => {
         if (hasDesktopWindowControlsOverride) {
-            setChromeStrategy('none');
             setWindowState({ isMaximized: false, isFullscreen: false });
             return;
         }
@@ -38,14 +36,11 @@ export function useResolvedDesktopWindowControls(
         let disposeWindowStateListener: (() => Promise<void>) | null = null;
 
         const loadWindowChrome = async () => {
-            const policy = await getDesktopWindowChromePolicy();
             if (!isActive) {
                 return;
             }
 
-            setChromeStrategy(policy.strategy);
-
-            if (policy.strategy === 'none') {
+            if (chromeStrategy === 'none') {
                 return;
             }
             const dispose = await listenDesktopWindowState((nextState) => {
@@ -69,7 +64,7 @@ export function useResolvedDesktopWindowControls(
                 void disposeWindowStateListener();
             }
         };
-    }, [hasDesktopWindowControlsOverride]);
+    }, [chromeStrategy, hasDesktopWindowControlsOverride]);
 
     const handleMinimize = React.useCallback(() => {
         fireAndForget(minimizeDesktopWindow(), { tag: 'DesktopWindowControlsSlot.minimize' });
@@ -87,7 +82,7 @@ export function useResolvedDesktopWindowControls(
         return params.desktopWindowControls ?? null;
     }
 
-    if (chromeStrategy === 'none' || windowState.isFullscreen) {
+    if (chromeStrategy === 'none' || chromeStrategy === 'native-windows-frame' || windowState.isFullscreen) {
         return null;
     }
 

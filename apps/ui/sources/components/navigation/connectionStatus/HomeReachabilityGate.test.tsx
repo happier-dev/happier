@@ -68,7 +68,7 @@ describe('HomeReachabilityGate', () => {
         const { useSettlingHomeServerId } = await import('./HomeReachabilityGate');
         const hook = await renderHook(useSettlingHomeServerId);
         const failed = buildOrdinarySessionListHomeState({ serverId: appliedHomeId, requestedQueryKey: 'ordinary', sessionIds: [],
-            observation: { phase: 'error', lastSuccessAt: null }, online: true,
+            observation: { phase: 'error', lastSuccessAt: null, failure: { reason: 'network', code: null } }, online: true,
             lifecycle: { serverId: appliedHomeId, hasFetchedSnapshot: false, fetchInFlight: false, fetchMoreInFlight: false,
                 frontier: { nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false } },
         });

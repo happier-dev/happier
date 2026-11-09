@@ -3,7 +3,6 @@ import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createRoot } from 'react-dom/client';
 import { Pressable } from 'react-native';
-import { Header } from '../Header';
 import { DesktopMainContentDragSurface } from './DesktopMainContentDragSurface';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopWindowPointerLikeEvent } from './DesktopWindowDragRegion';
@@ -12,10 +11,13 @@ import { renderHook } from '@/dev/testkit/hooks/renderHook';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const nativeWindowState = { isMaximized: false };
+const nativeWindowState = { isMaximized: false, nativeTitleBar: false };
 // Fake only native IPC; the shared desktopHost and window bridge stay real for both shells.
-const invoke = vi.fn(async (command: string) => {
-    if (command === 'desktop_get_window_chrome_policy') return { strategy: 'custom-controls' };
+const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+    if (command === 'desktop_set_native_title_bar') nativeWindowState.nativeTitleBar = args?.useNativeTitleBar === true;
+    if (command === 'desktop_get_window_chrome_policy' || command === 'desktop_set_native_title_bar') {
+        return { strategy: nativeWindowState.nativeTitleBar ? 'native-windows-frame' : 'custom-controls', canSetNativeTitleBar: true };
+    }
     if (command === 'desktop_toggle_window_maximize') nativeWindowState.isMaximized = !nativeWindowState.isMaximized;
     return true;
 });
@@ -51,9 +53,45 @@ describe('useDesktopWindowDragMouseProps', () => {
     beforeEach(() => {
         invoke.mockClear();
         nativeWindowState.isMaximized = false;
+        nativeWindowState.nativeTitleBar = false;
         vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
     });
     afterEach(() => vi.unstubAllGlobals());
+
+    it('delegates Electron drag regions to Chromium without invoking an unsupported native command', async () => {
+        vi.stubGlobal('navigator', { userAgent: 'Happier Electron/43.4.0' });
+        const { useDesktopWindowDragMouseProps } = await import('./DesktopWindowDragRegion');
+        const hook = await renderHook(() => useDesktopWindowDragMouseProps(), {
+            flushOptions: { cycles: 1, turns: 1 },
+        });
+        const props = hook.getCurrent();
+        expect(props).toMatchObject({ dataSet: { desktopWindowDragRegion: 'true' } });
+        expect(props.onMouseDown).toBeUndefined();
+        expect(document.getElementById('happier-electron-window-drag-regions')?.textContent).toContain('[role="tab"]');
+        expect(windowActions()).toEqual([]);
+
+        const host = document.createElement('div');
+        document.body.append(host);
+        const root = createRoot(host);
+        try {
+            await React.act(async () => {
+                root.render(<DesktopMainContentDragSurface enabled leftOffsetPx={72}>
+                    <button data-testid="chrome-action">Action</button>
+                </DesktopMainContentDragSurface>);
+            });
+            const strip = host.querySelector('[data-testid="desktop-main-content-native-drag-strip"]');
+            expect(strip?.nextElementSibling?.getAttribute('data-testid')).toBe('chrome-action');
+            // A conventional frame owns dragging: remove app regions and preserve its content.
+            const { setDesktopNativeTitleBar } = await import('@/utils/platform/desktopWindowBridge');
+            await React.act(async () => { await setDesktopNativeTitleBar(true); });
+            expect(host.querySelector('[data-desktop-window-drag-region]')).toBeNull();
+            expect(host.querySelector('[data-testid="chrome-action"]')).not.toBeNull();
+            expect(hook.getCurrent()).toEqual({});
+        } finally {
+            await React.act(async () => root.unmount());
+            host.remove();
+        }
+    });
 
     it('uses mouse click detail after pointer down to drag once and maximize on the second click', async () => {
         const { useDesktopWindowDragMouseProps } = await import('./DesktopWindowDragRegion');
@@ -111,6 +149,21 @@ describe('useDesktopWindowDragMouseProps', () => {
         expect(windowActions()).toEqual([]);
     });
 
+    it('drags a keyboard-focusable pill surface while preserving its child controls', async () => {
+        const { useDesktopWindowDragMouseProps } = await import('./DesktopWindowDragRegion');
+        const hook = await renderHook(() => useDesktopWindowDragMouseProps(), {
+            flushOptions: { cycles: 1, turns: 1 },
+        });
+        const pill = document.createElement('div');
+        pill.tabIndex = 0;
+        pill.innerHTML = '<span>Recording</span><button>Stop</button>';
+        await React.act(async () => {
+            hook.getCurrent().onMouseDown?.({ buttons: 1, target: pill.firstElementChild, currentTarget: pill });
+            hook.getCurrent().onMouseDown?.({ buttons: 1, target: pill.lastElementChild, currentTarget: pill });
+        });
+        expect(windowActions()).toEqual(['desktop_start_window_dragging']);
+    });
+
     it('preserves presses on a real React Native Web control without a button role', async () => {
         const { Pressable } = await vi.importActual<typeof import('react-native')>('react-native-web');
         const host = document.createElement('div');
@@ -134,6 +187,7 @@ describe('useDesktopWindowDragMouseProps', () => {
     });
 
     it('keeps header controls clickable through document capture while blank chrome still drags', async () => {
+        const { Header } = await import('../Header');
         const navigateBack = vi.fn();
         const close = vi.fn();
         const host = document.createElement('div');

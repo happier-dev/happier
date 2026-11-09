@@ -8,6 +8,7 @@ import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShel
 import { isRunningOnMac } from '@/utils/platform/platform';
 
 import { createHeader } from './Header';
+import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 
 /**
  * Whether stacks draw the app's own header (`createHeader`) rather than the native one: Android, Mac
@@ -30,7 +31,7 @@ export function createAppStackScreenOptions(args: Readonly<{
         headerBackTitle: args.headerBackTitle,
         headerShadowVisible: false,
         contentStyle: args.contentStyle ?? {
-            backgroundColor: args.theme.colors.surface.base,
+            backgroundColor: glassSurfaceBackgroundColor(args.theme.colors.surface.base, 'content', true),
         },
         headerStyle: {
             backgroundColor: args.theme.colors.chrome.header.background,

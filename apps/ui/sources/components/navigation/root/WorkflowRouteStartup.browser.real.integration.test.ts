@@ -31,6 +31,7 @@ type BrowserFixture = typeof window & {
         readBootstrapStates: () => Array<{ isDataReady: boolean; profileScope: unknown }>;
         readUnservedHttpPaths: () => string[];
         readHomeGate: () => { requests: number; isDataReady: boolean }; releaseHome: () => void;
+        readDocBodyReads: () => number;
         openWorkspace: (href: string) => Promise<{ ok: boolean }>; listWorkspace: () => Promise<{ ok: boolean }> };
     startupHistory: Array<{ method: string; before: string; after: string; stack?: string; navigationBefore?: unknown; navigationAfter?: unknown }>;
 };
@@ -50,6 +51,29 @@ afterAll(async () => {
 });
 
 describe('workflow real Expo web startup', () => {
+    it('preserves a cold Doc deep link through the supplied Home handoff with one body read', async () => {
+        accountKv.reset();
+        const browser = await chromium.launch({ executablePath: resolveChromiumExecutable() });
+        const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+        const diagnostics = collectBrowserDiagnostics({ page });
+        const pathname = '/artifacts/10000000-0000-4000-8000-000000000005';
+        try {
+            await page.goto(`${origin}${pathname}?server=${encodeURIComponent(origin)}`);
+            await page.addScriptTag({ url: `${origin}/bundle.js` });
+            await page.evaluate(() => (window as BrowserFixture).startupHarness.mount(true, true));
+            await page.waitForFunction(() => (window as BrowserFixture).startupHarness.readHomeGate().requests > 0);
+            expect(new URL(page.url()).pathname).toBe(pathname);
+            await page.evaluate(() => (window as BrowserFixture).startupHarness.releaseHome());
+            await page.waitForFunction(() => (window as BrowserFixture).startupHarness.readPersistenceState().isDataReady);
+            await expect.poll(() => new URL(page.url()).pathname).toBe(pathname);
+            await page.getByTestId('artifact:body').waitFor();
+            expect(await page.locator('body').innerText()).toContain('The garden keeps one cedar tree.');
+            expect(await page.evaluate(() => (window as BrowserFixture).startupHarness.readDocBodyReads())).toBe(1);
+        } catch (error) {
+            const state = await page.evaluate(() => (window as BrowserFixture).startupHarness?.readNavigationState());
+            throw appendBrowserDiagnostics(error, `${diagnostics()}\nNavigation: ${JSON.stringify(state)}`);
+        } finally { await browser.close(); }
+    });
     it('retains a parsed child until admission and clears a genuinely unmounted navigator', async () => {
         const browser = await chromium.launch({ executablePath: resolveChromiumExecutable() });
         const page = await browser.newPage();

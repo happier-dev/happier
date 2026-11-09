@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { DoctorSnapshotHomeTransportDiagnostics } from '@happier-dev/protocol';
+import type { DoctorSnapshotHomeTransportDiagnostics } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 
 import { projectIrohHomeTransportPresentation } from './projectIrohHomeTransportPresentation';
 

@@ -1,5 +1,6 @@
 import React from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installBrowserClipboardBoundary } from '@/dev/testkit';
 import renderer, { act } from 'react-test-renderer';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -501,8 +502,8 @@ vi.mock('@/sync/runtime/irohHomeTransportDiagnostics', () => ({
     },
 }));
 
-vi.mock('@/utils/ui/clipboard', () => ({
-    setClipboardStringSafe: clipboardMock.setClipboardStringSafe,
+vi.mock('expo-clipboard', () => ({
+    setStringAsync: clipboardMock.setClipboardStringSafe,
 }));
 
 vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
@@ -622,6 +623,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
     restoreWebLocksMock = installWebLockManagerMock().restore;
+    installBrowserClipboardBoundary(async text => { await clipboardMock.setClipboardStringSafe(text); });
 });
 
 afterEach(() => {
@@ -1030,7 +1032,12 @@ describe('ConnectionStatusControl (native popover config)', () => {
 
     it('offers "Add a Home", which closes the popover and opens the Homes collection draft', async () => {
         const ConnectionStatusControl = await importConnectionStatusControl();
-        const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+        // Publish the real imperative auth projection consumed by Home navigation.
+        const { InjectedAuthProvider } = await vi.importActual<typeof import('@/auth/context/AuthContext')>('@/auth/context/AuthContext');
+        const screen = await renderScreen(React.createElement(InjectedAuthProvider, {
+            credentials: { token: 'e30.eyJzdWIiOiJhY2NvdW50LWFkYSJ9.signature' },
+            children: React.createElement(ConnectionStatusControl, { variant: 'sidebar' }),
+        }));
         const trigger = screen.findByProps({ accessibilityRole: 'button' });
 
         await act(async () => pressTestInstanceAsync(trigger));
@@ -1043,8 +1050,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
         });
 
         expect(capture.popoverProps).toBeNull();
-        const { HOMES_ADD_ROUTE } = await import('@/components/settings/server/collection/homeCollectionModel');
-        expect(routerMocks.push).toHaveBeenCalledWith(HOMES_ADD_ROUTE);
+        expect(routerMocks.push).toHaveBeenCalledWith('/settings/server/add');
         await act(async () => screen.tree?.unmount());
     });
 

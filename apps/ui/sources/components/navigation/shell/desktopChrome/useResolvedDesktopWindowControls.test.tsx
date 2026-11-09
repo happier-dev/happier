@@ -1,13 +1,19 @@
+import { installNavigationShellCommonModuleMocks } from '../navigationShellTestHelpers';
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { findNearestHostParent, renderScreen } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit';
+import { setDesktopNativeTitleBar } from '@/utils/platform/desktopWindowBridge';
+import { useDesktopWindowChromePolicy } from '@/hooks/ui/useDesktopWindowChromePolicy';
+import { useDesktopWindowDragMouseProps } from '@/components/navigation/desktopWindowChrome/DesktopWindowDragRegion';
+import { View } from 'react-native';
 import { useResolvedDesktopWindowControls } from './useResolvedDesktopWindowControls';
 
-import { installNavigationShellCommonModuleMocks } from '../navigationShellTestHelpers';
 
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+let observedDrag: ReturnType<typeof useDesktopWindowDragMouseProps> = {};
+let observedPolicy: ReturnType<typeof useDesktopWindowChromePolicy> = { strategy: 'none' };
 
 const desktopHostState = vi.hoisted(() => ({
     invoke: vi.fn(),
@@ -25,33 +31,11 @@ installNavigationShellCommonModuleMocks({
     },
 });
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                groupped: { background: '#fff' },
-                divider: '#ddd',
-                surface: '#fff',
-                text: '#111',
-                textSecondary: '#777',
-                header: { tint: '#111' },
-                button: { primary: { tint: '#fff' } },
-                status: { error: '#f00' },
-            },
-        },
-    });
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
-
 // Tauri invocation/events are the platform boundary; the real chrome bridge stays under test.
 vi.mock('@/utils/platform/desktopHost', () => ({
     isDesktopHost: () => true,
-    invokeDesktopHost: (command: string) => desktopHostState.invoke(command),
+    invokeDesktopHost: (command: string, args?: Record<string, unknown>) => desktopHostState.invoke(command, args),
+    desktopHostKind: () => 'tauri',
     listenDesktopHostEvent: (event: string, handler: (payload: unknown) => void) => desktopHostState.listen(event, handler),
 }));
 
@@ -66,6 +50,15 @@ function ResolvedDesktopWindowControlsHarness(props: Readonly<{
     });
 
     return React.createElement(React.Fragment, null, controls);
+}
+
+function WindowsChromeHarness() {
+    const controls = useResolvedDesktopWindowControls({ variant: 'expanded' });
+    const drag = useDesktopWindowDragMouseProps();
+    const policy = useDesktopWindowChromePolicy();
+    observedDrag = drag;
+    observedPolicy = policy;
+    return <>{controls}<View testID="policy-probe" accessibilityState={{ checked: policy.useNativeTitleBar }} /><View testID="drag-probe" {...drag} /></>;
 }
 
 describe('useResolvedDesktopWindowControls', () => {
@@ -140,4 +133,30 @@ describe('useResolvedDesktopWindowControls', () => {
         await screen.unmount();
         expect(unlisten).toHaveBeenCalledOnce();
     });
+    it.each([false, true])('projects the native owner after a change (restart required: %s)', async (restartRequired) => {
+        let strategy = 'custom-controls';
+        let useNativeTitleBar = false;
+        desktopHostState.invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+            if (command === 'desktop_set_native_title_bar') {
+                useNativeTitleBar = args?.useNativeTitleBar === true;
+                if (!restartRequired) strategy = useNativeTitleBar ? 'native-windows-frame' : 'custom-controls';
+            }
+            if (command === 'desktop_get_window_chrome_policy' || command === 'desktop_set_native_title_bar') {
+                return { strategy, useNativeTitleBar, canSetNativeTitleBar: true,
+                    nativeTitleBarRestartRequired: restartRequired && useNativeTitleBar };
+            }
+            return { isMaximized: false, isFullscreen: false };
+        });
+        const screen = await renderScreen(<WindowsChromeHarness />);
+        expect(screen.findByTestId('desktop-window-controls-minimize')).toBeTruthy();
+        expect(observedDrag.onMouseDown).toBeTypeOf('function');
+        await act(async () => { await setDesktopNativeTitleBar(true); });
+        expect(observedPolicy.useNativeTitleBar).toBe(true);
+        expect(Boolean(screen.findByTestId('desktop-window-controls-minimize'))).toBe(restartRequired);
+        expect(typeof observedDrag.onMouseDown).toBe(restartRequired ? 'function' : 'undefined');
+        await act(async () => { await setDesktopNativeTitleBar(false); });
+        expect(observedPolicy.useNativeTitleBar).toBe(false);
+        expect(screen.findByTestId('desktop-window-controls-minimize')).toBeTruthy();
+    });
+
 });

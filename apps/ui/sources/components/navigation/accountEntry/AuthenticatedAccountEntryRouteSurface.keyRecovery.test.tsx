@@ -3,7 +3,7 @@ import { resolveNativeAppLinkHref } from '@/utils/url/nativeAppLink';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
-import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol';
+import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import type { EmailPasswordLoginTarget } from '@/auth/password/loginEmailPassword';
 import { renderScreen } from '@/dev/testkit';

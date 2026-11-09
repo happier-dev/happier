@@ -13,6 +13,8 @@ import * as React from 'react';
 import { usePhoneWorkspaceTabs } from '@/components/appShell/workspace/usePhoneWorkspaceTabs';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
+import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
 import { useSessionNavigationCursor } from '@/sync/domains/session/navigation/sessionNavigationCursorStore';
 import { readSessionMruOrder } from '@/sync/domains/session/navigation/recentSessions';
 import {
@@ -77,6 +79,7 @@ export function useSessionSwitcher(params: Readonly<{ sessionId: string | null; 
     const sideSource: SessionSwitcherSource = useSetting('sessionCockpitSwipeSource') === 'recent' ? 'recent' : 'list';
     const draftScope = useActiveServerAccountScope();
     const navigateToSession = useNavigateToSession();
+    const visibility = useSessionRecordingVisibility();
 
     const latest = React.useRef({ ...params, cursor, phoneTabs, upSource, sideSource, draftScope, navigateToSession });
     latest.current = { ...params, cursor, phoneTabs, upSource, sideSource, draftScope, navigateToSession };
@@ -85,6 +88,7 @@ export function useSessionSwitcher(params: Readonly<{ sessionId: string | null; 
     const prepare = React.useCallback((): SessionSwitcherPrepared => {
         const { sessionId, serverId, cursor: order, phoneTabs: tabs, draftScope: scope } = latest.current;
         const state = storage.getState() as unknown as Parameters<typeof readSessionSwitcherRows>[0]['state'];
+        const isSessionVisible = readSessionRecordingVisibility();
         const cursorEntries = order?.entries ?? [];
         // The current session's key in the shape every other key has: the captured list's entry when
         // it is there (a route opened without a serverId still anchors), else this Home's address.
@@ -102,6 +106,7 @@ export function useSessionSwitcher(params: Readonly<{ sessionId: string | null; 
             const session = tab.session && (tab.session.serverId ?? scope?.serverId)
                 ? { serverId: (tab.session.serverId ?? scope?.serverId) as string, sessionId: tab.session.sessionId }
                 : null;
+            if (session && !isSessionVisible(session)) continue;
             if (session) tabAddresses.push(session);
             openTabs.push({ tabId: tab.id, sessionKey: session ? buildServerScopedSessionKey(session.sessionId, session.serverId) : null });
             tabsById.set(tab.id, { tabId: tab.id, title: tab.title, icon: tab.icon, unavailable: tab.unavailable, session, context: tab.context });
@@ -113,11 +118,12 @@ export function useSessionSwitcher(params: Readonly<{ sessionId: string | null; 
         ]);
         const mru = readSessionMruOrder();
         const normalizedMru = moveSessionMruEntryToFront({ order: mru, activeSessionKey: null, maxEntries: mru.length,
-            knownSessionEntries: Array.from(addressByKey, ([sessionKey, address], index) => ({ index, sessionKey, ...address })) });
+            knownSessionEntries: Array.from(addressByKey, ([sessionKey, address], index) => ({ index, sessionKey, ...address })) })
+            .filter(key => { const address = addressByKey.get(key); return !address || isSessionVisible(address); });
         const pool = resolveSessionSwitcherRecentPool({ currentKey, mruSessionKeys: normalizedMru, openTabs });
         const listSessionKeys = cursorEntries.map((entry) => entry.sessionKey);
         const read = (entries: Parameters<typeof readSessionSwitcherRows>[0]['entries']) => readSessionSwitcherRows({
-            entries, state, addressByKey, tabsById, draftScope: scope, nowMs: Date.now(),
+            entries, state, addressByKey, tabsById, draftScope: scope, nowMs: Date.now(), isSessionVisible,
         });
         const { upSource: up, sideSource: side } = latest.current;
         const directional = (direction: SessionNavigationDirection, source = side) => read(resolveSessionSwitcherDirectionalEntries({
@@ -142,7 +148,7 @@ export function useSessionSwitcher(params: Readonly<{ sessionId: string | null; 
             tabsSynced: openTabs.length >= 2,
             flickOrder: { rows: flickRows, index: current ? previous.length : -1, cycle: up === 'recent' && openTabs.length >= 2 },
         };
-    }, []);
+    }, [visibility]);
 
     const open = React.useCallback((row: SessionSwitcherRow) => {
         const { navigateToSession: navigate, phoneTabs: tabs } = latest.current;
@@ -151,6 +157,11 @@ export function useSessionSwitcher(params: Readonly<{ sessionId: string | null; 
         else fireAndForget(navigate(row.target.sessionId, row.target.serverId ? { serverId: row.target.serverId } : undefined));
         announceAccessibilityMessage(t('phoneNav.switcher.switchedTo', { name: row.title }));
     }, []);
+
+    React.useEffect(() => {
+        if (burst.current?.timer) clearTimeout(burst.current.timer);
+        burst.current = null;
+    }, [visibility]);
 
     const flick = React.useCallback((direction: SessionNavigationDirection): SessionSwitcherRow | null => {
         let current = burst.current;

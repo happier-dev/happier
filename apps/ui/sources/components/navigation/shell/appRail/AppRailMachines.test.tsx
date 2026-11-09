@@ -14,6 +14,7 @@ import { settingsParse } from '@/sync/domains/settings/settings';
 import { machinesRailSeenState } from '@/sync/domains/state/machineAdministrationUiState';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 
 const vitalsRpc = vi.hoisted(() => vi.fn(async (_input: { machineId: string }) => ({ state: 'not_reported', sample: null,
     series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] } })));
@@ -86,6 +87,7 @@ function setHomeMachines(machines: readonly Machine[]) {
         machines: {},
         machineListByServerId: { ...state.machineListByServerId, [activeServerId]: [...machines] },
     }));
+    observeMachinePresenceForTest({ serverId: activeServerId, accountId: 'rail-account' }, machines.map(machine => machine.id));
 }
 
 function railScopeKey() {
@@ -104,6 +106,9 @@ describe('AppRailMachines', () => {
             const { AppRailMachines } = await import('./AppRailMachines');
             const { SidebarFooterPopoverButton } = await import('../sidebarFooter/SidebarFooterPopoverButton');
             const screen = await renderScreen(<AppRailMachines />);
+            // Cold module restoration can withdraw the retained fixture's
+            // presence; a new ingress, rather than reconnect alone, restores it.
+            await act(async () => observeMachinePresenceForTest(storage.getState().profileScope!, [acted.id]));
             expect(screen.findByTestId('app-rail-machines-badge')).not.toBeNull();
             const before = storage.getState().localSettings;
             await act(async () => screen.root.findByType(SidebarFooterPopoverButton).props.onOpenIntent?.());

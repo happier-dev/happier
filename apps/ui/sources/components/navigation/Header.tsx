@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { t } from '@/text';
-import { View, Platform, StatusBar, Pressable, type StyleProp, type ViewStyle } from 'react-native';
+import { View, Platform, StatusBar, type StyleProp, type ViewStyle } from 'react-native';
 import type { NativeStackHeaderProps } from '@react-navigation/native-stack';
 import { useLayoutMaxWidth } from '../ui/layout/layout';
 import { useHeaderHeight } from '@/utils/platform/responsive';
@@ -10,12 +10,14 @@ import { HAPPIER_PAGE_METRICS, useHappierMaterialColorResolver } from '@happier-
 import { shadowLevelStyle } from '@/shadowElevation';
 import { Text } from '@/components/ui/text/Text';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
+import { useHorizontalSafeAreaContentPadding } from '@/components/navigation/safeArea/HorizontalSafeArea';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { useDesktopWindowDragMouseProps } from '@/components/navigation/desktopWindowChrome/DesktopWindowDragRegion';
 import { Icon } from '@/components/ui/icons/Icon';
 import { HEADER_BAND_SUBTITLE_TEXT } from '@/components/ui/layout/headerBand';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { useStackHeaderActionsClaimed, useStackHeaderActionsPublisher } from '@/components/navigation/stackHeaderActions';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 
 interface HeaderProps {
@@ -57,6 +59,7 @@ export const Header = React.memo((props: HeaderProps) => {
     } = props;
 
     const insets = useChromeSafeAreaInsets();
+    const horizontalPadding = useHorizontalSafeAreaContentPadding();
     const paddingTop = safeAreaEnabled ? insets.top : 0;
     const headerHeight = useHeaderHeight();
     const desktopDragProps = useDesktopWindowDragMouseProps();
@@ -93,7 +96,7 @@ export const Header = React.memo((props: HeaderProps) => {
             <View
                 testID="desktop-route-header-content-wrapper"
                 pointerEvents="box-none"
-                style={styles.contentWrapper}
+                style={[styles.contentWrapper, horizontalPadding]}
             >
                 <View
                     testID="desktop-route-header-content"
@@ -139,14 +142,14 @@ interface ExtendedNavigationOptions extends Partial<NativeStackHeaderProps['opti
 export const DefaultBackButton: React.FC<{ tintColor?: string; onPress: () => void; testID?: string; label?: string; accessibilityLabel?: string }> = ({ tintColor = '#000', onPress, testID, label, accessibilityLabel }) => {
     const styles = stylesheet;
     return (
-        <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? t('common.back')} testID={testID} style={styles.backButtonTarget}>
+        <HappierPressable onPress={onPress} accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? t('common.back')} testID={testID} style={styles.backButtonTarget}>
             <Icon
                 name={Platform.OS === 'ios' ? 'caret-left' : 'arrow-left'}
                 size={24}
                 color={tintColor}
             />
             {label ? <Text numberOfLines={1} style={[Typography.variant('reading'), styles.backButtonLabel, { color: tintColor }]}>{label}</Text> : null}
-        </Pressable>
+        </HappierPressable>
     );
 };
 

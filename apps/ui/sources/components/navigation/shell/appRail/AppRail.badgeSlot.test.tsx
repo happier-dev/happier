@@ -16,8 +16,10 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({ styleSheet: { hairlineWidth: 1 } }));
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
-vi.mock('@/components/ui/popover', () => ({ Popover: (props: { children: (layout: { maxHeight: number; maxWidth: number }) => React.ReactNode }) =>
-    <>{props.children({ maxHeight: 600, maxWidth: 400 })}</> }));
+vi.mock('@/components/ui/popover', async (importOriginal) => {
+    const { createInlinePopoverModuleMock } = await import('@/dev/testkit/mocks/popover');
+    return createInlinePopoverModuleMock(importOriginal, { maxHeight: 600, maxWidth: 400, placement: 'bottom' });
+});
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const initialStorageState = getStorage().getState();
@@ -48,7 +50,8 @@ describe('AppRail badge placement', () => {
             builtins: { externalSessions: true, inbox: true, workflows: true, friends: true }, pages,
         }));
         const screen = await renderScreen(<InjectedAuthProvider credentials={null}><InboxSummaryProvider>
-            <AppRailSurface entries={entries} activeId={null} onOpen={() => {}} updatesVisible />
+            <AppRailSurface entries={entries} activeId={null} onOpen={() => {}} updatesVisible
+                preferences={{ orderedIds: [], placements: { 'plugin:acme.channels:channels': 'pinned' } }} />
         </InboxSummaryProvider></InjectedAuthProvider>);
 
         const badges = screen.findAll(node => typeof node.type === 'string'

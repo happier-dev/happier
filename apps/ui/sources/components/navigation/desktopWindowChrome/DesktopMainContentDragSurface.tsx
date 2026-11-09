@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import {
     handleDesktopWindowTitlebarMouseAction,
+    useDesktopWindowDragMode,
     type DesktopWindowPointerLikeEvent,
 } from './DesktopWindowDragRegion';
 import { DESKTOP_MAIN_CONTENT_DRAG_HEIGHT_PX } from '@/components/navigation/shell/desktopChrome/desktopChromeMetrics';
@@ -46,10 +47,12 @@ function resolveDesktopMainContentDragDocument(): Pick<Document, 'addEventListen
 }
 
 export const DesktopMainContentDragSurface = React.memo((props: DesktopMainContentDragSurfaceProps) => {
+    const mode = useDesktopWindowDragMode(props.enabled);
+    const enabled = mode === 'command';
     const heightPx = props.heightPx ?? DESKTOP_MAIN_CONTENT_DRAG_HEIGHT_PX;
 
     const startDraggingFromEvent = React.useCallback((event: DesktopWindowPointerLikeEvent) => {
-        if (!props.enabled || Platform.OS !== 'web') {
+        if (!enabled || Platform.OS !== 'web') {
             return false;
         }
         if (!isInsideMainContentTitlebarStrip(event, props.leftOffsetPx, heightPx)) {
@@ -59,10 +62,10 @@ export const DesktopMainContentDragSurface = React.memo((props: DesktopMainConte
             event,
             'DesktopMainContentDragSurface.mouseDown',
         ) !== 'none';
-    }, [heightPx, props.enabled, props.leftOffsetPx]);
+    }, [enabled, heightPx, props.leftOffsetPx]);
 
     React.useEffect(() => {
-        if (!props.enabled || Platform.OS !== 'web') {
+        if (!enabled || Platform.OS !== 'web') {
             return undefined;
         }
 
@@ -79,13 +82,22 @@ export const DesktopMainContentDragSurface = React.memo((props: DesktopMainConte
         return () => {
             ownerDocument.removeEventListener('mousedown', handleMouseDown, true);
         };
-    }, [props.enabled, startDraggingFromEvent]);
+    }, [enabled, startDraggingFromEvent]);
 
     return (
         <View
             testID="desktop-main-content-drag-surface"
             style={props.style}
         >
+            {mode === 'css' ? (
+                // Keep this region before the content: later no-drag masks protect native control
+                // clicks, while pointerEvents preserves normal DOM hit testing.
+                <div
+                    data-desktop-window-drag-region="true"
+                    data-testid="desktop-main-content-native-drag-strip"
+                    style={{ position: 'fixed', top: 0, left: props.leftOffsetPx, right: 0, height: heightPx, pointerEvents: 'none' }}
+                />
+            ) : null}
             {props.children}
         </View>
     );

@@ -2,6 +2,7 @@ import * as React from 'react';
 import '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { seedAdmittedArtifactRows } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { act } from 'react-test-renderer';
 import { storage } from '@/sync/domains/state/storageStore';
 import { removeServerProfile, setActiveServerId } from '@/sync/domains/server/serverProfiles';
@@ -16,6 +17,8 @@ const routerMock = vi.hoisted(() => ({
   width: 390,
   current: null as ReturnType<typeof import('@/dev/testkit/mocks/router').createExpoRouterMock> | null,
 }));
+// The recycler is a renderer/platform boundary: this substitute draws every row it is given.
+vi.mock('@legendapp/list/react-native', async () => (await import('@/dev/testkit/mocks/legendList')).createLegendListModuleMock());
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
     useWindowDimensions: () => ({
@@ -98,7 +101,7 @@ describe('InboxView focused item on a phone', () => {
 
   it('opens the full Inbox from its popover through the real workspace route body and renders its tabs', async () => {
     routerMock.width = 1200;
-    const { FeaturesResponseSchema } = await import('@happier-dev/protocol');
+    const { FeaturesResponseSchema} = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
     const { primeServerFeaturesSnapshot, deleteServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
     const { registerWorkspaceRouteContext } = await import('@/components/appShell/workspace/workspaceRouteContext');
     const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
@@ -195,11 +198,11 @@ describe('InboxView focused item on a phone', () => {
     // A generic notice: an open usage notice has no row to classify, and its links open its own page.
     const { createAccountNoticeArtifactFixture } = await import('@/dev/testkit/fixtures/usageNoticeFixtures');
     const notice = createAccountNoticeArtifactFixture();
-    storage.setState({ artifacts: { [notice.id]: notice } });
+    seedAdmittedArtifactRows([notice], storage);
     const { InboxView } = await import('./InboxView');
     const screen = await renderScreen(<InboxView focusedItem={{ kind: 'notice', serverId: getActiveServerSnapshot().serverId, id: notice.id }} />);
     expect(screen.findHostByTestId('inbox.view:updates')?.props.accessibilityState.selected).toBe(true);
-    await act(async () => storage.setState({ artifacts: {} }));
+    await act(async () => seedAdmittedArtifactRows([], storage));
     expect(screen.findHostByTestId('inbox.view:updates')?.props.accessibilityState.selected).toBe(true);
     await screen.update(<InboxView key="remounted" focusedItem={{ kind: 'notice', serverId: getActiveServerSnapshot().serverId, id: notice.id }} />);
     expect(screen.findHostByTestId('inbox.view:updates')?.props.accessibilityState.selected).toBe(true);

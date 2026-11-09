@@ -60,6 +60,9 @@ describe('root route identity ownership', () => {
     });
     it('hides the shell header on terminal connect', () => {
         expect(createRootStackRouteOptions('auto')['terminal/connect']).toMatchObject({ headerShown: false });
+        // A `happier://terminal` link lands on the index route; its surface titles itself (the welcome
+        // pane signed out, the approval card signed in), so a shell bar would be a second title.
+        expect(createRootStackRouteOptions('auto')['terminal/index']).toMatchObject({ headerShown: false });
     });
     it('opens settings as a non-animated app-shell destination, never as a modal', () => {
         const settings = createRootStackRouteOptions('auto')['settings'];

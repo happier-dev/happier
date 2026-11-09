@@ -6,14 +6,14 @@ import { useActiveSelectionMachineGroups } from '@/components/settings/machines/
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { selectSyncErrorForServer } from '@/sync/runtime/connectivity/syncErrorScope';
 import {
-    useAllMachines,
-    useMachineListByServerId,
-    useMachineListForServer,
+    getStorage,
     useMachineListStatusByServerId,
     useMachineListStatusForServer,
     useEndpointConnectivity,
     useSocketStatus,
     useSyncError,
+    useActiveMachineFacts,
+    useMachineListByServerId,
 } from '@/sync/domains/state/storage';
 import {
     getAppliedActiveServerSnapshot,
@@ -26,6 +26,11 @@ import { resolveMachineReachability, type MachineReachabilityScope } from '@/syn
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
+import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
+import { isMachineVisibleForSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
+import { captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
@@ -60,7 +65,7 @@ export function useConnectionHealth() {
     const socketStatus = useSocketStatus();
     const endpointConnectivity = useEndpointConnectivity();
     const syncError = useSyncError();
-    const allMachines = useAllMachines();
+    const allMachines = useActiveMachineFacts();
     const machineListByServerId = useMachineListByServerId();
     const machineListStatusByServerId = useMachineListStatusByServerId();
     const {
@@ -172,6 +177,66 @@ export function useConnectionHealth() {
     };
 }
 
+type AppliedHomeMachineFacts = Readonly<{
+    machineCount: number;
+    onlineCount: number;
+    unknownCount: number;
+    readyCount: number;
+    primaryMachineLabel: string | null;
+}>;
+
+function areAppliedHomeMachineFactsEqual(left: AppliedHomeMachineFacts, right: AppliedHomeMachineFacts): boolean {
+    return left.machineCount === right.machineCount && left.onlineCount === right.onlineCount
+        && left.unknownCount === right.unknownCount && left.readyCount === right.readyCount
+        && left.primaryMachineLabel === right.primaryMachineLabel;
+}
+
+function readPrimaryMachineLabel(machine: Machine | undefined): string | null {
+    const metadata = machine?.metadata && typeof machine.metadata === 'object'
+        ? machine.metadata as { displayName?: unknown; host?: unknown }
+        : null;
+    const displayName = typeof metadata?.displayName === 'string' ? metadata.displayName.trim() : '';
+    if (displayName) return displayName;
+    const host = typeof metadata?.host === 'string' ? metadata.host.trim() : '';
+    return host || machine?.id || null;
+}
+
+/**
+ * What the always-mounted health chrome shows of the applied Home's Machines: counts and one name.
+ * A daemon heartbeat rewrites the Machine row (activity time, daemon state) without changing any of
+ * them, so the facts are projected once per source change and republished only when one differs.
+ */
+function useAppliedHomeMachineFacts(serverId: string, accountScope: ServerAccountScope | null): AppliedHomeMachineFacts {
+    const readMachines = React.useCallback((): readonly Machine[] => {
+        const state = getStorage().getState();
+        const machines = resolveServerScopedMachines<Machine>({
+            serverId,
+            activeServerId: serverId,
+            get activeMachines() { return Object.values(state.machines); },
+            machineListByServerId: state.machineListByServerId,
+            machineListStatusByServerId: state.machineListStatusByServerId,
+        }, captureServerProfileScopeResolver());
+        return (machines ?? []).filter(isMachineVisibleForSelection);
+    }, [serverId]);
+    const published = React.useRef<AppliedHomeMachineFacts | null>(null);
+    const readSnapshot = React.useCallback((nowMs: number): AppliedHomeMachineFacts => {
+        const visible = readMachines().filter(machine => !machine.revokedAt);
+        const { onlineMachines, unknownCount } = resolveObservedMachinePresence(visible, accountScope, nowMs);
+        const next: AppliedHomeMachineFacts = {
+            machineCount: visible.length,
+            onlineCount: onlineMachines.length,
+            unknownCount,
+            readyCount: onlineMachines.filter(machine => isMachineSelectableForFleet(accountScope, machine, nowMs)
+                && isMachineReadyForConnectionHealth(machine)).length,
+            primaryMachineLabel: visible.length === 1 ? readPrimaryMachineLabel(visible[0]) : null,
+        };
+        if (published.current === null || !areAppliedHomeMachineFactsEqual(published.current, next)) published.current = next;
+        return published.current;
+    }, [accountScope, readMachines]);
+    const targets = React.useMemo(() => [{ serverId }], [serverId]);
+    return useMachinePresenceSnapshot(readMachines, readSnapshot, targets);
+}
+
 /**
  * Active-Home-only health for always-mounted shell chrome. Unlike the
  * selection-wide hook above, this does not derive health from staged focus or
@@ -192,11 +257,9 @@ export function useActiveHomeConnectionHealth() {
         getAppliedActiveServerSnapshot,
     );
     const appliedServerId = appliedServerSnapshot.serverId;
-    const appliedMachines = useMachineListForServer(appliedServerId) ?? [];
     const { binding } = useServerCredentialAccountScopeBinding(appliedServerId);
     const accountScope = binding?.isCurrent() ? binding.scope : null;
-    const reachabilityRevision = useMachineReachabilityRevision();
-    const presenceNowMs = useMachinePresenceNowMs(appliedMachines);
+    const machineFacts = useAppliedHomeMachineFacts(appliedServerId, accountScope);
     const machineListStatus = useMachineListStatusForServer(appliedServerId);
     const subscribeAppliedRuntime = React.useCallback(
         (listener: () => void) => subscribeAppliedActiveServerRuntimeAvailability(() => listener()),
@@ -211,26 +274,6 @@ export function useActiveHomeConnectionHealth() {
     const activeSyncError = React.useMemo(() => (
         selectSyncErrorForServer(syncError, appliedServerId)
     ), [appliedServerId, syncError]);
-
-    const visibleMachines = React.useMemo(
-        () => appliedMachines.filter((machine) => !machine.revokedAt),
-        [appliedMachines],
-    );
-    const { onlineMachines, unknownCount } = React.useMemo(
-        () => resolveObservedMachinePresence(visibleMachines, accountScope, presenceNowMs),
-        [visibleMachines, accountScope, presenceNowMs, reachabilityRevision],
-    );
-    const primaryMachineLabel = React.useMemo(() => {
-        if (visibleMachines.length !== 1) return null;
-        const machine = visibleMachines[0];
-        const metadata = machine?.metadata && typeof machine.metadata === 'object'
-            ? machine.metadata as { displayName?: unknown; host?: unknown }
-            : null;
-        const displayName = typeof metadata?.displayName === 'string' ? metadata.displayName.trim() : '';
-        if (displayName) return displayName;
-        const host = typeof metadata?.host === 'string' ? metadata.host.trim() : '';
-        return host || machine?.id || null;
-    }, [visibleMachines]);
 
     const health = React.useMemo(() => resolveConnectionHealth({
         // Socket and endpoint status are singleton transport projections. The
@@ -248,10 +291,10 @@ export function useActiveHomeConnectionHealth() {
                     onlineCount: null,
                 }
                 : {
-                    machineCount: visibleMachines.length,
-                    onlineCount: onlineMachines.length,
-                    unknownCount,
-                    readyCount: onlineMachines.filter(machine => isMachineSelectableForFleet(accountScope, machine, presenceNowMs) && isMachineReadyForConnectionHealth(machine)).length,
+                    machineCount: machineFacts.machineCount,
+                    onlineCount: machineFacts.onlineCount,
+                    unknownCount: machineFacts.unknownCount,
+                    readyCount: machineFacts.readyCount,
                 }),
             status: machineListStatus,
         }],
@@ -261,12 +304,8 @@ export function useActiveHomeConnectionHealth() {
         endpointConnectivity.status,
         isAppliedHomeTransitioning,
         machineListStatus,
-        onlineMachines,
-        unknownCount,
-        accountScope,
-        presenceNowMs,
+        machineFacts,
         socketStatus.status,
-        visibleMachines.length,
     ]);
     const presentation = React.useMemo(() => resolveConnectionHealthPresentation(health, {
         connected: theme.colors.status.connected,
@@ -280,7 +319,7 @@ export function useActiveHomeConnectionHealth() {
     return {
         ...health,
         ...presentation,
-        primaryMachineLabel,
+        primaryMachineLabel: machineFacts.primaryMachineLabel,
         endpointStatus: isAppliedHomeTransitioning ? 'connecting' : endpointConnectivity.status,
         nextRetryAt: isAppliedHomeTransitioning ? null : endpointConnectivity.nextRetryAt,
     };

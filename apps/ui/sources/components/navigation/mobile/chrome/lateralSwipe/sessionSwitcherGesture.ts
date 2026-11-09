@@ -37,7 +37,7 @@ function abs(value: number): number {
     return value < 0 ? -value : value;
 }
 
-/** Movement before the bar's gesture claims the touch. Wider than a tab's `hitSlop: 8`, so a sloppy tap never arms it. */
+/** Movement before the bar's gesture claims the touch. Wider than a tab's hit-area reach, so a sloppy tap never arms it. */
 export const SESSION_SWITCHER_ACTIVATION_PX = motionTokens.gesture.slopPx;
 /** Upward travel at which the ghost locks into the scrubber (≈⅕ of the space above the bar on a 390×844 phone). Device-tunable. */
 export const SESSION_SWITCHER_LOCK_PX = 120;

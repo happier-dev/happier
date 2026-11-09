@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 
 export type HeaderTitleWithActionProps = {
@@ -38,9 +39,8 @@ export const HeaderTitleWithAction = React.memo((props: HeaderTitleWithActionPro
                 </Text>
                 {props.subtitle ? <Text style={[styles.subtitle, { color: resolvedTintColor }]} numberOfLines={1}>{props.subtitle}</Text> : null}
             </View>
-            <Pressable
+            <HappierPressable
                 onPress={props.onActionPress}
-                hitSlop={10}
                 style={({ pressed }) => [styles.actionButton, pressed && styles.actionButtonPressed]}
                 accessibilityRole="button"
                 accessibilityLabel={props.actionLabel}
@@ -49,7 +49,7 @@ export const HeaderTitleWithAction = React.memo((props: HeaderTitleWithActionPro
                 {props.actionLoading === true
                     ? <ActivitySpinner size="small" color={resolvedActionColor} />
                     : <Icon name={props.actionIconName} size={16} color={resolvedActionColor} />}
-            </Pressable>
+            </HappierPressable>
         </View>
     );
 });

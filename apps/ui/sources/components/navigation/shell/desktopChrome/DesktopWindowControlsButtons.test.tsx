@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
-import { setPreferredLanguageFromSettings } from '@/text';
+import { preloadTranslationsForSettings, setPreferredLanguageFromSettings } from '@/text';
 import { DesktopWindowControlsButtons } from './DesktopWindowControlsButtons';
 
 vi.mock('react-native', async () => {
@@ -19,6 +19,7 @@ afterEach(() => setPreferredLanguageFromSettings(null));
 
 describe('DesktopWindowControlsButtons', () => {
     it('names each action in the selected language and changes maximize to restore', async () => {
+        await preloadTranslationsForSettings('fr');
         setPreferredLanguageFromSettings('fr');
         const onMinimize = vi.fn();
         const onToggleMaximize = vi.fn();
@@ -31,8 +32,8 @@ describe('DesktopWindowControlsButtons', () => {
             ['desktop-window-controls-toggle-maximize', 'Agrandir la fenêtre'],
             ['desktop-window-controls-close', 'Fermer la fenêtre'],
         ]) {
-            const button = screen.findByTestId(testId);
-            expect(button?.props.accessibilityRole).toBe('button');
+            const button = screen.findHostByTestId(testId);
+            expect(button?.props.role).toBe('button');
             expect(button?.props.accessibilityLabel).toBe(label);
             await screen.pressByTestIdAsync(testId);
         }
@@ -41,7 +42,7 @@ describe('DesktopWindowControlsButtons', () => {
         expect(onClose).toHaveBeenCalledOnce();
 
         await act(async () => screen.update(<DesktopWindowControlsButtons {...props} isMaximized />));
-        expect(screen.findByTestId('desktop-window-controls-toggle-maximize')?.props.accessibilityLabel)
+        expect(screen.findHostByTestId('desktop-window-controls-toggle-maximize')?.props.accessibilityLabel)
             .toBe('Restaurer la fenêtre');
     });
 });

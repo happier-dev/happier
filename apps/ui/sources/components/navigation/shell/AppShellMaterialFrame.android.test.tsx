@@ -19,6 +19,9 @@ vi.mock('react-native-reanimated', async () => {
     return createReanimatedModuleMock();
 });
 
+// Cold runtime-graph loading is collection work, outside the mounted behavior budget.
+await import('./AppShellMaterialFrame');
+
 describe('native shell material planes', () => {
     it('leaves the native content plane clear over a band even when Reduce Transparency makes surfaces solid', async () => {
         const { AppShellMaterialPlane } = await import('./appShellMaterialPlane');

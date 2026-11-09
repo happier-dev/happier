@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installAccountCommonModuleMocks } from '@/components/account/accountTestHelpers';
 import { resolveHomeConnectionSummary } from '@/components/navigation/connectionStatus/resolveHomeConnectionSummary';
+import { SelectableRow } from '@/components/ui/lists/SelectableRow';
+import { listServerSelectionTargets } from '@/sync/domains/server/selection/serverSelectionResolver';
+import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { AccountPopoverContent } from './AccountPopoverContent';
 
 installAccountCommonModuleMocks();
@@ -22,6 +25,31 @@ describe('AccountPopoverContent pairing entry', () => {
     });
 
     afterEach(() => vi.restoreAllMocks());
+
+    it('visibly distinguishes an unnamed peer while keeping each Home health subtitle', async () => {
+        const servers: ServerProfile[] = ['home-a', 'home-b'].map((id) => ({
+            id, name: `${id}.example.test`, serverUrl: `https://${id}.example.test`,
+            createdAt: 0, updatedAt: 0, lastUsedAt: 0,
+        }));
+        const screen = await renderScreen(<AccountPopoverContent
+            step="root" onStepChange={() => {}}
+            servers={servers} targets={listServerSelectionTargets({ serverProfiles: servers, groupProfiles: [] })}
+            activeTargetKey="server:home-a" activeServerId="home-a" displayServerId="home-a"
+            displayServerProfile={servers[0]!} displayHomeLabel="settingsAccount.thisHomeTitle" pendingServerId={null}
+            homeSummary={resolveHomeConnectionSummary({ healthKind: 'healthy' })}
+            machineSummary={{ kind: 'unknown' }} showsMachineGuidance={false}
+            runtimeOrigin={null} homeCarrier={null}
+            switchServer={async () => 'switched'} onRetry={async () => {}} retryBusy={false}
+            onRestore={() => {}} onAddHome={() => {}} onManageHomes={() => {}}
+            onClose={() => {}} renderDetails={() => null}
+        />);
+        const rows = screen.findAllByType(SelectableRow)
+            .filter((row) => ['connection-popover-home-server-home-a', 'connection-popover-home-server-home-b'].includes(row.props.testID));
+        expect(rows.map((row) => row.props.title)).toEqual([
+            'settingsAccount.thisHomeTitle', 'https://home-b.example.test',
+        ]);
+        expect(rows.every((row) => Boolean(row.props.subtitle))).toBe(true);
+    });
 
     it('closes the popover and opens the shared pairing modal for the displayed Home', async () => {
         const { Modal } = await import('@/modal');

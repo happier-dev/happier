@@ -13,9 +13,8 @@ import { t } from '@/text';
 import type { NavigationPlacement } from '@/sync/domains/settings/mobileSurfacePinning';
 import type { SessionOrganizationProjection } from '@/sync/domains/session/organization';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
-import { getSessionAvatarId } from '@/utils/sessions/sessionUtils';
+import { readSessionBotFaceFacts, type SessionBotFaceFacts } from '@/components/sessions/bots/face/sessionBotFaceFacts';
 
 /**
  * The desktop app shell (lab `xrail-R1`, user ruling 2026-09-27): a rail of destinations, a column that
@@ -70,7 +69,8 @@ export type AppRailBotEntry = Readonly<{
     id: string;
     serverId: string;
     sessionId: string;
-    avatarId: string;
+    /** The Bot's face, read once by the Session face owner. */
+    face: SessionBotFaceFacts;
     session: SessionListRenderableSession;
 }>;
 
@@ -104,7 +104,8 @@ export type AppRailPlacementItem = Readonly<{
 export function buildAppRailPlacementItems(entries: AppRailEntries, updatesVisible: boolean): readonly AppRailPlacementItem[] {
     const destinations = (items: readonly AppRailEntry[], group: AppRailPlacementItem['group']): AppRailPlacementItem[] =>
         items.map(entry => ({ kind: 'destination', id: entry.id, title: entry.title, icon: entry.icon, group,
-            defaultPlacement: entry.visibility === 'hidden' ? 'hidden' : 'pinned', entry }));
+            // A contextual page (owner Q3) waits in the customizer until the person pins it.
+            defaultPlacement: entry.visibility === 'hidden' || entry.contextual ? 'hidden' : 'pinned', entry }));
     const footer = (id: AppRailFooterItemId, title: string, icon: AppRailEntry['icon']): AppRailPlacementItem =>
         ({ kind: 'footer', id, title, icon, group: 'account', defaultPlacement: 'pinned' });
     return [
@@ -134,9 +135,10 @@ export function buildAppRailEntries(catalog: readonly CompactAppDestination[], o
         account: region('account'),
         bots: (options?.botHomes ?? []).flatMap(home => home.organization.railPinnedSessionIds.flatMap(sessionId => {
             const session = home.rowsBySessionId[sessionId];
-            if (!session || readSessionBotV1(session.metadata?.bot)?.kind !== 'bot') return [];
+            const face = session ? readSessionBotFaceFacts(session, home.serverId) : null;
+            if (!session || !face) return [];
             return [{ id: `bot:${sessionAddressKey({ serverId: home.serverId, sessionId })}`,
-                serverId: home.serverId, sessionId, avatarId: getSessionAvatarId(session, home.serverId), session }];
+                serverId: home.serverId, sessionId, face, session }];
         })),
     };
 }

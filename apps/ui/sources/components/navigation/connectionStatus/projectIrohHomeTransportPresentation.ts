@@ -1,4 +1,4 @@
-import type { DoctorSnapshotHomeTransportDiagnostics } from '@happier-dev/protocol';
+import type { DoctorSnapshotHomeTransportDiagnostics } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 
 import { isIrohHomeTransportDiagnosticsCurrent } from '@/sync/runtime/irohHomeTransportDiagnostics';
 

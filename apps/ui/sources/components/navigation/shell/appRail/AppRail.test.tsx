@@ -27,8 +27,9 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 // Portal measurement is a platform boundary; DropdownMenu and all placement decisions stay real.
-vi.mock('@/components/ui/popover', () => ({ Popover: (props: { children: (layout: { maxHeight: number; maxWidth: number }) => React.ReactNode }) =>
-    <>{props.children({ maxHeight: 600, maxWidth: 400 })}</> }));
+vi.mock('@/components/ui/popover', async (importOriginal) => ({ ...await importOriginal<typeof import('@/components/ui/popover')>(),
+    Popover: (props: { children: (layout: { maxHeight: number; maxWidth: number }) => React.ReactNode }) =>
+        <>{props.children({ maxHeight: 600, maxWidth: 400 })}</> }));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const initialStorageState = getStorage().getState();
@@ -45,11 +46,11 @@ function entries() {
         target: { kind: 'app' },
         visible: true,
         id: `plugin:acme.${id}:${id}`, pluginId: `acme.${id}`, descriptorId: id, localId: id,
-        label: id, icon: 'note', order: 10, disabledReason: null,
+        label: id, icon: 'note', order: 10, disabledReason: null, requestedPlacement: { kind: 'rail' },
         placement: {} as PluginPage['placement'], routePath: `/plugins/acme.${id}/${id}`,
     }));
     return buildAppRailEntries(resolveCompactAppDestinations({
-        builtins: { externalSessions: true, inbox: true, workflows: true, friends: true }, pages,
+        builtins: { externalSessions: true, inbox: true, workflows: true, friends: true, bots: true }, pages,
     }));
 }
 
@@ -163,6 +164,27 @@ describe('AppRail measured room', () => {
         });
         expect(all.plugins.every((entry) => screen.findByTestId(`app-rail:${entry.id}`) !== null)).toBe(true);
         expect(screen.findByTestId('app-rail-more.trigger')).toBeNull();
+    });
+
+    it('separates the same icons into Work, Together, Library and plugin bands (owner Q8)', async () => {
+        const all = entries();
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><InboxSummaryProvider><AppRailSurface entries={all} activeId={null} onOpen={() => {}}
+            renderFooter={(item) => <View testID={item.id} />} /></InboxSummaryProvider></InjectedAuthProvider>);
+        await act(async () => screen.findByTestId('app-rail')?.props.onLayout?.(layout(1200)));
+        const order: string[] = [];
+        const walk = (node: unknown) => {
+            if (!node || typeof node !== 'object') return;
+            const json = node as { props?: { testID?: unknown }; children?: unknown[] | null };
+            // Test-renderer instances: every element in render order, host and composite alike.
+            const testID = json.props?.testID;
+            if (testID === 'app-rail-band-separator') order.push('|');
+            else if (typeof testID === 'string' && testID.startsWith('app-rail:') && !/-(surface|icon|badge)$/.test(testID)
+                && order.at(-1) !== testID.slice('app-rail:'.length)) order.push(testID.slice('app-rail:'.length));
+            for (const child of json.children ?? []) walk(child);
+        };
+        walk(screen.findByTestId('app-rail-destinations'));
+        expect(order.join(' ')).toBe(['sessions search inbox projects workflows', 'friends bots', 'boards artifacts',
+            'plugins plugin:acme.channels:channels plugin:acme.inspector:inspector plugin:acme.triage:triage'].join(' | '));
     });
 
     it('moves app destinations into More as well when the whole rail is too short', async () => {

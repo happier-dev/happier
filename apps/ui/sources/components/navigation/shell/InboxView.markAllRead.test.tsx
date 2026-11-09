@@ -96,6 +96,8 @@ vi.mock('expo-router', async () => {
 // Expo's native Route context is an SDK boundary absent from this host renderer.
 // The canonical root router mock does not cover this deep SDK entry; the route body stays real.
 vi.mock('expo-router/build/Route', () => ({ useRouteNode: () => null }));
+// The recycler is a renderer/platform boundary: this substitute draws every row it is given.
+vi.mock('@legendapp/list/react-native', async () => (await import('@/dev/testkit/mocks/legendList')).createLegendListModuleMock());
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
     useWindowDimensions: () => ({ width: viewport.width, height: 844, scale: 1, fontScale: 1 }),
 }));
@@ -238,8 +240,8 @@ describe('InboxView mark as read', () => {
         await screen.update(<InboxPage />);
         const focusedRow = () => screen.findAllByType(HappierWorkRowShell)
             .find(node => node.props.testID === 'inbox.session.needs-focus');
-        const { InboxContent } = await import('@/components/inbox/InboxContent');
-        const model: React.ComponentProps<typeof InboxContent>['model'] = screen.findByType(InboxContent).props.model;
+        const { InboxContentList } = await import('@/components/inbox/InboxContent');
+        const model: React.ComponentProps<typeof InboxContentList>['model'] = screen.findByType(InboxContentList).props.model;
         expect(focusedRow()?.props.selected, JSON.stringify({
             items: model.items.map(item => ({ id: item.source.id, type: item.type, view: item.view })),
             needsAttention: model.sessionPresentation.sessionsNeedingAttention.map(entry => ({ id: entry.candidate.sessionId, reasons: entry.candidate.personalAttention.reasons })),
@@ -275,6 +277,33 @@ describe('InboxView mark as read', () => {
             { serverId: homeB, input: { state: 'read' } },
         ]));
         await waitForHomeGovernance(() => expect(nodesByTestId(tree, 'inbox.ready.mark_all_read')).toHaveLength(0));
+        expect(tree.root.findAllByType(WebAlertModal)).toHaveLength(0);
+    }, SLOW_RENDER_TIMEOUT_MS);
+
+    it('keeps the same-id online Home readable while an offline Home blocks bulk acknowledgement', async () => {
+        storage.setState({ concurrentSessionListCacheByServerId: {
+            [homeA]: { serverName: 'Personal Home', listObservation: { phase: 'ready', lastSuccessAt: 1_000 } },
+            [homeB]: { serverName: 'Work Home', listObservation: { phase: 'offline', lastSuccessAt: 1_000 } },
+        } });
+        const { InboxView } = await import('./InboxView');
+        const { IconButton } = await import('@/components/ui/buttons/IconButton');
+        const tree = await renderUpdates(InboxView);
+        const rowControl = (serverId: string) => tree.root.findAllByType(IconButton)
+            .find(node => node.props.testID === `inbox.ready_session.${serverId}.session-x.mark_read`)!;
+        expect(rowControl(homeA).props.disabled).toBe(false);
+        expect(rowControl(homeB).props.disabled).toBe(true);
+        expect(rowControl(homeB).props.disabledReason).toBe('session.homeFreshness.offline');
+        const [bulk] = nodesByTestId(tree, 'inbox.ready.mark_all_read');
+        expect(bulk.props.accessibilityState.disabled).toBe(true);
+        expect(bulk.props.accessibilityHint).toBe('session.homeFreshness.offline');
+        await press(bulk);
+        await press(rowControl(homeB));
+        expect(readRequests()).toHaveLength(0);
+        await press(rowControl(homeA));
+        await waitForHomeGovernance(() => expect(readRequests()).toEqual([
+            { serverId: homeA, input: { state: 'read' } },
+        ]));
+        expect(nodesByTestId(tree, `inbox.ready_session.${homeB}.session-x`)).toHaveLength(1);
         expect(tree.root.findAllByType(WebAlertModal)).toHaveLength(0);
     }, SLOW_RENDER_TIMEOUT_MS);
 

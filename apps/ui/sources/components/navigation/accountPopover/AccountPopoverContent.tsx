@@ -17,7 +17,6 @@ import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDispla
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Icon } from '@/components/ui/icons/Icon';
 import { HomeMark } from '@/components/homes/HomeMark';
 import { ActionListSection, type ActionListItem } from '@/components/ui/lists/ActionListSection';
@@ -87,7 +86,7 @@ export function AccountPopoverContent(props: Readonly<{
     runtimeOrigin: string | null;
     homeCarrier: HomeCarrier | null;
     switchServer: SwitchServer;
-    /** Starts recovery in place; the promise covers preparation and retryBusy follows the connection owner. */
+    /** Starts recovery in place and supersedes a pending dial; retryBusy only keeps the glyph while the owner is connecting. */
     onRetry: () => Promise<unknown>;
     retryBusy: boolean;
     onRestore: () => void;
@@ -440,7 +439,7 @@ function useAccountPopoverHomeRows(props: React.ComponentProps<typeof AccountPop
         const labelFor = (target: ConnectionTarget) => {
             if (target.kind !== 'server') return getServerSelectionTargetName(target);
             const profile = serverById.get(target.serverId);
-            return resolveHomeDisplayLabel(profile, target.serverId);
+            return resolveHomeDisplayLabel(profile, target.serverId, props.activeServerId);
         };
         for (const target of props.targets) {
             const key = labelFor(target).trim().toLocaleLowerCase();
@@ -522,7 +521,7 @@ function useAccountPopoverHomeRows(props: React.ComponentProps<typeof AccountPop
                 selected,
                 // Retry is a glyph (a failed Home keeps its row quiet); Sign in stays a labelled action.
                 right: fix === 'retry' ? (
-                    <RetryIconButton testID={`connection-popover-home-${target.kind}-${target.id}-fix`} onPress={fixPress} busy={isCurrent && props.retryBusy} />
+                    <RetryIconButton testID={`connection-popover-home-${target.kind}-${target.id}-fix`} onPress={fixPress} />
                 ) : fix ? (
                     <ToolbarButton
                         testID={`connection-popover-home-${target.kind}-${target.id}-fix`}
@@ -539,6 +538,7 @@ function useAccountPopoverHomeRows(props: React.ComponentProps<typeof AccountPop
         authStatusByServerId,
         machineListStatusByServerId,
         props.activeTargetKey,
+        props.activeServerId,
         props.displayServerId,
         props.homeSummary,
         props.machineSummary,
@@ -553,17 +553,14 @@ function useAccountPopoverHomeRows(props: React.ComponentProps<typeof AccountPop
     ]);
 }
 
-const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
-
 const RETRY_GLYPH_PX = 18;
 
 /** The inline retry of a failed row: the refresh glyph, no chrome, named and explained on hover. */
-function RetryIconButton(props: Readonly<{ testID: string; onPress: () => unknown; busy?: boolean }>) {
+function RetryIconButton(props: Readonly<{ testID: string; onPress: () => unknown }>) {
     return (
         <IconButton
             testID={props.testID}
             iconName="arrow-clockwise"
-            busy={props.busy}
             variant="plain"
             // A chromeless square just larger than its glyph, so the glyph's edge sits on the row's
             // trailing edge where a labelled action (Sign in) ends; the press frame grows vertically.
@@ -571,7 +568,6 @@ function RetryIconButton(props: Readonly<{ testID: string; onPress: () => unknow
             iconSize={RETRY_GLYPH_PX}
             accessibilityLabel={t('common.retry')}
             tooltip={t('common.retry')}
-            minimumInteractiveTargetSize={minimumInteractiveTargetSize}
             onPress={props.onPress}
         />
     );

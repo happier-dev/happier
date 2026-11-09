@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { useTabState } from '@/hooks/ui/useTabState';
 import type { TabType } from '@/components/ui/navigation/tabTypes';
+import { PresentedDetailNavigationProvider } from '@/components/appShell/rightSidebar/usePresentedDetailNavigation';
 
 type MainAppTabStateValue = Readonly<{
     activeTab: TabType;
@@ -15,7 +16,7 @@ export const MainAppTabStateProvider = React.memo((props: Readonly<{ children: R
     const value = useTabState();
     return (
         <MainAppTabStateContext.Provider value={value}>
-            {props.children}
+            <PresentedDetailNavigationProvider>{props.children}</PresentedDetailNavigationProvider>
         </MainAppTabStateContext.Provider>
     );
 });

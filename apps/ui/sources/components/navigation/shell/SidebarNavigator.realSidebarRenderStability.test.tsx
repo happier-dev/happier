@@ -15,6 +15,7 @@ const hoistedState = vi.hoisted(() => ({
     mockPathname: '/' as string,
     mockSegments: ['(app)'] as string[],
     mockWindowDimensions: { width: 1200, height: 900 },
+    routeStackRenders: 0,
     isDesktopHost: false,
     startDesktopWindowDragging: vi.fn(),
     getDesktopWindowChromePolicy: vi.fn(async () => ({ strategy: 'none' })),
@@ -111,7 +112,7 @@ installNavigationShellCommonModuleMocks({
     }),
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        return createExpoRouterMock({
+        const module = createExpoRouterMock({
             pathname: () => hoistedState.mockPathname,
             segments: () => hoistedState.mockSegments,
             router: {
@@ -121,6 +122,12 @@ installNavigationShellCommonModuleMocks({
                 setParams: vi.fn(),
             },
         }).module;
+        // The route navigator stands in for the whole route tree; its render count is that tree's.
+        const RouteStack = Object.assign(function Stack() {
+            hoistedState.routeStackRenders += 1;
+            return null;
+        }, { Screen: module.Stack.Screen });
+        return { ...module, Stack: RouteStack };
     },
     storage: async (importOriginal) => importOriginal<typeof import('@/sync/domains/state/storage')>(),
     appPaneProvider: async () => vi.importActual<typeof import('@/components/appShell/panes/AppPaneProvider')>('@/components/appShell/panes/AppPaneProvider'),
@@ -134,11 +141,14 @@ vi.mock('@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowConte
     isDesktopActivityOverlayWindowContext: () => false,
 }));
 
-vi.mock('@/utils/platform/desktopHost', () => ({
+vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/utils/platform/desktopHost')>()),
     isDesktopHost: () => hoistedState.isDesktopHost,
 }));
 
-vi.mock('@/utils/platform/desktopWindowBridge', () => ({
+vi.mock('@/utils/platform/desktopWindowBridge', async (importOriginal) => ({
+    // Policy interpretation stays real; only the native window bridge is replaced.
+    ...(await importOriginal<typeof import('@/utils/platform/desktopWindowBridge')>()),
     getDesktopWindowChromePolicy: () => hoistedState.getDesktopWindowChromePolicy(),
     getDesktopWindowState: () => hoistedState.getDesktopWindowState(),
     listenDesktopWindowState: (handler: (state: DesktopWindowState) => void) =>
@@ -215,6 +225,11 @@ vi.mock('@/components/appShell/search/UniversalSearchRuntimeContext', async (imp
 const { storage } = await import('@/sync/domains/state/storage');
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 const { SidebarNavigator } = await import('./SidebarNavigator');
+const { AppShellMaterialFrame } = await import('./AppShellMaterialFrame');
+const { ResizableDockedPane } = await import('@/components/ui/panels/ResizableDockedPane');
+const { act } = await import('react-test-renderer');
+const { WorkspaceNavigationProvider } = await import('@/components/appShell/workspace/WorkspaceNavigationContext');
+const { createWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
 const initialStorageState = storage.getState();
 
 beforeEach(() => {
@@ -250,6 +265,45 @@ describe('SidebarNavigator real sidebar render stability', () => {
         const dragSurface = screen.findByTestId('desktop-main-content-drag-surface');
         expect(dragSurface).toBeTruthy();
         expect(dragSurface?.props.onPointerDownCapture).toBeUndefined();
+    });
+
+    it('keeps the route tree when workspace navigation changes without changing whether it hosts the route', async () => {
+        const noop = () => {};
+        const inactive: import('@/components/appShell/workspace/WorkspaceNavigationContext').WorkspaceNavigationContextValue = {
+            active: false, state: createWorkspaceState({ id: 'tab', target: { kind: 'newTab', params: {} }, pinned: false, preview: true }),
+            canGoBack: false, canGoForward: false, openHref: () => false, activateTab: noop, closeTab: noop, closeTabs: noop,
+            dispatch: noop, navigationForTab: () => ({ push: noop, replace: noop, back: noop }), registerBackStep: () => noop,
+            back: noop, forward: noop,
+        };
+        const render = (value: typeof inactive) => <AppPaneProvider><WorkspaceNavigationProvider value={value}>
+            <SidebarNavigator />
+        </WorkspaceNavigationProvider></AppPaneProvider>;
+        const screen = await renderScreen(render(inactive));
+        const rail = () => screen.findByType(AppShellMaterialFrame)?.props.rail;
+        const routeTree = rail();
+        expect(routeTree).toBeTruthy();
+
+        // A title publication or history step replaces the navigation value, not the route tree.
+        await screen.update(render({ ...inactive, canGoBack: true }));
+
+        expect(rail()).toBe(routeTree);
+    });
+
+    it('follows a sidebar resize drag without re-rendering the route tree beside it', async () => {
+        const screen = await renderScreen(<AppPaneProvider><SidebarNavigator /></AppPaneProvider>);
+        const sidebarResizer = () => screen.findAllByType(ResizableDockedPane)
+            .find((pane) => pane.props.resizeEdge === 'right' && pane.props.collapse === true);
+        expect(sidebarResizer()).toBeTruthy();
+        const rendersBeforeDrag = hoistedState.routeStackRenders;
+        expect(rendersBeforeDrag).toBeGreaterThan(0);
+
+        for (const widthPx of [330, 340, 350, 360, 370]) {
+            await act(async () => { sidebarResizer()?.props.onDragWidthPx?.(widthPx, { overshootPx: 0 }); });
+        }
+
+        // The column follows the pointer; the pages beside it only reflow, React does not re-render them.
+        expect(screen.findByType(AppShellMaterialFrame)?.props.sidebarWidth).toBe(370);
+        expect(hoistedState.routeStackRenders - rendersBeforeDrag).toBe(0);
     });
 
     it('starts Tauri dragging from the main content titlebar strip without blocking interactive targets', async () => {
