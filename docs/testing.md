@@ -1546,6 +1546,12 @@ retrying the run. This is an observation of a moving checkout, not a frozen sour
 tree. Finite membership includes its imported source closure; ordinary single
 projects report their selected roots rather than every transitive import.
 
+In 0.3 development, captured compiler output is replayed and reported after each
+compiler finishes. Capture uses private temporary files, so a descendant retaining
+output descriptors cannot hold the compiler verdict behind a pipe's EOF. The
+foreground process owner retains cancellation, numeric exit codes and signals;
+uncaptured output continues to inherit the terminal.
+
 Source reload workers explicitly preload Stack's authored-source bootstrap before
 Node links their static imports; SSH does not inherit the controller preload.
 Finite runtime, web and smoke preparation share `runSourceBuildCommand`'s Node

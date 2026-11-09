@@ -877,6 +877,43 @@ for (const exitCode of [0, 2, 7]) {
   });
 }
 
+test('compiler reporting settles after compiler exit while a descendant retains diagnostic pipes', { timeout: 15000 }, async t => {
+  const diagnostic = 'source.ts(3,2): error TS2322: incompatible value.\n';
+  const setup = await fixture(t, { compilerBody: `
+    const fs = require('node:fs');
+    const worker = require('node:child_process').spawn(process.execPath,
+      ['-e', 'setInterval(() => {}, 1000);'], { stdio: ['ignore', 'inherit', 'inherit'] });
+    fs.writeFileSync('worker.pid', String(worker.pid));
+    fs.writeSync(1, ${JSON.stringify(diagnostic)});
+    fs.writeSync(2, 'compiler-stderr\\n');
+    process.exit(7);
+  ` });
+  const reports = join(setup.root, 'compiler-results');
+  await mkdir(reports);
+  await writeFile(join(setup.root, 'tsconfig.json'), JSON.stringify({ files: [] }));
+  const { child, stderr, stdout } = setup.start([runner, '--noEmit', '-p', 'tsconfig.json'], {
+    stdio: ['ignore', 'pipe', 'pipe'], env: { CI: 'true', HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS: '', HAPPIER_TYPECHECK_REPORT_DIR: reports },
+  });
+  const result = once(child, 'exit');
+  await waitUntil(async () => {
+    const pid = Number(await readFile(setup.pidFile, 'utf8').catch(() => '0'));
+    return pid > 0 && !alive(pid);
+  }, 'the real compiler must have exited before checking wrapper settlement');
+  const workerPid = Number(await readFile(setup.workerPidFile, 'utf8'));
+  assert.equal(alive(workerPid), true, 'the descendant still retains the diagnostic descriptors');
+  t.diagnostic('compiler exited; descendant still alive; awaiting the wrapper verdict');
+  assert.deepEqual(await result, [7, null], stderr());
+  assert.equal(stdout().toString(), diagnostic);
+  assert.match(stderr(), /compiler-stderr/);
+  const names = await readdir(reports);
+  assert.equal(names.length, 1);
+  const report = JSON.parse(await readFile(join(reports, names[0]), 'utf8'));
+  assert.equal(report.status, 7);
+  assert.equal(report.signal, null);
+  assert.equal(report.stdout, diagnostic);
+  assert.equal(report.stderr, 'compiler-stderr\n');
+});
+
 for (const status of [0, 1, 7]) {
   test(`baseline reporting records actual native result ${status} and preserves visible diagnostics`, async (t) => {
     const output = status === 0 ? '' : "source.ts(3,2): error TS2322: Type 'number' is not assignable to type 'string'.\\n  A nested diagnostic.\\n";

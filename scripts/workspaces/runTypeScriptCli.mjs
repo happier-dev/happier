@@ -1,9 +1,10 @@
+import { closeSync, mkdtempSync, openSync, rmSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { constants, tmpdir } from 'node:os';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { exitWithCommandResult, runCommand, spawnForegroundCommand } from '../../apps/stack/scripts/utils/proc/proc.mjs';
+import { exitWithCommandResult, runCommand } from '../../apps/stack/scripts/utils/proc/proc.mjs';
 
 import { prepareTypeScriptProjectBuildFromArgs, verifyTypeScriptProjectCoverage } from './prepareTypeScriptProjectBuild.mjs';
 import { readReferencedUiTypecheckProjects } from './deriveTypecheckProjects.mjs';
@@ -77,16 +78,28 @@ async function runCompiler(invocation, project, isCancelled, captureDiagnostics 
   const compilerArgs = [...invocation.argsPrefix, ...project.args, ...(invocation.argsSuffix ?? []), ...(capture ? ['--pretty', 'false'] : [])];
   const execute = async (command, args) => {
     if (!capture) return await runCommand(command, args, options);
-    const child = spawnForegroundCommand(command, args, { ...options, stdio: ['inherit', 'pipe', 'pipe'] });
-    const stdout = [];
-    const stderr = [];
-    child.stdout.on('data', chunk => { stdout.push(chunk); process.stdout.write(chunk); });
-    child.stderr.on('data', chunk => { stderr.push(chunk); process.stderr.write(chunk); });
-    const result = await new Promise(resolveResult => {
-      child.once('error', error => resolveResult({ status: null, signal: null, error }));
-      child.once('close', (status, signal) => resolveResult({ status, signal }));
-    });
-    return { ...result, stdout: Buffer.concat(stdout).toString(), stderr: Buffer.concat(stderr).toString() };
+    // A descendant can retain a diagnostic pipe after the compiler exits.
+    // Regular files preserve all compiler output without waiting for that EOF;
+    // foreground custody still owns the compiler's exit and cancellation.
+    // Set up descriptors synchronously so signal forwarding is installed by
+    // runCommand before the event loop can deliver cancellation.
+    const directory = mkdtempSync(resolve(tmpdir(), 'happier-typecheck-output-'));
+    const descriptors = [];
+    try {
+      descriptors.push(openSync(resolve(directory, 'stdout'), 'w'));
+      descriptors.push(openSync(resolve(directory, 'stderr'), 'w'));
+      const result = await runCommand(command, args, { ...options, stdio: ['inherit', ...descriptors] });
+      const [stdout, stderr] = await Promise.all([
+        readFile(resolve(directory, 'stdout')),
+        readFile(resolve(directory, 'stderr')),
+      ]);
+      process.stdout.write(stdout);
+      process.stderr.write(stderr);
+      return { ...result, stdout: stdout.toString(), stderr: stderr.toString() };
+    } finally {
+      for (const descriptor of descriptors) closeSync(descriptor);
+      rmSync(directory, { recursive: true, force: true });
+    }
   };
   const publish = async result => {
     if (result.error || result.signal || result.status !== 0) {
