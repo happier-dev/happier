@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Linking } from 'react-native';
 import { act } from 'react-test-renderer';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
 import { PluginProjectionV2Schema, type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginSearchQueryV1Schema, PluginSearchResultV1Schema } from '@happier-dev/protocol/plugins/contributions/search-providers';
@@ -21,6 +21,7 @@ import { createDeferred, createMachineFixture, flushHookEffects, renderScreen, s
 import { pluginArtifactTransferDaemonState } from '@/dev/testkit/harness/pluginArtifactTransferBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createAccountSettingsHttpBoundary } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionOutputV1Schema,
     PluginAvailabilityMaterializationsReadActionOutputV1Schema, PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -64,6 +65,7 @@ const daemon = vi.hoisted(() => ({ projection: null as PluginProjectionV2 | null
     mountedProjection: null as PluginProjectionV2 | null, peerMountedProjection: null as PluginProjectionV2 | null,
     peerMountedReads: 0, bytes: new Uint8Array(), entryPath: '', artifactDigest: '',
     successorBytes: new Uint8Array(), successorDigest: '', projectionReads: 0, artifactReads: 0 }));
+const route = vi.hoisted(() => ({ pathname: '/' }));
 // Only the real network transport is replaced. Account, storage, projection,
 // Artifact leases, CommonJS evaluation, registration and reconciliation stay real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
@@ -101,7 +103,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 });
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
-    pathname: () => '/settings/voice/service',
+    pathname: () => route.pathname,
 }).module);
 installDisconnectedServerSocketBoundary();
 
@@ -132,6 +134,8 @@ function CatalogDemand(props: Readonly<{ machineId: string; serverId: string }>)
     usePluginUiProjectionCurrentness(props);
     return null;
 }
+
+beforeEach(() => { route.pathname = '/'; });
 
 afterEach(async () => {
     pluginBoundary.pending.resolve('cleanup');
@@ -496,14 +500,18 @@ it.each(['selected', 'presented-local-picker'] as const)('discovers Voice descri
     const machine = createMachineFixture({ id: 'machine-live', active: true, activeAt: Date.now(),
         daemonStateVersion: 1, daemonState: pluginArtifactTransferDaemonState });
     resetVoiceSessionStoreForTests();
+    const settingsHttp = createAccountSettingsHttpBoundary({ serverUrl: 'https://fresh-voice-descriptor.test',
+        initialAccounts: [{ accountId: 'account-continuity', snapshot: { version: 1, content: { t: 'plain', v: settings } } }],
+    });
     connection = await restoreServerAccountForTest({ serverUrl: 'https://fresh-voice-descriptor.test', serverIdentityId,
         accountId: 'account-continuity', activation: 'switch', request: async (url, init) => {
             const path = new URL(String(url)).pathname;
+            const settingsResponse = settingsHttp.handle(url, init);
+            if (settingsResponse) return settingsResponse;
             if (path === '/health') return Response.json({ status: 'ok' });
             if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: 'account-continuity' }));
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ version: 1, updatedAt: 1 }));
-            if (path === '/v2/account/settings') return Response.json({ version: 1, content: { t: 'plain', v: settings } });
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse({ features: {
                 voice: { enabled: true }, plugins: { enabled: true, ui: { enabled: true, hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } } },
             } }));
@@ -541,14 +549,14 @@ it.each(['selected', 'presented-local-picker'] as const)('discovers Voice descri
         expect(daemon.projectionReads).toBe(0);
         expect(registry.get(providerId)).toBeNull();
         pickerPresented = true;
+        route.pathname = '/settings/voice/service';
         await screen.update(render());
     }
     await vi.waitFor(() => expect(registry.get(providerId)).toMatchObject({ providerId,
         kind: 'voice.conversation-provider.v1', declaration: { title: 'Fresh Voice' } }));
     if (selection === 'presented-local-picker') {
-        const service = screen.findByTestId(`settings.voice.provider.${encodeURIComponent(providerId)}.default`);
-        expect(service).not.toBeNull();
-        expect(service?.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync(`settings.voice.provider.${encodeURIComponent(providerId)}.default`);
+        await vi.waitFor(() => expect(storage.getState().settings.voiceSettingsV1.providerId).toBe(providerId));
     }
     expect([...demand]).toEqual([]);
     expect(daemon.artifactReads).toBe(0);
