@@ -121,7 +121,7 @@ jobs:
     name: Trusted workflow ref guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -133,6 +133,7 @@ jobs:
           set -euo pipefail
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/v0.3"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
@@ -144,7 +145,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout trusted workflow control bytes
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -173,7 +174,7 @@ jobs:
 
   resolve_source:
     name: Resolve source ref to SHA
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [release_actor_guard, resolve_resume]
     if: ${{ !cancelled() && needs.release_actor_guard.result == 'success' && (needs.resolve_resume.result == 'success' || needs.resolve_resume.result == 'skipped') }}
     permissions:
@@ -397,7 +398,7 @@ jobs:
             exit 0
           fi
           case "${GITHUB_REF_NAME}" in
-            dev|preview|main) ;;
+            v0.3|dev|preview|main) ;;
             *)
               echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev, preview, or main." >&2
               exit 1
@@ -787,7 +788,7 @@ jobs:
     name: Restore finalized desktop artifacts (${{ matrix.platform_key }})
     if: ${{ !cancelled() && needs.resolve_source.result == 'success' && needs.resolve_source.outputs.retry_version == '' && needs.resolve_source.outputs.reuse_needed == 'true' }}
     needs: [resolve_source]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Reuse the desktop artifact-consumer budget; download retries alone can exceed 30 minutes.
     timeout-minutes: 45
     permissions:
@@ -836,7 +837,7 @@ jobs:
   prepare_assets:
     name: Prepare latest.json + publish assets
     if: ${{ !cancelled() && needs.resolve_source.result == 'success' && (needs.finalize.result == 'success' || (needs.resolve_source.outputs.finalize_needed == 'false' && needs.finalize.result == 'skipped')) && (needs.reuse_finalized.result == 'success' || (needs.resolve_source.outputs.reuse_needed == 'false' && needs.reuse_finalized.result == 'skipped')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [resolve_source, finalize, reuse_finalized]
     permissions:
       contents: read
@@ -960,7 +961,7 @@ jobs:
     name: Promote immutable desktop release to stable feed
     if: ${{ !cancelled() && needs.resolve_source.result == 'success' && inputs.publish_release == true && inputs.environment == 'production' && (needs.publish_stable_release.result == 'success' || needs.resolve_source.outputs.retry_version != '') }}
     needs: [resolve_source, publish_stable_release]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     environment: release-shared
@@ -1006,7 +1007,7 @@ jobs:
             --title "Happier UI Desktop Stable" \
             --target-sha "$TARGET_SHA" \
             --prerelease false \
-            --notes "$RELEASE_MESSAGE" \
-            --release-message "$RELEASE_MESSAGE" \
+            --notes="$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --repo "$GH_REPO" \
             --public-key scripts/release/installers/happier-release.pub

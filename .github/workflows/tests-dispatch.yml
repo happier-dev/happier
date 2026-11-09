@@ -76,7 +76,7 @@ on:
 jobs:
   resolve:
     name: Resolve flags
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       run_ui_e2e: ${{ steps.flags.outputs.run_ui_e2e }}
       ui_e2e_specs: ${{ steps.flags.outputs.ui_e2e_specs }}
@@ -131,6 +131,7 @@ jobs:
     needs: [resolve]
     permissions:
       contents: read
+      actions: read
     uses: ./.github/workflows/tests.yml
     with:
       select_jobs_explicitly: true

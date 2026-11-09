@@ -38,6 +38,8 @@ runs:
           pkg-config
           libssl-dev
           libgtk-3-dev
+          libgtk-layer-shell-dev
+          libxkbcommon-dev
           libwebkit2gtk-4.1-dev
           libayatana-appindicator3-dev
           librsvg2-dev

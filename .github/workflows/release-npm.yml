@@ -40,6 +40,10 @@ on:
         description: "Published @happier-dev/channels-protocol integrity"
         value: ${{ jobs.publish-channels-protocol.outputs.channels_protocol_integrity }}
     inputs:
+      source_contracts_result:
+        required: false
+        default: ""
+        type: string
       channel:
         description: "Target — Release channel"
         required: true
@@ -48,6 +52,11 @@ on:
         description: "Promotion — Source ref to release from (auto: preview→preview, production→main)"
         required: false
         default: auto
+        type: string
+      promotion_source_ref:
+        description: "Preflight-admitted promotion source branch (empty for standalone channel publication)"
+        required: false
+        default: ""
         type: string
       authorized_sha:
         description: "Release-admitted exact source SHA"
@@ -128,13 +137,14 @@ concurrency:
 
 env:
   HAPPIER_BUILD_DEFAULT_PROFILE_JSON: '{"accountService":{"url":"https://api.happier.dev"},"home":{"url":"https://api.happier.dev","webappUrl":"https://cloud.happier.dev"},"personalHome":{"value":"offer"}}'
+  HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT: ${{ inputs.source_contracts_result }}
 
 jobs:
   trusted_ref_guard:
     name: Trusted workflow ref guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -146,6 +156,7 @@ jobs:
           set -euo pipefail
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/v0.3"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
@@ -174,8 +185,104 @@ jobs:
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
-  release:
+  build_windows_service_launcher:
+    name: Build Windows service launcher for npm packages
     needs: [release_actor_guard]
+    runs-on: windows-2022
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Checkout trusted workflow control bytes
+        if: inputs.publish_cli || inputs.publish_stack
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        if: inputs.publish_cli || inputs.publish_stack
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+
+      - name: Resolve release inputs
+        shell: bash
+        if: inputs.publish_cli || inputs.publish_stack
+        id: release_inputs
+        env:
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_NPM_TAG: ${{ inputs.npm_tag }}
+          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
+          INPUT_AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
+          INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
+          INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
+          INPUT_PUBLISH_SERVER: ${{ inputs.publish_server }}
+          INPUT_CLI_VERSION: ${{ inputs.cli_version }}
+          INPUT_STACK_VERSION: ${{ inputs.stack_version }}
+          INPUT_SERVER_VERSION: ${{ inputs.server_version }}
+          INPUT_PUBLISH_PLUGIN_SDK: ${{ inputs.publish_plugin_sdk }}
+          INPUT_PUBLISH_SDK: ${{ inputs.publish_sdk }}
+          INPUT_PUBLISH_CHANNELS_PROTOCOL: ${{ inputs.publish_channels_protocol }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/resolve-npm-release-inputs.mjs \
+            --channel "$INPUT_CHANNEL" \
+            --npm-tag "$INPUT_NPM_TAG" \
+            --source-ref "$INPUT_SOURCE_REF" \
+            --authorized-sha "$INPUT_AUTHORIZED_SHA" \
+            --publish-cli "$INPUT_PUBLISH_CLI" \
+            --publish-stack "$INPUT_PUBLISH_STACK" \
+            --publish-server "$INPUT_PUBLISH_SERVER" \
+            --cli-version "$INPUT_CLI_VERSION" \
+            --stack-version "$INPUT_STACK_VERSION" \
+            --server-version "$INPUT_SERVER_VERSION" \
+            --publish-plugin-sdk "$INPUT_PUBLISH_PLUGIN_SDK" \
+            --publish-sdk "$INPUT_PUBLISH_SDK" \
+            --publish-channels-protocol "$INPUT_PUBLISH_CHANNELS_PROTOCOL" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Checkout source ref
+        if: inputs.publish_cli || inputs.publish_stack
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ steps.release_inputs.outputs.authorized_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Record launcher source
+        if: inputs.publish_cli || inputs.publish_stack
+        id: source
+        shell: pwsh
+        run: "Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value ('sha=' + (git rev-parse HEAD))"
+      - name: Setup Node
+        if: inputs.publish_cli || inputs.publish_stack
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - name: Compile x64 GUI launcher with the installed MSVC toolchain
+        if: inputs.publish_cli || inputs.publish_stack
+        shell: cmd
+        run: call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 && node scripts\pipeline\release\build-windows-service-launcher.mjs
+      - name: Test launcher lifecycle in an isolated fixture
+        if: inputs.publish_cli || inputs.publish_stack
+        shell: pwsh
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packages/cli-common/native/windows/service-launcher.test.ps1
+      - name: Upload launcher for npm packaging
+        if: inputs.publish_cli || inputs.publish_stack
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-service-launcher-npm
+          path: packages/cli-common/native/windows/bin/windows-x64/happier-service-launcher.exe
+          if-no-files-found: error
+          retention-days: 2
+
+  release:
+    needs: [release_actor_guard, build_windows_service_launcher]
     permissions:
       contents: read
     runs-on: ubuntu-22.04
@@ -247,6 +354,22 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Verify launcher source matches npm source
+        if: inputs.publish_cli || inputs.publish_stack
+        env:
+          LAUNCHER_SOURCE_SHA: ${{ needs.build_windows_service_launcher.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test -n "$LAUNCHER_SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$LAUNCHER_SOURCE_SHA"
+
+      - name: Download validated Windows service launcher
+        if: inputs.publish_cli || inputs.publish_stack
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: windows-service-launcher-npm
+          path: packages/cli-common/native/windows/bin/windows-x64
+
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -269,6 +392,7 @@ jobs:
           args: --frozen-lockfile
 
       - name: Run release contract tests
+        if: ${{ inputs.source_contracts_result != 'success' }}
         run: |
           unset NODE_AUTH_TOKEN NPM_TOKEN
           pnpm run test:release:contracts
@@ -295,6 +419,26 @@ jobs:
           path: trusted-control
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Verify admitted publication source
+        env:
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
+          PROMOTION_SOURCE_REF: ${{ inputs.promotion_source_ref }}
+          CANONICAL_REF: ${{ inputs.channel == 'production' && 'main' || 'preview' }}
+        run: |
+          set -euo pipefail
+          source_ref="$CANONICAL_REF"
+          args=()
+          if [ -n "$PROMOTION_SOURCE_REF" ]; then
+            test -n "$AUTHORIZED_SHA"
+            source_ref="$PROMOTION_SOURCE_REF"
+            args+=(--allow-source-ancestor)
+          fi
+          if [ -z "$AUTHORIZED_SHA" ]; then exit 0; fi
+          test "$(git rev-parse HEAD)" = "$AUTHORIZED_SHA"
+          node "$GITHUB_WORKSPACE/trusted-control/scripts/pipeline/github/resolve-authorized-release-source.mjs" \
+            --source-ref "refs/heads/$source_ref" \
+            --authorized-sha "$AUTHORIZED_SHA" "${args[@]}"
 
       - name: Resolve release metadata
         id: meta

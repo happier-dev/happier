@@ -84,7 +84,7 @@ jobs:
     name: Trusted workflow ref guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -96,6 +96,7 @@ jobs:
           set -euo pipefail
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/v0.3"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
@@ -107,7 +108,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout trusted workflow control
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -124,7 +125,7 @@ jobs:
 
   resolve_source:
     needs: [release_actor_guard]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
@@ -152,6 +153,7 @@ jobs:
           set -euo pipefail
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/promote-website.yml@refs/heads/v0.3"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/promote-website.yml@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/promote-website.yml@refs/heads/preview"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/promote-website.yml@refs/heads/main") ;;
@@ -183,7 +185,7 @@ jobs:
       - name: Enforce trusted refs for manual dispatch
         run: |
           if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then exit 0; fi
-          case "$GITHUB_REF_NAME" in dev|preview|main) ;; *) exit 1 ;; esac
+          case "$GITHUB_REF_NAME" in v0.3|dev|preview|main) ;; *) exit 1 ;; esac
       - name: Bind exact authorized source SHA
         id: candidate
         env:
@@ -192,7 +194,7 @@ jobs:
 
   apply_bump:
     needs: [release_actor_guard, resolve_source]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release-shared
     permissions:
       contents: read
@@ -278,7 +280,7 @@ jobs:
 
   validate_candidate:
     needs: [apply_bump]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -324,7 +326,7 @@ jobs:
 
   promote:
     needs: [release_actor_guard, apply_bump, validate_candidate]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release-shared
     steps:
       - name: Checkout trusted promotion control
@@ -388,7 +390,7 @@ jobs:
   # would bypass release_actor_guard and trusted_ref_guard entirely.
   deploy_cloudflare:
     needs: [release_actor_guard, apply_bump, validate_candidate, promote]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: cloudflare-deploy
     permissions:
       contents: read

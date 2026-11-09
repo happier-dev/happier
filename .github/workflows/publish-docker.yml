@@ -66,6 +66,11 @@ on:
         required: false
         default: auto
         type: string
+      promotion_source_ref:
+        description: "Preflight-admitted promotion source branch (empty for standalone channel publication)"
+        required: false
+        default: ""
+        type: string
       authorized_sha:
         required: false
         default: ""
@@ -112,7 +117,7 @@ env:
 jobs:
   trusted_ref_guard:
     name: Trust called workflow repository and ref
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -143,6 +148,7 @@ jobs:
           fi
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/publish-docker.yml@refs/heads/v0.3"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-docker.yml@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-docker.yml@refs/heads/preview"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-docker.yml@refs/heads/main") ;;
@@ -154,7 +160,7 @@ jobs:
     needs: [trusted_ref_guard]
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout trusted workflow control bytes
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -172,7 +178,7 @@ jobs:
   prepare_candidate:
     name: Prepare exact Docker source candidate
     needs: [release_actor_guard]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
@@ -205,14 +211,6 @@ jobs:
             --source-ref "$SOURCE_REF" \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Guard stable channel
-        if: ${{ inputs.channel == 'stable' && steps.channel_meta.outputs.source_ref != 'main' }}
-        env:
-          RESOLVED_SOURCE_REF: ${{ steps.channel_meta.outputs.source_ref }}
-        run: |
-          echo "Stable Docker publishing must build from main (resolved ref: '$RESOLVED_SOURCE_REF')." >&2
-          exit 1
-
       - name: Checkout exact candidate source as inert data
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -237,6 +235,27 @@ jobs:
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
           echo "artifact_source_ref=$artifact_source_ref" >> "$GITHUB_OUTPUT"
 
+      - name: Verify admitted publication source
+        if: ${{ inputs.promotion_source_ref != '' || (inputs.channel == 'stable') }}
+        working-directory: .candidate-source
+        env:
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
+          PROMOTION_SOURCE_REF: ${{ inputs.promotion_source_ref }}
+          CANONICAL_REF: ${{ inputs.channel == 'stable' && 'main' || inputs.channel }}
+        run: |
+          set -euo pipefail
+          source_ref="$CANONICAL_REF"
+          args=()
+          if [ -n "$PROMOTION_SOURCE_REF" ]; then
+            test -n "$AUTHORIZED_SHA"
+            source_ref="$PROMOTION_SOURCE_REF"
+            args+=(--allow-source-ancestor)
+          fi
+          if [ -z "$AUTHORIZED_SHA" ]; then AUTHORIZED_SHA="$(git rev-parse HEAD)"; fi
+          node "$GITHUB_WORKSPACE/scripts/pipeline/github/resolve-authorized-release-source.mjs" \
+            --source-ref "refs/heads/$source_ref" \
+            --authorized-sha "$AUTHORIZED_SHA" "${args[@]}"
+
       - name: Pack exact candidate source as data
         working-directory: .candidate-source
         run: |
@@ -254,7 +273,7 @@ jobs:
   publish:
     name: Build and push exact candidate images
     needs: [prepare_candidate]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release-shared
     permissions:
       contents: read

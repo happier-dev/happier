@@ -114,6 +114,10 @@ on:
         type: boolean
   workflow_call:
     inputs:
+      source_binary_smoke_validated:
+        required: false
+        default: false
+        type: boolean
       channel:
         required: true
         type: string
@@ -190,6 +194,11 @@ on:
         required: false
         default: ""
         type: string
+      verify_channel_ref:
+        description: "Verify the channel branch; release candidates are verified before branch promotion"
+        required: false
+        default: true
+        type: boolean
       verify_deploy_ui:
         required: false
         default: false
@@ -238,14 +247,10 @@ permissions:
 env:
   HAPPIER_TYPESCRIPT_COMPILER: microsoft
 
-concurrency:
-  group: release-verify-${{ inputs.channel }}-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   verify_candidate_identity:
     name: Verify exact deployed and artifact candidate identities
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout trusted workflow control bytes
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -284,6 +289,7 @@ jobs:
           CANDIDATE_SERVER_VERSION: ${{ inputs.candidate_server_version }}
           CANDIDATE_RUNNER_VERSION: ${{ inputs.candidate_runner_version }}
           CANDIDATE_UI_WEB_VERSION: ${{ inputs.candidate_ui_web_version }}
+          VERIFY_CHANNEL_REF: ${{ inputs.verify_channel_ref }}
           VERIFY_DEPLOY_UI: ${{ inputs.verify_deploy_ui }}
           VERIFY_DEPLOY_SERVER: ${{ inputs.verify_deploy_server }}
           VERIFY_DEPLOY_WEBSITE: ${{ inputs.verify_deploy_website }}
@@ -313,6 +319,7 @@ jobs:
             --retained-server-version "$RETAINED_SERVER_VERSION" \
             --retained-runner-version "$RETAINED_RUNNER_VERSION" \
             --derive-targets true \
+            --verify-channel-ref "$VERIFY_CHANNEL_REF" \
             --verify-deploy-ui "$VERIFY_DEPLOY_UI" \
             --verify-deploy-server "$VERIFY_DEPLOY_SERVER" \
             --verify-deploy-website "$VERIFY_DEPLOY_WEBSITE" \
@@ -392,7 +399,7 @@ jobs:
 
   resolve_validation_profile:
     name: Resolve bounded validation profile
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
@@ -425,6 +432,7 @@ jobs:
       - name: Resolve candidate-applicable validation suites
         id: profile
         env:
+          SOURCE_BINARY_SMOKE_VALIDATED: ${{ inputs.source_binary_smoke_validated }}
           VALIDATION_PROFILE: ${{ inputs.validation_profile }}
           CANDIDATE_CLI_VERSION: ${{ inputs.candidate_cli_version }}
           CANDIDATE_SERVER_VERSION: ${{ inputs.candidate_server_version }}
@@ -438,6 +446,7 @@ jobs:
           set -euo pipefail
           node .release-control/scripts/pipeline/release-validation/resolve-validation-plan.mjs \
             --profile "$VALIDATION_PROFILE" \
+            --source-binary-smoke-validated "$SOURCE_BINARY_SMOKE_VALIDATED" \
             --has-cli-candidate "$([ -n "$CANDIDATE_CLI_VERSION" ] && echo true || echo false)" \
             --has-server-candidate "$([ -n "$CANDIDATE_SERVER_VERSION" ] && echo true || echo false)" \
             --has-published-relay-predecessor "$(if [[ "$RELEASE_CHANNEL" == preview || "$RELEASE_CHANNEL" == production ]]; then echo true; else echo false; fi)" \
@@ -453,6 +462,7 @@ jobs:
     needs: [verify_candidate_identity, resolve_validation_profile]
     uses: ./.github/workflows/tests.yml
     with:
+      artifact_namespace: ${{ format('verify-{0}-{1}-{2}-{3}-{4}-{5}', inputs.channel, inputs.candidate_cli_version, inputs.candidate_stack_version, inputs.candidate_server_version, inputs.candidate_runner_version, inputs.candidate_ui_web_version) }}
       select_jobs_explicitly: true
       run_ui: false
       run_shared_packages: false

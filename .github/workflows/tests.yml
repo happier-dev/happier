@@ -8,8 +8,15 @@ on:
       - preview
       - main
       - v0.3
+  schedule:
+    - cron: "43 1 * * *"
   workflow_call:
     inputs:
+      artifact_namespace:
+        description: "Scope artifacts and concurrency for repeated validations in one workflow run"
+        required: false
+        default: ''
+        type: string
       select_jobs_explicitly:
         description: "Honor run_* inputs instead of running the ordinary CI defaults"
         required: false
@@ -214,7 +221,7 @@ on:
         type: string
 
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}
+  group: tests-${{ github.workflow }}-${{ github.ref }}${{ inputs.artifact_namespace != '' && format('-{0}', inputs.artifact_namespace) || '' }}
   # Push runs keep their complete exact-SHA verdict: nightly and release source
   # validation consume dev/preview verdicts (verify-existing-ci.mjs), and on
   # v0.3 several sessions push faster than a run lasts, so cancelling would
@@ -231,6 +238,47 @@ permissions:
   contents: read
 
 jobs:
+  ci_plan:
+    name: Resolve affected release-only source checks
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run_self_host_schtasks: ${{ steps.pre_release.outputs.run_self_host_schtasks }}
+      run_packaged_cli: ${{ steps.pre_release.outputs.run_packaged_cli }}
+      run_mobile_native: ${{ steps.pre_release.outputs.run_mobile_native }}
+    steps:
+      - name: Checkout
+        if: ${{ !inputs.select_jobs_explicitly }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'v0.3' || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup Node
+        if: ${{ !inputs.select_jobs_explicitly }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+
+      - name: Classify changed source paths
+        id: changes
+        if: ${{ !inputs.select_jobs_explicitly && github.event_name != 'schedule' }}
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad
+        with:
+          list-files: json
+          filters: |
+            changed:
+              - '**'
+      - name: Select release-only checks before publication
+        id: pre_release
+        if: ${{ !inputs.select_jobs_explicitly }}
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CHANGED_PATHS_JSON: ${{ steps.changes.outputs.changed_files || '[]' }}
+        run: node scripts/pipeline/release/resolve-source-validation-plan.mjs --pre-release-checks
+
   gate-prepare:
     name: Gate — select and prepare shared workspace
     if: ${{ !inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')) }}
@@ -241,8 +289,12 @@ jobs:
     timeout-minutes: 110
     permissions:
       contents: read
+      actions: read
     outputs:
       packages: ${{ steps.select.outputs.packages }}
+      metadata_only: ${{ steps.select.outputs.metadata_only }}
+      metadata_base_sha: ${{ steps.select.outputs.metadata_base_sha }}
+      metadata_base_run_id: ${{ steps.select.outputs.metadata_base_run_id }}
       unit_matrix: ${{ steps.select.outputs.unit_matrix }}
       server_db_contract: ${{ steps.select.outputs.server_db_contract }}
       node_version: ${{ steps.toolchain.outputs.node_version }}
@@ -263,6 +315,7 @@ jobs:
         id: select
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           base="$BASE_SHA"
@@ -271,6 +324,9 @@ jobs:
           fi
           packages="$(git diff --no-renames --name-only -z "$base" HEAD | node scripts/ci/selectAffectedGatePackages.mjs)"
           echo "Affected gate packages: $packages"
+      - name: Validate final child release-note projections
+        if: ${{ steps.select.outputs.metadata_only == 'true' }}
+        run: node --test scripts/release/release_notes_projection.contract.test.mjs
       - name: Observe the shared toolchain
         id: toolchain
         run: echo "node_version=$(node -p 'process.versions.node')" >> "$GITHUB_OUTPUT"
@@ -436,12 +492,21 @@ jobs:
   gate-compiler:
     name: Gate — UI compiler diagnostics
     needs: [gate-prepare]
+    if: ${{ needs.gate-prepare.outputs.metadata_only != 'true' }}
     runs-on: ubuntu-24.04
     # Successful compiler plus preparation: 42m33s; more than twice that sample,
     # plus the 20-minute budget of the ordinary release-contracts lane it also runs.
     timeout-minutes: 110
     permissions:
       contents: read
+    outputs:
+      source_suite: release-contracts
+      source_profile: ${{ github.ref_name == 'main' && 'stable' || 'integrated' }}
+      source_policy: ${{ (inputs.select_jobs_explicitly && inputs.installers_channel == 'stable' || !inputs.select_jobs_explicitly && github.ref_name == 'main') && 'production' || 'preview' }}
+      source_sha: ${{ github.sha }}
+    env:
+      HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.select_jobs_explicitly && inputs.installers_channel == 'stable' || !inputs.select_jobs_explicitly && github.ref_name == 'main') && 'production' || 'preview' }}
+
     steps:
       - name: Require the shared workspace package build
         env:
@@ -668,7 +733,7 @@ jobs:
   gate:
     name: Gate
     if: ${{ always() && !inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')) }}
-    needs: [gate-prepare, gate-compiler, gate-unit, gate-build-artifacts, server-db-contract, installers-smoke-windows]
+    needs: [ci_plan, pre-release-packaged-cli, pre-release-mobile-native, self-host-schtasks-e2e, gate-prepare, gate-compiler, gate-unit, gate-build-artifacts, server-db-contract, installers-smoke-windows]
     runs-on: ubuntu-24.04
     # Normally terminating aggregate: 6s; twice that sample rounded up.
     timeout-minutes: 1
@@ -678,17 +743,40 @@ jobs:
       - name: Require every selected check to succeed
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          CI_RUN_ID: ${{ github.run_id }}
+          CI_SOURCE_SHA: ${{ github.sha }}
         run: |
           node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs';
           const needs = JSON.parse(process.env.NEEDS_JSON);
           const noUnits = needs['gate-prepare'].outputs.packages === '[]';
+          const metadataOnly = needs['gate-prepare'].outputs.metadata_only === 'true';
           for (const [id, job] of Object.entries(needs)) {
             if (job.result === 'success' || (id === 'gate-unit' && noUnits && job.result === 'skipped')) continue;
+            const preReleaseSelection = {
+              'pre-release-packaged-cli': 'run_packaged_cli',
+              'pre-release-mobile-native': 'run_mobile_native',
+              'self-host-schtasks-e2e': 'run_self_host_schtasks',
+            }[id];
+            if (preReleaseSelection && needs.ci_plan.outputs[preReleaseSelection] === 'false' && job.result === 'skipped') continue;
+            if (id === 'gate-compiler' && metadataOnly && job.result === 'skipped') continue;
             if (id === 'server-db-contract' && needs['gate-prepare'].outputs.server_db_contract === 'false' && job.result === 'skipped') continue;
             console.error(`::error::${id}: ${job.result}`);
             process.exitCode = 1;
           }
+          const summary = {
+            schemaVersion: 1, runId: process.env.CI_RUN_ID, sourceSha: process.env.CI_SOURCE_SHA,
+            failures: Object.entries(needs).filter(([, job]) => job.result === 'failure' || job.result === 'cancelled').map(([id]) => id),
+            lanes: Object.entries(needs).map(([id, job]) => ({ id, ...job })),
+          };
+          writeFileSync('ci-summary.json', `${JSON.stringify(summary)}\n`);
           NODE
+      - name: Upload exact-source gate evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-lane-summary
+          path: ci-summary.json
+          if-no-files-found: error
 
   cliproxyapi-managed-runtime:
     if: ${{ !(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3'))) && (!inputs.select_jobs_explicitly || inputs.run_cli) }}
@@ -885,7 +973,7 @@ jobs:
         if: (inputs.select_jobs_explicitly || steps.changes.outputs.ui_e2e == 'true') && failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ui-e2e-playwright-artifacts-shard-${{ matrix.shard }}-of-18
+          name: ${{ inputs.artifact_namespace != '' && format('{0}-', inputs.artifact_namespace) || '' }}ui-e2e-playwright-artifacts-shard-${{ matrix.shard }}-of-18
           compression-level: 0
           path: |
             packages/tests/.project/logs/e2e/ui-playwright
@@ -1289,7 +1377,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: mobile-e2e-maestro-android-artifacts
+          name: ${{ inputs.artifact_namespace != '' && format('{0}-', inputs.artifact_namespace) || '' }}mobile-e2e-maestro-android-artifacts
           path: |
             packages/tests/.project/logs/e2e/mobile-maestro
           if-no-files-found: ignore
@@ -1298,7 +1386,7 @@ jobs:
     # Native E2E is intentionally opt-in for now (not a PR check).
     if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_mobile_e2e_ios) }}
     name: Mobile E2E (Maestro) (ios) (opt-in)
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -1330,7 +1418,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: mobile-e2e-maestro-ios-artifacts
+          name: ${{ inputs.artifact_namespace != '' && format('{0}-', inputs.artifact_namespace) || '' }}mobile-e2e-maestro-ios-artifacts
           path: |
             packages/tests/.project/logs/e2e/mobile-maestro
           if-no-files-found: ignore
@@ -1843,8 +1931,16 @@ jobs:
   release-contracts:
     if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_release_contracts) }}
     name: Release Contracts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
+    outputs:
+      source_suite: release-contracts
+      source_profile: ${{ github.ref_name == 'main' && 'stable' || 'integrated' }}
+      source_policy: ${{ (inputs.select_jobs_explicitly && inputs.installers_channel == 'stable' || !inputs.select_jobs_explicitly && github.ref_name == 'main') && 'production' || 'preview' }}
+      source_sha: ${{ github.sha }}
+    env:
+      HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.select_jobs_explicitly && inputs.installers_channel == 'stable' || !inputs.select_jobs_explicitly && github.ref_name == 'main') && 'production' || 'preview' }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -1871,7 +1967,7 @@ jobs:
   installers-smoke-linux:
     if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_installers_smoke) }}
     name: Installer Smoke (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       INSTALLERS_CHANNEL: ${{ inputs.select_jobs_explicitly && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'preview' }}
@@ -1918,7 +2014,7 @@ jobs:
   installers-smoke-macos:
     if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_installers_smoke) }}
     name: Installer Smoke (macOS)
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 25
     env:
       INSTALLERS_CHANNEL: ${{ inputs.select_jobs_explicitly && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'preview' }}
@@ -1965,7 +2061,7 @@ jobs:
   installers-smoke-windows:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_installers_smoke }}
     name: Installer Smoke (Windows)
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 45
     env:
       INSTALLERS_CHANNEL: ${{ inputs.select_jobs_explicitly && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'preview' }}
@@ -1980,6 +2076,13 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version
+
+      - name: Compile x64 GUI service launcher with the installed MSVC toolchain
+        shell: cmd
+        run: call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 && node scripts\pipeline\release\build-windows-service-launcher.mjs
+      - name: Test native service launcher lifecycle
+        shell: pwsh
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packages/cli-common/native/windows/service-launcher.test.ps1
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -2024,7 +2127,7 @@ jobs:
   artifact-verify:
     if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.run_artifact_verify) }}
     name: Candidate Artifact Verify (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -2085,6 +2188,14 @@ jobs:
     name: Binary Smoke (isolated cwd)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 120
+    outputs:
+      source_suite: binary-smoke
+      source_profile: ${{ github.ref_name == 'main' && 'stable' || 'integrated' }}
+      source_policy: preview
+      source_sha: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+    env:
+      HAPPIER_EMBEDDED_POLICY_ENV: preview
+
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -2198,7 +2309,7 @@ jobs:
     name: Release Validation — CLI Update Continuity (Linux)
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
       CLI_UPDATE_FROM_CHANNEL: ${{ inputs.installers_channel }}
@@ -2252,7 +2363,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: cli-update-continuity-artifacts
+          name: ${{ inputs.artifact_namespace != '' && format('{0}-', inputs.artifact_namespace) || '' }}cli-update-continuity-artifacts
           path: |
             .project/logs/e2e/*core*/cli-update-*/*.log
             .project/logs/e2e/*core*/cli-update-*/*.json
@@ -2263,7 +2374,7 @@ jobs:
   daemon-continuity:
     if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.run_daemon_continuity) }}
     name: Release Validation — Daemon Continuity (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -2310,14 +2421,14 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: daemon-continuity-artifacts
+          name: ${{ inputs.artifact_namespace != '' && format('{0}-', inputs.artifact_namespace) || '' }}daemon-continuity-artifacts
           path: .project/logs/e2e
           if-no-files-found: ignore
 
   session-continuity:
     if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.run_session_continuity) }}
     name: Release Validation — Session Continuity (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -2364,14 +2475,14 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: session-continuity-artifacts
+          name: ${{ inputs.artifact_namespace != '' && format('{0}-', inputs.artifact_namespace) || '' }}session-continuity-artifacts
           path: .project/logs/e2e
           if-no-files-found: ignore
 
   release-assets-docker:
     if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_release_assets_docker) }}
     name: Release Assets Docker (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -2424,7 +2535,7 @@ jobs:
   self-host-systemd-e2e:
     if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_self_host_systemd) }}
     name: Self-Host E2E (Linux systemd)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -2458,7 +2569,7 @@ jobs:
   self-host-launchd-e2e:
     if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_self_host_launchd) }}
     name: Self-Host E2E (macOS launchd)
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -2490,20 +2601,28 @@ jobs:
           node --test apps/stack/scripts/self_host_launchd.real.integration.test.mjs
 
   self-host-schtasks-e2e:
-    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_self_host_schtasks) }}
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_self_host_schtasks) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_self_host_schtasks == 'true') }}
+    needs: [ci_plan]
     name: Self-Host E2E (Windows schtasks)
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || (github.event_name == 'schedule' && 'v0.3' || github.sha) }}
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version
+
+      - name: Compile x64 GUI service launcher with the installed MSVC toolchain
+        shell: cmd
+        run: call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 && node scripts\pipeline\release\build-windows-service-launcher.mjs
+      - name: Test native service launcher lifecycle
+        shell: pwsh
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packages/cli-common/native/windows/service-launcher.test.ps1
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -2518,6 +2637,9 @@ jobs:
         with:
           args: --frozen-lockfile
 
+      - name: Build self-host harness workspace dependencies
+        run: node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs @happier-dev/cli-common
+
       - name: Run real schtasks self-host E2E
         run: node --test apps/stack/scripts/self_host_schtasks.real.integration.test.mjs
 
@@ -2527,7 +2649,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, macos-26]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     steps:
@@ -2614,7 +2736,7 @@ jobs:
   cli-daemon-e2e:
     if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_cli_daemon_e2e) }}
     name: CLI + Server (light/sqlite) E2E
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
       PORT: "3005"
@@ -2880,7 +3002,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: core-e2e-artifacts-fast-sqlite
+          name: ${{ inputs.artifact_namespace != '' && format('{0}-', inputs.artifact_namespace) || '' }}core-e2e-artifacts-fast-sqlite
           path: .project/logs/e2e
 
   e2e-core-slow:
@@ -2932,7 +3054,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: core-e2e-artifacts-slow-sqlite
+          name: ${{ inputs.artifact_namespace != '' && format('{0}-', inputs.artifact_namespace) || '' }}core-e2e-artifacts-slow-sqlite
           path: .project/logs/e2e
 
   trusted_ref_guard:
@@ -2940,7 +3062,7 @@ jobs:
     name: Trusted workflow ref guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       ubuntu_2204: ${{ steps.runner_pool.outputs.ubuntu_2204 }}
       ubuntu_2404: ${{ steps.runner_pool.outputs.ubuntu_2404 }}
@@ -2976,7 +3098,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -2995,7 +3117,7 @@ jobs:
     needs: [release_actor_guard]
     if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_providers) }}
     name: Providers (contract matrix)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: providers-ci
     timeout-minutes: 120
     steps:
@@ -3135,13 +3257,13 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: providers-artifacts
+          name: ${{ inputs.artifact_namespace != '' && format('{0}-', inputs.artifact_namespace) || '' }}providers-artifacts
           path: .project/logs/e2e
 
   stress:
     if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.run_stress) }}
     name: Stress (repeat/chaos)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -3207,15 +3329,197 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: stress-artifacts
+          name: ${{ inputs.artifact_namespace != '' && format('{0}-', inputs.artifact_namespace) || '' }}stress-artifacts
           path: .project/logs/e2e
           if-no-files-found: ignore
+
+  pre-release-packaged-cli:
+    name: Packaged CLI build and runtime smoke (${{ matrix.target }})
+    if: ${{ !inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_packaged_cli == 'true' }}
+    needs: [ci_plan]
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: darwin-arm64
+            runner: macos-15
+          - target: windows-x64
+            runner: windows-2022
+    env:
+      HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+      HAPPIER_EMBEDDED_POLICY_ENV: preview
+      MINISIGN_SECRET_KEY: ""
+      MINISIGN_PASSPHRASE: ""
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'v0.3' || github.sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: apps/stack/scripts/provision/.bun-version
+      - name: Setup pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.94.1 --profile minimal
+          rustup default 1.94.1
+      - name: Setup pinned Go toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: packages/plugins/cliproxyapi/managed-runtime/go.mod
+          cache-dependency-path: packages/plugins/cliproxyapi/managed-runtime/go.sum
+      - name: Install dependencies
+        uses: ./.github/actions/install-pnpm-dependencies
+        with:
+          args: --frozen-lockfile
+          cross-target-optionals: 'true'
+      - name: Prepare the native Iroh runtime through its package owner
+        run: |
+          pnpm --filter @happier-dev/iroh-native run build
+          pnpm --filter @happier-dev/iroh-native run build:native
+          pnpm --filter @happier-dev/iroh-native run verify:native
+      - name: Compile Windows service launcher
+        if: matrix.target == 'windows-x64'
+        shell: cmd
+        run: call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 && node scripts\pipeline\release\build-windows-service-launcher.mjs
+      - name: Build packaged CLI for the native target
+        env:
+          CLI_TARGET: ${{ matrix.target }}
+        run: node scripts/pipeline/release/build-cli-binaries.mjs --channel preview --targets "$CLI_TARGET"
+      - name: Execute every packaged CLI component on the native target
+        env:
+          CLI_TARGET: ${{ matrix.target }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readdir } from 'node:fs/promises';
+          import { join } from 'node:path';
+          import { smokeTestArchive } from './scripts/pipeline/release/verify-artifacts.mjs';
+          const root = 'dist/release-assets/cli';
+          const archives = (await readdir(root)).filter((name) => name.endsWith(`-${process.env.CLI_TARGET}.tar.gz`));
+          if (archives.length === 0) throw new Error('CLI build produced no archives for its native target');
+          for (const archive of archives) await smokeTestArchive({ archivePath: join(root, archive) });
+          NODE
+
+  pre-release-mobile-native:
+    name: Pre-release native compile (${{ matrix.platform }})
+    needs: [ci_plan]
+    if: ${{ !inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_mobile_native == 'true' }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: android
+            runner: ubuntu-24.04
+          - platform: ios
+            runner: xcode-27
+    env:
+      CI: "1"
+      EXPO_NO_TELEMETRY: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'v0.3' || github.sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+
+      - name: Load canonical native build environment
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+          import { resolveEasBuildProfileEnv } from './scripts/pipeline/expo/resolve-eas-build-profile-env.mjs';
+          const env = resolveEasBuildProfileEnv({ easJsonPath: 'apps/ui/eas.json', profileId: 'preview' });
+          for (const [key, value] of Object.entries(env)) appendFileSync(process.env.GITHUB_ENV, `${key}=${value}\n`);
+          NODE
+
+      - name: Select hosted Android Java toolchain
+        if: ${{ matrix.platform == 'android' }}
+        run: |
+          test -d "$JAVA_HOME_17_X64"
+          test -d "$ANDROID_HOME"
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+
+      - name: Setup Xcode (pin)
+        if: ${{ matrix.platform == 'ios' }}
+        uses: ./.github/actions/setup-xcode
+        with:
+          xcode_version: "27.1"
+
+      - name: Reclaim iOS runner disk
+        if: ${{ matrix.platform == 'ios' }}
+        uses: ./.github/actions/reclaim-ios-runner-disk
+
+      - name: Install dependencies
+        uses: ./.github/actions/install-pnpm-dependencies
+        with:
+          args: --frozen-lockfile
+
+      - name: Prepare UI workspaces
+        working-directory: apps/ui
+        run: node scripts/ensureWorkspacePackagesBuilt.mjs
+
+      - name: Generate native project
+        working-directory: apps/ui
+        run: pnpm exec expo prebuild --platform ${{ matrix.platform }} --no-install
+
+      - name: Apply canonical native patches
+        working-directory: apps/ui
+        run: pnpm run eas-build-post-install
+
+      - name: Compile Android Debug
+        if: ${{ matrix.platform == 'android' }}
+        working-directory: apps/ui/android
+        run: ./gradlew :app:assembleDebug
+
+      - name: Install iOS pods
+        if: ${{ matrix.platform == 'ios' }}
+        working-directory: apps/ui/ios
+        run: pod install
+
+      - name: Compile unsigned iOS simulator app
+        if: ${{ matrix.platform == 'ios' }}
+        working-directory: apps/ui
+        run: |
+          set -euo pipefail
+          workspaces=(ios/*.xcworkspace)
+          workspace="${workspaces[0]}"
+          scheme="$(basename "$workspace" .xcworkspace)"
+          xcodebuild -workspace "$workspace" -scheme "$scheme" \
+            -sdk iphonesimulator -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/native-derived-data" \
+            build CODE_SIGNING_ALLOWED=NO
 
   ci_summary:
     if: ${{ always() && !(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3'))) }}
     name: CI result summary (all lanes)
-    needs: [cliproxyapi-managed-runtime, ui-e2e, workspace-sync-real, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, action-map-drift, shared-packages-unit, plugin-workspaces-unit, server, home-iroh-real, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, artifact-verify, binary-smoke, build-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress]
-    runs-on: ubuntu-latest
+    needs: [ci_plan, pre-release-packaged-cli, pre-release-mobile-native, cliproxyapi-managed-runtime, ui-e2e, workspace-sync-real, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, action-map-drift, shared-packages-unit, plugin-workspaces-unit, server, home-iroh-real, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, artifact-verify, binary-smoke, build-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress]
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -3237,6 +3541,16 @@ jobs:
           const needs = JSON.parse(process.env.NEEDS_JSON);
           const inputs = JSON.parse(process.env.CI_INPUTS_JSON || '{}');
           const requiredLanes = jobsForSelectedInputs({ inputs });
+          if (!inputs.select_jobs_explicitly) {
+            requiredLanes.add('ci_plan');
+            for (const [output, job] of Object.entries({
+              run_self_host_schtasks: 'self-host-schtasks-e2e',
+              run_packaged_cli: 'pre-release-packaged-cli',
+              run_mobile_native: 'pre-release-mobile-native',
+            })) {
+              if (needs.ci_plan.outputs[output] === 'true') requiredLanes.add(job);
+            }
+          }
           const { lanes, failures } = collectCiSummary({ needs, requiredJobs: requiredLanes });
           for (const lane of lanes) console.log(`${lane.id} => ${lane.result ?? 'unknown'}`);
           const summary = {
@@ -3259,6 +3573,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ci-lane-summary
+          name: ${{ inputs.artifact_namespace != '' && format('{0}-', inputs.artifact_namespace) || '' }}ci-lane-summary
           path: ci-summary.json
           if-no-files-found: error

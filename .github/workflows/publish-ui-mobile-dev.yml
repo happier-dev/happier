@@ -81,7 +81,7 @@ jobs:
     name: Trusted workflow ref guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -93,6 +93,7 @@ jobs:
           set -euo pipefail
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/v0.3"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
@@ -105,7 +106,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -125,7 +126,7 @@ jobs:
     name: Prepare exact dev OTA bytes without credentials
     needs: [release_actor_guard]
     if: inputs.publish_ota
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
@@ -188,7 +189,7 @@ jobs:
     name: Publish prepared dev OTA bytes from trusted control
     needs: [release_actor_guard, prepare_ota]
     if: inputs.publish_ota
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release-shared
     permissions:
       contents: read
@@ -243,7 +244,7 @@ jobs:
   publish:
     timeout-minutes: 240
     needs: [release_actor_guard]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release-shared
     steps:
       - name: Create GitHub App token
@@ -306,7 +307,7 @@ jobs:
             --build-json "/tmp/eas_build.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --secrets-source env
 
       - name: Install Dagger (local Android builds)
@@ -337,7 +338,7 @@ jobs:
             --build-json "/tmp/eas_build.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --secrets-source env
 
       - name: Note
@@ -350,7 +351,7 @@ jobs:
     name: iOS TestFlight submit (dev lane) (cloud, best-effort)
     needs: [release_actor_guard]
     if: inputs.submit_ios_testflight && inputs.eas_builder == 'eas_cloud'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       actions: write
       contents: read
@@ -439,7 +440,7 @@ jobs:
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
             --testflight-distribution-mode deferred \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --secrets-source env
 
       - name: Dispatch exact TestFlight reconciliation
@@ -460,7 +461,7 @@ jobs:
     name: iOS TestFlight submit (dev lane) (local, best-effort)
     needs: [release_actor_guard]
     if: inputs.submit_ios_testflight && inputs.eas_builder == 'eas_local'
-    runs-on: macos-26
+    runs-on: xcode-27
     permissions:
       actions: write
       contents: read
@@ -531,7 +532,10 @@ jobs:
       - name: Setup Xcode (pin)
         uses: ./.github/actions/setup-xcode
         with:
-          xcode_version: "26.2"
+          xcode_version: "27.1"
+
+      - name: Reclaim iOS runner disk
+        uses: ./.github/actions/reclaim-ios-runner-disk
 
       - name: iOS TestFlight submit (dev lane) (best-effort)
         env:
@@ -555,7 +559,7 @@ jobs:
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
             --testflight-distribution-mode deferred \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --secrets-source env
 
       - name: Dispatch exact TestFlight reconciliation

@@ -49,6 +49,10 @@ on:
         type: boolean
   workflow_call:
     inputs:
+      source_contracts_result:
+        required: false
+        default: ""
+        type: string
       channel:
         required: true
         type: string
@@ -92,10 +96,13 @@ concurrency:
   group: publish-ui-web-${{ github.repository }}-${{ inputs.channel }}
   cancel-in-progress: false
 
+env:
+  HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT: ${{ inputs.source_contracts_result }}
+
 jobs:
   trusted_ref_guard:
     name: Trust called workflow repository and ref
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -113,6 +120,7 @@ jobs:
           esac
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/publish-ui-web.yml@refs/heads/v0.3"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-ui-web.yml@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-ui-web.yml@refs/heads/preview"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-ui-web.yml@refs/heads/main") ;;
@@ -124,7 +132,7 @@ jobs:
     needs: [trusted_ref_guard]
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       resume_version: ${{ steps.resume.outputs.version }}
     steps:
@@ -174,7 +182,7 @@ jobs:
   prepare:
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [release_actor_guard]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
@@ -291,7 +299,7 @@ jobs:
     name: Build unsigned UI-web candidate
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [prepare]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions: {}
     env:
       EXPO_UNSTABLE_WEB_MODAL: "1"
@@ -390,7 +398,7 @@ jobs:
   publish:
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [prepare, build_candidate]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release-shared
     permissions:
       contents: write
@@ -487,21 +495,21 @@ jobs:
           node scripts/pipeline/release/publish-ui-web.mjs \
             --channel "$CHANNEL" \
             --allow-stable "$ALLOW_STABLE" \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --phase "$PUBLISH_PHASE" \
             --base-version "$BASE_VERSION" \
             --version "$VERSION" \
             --authorized-sha "$AUTHORIZED_SHA" \
             --prepared-artifacts \
             --github-output "$GITHUB_OUTPUT" \
-            --run-contracts "true" \
+            --run-contracts auto \
             --check-installers "true"
 
   promote_existing:
     name: Recover rolling UI web projection
     if: ${{ inputs.retry_version != '' && inputs.resume_version == '' }}
     needs: [release_actor_guard]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release-shared
     permissions:
       contents: write
@@ -555,7 +563,7 @@ jobs:
           node scripts/pipeline/release/publish-ui-web.mjs \
             --channel "$CHANNEL" \
             --allow-stable "$ALLOW_STABLE" \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --phase promote-rolling \
             --version "$RETRY_VERSION" \
             --authorized-sha "$AUTHORIZED_SHA" \

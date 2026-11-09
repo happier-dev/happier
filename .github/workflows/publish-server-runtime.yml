@@ -46,6 +46,10 @@ on:
         type: boolean
   workflow_call:
     inputs:
+      source_contracts_result:
+        required: false
+        default: ""
+        type: string
       channel:
         required: true
         type: string
@@ -89,10 +93,13 @@ concurrency:
   group: publish-server-runtime-${{ github.repository }}-${{ inputs.channel }}
   cancel-in-progress: false
 
+env:
+  HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT: ${{ inputs.source_contracts_result }}
+
 jobs:
   trusted_ref_guard:
     name: Trust called workflow repository and ref
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -110,6 +117,7 @@ jobs:
           esac
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/publish-server-runtime.yml@refs/heads/v0.3"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-server-runtime.yml@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-server-runtime.yml@refs/heads/preview"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-server-runtime.yml@refs/heads/main") ;;
@@ -121,7 +129,7 @@ jobs:
     needs: [trusted_ref_guard]
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       resume_version: ${{ steps.resume.outputs.version }}
     steps:
@@ -635,14 +643,14 @@ jobs:
           node scripts/pipeline/release/publish-server-runtime.mjs \
             --channel "$RELEASE_CHANNEL" \
             --allow-stable "$ALLOW_STABLE" \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --version "$RELEASE_VERSION" \
             --base-version "$CANDIDATE_BASE_VERSION" \
             --authorized-sha "$AUTHORIZED_SHA" \
             --phase "$PUBLISH_PHASE" \
             --prepared-artifacts \
             --skip-smoke \
-            --run-contracts true \
+            --run-contracts auto \
             --check-installers true
 
   promote_existing:
@@ -705,7 +713,7 @@ jobs:
           node scripts/pipeline/release/publish-server-runtime.mjs \
             --channel "$RELEASE_CHANNEL" \
             --allow-stable "$ALLOW_STABLE" \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --phase promote-rolling \
             --version "$RETRY_VERSION" \
             --authorized-sha "$AUTHORIZED_SHA" \

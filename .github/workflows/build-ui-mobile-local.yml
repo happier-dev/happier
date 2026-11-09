@@ -204,7 +204,7 @@ jobs:
     name: Trusted workflow ref guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -216,6 +216,7 @@ jobs:
           set -euo pipefail
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/v0.3"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
@@ -228,7 +229,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -246,7 +247,7 @@ jobs:
   resolve_existing_apk:
     name: Resolve existing production APK candidate
     needs: [release_actor_guard]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
@@ -324,7 +325,7 @@ jobs:
     name: Validate EXPO_TOKEN
     needs: [release_actor_guard]
     if: ${{ inputs.retry_version == '' && inputs.action != 'retry_testflight_distribution' && inputs.action != 'retry_store_publication' && (inputs.action == 'ota' || inputs.action == 'retry_android_store_submit' || inputs.platform == 'all' || inputs.platform == 'android' || inputs.platform == 'ios') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release-shared
     steps:
       - name: Fail when EXPO_TOKEN is missing
@@ -343,7 +344,7 @@ jobs:
     name: Validate APPLE_API_PRIVATE_KEY (iOS submit)
     needs: [release_actor_guard]
     if: ${{ ((inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'ios')) || inputs.action == 'retry_testflight_distribution' || (inputs.action == 'retry_store_publication' && inputs.platform == 'ios')) && (inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'production') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release-shared
     steps:
       - name: Fail when APPLE_API_PRIVATE_KEY is missing
@@ -362,7 +363,7 @@ jobs:
     name: Build (android)
     if: ${{ inputs.retry_version == '' && needs.resolve_existing_apk.outputs.retry_version == '' && inputs.action != 'ota' && inputs.action != 'retry_android_store_submit' && inputs.action != 'retry_testflight_distribution' && inputs.action != 'retry_store_publication' && (inputs.platform == 'all' || inputs.platform == 'android') }}
     needs: [release_actor_guard, validate_expo_token, resolve_existing_apk]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     environment: release-shared
@@ -444,7 +445,7 @@ jobs:
             --build-json "/tmp/eas_build_${EAS_PLATFORM}.json" \
             --out-dir "dist/ui-mobile" \
             --publish-apk-release false \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             "${store_args[@]}" \
             --secrets-source env
 
@@ -495,7 +496,7 @@ jobs:
     name: Sign and publish Android APK
     if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && (inputs.platform == 'all' || inputs.platform == 'android') && needs.build_android.outputs.has_apk == 'true' }}
     needs: [release_actor_guard, build_android]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     environment: release-shared
@@ -550,14 +551,14 @@ jobs:
             --apk-path "${apks[0]}" \
             --version "$APP_VERSION" \
             --target-sha "$AUTHORIZED_SHA" \
-            --release-message "$RELEASE_MESSAGE"
+            --release-message="$RELEASE_MESSAGE"
 
   build_ios:
     timeout-minutes: 240
     name: Build (ios)
     if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && inputs.action != 'retry_android_store_submit' && inputs.action != 'retry_testflight_distribution' && inputs.action != 'retry_store_publication' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     needs: [release_actor_guard, validate_expo_token]
-    runs-on: macos-26
+    runs-on: xcode-27
     permissions:
       actions: write
       contents: read
@@ -599,7 +600,10 @@ jobs:
       - name: Setup Xcode (pin)
         uses: ./.github/actions/setup-xcode
         with:
-          xcode_version: "26.2"
+          xcode_version: "27.1"
+
+      - name: Reclaim iOS runner disk
+        uses: ./.github/actions/reclaim-ios-runner-disk
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -643,7 +647,7 @@ jobs:
             --out-dir "dist/ui-mobile" \
             --publish-apk-release false \
             --testflight-distribution-mode deferred \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             "${store_args[@]}" \
             --secrets-source env
 
@@ -677,7 +681,7 @@ jobs:
     name: Resume Android store submission (preserved AAB)
     if: ${{ inputs.action == 'retry_android_store_submit' }}
     needs: [release_actor_guard, validate_expo_token]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       actions: read
       contents: read
@@ -781,7 +785,7 @@ jobs:
     name: Resume production store publication (existing binary)
     if: ${{ inputs.action == 'retry_store_publication' }}
     needs: [release_actor_guard]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     permissions:
       contents: read
@@ -854,7 +858,7 @@ jobs:
     name: Resume TestFlight distribution (existing build)
     if: ${{ inputs.action == 'retry_testflight_distribution' }}
     needs: [release_actor_guard, validate_apple_api_private_key]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     permissions:
       contents: read
@@ -955,7 +959,7 @@ jobs:
     name: OTA update
     if: ${{ inputs.retry_version == '' && inputs.action == 'ota' }}
     needs: [release_actor_guard, validate_expo_token]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release-shared
     env:
       EAS_CLI_VERSION: 18.0.1
@@ -998,7 +1002,7 @@ jobs:
     name: Recover rolling APK projection
     if: ${{ inputs.retry_version != '' || needs.resolve_existing_apk.outputs.retry_version != '' }}
     needs: [release_actor_guard, resolve_existing_apk]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release-shared
     permissions:
       contents: read

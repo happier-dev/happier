@@ -1,0 +1,39 @@
+name: Reclaim iOS runner disk
+description: Remove unused Xcode apps and the Android SDK while preserving the selected Xcode and simulator runtimes.
+
+runs:
+  using: composite
+  steps:
+    - name: Reclaim unused SDK disk space
+      shell: bash
+      run: |
+        set -euo pipefail
+        df -h /
+
+        # The override lets the same shell be exercised against scratch apps.
+        applications_root="${IOS_RUNNER_APPLICATIONS_ROOT:-/Applications}"
+        selected_developer_dir="$(xcode-select -p)"
+        selected_developer_dir="$(cd -P "$selected_developer_dir" && pwd -P)"
+        case "$selected_developer_dir" in
+          *.app/Contents/Developer) selected_app="${selected_developer_dir%/Contents/Developer}" ;;
+          *) echo "Selected developer directory is not inside an Xcode app: $selected_developer_dir" >&2; exit 1 ;;
+        esac
+        : "${ANDROID_HOME:?ANDROID_HOME must identify the unused Android SDK}"
+
+        shopt -s nullglob
+        for app in "$applications_root"/Xcode*.app; do
+          if [[ -L "$app" && ! -e "$app" ]]; then
+            echo "Removing dangling Xcode alias: $app"
+            sudo rm -f -- "$app"
+            continue
+          fi
+          resolved_app="$(cd -P "$app" && pwd -P)"
+          if [[ "$resolved_app" != "$selected_app" ]]; then
+            echo "Removing unused Xcode: $app"
+            sudo rm -rf -- "$app"
+          fi
+        done
+
+        echo "Removing unused Android SDK: $ANDROID_HOME"
+        sudo rm -rf -- "$ANDROID_HOME"
+        df -h /

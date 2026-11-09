@@ -49,6 +49,10 @@ on:
         type: boolean
   workflow_call:
     inputs:
+      source_contracts_result:
+        required: false
+        default: ""
+        type: string
       channel:
         required: true
         type: string
@@ -92,10 +96,13 @@ concurrency:
   group: publish-hstack-binaries-${{ github.repository }}-${{ inputs.channel }}
   cancel-in-progress: false
 
+env:
+  HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT: ${{ inputs.source_contracts_result }}
+
 jobs:
   trusted_ref_guard:
     name: Trust called workflow repository and ref
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -113,6 +120,7 @@ jobs:
           esac
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/publish-hstack-binaries.yml@refs/heads/v0.3"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-hstack-binaries.yml@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-hstack-binaries.yml@refs/heads/preview"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-hstack-binaries.yml@refs/heads/main") ;;
@@ -124,7 +132,7 @@ jobs:
     needs: [trusted_ref_guard]
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       resume_version: ${{ steps.resume.outputs.version }}
     steps:
@@ -298,10 +306,49 @@ jobs:
             --run-contracts false \
             --check-installers false
 
+  build_windows_service_launcher:
+    name: Build Windows service launcher
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
+    needs: [prepare]
+    runs-on: windows-2022
+    timeout-minutes: 20
+    permissions: {}
+    steps:
+      - name: Download exact candidate source transport
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: hstack-source-${{ needs.prepare.outputs.source_sha }}
+          path: ${{ runner.temp }}\hstack-source
+      - name: Materialize candidate source without repository authority
+        shell: pwsh
+        env:
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "hstack-source\hstack-source-$env:SOURCE_SHA.tar.gz"
+          if (-not (Test-Path -LiteralPath $archive)) { throw "candidate source archive missing" }
+          tar -xzf $archive -C $env:GITHUB_WORKSPACE
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - name: Compile x64 GUI launcher with the installed MSVC toolchain
+        shell: cmd
+        run: call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 && node scripts\pipeline\release\build-windows-service-launcher.mjs
+      - name: Test launcher lifecycle in an isolated fixture
+        shell: pwsh
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packages/cli-common/native/windows/service-launcher.test.ps1
+      - name: Upload exact launcher artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hstack-windows-service-launcher-${{ needs.prepare.outputs.source_sha }}
+          path: packages/cli-common/native/windows/bin/windows-x64/happier-service-launcher.exe
+          if-no-files-found: error
+          retention-days: 2
+
   build_candidate:
     name: Build unsigned HStack candidate
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
-    needs: [prepare]
+    needs: [prepare, build_windows_service_launcher]
     runs-on: ubuntu-24.04
     permissions: {}
     steps:
@@ -320,6 +367,11 @@ jobs:
           tar -xzf "$archive" -C "$GITHUB_WORKSPACE"
           test -f "$GITHUB_WORKSPACE/apps/stack/package.json"
           test -f "$GITHUB_WORKSPACE/scripts/pipeline/run.mjs"
+      - name: Download exact Windows service launcher
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: hstack-windows-service-launcher-${{ needs.prepare.outputs.source_sha }}
+          path: packages/cli-common/native/windows/bin/windows-x64
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -559,21 +611,21 @@ jobs:
           node scripts/pipeline/release/publish-hstack-binaries.mjs \
             --channel "$RELEASE_CHANNEL" \
             --allow-stable "$ALLOW_STABLE" \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --version "$RELEASE_VERSION" \
             --base-version "$CANDIDATE_BASE_VERSION" \
             --authorized-sha "$AUTHORIZED_SHA" \
             --phase "$PUBLISH_PHASE" \
             --prepared-artifacts \
             --skip-smoke \
-            --run-contracts true \
+            --run-contracts auto \
             --check-installers true
 
   promote_existing:
     name: Recover rolling HStack projection
     if: ${{ inputs.retry_version != '' && inputs.resume_version == '' }}
     needs: [release_actor_guard]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release-shared
     permissions:
       contents: write
@@ -629,7 +681,7 @@ jobs:
           node scripts/pipeline/release/publish-hstack-binaries.mjs \
             --channel "$RELEASE_CHANNEL" \
             --allow-stable "$ALLOW_STABLE" \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --phase promote-rolling \
             --version "$RETRY_VERSION" \
             --authorized-sha "$AUTHORIZED_SHA" \

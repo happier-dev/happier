@@ -69,7 +69,7 @@ jobs:
     name: Trusted workflow ref guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -81,6 +81,7 @@ jobs:
           set -euo pipefail
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/v0.3"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
@@ -92,7 +93,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -109,7 +110,7 @@ jobs:
 
   resolve_source:
     needs: [release_actor_guard]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       source_ref: ${{ steps.resolve.outputs.source_ref }}
       candidate_sha: ${{ steps.candidate.outputs.authorized_sha }}
@@ -136,6 +137,7 @@ jobs:
           set -euo pipefail
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/promote-docs.yml@refs/heads/v0.3"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/promote-docs.yml@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/promote-docs.yml@refs/heads/preview"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/promote-docs.yml@refs/heads/main") ;;
@@ -182,7 +184,7 @@ jobs:
             exit 0
           fi
           case "${GITHUB_REF_NAME}" in
-            dev|preview|main) ;;
+            v0.3|dev|preview|main) ;;
             *)
               echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev, preview, or main." >&2
               exit 1
@@ -201,7 +203,7 @@ jobs:
 
   validate_candidate:
     needs: [resolve_source]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -244,7 +246,7 @@ jobs:
 
   promote:
     needs: [release_actor_guard, resolve_source, validate_candidate]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release-shared
     steps:
       - name: Checkout trusted promotion control
@@ -330,7 +332,7 @@ jobs:
   # and CI is the one that ran the checks.
   deploy_cloudflare:
     needs: [promote]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: cloudflare-deploy
     permissions:
       contents: read

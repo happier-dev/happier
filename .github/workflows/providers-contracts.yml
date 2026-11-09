@@ -72,6 +72,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -79,7 +80,7 @@ concurrency:
 
 jobs:
   trusted_ref_guard:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Enforce trusted workflow control ref
         env:
@@ -90,6 +91,7 @@ jobs:
           set -euo pipefail
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/providers-contracts.yml@refs/heads/v0.3"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/providers-contracts.yml@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/providers-contracts.yml@refs/heads/preview"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/providers-contracts.yml@refs/heads/main") ;;

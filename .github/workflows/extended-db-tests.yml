@@ -197,7 +197,7 @@ jobs:
   db-contract-postgres:
     if: ${{ github.event_name != 'workflow_call' || inputs.run_db_contract_postgres }}
     name: DB Contract (Postgres)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     services:
       postgres:
@@ -247,14 +247,17 @@ jobs:
       - name: Run db contract suite (Postgres)
         env:
           HAPPIER_DB_PROVIDER: postgres
+          HAPPIER_DB_CONTRACT_CONTAINER_ID: ${{ job.services.postgres.id }}
           DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports[5432] }}/happier?sslmode=disable
           HAPPIER_TEST_POSTGRES_DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports[5432] }}/happier?sslmode=disable
-        run: pnpm --dir apps/server run test:db-contract
+        run: |
+          export HAPPIER_DB_CONTRACT_TEMPLATE_URL="$DATABASE_URL"
+          pnpm --dir apps/server run test:db-contract
 
   db-contract-mysql:
     if: ${{ github.event_name != 'workflow_call' || inputs.run_db_contract_mysql }}
     name: DB Contract (MySQL)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     services:
       mysql:
@@ -311,6 +314,9 @@ jobs:
       - name: Run db contract suite (MySQL)
         env:
           HAPPIER_DB_PROVIDER: mysql
+          HAPPIER_DB_CONTRACT_CONTAINER_ID: ${{ job.services.mysql.id }}
           DATABASE_URL: mysql://root:happier@127.0.0.1:${{ job.services.mysql.ports[3306] }}/happier
           HAPPIER_TEST_MYSQL_DATABASE_URL: mysql://root:happier@127.0.0.1:${{ job.services.mysql.ports[3306] }}/happier
-        run: pnpm --dir apps/server run test:db-contract
+        run: |
+          export HAPPIER_DB_CONTRACT_TEMPLATE_URL="$DATABASE_URL"
+          pnpm --dir apps/server run test:db-contract
