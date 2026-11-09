@@ -21,7 +21,7 @@ export async function executeDeploymentAction(
     ...('effectAttempted' in result && result.effectAttempted === false ? { effectAttempted: false } : {}) };
   if (actionId === 'deployments.environments.delete'
     || (actionId === 'deployments.teardown' && 'environmentRemoved' in result && result.environmentRemoved === true)) {
-    if ('environmentId' in input) await retireRemovedEnvironmentApprovals?.(input.environmentId);
+    if ('environmentId' in input && input.environmentId) await retireRemovedEnvironmentApprovals?.(input.environmentId);
   }
   if (actionId === 'deployments.environments.list' && deps.deploymentReadArtifactHeaders) {
     const page = DeploymentEnvironmentListResultV1Schema.parse(result);
