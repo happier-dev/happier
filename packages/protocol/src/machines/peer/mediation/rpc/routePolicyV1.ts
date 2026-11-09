@@ -925,6 +925,8 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
     'Session and execution-run lifecycle/state methods remain server-required; detached Runs use exact Machine admission while attached Runs retain Session authority.', 'custodian_only'),
   serverRequired(SESSION_RPC_METHODS.EXECUTION_RUN_STOP, 'durable_session_write',
     'Session and execution-run lifecycle/state methods remain server-required; detached Runs use exact Machine admission while attached Runs retain Session authority.', 'use'),
+  serverRequired(SESSION_RPC_METHODS.SESSION_DELETE, 'destructive_or_recovery_mutation',
+    'Detached conversation history deletion uses exact Machine admission and the retained Run requester owner.', 'use'),
   serverRequired(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, 'durable_session_write',
     'Session and execution-run lifecycle/state methods remain server-required; detached Runs use exact Machine admission while attached Runs retain Session authority.', 'use'),
   serverRequired(SESSION_RPC_METHODS.EXECUTION_RUN_GET, 'durable_session_write',
@@ -1170,12 +1172,15 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
       ? binding.actionId : null;
   }
   if (method === RPC_METHODS.BASH || method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START
+    || method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ || method === RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL
     || method === RPC_METHODS.CAPABILITIES_INVOKE && binding?.actionId === 'machines.capabilities.install') {
     // These shared transports spend the original Action, never a method-wide
     // substitute. Home still verifies its signed arguments and exact principal.
     const matchingAction = method === RPC_METHODS.BASH ? binding?.actionId === 'machines.command.run'
       : method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START
         ? binding?.actionId === 'machines.agents.install' || binding?.actionId === 'machines.agents.uninstall'
+        : method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ ? binding?.actionId === 'machines.agents.install.status'
+        : method === RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL ? binding?.actionId === 'machines.agents.install.cancel'
         : binding?.actionId === 'machines.capabilities.install';
     return matchingAction && binding && binding.target.kind === 'machine'
       && binding.target.machineId === binding.machineId

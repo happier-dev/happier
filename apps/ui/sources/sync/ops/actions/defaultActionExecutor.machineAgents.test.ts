@@ -6,7 +6,12 @@ import { AccountSettingsV2UpdateRequestSchema, ARTIFACT_PLAIN_DATA_KEY_MARKER, B
     buildRoleArtifactHeaderV1, encodePlainArtifactStoredContent, readLegacyRolesV1 } from '@happier-dev/protocol';
 import { ArtifactReadBatchInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import tweetnacl from 'tweetnacl';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createPlainV2SessionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
@@ -95,6 +100,22 @@ describe('UI machine Agent inventory Action transport', () => {
             method: RPC_METHODS.DAEMON_WORKSPACE_FILES_SEARCH, payload: { rootPath: '/project', query: 'needle', regex: false } }));
     });
 
+    it('refreshes workflow events through the shared conditional projection read', async () => {
+        const serverId = await addHome({ name: 'Workflow Events Home', serverUrl: 'https://workflow-events.test', accountId: 'alice' });
+        rpc.machine.mockResolvedValue({ protocolVersion: 1, projectionDigest: 'workflow-events-digest',
+            projection: { v: 2, generation: 1 }, automationEligibleEvents: [] });
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'ui' as const, serverId, signal: new AbortController().signal };
+        for (let read = 0; read < 2; read += 1) {
+            expect(await executor.execute('workflow.events.list', { machineId: 'machine', serverId }, context))
+                .toEqual({ ok: true, result: { machineId: 'machine', events: [] } });
+        }
+        const describes = rpc.machine.mock.calls.map(([request]) => request).filter(request =>
+            request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
+        expect(describes).toHaveLength(2);
+        expect(describes[1].payload).toMatchObject({ knownProjectionDigest: 'workflow-events-digest' });
+    });
+
     it.each([false, true])('lists Role content without reading unrelated Artifact bodies (unclassified=%s)', async unclassified => {
         const serverId = await addHome({ name: 'Selected Roles Home', serverUrl: `https://selected-roles-${unclassified}.test`, accountId: 'alice' });
         const rows = harness.artifacts(serverId);
@@ -164,6 +185,34 @@ describe('UI machine Agent inventory Action transport', () => {
         expect(await execute('roles.delete', { roleId: 'my-role', expectedRevision: { headerVersion: 2, bodyVersion: 2 } }, context))
             .toEqual({ ok: true, result: { deleted: true } });
         expect(harness.artifacts(serverId).read('my-role')).toBeNull();
+    });
+
+    it('deletes an imported Role through the public Action while preserving neighboring predecessor guidance', async () => {
+        const serverId = await addHome({ name: 'Deleting Roles Home', serverUrl: 'https://deleting-roles.test', accountId: 'alice' });
+        const neighbor = { id: 'unreadable-neighbor', description: null };
+        let raw: Record<string, unknown> = { executionRunsGuidanceEntries: [
+            { id: 'legacy-review', description: 'Review carefully.' }, neighbor,
+        ], futureSetting: { keep: true } };
+        const [legacy] = readLegacyRolesV1(raw, 'alice');
+        if (!legacy) throw new Error('Expected retained Role identity');
+        let version = 7;
+        harness.answer(serverId, '/v2/account/settings', { select: input => {
+            if (input === undefined || input === null) return { body: { content: { t: 'plain', v: raw }, version } };
+            const request = AccountSettingsV2UpdateRequestSchema.parse(input);
+            expect(request.expectedVersion).toBe(version);
+            if (request.content?.t !== 'plain') throw new Error('Expected Plain Account settings');
+            raw = request.content.v;
+            return { body: { success: true, version: ++version } };
+        } });
+        await harness.artifacts(serverId).handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({
+            id: legacy.artifactId, header: encodePlainArtifactStoredContent(buildRoleArtifactHeaderV1(legacy.role)),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify(legacy.role) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        }) });
+        expect(await createDefaultActionExecutor().execute('roles.delete', {
+            roleId: legacy.artifactId, expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+        }, { surface: 'ui', authority: 'present_user', serverId })).toMatchObject({ ok: true, result: { deleted: true } });
+        expect(raw).toEqual({ executionRunsGuidanceEntries: [neighbor], futureSetting: { keep: true } });
+        expect(harness.artifacts(serverId).read(legacy.artifactId)).toBeNull();
     });
 
     it('retains predecessor guidance Artifacts before the first Account role override cuts off read-through', async () => {
@@ -491,28 +540,63 @@ describe('UI machine Agent inventory Action transport', () => {
         },
     );
 
-    it('preserves current job progress at a consumed cursor and exposes cancellation failure', async () => {
-        const serverId = await addHome({ name: 'Setup Home', serverUrl: 'https://setup.test', accountId: 'alice' });
+    it('reads and cancels a shared Machine job through its admitted Actions from the executor and job store', async () => {
+        const serverUrl = 'https://setup.test';
+        const homeId = 'srv_install_status';
+        const serverId = await addHome({ name: 'Setup Home', serverUrl, serverIdentityId: homeId, accountId: 'alice', currentAccount: true });
+        const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
+        const machine = { ...createPlainMachineRowFixture({ id: 'machine-1', accountId: 'custodian' }),
+            kind: 'persistent', active: true, installationId: 'installation', installationPublicKey: encodeBase64(installation.publicKey),
+            revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
+            access: { custodian: { accountId: 'custodian' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } } as const;
+        harness.answer(serverId, '/v1/machines', { body: [machine] });
+        harness.answer(serverId, '/v1/machines/machine-1', { body: { machine } });
+        network.setHttpResponder((input, init) => harness.request(input, init));
         const signal = new AbortController().signal;
         const progress = [{ stepId: 'cli', bytesDone: 128, bytesTotal: 256 }];
         const snapshot = { ok: true, steps: [{ stepId: 'cli', label: 'Install CLI', state: 'running' }],
             progress, events: [], nextCursor: 4, done: false, outcome: null };
-        rpc.machine.mockResolvedValueOnce(snapshot)
-            .mockResolvedValueOnce({ ok: false, errorCode: 'job_not_found', error: 'No job' });
+        const calls: Array<{ actionId: string; input: unknown }> = [];
+        for (const actionId of ['machines.agents.install.status', 'machines.agents.install.cancel'] as const) {
+            harness.answer(serverId, `/v1/actions/${actionId}/execution-authorization`, { select: body => {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-install-job', binding: {
+                    accountId: 'alice', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: homeId,
+                    machineId: 'machine-1', installationId: 'installation', custodianAccountId: 'custodian', accountEncryptionMode: 'plain',
+                    actionId, requestId: request.envelope.requestId, target: request.envelope.target,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+                } }) };
+            } });
+            harness.answer(serverId, `/v1/actions/${actionId}`, { select: body => {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                expect(openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
+                    purpose: { kind: 'external_action' }, machineId: 'machine-1', installationId: 'installation', serverIdentityId: homeId,
+                    installationPrivateKey: installation.secretKey })).toEqual({ token: harness.findByServerUrl(serverUrl)?.token });
+                calls.push({ actionId, input: request.envelope.input });
+                return { body: { v: 1, actionId, requestId: request.envelope.requestId,
+                    execution: actionId === 'machines.agents.install.status'
+                        ? { ok: true, result: snapshot } : { ok: false, errorCode: 'job_not_found', error: 'No job' } } };
+            } });
+        }
         const executor = createDefaultActionExecutor();
         const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId, signal };
         expect(await executor.execute('machines.agents.install.status', {
-            machineId: 'machine-1', jobId: 'job-1', cursor: 4,
+            machineId: 'machine-1', jobId: 'job-1', cursor: 4, waitForTerminal: true,
         }, context)).toEqual({ ok: true, result: snapshot });
         expect(await executor.execute('machines.agents.install.cancel', {
             machineId: 'machine-1', jobId: 'job-1',
         }, context)).toMatchObject({ ok: false, errorCode: 'job_not_found' });
-        expect(rpc.machine.mock.calls.map(([request]) => request)).toEqual([
-            { machineId: 'machine-1', serverId, method: RPC_METHODS.DAEMON_AGENTS_INSTALL_READ,
-                payload: { jobId: 'job-1', cursor: 4 } },
-            { machineId: 'machine-1', serverId, method: RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL,
-                payload: { jobId: 'job-1' } },
-        ]);
+        const { readAgentInstallJobRpc } = await import('@/agents/machineAgents/installJobs/api');
+        const { cancelMachineAgentInstallJob } = await import('@/agents/machineAgents/installJobs/installJobStore');
+        expect(await readAgentInstallJobRpc({ machineId: 'machine-1', serverId, accountId: 'alice', signal },
+            { jobId: 'job-1', cursor: 4, waitForTerminal: true })).toEqual(snapshot);
+        expect(await cancelMachineAgentInstallJob({ machineId: 'machine-1', serverId, accountId: 'alice' }, 'job-1'))
+            .toMatchObject({ ok: false, errorCode: 'job_not_found' });
+        expect(calls).toEqual(Array.from({ length: 2 }, () => [
+            { actionId: 'machines.agents.install.status', input: { machineId: 'machine-1', jobId: 'job-1', cursor: 4, waitForTerminal: true } },
+            { actionId: 'machines.agents.install.cancel', input: { machineId: 'machine-1', jobId: 'job-1' } },
+        ]).flat());
+        expect(rpc.machine).not.toHaveBeenCalled();
     });
 
     it('launches native sign-in through the terminal owner and reads the daemon status', async () => {

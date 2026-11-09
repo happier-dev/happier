@@ -9,7 +9,7 @@ import { AgentsAcpBackendsDeleteInputV1Schema, AgentsAcpBackendsDeleteOutputV1Sc
 import { z } from 'zod/mini';
 import { AGENT_SIGN_IN_STATUS_RPC_METHOD, MachinesAgentsSignInStartInputSchema, MachinesAgentsSignInStartOutputSchema, MachinesAgentsSignInStatusInputSchema, AgentSignInStatusResponseSchema, MachinesAgentsSignInCancelInputSchema, MachinesAgentsSignInCancelOutputSchema } from '../../daemon/agentSignIn.js';
 import { MachinesAgentsListInputSchema, MachinesAgentsListOutputSchema } from '../../capabilities/machineAgentInventory.js';
-import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallReadResponseSchema, DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallCancelResponseSchema } from '../../daemon/agentInstallJobs.js';
+import { AgentAcquireJobIntentSchema, DaemonAgentInstallStartRequestSchema, DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallReadResponseSchema, DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallCancelResponseSchema } from '../../daemon/agentInstallJobs.js';
 import { AcpBackendApprovalInputSchema, projectAcpBackendApprovalInput } from './acpBackendApproval.js';
 import { AgentsBackendsListOutputSchema } from '../agentBackendInventory.js';
 import { BackendTargetKeySchema } from '../../backends/targets/backendTargetRef.js';
@@ -28,7 +28,7 @@ import type { PreNormalizedActionSpec } from './definition.js';
 
 export const MachineAgentInstallCliInputSchema = lazyZodSchema(() => z.strictObject({
   machineId: z.optional(z.string().check(z.minLength(1))), agentId: z.string().check(z.minLength(1)), definitionId: z.optional(z.string().check(z.minLength(1))),
-  intent: z.optional(z.enum(['install', 'update'])), consent: z.optional(DaemonAgentInstallStartRequestSchema.shape.consent),
+  intent: z.optional(AgentAcquireJobIntentSchema), consent: z.optional(DaemonAgentInstallStartRequestSchema.shape.consent),
   force: z.optional(z.boolean()), yes: z.optional(z.boolean()), allowVendorRecipe: z.optional(z.boolean()), dryRun: z.optional(z.boolean()),
   version: z.optional(z.string().check(z.minLength(1))),
 }));
@@ -255,7 +255,7 @@ function createAgentCatalogActionSpecs() {
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     inputSchema: lazyZodSchema(() => z.extend(z.omit(DaemonAgentInstallStartRequestSchema, { expectedDefinitionVersion: true }), {
       machineId: z.string().check(z.minLength(1)),
-      intent: z.enum(['install', 'update']),
+      intent: AgentAcquireJobIntentSchema,
       consent: z.optional(DaemonAgentInstallStartRequestSchema.shape.consent),
     })),
     outputSchema: DaemonAgentInstallStartResponseSchema,
@@ -306,6 +306,7 @@ function createAgentCatalogActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'machines.agents.install.status', executionPlacement: 'machine', approval: {result: 'required'},
+    originalExecution: { daemonIngressSurfaces: ['ui'] },
     title: 'Read an agent install job',
     description: 'Read the daemon-owned current steps, byte progress, and outcome alongside events after the cursor. Omitting the cursor reads events from the start.',
     sideEffectClass: 'read',
@@ -329,6 +330,7 @@ function createAgentCatalogActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'machines.agents.install.cancel', executionPlacement: 'machine', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'direct' },
+    originalExecution: { daemonIngressSurfaces: ['ui'] },
     title: 'Cancel agent install',
     sideEffectClass: 'danger',
     safety: 'danger',

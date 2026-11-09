@@ -228,6 +228,26 @@ describe('MachineRpcRoutePolicyV1', () => {
         rpcClassification: 'internal_only', scope: { accountRequired: true, machineRequired: true, serverRequired: true } });
     }
   });
+  it('spends install status and cancellation only on their exact admitted Machine root', async () => {
+    const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
+    const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-job', binding: {
+      accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+      actionId: 'machines.agents.install.status', requestId: 'status', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'machine' },
+    } }).binding;
+    for (const [method, actionId] of [
+      [RPC_METHODS.DAEMON_AGENTS_INSTALL_READ, 'machines.agents.install.status'],
+      [RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL, 'machines.agents.install.cancel'],
+    ] as const) {
+      const root = { ...binding, actionId };
+      expect(resolve(method, root)).toBe(actionId);
+      expect(resolve(method)).toBeNull();
+      expect(resolve(method, { ...root, actionId: 'machines.agents.install' })).toBeNull();
+      expect(resolve(method, { ...root, target: { kind: 'machine', machineId: 'other-machine' } })).toBeNull();
+      expect(resolve(method, root, { machineId: 'machine', installationId: 'replaced' })).toBeNull();
+    }
+  });
   it('spends only an exact Found root on the existing download transport', async () => {
     const { resolveMachineRpcExternalActionEffectV1 } = await import('./routePolicyV1');
     for (const actionId of ['skills.found.read', 'skills.found.adopt'] as const) {

@@ -256,6 +256,7 @@ export const RPC_METHODS = {
   // Present-user controls scoped to the authenticated requester's personal desktop.
   DAEMON_COMPUTER_PERSONAL_ACTION_EXECUTE: 'daemon.computer.personal.actions.execute',
   DAEMON_BROWSER_VIEW_LIST: 'daemon.browser.view.list',
+  DAEMON_BROWSER_VIEW_WATCH: 'daemon.browser.view.watch',
   DAEMON_BROWSER_CONTEXT_DISPATCH: 'daemon.browser.context.dispatch',
   DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT: 'daemon.browser.diagnostics.snapshot',
   DAEMON_BROWSER_RECORDING_START: 'daemon.browser.recording.start',
@@ -671,6 +672,7 @@ export const SESSION_RPC_METHODS = {
   /** Host-private live occurrence/currentness query; persisted markers only route to this owner. */
   EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE_V1: 'execution.run.brokerAuthority.resolve.v1',
   EXECUTION_RUN_STOP: 'execution.run.stop',
+  SESSION_DELETE: 'session.delete',
   EXECUTION_RUN_LIST: 'execution.run.list',
   EXECUTION_RUN_GET: 'execution.run.get',
   /** Content-free exact retained occurrence for Follow baselines and admission. */

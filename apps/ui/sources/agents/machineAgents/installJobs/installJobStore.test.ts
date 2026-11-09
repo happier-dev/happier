@@ -1,5 +1,6 @@
+import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
@@ -10,17 +11,21 @@ import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccou
 import type { MachineAgentInventoryItem } from '@happier-dev/protocol/capabilities';
 import { buildMachineAgentInventoryKey, MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
 import { AgentInstallJobSchema, DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallStartRequestSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
-import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createAccountTokenForTests, createHomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { storage } from '@/sync/domains/state/storageStore';
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 const boundary = vi.hoisted(() => ({ rpc: vi.fn(), credentialListeners: new Set<(event: { serverId: string; kind: 'credentials_removed'; serverUrl: string }) => void>() }));
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
     const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
     return createTokenStorageModuleMock({ importOriginal, tokenStorage: {
-        getCredentialsForServerUrl: async () => ({ token: `header.${Buffer.from(JSON.stringify({ sub: 'store-account' })).toString('base64')}.signature` }),
+        getCredentialsForServerUrl: async serverUrl => ({ token: homes.findByServerUrl(serverUrl)?.token
+            ?? createAccountTokenForTests('store-account', { currentAccount: true }) }),
     }, subscribeHomeCredentialMutations: (listener) => {
         boundary.credentialListeners.add(listener);
         return () => { boundary.credentialListeners.delete(listener); };
@@ -34,7 +39,44 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 import { useAgentInstallJob } from './useAgentInstallJob';
 // Load the real inventory graph during collection, outside the job's settlement test.
 import '../useMachineAgents';
-import { cancelAgentInstallJob, ensureMachineAgentInstallJobs, readAgentInstallJob, readMachineAgentInstallJobs, startAgentInstallJob, subscribeAgentInstallJob, waitForAgentInstallJob } from './installJobStore';
+import { cancelAgentInstallJob, ensureMachineAgentInstallJobs, readAgentInstallJob, readMachineAgentInstallJobs, startAgentInstallJob, subscribeAgentInstallJob, subscribeMachineAgentInstallJobs, waitForAgentInstallJob } from './installJobStore';
+
+const homes = createHomeGovernanceHarness();
+async function addJobHome(options: { serverUrl: string; accountId?: string }) {
+    const id = await homes.addHome({ ...options, name: 'Install jobs', serverIdentityId: 'srv_install_jobs',
+        accountId: options.accountId ?? 'store-account', currentAccount: true });
+    return { id };
+}
+beforeEach(async () => {
+    await homes.reset();
+    setRuntimeFetch(async (input, init) => {
+        const url = new URL(String(input));
+        const home = homes.findByServerUrl(url.origin);
+        if (home && /^\/v1\/machines\/[^/]+$/.test(url.pathname)) {
+            const machineId = url.pathname.split('/').at(-1)!;
+            return Response.json({ machine: { ...createPlainMachineRowFixture({ id: machineId, accountId: home.accountId! }),
+                kind: 'persistent', active: true, installationId: 'installation', revokedAt: null, replacedByMachineId: null,
+                dataEncryptionKey: null, runnerContentKeyBinding: null,
+                access: { custodian: { accountId: home.accountId }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } } });
+        }
+        const method = url.pathname === '/v1/actions/machines.agents.install.status' ? RPC_METHODS.DAEMON_AGENTS_INSTALL_READ
+            : url.pathname === '/v1/actions/machines.agents.install.cancel' ? RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL : null;
+        if (home && method) {
+            const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+            if (request.target.kind !== 'machine') throw new Error('Unexpected install job target');
+            const schema = method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ ? DaemonAgentInstallReadRequestSchema : DaemonAgentInstallCancelRequestSchema;
+            const { machineId: _machineId, ...operands } = request.input as { machineId: string };
+            // HTTP is the Home/daemon boundary; the real API, Account capture,
+            // Action envelope and job-store lifecycle remain inside this test.
+            const result = await boundary.rpc({ serverId: home.serverId, accountId: home.accountId,
+                machineId: request.target.machineId, method, payload: schema.parse(operands) });
+            return Response.json({ v: 1, actionId: url.pathname.split('/').at(-1), requestId: request.requestId,
+                execution: result && typeof result === 'object' && 'ok' in result && result.ok === false
+                    ? result : { ok: true, result } });
+        }
+        return await homes.request(input, init);
+    });
+});
 
 function wireJob(agentId: string, jobId: string) {
     return {
@@ -52,8 +94,84 @@ afterEach(() => {
 });
 
 describe('agent install job owner', () => {
+    it('shares one poll while presented, reads nothing for 60s hidden or unmounted, and resumes its cursor until terminal', async () => {
+        vi.useFakeTimers();
+        const server = await addJobHome({ serverUrl: 'https://pf58-presentation.example.test' });
+        const target = { serverId: server.id, accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
+        let presented = true;
+        let settled = false;
+        const wrapper = ({ children }: React.PropsWithChildren) => React.createElement(PluginSurfaceFocusEligibilityProvider,
+            { active: presented, children });
+        boundary.rpc.mockImplementation(async ({ method, payload }: { method: string; payload: { cursor?: number } }) => {
+            if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST) return { ok: true, jobs: [wireJob('codex', 'pf58-job')] };
+            if (method !== RPC_METHODS.DAEMON_AGENTS_INSTALL_READ) throw new Error('Unexpected PF-58 fixture RPC');
+            return { ok: true, steps: [], progress: [], events: settled
+                ? [{ t: 'progress', stepId: 'cli', bytesDone: 8, bytesTotal: 10 }] : [],
+                nextCursor: (payload.cursor ?? 0) + 1, done: settled, outcome: settled
+                    ? { kind: 'failed', code: 'cancelled', stepId: 'cli', message: 'Fixture settled' } : null };
+        });
+        const reads = () => boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ);
+        try {
+            const first = await renderHook(() => useAgentInstallJob(target), { wrapper });
+            const second = await renderHook(() => useAgentInstallJob(target), { wrapper });
+            const beforeTick = reads().length;
+            await act(async () => { await vi.advanceTimersByTimeAsync(MACHINE_RPC_POLL_INTERVAL_MS); });
+            expect(reads().length - beforeTick).toBe(1);
+            presented = false;
+            await first.rerender();
+            await second.rerender();
+            const beforeHidden = reads().length;
+            await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+            expect.soft(reads().length - beforeHidden).toBe(0);
+            const cursor = reads().at(-1)?.[0].payload.cursor + 1;
+            presented = true;
+            await first.rerender();
+            expect(reads().at(-1)?.[0].payload).toEqual({ jobId: 'pf58-job', cursor });
+            await first.unmount();
+            await second.unmount();
+            const beforeUnmounted = reads().length;
+            await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+            expect.soft(reads().length - beforeUnmounted).toBe(0);
+            const remounted = await renderHook(() => useAgentInstallJob(target), { wrapper });
+            expect(remounted.getCurrent().job?.jobId).toBe('pf58-job');
+            settled = true;
+            await act(async () => { await vi.advanceTimersByTimeAsync(MACHINE_RPC_POLL_INTERVAL_MS); });
+            expect(remounted.getCurrent().job).toMatchObject({ steps: [{ bytesDone: 8 }],
+                outcome: { kind: 'failed', code: 'cancelled' } });
+            const terminalReads = reads().length;
+            await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+            expect(reads().length).toBe(terminalReads);
+            await remounted.unmount();
+        } finally {
+            for (const listener of boundary.credentialListeners) listener({ serverId: target.serverId,
+                serverUrl: 'https://pf58.example.test', kind: 'credentials_removed' });
+        }
+    });
+    it('keeps a queue completion waiter observed without a presenter and stops reads after settlement', async () => {
+        vi.useFakeTimers();
+        const target = { serverId: (await addJobHome({ serverUrl: 'https://pf58-queue.test' })).id, accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
+        let settled = false;
+        boundary.rpc.mockImplementation(async ({ method }: { method: string }) => method.endsWith('.list')
+            ? { ok: true, jobs: [wireJob('codex', 'queue-job')] }
+            : { ok: true, steps: [], progress: [], events: [], nextCursor: 1, done: settled,
+                outcome: settled ? { kind: 'failed', code: 'cancelled', stepId: 'cli', message: 'Cancelled' } : null });
+        await ensureMachineAgentInstallJobs(target);
+        const completion = waitForAgentInstallJob(target);
+        await act(async () => {});
+        const reads = () => boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ).length;
+        const beforeTick = reads();
+        await act(async () => { await vi.advanceTimersByTimeAsync(MACHINE_RPC_POLL_INTERVAL_MS); });
+        expect(reads() - beforeTick).toBe(1);
+        settled = true;
+        await act(async () => { await vi.advanceTimersByTimeAsync(MACHINE_RPC_POLL_INTERVAL_MS); });
+        expect(await completion).toMatchObject({ kind: 'failed', code: 'cancelled' });
+        const terminalReads = reads();
+        await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+        expect(reads()).toBe(terminalReads);
+    });
+
     it('sends each definition-qualified admission to the daemon so a changed pin cannot join an older pending request', async () => {
-        const target = { serverId: 'store-definition-pin', accountId: 'store-account', machineId: 'machine',
+        const target = { serverId: (await addJobHome({ serverUrl: 'https://store-definition-pin.test' })).id, accountId: 'store-account', machineId: 'machine',
             agentId: 'custom-acp', definitionId: 'registry-definition' };
         const olderAdmission = createDeferred<void>();
         const reachedOlderAdmission = createDeferred<void>();
@@ -80,7 +198,7 @@ describe('agent install job owner', () => {
     });
     it('keeps two configured definitions distinct through admission, hydration, hooks and cancellation', async () => {
         vi.useFakeTimers();
-        const server = await upsertServerProfile({ serverUrl: 'https://definition-install-jobs.example.test' });
+        const server = await addJobHome({ serverUrl: 'https://definition-install-jobs.example.test' });
         const a = { serverId: server.id, accountId: 'store-account', machineId: 'definitions-machine', agentId: 'custom-acp', definitionId: 'definition-a' };
         const b = { ...a, definitionId: 'definition-b' };
         const key = serverAccountScopedResourceKey(a, 'machine-agents', a.machineId);
@@ -147,7 +265,7 @@ describe('agent install job owner', () => {
         });
     });
     it('retains the native acknowledgement when Account retirement interrupts initial hydration', async () => {
-        const target = { serverId: 'store-ack-retirement', accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
+        const target = { serverId: (await addJobHome({ serverUrl: 'https://store-ack-retirement.test' })).id, accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
         const hydration = createDeferred<unknown>();
         const reading = createDeferred<void>();
         boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
@@ -170,12 +288,12 @@ describe('agent install job owner', () => {
     });
     it('reads successor Account facts through the inventory after the old detect retires', async () => {
         const { refreshMachineAgents } = await import('../useMachineAgents');
-        const server = await upsertServerProfile({ serverUrl: 'https://inventory-switch.example.test' });
+        const server = await addJobHome({ serverUrl: 'https://inventory-switch.example.test' });
         const machine = createMachineFixture({ id: 'inventory-switch', active: true, activeAt: Date.now(), daemonStateVersion: 1 });
         storage.setState({ machineListByServerId: { [server.id]: [machine] } });
         const projection: PluginProjectionV2 = { v: 2, generation: 1, installedPackagesById: {}, agentsById: {
             codex: { id: 'codex', title: 'Codex', providerOwnedEnvironmentKeys: [], capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
-        }, actionsById: {}, familiesById: {},   resourcesById: {}, settingsById: {}, diagnostics: [] };
+        }, actionsById: {}, familiesById: {}, resourcesById: {}, settingsById: {}, diagnostics: [] };
         let currentAccount = 'account-a';
         const pending = createDeferred<unknown>();
         const detect = (version: string) => ({ protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 24, data: {
@@ -211,7 +329,7 @@ describe('agent install job owner', () => {
     });
 
     it('settles success without a client inventory readback when no inventory presenter is mounted', async () => {
-        const server = await upsertServerProfile({ serverUrl: 'https://install-completion.example.test' });
+        const server = await addJobHome({ serverUrl: 'https://install-completion.example.test' });
         const target = { serverId: server.id, accountId: 'store-account', machineId: 'completed-machine', agentId: 'codex' };
         const machine = createMachineFixture({ id: target.machineId, active: true, activeAt: Date.now(), daemonStateVersion: 1 });
         storage.setState({ machineListByServerId: { [server.id]: [machine] } });
@@ -240,7 +358,7 @@ describe('agent install job owner', () => {
 
     it('publishes daemon cursor progress and cancellation into the shared inventory without replacing unrelated agents', async () => {
         vi.useFakeTimers();
-        const target = { serverId: 'store-inventory', accountId: 'account-a', machineId: 'machine', agentId: 'codex' };
+        const target = { serverId: (await addJobHome({ serverUrl: 'https://store-inventory.test', accountId: 'account-a' })).id, accountId: 'account-a', machineId: 'machine', agentId: 'codex' };
         const key = serverAccountScopedResourceKey(target, 'machine-agents', target.machineId);
         const facts = (agentId: string): MachineAgentInventoryItem => ({ agentId, title: agentId, installed: false, version: null, latestVersion: null,
             update: { supported: false, command: null }, signIn: { status: 'unknown', loginSupport: 'login_terminal' }, platform: { supported: true },
@@ -253,6 +371,7 @@ describe('agent install job owner', () => {
             if (payload.cursor === 0) return read.promise;
             return { ok: true, steps: [], progress: [], events: [], nextCursor: 2, done: true, outcome: { kind: 'failed', code: 'cancelled', stepId: 'cli', message: 'Cancelled' } };
         });
+        const unsubscribe = subscribeMachineAgentInstallJobs(target, () => {});
         await ensureMachineAgentInstallJobs(target);
         expect(machineAgentInventoryStore.read(key).agents[0]).toMatchObject({ state: 'installing', job: { jobId: 'job-inventory', steps: [{ bytesDone: 3 }] } });
         await act(async () => {
@@ -262,10 +381,11 @@ describe('agent install job owner', () => {
         await act(async () => { await vi.advanceTimersByTimeAsync(MACHINE_RPC_POLL_INTERVAL_MS); });
         expect(machineAgentInventoryStore.read(key).agents[0]).toMatchObject({ state: 'notInstalled', job: { outcome: { code: 'cancelled' } } });
         expect(machineAgentInventoryStore.read(key).agents[1]).toBe(unrelated);
+        unsubscribe();
     });
 
     it('retires pending reads on credential removal without publishing their late completion', async () => {
-        const target = { serverId: 'store-retired', accountId: 'account-a', machineId: 'machine', agentId: 'codex' };
+        const target = { serverId: (await addJobHome({ serverUrl: 'https://store-retired.test', accountId: 'account-a' })).id, accountId: 'account-a', machineId: 'machine', agentId: 'codex' };
         const read = createDeferred<unknown>();
         boundary.rpc.mockImplementation(async ({ method }: { method: string }) => method.endsWith('.list')
             ? { ok: true, jobs: [wireJob('codex', 'job-retired')] } : read.promise);
@@ -278,7 +398,7 @@ describe('agent install job owner', () => {
     });
 
     it('isolates jobs and admission by Account on the same Home and machine', async () => {
-        const a = { serverId: 'store-accounts', accountId: 'account-a', machineId: 'machine', agentId: 'codex' };
+        const a = { serverId: (await addJobHome({ serverUrl: 'https://store-accounts.test', accountId: 'account-a' })).id, accountId: 'account-a', machineId: 'machine', agentId: 'codex' };
         const b = { ...a, accountId: 'account-b' };
         const read = createDeferred<unknown>();
         boundary.rpc.mockImplementation(async ({ method, accountId }: { method: string; accountId?: string }) => {
@@ -296,7 +416,7 @@ describe('agent install job owner', () => {
     });
 
     it('projects the current active job without publishing historical completion when the daemon clock was corrected', async () => {
-        const target = { serverId: 'store-list-clock', accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
+        const target = { serverId: (await addJobHome({ serverUrl: 'https://store-list-clock.test' })).id, accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
         const read = createDeferred<unknown>();
         boundary.rpc.mockImplementation(async ({ method }: { method: string }) => method.endsWith('.list')
             ? { ok: true, jobs: [
@@ -318,7 +438,7 @@ describe('agent install job owner', () => {
     });
 
     it('keeps an admitted job when an older in-flight list arrives from a daemon with a clock ahead of the client', async () => {
-        const target = { serverId: 'store-start-clock', accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
+        const target = { serverId: (await addJobHome({ serverUrl: 'https://store-start-clock.test' })).id, accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
         const staleList = createDeferred<unknown>();
         const read = createDeferred<unknown>();
         boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
@@ -341,7 +461,7 @@ describe('agent install job owner', () => {
     });
 
     it('rejects cancelling a pruned projection while fresh discovery is pending instead of implicitly cancelling its successor', async () => {
-        const target = { serverId: 'store-cancel-pruned', accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
+        const target = { serverId: (await addJobHome({ serverUrl: 'https://store-cancel-pruned.test' })).id, accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
         const discovery = createDeferred<unknown>();
         let listed = false;
         boundary.rpc.mockImplementation(async ({ method, payload }: { method: string; payload: { jobId?: string } }) => {
@@ -366,7 +486,7 @@ describe('agent install job owner', () => {
 
     it('retains the last projection and retries when reconnect discovery loses its connection', async () => {
         vi.useFakeTimers();
-        const target = { serverId: 'store-pruned-offline', accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
+        const target = { serverId: (await addJobHome({ serverUrl: 'https://store-pruned-offline.test' })).id, accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
         let listCount = 0;
         boundary.rpc.mockImplementation(async ({ method, payload }: { method: string; payload: { jobId?: string } }) => {
             if (method.endsWith('.list')) {
@@ -377,15 +497,17 @@ describe('agent install job owner', () => {
             if (payload.jobId === 'job-offline-pruned') return { ok: false, errorCode: 'job_not_found', error: 'Job no longer retained' };
             return { ok: true, steps: [], progress: [], events: [], nextCursor: 1, done: true, outcome: { kind: 'succeeded', version: '3.0' } };
         });
+        const unsubscribe = subscribeAgentInstallJob(target, () => {});
         await ensureMachineAgentInstallJobs(target);
         await act(async () => {});
         expect(readAgentInstallJob(target)).toMatchObject({ jobId: 'job-offline-pruned', outcome: null });
         await act(async () => { await vi.advanceTimersByTimeAsync(MACHINE_RPC_POLL_INTERVAL_MS); });
         expect(readAgentInstallJob(target)).toMatchObject({ jobId: 'job-offline-current', outcome: { kind: 'succeeded', version: '3.0' } });
+        unsubscribe();
     });
 
     it('discovers the latest admitted job when a cursor job was pruned during reconnect', async () => {
-        const target = { serverId: 'store-pruned', accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
+        const target = { serverId: (await addJobHome({ serverUrl: 'https://store-pruned.test' })).id, accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
         const terminal = createDeferred<unknown>();
         let listed = false;
         boundary.rpc.mockImplementation(async ({ method, payload }: { method: string; payload: { jobId?: string } }) => {
@@ -413,8 +535,8 @@ describe('agent install job owner', () => {
         unsubscribe();
     });
 
-    it('keeps polling after unmount and remounts the same job without notifying unrelated agents', async () => {
-        const server = await upsertServerProfile({ serverUrl: 'https://install-lifetime.example.test' });
+    it('retains an in-flight read across unmount and remounts the same job without notifying unrelated agents', async () => {
+        const server = await addJobHome({ serverUrl: 'https://install-lifetime.example.test' });
         const target = { serverId: server.id, accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
         const read = createDeferred<unknown>();
         boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
@@ -449,7 +571,7 @@ describe('agent install job owner', () => {
     });
 
     it('resumes an existing daemon job from list and reads from the cursor without replaying snapshots', async () => {
-        const target = { serverId: 'store-reload', accountId: 'store-account', machineId: 'machine', agentId: 'plugin-agent' };
+        const target = { serverId: (await addJobHome({ serverUrl: 'https://store-reload.test' })).id, accountId: 'store-account', machineId: 'machine', agentId: 'plugin-agent' };
         boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
             if (method.endsWith('.list')) return { ok: true, jobs: [wireJob('plugin-agent', 'job-reload')] };
             return { ok: true, steps: [], progress: [], events: [{ t: 'log', line: 'Checking the CLI' }], nextCursor: 7,
@@ -467,7 +589,7 @@ describe('agent install job owner', () => {
     });
 
     it('shares concurrent admission and waits for the daemon cancellation outcome', async () => {
-        const target = { serverId: 'store-cancel', accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
+        const target = { serverId: (await addJobHome({ serverUrl: 'https://store-cancel.test' })).id, accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
         let started = false;
         let cancelled = false;
         boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {

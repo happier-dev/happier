@@ -79,6 +79,7 @@ export async function dispatchAgentsCatalog(inv: Pick<CoreInvocation, 'actionId'
           const request = DaemonAgentInstallCancelRequestSchema.parse({ jobId: data.jobId });
           return completeActionResult(await deps.machineAgentInstallCancel({
             ...request, machineId: String(data.machineId),
+            context: ctx, effectActionId: actionId,
             ...(ctx.serverId ? { serverId: ctx.serverId } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           }), { treatReturnedErrorEnvelopeAsFailure: true });

@@ -273,12 +273,13 @@ export function createCliMachineActionDeps(
         ...(signal ? { signal } : {}),
       }));
     },
-    machineAgentInstallCancel: async ({ machineId, signal, serverId, ...request }) => {
+    machineAgentInstallCancel: async ({ machineId, signal, serverId, context, effectActionId, ...request }) => {
       if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
         return { ok: false, errorCode: 'install_unavailable', error: 'An authenticated machine transport is required.' };
       }
       return DaemonAgentInstallCancelResponseSchema.parse(await callMachineAction({
         machineId, serverId, method: RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL, request,
+        context, effectActionId, authority: context?.authority,
         ...(signal ? { signal } : {}),
       }));
     },

@@ -23,12 +23,77 @@ import { accountSettingsParse } from '@happier-dev/protocol/account/settings/acc
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import { socketRpcCodec } from '@happier-dev/sync-client';
 
 const io = vi.hoisted(() => vi.fn());
 // Network and the package-manager child are system boundaries; keep the Action,
 // registered handler, job owner, staging, bin resolution and promotion real.
 vi.mock('socket.io-client', () => ({ io }));
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
+
+it('reads and cancels an admitted install job at its receiving Action owner without a second Home RPC', async () => {
+  const owner = createAgentInstallJobOwner({ readTrackedSessions: () => [], readRegistry: () => ({ agents: [{
+    id: 'fixture', runtimeSpec: { id: 'fixture', title: 'Fixture', binaryName: 'fixture', sourcePreferenceDefault: 'system-first',
+      managedInstall: null, manualInstallKind: 'none', manualInstallRecipes: {}, acceptsJavaScriptFileOverride: false },
+  }] }) });
+  const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'selected',
+    installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const };
+  const manager = new RpcHandlerManager({ scopePrefix: 'selected', localMachineId: 'selected', scopeKind: 'machine', encryptionMode: 'plain', logger: () => {},
+    authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, { machineId: 'selected',
+      resolveInstallationId: () => 'installation', resolveCustodianAccountId: async () => 'owner',
+      resolveHomeServerIdentityId: async () => 'home', verifyMachineAdmission: async () => true }, source) });
+  registerMachineAgentInstallJobRpcHandlers({ rpcHandlerManager: manager, owner });
+  let selfRpcCalls = 0;
+  // The incident's redundant Home RPC refuses dispatch. Keep the receiving
+  // Action, transport selection, RPC authorization and retained job owner real.
+  bindApiSessionSocketMock(io, createApiSessionSocketStub({ emitWithAck: async event => {
+    if (event !== SOCKET_RPC_EVENTS.CALL) throw new Error('Unexpected transport');
+    selfRpcCalls++;
+    return { ok: false, error: 'Forbidden', errorCode: 'RPC_FORBIDDEN' };
+  } }));
+  vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { machine: {
+    id: 'selected', storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+  } } });
+  const executor = createActionExecutor(createCliActionDeps({ token: 'fixture', credentials: { token: 'fixture', encryption: null },
+    sessionId: '', serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null,
+    externalActionMachineInstallationId: 'installation', externalActionMachineRequestPrivateKey: new Uint8Array(64),
+    machineActionDirectTargetTransport: { machineId: 'selected', invoke: (method, request, options) => manager.invokeLocal(method, request, options) },
+  }));
+  try {
+    const started = owner.start({ agentId: 'fixture', intent: 'install', consent: { vendorRecipe: false } });
+    if (!started.ok) throw new Error('Install was not admitted');
+    await vi.waitFor(() => expect(owner.read({ jobId: started.jobId, cursor: 0 })).toMatchObject({ done: true }));
+    for (const actionId of ['machines.agents.install.status', 'machines.agents.install.cancel'] as const) {
+      const target = { kind: 'machine' as const, machineId: 'selected' };
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'receiving-admission', binding: {
+        accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 },
+        accountEncryptionMode: 'plain', serverIdentityId: 'home', actionId, requestId: actionId,
+        machineId: 'selected', installationId: 'installation', target, requestEnvelopeDigest: 'a'.repeat(43),
+      } });
+      const context = { surface: 'cli', authority: 'present_user', serverId: 'home', actionRequestId: actionId,
+        machineAdmission, verifyMachineAdmissionCurrent: async () => true, bypassApprovals: true,
+        externalActionExecutionAuthorization: authorization, externalActionTarget: target } satisfies RpcActionExecutorContext;
+      const method = actionId === 'machines.agents.install.status'
+        ? RPC_METHODS.DAEMON_AGENTS_INSTALL_READ : RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL;
+      const requestId = '0123456789abcdef0123456789abcdef';
+      const rpcMethod = `selected:${method}`;
+      const params = await socketRpcCodec.encodeParams({ mode: 'plain' },
+        { jobId: started.jobId, ...(actionId === 'machines.agents.install.status' ? { cursor: 0 } : {}) },
+        { method: rpcMethod, callId: requestId });
+      const encoded = await manager.handleRequest({ method: rpcMethod, requestId, params,
+        machineAdmission, callerAuthority: 'present_user', callerInputAuthorization: authorization });
+      const received = await socketRpcCodec.decodeResult({ mode: 'plain' }, { ok: true, result: encoded }, requestId);
+      expect.soft(received, JSON.stringify(received)).toMatchObject({ ok: true });
+      const result = await executor.execute(actionId, { machineId: 'selected', jobId: started.jobId }, context);
+      expect.soft(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true } });
+      if (result.ok) assertActionOutputContract(actionId, result.result);
+    }
+    expect(selfRpcCalls).toBe(0);
+  } finally { await owner.shutdown(); }
+});
 
 it('replays local configured-Agent install, status, cancellation and removal through current Machine admission', async () => {
   const home = await createTempDir('happier-agent-install-admission-');
