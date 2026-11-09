@@ -3,7 +3,6 @@ import { SESSION_PERMISSION_MODES } from '@happier-dev/protocol/sessions/metadat
 import { AGENT_PERMISSION_INTENTS_V1 } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import type { SessionNativeVendorResumeIdFieldV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import {
-    type ConnectedServiceId,
     type PluginAgentSkillsCapabilityV2,
     type AgentSessionCompactionCapability,
     type AgentToolsDelivery,
@@ -210,7 +209,7 @@ export type AgentCore = Readonly<{
      * This is used by UI + daemon to offer "connect once, reuse everywhere" auth routing.
     */
     connectedServices?: Readonly<{
-      supportedServiceIds: ReadonlyArray<ConnectedServiceId>;
+      supportedServiceIds: ReadonlyArray<string>;
       providerStateSharing?: ConnectedServicesProviderStateSharingCapability;
     }> | null;
     runtimeKinds?: AnyAgentRuntimeKindsManifest | null;
