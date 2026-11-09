@@ -12,10 +12,12 @@ import { DeploymentBindingSavedSecretRevisionsV1Schema } from '@happier-dev/prot
 
 const collectionCoverage = z.optional(z.enum(['complete', 'partial']));
 
-/** Labels come from admitted Source metadata and private Artifact headers, never their bodies. */
+/** Private Environment configuration facts stay with the opened page, never public metadata. */
 export const DeploymentEnvironmentCollectionV1Schema = z.strictObject({
     items: z.array(z.strictObject({ environment: DeploymentEnvironmentHeaderV1Schema, title: z.string(),
         projectSourceName: z.optional(z.nullable(z.string())),
+        /** Saved configuration, independent of backup runs; omitted by older readers or unreadable content. */
+        backupConfigured: z.optional(z.boolean()),
         /** Unknown unless the carried receipt is the runtime link's actual active deployment. */
         liveVersionTitle: z.optional(z.nullable(z.string())),
         runtimeTargetLink: z.optional(z.nullable(DeploymentTargetLinkHeaderV1Schema)),

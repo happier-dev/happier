@@ -2286,11 +2286,19 @@ status record at this storage boundary.
 
 The Project deployment read controller opens Environment collection content and
 visible history receipt content through the existing Account Artifact reader.
+Compact Environment rows expose optional `backupConfigured`, derived from that
+Environment's saved `content.backup`: a configuration is true; absence or
+`{notNeeded:true}` is false. It does not require a backup run. Unreadable content
+retains a readable header row with partial coverage and omits the fact; older
+producers also omit it, so omission is unknown rather than false. The Store
+consumes this fact through the shared Environment inventory, without settings,
+a backup-history aggregate, or a per-Environment request.
 The Environment list includes each row's latest receipt attempt
 (id and state), which is distinct from the serving receipt selected by the
-runtime link's `activeDeploymentId`. Collection receipt summaries retain a
-separate header-only batch; they do not open retained receipt or TargetLink
-bodies. Environment and receipt reads enforce exact Artifact identity, version
+runtime link's `activeDeploymentId`. The visible Environment page and its current
+receipt summaries share one deduplicated Artifact content batch per list. Only
+the current receipt's header is projected; retained receipts and TargetLinks are
+not fetched by the list. Environment and receipt reads enforce exact Artifact identity, version
 and kind checks through their canonical content projections.
 
 Current 0.3 development source also admits an Account-wide collection when

@@ -178,6 +178,10 @@ describe('deployment scoped read transport', () => {
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'account-owner' }, isCurrent: () => true,
             onRetire: () => ({ dispose() {} }) };
         const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+        detail.content.backup = { configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 'open' },
+            occurrenceId: 'destination', config: { bucket: 'recovery' }, credentialBindings: [],
+            sources: [{ kind: 'dump', sourceId: 'database', service: 'db', consistency: 'logical' }],
+            ownership: { environmentId: detail.environment.id, prefix: 'backups' }, retention: { kind: 'keepEverything' } };
         const receiptDetail = createDeploymentReceiptDetailV1();
         receiptDetail.deployment.state = 'running';
         receiptDetail.content.steps = [{ id: 'source', label: 'Source', state: 'succeeded' }];
@@ -220,6 +224,7 @@ describe('deployment scoped read transport', () => {
         const options = { signal: new AbortController().signal };
         expect(await transport.listEnvironments(scope, {}, options)).toMatchObject({ ok: true,
             value: { items: [{ environment: environmentHeader, title: detail.content.name,
+                backupConfigured: true,
                 projectSourceName: projectSources[0]!.name, liveVersionTitle: 'Exact revision A',
                 currentDeployment: { ...receiptHeader, title: 'Exact revision A', steps: receiptDetail.content.steps } }] } });
         const exactHeaderQuery = { environmentIds: [environmentHeader.id], machineId: undefined };
@@ -230,7 +235,7 @@ describe('deployment scoped read transport', () => {
         const exactList = exactHeaderRequests.find(request => request.path.split('?')[0] === root);
         expect(new URLSearchParams(exactList?.path.split('?')[1]).getAll('environmentIds')).toEqual([environmentHeader.id]);
         expect(exactHeaderRequests.filter(request => request.path === '/v1/artifacts/read').map(request => request.input))
-            .toEqual([{ artifactIds: [environmentHeader.contentArtifactId], projection: 'headers' }]);
+            .toEqual([{ artifactIds: [environmentHeader.contentArtifactId] }]);
         expect(exactHeaderRequests.filter(request => request.path.includes('/deployments/receipts/')
             || request.path === `${root}/${environmentHeader.id}/deployments`)).toEqual([]);
         const unexpectedEnvironment = createDeploymentEnvironmentHeaderV1({ ...environmentHeader,
@@ -246,8 +251,8 @@ describe('deployment scoped read transport', () => {
         const collectionReads = homes.requests.filter(request => request.path === '/v1/artifacts/read').slice(artifactRequests);
         expect(collectionReads).toHaveLength(3);
         expect(collectionReads.map(request => request.input)).toEqual(expect.arrayContaining([
-            { artifactIds: [environmentHeader.contentArtifactId, receiptHeader.contentArtifactId], projection: 'headers' },
-            { artifactIds: [environmentHeader.contentArtifactId], projection: 'headers' },
+            { artifactIds: [environmentHeader.contentArtifactId, receiptHeader.contentArtifactId] },
+            { artifactIds: [environmentHeader.contentArtifactId] },
             { artifactIds: [receiptHeader.contentArtifactId, otherReceipt.contentArtifactId] },
         ]));
         const controller = createDeploymentReadControllerV1({ scope, transport });
@@ -258,6 +263,7 @@ describe('deployment scoped read transport', () => {
             await Promise.all([collection.refresh(), history.refresh()]);
             expect(collection.getSnapshot().value?.items[0]?.currentDeployment).toEqual({ ...receiptHeader,
                 title: 'Exact revision A', steps: receiptDetail.content.steps });
+            expect(collection.getSnapshot().value?.items[0]).toHaveProperty('backupConfigured', true);
             expect(history.getSnapshot().value?.items[0]?.title).toBe('aaaaaaa');
         } finally { collection.release(); history.release(); controller.retire(); }
         const beforeDetail = homes.requests.filter(request => request.path === '/v1/artifacts/read').length;
@@ -303,7 +309,7 @@ describe('deployment scoped read transport', () => {
             { environment: environmentHeader }, { environment: sharedEnvironment },
         ] } });
         expect(homes.requests.filter(request => request.path === '/v1/artifacts/read').slice(beforeShared).map(request => request.input))
-            .toEqual([{ artifactIds: [environmentHeader.contentArtifactId], projection: 'headers' }]);
+            .toEqual([{ artifactIds: [environmentHeader.contentArtifactId] }]);
         homes.answer(serverId, `${root}/${environmentHeader.id}/deployments`, { body: { ok: true,
             items: [badReceipt, receiptHeader, { ...otherReceipt, contentBodyVersion: 2 }], nextCursor: 'next-history-page' } });
         const partialHistory = await transport.listHistory(scope, environmentHeader.id, {}, options);
@@ -324,6 +330,35 @@ describe('deployment scoped read transport', () => {
         const partialDomains = await transport.listDomains!(scope, environmentHeader.id, {}, options);
         expect(partialDomains).toMatchObject({ ok: true, value: { items: [{ domain: { id: domain.id } }], coverage: 'partial', nextCursor: 'next-domain-page' } });
         expect(pageItems(partialDomains)).toHaveLength(1);
+        const unconfigured = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({
+            serverId, id: 'unconfigured', contentArtifactId: 'unconfigured-content' }) });
+        const notNeeded = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({
+            serverId, id: 'not-needed', contentArtifactId: 'not-needed-content' }) });
+        notNeeded.content.backup = { notNeeded: true };
+        const configurationWriter = await captureLazyActionAccountContext(serverId);
+        try {
+            for (const candidate of [unconfigured, notNeeded]) await configurationWriter.createArtifactDocument({
+                artifactId: candidate.environment.contentArtifactId,
+                header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: candidate.content.name },
+                body: JSON.stringify(candidate.content),
+            });
+        } finally { configurationWriter.dispose(); }
+        // No receipts or backup history exist for this page. Configured membership is independent of runs.
+        homes.answer(serverId, root, { body: { ok: true,
+            items: [environmentHeader, unconfigured.environment, notNeeded.environment], nextCursor: null } });
+        const beforeMembership = homes.requests.length;
+        expect(await transport.listEnvironments(scope, {}, options)).toMatchObject({ ok: true, value: { items: [
+            { environment: environmentHeader, backupConfigured: true },
+            { environment: unconfigured.environment, backupConfigured: false },
+            { environment: notNeeded.environment, backupConfigured: false },
+        ] } });
+        const membershipRequests = homes.requests.slice(beforeMembership);
+        expect(membershipRequests.filter(request => request.path.split('?')[0] === root)).toHaveLength(1);
+        expect(membershipRequests.filter(request => request.path === '/v1/artifacts/read').map(request => request.input))
+            .toEqual([{ artifactIds: [environmentHeader.contentArtifactId,
+                unconfigured.environment.contentArtifactId, notNeeded.environment.contentArtifactId] }]);
+        expect(membershipRequests.filter(request => request.path.includes('/backups')
+            || request.path.startsWith(`${root}/`))).toEqual([]);
         homes.answer(serverId, '/v1/artifacts/read', { status: 503, body: { error: 'artifact_content_unavailable' } });
         expect(await transport.listEnvironments(scope, {}, options)).toMatchObject({ ok: false,
             failure: { code: 'artifact_content_unavailable' } });

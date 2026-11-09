@@ -8,7 +8,6 @@ import {
     readDeploymentReceiptArtifactV1,
     readDeploymentDomainArtifactV1,
     projectDeploymentCancellationConsequenceV1,
-    type DeploymentArtifactHeaderV1,
 } from '@happier-dev/deployment-protocol/v1';
 import type {
     DeploymentReadTransportV1, DeploymentReadScopeV1, DeploymentReadOptionsV1, DeploymentReadResultV1,
@@ -129,33 +128,33 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             const receipts = query.environmentIds === undefined
                 ? (page.currentDeployments ?? []).filter(row => environmentsById.has(row.environmentId)) : [];
             const currentByEnvironment = new Map(receipts.map((receipt, index) => [receipt.environmentId, { receipt, index }]));
-            const headers = await readArtifactsByRow([...page.items.map(row => row.contentArtifactId),
-                ...receipts.map(row => row.contentArtifactId)], ids => account.readArtifactHeaders(ids, { signal: options.signal }));
+            // Existing headers predate configured-backup membership. Open the visible page once,
+            // including current receipt headers, so old configurations need no rewrite or per-row read.
+            const contents = await readArtifactsByRow([...page.items.map(row => row.contentArtifactId),
+                ...receipts.map(row => row.contentArtifactId)], ids => account.readArtifactContents(ids, { signal: options.signal }));
             const items = [];
             let coverage = page.coverage;
             for (const [index, environment] of page.items.entries()) {
-                const read = headers[index];
+                const read = contents[index];
                 if (!read || read.status !== 'fulfilled') { coverage = 'partial'; continue; }
                 const artifact = read.value;
-                const opened: DeploymentArtifactHeaderV1 | null = artifact?.isDecrypted && artifact.rawHeader && artifact.bodyVersion !== undefined
-                    ? { artifactId: artifact.id, header: artifact.rawHeader,
-                        revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } } : null;
-                const label = readDeploymentEnvironmentArtifactHeaderV1(environment, opened);
+                const opened = readDeploymentEnvironmentArtifactV1(environment, artifact);
+                const label = opened.ok ? opened : readDeploymentEnvironmentArtifactHeaderV1(environment, artifact);
                 if (!label.ok) { coverage = 'partial'; continue; }
+                if (!opened.ok) coverage = 'partial';
                 const current = currentByEnvironment.get(environment.id);
                 let currentDeployment: DeploymentEnvironmentCollectionV1['items'][number]['currentDeployment'] = null;
                 if (current) {
-                    const receiptHeader = headers[page.items.length + current.index];
+                    const receiptHeader = contents[page.items.length + current.index];
                     const artifact = receiptHeader?.status === 'fulfilled' ? receiptHeader.value : null;
-                    const opened: DeploymentArtifactHeaderV1 | null = artifact?.isDecrypted && artifact.rawHeader && artifact.bodyVersion !== undefined
-                        ? { artifactId: artifact.id, header: artifact.rawHeader,
-                            revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } } : null;
-                    const projection = readDeploymentReceiptArtifactHeaderV1(current.receipt, opened);
+                    const projection = readDeploymentReceiptArtifactHeaderV1(current.receipt, artifact);
                     if (projection.ok) currentDeployment = { ...current.receipt, title: projection.title, steps: projection.steps };
                     else coverage = 'partial';
                 }
                 const runtimeTargetLink = runtimeByEnvironment.get(environment.id) ?? null;
                 items.push({ environment, title: label.title, projectSourceName: sourceNames.get(environment.projectSourceId) ?? null,
+                    ...(opened.ok ? { backupConfigured: opened.content.backup !== undefined
+                        && !('notNeeded' in opened.content.backup) } : {}),
                     liveVersionTitle: currentDeployment && runtimeTargetLink?.activeDeploymentId === currentDeployment.id
                         ? currentDeployment.title ?? null : null,
                     ...(page.runtimeTargetLinks === undefined ? {} : { runtimeTargetLink }),
