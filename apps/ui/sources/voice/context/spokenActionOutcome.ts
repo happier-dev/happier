@@ -1,28 +1,42 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { DECISION_ACTION_IDS, SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { SETTINGS_DECLARATION_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/settingsDeclarationActionIdsV1';
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { ActionApprovalRequestCreatedResultSchema, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ApprovalRequestStatusSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { SessionMessageSendActionResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 
 import { t } from '@/text';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { VOICE_ACTION_EXECUTE_TOOL_NAME } from '@/voice/tools/voiceActionExecution';
 import type { LocalVoiceAgentToolResultEntry } from '@/voice/tools/localVoiceEffectOutcomeCustody';
 
+const [, , settingsSetActionId] = SETTINGS_DECLARATION_ACTION_IDS_V1;
+const [approvalRequestDecideActionId] = DECISION_ACTION_IDS;
+
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown> : null;
 }
 
-/** These mutations have an owner-produced completion, rather than a model-authored answer. */
+/** These Actions have an owner-produced disposition, rather than a model-authored answer. */
 export function readSpokenActionOutcomeOwner(toolName: string, input: unknown) {
   const requestedActionId = toolName === VOICE_ACTION_EXECUTE_TOOL_NAME ? record(input)?.actionId : null;
-  return (['settings.set', 'approval.request.decide'] as const).find(actionId =>
+  const owner = ([settingsSetActionId, approvalRequestDecideActionId, SESSION_MESSAGE_SEND_ACTION_ID_V1] as const).find(actionId =>
     requestedActionId === actionId || toolName === getActionSpec(actionId).bindings?.voiceClientToolName,
   ) ?? null;
+  if (owner === SESSION_MESSAGE_SEND_ACTION_ID_V1) {
+    const args = record(toolName === VOICE_ACTION_EXECUTE_TOOL_NAME ? record(input)?.input : input);
+    // An explicit answer belongs to the existing wait/return lifecycle.
+    if (args?.reply === 'wait' || args?.reply === 'return' || args?.wait === true) return null;
+  }
+  return owner;
 }
 
 /** Present the saved value/decision disposition; an accepted or pending call is not completion. */
-export function resolveSpokenActionOutcome(entry: LocalVoiceAgentToolResultEntry): string | null {
+export function resolveSpokenActionOutcome(entry: LocalVoiceAgentToolResultEntry, options?: Readonly<{
+  resolveSentToLabel?: (input: Readonly<Record<string, unknown>> | null) => string | null;
+}>): string | null {
   const owner = readSpokenActionOutcomeOwner(entry.t, entry.args);
   if (!owner) return null;
   const envelope = record(entry.result);
@@ -33,14 +47,45 @@ export function resolveSpokenActionOutcome(entry: LocalVoiceAgentToolResultEntry
   if (parseActionExecuteFailure(entry.result)?.errorCode === 'cancelled') {
     return t('voiceSurface.actionCanceled');
   }
-  if (envelope?.ok !== true) return resolveActionExecutionFailureMessage(entry.result, unknown) ?? unknown;
+  if (envelope?.ok !== true) {
+    if (owner === SESSION_MESSAGE_SEND_ACTION_ID_V1) {
+      return parseActionExecuteFailure(entry.result)?.errorCode === 'outcome_unknown'
+        ? t('session.askRecord.unsure') : t('session.askRecord.notSent');
+    }
+    return resolveActionExecutionFailureMessage(entry.result, unknown) ?? unknown;
+  }
   // Direct tools flatten the envelope; action_execute retains it. Neither
   // transport metadata nor a previous presentation belongs to owner output.
   const { ok: _ok, summary: _summary, ...body } = record(envelope.result) ?? envelope;
   if (ActionApprovalRequestCreatedResultSchema.safeParse(body).success) {
     return t('approvals.status.open');
   }
-  if (owner === 'settings.set') {
+  if (owner === SESSION_MESSAGE_SEND_ACTION_ID_V1) {
+    const parsed = SessionMessageSendActionResultV1Schema.safeParse(body);
+    if (!parsed.success) return unknown;
+    if ('kind' in parsed.data) {
+      return parsed.data.results.every(({ result }) => result.ok
+        && (result.result.status === 'accepted' || result.result.status === 'alreadyAccepted'))
+        ? t('session.askRecord.sent') : t('session.askRecord.unsure');
+    }
+    switch (parsed.data.status) {
+      case 'accepted':
+      case 'alreadyAccepted': {
+        // Provider summaries call without presentation context and receive no
+        // private target label. Local speech uses the existing disclosure owner.
+        const args = record(entry.t === VOICE_ACTION_EXECUTE_TOOL_NAME ? record(entry.args)?.input : entry.args);
+        const label = options?.resolveSentToLabel?.(args);
+        return label ? `${t('session.askRecord.sentTo')} ${label}` : t('session.askRecord.sent');
+      }
+      case 'outcomeUnknown': return t('session.askRecord.unsure');
+      case 'held': return t('session.askRecord.noAnswerYet');
+      case 'rejected':
+      case 'failed':
+      case 'cancelled': return t('session.askRecord.notSent');
+      case 'replied': return unknown;
+    }
+  }
+  if (owner === settingsSetActionId) {
     return SettingsDeclarationActionOutputSchemasV1['settings.set'].safeParse(body).success
       ? t('common.done') : unknown;
   }

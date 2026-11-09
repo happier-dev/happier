@@ -14,6 +14,7 @@ import type { VoiceAssistantAction } from '@happier-dev/protocol/voice/actions';
 import { parseVoiceToolResultsFollowUp } from '@happier-dev/protocol/voice/toolResultsChannel';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import { t } from '@/text';
 
 const restoreHarness = await warmLocalVoiceEngineHarnessGraph();
 afterAll(() => restoreHarness());
@@ -313,6 +314,27 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     expect(replay.toolResultBatches[0]).toEqual(result.toolResultBatches[0]);
   });
 
+  it('acknowledges delegated delivery without predicting approval', async () => {
+    await prepareSession();
+    const input = { sessionId: 's1', message: 'Write the requested file.', reply: 'none' };
+    queueSend('delegated-write', input.message, { sessionId: input.sessionId, reply: input.reply });
+    queueFinal('The session needs your approval before running a terminal command.');
+    const spoken: string[] = [];
+    const streamed: string[] = [];
+    const result = await run('ask the session to write the file', {
+      onAssistantTurn: async ({ assistantText }) => { spoken.push(assistantText); },
+      onOutputEvent: async output => {
+        for (const effect of output.effects) if (effect.kind === 'speak') streamed.push(effect.text);
+      },
+    });
+    expect(targetPendingRequests()).toHaveLength(1);
+    expect(result.toolResultBatches[0]?.[0]?.result).toMatchObject({ ok: true, status: 'accepted' });
+    expect(spoken).toHaveLength(1);
+    expect(spoken[0]).toMatch(/sent/i);
+    expect([...spoken, ...streamed].join(' ')).not.toMatch(/approv|permission|terminal command/i);
+    expect(result.assistantTurns).toEqual(spoken);
+  });
+
   it('keeps sending in one conversation after an invented target id is corrected', async () => {
     await prepareSession();
     queueSend('first-target-send', 'Reply MAPLE.', { sessionId: 's1', reply: 'none' }); queueFinal();
@@ -344,7 +366,7 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
   it('speaks only the outcome-informed follow-up when a requested send fails before dispatch', async () => {
     await prepareSession();
     queueSend('effect-truthful-failure', 'Cannot dispatch', { sessionId: 'missing-session' });
-    queueFinal('I could not send it.');
+    queueFinal('Sent. The session needs approval.');
     const spoken: string[] = [];
     const result = await run('send it', { onAssistantTurn: async ({ assistantText }) => {
       // The non-streaming TTS consumer awaits this callback before continuing.
@@ -354,7 +376,7 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
       expect(targetPendingRequests()).toEqual([]);
       spoken.push(assistantText);
     } });
-    expect(spoken).toEqual(['I could not send it.']);
-    expect(result.assistantTurns).toEqual(['I could not send it.']);
+    expect(spoken).toEqual([t('session.askRecord.notSent')]);
+    expect(result.assistantTurns).toEqual(spoken);
   });
 });

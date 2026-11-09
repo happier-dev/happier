@@ -1,4 +1,6 @@
 import { readSpokenActionOutcomeOwner, resolveSpokenActionOutcome } from '@/voice/context/spokenActionOutcome';
+import { getVoiceContextFormatterPrefs } from '@/voice/context/voiceContextPrefs';
+import { resolveVoiceSessionLabel } from '@/voice/context/resolveVoiceSessionLabel';
 import type { VoiceHostTextPlayback } from '@happier-dev/plugin-sdk/voice/client';
 import type { SpokenActionTurnOrigin } from '@/voice/tools/executeSpokenAction';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -371,7 +373,17 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     const actionRun = await runActionsOnce(actions, params.turnOrigin ?? 'person');
     const toolResults = actionRun.results;
     toolResultBatches.push(toolResults);
-    const outcomes = toolResults.map(resolveSpokenActionOutcome).filter(outcome => outcome !== null);
+    const outcomes = toolResults.map(entry => resolveSpokenActionOutcome(entry, {
+      resolveSentToLabel: input => {
+        const sessionId = input?.sessionId ?? params.currentToolSessionAddress?.sessionId;
+        const serverId = input?.serverId ?? params.currentToolSessionAddress?.serverId;
+        if (typeof sessionId !== 'string' || typeof serverId !== 'string') return null;
+        const target = { serverId, sessionId };
+        const prefs = getVoiceContextFormatterPrefs({ settings: storage.getState().settings,
+          sessionId, sessionAddress: target });
+        return resolveVoiceSessionLabel(target, prefs, { fallbackLabel: 'the session' });
+      },
+    })).filter(outcome => outcome !== null);
     if (outcomes.length > 0) {
       ownerPresentsOutcome = true;
       spokenActionOutcome = [spokenActionOutcome, ...outcomes].filter(Boolean).join(' ');
