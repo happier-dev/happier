@@ -1,4 +1,6 @@
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { isAbsolute } from 'node:path';
+import { resolveAgentNativeTranscriptPathFromSessionMetadata } from '@happier-dev/agents';
 import { findCatalogEntry } from '@/agent/catalog/registry';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { isCustomAcpAgentContributionIdentityV1 } from '@happier-dev/protocol/agents/executionTargetV1';
@@ -61,6 +63,7 @@ export type PreparedExecuteSpawnSessionRequest = Readonly<{
     memoryHighBytes: number | null;
     normalizedExistingSessionId: string;
     effectiveResume: string;
+    candidatePersistedSessionFile?: string | null;
     effectiveBackendTargetV2: BackendIdentitySuccess['effectiveBackendTargetV2'];
     sessionAttachPayload: BackendIdentitySuccess['sessionAttachPayload'];
     catalogAgentId: CatalogAgentId | null;
@@ -382,6 +385,9 @@ export async function prepareExecuteSpawnSessionRequest(
         effectiveResume,
         effectiveBackendTargetV2,
         sessionAttachPayload: effectiveSessionAttachPayload,
+        candidatePersistedSessionFile: isAbsolute(effectiveResume)
+            ? effectiveResume
+            : catalogAgentId ? resolveAgentNativeTranscriptPathFromSessionMetadata(catalogAgentId, persistedMetadata) : null,
         catalogAgentId,
         daemonSpawnHooks,
         environmentVariablesValidation,

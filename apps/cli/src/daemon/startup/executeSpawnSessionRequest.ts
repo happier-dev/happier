@@ -51,6 +51,7 @@ import { createManagedSessionDirectories } from '@/session/creation/managedSessi
 import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 import { seedManagedSessionDirectory } from '@/session/creation/seedManagedSessionDirectory';
 import { prepareDaemonAgentIsolationIdentity } from '../spawn/prepareDaemonAgentIsolationIdentity';
+import { projectPluginCodeRefusal } from '../spawn/pluginCodeRefusal';
 import { isDefiniteSpawnPreAdmissionRejection } from '@/session/services/spawnPreAdmissionRejection';
 import { readSessionCreationTerminalSpawnErrorDetail } from '@/api/session/sessionCreationTerminalSpawnErrorDetail';
 import { prepareExecuteSpawnSessionRequest } from './prepareExecuteSpawnSessionRequest';
@@ -1026,6 +1027,7 @@ export async function executeSpawnSessionRequest(
                 requestedSessionId,
                 effectiveResume,
                 catalogAgentId,
+                candidatePersistedSessionFile: prepared.candidatePersistedSessionFile,
                 credentials: params.credentials,
                 api: params.api,
                 ...(params.providerAccountUsageStore
@@ -1565,7 +1567,11 @@ export async function executeSpawnSessionRequest(
             if (error instanceof AgentCliNotFoundError && !incompleteRetirement) {
                 return { type: 'error', errorCode: error.errorCode, agentId: error.agentId, errorMessage };
             }
-            const launchCause = SessionSpawnLaunchErrorV1Schema.safeParse({ kind: 'launch_error',
+            const pluginCodeRefusal = !incompleteRetirement ? projectPluginCodeRefusal(error, { platform: process.platform,
+                role: (requesterRuntime?.bootstrap.savedSecretOperationContext.machineAdmission
+                    ?? options.spawnActionContext?.machineAdmission)?.role,
+                target: requesterRuntime?.bootstrap.attribution ?? options.requesterWorkAttributionV1 }) : undefined;
+            const launchCause = SessionSpawnLaunchErrorV1Schema.safeParse(pluginCodeRefusal ?? { kind: 'launch_error',
                 code: incompleteRetirement ? 'STARTUP_RETIREMENT_INCOMPLETE' : rawCauseCode,
                 message: incompleteRetirement ?? errorMessage });
             return {

@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path';
 
-import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
+import { resolveAgentNativeTranscriptPathFromSessionMetadata, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { readRuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import type { ConnectedServiceMaterializationIdentityV1, RuntimeDescriptorV1 } from '@happier-dev/protocol';
@@ -89,12 +89,18 @@ function resolveTrackedConnectedServiceResumeContext(input: Readonly<{
   const trackedSpawnResumeCandidate = normalizeOptionalAbsolutePath(trackedSpawnResume);
   const explicitVendorResumeId = readNonBlankOpaqueIdentifier(input.vendorResumeId);
   const explicitCandidatePersistedSessionFile = normalizeOptionalString(input.candidatePersistedSessionFile);
+  const metadataCandidate = (vendorResumeId: string) =>
+    (persistedMetadataVendorResumeId === vendorResumeId
+      ? resolveAgentNativeTranscriptPathFromSessionMetadata(input.agentId, persistedMetadata) : null)
+    ?? (trackedMetadataVendorResumeId === vendorResumeId
+      ? resolveAgentNativeTranscriptPathFromSessionMetadata(input.agentId, trackedMetadata) : null);
 
   if (trackedVendorResumeId) {
     return {
       vendorResumeId: trackedVendorResumeId,
       candidatePersistedSessionFile: trackedSpawnResumeCandidate
-        ?? (explicitVendorResumeId === trackedVendorResumeId ? explicitCandidatePersistedSessionFile : null),
+        ?? (explicitVendorResumeId === trackedVendorResumeId ? explicitCandidatePersistedSessionFile : null)
+        ?? metadataCandidate(trackedVendorResumeId),
     };
   }
 
@@ -102,25 +108,26 @@ function resolveTrackedConnectedServiceResumeContext(input: Readonly<{
     return {
       vendorResumeId: trackedSpawnResume,
       candidatePersistedSessionFile: trackedSpawnResumeCandidate
-        ?? (explicitVendorResumeId === trackedSpawnResume ? explicitCandidatePersistedSessionFile : null),
+        ?? (explicitVendorResumeId === trackedSpawnResume ? explicitCandidatePersistedSessionFile : null)
+        ?? metadataCandidate(trackedSpawnResume),
     };
   }
 
   if (persistedMetadataVendorResumeId) {
     return {
       vendorResumeId: persistedMetadataVendorResumeId,
-      candidatePersistedSessionFile: explicitVendorResumeId === persistedMetadataVendorResumeId
+      candidatePersistedSessionFile: (explicitVendorResumeId === persistedMetadataVendorResumeId
         ? explicitCandidatePersistedSessionFile
-        : null,
+        : null) ?? metadataCandidate(persistedMetadataVendorResumeId),
     };
   }
 
   if (trackedMetadataVendorResumeId) {
     return {
       vendorResumeId: trackedMetadataVendorResumeId,
-      candidatePersistedSessionFile: explicitVendorResumeId === trackedMetadataVendorResumeId
+      candidatePersistedSessionFile: (explicitVendorResumeId === trackedMetadataVendorResumeId
         ? explicitCandidatePersistedSessionFile
-        : null,
+        : null) ?? metadataCandidate(trackedMetadataVendorResumeId),
     };
   }
 

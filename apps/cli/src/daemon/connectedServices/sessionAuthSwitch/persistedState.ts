@@ -1,5 +1,5 @@
 import type { ConnectedServiceBindingsV2, ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
-import { resolveAgentIdFromSessionMetadata, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
+import { resolveAgentIdFromSessionMetadata, resolveAgentNativeTranscriptPathFromSessionMetadata, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
 import { resolveCatalogAgentId } from '@/agent/catalog/resolution';
 import type { CatalogAgentId } from '@/agent/catalog/types';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
@@ -113,6 +113,9 @@ export async function resolveInactiveConnectedServiceSessionContext(
   const vendorResumeId = agentId
     ? resolveVendorResumeIdFromSessionMetadata(agentId, metadata)
     : null;
+  const candidatePersistedSessionFile = agentId
+    ? resolveAgentNativeTranscriptPathFromSessionMetadata(agentId, metadata)
+    : null;
   const cwd = resolveSessionMachineWorkspacePath({
     metadata,
     currentMachineId: input.currentMachineId,
@@ -128,6 +131,7 @@ export async function resolveInactiveConnectedServiceSessionContext(
       ? { connectedServiceMaterializationIdentityV1: materializationIdentity }
       : {}),
     ...(vendorResumeId ? { vendorResumeId } : {}),
+    ...(candidatePersistedSessionFile ? { candidatePersistedSessionFile } : {}),
     ...(cwd ? { cwd } : {}),
   };
 }

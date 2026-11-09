@@ -1165,6 +1165,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
   isAccountRuntimeCurrent?: () => Promise<boolean>;
   vendorResumeId: string | null;
   resumeReachabilityRequired: boolean;
+  candidatePersistedSessionFile?: string | null;
   runtimeDescriptorV1?: RuntimeDescriptorV1;
 }>): Promise<ConnectedServicesMaterialization | null> {
   params.signal?.throwIfAborted();
@@ -1196,6 +1197,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
     isAccountRuntimeCurrent: params.isAccountRuntimeCurrent,
     runtimeDescriptorV1: params.runtimeDescriptorV1,
     vendorResumeId: params.vendorResumeId,
+    candidatePersistedSessionFile: params.candidatePersistedSessionFile,
   });
 
   if (!materialized) return null;
@@ -1206,6 +1208,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
       materializedEnv: materialized.env,
       vendorResumeId: params.vendorResumeId,
       cwd: params.sessionDirectory,
+      candidatePersistedSessionFile: params.candidatePersistedSessionFile,
       resumeReachabilityRequired: params.resumeReachabilityRequired,
       ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),
     });
@@ -1428,6 +1431,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
       }
       params.signal?.throwIfAborted();
       const materialized = await materializeAndVerifyConnectedServiceAuthForSpawn({
+        candidatePersistedSessionFile: params.candidatePersistedSessionFile,
         agentLaunchTarget: params.agentLaunchTarget,
         signal: params.signal,
         retainCleanup: params.retainCleanup,
@@ -1518,6 +1522,7 @@ async function assertSpawnResumeReachable(params: Readonly<{
   vendorResumeId: string | null;
   cwd: string | null;
   resumeReachabilityRequired: boolean;
+  candidatePersistedSessionFile?: string | null;
   runtimeDescriptorV1?: RuntimeDescriptorV1;
 }>): Promise<void> {
   if (!params.resumeReachabilityRequired) return;
@@ -1535,6 +1540,7 @@ async function assertSpawnResumeReachable(params: Readonly<{
     agentId: params.agentId,
     vendorResumeId,
     materializedEnv: params.materializedEnv,
+    candidatePersistedSessionFile: params.candidatePersistedSessionFile,
     ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),
   });
   if (reachability.ok) return;

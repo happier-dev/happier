@@ -20,6 +20,7 @@ export async function verifySpawnResumeReachability(params: Readonly<{
   agentId: CatalogAgentId;
   vendorResumeId: string;
   materializedEnv: Readonly<Record<string, string>>;
+  candidatePersistedSessionFile?: string | null;
   runtimeDescriptorV1?: Parameters<typeof verifyResumeReachabilityByAgent>[0]['input']['runtimeDescriptorV1'];
 }>): Promise<VerifyResumeReachableResult | Readonly<{ ok: false; reason: string }>> {
   const targetMaterializedRoot = resolveConnectedServiceTargetMaterializedRoot({
@@ -33,6 +34,7 @@ export async function verifySpawnResumeReachability(params: Readonly<{
     input: {
       targetMaterializedRoot,
       vendorResumeId: params.vendorResumeId,
+      candidatePersistedSessionFile: params.candidatePersistedSessionFile,
       ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),
     },
   });

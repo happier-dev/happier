@@ -133,6 +133,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     normalizedExistingSessionId: string;
     requestedSessionId: string;
     effectiveResume: string;
+    candidatePersistedSessionFile?: string | null;
     catalogAgentId: CatalogAgentId | null;
     credentials: SpawnCredentials;
     accountSettingsSnapshot?: ActiveAccountSettingsSnapshot;
@@ -290,6 +291,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                 processEnv: input.processEnv,
                 credentialRefreshService: input.connectedServiceRefreshCoordinator,
                 vendorResumeId: input.effectiveResume || null,
+                candidatePersistedSessionFile: input.candidatePersistedSessionFile,
                 ...(options.runtimeDescriptorV1
                     ? { runtimeDescriptorV1: options.runtimeDescriptorV1 }
                     : {}),
