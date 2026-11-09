@@ -3,7 +3,7 @@ import type { StoredJsonContentEnvelope } from '@happier-dev/protocol';
 import { z } from 'zod/mini';
 import type { HttpService } from '../plugins/http/contracts.js';
 
-// Existing server attempt-custody lifetime, shared by writers and admission.
+// Shared custody bound for staged credential material; after expiry, recover by starting a new attempt.
 export const CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS = 24 * 60 * 60_000;
 
 export type ConnectedAccountAttemptTransactionKind = 'manual' | 'oauth' | 'device';
