@@ -16,11 +16,12 @@ import {
 } from '@happier-dev/protocol/browser/recording/v1';
 import * as React from 'react';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
 
 import type { BrowserShellRecordingState } from '@/components/browser/BrowserShell';
 import type { BrowserRecordingStartControlRequest } from '@/components/browser/recording';
+import { buildRecordingMessageLocalId, presentBrowserRecordingActionFailure } from '@/components/browser/recording/recordingActions';
 import {
     applyBrowserRecordingSessionSnapshot,
     createBrowserRecordingState,
@@ -52,15 +53,6 @@ export type SessionBrowserRecordingRuntimeInput = Readonly<{
     nowMs?: () => number;
     onUnavailable?: BrowserShellRecordingState['onUnavailable'];
 }>;
-
-function sanitizeMessageLocalIdSegment(value: string): string {
-    const sanitized = value.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
-    return sanitized.length > 0 ? sanitized.slice(0, 80) : 'view';
-}
-
-function buildRecordingMessageLocalId(viewId: string, atMs: number): string {
-    return `browser-recording-${sanitizeMessageLocalIdSegment(viewId)}-${atMs}`;
-}
 
 function readRecordingCapabilitiesFromSnapshot(
     snapshotCapabilities: BrowserCapabilities | null,
@@ -118,7 +110,7 @@ function mapDaemonUnavailableReasonToUi(
         || reason.code === 'browser_recording_permission_denied'
     ) {
         return {
-            reasonCode: 'browser_recording_permission_denied',
+            reasonCode: 'browser_recording_policy_denied',
             policyState: 'permissionDenied',
             message: reason.message,
         };
@@ -142,17 +134,20 @@ function mapDaemonUnavailableReasonToUi(
 }
 
 /**
- * One visible outcome for a stop or discard that did not happen (H-UX F-4, plan §437). A transport
+ * One visible outcome for a recording operation that did not happen (H-UX F-4, plan §437). A transport
  * failure, a daemon refusal and a finalization that failed are the same product event: the clip is
  * not where the user asked it to be. Success says nothing here (the recording state changing is the
  * evidence), and the daemon's technical reason message is never shown raw.
  */
-function presentBrowserRecordingActionFailure(action: 'stop' | 'discard'): void {
-    if (action === 'stop') {
-        Modal.alert(t('browserRecording.failure.stopTitle'), t('browserRecording.failure.stopBody'));
-        return;
-    }
-    Modal.alert(t('browserRecording.failure.discardTitle'), t('browserRecording.failure.discardBody'));
+function presentBrowserRecordingUnavailable(
+    reason: Parameters<NonNullable<BrowserShellRecordingState['onUnavailable']>>[0],
+): void {
+    const body = reason.reasonCode === 'browser_recording_disabled'
+        ? t('browserRecording.status.turnedOff')
+        : reason.reasonCode === 'browser_recording_policy_denied'
+            ? t('browserRecording.status.notAllowed')
+            : t('browserRecording.failure.startBody');
+    Modal.alert(t('browserRecording.failure.startTitle'), body);
 }
 
 export function useSessionBrowserRecordingRuntime(
@@ -182,7 +177,7 @@ export function useSessionBrowserRecordingRuntime(
     }, [params.scopeKey, params.sessionId, params.machineId, params.serverId, params.enabled, presented]);
 
     const sessionId = params.sessionId;
-    const onUnavailable = params.onUnavailable;
+    const onUnavailable = params.onUnavailable ?? presentBrowserRecordingUnavailable;
     const machineId = typeof params.machineId === 'string' && params.machineId.trim().length > 0
         ? params.machineId.trim()
         : null;
@@ -264,17 +259,20 @@ export function useSessionBrowserRecordingRuntime(
             });
             if (signal.aborted || !isCurrent()) return;
             const parsed = result.ok ? DaemonBrowserRecordingStartResultV1Schema.safeParse(result.result) : null;
-            if (!parsed?.success) return;
+            if (!parsed?.success) {
+                presentBrowserRecordingActionFailure('start');
+                return;
+            }
             const recording = readRecordingFromDaemonResult(parsed.data);
             if (parsed.data.status === 'unavailable') {
-                onUnavailable?.(mapDaemonUnavailableReasonToUi(parsed.data.reason));
+                onUnavailable(mapDaemonUnavailableReasonToUi(parsed.data.reason));
                 return;
             }
             if (recording) {
                 setState((current) => applyBrowserRecordingSessionSnapshot(current, recording));
             }
         } catch {
-            // A refused or unavailable start never creates a local active recording.
+            if (!signal.aborted && isCurrent()) presentBrowserRecordingActionFailure('start');
         } finally {
             pending.delete(request.viewId);
         }

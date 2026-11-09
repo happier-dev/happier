@@ -1,3 +1,5 @@
+import type { ComputerRecordingControl } from './useSessionComputerRecording';
+import { BrowserRecordingCapsule } from '@/components/browser/recording/BrowserRecordingCapsule';
 import * as React from 'react';
 import { PixelRatio, ScrollView, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -111,6 +113,8 @@ function ComputerStateStage(props: React.PropsWithChildren<Readonly<{ testID?: s
 }
 
 export type ComputerScreenViewerProps = Readonly<{
+    /** The Session's recorder for this source; a Machine's own page has none. */
+    recording?: ComputerRecordingControl | null;
     agent: BrowserPresenceAgent;
     /** No Session agent to name (a Machine's own Computer page): the sentences speak of agents on the Machine. */
     agentless?: boolean;
@@ -520,6 +524,9 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                         <SessionViewerMachineMark name={machine} online={props.machineOnline} testID={`${testID}-machine`} />
                     ) : null}
                 </View>
+                {props.shared && props.recording?.recording ? (
+                    <BrowserRecordingCapsule recording={props.recording.recording} onStop={props.recording.onStop} testID={`${testID}-recording`} />
+                ) : null}
                 {props.shared ? (
                     <DropdownMenu
                         open={menuOpen}
@@ -527,12 +534,17 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                         items={[
                             { id: 'change', title: t('computerUse.request.change'), testID: `${testID}-change-window` },
                             ...(props.onFloat ? [{ id: 'float', title: t('presentation.floatView'), testID: `${testID}-float` }] : []),
+                            ...(props.recording ? [props.recording.recording
+                                ? { id: 'discard-recording', title: t('browserPresence.recording.discard'), destructive: true, testID: `${testID}-discard-recording` }
+                                : { id: 'record', title: t('browserRecording.actions.start'), testID: `${testID}-record` }] : []),
                             { id: 'stop', title: t('computerUse.picker.stopSharing'), destructive: true, testID: `${testID}-stop-sharing` },
                         ]}
                         onSelect={(id) => {
                             setMenuOpen(false);
                             if (id === 'change') props.onChooseWindow();
                             else if (id === 'float') props.onFloat?.();
+                            else if (id === 'record') props.recording?.onStart();
+                            else if (id === 'discard-recording') props.recording?.onDiscard();
                             else props.onStopSharing();
                         }}
                         matchTriggerWidth={false}

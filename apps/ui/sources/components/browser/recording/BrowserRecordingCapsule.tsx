@@ -1,12 +1,11 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol';
+import { StyleSheet } from 'react-native-unistyles';
+import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol/browser/recording/v1';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { StatusDot } from '@/components/ui/status/StatusDot';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
+import { RecordingElapsed } from '@/components/ui/media/recording/RecordingElapsed';
+import { formatPlaybackTime } from '@/components/workspaces/files/file/filePageMediaFacts';
 import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 import { t } from '@/text';
 
@@ -21,18 +20,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 15,
         backgroundColor: theme.colors.state.danger.background,
     },
-    elapsed: {
-        ...Typography.variant('meta'),
-        color: theme.colors.text.primary,
-        fontVariant: ['tabular-nums'],
-    },
 }));
-
-function formatElapsed(totalSeconds: number): string {
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-}
 
 /**
  * A running recording, docked in the chrome row: "● 0:42 · Stop" (lab `browser` Q notes). The one
@@ -40,15 +28,15 @@ function formatElapsed(totalSeconds: number): string {
  * recorder lives in the `⋯` menu. The elapsed time ticks in this leaf, so the second hand never
  * re-renders the shell. Discarding the recording is the menu's job, beside Record.
  */
-export function BrowserRecordingCapsule(props: Readonly<{
-    recording: BrowserRecordingSessionV1;
-    onStop?: (recording: BrowserRecordingSessionV1) => void;
+export function BrowserRecordingCapsule<R extends Pick<BrowserRecordingSessionV1, 'status' | 'startedAtMs' | 'durationMs'>>(props: Readonly<{
+    recording: R;
+    onStop?: (recording: R) => void;
     testID: string;
 }>): React.ReactElement {
-    const { theme } = useUnistyles();
     const running = props.recording.status === 'recording';
     const tickingSeconds = useElapsedTime(running ? props.recording.startedAtMs : null);
-    const elapsed = formatElapsed(running ? tickingSeconds : Math.floor(props.recording.durationMs / 1_000));
+    const seconds = running ? tickingSeconds : Math.floor(props.recording.durationMs / 1_000);
+    const elapsed = formatPlaybackTime(seconds);
     const { onStop, recording } = props;
     return (
         <View
@@ -56,8 +44,7 @@ export function BrowserRecordingCapsule(props: Readonly<{
             style={stylesheet.capsule}
             accessibilityLabel={t('browserPresence.recording.elapsedA11y', { elapsed })}
         >
-            <StatusDot color={theme.colors.state.danger.foreground} size={8} />
-            <Text style={stylesheet.elapsed}>{elapsed}</Text>
+            <RecordingElapsed seconds={seconds} size="capsule" />
             <IconButton
                 testID={`${props.testID}-stop`}
                 iconName="stop"

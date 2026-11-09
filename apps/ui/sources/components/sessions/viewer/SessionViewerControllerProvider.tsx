@@ -7,12 +7,9 @@ import { useSessionViewerPresentationState } from './SessionViewerDestinationSco
 
 import {
   createSessionViewerPresenceStore,
-  NO_SESSION_VIEWER_INSET,
   SessionViewerComposerReserveContext,
   SessionViewerControllerContext,
-  SessionViewerReadingInsetContext,
   type SessionViewerController,
-  type SessionViewerReadingInset,
   type SessionViewerSourceFacts,
 } from './SessionViewerController';
 import {
@@ -58,11 +55,6 @@ export function SessionViewerControllerProvider(
     {},
   );
   const [presence] = React.useState(createSessionViewerPresenceStore);
-  const [readingInset, setReadingInsetState] =
-    React.useState<SessionViewerReadingInset>(NO_SESSION_VIEWER_INSET);
-  const [floatFits, setFloatFits] = React.useState(false);
-  const floatFitsRef = React.useRef(floatFits);
-  floatFitsRef.current = floatFits;
   const inputRef = React.useRef(props);
   inputRef.current = props;
 
@@ -84,8 +76,6 @@ export function SessionViewerControllerProvider(
   }, [semanticScope]);
   const applyPresentation = React.useCallback((intent: SessionViewerLocalIntent) => {
     const { phone, canPresentSource, openDocked, closeDocked } = inputRef.current;
-    // Floating again is the placement owner's call: only while the frame fits where it would rest.
-    if (intent.kind === 'viewer.float' && !floatFitsRef.current) return { status: 'unavailable' } as const;
     const next = resolveSessionViewerPresentation(readState(), intent, {
       phone,
       canPresentSource,
@@ -115,12 +105,6 @@ export function SessionViewerControllerProvider(
       openDocked(intent.source);
     return next.result;
   }, [readState, setState]);
-  React.useEffect(() => {
-    // Only a space-driven dock returns automatically. A deliberate Dock remains a pane until
-    // the person chooses Float, using the same current placement verdict and pane handoff.
-    if (!props.phone && floatFits && state.mode === 'docked' && state.restore?.mode === 'floating')
-      applyPresentation({ kind: 'viewer.float' });
-  }, [applyPresentation, floatFits, props.phone, state.mode, state.restore?.mode]);
   const executeAction = React.useMemo(() => createFrontDoorActionExecute(undefined, accountBinding ? {
     currentSessionPresentationApply: {
       serverId: accountBinding.serverId,
@@ -180,28 +164,16 @@ export function SessionViewerControllerProvider(
           previous.personInControl === next.personInControl &&
           previous.watching === next.watching &&
           previous.aspectRatio === next.aspectRatio &&
+          previous.stateMinBody === next.stateMinBody &&
           previous.chooseTarget === next.chooseTarget &&
           previous.resolveTargetPicker === next.resolveTargetPicker &&
           previous.stopSharing === next.stopSharing &&
+          previous.recording === next.recording &&
           previous.navigation === next.navigation
         )
           return current;
         return { ...current, [source]: next };
       });
-    },
-    [],
-  );
-  const setReadingInset = React.useCallback(
-    (inset: SessionViewerReadingInset) => {
-      setReadingInsetState((current) =>
-        current.left === inset.left &&
-        current.right === inset.right &&
-        current.centred.left === inset.centred.left &&
-        current.centred.right === inset.centred.right &&
-        current.centred.bottom === inset.centred.bottom
-          ? current
-          : inset,
-      );
     },
     [],
   );
@@ -223,12 +195,8 @@ export function SessionViewerControllerProvider(
       facts,
       publishFacts,
       presence,
-      setReadingInset,
-      floatFits,
-      setFloatFits,
     }),
     [
-      floatFits,
       apply,
       requestSemantic,
       canPresentSource,
@@ -238,12 +206,10 @@ export function SessionViewerControllerProvider(
       props.serverId,
       presence,
       publishFacts,
-      setReadingInset,
       setRect,
       presentedState,
     ],
   );
-  const effectiveInset = presentedState.mode === 'floating' ? readingInset : NO_SESSION_VIEWER_INSET;
   // A phone presents the viewer in Chat above the composer; its attention band leaves the frame this room.
   const composerReserve =
     props.phone && presentedState.source && (presentedState.mode === 'docked' || presentedState.mode === 'expanded')
@@ -251,11 +217,9 @@ export function SessionViewerControllerProvider(
       : 0;
   return (
     <SessionViewerControllerContext.Provider value={value}>
-      <SessionViewerReadingInsetContext.Provider value={effectiveInset}>
-        <SessionViewerComposerReserveContext.Provider value={composerReserve}>
-          {props.children}
-        </SessionViewerComposerReserveContext.Provider>
-      </SessionViewerReadingInsetContext.Provider>
+      <SessionViewerComposerReserveContext.Provider value={composerReserve}>
+        {props.children}
+      </SessionViewerComposerReserveContext.Provider>
     </SessionViewerControllerContext.Provider>
   );
 }

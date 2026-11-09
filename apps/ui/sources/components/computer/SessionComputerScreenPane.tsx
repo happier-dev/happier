@@ -8,10 +8,12 @@ import {
   isSessionViewerPresenting,
   useOptionalSessionViewerController,
   usePublishSessionViewerPresence,
+  useSessionViewerFloatFromDock,
   usePublishSessionViewerSourceFacts,
   type SessionViewerPresence,
 } from '@/components/sessions/viewer/SessionViewerController';
 import { SessionViewerPicture } from '@/components/sessions/viewer/SessionViewerPicture';
+import { SESSION_VIEWER_PERMISSION_MIN_BODY } from '@/components/sessions/viewer/sessionViewerGeometry';
 import { useSessionViewerSourceAccountLifetime } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
 import {
   useRetainedPresentationSlotVisible,
@@ -26,6 +28,7 @@ import {
   type ComputerScreenPicture,
 } from './ComputerScreenViewer';
 import { useSessionComputerScreen } from './useSessionComputerScreen';
+import { useSessionComputerRecording } from './useSessionComputerRecording';
 
 /**
  * The Session's shared window: the computer owner's selection and control status, the live
@@ -133,6 +136,14 @@ function SessionComputerScreenBody(
       ),
     [],
   );
+  // Recording needs the live picture the shared source streams; a screen the machine won't show has none.
+  const recording = useSessionComputerRecording({
+    sessionId: props.sessionId,
+    machineId: props.machineId,
+    serverId: props.serverId ?? null,
+    sourceId: model.shared && !computerCaptureNeedsPermission(model) ? model.sourceId : null,
+    enabled,
+  });
   const personInControl = model.presence.kind === 'human';
   // Watching: the live picture is only being looked at (the Agent drives it, or the person may not
   // use it), so the viewer moves by the picture. A state card's choices keep their presses.
@@ -151,9 +162,13 @@ function SessionComputerScreenBody(
     aspectRatio: picture?.size
       ? picture.size.width / picture.size.height
       : null,
+    stateMinBody: computerCaptureNeedsPermission(model)
+      ? SESSION_VIEWER_PERMISSION_MIN_BODY
+      : null,
     chooseTarget: model.onChooseWindow,
     resolveTargetPicker: model.resolveChooseWindow,
     stopSharing: model.shared ? model.onStopSharing : undefined,
+    recording,
   });
   // The one capsule projection the pane draws too: no Take control while the machine denies input,
   // and nobody to name while the screen cannot be seen at all (its picture is the permission card).
@@ -194,19 +209,16 @@ function SessionComputerScreenBody(
   );
   usePublishSessionViewerPresence('computer', presence);
 
-  const { resolveChooseWindow: _anchoredPicker, ...viewerModel } = model;
+  const { resolveChooseWindow: _anchoredPicker, sourceId: _recordingSource, ...viewerModel } = model;
   // Docked in the desktop pane: the person can float it again.
-  const viewerController = useOptionalSessionViewerController();
-  const applyViewer = viewerController?.apply;
-  const canFloat = !viewer && viewerController !== null && !viewerController.phone
-    && viewerController.state.source === 'computer' && viewerController.state.mode === 'docked';
-  const onFloat = React.useCallback(() => { applyViewer?.({ kind: 'viewer.float' }); }, [applyViewer]);
+  const onFloat = useSessionViewerFloatFromDock('computer', !viewer);
   const screen = (
     <ComputerScreenViewer
       testID={props.testID}
       {...viewerModel}
+      recording={recording}
       chrome={viewer ? 'none' : 'bar'}
-      onFloat={canFloat ? onFloat : undefined}
+      onFloat={onFloat}
       compact={compact}
       onPictureChange={viewer ? onPictureChange : undefined}
     />

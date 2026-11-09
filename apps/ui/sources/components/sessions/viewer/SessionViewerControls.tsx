@@ -1,3 +1,4 @@
+import { BrowserRecordingCapsule } from '@/components/browser/recording/BrowserRecordingCapsule';
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -188,6 +189,12 @@ export function SessionViewerControls(
       testID: 'session-viewer-menu-choose',
     });
   }
+  const recorder = props.source === 'computer' ? facts?.recording ?? null : null;
+  if (recorder) {
+    menuItems.push(recorder.recording
+      ? { id: 'discard-recording', title: t('browserPresence.recording.discard'), destructive: true, testID: 'session-viewer-menu-discard-recording' }
+      : { id: 'record', title: t('browserRecording.actions.start'), testID: 'session-viewer-menu-record' });
+  }
   if (!controller.phone && !expanded && props.frame) {
     menuItems.push(
       { id: 'tl', title: t('presentation.moveTopLeft') },
@@ -220,6 +227,8 @@ export function SessionViewerControls(
     else if (id === 'reload') navigation?.reload?.();
     else if (id === 'choose') choosePickerTarget();
     else if (id === 'stop') facts?.stopSharing?.();
+    else if (id === 'record') recorder?.onStart();
+    else if (id === 'discard-recording') recorder?.onDiscard();
     else if (id === 'dock') apply({ kind: 'viewer.dock' });
     else if (id === 'larger' || id === 'smaller') props.frame?.resize(id);
     else if (id === 'tl' || id === 'tr' || id === 'bl' || id === 'br')
@@ -300,6 +309,11 @@ export function SessionViewerControls(
         </View>
       ) : null}
       <View style={stylesheet.grow} />
+      {recorder?.recording ? (
+        <CompanionNoDragRegion>
+          <BrowserRecordingCapsule recording={recorder.recording} onStop={recorder.onStop} testID="session-viewer-recording" />
+        </CompanionNoDragRegion>
+      ) : null}
       <CompanionNoDragRegion>
       <HappierControlCapsule
         host={CORE_CAPSULE_HOST}

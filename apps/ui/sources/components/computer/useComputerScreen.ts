@@ -41,6 +41,8 @@ export function useComputerScreen(props: Readonly<{
     refreshKey?: unknown;
 }>): Omit<ComputerScreenViewerProps, 'compact' | 'testID'> & Readonly<{
     resolveChooseWindow: () => ComputerTargetPickerRequest | null;
+    /** The shared source, for the Session's recorder. */
+    sourceId: string | null;
 }> {
     const { scope, accountLifetime } = props;
     const serverId = scope.serverId ?? accountLifetime?.scope.serverId ?? null;
@@ -125,6 +127,7 @@ export function useComputerScreen(props: Readonly<{
         targetKind: control.selection?.approvalDisplay.target?.kind ?? null,
         machineName,
         shared: Boolean(control.selection?.sourceId),
+        sourceId: control.selection?.sourceId ?? null,
         selectionPending: control.selection === null && control.failure === null,
         inputDenied: control.inputDenied,
         machineOnline,

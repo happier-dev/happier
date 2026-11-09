@@ -1,3 +1,4 @@
+import type { ComputerRecordingControl } from '@/components/computer/useSessionComputerRecording';
 import * as React from 'react';
 import type { CurrentSessionPresentationIntentResultV1 } from '@happier-dev/protocol/sessions';
 import type { FrameRect } from '@happier-dev/plugin-ui/presentation';
@@ -32,10 +33,14 @@ export type SessionViewerSourceFacts = Readonly<{
   watching?: boolean;
   /** The live picture's own width ÷ height, once the source reports it. */
   aspectRatio?: number | null;
+  /** The body height the source's current state needs while it has no picture (the permission card). */
+  stateMinBody?: number | null;
   chooseTarget?: () => void;
   /** The same picker, read at the person's intent, for the viewer to anchor to its source switch. */
   resolveTargetPicker?: () => ComputerTargetPickerRequest | null;
   stopSharing?: () => void;
+  /** The source's recorder (Computer); Browser records from its own toolbar. */
+  recording?: ComputerRecordingControl | null;
   /** The source's own navigation (the Browser's Back, Forward and Reload), offered in the view menu. */
   navigation?: SessionViewerSourceNavigation | null;
 }>;
@@ -134,6 +139,23 @@ export function useOptionalSessionViewerController(): SessionViewerController | 
   return React.useContext(SessionViewerControllerContext);
 }
 
+/**
+ * The docked desktop pane's way back to the floating frame (its retained placement): present only
+ * while this source is the viewer's and docked, for every source's own pane menu.
+ */
+export function useSessionViewerFloatFromDock(
+  source: SessionViewerSource,
+  inPane: boolean,
+): (() => void) | undefined {
+  const controller = useOptionalSessionViewerController();
+  const apply = controller?.apply;
+  const float = React.useCallback(() => { apply?.({ kind: 'viewer.float' }); }, [apply]);
+  return inPane && controller !== null && !controller.phone
+    && controller.state.source === source && controller.state.mode === 'docked'
+    ? float
+    : undefined;
+}
+
 /** Whether the viewer excludes a pane from binding this source's retained body. */
 export function isSessionViewerPresenting(
   controller: SessionViewerController | null,
@@ -163,18 +185,21 @@ export function usePublishSessionViewerSourceFacts(
   const personInControl = facts?.personInControl ?? false;
   const watching = facts?.watching ?? false;
   const aspectRatio = facts?.aspectRatio ?? null;
+  const stateMinBody = facts?.stateMinBody ?? null;
   const chooseTarget = facts?.chooseTarget;
   const resolveTargetPicker = facts?.resolveTargetPicker;
   const stopSharing = facts?.stopSharing;
+  const recording = facts?.recording ?? null;
   const navigation = facts?.navigation ?? null;
   const present = facts !== null;
   // A body that is not a viewer source (`null`) publishes nothing and never clears another's facts.
   React.useEffect(() => {
     if (!publish || !present) return undefined;
-    publish(source, { machineName, targetTitle, personInControl, watching, aspectRatio, chooseTarget, resolveTargetPicker, stopSharing, navigation });
+    publish(source, { machineName, targetTitle, personInControl, watching, aspectRatio, stateMinBody, chooseTarget, resolveTargetPicker, recording, stopSharing, navigation });
     return undefined;
   }, [
     aspectRatio,
+    stateMinBody,
     chooseTarget,
     resolveTargetPicker,
     machineName,
@@ -183,6 +208,7 @@ export function usePublishSessionViewerSourceFacts(
     personInControl,
     present,
     publish,
+    recording,
     source,
     stopSharing,
     watching,

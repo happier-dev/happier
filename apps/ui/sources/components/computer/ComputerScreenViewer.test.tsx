@@ -8,6 +8,7 @@ import { SessionCockpitBottomChromeHeightContext } from '@/components/workspaceC
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { LiveStreamInputLayer } from '@/components/stream/LiveStreamInputLayer';
 import { BrowserPresenceCapsule } from '@/components/browser/copresence/BrowserPresenceCapsule';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 
 import {
   ComputerScreenViewer,
@@ -504,12 +505,38 @@ describe('ComputerScreenViewer', () => {
       />,
     );
     expect(denied.getTextContent()).toContain(
-      'computerUse.permission.captureTitle:{"machine":"mac-\u2060vm-\u20601"}',
+      'computerUse.permission.title:{"machine":"mac-\u2060vm-\u20601"}',
     );
     // Nobody acts on a screen that cannot be seen: no presence capsule beside the card.
     expect(denied.findByTestId('v-presence')).toBeNull();
     await denied.pressByTestIdAsync('v-permission-card-open-settings');
     expect(onOpenSettings).toHaveBeenCalledWith('capture');
+  });
+
+  // The menu's popover portal is a platform boundary; its items and selection are this viewer's own.
+  const viewMenu = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
+    screen.tree.root.findByType(DropdownMenu).props as { items: Array<{ id: string }>; onSelect: (id: string) => void };
+
+  it('offers Record in the view menu, and while recording shows the capsule and Discard instead', async () => {
+    const onStart = vi.fn();
+    const onStop = vi.fn();
+    const onDiscard = vi.fn();
+    const idle = await renderScreen(
+      <ComputerScreenViewer {...props({ shared: true, recording: { recording: null, onStart, onStop, onDiscard } })} />,
+    );
+    expect(viewMenu(idle).items.map((item) => item.id)).toContain('record');
+    await act(async () => { viewMenu(idle).onSelect('record'); });
+    expect(onStart).toHaveBeenCalledTimes(1);
+
+    const running = { recordingId: 'recording-1', status: 'recording', startedAtMs: Date.now(), durationMs: 0 } as never;
+    const active = await renderScreen(
+      <ComputerScreenViewer {...props({ shared: true, recording: { recording: running, onStart, onStop, onDiscard } })} />,
+    );
+    await active.pressByTestIdAsync('v-recording-stop');
+    expect(onStop).toHaveBeenCalledWith(running);
+    expect(viewMenu(active).items.map((item) => item.id)).not.toContain('record');
+    await act(async () => { viewMenu(active).onSelect('discard-recording'); });
+    expect(onDiscard).toHaveBeenCalledTimes(1);
   });
 
   it('leaves identity to the floating frame when the picture is the viewer', async () => {
