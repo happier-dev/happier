@@ -3224,6 +3224,11 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
     ): Promise<void> => {
         if (entry.retirement) return await entry.retirement;
         const retirement = (async () => {
+            if (entry.authority === 'project') {
+                logger.infoFile('[managed-service-lifecycle]', {
+                    phase: 'owner_retire', serviceId: entry.readProcessSnapshot?.().instanceId ?? null,
+                });
+            }
             entry.terminal = true;
             entry.establishmentAbort.abort(
                 'Managed-service lifecycle retired during establishment',
@@ -4583,6 +4588,9 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 },
                 lifetime.signal,
                 (snapshot, unexpected) => {
+                    logger.infoFile('[managed-service-lifecycle]', {
+                        phase: 'owner_terminal', serviceId: snapshot.instanceId, unexpected,
+                    });
                     entry.terminal = true;
                     if (unexpected) {
                         failedSnapshot = Object.freeze({ ...translateSnapshot(snapshot), state: 'failed', baseUrl: null });
@@ -4769,11 +4777,13 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 },
                 async stop(options?: Parameters<ManagedServiceHandle['stop']>[0]) {
                     if (witness.kind === 'environment') return fail('plugin_managed_service_unavailable', 'Environment control requires an admitted host operation');
+                    logger.infoFile('[managed-service-lifecycle]', { phase: 'owner_stop', serviceId: process.snapshot().instanceId });
                     const result = await wrapped.stop(options);
                     clearFailedAttempt();
                     return result;
                 },
                 async dispose() {
+                    logger.infoFile('[managed-service-lifecycle]', { phase: 'owner_dispose', serviceId: process.snapshot().instanceId });
                     await wrapped.dispose();
                     clearFailedAttempt();
                 },

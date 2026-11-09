@@ -1218,6 +1218,17 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             if (!process || processTerminalObservation) return;
             processTerminalObservation = process.wait().then((result) => {
                 processTerminal = Object.freeze({ kind: 'result', result });
+                if (scope.kind === 'project') {
+                    const observed = result.termination.observed;
+                    const requested = result.termination.requestedBy;
+                    logger.infoFile('[managed-service-lifecycle]', {
+                        phase: 'process_terminal', serviceId: snapshot.instanceId, pid: snapshot.pid,
+                        observed: observed.kind, requestedBy: requested.kind,
+                        ...(observed.kind === 'exit' ? { exitCode: observed.exitCode } : {}),
+                        ...(observed.kind === 'signal' ? { signal: observed.signal } : {}),
+                        ...(requested.kind === 'dispose' && requested.reason ? { reason: requested.reason } : {}),
+                    });
+                }
                 if (spec.mode.kind === 'native' || isStopping() || isStopped() || !isGenerationUsable()) {
                     return;
                 }
