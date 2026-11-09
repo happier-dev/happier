@@ -23,6 +23,8 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent } from
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentEnvironmentContentV1Schema, readDeploymentDomainArtifactV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
@@ -45,7 +47,7 @@ import { readEnvironmentSecretLaunchAdmissionForHost } from '../secrets/readEnvi
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
-it.each(['allowed', 'denied Domain'] as const)('publishes a template Domain only through its admitted child: %s', async admission => {
+it.each(['allowed', 'denied Domain', 'occupied Caddy port'] as const)('publishes a template Domain only through its admitted child: %s', async admission => {
     await withConfiguredDaemonTestHome({ prefix: 'template-domain-child-' }, async () => {
         const origin = 'https://template-domain.test', serverId = 'srv_template_domain', machineId = 'target';
         const identity = await readOrCreateInstallationIdentity();
@@ -232,6 +234,19 @@ it.each(['allowed', 'denied Domain'] as const)('publishes a template Domain only
             if (!admitted) { acknowledge({ ok: false, error: 'action_forbidden' }); return; }
             if (job.kind === 'domainDiscover') {
                 expect(domainWrites).toContain(job.input.contentArtifactId);
+                if (admission === 'occupied Caddy port') {
+                    acknowledge({ ok: true, result: { ok: false, errorCode: 'native_effect_failed', error: 'native_effect_failed',
+                        details: DeploymentDomainFailureDetailsV1Schema.parse({ environmentId: job.input.environmentId,
+                            domainId: job.input.domainId, step: 'native_execution', requiredFact: 'caddyAdminConfig',
+                            remedy: 'Caddy cannot bind a public port. Use Tunnel ingress or stop the other proxy, then retry.',
+                            failure: { kind: 'native_effect_failed', reason: 'native_effect_failed', requiredFact: 'caddyAdminConfig',
+                                stepId: 'caddy-container-start', nativeCommand: { command: 'docker', phase: 'start', exitCode: 1 },
+                                containerExitCode: 128, containerError: 'port_in_use' } }),
+                        failureCause: { phase: 'deployment.domain.native_execution', errorClass: 'Error',
+                            errorCode: 'native_effect_failed', httpStatus: null } } });
+                    return;
+                }
+
                 acknowledge({ ok: true, result: DeploymentDomainMachineTopologyV1Schema.parse({ machineId, installationId: identity.installationId,
                     dockerEngineId: 'engine', privateNetworks: [], replicas: [], caddy: { status: 'ready', containerId: 'caddy',
                         containerName: 'caddy', adminSocketPath: '/run/caddy.sock', networkNames: [], servers: [{ serverId: 'public',
@@ -298,6 +313,19 @@ it.each(['allowed', 'denied Domain'] as const)('publishes a template Domain only
             if (admission === 'denied Domain') {
                 expect(result).toMatchObject({ ok: false, errorCode: 'action_forbidden', failureCause: { httpStatus: 401 } });
                 expect(domainWrites).toEqual([]); expect(domain).toBeUndefined();
+            } else if (admission === 'occupied Caddy port') {
+                expect(result).toMatchObject({ ok: false, errorCode: 'native_effect_failed', details: {
+                    kind: 'partial', phase: 'domains', environmentId: environment.environment.id,
+                    failure: { step: 'native_execution', failure: { containerError: 'port_in_use', containerExitCode: 128 } },
+                } });
+                if (result.ok) throw new Error('Expected retained Domain failure');
+                expect(readDeploymentFailureRecoveryV1(result.errorCode, result.details)).toMatchObject({
+                    requiredFact: 'caddyAdminConfig', nextAction: { destination: 'domains' },
+                    remedy: readDeploymentFailureRecoveryV1('native_effect_failed', {
+                        remedy: 'Caddy cannot bind a public port. Use Tunnel ingress or stop the other proxy, then retry.',
+                    }).remedy,
+                });
+                expect(domain).toBeUndefined();
             } else {
                 expect(result, JSON.stringify({ result, httpPaths, domainWrites })).toMatchObject({ ok: true, result: { kind: 'applied' } });
                 expect(domain).toMatchObject({ state: 'active' });

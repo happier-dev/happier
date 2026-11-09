@@ -192,7 +192,15 @@ const fallback = recovery('Happier could not complete this change. Check deploym
 const transactionRollbackRecovery = recovery('The Home could not record this change and rolled it back. Review the deployment and try again.', 'review', 'Review deployment');
 const nativeConflictRecovery = recovery('Happier could not identify one running service generation for this change. Check the services on the serving machine before trying again.', 'machines', 'Check running services');
 
+function recoveryDetails(details: Record<string, unknown>): Record<string, unknown> {
+    // Store keeps completed steps alongside the Domain owner's failure. Its
+    // retained wrapper recovery must not replace that more specific cause.
+    return details.kind === 'partial' && details.phase === 'domains' && isRecord(details.failure)
+        ? details.failure : details;
+}
+
 function recoveryFor(details: Record<string, unknown>, errorCode?: string) {
+    details = recoveryDetails(details);
     // The transport sets this fact only after consuming Home's confirmed rollback.
     if (details.requiredFact === 'transaction_commit') return transactionRollbackRecovery;
     const failure = isRecord(details.failure) ? details.failure : undefined;
@@ -222,24 +230,25 @@ export function projectDeploymentFailureRecoveryV1<T extends Record<string, unkn
 export function projectDeploymentFailureRecoveryV1<T extends Record<string, unknown>>(details: T, errorCode?: string): T & {
     requiredFact: string; remedy: string;
 } {
-    const recovery = recoveryFor(details, errorCode);
-    const failure = isRecord(details.failure) ? details.failure : undefined;
-    const sourceAdmission = isRecord(details.sourceAdmission) ? details.sourceAdmission
+    const facts = recoveryDetails(details);
+    const recovery = recoveryFor(facts, errorCode);
+    const failure = isRecord(facts.failure) ? facts.failure : undefined;
+    const sourceAdmission = isRecord(facts.sourceAdmission) ? facts.sourceAdmission
         : isRecord(failure?.sourceAdmission) ? failure.sourceAdmission : undefined;
-    const authoredRemedy = typeof details.remedy === 'string' && details.remedy !== legacyGenericRemedy ? details.remedy
+    const authoredRemedy = typeof facts.remedy === 'string' && facts.remedy !== legacyGenericRemedy ? facts.remedy
         : typeof failure?.remedy === 'string' ? failure.remedy
             : typeof sourceAdmission?.remedy === 'string' ? sourceAdmission.remedy : undefined;
     return projectActionFailureRecoveryV1({ ...details,
-        requiredFact: typeof details.requiredFact === 'string'
-            && !(details.step === 'native_execution'
-                && DeploymentFailureRecoveryV1Schema.shape.requiredFact.safeParse(details.requiredFact).success) ? details.requiredFact
+        requiredFact: typeof facts.requiredFact === 'string'
+            && !(facts.step === 'native_execution'
+                && DeploymentFailureRecoveryV1Schema.shape.requiredFact.safeParse(facts.requiredFact).success) ? facts.requiredFact
             : typeof failure?.requiredFact === 'string' ? failure.requiredFact
                 : typeof sourceAdmission?.requiredFact === 'string' ? sourceAdmission.requiredFact
                     : undefined,
         remedy: recovery === nativeConflictRecovery && authoredRemedy === recoveries.deployment_conflict.remedy
             ? undefined : authoredRemedy,
     }, {
-        requiredFact: details.step === 'native_execution' ? 'nativeExecutionResult' : 'deploymentActionResult',
+        requiredFact: facts.step === 'native_execution' ? 'nativeExecutionResult' : 'deploymentActionResult',
         remedy: recovery.remedy,
     });
 }

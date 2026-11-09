@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1, readDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1 } from './deploymentFailureRecoveryV1.js';
 import { DeploymentReceiptFailureV1Schema } from './deploymentReceiptEventsV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from './deploymentDomainFailureV1.js';
+import { DeploymentTemplateInstantiationPartialV1Schema } from './deploymentTemplateInstantiationV1.js';
 
 it.each([
     { step: 'native_execution' },
@@ -223,6 +224,23 @@ describe('deployment failure recovery', () => {
         expect(readDeploymentFailureRecoveryV1('required_fact_unavailable', details)).toMatchObject({
             requiredFact: 'caddyPublishedBindings', nextAction: { kind: 'navigate', destination: 'domains' },
             remedy: readDeploymentFailureRecoveryV1('port_in_use').remedy,
+        });
+    });
+
+    it('presents a retained Store Domain failure through the same owner as Add Domain', () => {
+        const native = DeploymentDomainFailureDetailsV1Schema.parse({ environmentId: 'environment', domainId: 'domain',
+            step: 'native_execution', requiredFact: 'caddyAdminConfig',
+            remedy: 'Caddy cannot bind a public port. Use Tunnel ingress or stop the other proxy, then retry.',
+            failure: { kind: 'native_effect_failed', reason: 'native_effect_failed', requiredFact: 'caddyAdminConfig',
+                stepId: 'caddy-container-start', nativeCommand: { command: 'docker', phase: 'start', exitCode: 1 },
+                containerExitCode: 128, containerError: 'port_in_use' } });
+        const partial = DeploymentTemplateInstantiationPartialV1Schema.parse({ kind: 'partial', phase: 'domains',
+            errorCode: 'native_effect_failed', savedSecrets: [], environmentId: 'environment', failure: native,
+            ...projectDeploymentFailureRecoveryV1({}, 'native_effect_failed') });
+        const expected = readDeploymentFailureRecoveryV1('native_effect_failed', native);
+        expect(readDeploymentFailureRecoveryV1(partial.errorCode, partial)).toEqual(expected);
+        expect(projectDeploymentFailureRecoveryV1(partial, partial.errorCode)).toMatchObject({
+            requiredFact: expected.requiredFact, remedy: expected.remedy, failure: native,
         });
     });
 
