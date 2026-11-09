@@ -1,10 +1,14 @@
 import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
 import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 
+/** The existing external MCP category retains its catalog-consent permission path. */
+export function isClaudeExternalMcpTool(toolName: string): boolean {
+    return toolName.startsWith('mcp__') && !toolName.startsWith('mcp__happier__') && !toolName.startsWith('mcp__happy__');
+}
+
 /** Claude's native permission response policy belongs to its request producer. */
 export function buildClaudePermissionChoices(input: Readonly<{
     requestId: string; toolName: string; toolInput: unknown; allowSessionPersistence?: boolean;
-    sessionRuleApplication?: 'native' | 'host';
 }>): NativePermissionChoicesV1 {
     const { toolName } = input;
     const exitPlan = toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode';
@@ -29,10 +33,10 @@ export function buildClaudePermissionChoices(input: Readonly<{
         const identifier = ruleContent ? `${toolName}(${ruleContent})` : toolName;
         choices.push({ id, label, decision: 'approved', scope: 'session', rulePreview: identifier,
             response: { approved: true, decision: 'approved', allowedTools: [identifier],
-                ...(input.sessionRuleApplication === 'host' ? {} : { updatedPermissions: [{
+                updatedPermissions: [{
                 type: 'addRules', behavior: 'allow', destination: 'session',
                 rules: [{ toolName, ...(ruleContent ? { ruleContent } : {}) }],
-            }] }) } });
+            }] } });
     };
     if (input.allowSessionPersistence !== false && !edit && toolName && toolName !== 'ExitPlanMode' && toolName !== 'exit_plan_mode') {
         addRule('always_allow', `Allow ${toolName} for this session`);

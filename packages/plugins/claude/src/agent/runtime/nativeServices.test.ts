@@ -8,15 +8,12 @@ import {
 import { createClaudePermissionHookHandler } from './shared/permissionHookHandler.js';
 
 describe('createClaudeNativeAgentSdkContext', () => {
-  it('keeps a selected MCP Session grant on the host without installing a native rule', async () => {
+  it('keeps external MCP catalog consent on its incumbent host permission path', async () => {
     // The host interaction transport is the external SDK boundary.
     const requestApproval: AgentSessionRuntimeContext['services']['interactions']['requestApproval'] = async (request) => {
-      const choice = request.nativeChoices?.choices.find((item) => item.id === 'always_allow');
-      expect(choice).toMatchObject({ scope: 'session', response: { allowedTools: ['mcp__docs__mutate'] } });
-      expect(choice?.response.updatedPermissions).toBeUndefined();
-      if (!choice || !request.nativeChoices) throw new Error('Expected offered MCP Session choice');
-      return { requestId: 'mcp-session', kind: 'approval', status: 'approved', persistence: 'session',
-        nativeChoice: { requirementId: request.nativeChoices.requirementId, choiceId: choice.id } };
+      expect(request.nativeChoices).toBeUndefined();
+      expect(request.allowSessionPersistence).toBe(true);
+      return { requestId: 'mcp-session', kind: 'approval', status: 'approved', persistence: 'session' };
     };
     const context = {
       services: {

@@ -5,7 +5,7 @@ import type {
 } from '@happier-dev/plugin-sdk/sessions';
 
 import type { PermissionResult } from '../sdk/types.js';
-import { buildClaudePermissionChoices } from './permissionChoices.js';
+import { buildClaudePermissionChoices, isClaudeExternalMcpTool } from './permissionChoices.js';
 import {
     isAskUserQuestionToolName,
     normalizeAskUserQuestionInputForPublication,
@@ -136,7 +136,7 @@ export function createClaudePermissionEngine(ctx: ClaudePermissionContext): Clau
                 toolCallId: requestId,
                 toolName,
                 input: publishedInput,
-                ...(!isAskUserQuestionToolName(toolName) ? { nativeChoices: buildClaudePermissionChoices({
+                ...(!isAskUserQuestionToolName(toolName) && !isClaudeExternalMcpTool(toolName) ? { nativeChoices: buildClaudePermissionChoices({
                     requestId, toolName, toolInput: publishedInput,
                 }) } : {}),
             }, { signal: options.signal });

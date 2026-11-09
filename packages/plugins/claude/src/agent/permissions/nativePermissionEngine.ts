@@ -9,7 +9,7 @@ import type {
 import type { PermissionResult } from '../sdk/types.js';
 import { isAskUserQuestionToolName } from './askUserQuestion.js';
 import { resolveClaudePermissionResult, type ClaudePermissionEngine, type ClaudePermissionDecision } from './createClaudePermissionEngine.js';
-import { buildClaudePermissionChoices } from './permissionChoices.js';
+import { buildClaudePermissionChoices, isClaudeExternalMcpTool } from './permissionChoices.js';
 
 type QuestionRecord = Readonly<{
   id: string;
@@ -154,7 +154,7 @@ async function answerClaudeQuestions(
 export function allowsClaudeNativeSessionPersistence(toolName: string): boolean {
   // Explicit next-mode operations last for the Session; ordinary native tool grants remain once-only.
   return toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode'
-    || toolName.startsWith('mcp__') && !toolName.startsWith('mcp__happier__') && !toolName.startsWith('mcp__happy__');
+    || isClaudeExternalMcpTool(toolName);
 }
 
 export async function requestClaudeNativePermissionDecision(
@@ -166,13 +166,12 @@ export async function requestClaudeNativePermissionDecision(
   const toolInput = AgentRuntimeJsonValueSchema.safeParse(isRecord(input) ? input : {});
   if (!toolInput.success) return { decision: 'denied', rationale: 'Claude supplied invalid tool input' };
   const toolCallId = options.toolUseId ?? options.requestId;
-  const nativeChoices = buildClaudePermissionChoices({
+  const nativeChoices = isClaudeExternalMcpTool(toolName) ? undefined : buildClaudePermissionChoices({
     requestId: toolCallId ?? randomUUID(), toolName, toolInput: input,
     allowSessionPersistence: allowsClaudeNativeSessionPersistence(toolName),
-    sessionRuleApplication: 'host',
   });
   const result = await context.services.interactions.requestApproval({
-    kind: 'approval', title: 'Claude permission', nativeChoices,
+    kind: 'approval', title: 'Claude permission', ...(nativeChoices ? { nativeChoices } : {}),
     subject: { kind: 'tool', name: toolName, input: toolInput.data,
       ...(toolCallId ? { toolCallId } : {}),
     },
@@ -180,7 +179,7 @@ export async function requestClaudeNativePermissionDecision(
     ...(allowsClaudeNativeSessionPersistence(toolName) ? { allowSessionPersistence: true } : {}),
   }, options.signal ? { signal: options.signal } : undefined);
   const selected = result.nativeChoice
-    ? nativeChoices.choices.find((choice) => choice.id === result.nativeChoice?.choiceId) : undefined;
+    ? nativeChoices?.choices.find((choice) => choice.id === result.nativeChoice?.choiceId) : undefined;
   return selected
     ? { ...selected.response, decision: selected.decision, nativeChoice: result.nativeChoice }
     : { decision: result.status === 'approved' ? 'approved' : result.status === 'userCancelled' ? 'abort' : 'denied',
