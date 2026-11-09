@@ -113,6 +113,13 @@ const RECOGNIZED_STATUSES: ReadonlySet<CoverageStatus> = new Set<CoverageStatus>
 // UNSURFACED (statically-unbacked), not an allowlist deferral.
 const DEFERRED_ALLOWLIST: Readonly<Record<string, string>> = Object.freeze({});
 
+/**
+ * Runtime ids whose Protocol shape is retained while the executable is out of the release,
+ * unavailable on every surface (docs/browser-automation-verb-matrix.md). Like a
+ * statically-unbacked simulator id they make no product promise, so they are UNSURFACED.
+ */
+const RELEASE_DEFERRED_UNSURFACED_RUNTIME_ACTION_IDS: ReadonlySet<string> = new Set(['computer.secret.fill']);
+
 // ---------------------------------------------------------------------------
 // Item shape.
 // ---------------------------------------------------------------------------
@@ -258,6 +265,20 @@ const DESTINATION_REACHABILITY_PROOF_REFS_BY_SLOT: Readonly<
     launcherOrOpenPath: 'pluginAppPageNavigation',
     productionShell: 'PluginAppPageScreen',
     decidingTest: 'PluginAppPageScreen',
+  },
+  'appPage:project': {
+    declaration: 'ui.views',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'ProjectPageCatalogProvider',
+    productionShell: 'PluginProjectPageBody',
+    decidingTest: 'ProjectDetailScreenPluginPage',
+  },
+  'appPage:machine': {
+    declaration: 'ui.views',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'useMachinePagePluginCatalog',
+    productionShell: 'MachinePluginPageTab',
+    decidingTest: 'MachinePageScreenPluginUse',
   },
   'settingsPage:app': {
     declaration: 'ui.settingsPages',
@@ -417,6 +438,20 @@ const DESTINATION_REACHABILITY_SOURCE_PROOFS_V1 = [
   },
   {
     stage: 'launcherOrOpenPath',
+    ref: 'ProjectPageCatalogProvider',
+    sourcePath: 'apps/ui/sources/components/projects/navigation/useProjectPageCatalog.tsx',
+    codeIdentifier: "selectPluginPagePlacements(declarations.projection, { container: 'appPage', targetKind: 'project' })",
+    supportedSlotKeys: ['appPage:project'],
+  },
+  {
+    stage: 'launcherOrOpenPath',
+    ref: 'useMachinePagePluginCatalog',
+    sourcePath: 'apps/ui/sources/components/machines/page/useMachinePagePluginCatalog.ts',
+    codeIdentifier: 'export function useMachinePagePluginCatalog',
+    supportedSlotKeys: ['appPage:machine'],
+  },
+  {
+    stage: 'launcherOrOpenPath',
     ref: 'useResolvedSettingsPageCatalog',
     sourcePath: 'apps/ui/sources/components/settings/catalog/runtime/useResolvedSettingsPageCatalog.ts',
     codeIdentifier: 'export function useResolvedSettingsPageCatalog',
@@ -461,8 +496,26 @@ const DESTINATION_REACHABILITY_SOURCE_PROOFS_V1 = [
     stage: 'productionShell',
     ref: 'PluginAppPageScreen',
     sourcePath: 'apps/ui/sources/components/appShell/plugins/PluginAppPageScreen.tsx',
-    codeIdentifier: 'placement={page.placement}',
+    codeIdentifier: '<PluginPageContent {...props} page={page}',
+    additionalSourceChecks: [{
+      sourcePath: 'apps/ui/sources/components/plugins/pages/PluginPageContent.tsx',
+      codeIdentifier: 'placement={page.placement}',
+    }],
     supportedSlotKeys: ['appPage:app'],
+  },
+  {
+    stage: 'productionShell',
+    ref: 'PluginProjectPageBody',
+    sourcePath: 'apps/ui/sources/components/projects/detail/PluginProjectPageBody.tsx',
+    codeIdentifier: 'return <PluginPageContent pluginId={pluginId}',
+    supportedSlotKeys: ['appPage:project'],
+  },
+  {
+    stage: 'productionShell',
+    ref: 'MachinePluginPageTab',
+    sourcePath: 'apps/ui/sources/components/machines/page/MachinePluginPageTab.tsx',
+    codeIdentifier: '<PluginPageContent pluginId={pluginId}',
+    supportedSlotKeys: ['appPage:machine'],
   },
   {
     stage: 'productionShell',
@@ -533,6 +586,20 @@ const DESTINATION_REACHABILITY_SOURCE_PROOFS_V1 = [
     sourcePath: 'apps/ui/sources/components/appShell/plugins/PluginAppPageScreen.test.tsx',
     codeIdentifier: 'expect(context.surface.mount).toEqual({',
     supportedSlotKeys: ['appPage:app'],
+  },
+  {
+    stage: 'decidingTest',
+    ref: 'ProjectDetailScreenPluginPage',
+    sourcePath: 'apps/ui/sources/components/projects/ProjectDetailScreen.activeWorktreeSelection.test.tsx',
+    codeIdentifier: "expect(screen.findHostByTestId('plugin-app-page-unavailable')).not.toBeNull();",
+    supportedSlotKeys: ['appPage:project'],
+  },
+  {
+    stage: 'decidingTest',
+    ref: 'MachinePageScreenPluginUse',
+    sourcePath: 'apps/ui/sources/components/machines/page/MachinePageScreen.pluginUse.composed.test.tsx',
+    codeIdentifier: "opens the addressed owner installed materialization Machine page",
+    supportedSlotKeys: ['appPage:machine'],
   },
   {
     stage: 'decidingTest',
@@ -650,6 +717,16 @@ const MAINTAINED_AUTHORED_DESTINATION_DECLARATIONS_V1 = [
     codeIdentifier: ["                id: 'review-panel',", "                container: 'appPage',"].join('\n'),
   },
   {
+    slotKey: 'appPage:project',
+    sourcePath: 'packages/plugins/scm-github/src/manifest.ts',
+    codeIdentifier: ["      container: 'appPage',", "      target: { kind: 'project' },"].join('\n'),
+  },
+  {
+    slotKey: 'appPage:machine',
+    sourcePath: 'packages/plugins/machine-docker-sandboxes/src/manifest.ts',
+    codeIdentifier: "container: 'appPage', target: { kind: 'machine' },",
+  },
+  {
     slotKey: 'settingsPage:app',
     sourcePath: 'packages/plugins/channels/src/manifest.ts',
     codeIdentifier: '  settingsPages: [{',
@@ -661,7 +738,7 @@ const MAINTAINED_AUTHORED_DESTINATION_DECLARATIONS_V1 = [
   },
   {
     slotKey: 'rightSidebarTab:session',
-    sourcePath: 'packages/plugins/triage/src/manifest.ts',
+    sourcePath: 'packages/plugins/triage/src/definition.ts',
     codeIdentifier: ["        container: 'rightSidebarTab',", "        target: { kind: 'session' },"].join('\n'),
   },
   {
@@ -781,8 +858,11 @@ function readAuthoredDestinationSlotKeysFromSource(repoRoot: string): Set<string
   const producerSources: string[] = [];
   const pluginsDir = resolve(repoRoot, 'packages/plugins');
   for (const entry of readdirSync(pluginsDir)) {
-    const manifest = join(pluginsDir, entry, 'src', 'manifest.ts');
-    if (existsSync(manifest)) producerSources.push(manifest);
+    // A `definePlugin` plugin authors its views in definition.ts; manifest.ts then only projects it.
+    for (const file of ['manifest.ts', 'definition.ts']) {
+      const producer = join(pluginsDir, entry, 'src', file);
+      if (existsSync(producer)) producerSources.push(producer);
+    }
   }
   const examplesDir = resolve(repoRoot, 'packages/plugin-sdk/examples');
   for (const entry of readdirSync(examplesDir)) {
@@ -940,7 +1020,7 @@ function buildRuntimeActionItems(): readonly CoverageItem[] {
     let status: CoverageStatus;
     if (surfacedOnUi) {
       status = 'runtime-owned';
-    } else if (simulatorBacking === 'statically-unbacked') {
+    } else if (simulatorBacking === 'statically-unbacked' || RELEASE_DEFERRED_UNSURFACED_RUNTIME_ACTION_IDS.has(id)) {
       // UNSURFACED (DZ-2): no producer in stock tooling (e.g. absolute-orientation input — stock
       // scrcpy `rotate_device` is relative). It is fail-closed at every surface and makes NO
       // product promise, so it is NOT a deferral and is NOT allowlisted. Distinct from
@@ -1481,7 +1561,7 @@ describe('coverage matrix — classification snapshot', () => {
     const staticallyUnbackedSimulatorCount = ACTION_ID_FAMILIES_V1.devices_simulator.filter(
       (id) => classifySimulatorRuntimeActionBackingV1(id as never) === 'statically-unbacked',
     ).length;
-    expect(counts.unsurfaced).toBe(staticallyUnbackedSimulatorCount);
+    expect(counts.unsurfaced).toBe(staticallyUnbackedSimulatorCount + RELEASE_DEFERRED_UNSURFACED_RUNTIME_ACTION_IDS.size);
 
     // The only `unimplemented` items are the labeled runtime-action deferrals. Forward-only
     // ratchet (DZ-1): this is `<=`, never equality — when a deferred id ships, its

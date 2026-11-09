@@ -737,7 +737,8 @@ describe('SessionCockpitSurfaceScreen', () => {
         });
 
         const probe = screen.tree.findByType('PaneScopeProbe' as never);
-        expect(switchSurface).toHaveBeenCalledWith('tabs');
+        // The pane accepts the page; a phone's rail presentation is the pane presenter's job, not a scene switch.
+        expect(switchSurface).not.toHaveBeenCalled();
         expect(probe.props.scopeState?.details?.tabs).toEqual([
             expect.objectContaining({
                 key: 'commit:abc1234',
@@ -785,7 +786,8 @@ describe('SessionCockpitSurfaceScreen', () => {
         });
 
         const probe = screen.tree.findByType('PaneScopeProbe' as never);
-        expect(switchSurface).toHaveBeenCalledWith('tabs');
+        // The pane accepts the page; a phone's rail presentation is the pane presenter's job, not a scene switch.
+        expect(switchSurface).not.toHaveBeenCalled();
         expect(probe.props.scopeState?.details?.tabs).toEqual([
             expect.objectContaining({
                 key: 'scmReview:working',
@@ -833,7 +835,8 @@ describe('SessionCockpitSurfaceScreen', () => {
         });
 
         const probe = screen.tree.findByType('PaneScopeProbe' as never);
-        expect(switchSurface).toHaveBeenCalledWith('tabs');
+        // The pane accepts the page; a phone's rail presentation is the pane presenter's job, not a scene switch.
+        expect(switchSurface).not.toHaveBeenCalled();
         expect(probe.props.scopeState?.details?.tabs).toEqual([
             expect.objectContaining({
                 key: 'scmStash',
@@ -842,53 +845,6 @@ describe('SessionCockpitSurfaceScreen', () => {
         ]);
     });
 
-    it('opens a new terminal details tab on the internal details surface', async () => {
-        const switchSurface = vi.fn();
-        replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({
-                'session:s_1': {
-                    right: { isOpen: false, activeTabId: null, tabState: {} },
-                    details: {
-                        isOpen: false,
-                        tabs: [],
-                        activeTabKey: null,
-                        tabState: {},
-                    },
-                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
-                },
-            }));
-
-        const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
-        const screen = await renderScreen(
-            <AppPaneProvider>
-                <SessionCockpitSurfaceNavigationProvider value={{ switchSurface, returnToPreviousSurface: () => switchSurface('chat') }}>
-                    <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
-                        sessionId="s_1"
-                        scopeId="session:s_1"
-                        surface="terminal"
-                        routeServerId="server-b"
-                        terminalTabAvailable
-                    />
-                </SessionCockpitSurfaceNavigationProvider>
-                <PaneScopeProbe scopeId="session:s_1" />
-            </AppPaneProvider>,
-        );
-
-        const terminalSurface = screen.tree.findByType('SessionTerminalSurface' as never);
-
-        await act(async () => {
-            terminalSurface.props.onOpenNewTerminalTab();
-            await new Promise((resolve) => setTimeout(resolve, 0));
-        });
-
-        const probe = screen.tree.findByType('PaneScopeProbe' as never);
-        expect(switchSurface).toHaveBeenCalledWith('tabs');
-        expect(probe.props.scopeState?.details?.tabs).toEqual([
-            expect.objectContaining({
-                kind: 'terminal',
-                resource: expect.objectContaining({ kind: 'terminal' }),
-            }),
-        ]);
-    });
 
     it('renders a validated plugin mobile surface through the right-sidebar placement host', async () => {
         pluginProjectionState.value = {

@@ -665,7 +665,7 @@ export function WorkspaceProvider(props: Readonly<{
             openHref: (href, mode, onOpened) => {
                 const tabHref = resolvePhoneWorkspaceTabHref(latest.current.catalog, href);
                 if (!tabHref) return false;
-                navigate(() => { runtime.adapter.openHref(tabHref, { mode, onOpened }); });
+                navigate(() => { runtime.adapter.openHref(tabHref, { mode, onOpened, retainSourceTab: mode === 'preview' }); });
                 return true;
             },
             activateTab: (tabId) => {

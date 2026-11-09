@@ -18,6 +18,8 @@ export type WorkspaceOpenOptions = Readonly<{
     beforeTabId?: string | null;
     reuseExisting?: boolean;
     replace?: boolean;
+    /** A phone Details page opens or focuses its own rail tab; the source tab keeps its route. */
+    retainSourceTab?: boolean;
     /** Explicit app-section activation. Ordinary item opens retain the selected section. */
     section?: boolean;
     availableSizePx?: number;
@@ -301,7 +303,7 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
                 if (admittedSingleton.length === 0) return false;
                 for (const action of admittedSingleton) input.dispatch(action);
                 if (mode === 'newTab') input.dispatch({ type: 'promoteTab', tabId: focusedEntry().tabId });
-            } else if (mode === 'preview' && sourceTab) {
+            } else if (mode === 'preview' && sourceTab && !options.retainSourceTab) {
                 finishOpen = sourceEntry
                     ? input.prepareOpen?.(sourceEntry, { tabId: sourceTab.id, groupId: openingGroupId, target }, options) : undefined;
                 input.dispatch({ type: 'setTarget', tabId: sourceTab.id, target });

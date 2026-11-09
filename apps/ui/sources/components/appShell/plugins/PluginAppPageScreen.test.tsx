@@ -288,7 +288,7 @@ vi.mock('@/text', async () => {
     const { en } = await import('@/text/translations/en');
     const defaultText = createTextModuleMock();
     const translate = (key: string, params?: Record<string, unknown>) => {
-        if (key === 'pluginSurfaces.state.namedUnavailable') return defaultText.t(key, params);
+        if (key === 'pluginSurfaces.state.namedUnavailable' || key === 'pluginSurfaces.state.namedPageUnavailable') return defaultText.t(key, params);
         if (key !== 'settingsPlugins.managePlugin') return key;
         const value = (en.settingsPlugins as Readonly<Record<string, unknown>>).managePlugin;
         return typeof value === 'string' ? value : key;

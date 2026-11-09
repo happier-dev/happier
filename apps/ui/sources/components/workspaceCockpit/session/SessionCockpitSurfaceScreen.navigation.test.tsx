@@ -321,6 +321,7 @@ vi.mock('@/components/sessions/localServices/useServicesOpenInBrowser', () => ({
     useServicesOpenInBrowser: () => () => {},
 }));
 vi.mock('@/components/sessions/model/useSessionMachineTarget', () => ({
+    useSessionMachineDisplayIdentity: () => ({ machineId: 'machine-1', basePath: '/repo' }),
     useSessionMachineTarget: (target: unknown) => {
         sessionMachineTargetCalls.push(target);
         return { machineId: 'machine-1', basePath: '/repo' };

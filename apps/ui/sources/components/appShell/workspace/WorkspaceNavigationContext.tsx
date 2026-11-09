@@ -28,7 +28,7 @@ export type WorkspacePhoneControls = Readonly<{
     catalog: readonly CompactAppDestination[];
     /** The screen shows one of the tabs (not one of the phone's own main tabs). */
     onTab: boolean;
-    /** `preview` replaces the phone's preview; `newTab` keeps it as a synced tab. Both open it on screen. */
+    /** `preview` opens or focuses its own preview tab beside the source tab; `newTab` keeps it as a synced tab. Both open it on screen. */
     openHref: (href: string, mode: 'preview' | 'newTab', onOpened?: () => void) => boolean;
     activateTab: (tabId: string) => void;
     closeTab: (tabId: string) => void;
