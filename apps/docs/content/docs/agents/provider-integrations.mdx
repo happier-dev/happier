@@ -33,6 +33,19 @@ Select the machine that will run the Agent before testing, fetching live models,
 loading local models or confirming a runtime pairing. Account-only browsing
 does not replace those checks. See [Account-only model browsing](/agents/model-and-engine-selection#account-only-browsing-in-03-development).
 
+## Muse Agent in 0.3 development
+
+The unreleased Muse Agent integration runs the native Muse executable on the
+machine you select. Choose Muse as the Agent and use its installation action if
+that machine needs the executable. For login or API-key setup, see
+[Muse accounts](/accounts/connected-services#muse-accounts-in-03-development).
+The selected account is also used when fetching Muse's native model list.
+
+Muse's model picker preserves the models returned for that account, including
+contributor variants and their native descriptions. Availability can differ
+between login and API-key accounts. Choosing a Muse model for a native Session
+is separate from using that account through a managed gateway in another Agent.
+
 ## Connect a third-party model API
 
 For the unreleased 0.3 Gateway integration and its current availability, see
@@ -93,7 +106,10 @@ aborted terminal usage remains unknown.
 
 The unreleased development integration extends per-session Provider bindings to
 [Gemini CLI](/agents/gemini), [Kilo](/agents/kilo),
-[Droid](/agents/droid) and [Copilot CLI](/agents/copilot). Each Agent
+[Droid](/agents/droid), [Copilot CLI](/agents/copilot), [Pi](/agents/pi)
+and [Oh My Pi](/agents/oh-my-pi). Pi and Oh My Pi require credentialed OpenAI
+Responses endpoints. Oh My Pi cannot represent an empty custom-header value;
+remove that header or choose another compatible Agent. Each Agent
 still requires its native API protocol: Gemini CLI needs a Gemini-compatible
 endpoint, for example, while Copilot accepts OpenAI Chat Completions or
 Anthropic Messages. Selecting a router does not translate between protocols.
@@ -116,7 +132,7 @@ described on the linked pages; authenticated CLI acceptance remains release
 validation.
 
 Native custom-model settings in another Agent do not automatically enable a
-Happier binding. Qwen, Pi, Oh My Pi, Kimi, Grok and FX still require their native
+Happier binding. Qwen, Kimi, Grok and FX still require their native
 configuration in the current integration, as does CodeBuddy where managed
 configuration can override routing. Cursor's editor API-key support does
 not apply to its CLI. Custom ACP definitions use the authentication and model

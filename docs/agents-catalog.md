@@ -246,7 +246,10 @@ forward the admitted endpoint and public headers, and keep credentials in child
 environment values referenced by native configuration. Native model owners
 supply defaults for metadata the Provider did not declare. Oh My Pi retains its
 native ACP launch and model acknowledgement path; changing the Provider binding
-uses Session restart semantics. Native candidate catalogs remain unverified
+uses Session restart semantics. Its native string configuration cannot preserve
+an empty public-header value, so materialization refuses that input; nonempty
+values remain literal, including command and environment substitution syntax.
+Native candidate catalogs remain unverified
 until the canonical account catalog owner observes the selected account.
 
 Custom ACP definitions do not inherit another Agent's Provider adapter merely

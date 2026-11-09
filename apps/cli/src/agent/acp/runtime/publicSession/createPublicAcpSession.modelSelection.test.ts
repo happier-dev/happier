@@ -13,6 +13,10 @@ import { createDroidAgentRuntime } from '../../../../../../../packages/plugins/d
 import { createOhMyPiAgentRuntime } from '../../../../../../../packages/plugins/ohmypi/src/agent/runtime/engine';
 import { OH_MY_PI_PLUGIN } from '../../../../../../../packages/plugins/ohmypi/src/manifest';
 import { DROID_PLUGIN } from '../../../../../../../packages/plugins/droid/src/manifest';
+import { createCopilotAgentRuntime } from '../../../../../../../packages/plugins/copilot/src/agent/runtime/factory';
+import { COPILOT_PLUGIN } from '../../../../../../../packages/plugins/copilot/src/manifest';
+import { COPILOT_GITHUB_PURPOSE_ID } from '../../../../../../../packages/plugins/copilot/src/agent/auth/services/accountPurposes';
+import { COPILOT_PROVIDER_BINDING_ADAPTER_V1 } from '../../../../../../../packages/plugins/copilot/src/agent/providerBinding';
 import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { createFxConfigOptionsFixture } from '@/agent/acp/testkit/fxConfigOptionsFixture';
@@ -25,8 +29,8 @@ import { createPublicAcpSession, type PublicAcpComposerDependencies } from './cr
 // Protocol fixture: FX v0.0.14 session/new (2026-10-27), with constructed
 // Gateway/custom-route and native-refusal variants, plus Kilo's declared model
 // config-option control and Oh My Pi 18.12.3 model config options. Only the OS peer is fake.
-async function fixture(dir: string, scenario: 'accept' | 'refuse' | 'current', agentId: 'fx' | 'kilo' | 'codebuddy' | 'droid' | 'ohmypi' = 'fx', selectedAccount = true) {
-  const plugin = { fx: FX_PLUGIN, kilo: KILO_PLUGIN, codebuddy: CODEBUDDY_PLUGIN, droid: DROID_PLUGIN, ohmypi: OH_MY_PI_PLUGIN }[agentId];
+async function fixture(dir: string, scenario: 'accept' | 'refuse' | 'current', agentId: 'fx' | 'kilo' | 'codebuddy' | 'droid' | 'ohmypi' | 'copilot' = 'fx', selectedAccount = true, selectedProvider = false) {
+  const plugin = { fx: FX_PLUGIN, kilo: KILO_PLUGIN, codebuddy: CODEBUDDY_PLUGIN, droid: DROID_PLUGIN, ohmypi: OH_MY_PI_PLUGIN, copilot: COPILOT_PLUGIN }[agentId];
   const capture = join(dir, 'requests.json');
   const script = writeAcpTestAgentScript({ dir, fileName: 'models.mjs', source: `
     import { createInterface } from 'node:readline';
@@ -39,6 +43,11 @@ async function fixture(dir: string, scenario: 'accept' | 'refuse' | 'current', a
     if (process.env.AGENT_MODE === 'kilo') configOptions = [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'openai/native-default', options: ['openai/selected-initial', 'openai/selected-next', 'openai/unverified-native'].map(value => ({ value, name: value })) }];
     if (process.env.AGENT_MODE === 'codebuddy') configOptions = [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'openai/selected-initial', options: ['openai/selected-initial', 'openai/unverified-native'].map(value => ({ value, name: value })) }];
     if (process.env.AGENT_MODE === 'droid') configOptions = [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'custom:selected', options: [{ value: 'custom:selected', name: 'Happier provider: openai/selected-initial' }, { value: 'native-global', name: 'Global model' }] }];
+    if (process.env.AGENT_MODE === 'copilot') {
+      const selected = process.env.COPILOT_MODEL || 'native-global';
+      configOptions = [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: selected,
+        options: [{ value: selected, name: 'Selected' }, { value: 'native-global', name: 'Global model' }] }];
+    }
     configOptions = configOptions.map(option => option.id === 'provider'
       ? { ...option, options: [...option.options, {value:'private-route',name:'Configured route'}] } : option);
     if (process.env.SCENARIO === 'current') configOptions = configOptions.map(option => option.id === 'model'
@@ -73,6 +82,15 @@ async function fixture(dir: string, scenario: 'accept' | 'refuse' | 'current', a
     }
   ` });
   const signal = new AbortController().signal;
+  const providerMaterialization = selectedProvider ? await COPILOT_PROVIDER_BINDING_ADAPTER_V1.materialize({
+    v: 1, binding: { v: 1, agentTargetKey: 'backend:copilot:built_in',
+      selection: { connectionId: 'gateway', model: { id: 'vendor/selected-model', name: 'Selected' } },
+      contributionKey: null,
+      endpoint: { endpointTemplateId: 'custom', normalizedUrl: 'http://127.0.0.1:7777/v1', protocol: 'openai-chat', publicHeaders: {} },
+      runtimeCredentialTransport: null, compatibilityFingerprint: 'pcf1:copilot-test' },
+    prepared: COPILOT_PROVIDER_BINDING_ADAPTER_V1.prepare({ v: 1, agentTargetKey: 'backend:copilot:built_in', connectionId: 'gateway' }),
+    credential: { kind: 'none' },
+  }) : null;
   const publications = createNativeAgentSessionPublications({ agentId, session: null,
     signal, isCurrent: () => true, supportsInFlightSteer: false });
   const dependencies: PublicAcpComposerDependencies = {
@@ -89,13 +107,13 @@ async function fixture(dir: string, scenario: 'accept' | 'refuse' | 'current', a
   const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'selected' };
   const context = createAcpSessionRuntimeContextFixture({ agent, pluginId: plugin.manifest.id,
     sessionId: 'model-session', directory: dir, signal, publications,
-    ...(agentId === 'codebuddy' || agentId === 'droid' || agentId === 'ohmypi' ? { services: { ...services, connectedAccounts: {
+    ...(agentId === 'codebuddy' || agentId === 'droid' || agentId === 'ohmypi' || agentId === 'copilot' ? { services: { ...services, connectedAccounts: {
       ...services.connectedAccounts,
       ...(agentId === 'ohmypi' ? { watch: (_purpose: string, listener: (event: {kind:'resync';authorityChanged:boolean}) => void) => {
         queueMicrotask(() => listener({kind:'resync',authorityChanged:false})); return {dispose() {}};
       } } : {}),
       // This host port is the external credential boundary of the plugin leaf.
-      getBinding: async purpose => agentId !== 'ohmypi' && selectedAccount ? { purpose, service: account.service, account,
+      getBinding: async purpose => agentId !== 'ohmypi' && selectedAccount && purpose !== COPILOT_GITHUB_PURPOSE_ID ? { purpose, service: account.service, account,
         target: { kind: 'account' as const, displayName: 'Selected' } } : null,
       materialize: async () => ({ kind: 'httpHeaders' as const,
         headers: { authorization: 'Bearer synthetic-selected', 'chatgpt-account-id': 'synthetic-account' } }),
@@ -105,11 +123,19 @@ async function fixture(dir: string, scenario: 'accept' | 'refuse' | 'current', a
     },
       async openExecutionRunV1() { throw new Error('Unexpected execution run'); } } } });
   const runtime = await ({ fx: createFxAgentRuntime, kilo: createKiloAgentRuntime,
-    codebuddy: createCodeBuddyAgentRuntime, droid: createDroidAgentRuntime, ohmypi: createOhMyPiAgentRuntime }[agentId])({ plugin: { id: plugin.manifest.id, version: '0.0.0' }, agent: { id: agentId }, signal });
+    codebuddy: createCodeBuddyAgentRuntime, droid: createDroidAgentRuntime, ohmypi: createOhMyPiAgentRuntime, copilot: createCopilotAgentRuntime }[agentId])({ plugin: { id: plugin.manifest.id, version: '0.0.0' }, agent: { id: agentId }, signal });
   return { publications, context, async open(configuration?: AgentSessionConfigurationSnapshot) {
     try {
       return await runtime.sessions!.open({ kind: 'create', sessionId: 'model-session', cwd: dir,
         ...(configuration ? { configuration } : {}),
+        ...(selectedProvider && providerMaterialization ? { providerBinding: { connectionId: 'gateway',
+          upstream: { protocol: 'openai-chat' as const, normalizedUrl: 'http://127.0.0.1:7777/v1', credential: 'none' as const },
+          model: { id: 'vendor/selected-model', name: 'Selected' }, materialization: providerMaterialization },
+          ...(providerMaterialization.kind === 'spawnEnv' ? { launchEnvironment: {
+            values: Object.fromEntries(providerMaterialization.env.flatMap(entry => entry.value === null ? [] : [[entry.name, entry.value]])),
+            unset: providerMaterialization.env.filter(entry => entry.value === null).map(entry => entry.name),
+          } } : {}),
+        } : {}),
         ...(agentId === 'ohmypi' ? { providerBinding: { connectionId:'gateway',
           upstream:{protocol:'openai-responses' as const,normalizedUrl:'http://127.0.0.1:7777/v1',credential:'apiKey' as const},
           model:{id:'vendor/selected-model',name:'Selected'},
@@ -151,14 +177,14 @@ async function sendCompletedPrompt(session: AgentSessionRuntime, turnId: string,
 }
 
 describe('selected account native model catalog provenance', () => {
-  it.each(['codebuddy', 'droid'] as const)('withholds the %s generated account overlay from public catalogs while its explicit model still runs', async agentId => {
+  it.each(['codebuddy', 'droid', 'copilot'] as const)('withholds the %s generated account overlay from public catalogs while its explicit model still runs', async agentId => {
     await withTempDir(`${agentId}-account-catalog-`, async dir => {
       const f = await fixture(dir, 'accept', agentId);
       const session = await f.open({ ...configuration('openai/selected-initial', 'explicit'), options: {} });
       const events: AgentSessionRuntimeEvent[] = [];
       try {
         await sendCompletedPrompt(session, 'selected-overlay-prompt', 'Run the explicit model', event => events.push(event));
-        expect(f.promptModels()).toEqual([agentId === 'droid' ? 'custom:selected' : 'openai/selected-initial']);
+        expect(f.promptModels()).toEqual([agentId === 'droid' ? 'custom:selected' : agentId === 'copilot' ? 'happier-chatgpt/openai/selected-initial' : 'openai/selected-initial']);
         expect(f.publications.modelsSource.read().currentModelId).toBe('openai/selected-initial');
         expect.soft(f.publications.modelsSource.read().models).toEqual([]);
         const options = events.filter(event => event.kind === 'config-options').flatMap(event => event.configOptions);
@@ -168,12 +194,28 @@ describe('selected account native model catalog provenance', () => {
     });
   });
 
-  it.each(['codebuddy', 'droid'] as const)('preserves the unbound %s native catalog', async agentId => {
+  it.each(['codebuddy', 'droid', 'copilot'] as const)('preserves the unbound %s native catalog', async agentId => {
     await withTempDir(`${agentId}-native-catalog-`, async dir => {
       const f = await fixture(dir, 'accept', agentId, false);
-      const session = await f.open();
+      const session = await f.open(agentId === 'copilot' ? { ...configuration('native-global', 'explicit'), options: {} } : undefined);
       try { expect(f.publications.modelsSource.read().models?.length).toBeGreaterThan(0); }
       finally { await session.dispose(); await f.dispose(); }
+    });
+  });
+
+  it('withholds Copilot Provider-bound ambient choices while the selected model still runs', async () => {
+    await withTempDir('copilot-provider-catalog-', async dir => {
+      const f = await fixture(dir, 'accept', 'copilot', false, true);
+      const session = await f.open({ ...configuration('vendor/selected-model', 'explicit'), options: {} });
+      const events: AgentSessionRuntimeEvent[] = [];
+      try {
+        await sendCompletedPrompt(session, 'provider-prompt', 'Run the selected model', event => events.push(event));
+        expect(f.promptModels()).toEqual(['vendor/selected-model']);
+        expect(f.publications.modelsSource.read().currentModelId).toBe('vendor/selected-model');
+        expect.soft(f.publications.modelsSource.read().models).toEqual([]);
+        expect(events.filter(event => event.kind === 'config-options').flatMap(event => event.configOptions)
+          .find(option => option.id === 'model')?.options).toEqual([]);
+      } finally { await session.dispose(); await f.dispose(); }
     });
   });
 });

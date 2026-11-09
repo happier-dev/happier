@@ -12,6 +12,7 @@ import type {
 import { prepareOhMyPiQualifiedAccounts } from '../auth/services/preparation.js';
 import { OH_MY_PI_SYSTEM_TOOL_ID } from '../systemTool.js';
 import { OH_MY_PI_ACP_COMMAND } from '../preflight/models.js';
+import { ohMyPiProviderLaunchArgs, ohMyPiProviderModelControls } from '../providerBinding.js';
 
 export {
   ohMyPiExternalSessionsContribution,
@@ -41,9 +42,9 @@ async function openOhMyPiExecutionRun(
             kind: 'systemTool',
             id: OH_MY_PI_SYSTEM_TOOL_ID,
           },
-          args: [...OH_MY_PI_ACP_COMMAND.args],
+          args: [...OH_MY_PI_ACP_COMMAND.args, ...ohMyPiProviderLaunchArgs(prepared.request.providerBinding)],
         },
-        definition: OH_MY_PI_ACP_RUNTIME_DEFINITION,
+        definition: { ...OH_MY_PI_ACP_RUNTIME_DEFINITION, models: ohMyPiProviderModelControls(prepared.request.providerBinding) },
       },
     );
     return prepared.bindExecutionRun(run);
@@ -69,9 +70,9 @@ async function openOhMyPiSession(
           kind: 'systemTool',
           id: OH_MY_PI_SYSTEM_TOOL_ID,
         },
-        args: [...OH_MY_PI_ACP_COMMAND.args],
+        args: [...OH_MY_PI_ACP_COMMAND.args, ...ohMyPiProviderLaunchArgs(prepared.request.providerBinding)],
       },
-      definition: OH_MY_PI_ACP_RUNTIME_DEFINITION,
+      definition: { ...OH_MY_PI_ACP_RUNTIME_DEFINITION, models: ohMyPiProviderModelControls(prepared.request.providerBinding) },
     });
     return prepared.bind(session);
   } catch (error) {
