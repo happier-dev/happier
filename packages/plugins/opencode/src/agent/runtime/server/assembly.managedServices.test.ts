@@ -2,6 +2,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { createHappierMcpToolNamingResolver } from '../../../../../../../apps/cli/src/mcp/runtime/projectMcpToolNames';
 import { dirname, join } from 'node:path';
 
@@ -859,6 +861,25 @@ describe('OpenCode server managed-service assembly', () => {
 
   it.each(['openai-chat', 'openai-responses'] as const)('loads the produced Muse gateway family through the generic %s Provider launch', async protocol => {
     const rootPath = await mkdtemp(join(tmpdir(), 'happier-opencode-provider-'));
+    const requests: Array<{ path: string; authorization: string | undefined; body: Record<string, unknown> }> = [];
+    const gateway = createServer(async (request, response) => {
+      let bytes = '';
+      for await (const chunk of request) bytes += String(chunk);
+      requests.push({ path: request.url!, authorization: request.headers.authorization, body: JSON.parse(bytes) });
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify(protocol === 'openai-chat'
+        ? { choices: [{ message: requests.length === 1
+          ? { role: 'assistant', tool_calls: [{ id: 'new-call', type: 'function', function: { name: 'read_file', arguments: '{}' } }] }
+          : { role: 'assistant', content: 'gateway tool completed' } }] }
+        : { output: requests.length === 1
+          ? [{ type: 'function_call', call_id: 'new-call', name: 'read_file', arguments: '{}' }]
+          : [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'gateway tool completed' }] }] }));
+    });
+    gateway.listen(0, '127.0.0.1');
+    await once(gateway, 'listening');
+    const address = gateway.address();
+    if (!address || typeof address === 'string') throw new Error('Gateway fixture has no TCP address');
+    const gatewayBaseUrl = `http://127.0.0.1:${address.port}/v1`;
     const contribution = CLIPROXYAPI_PROVIDER_CONTRIBUTION;
     const family = contribution.managedRuntime.connectedAccounts.find(row => row.service.pluginId === 'happier.agent.muse');
     const endpoint = contribution.endpointTemplates.find(row => row.protocol === protocol && family?.endpointTemplateIds.includes(row.id));
@@ -873,7 +894,7 @@ describe('OpenCode server managed-service assembly', () => {
       prepared,
       binding: { v: 1, agentTargetKey, selection: { connectionId, model },
         contributionKey: 'happier.provider.cliproxyapi/cliproxyapi',
-        endpoint: { endpointTemplateId: endpoint.id, protocol, normalizedUrl: endpoint.localUrlCandidates[0]!, publicHeaders: {} },
+        endpoint: { endpointTemplateId: endpoint.id, protocol, normalizedUrl: gatewayBaseUrl, publicHeaders: {} },
         runtimeCredentialTransport: transport, compatibilityFingerprint: 'pcf1:muse-gateway-fixture' },
       credential: { kind: 'apiKey', transport, value: 'fixture-downstream-bearer' },
     });
@@ -928,12 +949,73 @@ describe('OpenCode server managed-service assembly', () => {
         model: `${prepared.adapterBindingKey}/${model.id}`,
         provider: { [prepared.adapterBindingKey!]: {
           npm: protocol === 'openai-chat' ? '@ai-sdk/openai-compatible' : '@ai-sdk/openai',
-          options: { baseURL: endpoint.localUrlCandidates[0], apiKey: '{env:HAPPIER_OPENCODE_PROVIDER_API_KEY}' },
+          options: { baseURL: gatewayBaseUrl, apiKey: '{env:HAPPIER_OPENCODE_PROVIDER_API_KEY}' },
           models: { [model.id]: { name: model.name } },
         } },
       });
+      // OpenCode is the external process boundary. This fixture consumes the
+      // actual serialized native launch configuration; it does not stand in for
+      // the real driver's implementation, whose installed-binary journey is separate.
+      const nativeFixture = `
+        const config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT);
+        const [providerId, ...modelParts] = config.model.split('/');
+        const provider = config.provider[providerId];
+        const model = modelParts.join('/');
+        const keyName = /^\\{env:(.+)\\}$/.exec(provider.options.apiKey)[1];
+        const chat = provider.npm === '@ai-sdk/openai-compatible';
+        if (!chat && provider.npm !== '@ai-sdk/openai') throw new Error('Unsupported native driver');
+        const history = chat ? [
+          { role: 'user', content: 'Earlier question' },
+          { role: 'assistant', tool_calls: [{ id: 'historic-call', type: 'function', function: { name: 'read_file', arguments: '{}' } }] },
+          { role: 'tool', tool_call_id: 'historic-call', content: 'historical result' },
+          { role: 'user', content: 'Continue' },
+        ] : [
+          { role: 'user', content: 'Earlier question' },
+          { type: 'function_call', call_id: 'historic-call', name: 'read_file', arguments: '{}' },
+          { type: 'function_call_output', call_id: 'historic-call', output: 'historical result' },
+          { role: 'user', content: 'Continue' },
+        ];
+        const send = async () => {
+          const response = await fetch(provider.options.baseURL + (chat ? '/chat/completions' : '/responses'), {
+            method: 'POST', headers: { authorization: 'Bearer ' + process.env[keyName], 'content-type': 'application/json' },
+            body: JSON.stringify({ model, [chat ? 'messages' : 'input']: history }),
+          });
+          if (!response.ok) throw new Error('Gateway request refused');
+          return response.json();
+        };
+        const first = await send();
+        if (chat) {
+          const message = first.choices[0].message;
+          history.push(message, { role: 'tool', tool_call_id: message.tool_calls[0].id, content: 'selected tool result' });
+        } else {
+          const call = first.output[0];
+          history.push(call, { type: 'function_call_output', call_id: call.call_id, output: 'selected tool result' });
+        }
+        const result = await send();
+        process.stdout.write(chat ? result.choices[0].message.content : result.output[0].content[0].text);
+      `;
+      const result = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', nativeFixture], {
+        env: { ...launchEnv, OPENAI_API_KEY: 'conflicting-ambient-key', ANTHROPIC_API_KEY: 'conflicting-ambient-key' },
+      });
+      expect(result.stdout).toBe('gateway tool completed');
+      expect(requests).toHaveLength(2);
+      expect(requests.map(request => request.path)).toEqual(Array(2).fill(protocol === 'openai-chat' ? '/v1/chat/completions' : '/v1/responses'));
+      for (const request of requests) {
+        expect(request.authorization).toBe('Bearer fixture-downstream-bearer');
+        expect(request.body.model).toBe(model.id);
+        expect(request.body).not.toHaveProperty('apiKey');
+      }
+      const firstHistory = requests[0]!.body[protocol === 'openai-chat' ? 'messages' : 'input'];
+      const continuedHistory = requests[1]!.body[protocol === 'openai-chat' ? 'messages' : 'input'];
+      expect(firstHistory).toEqual(expect.arrayContaining([protocol === 'openai-chat'
+        ? { role: 'tool', tool_call_id: 'historic-call', content: 'historical result' }
+        : { type: 'function_call_output', call_id: 'historic-call', output: 'historical result' }]));
+      expect(continuedHistory).toEqual(expect.arrayContaining([protocol === 'openai-chat'
+        ? { role: 'tool', tool_call_id: 'new-call', content: 'selected tool result' }
+        : { type: 'function_call_output', call_id: 'new-call', output: 'selected tool result' }]));
     } finally {
       await assembly?.dispose();
+      await new Promise<void>((resolve, reject) => gateway.close(error => error ? reject(error) : resolve()));
       await rm(rootPath, { recursive: true, force: true });
     }
   });

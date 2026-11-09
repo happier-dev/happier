@@ -214,17 +214,23 @@ describe('Claude provider-binding adapter V1', () => {
   });
 
   it('applies explicit helper pins without adding a subagent override', async () => {
-    const output = await CLAUDE_PROVIDER_BINDING_ADAPTER_V1.materialize(
-      managedMaterializeInput({ fast: 'gateway-fast', strongest: 'gateway-strongest' }),
-    );
-
-    expect(Object.fromEntries(output.env.filter((row) => row.name.startsWith('ANTHROPIC_DEFAULT_'))
-      .map((row) => [row.name, row.value]))).toEqual({
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gateway-fast',
-      ANTHROPIC_DEFAULT_SONNET_MODEL: 'gateway-sonnet',
-      ANTHROPIC_DEFAULT_OPUS_MODEL: 'gateway-strongest',
-    });
-    expect(output.env.some((row) => row.name.includes('SUBAGENT'))).toBe(false);
+    const savedPins = { fast: 'gateway-fast', strongest: 'gateway-strongest' };
+    for (const modelId of ['gateway-sonnet', 'gateway-second']) {
+      const input = managedMaterializeInput(savedPins);
+      const model = { id: modelId, name: modelId };
+      const output = await CLAUDE_PROVIDER_BINDING_ADAPTER_V1.materialize({
+        ...input,
+        binding: { ...input.binding, selection: { ...input.binding.selection, model } },
+        prepared: CLAUDE_PROVIDER_BINDING_ADAPTER_V1.prepare({ ...prepareInput(), model, roleModels: savedPins }),
+      });
+      expect(Object.fromEntries(output.env.filter((row) => row.name.startsWith('ANTHROPIC_DEFAULT_'))
+        .map((row) => [row.name, row.value]))).toEqual({
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gateway-fast',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: modelId,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'gateway-strongest',
+      });
+      expect(output.env.some((row) => row.name.includes('SUBAGENT'))).toBe(false);
+    }
   });
 
   it('changes the existing binding key only when resolved helper pins change', () => {
