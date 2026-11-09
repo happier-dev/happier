@@ -447,11 +447,14 @@ export async function readPendingManagedWakeTargetInTx(tx: Tx, sessionId: string
 }
 
 /** Reconnect reads existing activation/assignment custody, not a second queue or copied Session content. */
-export async function readManagedWakeTargets(input: Readonly<{ actorAccountId: string; request: ManagedWakeTargetsReadRequestV1 }>) {
+export async function readManagedWakeTargets(input: Readonly<{
+    actorAccountId: string; request: ManagedWakeTargetsReadRequestV1; managedId?: string;
+}>) {
     const request = ManagedWakeTargetsReadRequestV1Schema.parse(input.request);
     return inTx(async tx => {
         await requireManagedControllerInTx(tx, { ...request, custodianAccountId: input.actorAccountId });
         const managedRows = await tx.managedMachine.findMany({ where: { homeId: request.homeId,
+            ...(input.managedId ? { id: input.managedId } : {}),
             OR: [{ controllerMachineId: request.controller.machineId, controllerInstallationId: request.controller.installationId },
                 { controllerMachineId: null }],
             custodianAccountId: input.actorAccountId, enrolledMachineId: { not: null }, archivedAt: null,

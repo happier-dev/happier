@@ -52,7 +52,7 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
     isAvailable?: () => boolean;
     /** The incumbent authenticated Machine reader opens published registration readiness. */
     loadMachine?: (machineId: string, signal: AbortSignal) => Promise<Machine | null>;
-    readCensus(signal: AbortSignal): Promise<ManagedMachinePolicyCensus>;
+    readCensus(signal: AbortSignal, managedId?: string): Promise<ManagedMachinePolicyCensus>;
     executePolicy: ReturnType<typeof createDaemonManagedMachineActionAdapter>['executePolicy'];
     reconcileNativeCredentials?: (machine: ManagedMachineV1, signal: AbortSignal) => Promise<void>;
     supportsNativeLifetimeRenewal?: (machine: ManagedMachineV1, signal: AbortSignal) => Promise<boolean>;
@@ -66,7 +66,11 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
     let changed = false;
     let schedulingRequested = false;
     let nativeInvalidations: Set<string> | null = new Set();
-    let enrolledMachineIds = new Set<string>();
+    let censusInvalidations: Set<string> | null = null;
+    const enrolledMachineIds = new Set<string>();
+    // Enrollment is unique. Keep its row index so an exact missing/replaced row
+    // withdraws its former readiness subscription without rebuilding siblings.
+    const enrollments = new Map<string, string>();
     let pump: Promise<void> | null = null;
     const abortPolicy = (managedId: string, cancel: AbortController, reasonCode:
         'retention_satisfied' | 'policy_replaced' | 'policy_target_missing' | 'controller_unavailable'
@@ -75,9 +79,21 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
         try { logger.warnLocalFile('[managed-policy.abort]', { managedId, reasonCode }); } catch { /* Diagnostic only. */ }
         cancel.abort(reasonCode === 'retention_satisfied' ? MANAGED_MACHINE_POLICY_RETENTION_SATISFIED_ABORT : reason);
     };
-    const reconcile = async (census: ManagedMachinePolicyCensus, scheduleNew: boolean, nativeManagedIds: ReadonlySet<string> | null) => {
+    const reconcile = async (census: ManagedMachinePolicyCensus, scheduleNew: boolean,
+        nativeManagedIds: ReadonlySet<string> | null, managedIds: ReadonlySet<string> | null) => {
         const retentionContinuations = new Map(census.retentionContinuations?.map(item => [item.managedId, item.requestId]));
-        enrolledMachineIds = new Set(census.machines.flatMap(machine => machine.enrolledMachineId ? [machine.enrolledMachineId] : []));
+        if (managedIds === null) {
+            enrolledMachineIds.clear();
+            enrollments.clear();
+        } else for (const id of managedIds) {
+            const enrolledId = enrollments.get(id);
+            if (enrolledId) enrolledMachineIds.delete(enrolledId);
+            enrollments.delete(id);
+        }
+        for (const machine of census.machines) if (machine.enrolledMachineId) {
+            enrollments.set(machine.id, machine.enrolledMachineId);
+            enrolledMachineIds.add(machine.enrolledMachineId);
+        }
         const current = new Set<string>();
         for (const machine of census.machines) {
             const canceledCleanup = machine.creationState === 'canceled' && machine.desired === 'delete' && machine.desiredWhen === 'now';
@@ -191,17 +207,12 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
             })();
             active.set(machine.id, entry);
         }
-        for (const [id, entry] of active) if (!current.has(id)) abortPolicy(id, entry.cancel, 'policy_target_missing');
-    };
-    const notifyChanged = (currentnessOnly = false, nativeManagedIds?: readonly string[]) => {
-        if (stopped) return;
-        if (currentnessOnly && active.size === 0) return;
-        changed = true;
-        if (!currentnessOnly) {
-            schedulingRequested = true;
-            if (nativeManagedIds === undefined) nativeInvalidations = null;
-            else for (const id of nativeManagedIds) nativeInvalidations?.add(id);
+        for (const id of managedIds ?? active.keys()) {
+            const entry = active.get(id);
+            if (entry && !current.has(id)) abortPolicy(id, entry.cancel, 'policy_target_missing');
         }
+    };
+    const runPump = (): Promise<void> => {
         if (pump) return pump;
         pump = (async () => {
             while (changed && !stopped) {
@@ -210,14 +221,25 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
                 schedulingRequested = false;
                 const nativeManagedIds = nativeInvalidations;
                 nativeInvalidations = new Set();
+                const managedIds = censusInvalidations;
+                censusInvalidations = new Set();
                 try {
                     if (params.isAvailable?.() === false) {
                         for (const [id, entry] of active) abortPolicy(id, entry.cancel, 'controller_unavailable');
                         continue;
                     }
-                    const census = await params.readCensus(lifetime.signal);
-                    lifetime.signal.throwIfAborted();
-                    await reconcile(census, scheduleNew, nativeManagedIds);
+                    if (managedIds === null) {
+                        const census = await params.readCensus(lifetime.signal);
+                        lifetime.signal.throwIfAborted();
+                        await reconcile(census, scheduleNew, nativeManagedIds, null);
+                    } else {
+                        const censuses = await Promise.all([...managedIds].map(id => params.readCensus(lifetime.signal, id)));
+                        lifetime.signal.throwIfAborted();
+                        await reconcile({ machines: censuses.flatMap(census => census.machines),
+                            targets: censuses.flatMap(census => census.targets),
+                            retentionContinuations: censuses.flatMap(census => census.retentionContinuations ?? []),
+                        }, scheduleNew, nativeManagedIds, managedIds);
+                    }
                 } catch (error) {
                     // A failed read does not withdraw an admitted origin.
                     // Keep its held Ask/native owner; a successful census or
@@ -225,8 +247,21 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
                     if (!stopped) params.onUnavailable?.(error);
                 }
             }
-        })().finally(() => { pump = null; if (changed && !stopped) notifyChanged(); });
+        })().finally(() => { pump = null; if (changed && !stopped) runPump(); });
         return pump;
+    };
+    const notifyChanged = (currentnessOnly = false, nativeManagedIds?: readonly string[]) => {
+        if (stopped) return;
+        if (currentnessOnly && active.size === 0) return;
+        changed = true;
+        if (currentnessOnly || !nativeManagedIds?.length) censusInvalidations = null;
+        else for (const id of nativeManagedIds) censusInvalidations?.add(id);
+        if (!currentnessOnly) {
+            schedulingRequested = true;
+            if (nativeManagedIds === undefined) nativeInvalidations = null;
+            else for (const id of nativeManagedIds) nativeInvalidations?.add(id);
+        }
+        return runPump();
     };
     const subscriptions: Array<() => void> = [];
     if (params.apiMachine) {

@@ -160,6 +160,23 @@ describe('finite managed wake original Action authority (real storage)', () => {
             });
             const request = { homeId, controller: { machineId: test.controller.id, installationId: test.controller.installationId! } };
             expect((await readManagedWakeTargets({ actorAccountId: test.account.id, request })).targets).toHaveLength(wakeOnAcceptedMessage ? 1 : 0);
+            // A classified managed-row wake must discover accepted input through
+            // the same exact census that supplies its current scheduling row.
+            await withAuthenticatedTestApp(registerManagedMachineRoutes, async app => {
+                const exact = await measure('exact-managed-wake', () => app.inject({ method: 'POST',
+                    url: '/v1/machines/managed/controller/policies', headers: { 'x-test-user-id': test.account.id },
+                    payload: { ...request, managedId: test.row.id,
+                        proof: createManagedPolicyCensusProofV1({ ...request, custodianAccountId: test.account.id,
+                            privateKey: test.controllerKeys.secretKey }) } }));
+                expect(exact.value.statusCode, exact.value.body).toBe(200);
+                expect(exact.value.json().machines.map((machine: { id: string }) => machine.id)).toEqual([test.row.id]);
+                expect(exact.value.json().targets).toHaveLength(wakeOnAcceptedMessage ? 1 : 0);
+                if (wakeOnAcceptedMessage) expect(exact.value.json().targets[0]).toMatchObject({
+                    managedId: test.row.id, origin: { kind: 'session-input', pendingRequestId: localId },
+                });
+                expect(exact.queries.filter(query => query.model === 'managedMachine' && query.method === 'findMany')
+                    .every(query => query.rows <= 1)).toBe(true);
+            });
             expect(await listPendingMessages(input)).toMatchObject({ ok: true, pending: [{ localId,
                 status: 'queued', deliveryState: null, content: input.content }] });
             expect(await db.managedMachine.findUniqueOrThrow({ where: { id: test.row.id } }))
@@ -194,9 +211,8 @@ describe('finite managed wake original Action authority (real storage)', () => {
             expect(exact.value.statusCode, exact.value.body).toBe(200);
             expect(exact.value.json().machines.map((machine: { id: string }) => machine.id)).toEqual([test.row.id]);
             expect(exact.value.json().targets).toEqual([]);
-            expect(exact.queries.filter(query => query.model === 'managedMachine')
-                .reduce((sum, query) => sum + query.rows, 0)).toBe(1);
-            expect(exact.queries.filter(query => query.model === 'session' || query.model === 'automationRun')).toEqual([]);
+            expect(exact.queries.filter(query => query.model === 'managedMachine' && query.method === 'findMany')
+                .reduce((sum, query) => sum + query.rows, 0)).toBeLessThanOrEqual(2);
             if (!controllerFree) {
                 const fleet = await measure('scheduler-managed-census', () => read());
                 expect(fleet.value.statusCode, fleet.value.body).toBe(200);

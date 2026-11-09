@@ -3,11 +3,9 @@ import type { FastifyRequest, FastifyReply } from "fastify";
 import { z } from 'zod/mini';
 import type { Fastify } from "@/app/api/types";
 import { resolveMachineAdmissionInTx, resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
-import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
-import { ManagedAdmissionInputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerCurrentInputV1Schema, ManagedControllerReportV1Schema, ManagedEnrollmentCorrelationV1Schema, ManagedControllerContextInputV1Schema, ManagedBootstrapCredentialCreateV1Schema, ManagedControllerSubmitInputV1Schema, ManagedControllerMachineOutputV1Schema, resolveManagedAcquireReviewV1, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, MANAGED_CONTROL_ACTION_IDS_V1, ManagedGuestCurrentInputV1Schema, ManagedGuestCurrentOutputV1Schema, MachineSetupResolveInputV1Schema, MachineSetupResolveResultV1Schema, MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, ManagedWakeTargetsReadRequestV1Schema, ManagedWakeTargetsReadResultV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
+import { ManagedAdmissionInputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerCurrentInputV1Schema, ManagedControllerReportV1Schema, ManagedEnrollmentCorrelationV1Schema, ManagedControllerContextInputV1Schema, ManagedBootstrapCredentialCreateV1Schema, ManagedControllerSubmitInputV1Schema, ManagedControllerMachineOutputV1Schema, resolveManagedAcquireReviewV1, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, MANAGED_CONTROL_ACTION_IDS_V1, MachineSetupResolveInputV1Schema, MachineSetupResolveResultV1Schema, MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedWakeTargetsReadRequestV1Schema, ManagedWakeTargetsReadResultV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema, MANAGED_POLICY_PROOF_HEADER, decodeManagedPolicyProofV1, managedPolicyDigestV1, managedPolicyPurposeDigestV1, ManagedPolicyCensusInputV1Schema, ManagedPolicyCensusOutputV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { ManagedPendingActivationFailureRequestV1Schema, PendingActivationFailureResponseV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { inReadSnapshot, inTx } from "@/storage/inTx";
@@ -21,7 +19,6 @@ import { readManagedWakeTargets } from './managedWake';
 import { markPendingActivationFailed } from '@/app/session/pending/pendingMessageService';
 import { emitPendingChanged } from '@/app/session/pending/publishPendingMutation';
 import { resolveMachineSetup, reportMachineSetup, skipManagedMachineSetup } from './machineSetup';
-import { resolveManagedGuestActivityAdmissionInTx } from './managedGuestActivity';
 import { readSessionTeamCredentialNativeSelectionInTx } from '@/app/teams/credentials/nativeDeliveryRead';
 import { completeSessionTeamCredentialNativeDeliveryInTx, submitSessionTeamCredentialNativeDeliveryInTx,
     readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx } from '@/app/teams/credentials/sessionBinding';
@@ -238,7 +235,11 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             return { machines: await projectManagedMachinesInTx(tx, rows), retentionContinuations,
                 ...(nativeCredentialPolicies ? { nativeCredentialPolicies } : {}) };
         });
-        return { ...census, targets };
+        // Exact scheduling reads need the same accepted origins as reconnect.
+        // Discover them only for a row admitted by the signed census above.
+        return { ...census, targets: managedId && census.machines.length > 0
+            ? (await readManagedWakeTargets({ actorAccountId: request.userId, request: { homeId, controller }, managedId })).targets
+            : targets };
     }));
     app.post('/v1/machines/managed/controller/prepare-policy', { preHandler: app.authenticate, schema: { body: ManagedPolicyAdmissionInputV1Schema, response: { 200: ManagedControllerMachineOutputV1Schema } } }, async (request, reply) => respond(reply, async () => {
         const verified = await requireManagedPolicyRequest(request, '/v1/machines/managed/controller/prepare-policy', request.body, 'admit');
@@ -284,23 +285,6 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 recipientCursors: result.recipientCursors });
             return { ok: true, didFail: result.didFail };
         }));
-    app.post('/v1/machines/managed/guest/current', { preHandler: app.authenticate, schema: { body: ManagedGuestCurrentInputV1Schema, response: { 200: ManagedGuestCurrentOutputV1Schema } } }, async (request, reply) => respond(reply, async () => inTx(async tx => {
-        const { context, method, managedTarget, proof } = request.body;
-        const rpcMethod = method.slice(`${context.machineId}:`.length);
-        if (request.userId !== context.custodianAccountId || !method.startsWith(`${context.machineId}:`)
-            || ![MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD].includes(rpcMethod)) throw new ManagedMachineError('permission_denied');
-        const guest = await tx.machine.findUnique({ where: { id: context.machineId } });
-        if (!guest || guest.accountId !== context.custodianAccountId || guest.installationId !== context.installationId
-            || !guest.installationPublicKey || classifyMachineAvailabilityState(guest) !== 'available'
-            || !verifyMachineInstallationProof({ payload: { version: 1, machineId: context.machineId, installationId: context.installationId,
-                accountId: context.custodianAccountId, rpcAdmission: { context, method, managedTarget } }, proof,
-                publicKey: encodeBase64(guest.installationPublicKey, 'base64url') })) throw new ManagedMachineError('permission_denied');
-        const admission = await resolveManagedGuestActivityAdmissionInTx(tx, { actorAccountId: context.actorAccountId,
-            machineId: context.machineId, rpcMethod, target: managedTarget });
-        return { current: admission !== null && admission.custodianAccountId === context.custodianAccountId
-            && admission.installationId === context.installationId && admission.encryptionMode === context.encryptionMode
-            && admission.role === context.role };
-    })));
     app.post("/v1/machines/managed/controller/admit-control", { preHandler: app.authenticate, schema: { body: ManagedControlAdmissionInputV1Schema } }, async (request, reply) => respond(reply, async () => {
         const input = request.body.input;
         const proof = await requireManagedOperationRequest(request, { homeId: input.homeId,
