@@ -27,7 +27,7 @@ test('build-ui-mobile-local resumes TestFlight distribution from trusted control
   assert.ok(retry, 'expected a dedicated TestFlight distribution retry job');
   assert.equal(retry.if, "${{ inputs.action == 'retry_testflight_distribution' }}");
   assert.deepEqual(retry.needs, ['release_actor_guard', 'validate_apple_api_private_key']);
-  assert.equal(retry['runs-on'], 'ubuntu-latest');
+  assert.equal(retry['runs-on'], 'ubuntu-24.04');
   assert.equal(retry.permissions?.contents, 'read');
 
   const checkout = retry.steps?.find((step) => step.name === 'Checkout trusted workflow control bytes');
@@ -91,7 +91,7 @@ test('build-ui-mobile-local resubmits a preserved Android store artifact from tr
   assert.ok(retry, 'expected a dedicated Android store submission retry job');
   assert.equal(retry.if, "${{ inputs.action == 'retry_android_store_submit' }}");
   assert.deepEqual(retry.needs, ['release_actor_guard', 'validate_expo_token']);
-  assert.equal(retry['runs-on'], 'ubuntu-latest');
+  assert.equal(retry['runs-on'], 'ubuntu-24.04');
   assert.equal(retry.permissions?.actions, 'read');
   assert.equal(retry.permissions?.contents, 'read');
 

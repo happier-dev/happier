@@ -132,6 +132,6 @@ test('combined confirmation and automatic profile reach production admission thr
     checksProfile: profile.checksProfile, environment: 'production', plannedSourceSha: sourceSha, validatedSourceSha: sourceSha,
     ciResult: 'success', publishServerRuntimeNeeded: false, publishCliBinariesNeeded: false,
     risks: { mysqlContract: false, platformServices: false, trustRoots: false },
-    gates: { mysql: 'skipped', platform: 'skipped', trustRoots: 'skipped', mutagenEngine: 'success' },
+    gates: { mysql: 'skipped', platform: 'skipped', trustRoots: 'skipped' },
   }), { admitted: true });
 });

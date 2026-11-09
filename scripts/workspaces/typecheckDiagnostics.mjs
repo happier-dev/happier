@@ -1,10 +1,11 @@
 import { execFile, spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, parse, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { compilerDiagnosticFromLine } from '../testing/lib/compilerBaseline.mjs';
 import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
 import { typecheckCompilerOptions } from './resolveTypeScriptCliInvocation.mjs';
+import { readTypecheckProject } from './deriveTypecheckProjects.mjs';
 
 const execute = promisify(execFile);
 const portable = value => value.replaceAll('\\', '/');
@@ -36,6 +37,40 @@ export function compareTouchedTypecheckLocations({ baseline, current, paths }) {
     added: added.filter(touched).sort(),
     removed: [...before].filter(row => !after.has(row) && touched(row)).sort(),
     unattributed: added.filter(row => !touched(row)).sort(),
+  };
+}
+
+/** Observe the selected compiler roots, without freezing a shared checkout or
+ * invalidating a completed compiler verdict when another lane edits them.
+ * Finite project membership already includes its imported source closure.
+ */
+export async function createTypecheckInputObservation(projects, cwd = process.cwd()) {
+  const capturedAt = new Date().toISOString();
+  const inputs = new Map();
+  const signature = async path => {
+    const info = await stat(path, { bigint: true }).catch(error => {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return;
+      throw error;
+    });
+    return info && [info.dev, info.ino, info.mode, info.size, info.mtimeNs, info.ctimeNs].join(':');
+  };
+  for (const project of projects) {
+    const options = typecheckCompilerOptions(project.args, cwd);
+    if (!options?.configFilePath) continue;
+    const { parsed } = readTypecheckProject(options.configFilePath);
+    for (const path of [...parsed.fileNames, options.configFilePath,
+      ...(project.authoredProject ? [resolve(cwd, project.authoredProject)] : [])]) {
+      if (!inputs.has(path)) inputs.set(path, await signature(path));
+    }
+  }
+  return {
+    async publish() {
+      const changed = [];
+      for (const [path, before] of inputs) {
+        if (await signature(path) !== before) changed.push(portable(relative(cwd, path)));
+      }
+      return { capturedAt, basis: 'selected-project-inputs', changed: changed.sort() };
+    },
   };
 }
 
@@ -160,7 +195,7 @@ export async function createTypecheckDiagnosticRun({ projects, producers = [], c
     const args = project.authoredArgs;
     if (args.some(arg => introspection.has(arg.toLowerCase()))) continue;
     const options = typecheckCompilerOptions(args, cwd);
-    if (options?.noEmit !== true || !options.configFilePath) continue;
+    if ((!options?.noEmit && !options?.emitDeclarationOnly) || !options.configFilePath) continue;
     if (!repoRoot) {
       try { repoRoot = (await execute('git', ['rev-parse', '--show-toplevel'], { cwd })).stdout.trim(); }
       catch { break; } // External author projects without Git still compile normally.

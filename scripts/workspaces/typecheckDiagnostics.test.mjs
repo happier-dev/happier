@@ -179,6 +179,23 @@ test('multiple compiler projects publish one full snapshot and deduplicate share
   assert.equal(reports[0].total, 1);
 });
 
+test('emitting source partitions retain authored diagnostic identities and the full dependency verdict', async t => {
+  const f = await fixture(t);
+  await writeFile(join(f.cwd, 'tsconfig.source.json'), JSON.stringify({
+    compilerOptions: { noEmit: false, emitDeclarationOnly: true, declaration: true }, files: ['input.ts'],
+  }));
+  const project = { project: 'node_modules/.cache/tsc/tsconfig.source.json', authoredProject: 'tsconfig.source.json',
+    authoredArgs: ['-p', 'tsconfig.source.json'] };
+  const run = await createTypecheckDiagnosticRun({ ...f.options, projects: [project] });
+  assert.equal(run.enabled, true);
+  run.record(project, { stdout: compilerDiagnostic + compilerDiagnostic.replace('input.ts', '../../packages/dependency/source.ts'), status: 2 });
+  const [report] = await run.publish();
+  assert.equal(report.total, 2);
+  const snapshot = JSON.parse(await readFile(report.path, 'utf8'));
+  assert.deepEqual(snapshot.projects, ['apps/sample/tsconfig.source.json']);
+  assert.ok(snapshot.diagnosticsByPath['packages/dependency/source.ts']);
+});
+
 test('global diagnostics remain visible; non-typecheck commands cannot replace a baseline', async t => {
   const f = await fixture(t);
   assert.equal((await f.finish('error TS18003: No inputs were found.\n'))[0].globalDiagnostics, 1);

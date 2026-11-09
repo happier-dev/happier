@@ -90,6 +90,7 @@ test('immutable publication refuses to overwrite different remote bytes and retr
     writeFileSync(log, '');
     execFileSync(process.execPath, args, { cwd: repoRoot, env, encoding: 'utf8' });
     const retryLog = readFileSync(log, 'utf8');
+    assert.match(retryLog, /release edit .*--latest=false/, 'immutable publication cannot become Latest before channel promotion');
     assert.match(retryLog, /release upload cli-v1\.2\.3-preview\.4 .*checksums\.txt/);
     assert.doesNotMatch(retryLog, /release upload cli-v1\.2\.3-preview\.4 .*archive\.tar\.gz/);
   } finally {
@@ -116,6 +117,7 @@ for (const failure of ['FAIL_UPLOAD', 'CORRUPT_UPLOAD']) {
       execFileSync(process.execPath, f.args, { cwd: repoRoot, env, encoding: 'utf8' });
       const log = readFileSync(f.log, 'utf8');
       assert.equal(log.match(/release create/g)?.length, 1);
+      assert.match(log, /release create .*--latest=false/);
       assert.equal(log.match(/release edit/g)?.length, 1);
       assert.equal(log.match(/release upload .*archive.tar.gz/g)?.length, 1);
       const beforePublish = log.slice(0, log.indexOf('gh release edit'));

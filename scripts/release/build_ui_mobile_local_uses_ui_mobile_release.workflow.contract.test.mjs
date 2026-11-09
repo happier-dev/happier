@@ -142,7 +142,7 @@ test('build-ui-mobile-local defers and can resume exact TestFlight distribution 
 
   const retryJob = src.slice(src.indexOf('  retry_testflight_distribution:'), src.indexOf('  ota_update:'));
   assert.match(retryJob, /if:.*inputs\.action == 'retry_testflight_distribution'/);
-  assert.match(retryJob, /runs-on: ubuntu-latest/);
+  assert.match(retryJob, /runs-on: ubuntu-24.04/);
   assert.match(retryJob, /--eas-build-id "\$RETRY_TESTFLIGHT_EAS_BUILD_ID"/);
   assert.match(retryJob, /--build-number "\$RETRY_TESTFLIGHT_BUILD_NUMBER"/);
   assert.match(retryJob, /--app-version "\$RETRY_TESTFLIGHT_APP_VERSION"/);
@@ -211,7 +211,7 @@ test('build-ui-mobile-local passes approved release notes and projects exact ret
   );
   assert.match(src, /release_message:/);
   assert.match(src, /RELEASE_MESSAGE:\s*\$\{\{\s*inputs\.release_message\s*\}\}/);
-  assert.match(src, /--release-message\s+"\$RELEASE_MESSAGE"/);
+  assert.match(src, /--release-message(?:=|\s+)"\$RELEASE_MESSAGE"/);
   assert.match(src, /Project approved release notes from exact immutable candidate/);
   assert.match(src, /release-notes\.md/);
   assert.match(src, /ref: \$\{\{ steps\.source\.outputs\.authorized_sha \}\}[\s\S]*?path: candidate/);

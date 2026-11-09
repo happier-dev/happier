@@ -129,7 +129,7 @@ test('release dry-run JSON resolves the actual promotion source independently of
   }
 });
 
-test('combined preview and production dry-run binds one exact dev source and stable validation profile', () => {
+test('combined preview and production dry-run binds one exact v0.3 source and stable validation profile', () => {
   const stub = createReleaseCliDryRunEnv();
   try {
     const raw = execFileSync(
@@ -159,7 +159,7 @@ test('combined preview and production dry-run binds one exact dev source and sta
       },
     );
     const plan = JSON.parse(raw);
-    assert.equal(plan.sourceBranch, 'dev');
+    assert.equal(plan.sourceBranch, 'v0.3');
     assert.equal(plan.productionPromotionMode, 'fast-forward');
     assert.equal(plan.authorizedPromotionSourceSha, '2222222222222222222222222222222222222222');
     assert.equal(plan.validationProfile, 'stable');
@@ -255,4 +255,17 @@ test('release workflow admits one authorized promotion-source SHA and passes it 
   assert.match(raw, /promote_main:[\s\S]*?source_sha: \$\{\{[^\n]+\}\}/);
   assert.match(raw, /promote_preview:[\s\S]*?source_sha: \$\{\{[^\n]+\}\}/);
   assert.match(raw, /sync_dev:[\s\S]*?source_sha: \$\{\{ needs\.prepare_release_candidate\.outputs\.source_sha \}\}/);
+});
+
+
+test('channel promotion consumes the admitted source branch and syncs the named development line', () => {
+  const channel = YAML.parse(readFileSync(resolve(repoRoot, '.github/workflows/release-channel.yml'), 'utf8'));
+  for (const jobName of ['promote_main', 'promote_preview']) {
+    const job = channel.jobs[jobName];
+    assert.ok(job.needs.includes('release_preflight'), `${jobName} must consume preflight's source decision`);
+    assert.equal(job.with.source, '${{ needs.release_preflight.outputs.source_ref }}');
+    assert.match(job.with.confirm, /needs\.release_preflight\.outputs\.source_ref/);
+  }
+  assert.equal(channel.jobs.sync_dev.with.target, 'v0.3');
+  assert.equal(channel.jobs.sync_dev.with.confirm, 'promote v0.3 from main');
 });

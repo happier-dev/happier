@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, dirname, relative, resolve } from 'node:path';
 import ts from 'typescript';
 import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
-import { readWorkspaceTypecheckDeclarationPaths } from './workspaceTypecheckDeclarationPaths.mjs';
+import { readWorkspaceTypecheckSources, sourceTypecheckCompilerOptions } from './workspaceSourceTypecheck.mjs';
+import { deriveTypecheckSourceOwners } from './deriveTypecheckSourceOwners.mjs';
 
 export function readTypecheckProject(path) {
   const config = ts.readConfigFile(path, ts.sys.readFile);
@@ -96,17 +97,13 @@ export function readTypecheckAmbientModules(file) {
  * remainder, and caller-selected test programs from the current graph.
  * TypeScript 5 is used only as a compiler API; checking stays with native TS7.
  */
-export async function deriveTypecheckProjects(packageDir, { sourceNames, testNames, testProject = "test", testGroup = () => 0, testCompilerOptions = () => ({}), resolveSourceOwners = false, check = false, writeAuthored = false, declarationOverrides = new Map() } = {}) {
+export async function deriveTypecheckProjects(packageDir, { sourceNames, testNames, testProject = "test", testGroup = () => 0, testCompilerOptions = () => ({}), resolveSourceOwners = true, check = false, writeAuthored = false, declarationOverrides = new Map() } = {}) {
   const names = [...sourceNames, ...testNames];
   packageDir = resolve(packageDir);
-  const workspaceDeclarationPaths = await readWorkspaceTypecheckDeclarationPaths(packageDir);
-  const hasWorkspaceDeclarationPaths = Object.keys(workspaceDeclarationPaths).length > 0;
+  const workspaceSources = await readWorkspaceTypecheckSources(packageDir);
   const readProject = path => {
     const project = readTypecheckProject(path);
-    if (hasWorkspaceDeclarationPaths) {
-      project.parsed.options.paths = { ...workspaceDeclarationPaths, ...project.parsed.options.paths };
-      project.parsed.options.pathsBasePath ??= dirname(path);
-    }
+    Object.assign(project.parsed.options, sourceTypecheckCompilerOptions(project.parsed.options, path, workspaceSources));
     return project;
   };
   const original = readProject(resolve(packageDir, 'tsconfig.json'));
@@ -129,6 +126,7 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
     && !basename(file).includes('.composed.')));
   const testRoots = new Set([...existingTests, ...originalRoots].filter(file => !sharedSet.has(file) && existsSync(file)
     && (existingTests.has(file) || /\.(?:test|spec)\.tsx?$/.test(file)
+      || /(?:^|[\\/])vitestSetup\.[cm]?tsx?$/.test(file)
       || file.replaceAll('\\', '/').includes('/__tests__/'))));
   const owned = new Set();
   const results = [];
@@ -138,19 +136,29 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
   const privateNamespace = context => context.parsed.options.paths?.['@/*']?.map(path => resolve(
     context.parsed.options.baseUrl ?? context.parsed.options.pathsBasePath ?? dirname(context.configPath), path));
   const originalNamespace = JSON.stringify(privateNamespace(contexts.get(originalConfigPath)));
-  const originalLibraries = JSON.stringify(original.parsed.options.lib);
   const sourceContexts = new Map();
-  const producerInputs = new Map();
-  const sourceContext = file => {
-    if (!resolveSourceOwners || file.endsWith('.json') || /[\\/]node_modules[\\/]/.test(file)) return contexts.get(originalConfigPath);
-    if (!sourceContexts.has(file)) {
-      // Private aliases and ambient libraries belong to their source producer.
-      // Other package leaves retain their consuming-program resolution.
-      // Never retry an unresolved import against another host's alias.
-      const configPath = resolve(ts.findConfigFile(dirname(file), ts.sys.fileExists) ?? originalConfigPath);
+  const sourceContext = (file, consumer = contexts.get(originalConfigPath)) => {
+    if (!resolveSourceOwners || file.endsWith('.json') || /[\\/]node_modules[\\/]/.test(file)) return consumer;
+    // Explicit program roots remain owned by that program, including vendored
+    // sources with a nested build config. This lookup decides imported owners.
+    if (originalRoots.has(file)) return contexts.get(originalConfigPath);
+    if (!sourceContexts.has(consumer.configPath)) sourceContexts.set(consumer.configPath, new Map());
+    const cache = sourceContexts.get(consumer.configPath);
+    if (!cache.has(file)) {
+      // Independent declaration inputs own their compiler environment,
+      // including portable packages without JSX or private aliases. Otherwise
+      // a UI consumer can emit their shared declarations with native globals.
+      // Excluded test helpers retain their importing environment.
+      const nearest = ts.findConfigFile(dirname(file), ts.sys.fileExists);
+      // Authored tooling declarations outside package projects inherit their
+      // importer; absence of an owner never grants the CLI private namespace.
+      if (!nearest) { cache.set(file, consumer); return consumer; }
+      const configPath = resolve(nearest);
       if (!contexts.has(configPath)) {
         try {
-          const context = { ...readProject(configPath), configPath };
+          const project = readProject(configPath);
+          const context = { ...project, configPath,
+            declarationInputs: new Set(project.parsed.options.declaration ? project.parsed.fileNames : []) };
           context.ownsForeignPrivateNamespace = Boolean(privateNamespace(context)
             && JSON.stringify(privateNamespace(context)) !== originalNamespace);
           contexts.set(configPath, context);
@@ -158,30 +166,14 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
         catch (cause) { throw new Error(`Cannot resolve compiler owner of ${file}: ${cause.message}`, { cause }); }
       }
       const context = contexts.get(configPath);
-      let owner = contexts.get(originalConfigPath);
-      if (context.ownsForeignPrivateNamespace) owner = context;
-      else if (JSON.stringify(context.parsed.options.lib) !== originalLibraries) {
-        // A library environment owns its real program, including imported
-        // implementations excluded as roots. Consumer-only test support is not
-        // promoted merely because its nearest production config uses DOM.
-        if (context.parsed.fileNames.includes(file)) owner = context;
-        else {
-          // Root membership is already known. Only excluded producer-private
-          // leaves need a walk inside that producer, not through every
-          // dependency's declarations and compiler environment.
-          if (!producerInputs.has(configPath)) producerInputs.set(configPath,
-            new Set(importClosure(context.parsed.fileNames,
-              input => {
-                const local = relative(dirname(configPath), input);
-                return local !== '..' && !local.startsWith(`..${sep}`) && !isAbsolute(local)
-                  && !/[\\/]node_modules[\\/]/.test(local);
-              }, context)));
-          if (producerInputs.get(configPath).has(file)) owner = context;
-        }
-      }
-      sourceContexts.set(file, owner);
+      let owner = consumer;
+      if (context.declarationInputs?.has(file)
+        || (privateNamespace(context) && JSON.stringify(privateNamespace(context)) !== JSON.stringify(privateNamespace(consumer)))) owner = context;
+      else if (!/\.d\.[cm]?ts$/.test(file) && context.parsed.options.jsx !== undefined
+        && context.parsed.options.jsx !== consumer.parsed.options.jsx) owner = context;
+      cache.set(file, owner);
     }
-    return sourceContexts.get(file);
+    return cache.get(file);
   };
   const moduleCaches = new Map();
   const moduleCache = context => {
@@ -209,7 +201,19 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
       const text = readSource(file);
       if (text === undefined) return;
       const info = ts.preProcessFile(text, true, true);
-      const dependencies = info.importedFiles.flatMap(({ fileName }) => {
+      const specifiers = new Set(info.importedFiles.map(({ fileName }) => fileName));
+      // TS5's lightweight preprocessor omits `export * as name from` edges.
+      // Read those declarations with its parser; retain only specifiers, not
+      // ASTs, so composite membership includes their source dependency closure.
+      if (text.includes('export') && text.includes('*')) {
+        const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false);
+        for (const statement of source.statements) {
+          if (ts.isExportDeclaration(statement) && statement.exportClause
+            && ts.isNamespaceExport(statement.exportClause) && statement.moduleSpecifier
+            && ts.isStringLiteralLike(statement.moduleSpecifier)) specifiers.add(statement.moduleSpecifier.text);
+        }
+      }
+      const dependencies = [...specifiers].flatMap(fileName => {
         const resolved = ts.resolveModuleName(fileName, file, context.parsed.options, ts.sys, moduleCache(context)).resolvedModule;
         return resolved && authored(resolved) ? [resolve(resolved.resolvedFileName)] : [];
       });
@@ -240,7 +244,24 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
     }
     return [...found];
   };
-  const sources = importClosure([...originalRoots].filter(file => !testRoots.has(file)));
+  const ownership = deriveTypecheckSourceOwners({
+    original: contexts.get(originalConfigPath), sourceRoots: [...originalRoots].filter(file => !testRoots.has(file)),
+    testRoots: [...testRoots], contextFor: sourceContext, dependenciesFor,
+    ambientFor: owner => {
+      const acceptsOwnerInput = file => sourceContext(file, owner).configPath === owner.configPath;
+      const primaryInputs = [...primaryTypes(owner).values()].flatMap(reference => reference ? [resolve(reference.resolvedFileName)] : []);
+      const producerInputs = importClosure([...owner.parsed.fileNames, ...primaryInputs], acceptsOwnerInput, owner)
+        .filter(file => contributesAmbientTypes(file, readSource));
+      const authoredAmbientRoots = owner.parsed.fileNames.filter(file =>
+        !/[\\/]node_modules[\\/]/.test(file) && acceptsOwnerInput(file) && contributesAmbientTypes(file, readSource));
+      const ambientInputsFor = seeds => importClosure([...seeds, ...authoredAmbientRoots, ...primaryInputs], acceptsOwnerInput, owner)
+        .filter(file => contributesAmbientTypes(file, readSource));
+      return { producerInputs, ambientInputsFor, declarationRoots: owner.parsed.fileNames.filter(file => /\.d\.[cm]?ts$/.test(file)) };
+    },
+  });
+  imports.clear();
+  for (const [file, dependencies] of ownership.imports) imports.set(file, dependencies);
+  const sources = ownership.sources;
   const implementations = new Set(sources.filter(file => !/\.d\.[cm]?ts$/.test(file)));
   // Iterative strongly-connected components avoid recursion limits on the UI
   // graph. Edges through authored declaration packages still join real cycles.
@@ -283,7 +304,18 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
     if (weight > coreWeight) { core = component; coreWeight = weight; }
   }
   const coreSet = new Set(core);
-  const foundation = importClosure([...core, ...shared]).filter(file => !coreSet.has(file));
+  const sourceClosure = seeds => {
+    const found = new Set();
+    const pending = [...seeds];
+    while (pending.length) {
+      const file = pending.pop();
+      if (found.has(file) || !imports.has(file)) continue;
+      found.add(file);
+      pending.push(...imports.get(file));
+    }
+    return [...found];
+  };
+  const foundation = sourceClosure([...core, ...shared]).filter(file => !coreSet.has(file));
   const prerequisiteGroups = Array.from({ length: sourceNames.length - 2 }, () => []);
   const foundationSet = new Set(foundation);
   const prerequisiteComponents = components.slice().reverse().map(component => component.filter(file => foundationSet.has(file))).filter(component => component.length);
@@ -301,75 +333,17 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
     const seeds = sourceGroups[index];
     // Scan one file at a time, retaining edges rather than full compiler ASTs.
     // Resolution includes authored TS dependencies, reference directives, JSON.
-    const closure = importClosure([...seeds, ...shared])
+    const closure = sourceClosure([...seeds, ...shared])
       .filter(file => !/\.d\.[cm]?ts$/.test(file) || originalRoots.has(file));
     const files = [...new Set([...seeds, ...closure])]
       .filter(file => (!/\.d\.[cm]?ts$/.test(file) || originalRoots.has(file)) && !sharedSet.has(file) && !owned.has(file)).sort();
     for (const file of files) owned.add(file);
     results.push({ ...project.config, files: [...files, ...shared].map(path).sort(), include: [], exclude: [] });
   }
-  const foreignProjects = new Map();
   const testContexts = new Map();
   const consumerPrimaryAmbientInputs = new Map();
   const testOptionOverrides = [];
-  const reachableOwners = new Map();
-  if (resolveSourceOwners) {
-    const dependencies = importClosure([...testRoots]);
-    const parents = new Map();
-    for (const [file, edges] of imports) for (const dependency of edges) {
-      if (!parents.has(dependency)) parents.set(dependency, []);
-      parents.get(dependency).push(file);
-    }
-    const ownerSeeds = new Map();
-    const pending = [];
-    const addOwner = (file, owner) => {
-      if (!reachableOwners.has(file)) reachableOwners.set(file, new Set());
-      if (reachableOwners.get(file).has(owner)) return;
-      reachableOwners.get(file).add(owner);
-      pending.push([file, owner]);
-    };
-    // Published declarations retain their ambient facts, but do not import
-    // their package's build context into the consumer. Label implementations
-    // once, then propagate exact reachability through the existing graph.
-    for (const file of dependencies) {
-      if (/\.d\.[cm]?ts$/.test(file)) continue;
-      const owner = sourceContext(file);
-      if (owner.configPath === originalConfigPath) continue;
-      if (!ownerSeeds.has(owner)) ownerSeeds.set(owner, []);
-      ownerSeeds.get(owner).push(file);
-      addOwner(file, owner);
-    }
-    for (let index = 0; index < pending.length; index++) {
-      const [file, owner] = pending[index];
-      for (const parent of parents.get(file) ?? []) addOwner(parent, owner);
-    }
-    for (const [owner, seeds] of ownerSeeds) {
-      // Preserve the producer's actual ambient environment, including .ts
-      // global declarations and dependency augmentations imported by its roots.
-      // Another host reached by a producer test does not own that environment.
-      const acceptsOwnerInput = file => /[\\/]node_modules[\\/]/.test(file)
-        || sourceContext(file).configPath === owner.configPath;
-      const primaryInputs = [...primaryTypes(owner).values()].flatMap(reference => reference ? [resolve(reference.resolvedFileName)] : []);
-      const producerAmbientInputs = importClosure([...owner.parsed.fileNames, ...primaryInputs], acceptsOwnerInput, owner).filter(file => contributesAmbientTypes(file, readSource));
-      // Canonical authored ambient roots form the producer's type contract.
-      // Dependency augmentations join that contract through reached inputs,
-      // not through unrelated UI/test implementations in the whole program.
-      const authoredAmbientRoots = owner.parsed.fileNames.filter(file =>
-        !/[\\/]node_modules[\\/]/.test(file) && acceptsOwnerInput(file) && contributesAmbientTypes(file, readSource));
-      const ambientInputs = importClosure([...seeds, ...authoredAmbientRoots, ...primaryInputs], acceptsOwnerInput, owner)
-        .filter(file => contributesAmbientTypes(file, readSource));
-      // Declaration facades can re-export implementations that no consumer
-      // reaches directly. Include their closure before emitting a composite
-      // producer, rather than appending unwalked roots during preparation.
-      const declarationRoots = owner.parsed.fileNames.filter(file => /\.d\.[cm]?ts$/.test(file));
-      foreignProjects.set(owner.configPath, {
-        configPath: owner.configPath,
-        ambientInputs,
-        files: new Set([...producerAmbientInputs, ...importClosure([...seeds, ...producerAmbientInputs, ...declarationRoots])
-          .filter(file => !/[\\/]node_modules[\\/]/.test(file))]),
-      });
-    }
-  }
+  const reachableOwners = ownership.reachableOwners;
   for (const file of testRoots) testContexts.set(file, { file, owners: [...reachableOwners.get(file) ?? []] });
   for (let index = 0; index < testNames.length; index++) {
     // Source imports determine prerequisite ownership even for explicitly
@@ -430,10 +404,8 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
       extends: resolve(packageDir, `tsconfig.${names[index]}.json`),
       compilerOptions: {
         ...(index >= sourceNames.length ? testOptionOverrides[index - sourceNames.length] : {}),
-        ...(hasWorkspaceDeclarationPaths ? {
-          paths: Object.fromEntries(Object.entries(projects[index].parsed.options.paths).map(([name, targets]) => [name,
-            targets.map(target => resolve(projects[index].parsed.options.baseUrl ?? projects[index].parsed.options.pathsBasePath, target))])),
-        } : {}),
+        ...sourceTypecheckCompilerOptions(projects[index].parsed.options,
+          resolve(packageDir, `tsconfig.${names[index]}.json`), workspaceSources),
         ...(cacheSuffix && projects[index].parsed.options.outDir
           ? { outDir: `${projects[index].parsed.options.outDir}${cacheSuffix}` } : {}),
       },
@@ -458,9 +430,13 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
   // Coverage must observe the same editor roots that this invocation assigned.
   // Files created during graph traversal belong to the next invocation.
   inventory.baseline = { configPath: originalConfigPath, fileNames: [...originalRoots] };
-  inventory.foreignProjects = [...foreignProjects.values()].map(project => ({ ...project,
+  inventory.sourceReferences = new Map(sourceNames.map((name, index) => [targets[index],
+    results[index].files.flatMap(file => ownership.sourceReferences.get(resolve(packageDir, file)) ?? [])]));
+  inventory.foreignProjects = ownership.foreignProjects.map(project => ({ ...project,
+    ambientDependencies: contextualImports.get(project.configPath),
     ambientInputs: project.ambientInputs.filter(file => !missingFiles.has(file)),
-    files: [...project.files].filter(file => !missingFiles.has(file)).sort() }));
+    files: [...project.files].filter(file => !missingFiles.has(file)
+      && (!/[\\/]node_modules[\\/]/.test(file) || contributesAmbientTypes(file, readSource))).sort() }));
   inventory.testContexts = testContexts;
   inventory.consumerPrimaryAmbientInputs = consumerPrimaryAmbientInputs;
   return inventory;

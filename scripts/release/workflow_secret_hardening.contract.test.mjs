@@ -99,6 +99,17 @@ test('release workflow keeps provider checks outside the compact manual release 
 test('manually dispatched secret-bearing workflows enforce trusted refs', async () => {
   const files = [
     'release.yml',
+    'release-channel.yml',
+    'build-ui-mobile-local.yml',
+    'publish-docker.yml',
+    'publish-server-runtime.yml',
+    'publish-github-release.yml',
+    'publish-runner-binaries.yml',
+    'publish-hstack-binaries.yml',
+    'publish-ui-web.yml',
+    'publish-cli-binaries.yml',
+    'release-npm.yml',
+    'publish-ui-mobile-dev.yml',
     'promote-ui.yml',
     'promote-server.yml',
     'promote-website.yml',
@@ -117,14 +128,16 @@ test('manually dispatched secret-bearing workflows enforce trusted refs', async 
     assert.ok(admission?.run, `${file} must admit the called workflow ref`);
     const repository = 'happier-dev/happier';
     for (const [branch, callerRepository, expectedStatus] of [
-      ['dev', repository, 0], ['preview', repository, 0], ['main', repository, 0],
+      ['v0.3', repository, 0], ['dev', repository, 0], ['preview', repository, 0], ['main', repository, 0],
       ['feature/untrusted', repository, 1], ['main', 'fork/happier', 1],
     ]) {
       const result = spawnSync('bash', ['-c', admission.run], {
         encoding: 'utf8',
         env: {
           ...process.env, ...admission.env,
+          CHANNEL: 'preview', CANDIDATE_ONLY: 'false', CANDIDATE_RUN_ID: '', CANDIDATE_VERSION: '', CANDIDATE_SOURCE_SHA: '', RETRY_VERSION: '', RESUME_VERSION: '',
           CALLER_REPOSITORY: callerRepository,
+          CALLER_WORKFLOW_REF: `${repository}/.github/workflows/release.yml@refs/heads/${branch}`,
           WORKFLOW_REPOSITORY: repository,
           WORKFLOW_REF: `${repository}/.github/workflows/${file}@refs/heads/${branch}`,
         },
@@ -261,5 +274,24 @@ test('secret-bearing workflows require release-admin actor guard before privileg
       undefined,
       `${file} should not pass app secrets directly to release_actor_guard`
     );
+  }
+});
+
+
+test('hosted release and channel refuse changed approved workflow control before actor admission', async () => {
+  for (const file of ['release.yml', 'release-channel.yml']) {
+    const { parsed } = await loadWorkflow(file);
+    const step = parsed.jobs.trusted_ref_guard.steps.find((step) => step.env?.WORKFLOW_CONTROL_SHA);
+    assert.ok(step?.run, `${file} must bind the approved control SHA`);
+    for (const [expected, loaded, status] of [
+      ['a'.repeat(40), 'a'.repeat(40), 0],
+      ['a'.repeat(40), 'b'.repeat(40), 1],
+      ['malformed', 'a'.repeat(40), 1],
+    ]) {
+      const result = spawnSync('bash', ['-c', step.run], {
+        encoding: 'utf8', env: { ...process.env, WORKFLOW_CONTROL_SHA: expected, WORKFLOW_SHA: loaded },
+      });
+      assert.equal(result.status, status, `${file}: ${result.stderr}`);
+    }
   }
 });

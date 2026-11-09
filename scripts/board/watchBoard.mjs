@@ -79,7 +79,7 @@ async function main() {
         await record({ report: file, line });
         // Any upper-case verdict word wakes (lanes also write FIXED, PARTIAL, IMPLEMENTED…), after an optional
         // Markdown heading marker and Status: label in any case; only in-progress lines stay quiet.
-        const verdict = line.replace(/^#+\s*/, '').replace(/^status:\s*/i, '');
+        const verdict = line.replace(/^#+\s*/, '').replace(/^status:?\s*/i, '');
         if (!silent && /^[A-Z][A-Z_]{2,}\b/.test(verdict) && !/^(?:IN[ _]PROGRESS|RUNNING)\b/.test(verdict)) {
           process.stdout.write(`${file}: ${line}\n`);
           wake = true;

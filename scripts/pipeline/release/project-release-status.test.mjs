@@ -3,6 +3,36 @@ import assert from 'node:assert/strict';
 
 import { projectReleaseStatus } from './project-release-status.mjs';
 
+test('a published web product remains complete beside a failed CLI and pending deployment', () => {
+  const status = projectReleaseStatus('standard', {
+    RELEASE_RUN: '42', RELEASE_RUN_URL: 'https://github.com/happier-dev/happier/actions/runs/42',
+    RELEASE_RUN_NAME: 'RELEASE', RELEASE_CHANNEL: 'preview', SOURCE_SHA: 'a'.repeat(40),
+    CANDIDATE_RESULT: 'success', IMMUTABLE_VERIFICATION_RESULT: 'failure', RELEASE_VERIFY_RESULT: 'skipped',
+    REQUEST_CLI: 'true', CLI_CANDIDATE_RESULT: 'failure', CLI_RESULT: 'skipped',
+    REQUEST_UI_WEB: 'true', UI_WEB_CANDIDATE_RESULT: 'success', UI_WEB_VERSION: '1.2.3-preview.4',
+    UI_WEB_RESUME_VERIFIED: 'true', UI_WEB_RESULT: 'success',
+    REQUEST_DEPLOY_DOCS: 'true', DEPLOY_DOCS_RESULT: 'pending',
+  });
+  assert.equal(status.surfaces.find((surface) => surface.id === 'ui_web_rolling_release')?.state, 'complete');
+  assert.equal(status.surfaces.find((surface) => surface.id === 'deploy_docs')?.result, 'pending');
+  assert.equal(status.terminal, 'failed');
+});
+
+test('an admitted completed web product remains reusable through repeated partial resumes', () => {
+  const status = projectReleaseStatus('standard', {
+    RELEASE_RUN: '42', RELEASE_RUN_URL: 'https://github.com/happier-dev/happier/actions/runs/42',
+    RELEASE_RUN_NAME: 'RELEASE', RELEASE_CHANNEL: 'preview', SOURCE_SHA: 'a'.repeat(40),
+    CANDIDATE_RESULT: 'success', IMMUTABLE_VERIFICATION_RESULT: 'failure', RELEASE_VERIFY_RESULT: 'skipped',
+    REQUEST_CLI: 'true', CLI_CANDIDATE_RESULT: 'failure', CLI_RESULT: 'skipped',
+    REQUEST_UI_WEB: 'true', UI_WEB_CANDIDATE_RESULT: 'success', UI_WEB_VERSION: '1.2.3-preview.4',
+    UI_WEB_RESUME_VERIFIED: 'true', UI_WEB_RESULT: 'skipped', UI_WEB_ROLLING_RESUME_COMPLETE: 'true',
+    REQUEST_DEPLOY_DOCS: 'true', DEPLOY_DOCS_RESULT: 'pending',
+  });
+  assert.equal(status.surfaces.find((surface) => surface.id === 'ui_web_rolling_release')?.state, 'complete');
+  assert.equal(status.surfaces.find((surface) => surface.id === 'deploy_docs')?.result, 'pending');
+  assert.equal(status.terminal, 'failed');
+});
+
 test('nightly status preserves an independently verified sibling after grouped failure', () => {
   const status = projectReleaseStatus('nightly', {
     RELEASE_RUN: '42',
@@ -234,4 +264,29 @@ test('resumed rolling completion still requires current owner verification befor
   const runner = status.surfaces.find((surface) => surface.id === 'runner_rolling_release');
   assert.equal(runner.identity.verified, false);
   assert.notEqual(runner.state, 'complete');
+});
+
+
+test('channel promotion failure does not erase independently published products or report complete release', () => {
+  const base = {
+    RELEASE_RUN: '42', RELEASE_RUN_URL: 'https://github.com/happier-dev/happier/actions/runs/42',
+    RELEASE_RUN_NAME: 'RELEASE', RELEASE_CHANNEL: 'production', SOURCE_SHA: 'a'.repeat(40),
+    CANDIDATE_RESULT: 'success', IMMUTABLE_VERIFICATION_RESULT: 'success', RELEASE_VERIFY_RESULT: 'success',
+    REQUEST_SERVER: 'true', SERVER_CANDIDATE_RESULT: 'success', SERVER_VERSION: '1.2.3', SERVER_RESULT: 'success',
+  };
+  for (const [result, state] of [['failure', 'failed'], ['pending', 'partial'], ['success', 'complete']]) {
+    const status = projectReleaseStatus('standard', { ...base, CHANNEL_PROMOTION_RESULT: result });
+    assert.equal(status.surfaces.find((surface) => surface.id === 'server_rolling_release')?.state, 'complete');
+    assert.equal(status.surfaces.find((surface) => surface.id === 'channel_promotion')?.state, state);
+    assert.equal(status.terminal, state);
+  }
+  for (const [result, state] of [['failure', 'failed'], ['pending', 'partial'], ['success', 'published']]) {
+    const status = projectReleaseStatus('standard', { ...base, CHANNEL_PROMOTION_RESULT: 'success', GITHUB_LATEST_RESULT: result });
+    assert.equal(status.surfaces.find((surface) => surface.id === 'server_rolling_release')?.state, 'complete');
+    assert.equal(status.surfaces.find((surface) => surface.id === 'github_latest')?.state, state);
+    assert.equal(status.terminal, state);
+  }
+  const preview = projectReleaseStatus('standard', { ...base, RELEASE_CHANNEL: 'preview', CHANNEL_PROMOTION_RESULT: 'success', GITHUB_LATEST_RESULT: 'skipped' });
+  assert.equal(preview.surfaces.find((surface) => surface.id === 'github_latest')?.state, 'not_requested');
+  assert.equal(preview.terminal, 'complete');
 });

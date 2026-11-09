@@ -53,6 +53,18 @@ export function buildPublicReleaseContractV1() {
   return {
     schemaVersion: PUBLIC_RELEASE_CONTRACT_SCHEMA_VERSION,
     kind: PUBLIC_RELEASE_CONTRACT_KIND,
+    conductorProtocol: {
+      version: 1,
+      capabilities: [
+        'release-analysis-v1',
+        'release-dispatch-plan-v3',
+        'ci-run-id',
+        'production-promotion-mode-v1',
+        'combined-preview-production-v1',
+        'approved-release-packet-v1',
+        'public-sdk-release-approval',
+      ],
+    },
     targets: Object.values(versionedComponents).map(({ id, baselineTagPrefix, changedWhen }) => ({
       id,
       baselineTagPrefix,

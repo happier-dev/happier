@@ -34,9 +34,9 @@ function valid(overrides = {}) {
 test('validates a materialized preview release and resolves planning facts', () => {
   assert.deepEqual(validateReleaseDispatch(valid()), {
     mode: 'preview_release',
-    sourceRef: 'dev',
+    sourceRef: 'v0.3',
     baseRef: 'preview',
-    compareLabel: 'preview..dev',
+    compareLabel: 'preview..v0.3',
     deployTargets: ['ui', 'server', 'cli'],
     overrides: { waiveCi: false, includeValidationSuiteIds: [], waiveValidationSuiteIds: [], reason: '' },
     publicSdkReleaseApproval: {
@@ -117,4 +117,9 @@ test('rejects partial candidate identity, resume conflicts, and untrusted dispat
     candidateRunId: '42', candidateVersion: '1.2.3', candidateSourceSha: sha, resumeRunId: '77',
   })), /cannot combine/);
   assert.throws(() => validateReleaseDispatch(valid({ refName: 'feature/release' })), /untrusted ref/);
+});
+
+test('v0.3 control admits the named source while historical dev confirmation wording remains supported', () => {
+  assert.equal(validateReleaseDispatch(valid({ refName: 'v0.3' })).sourceRef, 'v0.3');
+  assert.equal(validateReleaseDispatch(valid({ refName: 'v0.3', environment: 'production', confirm: 'reset main from preview' })).sourceRef, 'preview');
 });

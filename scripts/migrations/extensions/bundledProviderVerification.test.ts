@@ -123,6 +123,7 @@ test('collectProviderExecutableFactPathsV1 derives stable semantic paths without
 test('collectProviderExecutableFactPathsV1 closes every managed-runtime declaration fact', () => {
   const managedContribution = ProviderContributionV1Schema.parse({
     ...contribution,
+    catalog: { ...contribution.catalog, sourceRegistryVersion: 'fixture-models/v1' },
     endpointTemplates: [...contribution.endpointTemplates, {
       id: 'fixture-anthropic',
       protocol: 'anthropic',
@@ -319,6 +320,29 @@ test('collectProviderExecutableFactPathsV1 closes every managed-runtime declarat
     },
     todayUtc: '2026-07-12',
   }), /must not restate executable Provider facts/);
+});
+
+test('collectProviderExecutableFactPathsV1 closes usage-source, inline-completion and request-cost facts', () => {
+  const executableContribution = ProviderContributionV1Schema.parse({
+    ...contribution,
+    inlineCompletion: [{ id: 'fixture-fim', mode: 'chat-fallback', endpointTemplateId: 'fixture-openai', path: '/v1/chat/completions', wireFormat: 'openai-chat' }],
+    usageSources: [{ id: 'fixture-balance', endpointTemplateId: 'fixture-openai', path: '/v1/balance', parser: 'fixture-balance' }],
+    requestCost: { endpointTemplateIds: ['fixture-openai'] },
+  });
+  const paths = collectProviderExecutableFactPathsV1(executableContribution);
+  for (const path of ['inlineCompletion.fixture-fim', 'usageSources.fixture-balance', 'requestCost.fixture-openai']) {
+    assert.ok(paths.includes(path), `expected executable fact path ${path}`);
+    assert.throws(() => assertBundledProviderVerificationV1({
+      buildQualifiedContributionKey: buildQualifiedPluginContributionKey,
+      pluginId: 'happier.provider.fixture', contribution: executableContribution,
+      verification: verificationFor(paths.filter((candidate) => candidate !== path)), todayUtc: '2026-07-12',
+    }), new RegExp(`Missing Provider verification for .*${path.replaceAll('.', '\\.')}`));
+  }
+  assert.equal(assertBundledProviderVerificationV1({
+    buildQualifiedContributionKey: buildQualifiedPluginContributionKey,
+    pluginId: 'happier.provider.fixture', contribution: executableContribution,
+    verification: verificationFor(paths), todayUtc: '2026-07-12',
+  }).facts.length, paths.length);
 });
 
 test('assertBundledProviderVerificationV1 accepts complete field-path provenance', () => {
@@ -544,24 +568,28 @@ test('readAndAssertBundledProviderVerificationsV1 requires exactly one record pe
 test('all bundled first-party Provider contributions have complete current verification records', async () => {
   const rootDir = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../..');
   const specs = [
-    ['deepseek', 'happier.provider.deepseek', 'DEEPSEEK_PROVIDER_CONTRIBUTION'],
-    ['zai', 'happier.provider.zai', 'ZAI_PROVIDER_CONTRIBUTION'],
-    ['openrouter', 'happier.provider.openrouter', 'OPENROUTER_PROVIDER_CONTRIBUTION'],
-    ['ollama', 'happier.provider.ollama', 'OLLAMA_PROVIDER_CONTRIBUTION'],
-    ['lmstudio', 'happier.provider.lmstudio', 'LMSTUDIO_PROVIDER_CONTRIBUTION'],
-    ['cliproxyapi', 'happier.provider.cliproxyapi', 'CLIPROXYAPI_PROVIDER_CONTRIBUTION'],
-    ['openai-models', 'happier.provider.openai', 'OPENAI_PROVIDER_CONTRIBUTION'],
-    ['claude', 'happier.agent.claude', 'ANTHROPIC_PROVIDER_CONTRIBUTION'],
+    ['claude', 'happier.agent.claude', ['ANTHROPIC_PROVIDER_CONTRIBUTION']],
+    ['cliproxyapi', 'happier.provider.cliproxyapi', ['CLIPROXYAPI_PROVIDER_CONTRIBUTION']],
+    ['cloudflare-ai-gateway', 'happier.provider.cloudflare-ai-gateway', ['CLOUDFLARE_AI_GATEWAY_PROVIDER_CONTRIBUTION']],
+    ['deepseek', 'happier.provider.deepseek', ['DEEPSEEK_PROVIDER_CONTRIBUTION']],
+    ['lmstudio', 'happier.provider.lmstudio', ['LMSTUDIO_PROVIDER_CONTRIBUTION']],
+    ['minimax', 'happier.provider.minimax', ['MINIMAX_PROVIDER_CONTRIBUTION', 'MINIMAX_CN_PROVIDER_CONTRIBUTION']],
+    ['ollama', 'happier.provider.ollama', ['OLLAMA_PROVIDER_CONTRIBUTION']],
+    ['openai-models', 'happier.provider.openai', ['OPENAI_PROVIDER_CONTRIBUTION']],
+    ['openrouter', 'happier.provider.openrouter', ['OPENROUTER_PROVIDER_CONTRIBUTION']],
+    ['vercel-ai-gateway', 'happier.provider.vercel-ai-gateway', ['VERCEL_AI_GATEWAY_PROVIDER_CONTRIBUTION']],
+    ['zai', 'happier.provider.zai', ['ZAI_PROVIDER_CONTRIBUTION']],
   ] as const;
-  for (const [pluginPackageId, pluginId, exportName] of specs) {
+  const todayUtc = new Date().toISOString().slice(0, 10);
+  for (const [pluginPackageId, pluginId, exportNames] of specs) {
     const module = await import(`../../../packages/plugins/${pluginPackageId}/src/provider/contribution.ts`);
     assert.equal(readAndAssertBundledProviderVerificationsV1({
-    buildQualifiedContributionKey: buildQualifiedPluginContributionKey,
+      buildQualifiedContributionKey: buildQualifiedPluginContributionKey,
       rootDir,
       pluginPackageId,
       pluginId,
-      contributions: [module[exportName]],
-      todayUtc: '2026-08-10',
-    }).length, 1);
+      contributions: exportNames.map((exportName) => module[exportName]),
+      todayUtc,
+    }).length, exportNames.length);
   }
 });

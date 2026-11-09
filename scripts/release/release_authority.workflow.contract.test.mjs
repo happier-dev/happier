@@ -370,7 +370,7 @@ test('standalone publisher credential-bearing shells receive untrusted values on
       for (const step of job.steps ?? []) {
         if (!String(step.run ?? '').includes('--release-message')) continue;
         assert.equal(step.env?.RELEASE_MESSAGE, '${{ inputs.release_message }}');
-        assert.match(String(step.run), /--release-message "\$RELEASE_MESSAGE"/);
+        assert.match(String(step.run), /--release-message(?:=|\s+)"\$RELEASE_MESSAGE"/);
         assert.doesNotMatch(String(step.run), /inputs\.release_message/);
       }
     }
@@ -464,11 +464,11 @@ test('preview release forwards one complete CLI candidate identity and binds it 
   assert.match(inputValidation.run, /validate-release-dispatch\.mjs/);
 
   const sourceBinding = jobs.prepare_release_candidate.steps.find(
-    (step) => step.name === 'Resolve promoted branch once',
+    (step) => step.name === 'Bind admitted release candidate',
   );
   assert.equal(sourceBinding.env.CANDIDATE_SOURCE_SHA, '${{ inputs.candidate_source_sha }}');
   assert.match(sourceBinding.run, /\[ "\$CANDIDATE_SOURCE_SHA" != "\$source_sha" \]/);
-  assert.match(sourceBinding.run, /CLI candidate source does not match the promoted preview source/);
+  assert.match(sourceBinding.run, /CLI candidate source does not match the admitted release source/);
 
   const cliPublisher = jobs.publish_cli_binaries;
   assert.equal(cliPublisher.permissions.actions, 'read');

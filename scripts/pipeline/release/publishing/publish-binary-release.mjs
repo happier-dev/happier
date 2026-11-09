@@ -233,7 +233,7 @@ export async function publishBinaryReleaseMain(options = {}) {
   }
 
   const opts = { dryRun: values['dry-run'] === true };
-  const runContracts = resolveAutoBool(values['run-contracts'], '--run-contracts', process.env.GITHUB_ACTIONS === 'true');
+  const runContracts = resolveAutoBool(values['run-contracts'], '--run-contracts', false);
   const checkInstallers = parseBool(values['check-installers'], '--check-installers');
   const releaseMessage = String(values['release-message'] ?? '').trim();
   const explicitVersion = String(values.version ?? '').trim();
@@ -319,11 +319,13 @@ export async function publishBinaryReleaseMain(options = {}) {
     }`,
   );
 
+  // Trusted local/reusable caller projects source admission; this is not a proof token.
   if (phase !== 'promote-rolling' && !finalizedArtifacts) {
     await preflightMinisignKey(productSpec, opts);
   }
 
-  if (runContracts) {
+  // Trusted local/reusable caller projects source admission; this is not a proof token.
+  if (phase !== 'promote-rolling' && (runContracts || process.env.HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT !== 'success')) {
     run(opts, 'pnpm', ['--silent', 'run', 'test:release:contracts'], {
       cwd: repoRoot,
       env: { ...process.env, HAPPIER_EMBEDDED_POLICY_ENV: embeddedPolicy },
@@ -350,7 +352,7 @@ export async function publishBinaryReleaseMain(options = {}) {
       '--target-sha', targetSha,
       '--prerelease', prerelease,
       '--notes', notes,
-      '--release-message', releaseMessage,
+      `--release-message=${releaseMessage}`,
       '--repo', repoSlug,
       '--public-key', RELEASE_PUBLIC_KEY_RELATIVE_PATH,
       ...(opts.dryRun ? ['--dry-run'] : []),
@@ -420,7 +422,7 @@ export async function publishBinaryReleaseMain(options = {}) {
       '--assets-dir', path.relative(repoRoot, artifactsDir),
       '--clobber', 'false',
       '--prune-assets', 'false',
-      '--release-message', releaseMessage,
+      `--release-message=${releaseMessage}`,
       ...(opts.dryRun ? ['--dry-run'] : []),
     ], { cwd: repoRoot });
 
@@ -433,7 +435,7 @@ export async function publishBinaryReleaseMain(options = {}) {
         '--target-sha', targetSha,
         '--prerelease', prerelease,
         '--notes', notes,
-        '--release-message', releaseMessage,
+        `--release-message=${releaseMessage}`,
         '--repo', repoSlug,
         '--public-key', RELEASE_PUBLIC_KEY_RELATIVE_PATH,
         ...(opts.dryRun ? ['--dry-run'] : []),

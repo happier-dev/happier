@@ -6,6 +6,7 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { StringDecoder } from 'node:string_decoder';
 import { readBundledPluginPackageNames } from '../../apps/cli/scripts/build-owned/bundledPluginMembership.ts';
+import { createCliSourceLoader } from '../../packages/cli-common/cliSourceLoader.mjs';
 
 import { buildIntoTempThenReplace } from '../../apps/stack/scripts/utils/fs/atomic_dir_swap.mjs';
 import { readCachedFileDigestSync } from '../../apps/stack/scripts/utils/fs/cached_file_digest.mjs';
@@ -16,7 +17,6 @@ import { readWorkspaceBuildInputs } from '../../apps/stack/scripts/utils/fs/work
 export { readWorkspaceBuildInputs } from '../../apps/stack/scripts/utils/fs/workspaceBuildInputs.mjs';
 import { coerceHappyMonorepoRootFromPath } from '../../apps/stack/scripts/utils/paths/paths.mjs';
 import { assertInheritedWorkspaceBuildResources, runWorkspaceBuildAdmission, withWorkspaceBuildResources } from '../../apps/stack/scripts/utils/proc/workspace_build_admission.mjs';
-import { resolveDependencyInstallRoot, resolveDependencyRefreshLockPath } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
 import { createWorkspaceBuildWaitNotifier } from '../../apps/stack/scripts/utils/proc/workspaceBuildWaitNotifier.mjs';
 import { run } from '../../apps/stack/scripts/utils/proc/proc.mjs';
 import { collectWorkspacePackageJsonPaths } from '../../apps/stack/scripts/utils/proc/workspace_package_manifests.mjs';
@@ -44,7 +44,7 @@ export { WORKSPACE_BUILD_MODE_ENV, resolveWorkspaceBuildMode } from './workspace
 import { resolveWorkspaceBundlePublicationMode } from './workspaceBundlePublication.mjs';
 import { syncBundledWorkspacePackages } from './syncBundledWorkspacePackages.mjs';
 import { createBundledPluginPublicationFailure } from './bundledPluginPublicationFailure.mjs';
-import { BuildInputDriftError, WorkspacePackageBuildError, captureBuildInputFiles, mountCapturedWorkspaceDependencies, withSingleTrailingBuildPass, withBuildInputDependencies } from './buildInputConvergence.mjs';
+import { BuildInputDriftError, WorkspacePackageBuildError, captureBuildInputFiles, mountCapturedWorkspaceDependencies, withBuildInputDependencies, withSingleTrailingBuildPass } from './buildInputConvergence.mjs';
 import {
   collectInternalWorkspaceDependencyNames,
   collectAdmittedInternalWorkspacePeerDependencyNames,
@@ -54,6 +54,7 @@ const GENERATED_PLUGIN_UI_ARTIFACTS_MANIFEST_RELATIVE_PATH =
   'dist/happier-plugin-ui/ui-artifacts.json';
 const DEFAULT_MAX_CONCURRENT_WORKSPACE_BUILDS = 2;
 const WORKSPACE_BUILD_EVENT_PREFIX = '[workspace-build-progress] ';
+let bundledPluginUiManifestGenerator;
 function serializeWorkspaceBuildError(error) {
   return { name: error.name, message: error.message, code: error.code,
     trailingPassExhausted: error.trailingPassExhausted,
@@ -331,11 +332,14 @@ export async function findFirstNoncurrentWorkspaceDependency(componentDir, { env
 
 /** Collect before requesting capacity. Repeating this observation beneath the
  * admitted leases detects a changed graph without extending a held lock set. */
-export async function collectWorkspaceBuildBatchResources(componentDirs, { env = process.env, admissionClass = 'compilation' } = {}) {
+export async function readWorkspaceBuildBatchDemand(componentDirs, { env = process.env, admissionClass = '' } = {}) {
   const components = [...new Set(componentDirs.map(path => resolve(path)))].sort();
   if (components.length === 0) throw new Error('Workspace build batch requires a consuming component');
   const monorepoRoot = coerceHappyMonorepoRootFromPath(components[0]);
-  if (!monorepoRoot || components.some(path => coerceHappyMonorepoRootFromPath(path) !== monorepoRoot)) {
+  // Component preparation is a no-op outside a Happier workspace or without
+  // its manifest. Metadata observes that same producer contract.
+  if (!monorepoRoot || components.some(path => !existsSync(join(path, 'package.json')))) return null;
+  if (components.some(path => coerceHappyMonorepoRootFromPath(path) !== monorepoRoot)) {
     throw new Error('Workspace build batch components must belong to one monorepo');
   }
   const { packageDirsByName, packageJsonByDir } = await readWorkspacePackageGraph(monorepoRoot);
@@ -359,17 +363,27 @@ export async function collectWorkspaceBuildBatchResources(componentDirs, { env =
   const producerClasses = await Promise.all(packageNames.map(async name => {
     const cwd = packageDirsByName.get(name);
     const packageJson = packageJsonByDir.get(cwd);
-    return packageJson.scripts?.build && collectExpectedPackageOutputTargets(packageJson).length
+    return collectExpectedPackageOutputTargets(packageJson).length
       ? await resolveWorkspacePackageBuildAdmissionClass({ packageJson, cwd, env, repoRoot: monorepoRoot }) : null;
   }));
   for (const required of producerClasses) {
-    if (required && resolveHeavyweightMemoryFloorKiB(required) > resolveHeavyweightMemoryFloorKiB(admissionClass)) {
+    if (required && (!admissionClass || resolveHeavyweightMemoryFloorKiB(required) > resolveHeavyweightMemoryFloorKiB(admissionClass))) {
       admissionClass = required;
     }
   }
-  const installDir = resolveDependencyInstallRoot(monorepoRoot);
+  return { monorepoRoot, componentInputs, packageNames, consumerOnlyPackageNames, packageDirsByName, packageJsonByDir, admissionClass };
+}
+
+export async function collectWorkspaceBuildBatchResources(componentDirs, { env = process.env, admissionClass = 'compilation' } = {}) {
+  const demand = await readWorkspaceBuildBatchDemand(componentDirs, { env, admissionClass });
+  if (!demand) throw new Error('Workspace build batch components must belong to one monorepo');
+  return workspaceBuildBatchResources(demand);
+}
+
+function workspaceBuildBatchResources(demand) {
+  const { monorepoRoot, componentInputs, packageNames, consumerOnlyPackageNames, packageDirsByName, packageJsonByDir } = demand;
+  const admissionClass = demand.admissionClass;
   const locks = [
-    { kind: 'dependency', installDir, path: resolveDependencyRefreshLockPath(installDir, env) },
     // Actual consuming components finish their existing bundled-host sync.
     { path: resolveWorkspaceBundleLockPath(monorepoRoot) },
     ...packageNames.map(name => {
@@ -384,6 +398,107 @@ export async function collectWorkspaceBuildBatchResources(componentDirs, { env =
     }),
   })).digest('hex');
   return { locks, identity, packageNames, consumerOnlyPackageNames, admissionClass };
+}
+
+/** One finite producer transaction for a consuming component union. Readers
+ * start only after this function returns and native custody has unwound. */
+export async function ensureWorkspacePackagesBuiltForComponents(componentDirs, {
+  env = process.env, buildMode, quiet = false, deferBundledWorkspaceSync = false, signal,
+  admissionClass = '',
+} = {}) {
+  signal?.throwIfAborted();
+  const components = [...new Set(componentDirs.map(path => resolve(path)))].filter(path =>
+    coerceHappyMonorepoRootFromPath(path) && existsSync(join(path, 'package.json')));
+  if (!components.length) return { ok: true, built: [], skipped: ['missing-component-package-json'] };
+  env = { ...env, [WORKSPACE_BUILD_MODE_ENV]: resolveWorkspaceBuildMode({ buildMode, env }) };
+  return await withSingleTrailingBuildPass({ run: async () => {
+    signal?.throwIfAborted();
+    const demand = await readWorkspaceBuildBatchDemand(components, { env, admissionClass });
+    const resources = workspaceBuildBatchResources(demand);
+    const workspacePackageNames = new Set(demand.packageDirsByName.keys());
+    let current = true;
+    for (const name of demand.packageNames) {
+      signal?.throwIfAborted();
+      const packageDir = demand.packageDirsByName.get(name);
+      const packageJson = demand.packageJsonByDir.get(packageDir);
+      const dependencyDirs = collectWorkspacePackageFingerprintDependencyNames(packageJson, name,
+        workspacePackageNames, { packageDirsByName: demand.packageDirsByName })
+        .map(dependency => demand.packageDirsByName.get(dependency));
+      const state = await inspectWorkspacePackageBuildState(packageDir, packageJson, {
+        monorepoRoot: demand.monorepoRoot, dependencyDirs, env,
+      });
+      if (!workspacePackageBuildStateCurrent(state)) { current = false; break; }
+    }
+    if (current) {
+      if (!deferBundledWorkspaceSync) for (const component of components) {
+        await syncWorkspaceComponentBundledDependencies(component, { env, signal });
+      }
+      return { ok: true, built: [], skipped: [] };
+    }
+    const resultDir = await mkdtemp(join(tmpdir(), 'happier-typecheck-batch-result-'));
+    const resultPath = join(resultDir, 'result.json');
+    const request = { repoDir: demand.monorepoRoot, components, identity: resources.identity,
+      readerAdmissionClass: admissionClass, resultPath, buildMode: env[WORKSPACE_BUILD_MODE_ENV],
+      quiet, deferBundledWorkspaceSync };
+    try {
+      const result = await runWorkspaceBuildAdmission({ command: process.execPath,
+        args: [fileURLToPath(new URL('../../apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs', import.meta.url)),
+          '--typecheck-batch-worker', JSON.stringify(request)],
+        locks: resources.locks, admissionClass: resources.admissionClass,
+        admissionRequired: requiresTypeScriptAdmission({ env }), cwd: demand.monorepoRoot, env, signal,
+      });
+      if (result.error) throw result.error;
+      const response = await readFile(resultPath, 'utf8').then(JSON.parse).catch(error => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (result.status !== 0 || result.signal) {
+        if (!result.signal && response?.code === 'HSTACK_WORKSPACE_BUILD_RESOURCES_CHANGED') {
+          throw new BuildInputDriftError(response.message);
+        }
+        throw Object.assign(new Error('Typecheck preparation batch failed'),
+          { exitCode: result.status, signal: result.signal,
+            ...(response?.error ? { cause: deserializeWorkspaceBuildError(response.error) } : {}) });
+      }
+      if (!response?.result) throw new Error('Workspace preparation batch did not publish its result');
+      return response.result;
+    } finally { await rm(resultDir, { recursive: true, force: true }); }
+  } });
+}
+
+/** Existing queued worker requests default to strict publication and bundled
+ * synchronization. Only the public compiler explicitly requests source-dev. */
+export async function runWorkspaceBuildBatchWorker(request) {
+  try {
+    if (Object.hasOwn(request, 'reader')) {
+      throw Object.assign(new Error('Typecheck publication workers cannot run readers; rerun the batch from current source'),
+        { code: 'HSTACK_TYPECHECK_PRODUCER_READER_FORBIDDEN' });
+    }
+    const buildMode = request.buildMode ?? 'strict';
+    const env = { ...process.env, [WORKSPACE_BUILD_MODE_ENV]: buildMode };
+    const current = await collectWorkspaceBuildBatchResources(request.components, { env,
+      admissionClass: request.readerAdmissionClass });
+    if (current.identity !== request.identity) {
+      throw Object.assign(new Error('Typecheck batch resources changed while queued; retry after releasing admission'),
+        { code: 'HSTACK_WORKSPACE_BUILD_RESOURCES_CHANGED' });
+    }
+    const started = performance.now();
+    const result = await ensureWorkspacePackagesBuiltByName(request.repoDir, current.packageNames, {
+      env, buildMode, quiet: request.quiet ?? false, maxConcurrentBuilds: 1, inheritedAdmission: true,
+      visitedNames: current.consumerOnlyPackageNames,
+    });
+    if (!request.deferBundledWorkspaceSync) for (const component of request.components) {
+      await syncWorkspaceComponentBundledDependencies(component, { env });
+    }
+    await writeJsonAtomic(request.resultPath, { result });
+    if (!request.quiet) process.stderr.write(`[typecheck-preparation] ready ${JSON.stringify({
+      built: result.built, elapsedMs: Math.round(performance.now() - started),
+    })}\n`);
+  } catch (error) {
+    await writeJsonAtomic(request.resultPath, { code: error.code, message: error.message,
+      error: serializeWorkspaceBuildError(error) });
+    throw error;
+  }
 }
 
 export function collectWorkspacePackageFingerprintDependencyNames(
@@ -432,11 +547,6 @@ function isBundledPluginUiWorkspacePackage(packageJson, { monorepoRoot, packageD
     && Boolean(packageJson.scripts['build:ui'].trim())
     && resolve(packageDir) === resolve(monorepoRoot, 'packages/plugins', packageName.slice('@happier-dev/plugins-'.length))
     && readBundledPluginPackageNames(monorepoRoot).includes(packageName);
-}
-
-function buildEntersWorkspaceBundleLock(packageJson, context) {
-  return hasBundledWorkspaceDependencies(packageJson)
-    || isBundledPluginUiWorkspacePackage(packageJson, context);
 }
 
 function collectExpectedPackageOutputTargets(packageJson) {
@@ -588,7 +698,7 @@ export function readWorkspacePackageInputFingerprint({
   // The canonical selector's @typescript installation owns the actual native
   // executable and launcher helpers. Its launcher alone is not tool identity.
   const compilerInstallationDir = dirname(dirname(dirname(compilerPath)));
-  const buildOwnerPaths = ['ensureWorkspacePackagesBuilt.mjs', 'buildTypeScriptPackageDist.mjs', 'workspaceOutputScriptArgs.mjs'].map(name => {
+  const buildOwnerPaths = ['ensureWorkspacePackagesBuilt.mjs', 'buildTypeScriptPackageDist.mjs', 'pruneRetiredCompilerOutputs.mjs', 'workspaceOutputScriptArgs.mjs'].map(name => {
     const capturedPath = identitySourceRepoDir && join(identitySourceRepoDir, 'scripts/workspaces', name);
     return capturedPath && existsSync(capturedPath) ? capturedPath : fileURLToPath(new URL(`./${name}`, import.meta.url));
   });
@@ -818,27 +928,8 @@ async function assertNoMissingLocalImportsWithRetry({
   throw lastError ?? new Error(`[local] ${label} import validation failed for ${entryPath}`);
 }
 
-async function inspectWorkspacePackageOutput(packageDir, packageJson, {
-  env = process.env,
-  retryImports = false,
-  inputFingerprint,
-  builtDependencies = [],
-  publicationMode = 'live',
-  allowQaFailure = false,
-  outputDir = join(packageDir, 'dist'),
-  requireCompleteDigests = false,
-} = {}) {
+function resolveWorkspacePackageOutputMetadata(packageDir, packageJson, distDir) {
   const expectedTargets = collectExpectedPackageOutputTargets(packageJson);
-  const distDir = outputDir;
-  const expectedTargetMatches = resolveExpectedPackageOutputTargetMatches({
-    packageDir,
-    distDir,
-    expectedTargets,
-  });
-  const expectedFiles = [...new Set(expectedTargetMatches.flatMap(({ paths }) => paths))];
-  const missing = expectedTargetMatches
-    .filter(({ paths }) => paths.length === 0)
-    .map(({ target }) => target);
   const distRoot = resolve(distDir);
   const distEntrypoints = expectedTargets
     .filter((target) => !target.includes('*'))
@@ -853,6 +944,30 @@ async function inspectWorkspacePackageOutput(packageDir, packageJson, {
       return absolutePath === distRoot || absolutePath.startsWith(distRoot + sep);
     });
   const label = packageJson?.name ? `${packageJson.name} dist build` : 'dist build';
+  return { expectedTargets, distEntrypoints, label };
+}
+
+async function inspectWorkspacePackageOutput(packageDir, packageJson, {
+  env = process.env,
+  retryImports = false,
+  inputFingerprint,
+  builtDependencies = [],
+  publicationMode = 'live',
+  allowQaFailure = false,
+  outputDir = join(packageDir, 'dist'),
+  requireCompleteDigests = false,
+} = {}) {
+  const distDir = outputDir;
+  const { expectedTargets, distEntrypoints, label } = resolveWorkspacePackageOutputMetadata(packageDir, packageJson, distDir);
+  const expectedTargetMatches = resolveExpectedPackageOutputTargetMatches({
+    packageDir,
+    distDir,
+    expectedTargets,
+  });
+  const expectedFiles = [...new Set(expectedTargetMatches.flatMap(({ paths }) => paths))];
+  const missing = expectedTargetMatches
+    .filter(({ paths }) => paths.length === 0)
+    .map(({ target }) => target);
 
   if (expectedTargets.length === 0) {
     return {
@@ -1002,7 +1117,7 @@ export const defaultWorkspaceBuildBoundary = {
   runPackageBuild: runWorkspacePackageBuild,
   runPackageScript: (packageDir, script, options) => withWorkspaceOutputScriptArgs(
     { packageDir, scriptName: script, env: options.env },
-    args => runPnpm(args, { cwd: packageDir, ...options }),
+    (args, env) => runPnpm(args, { cwd: packageDir, ...options, env }),
   ),
 };
 
@@ -1030,6 +1145,10 @@ async function captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDir
       // adapters; capture that consumed code as well as the package sources.
       await visit(join(monorepoRoot, 'scripts/workspaces'));
       await visit(join(monorepoRoot, 'apps/stack/scripts/utils'));
+      // Public package scripts may self-dispatch through this entry. A source
+      // symlink would make its physical repo root escape the captured manifest
+      // and turn an already-admitted finite build into unknown compilation.
+      await visit(join(monorepoRoot, 'apps/stack/bin/hstack-exec'));
       return [...paths];
     };
     const capture = await captureBuildInputFiles({ sourceDir: monorepoRoot, captureDir: repoDir, readPaths });
@@ -1060,11 +1179,13 @@ async function captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDir
       workspaceDirs: capturedDirs.map(dir => relative(monorepoRoot, dir)), capturedFiles: capture.files });
     const capturePackageDir = join(repoDir, relative(monorepoRoot, packageDir));
     const captureDependencyDirs = dependencyDirs.map(dir => join(repoDir, relative(monorepoRoot, dir)));
+    const packageJson = await readJson(join(capturePackageDir, 'package.json'));
     const identityRepoDir = env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR || monorepoRoot;
     const inputFingerprint = readWorkspacePackageInputFingerprint({ packageDir: capturePackageDir, dependencyDirs: captureDependencyDirs, env,
       identitySourceRepoDir: repoDir, identityRepoDir, installedDependencyRepoDir: monorepoRoot });
     const builtDependencies = readWorkspaceBuiltDependencies({ monorepoRoot: repoDir, dependencyDirs: captureDependencyDirs });
     return { packageDir: capturePackageDir, dependencyDirs: captureDependencyDirs, repoDir, inputFingerprint, builtDependencies,
+      packageJson, ...resolveWorkspacePackageOutputMetadata(packageDir, packageJson, join(packageDir, 'dist')),
       env: { ...env, HAPPIER_STACK_REPO_DIR: repoDir,
         HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR: monorepoRoot,
         HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: identityRepoDir },
@@ -1078,10 +1199,11 @@ async function captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDir
 
 async function ensureWorkspacePackageBuiltUnderLock(options) {
   return await withBuildInputDependencies({ sourceDir: options.monorepoRoot, env: options.env, signal: options.signal },
-    env => consumeWorkspacePackageBuildInputs({ ...options, env }));
+    (env, publication) => consumeWorkspacePackageBuildInputs({ ...options, env, dependencyPublication: publication }));
 }
 
 async function consumeWorkspacePackageBuildInputs({
+  dependencyPublication,
   monorepoRoot,
   packageDir,
   packageJsonPath,
@@ -1097,30 +1219,12 @@ async function consumeWorkspacePackageBuildInputs({
   workspaceBuildBoundary,
   publicationMode,
   buildMode,
-  trailingPass,
   dependencyDirs,
 }) {
-  const packageJson = await readJson(packageJsonPath);
-  let preparedInputFingerprint = null;
-  if (isBundledPluginUiWorkspacePackage(packageJson, { monorepoRoot, packageDir })) {
-    // Joint admission owns dependency, publication and package custody before
-    // the canonical writer prepares the package-root input consumed by capture.
-    const { prepareBundledPluginUiManifestForWorkspaceBuild } = await import(
-      '../../apps/cli/scripts/build-owned/generateBundledPluginEntries.ts'
-    );
-    const manifestInputFingerprint = readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs, env });
-    const prepared = await prepareBundledPluginUiManifestForWorkspaceBuild({
-      repoRoot: monorepoRoot, packageName: packageJson.name,
-      heldLockValue: env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD, env,
-    });
-    if (prepared) preparedInputFingerprint = manifestInputFingerprint;
-  }
+  const initialPackageJson = await readJson(packageJsonPath);
   let inputFingerprint = readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs, env });
-  if (preparedInputFingerprint && inputFingerprint !== preparedInputFingerprint) {
-    throw new BuildInputDriftError(`[workspace-build] inputs changed after preparing the UI manifest for ${packageJson.name ?? packageDir}; retained the last coherent output; rerun the phase`);
-  }
   let builtDependencies = readWorkspaceBuiltDependencies({ monorepoRoot, dependencyDirs });
-  const state = await inspectWorkspacePackageOutput(packageDir, packageJson, {
+  const state = await inspectWorkspacePackageOutput(packageDir, initialPackageJson, {
     env,
     retryImports: true,
     inputFingerprint,
@@ -1128,20 +1232,18 @@ async function consumeWorkspacePackageBuildInputs({
     publicationMode,
   });
   const {
-    expectedTargets,
+    expectedTargets: initialExpectedTargets,
     missing: missingBefore,
     distDir,
-    distEntrypoints,
-    label,
   } = state;
-  const reportImportRetry = createWorkspaceBuildWaitNotifier({ env, label, kind: 'imports' });
-  if (expectedTargets.length === 0) return { built: false, reason: 'no-expected-files' };
+  if (initialExpectedTargets.length === 0) return { built: false, reason: 'no-expected-files' };
   // Force requests a new compile relative to this demand. A concurrent
   // publisher may already have satisfied it while admission was pending.
   const forcedBuildCompleted = force && state.complete
     && typeof state.verifiedOutput.record.builtAt === 'string'
     && state.verifiedOutput.record.builtAt !== requestedBuildAt;
   if (state.complete && (!force || forcedBuildCompleted)) {
+    await dependencyPublication.assertCurrent();
     if (state.verifiedOutput.verificationNeeded) {
       // Initial inspection is read-only. Only this admitted publisher may
       // persist successful migration/reverification of worker-local identity.
@@ -1154,15 +1256,15 @@ async function consumeWorkspacePackageBuildInputs({
   }
 
   let refreshOnly = !force && state.compileComplete;
-  const checkOnly = !force && buildMode === 'strict' && state.invalidation === 'unchecked-qa-output'
+  let checkOnly = !force && buildMode === 'strict' && state.invalidation === 'unchecked-qa-output'
     && publishedOutputsMatch(distDir, inputFingerprint, {
       requireCompleteDigests: true, allowQaFailure: false,
     }) && publishedDependencyOutputsMatch(distDir, builtDependencies);
   const priorRecord = refreshOnly || checkOnly ? await readJson(join(distDir, BUILD_INPUT_RECORD)) : null;
 
-  if (!packageJson?.scripts?.build) {
+  if (!initialPackageJson?.scripts?.build) {
     throw new Error(
-      `[local] missing build outputs for ${packageJson?.name ?? packageDir}:\n`
+      `[local] missing build outputs for ${initialPackageJson?.name ?? packageDir}:\n`
       + missingBefore.map((path) => `- ${path}`).join('\n')
       + '\nFix: add a build script, or ensure the package does not export dist/* paths.',
     );
@@ -1171,6 +1273,9 @@ async function consumeWorkspacePackageBuildInputs({
   syncBundledWorkspacePackages({
     repoRoot: monorepoRoot,
     hostPackageDirs: [packageDir],
+    // This is the live compiler host, even when its output is an artifact.
+    // Physical artifact packages belong to packaging's own staged destination.
+    publicationMode: 'live',
     replaceExisting: true,
     pruneStale: true,
     syncId: `workspace-build.${process.pid}`,
@@ -1178,28 +1283,33 @@ async function consumeWorkspacePackageBuildInputs({
 
   if (!refreshOnly) await onPackageBuildStart?.({
     packageDir,
-    packageName: String(packageJson?.name ?? '').trim(),
+    packageName: String(initialPackageJson?.name ?? '').trim(),
   });
-  // Typecheck prerequisites retain strict semantic checking, but consume the
-  // same bounded input capture as source-dev instead of requiring a quiet tree.
-  const capture = buildMode !== 'strict' || env.HAPPIER_WORKSPACE_CAPTURE_INPUTS === '1'
-    ? await captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDirs, env }) : null;
-  const buildPackageDir = capture?.packageDir ?? packageDir;
-  const buildDependencyDirs = capture?.dependencyDirs ?? dependencyDirs;
-  if (capture) {
-    if (capture.inputFingerprint !== inputFingerprint) refreshOnly = false;
-    inputFingerprint = capture.inputFingerprint;
-    builtDependencies = capture.builtDependencies;
+  // Every compiler consumes one private input view, including strict builds.
+  // Later authored edits invalidate the next demand, never this publication.
+  const capture = await captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDirs, env });
+  const { packageDir: buildPackageDir, packageJson, expectedTargets, distEntrypoints, label } = capture;
+  const reportImportRetry = createWorkspaceBuildWaitNotifier({ env, label, kind: 'imports' });
+  if (capture.inputFingerprint !== inputFingerprint) {
+    refreshOnly = false;
+    checkOnly = false;
   }
+  inputFingerprint = capture.inputFingerprint;
+  builtDependencies = capture.builtDependencies;
   let publishedRecord;
   const publishOutputs = async (tmpDistDir) => {
-    // Capture may legitimately converge to newer authored source. Its staged
-    // UI input must not be the manifest prepared from an earlier source basis.
-    if (preparedInputFingerprint && inputFingerprint !== preparedInputFingerprint) {
-      throw new BuildInputDriftError(`[workspace-build] inputs changed while capturing the UI manifest for ${packageJson.name ?? packageDir}; retained the last coherent output; rerun the phase`);
+    if (isBundledPluginUiWorkspacePackage(packageJson, { monorepoRoot, packageDir })) {
+      // Derive the UI compiler's manifest from the same private authored inputs.
+      // Later checkout edits invalidate the next demand, never this publication.
+      bundledPluginUiManifestGenerator ??= createCliSourceLoader('happier-workspace-plugin-generator')
+        .then(loader => loader.import(new URL('../../apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', import.meta.url).href, import.meta.url));
+      const { prepareBundledPluginUiManifestForWorkspaceBuild } = await bundledPluginUiManifestGenerator;
+      await prepareBundledPluginUiManifestForWorkspaceBuild({
+        repoRoot: capture.repoDir, packageName: packageJson.name, env: capture.env,
+      });
     }
     const buildEnv = {
-      ...(capture?.env ?? env),
+      ...capture.env,
       HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldLockValue,
       HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: tmpDistDir,
       [WORKSPACE_PACKAGE_PREREQUISITES_READY_ENV_VAR]: '1',
@@ -1265,14 +1375,11 @@ async function consumeWorkspacePackageBuildInputs({
       env,
       onRetry: reportImportRetry,
     });
-    if ((!capture && readWorkspacePackageInputFingerprint({ packageDir: buildPackageDir, dependencyDirs: buildDependencyDirs, env: buildEnv }) !== inputFingerprint)
-      || JSON.stringify(readWorkspaceBuiltDependencies({ monorepoRoot: capture?.repoDir ?? monorepoRoot, dependencyDirs: buildDependencyDirs })) !== JSON.stringify(builtDependencies)
+    if (JSON.stringify(readWorkspaceBuiltDependencies({ monorepoRoot: capture.repoDir, dependencyDirs: capture.dependencyDirs })) !== JSON.stringify(builtDependencies)
       || (checkOnly && !publishedOutputsMatch(distDir, inputFingerprint, { requireCompleteDigests: true, allowQaFailure: false }))) {
-      // Uncaptured compilation still needs the live-tree fence. A private
-      // capture belongs to this build: generators may derive source there
-      // before compilation without changing the admitted producer identity.
-      // Later producer edits belong to the next build, not this publication.
-      throw new BuildInputDriftError(`[workspace-build] inputs changed while building ${packageJson.name ?? packageDir}; retained the last coherent output; rerun the phase`);
+      // A compiler must not rewrite its admitted dependency outputs or the
+      // checked candidate. Source generators may derive private inputs.
+      throw new BuildInputDriftError(`[workspace-build] dependency or checked output changed while building ${packageJson.name ?? packageDir}; candidate not published; rerun the phase`);
     }
     const record = {
       version: 2,
@@ -1289,6 +1396,7 @@ async function consumeWorkspacePackageBuildInputs({
         ? { outputVerification: priorRecord.outputVerification } : {}),
     };
     // Reference-only refreshes replace the receipt, never the compiler output.
+    await dependencyPublication.assertCurrent();
     await writeJsonAtomic(join(tmpDistDir, BUILD_INPUT_RECORD), record);
     publishedRecord = record;
   };
@@ -1308,18 +1416,9 @@ async function consumeWorkspacePackageBuildInputs({
     if (!verifiedOutput) throw new Error(`[workspace-build] published output verification failed for ${packageJson.name ?? packageDir}`);
     await writeJsonAtomic(join(distDir, BUILD_INPUT_RECORD), verifiedOutput.record);
   } catch (error) {
-    // Keep the phase's existing trailing pass before admitting retained bytes.
-    // Drift can also reject an output-only refresh; neither case certifies the
-    // moving staged output, and both use the same last-green integrity checks.
-    // Finite preparation may retain coherent output after exhausted drift too.
-    // Reuse capture admission; release/artifact publication still requires a
-    // fresh successful build, and strict compiler errors never admit fallback.
-    const canRetainDrift = publicationMode === 'live'
-      && resolveWorkspaceBuildMode({ buildMode: 'source-dev', env }) !== 'strict'
-      && (buildMode !== 'strict' || env.HAPPIER_WORKSPACE_CAPTURE_INPUTS === '1');
-    const diagnosticSummary = error instanceof BuildInputDriftError && trailingPass && canRetainDrift
-      ? error.message
-      : buildMode !== 'strict' && !refreshOnly ? compilerDiagnosticSummary(error) : null;
+    // Compiler diagnostics retain the existing development-only fallback.
+    // Unsafe dependency/output drift never admits retained output as success.
+    const diagnosticSummary = buildMode !== 'strict' && !refreshOnly ? compilerDiagnosticSummary(error) : null;
     if (!diagnosticSummary || !isWorkspacePackageOutputValid(packageDir, { monorepoRoot, dependencyDirs })) throw error;
     const recordPath = join(distDir, BUILD_INPUT_RECORD);
     const record = await readJson(recordPath);
@@ -1338,7 +1437,7 @@ async function consumeWorkspacePackageBuildInputs({
     process.stderr.write(`[workspace-build] QA last-green fallback: ${packageJson.name}; output=${stalePackage.outputIdentity}; builtAt=${stalePackage.lastGreenBuiltAt}; dist=${distDir}\n${diagnosticSummary}\n`);
     return { built: false, reason: 'qa-last-green', stalePackage };
   } finally {
-    await capture?.cleanup();
+    await capture.cleanup();
   }
   if (!refreshOnly) await onPackageBuildDone?.({
     packageDir,
@@ -1348,6 +1447,21 @@ async function consumeWorkspacePackageBuildInputs({
 
   return { built: !refreshOnly, refreshed: refreshOnly, reason: refreshOnly ? 'runtime-outputs-refreshed' : 'rebuilt',
     invalidation: force ? 'forced' : state.invalidation };
+}
+
+function workspacePackageBuildStateCurrent(state) {
+  return state.expectedTargets.length === 0
+    || (state.complete && !state.verifiedOutput.verificationNeeded);
+}
+
+async function inspectWorkspacePackageBuildState(packageDir, packageJson, {
+  monorepoRoot, dependencyDirs, env, publicationMode = 'live',
+}) {
+  return await inspectWorkspacePackageOutput(packageDir, packageJson, {
+    env, publicationMode,
+    inputFingerprint: readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs, env }),
+    builtDependencies: readWorkspaceBuiltDependencies({ monorepoRoot, dependencyDirs }),
+  });
 }
 
 async function ensureWorkspacePackageBuilt(packageDir, {
@@ -1361,7 +1475,6 @@ async function ensureWorkspacePackageBuilt(packageDir, {
   workspaceBuildBoundary,
   publicationMode,
   buildMode,
-  trailingPass,
   dependencyDirs,
   signal,
   inheritedAdmission,
@@ -1376,24 +1489,22 @@ async function ensureWorkspacePackageBuilt(packageDir, {
   const requestedBuildAt = force
     ? (await readJson(join(packageDir, 'dist', BUILD_INPUT_RECORD)).catch(() => null))?.builtAt ?? null
     : null;
-  const inputFingerprint = readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs, env: envIn });
-  const initial = await inspectWorkspacePackageOutput(packageDir, packageJson, {
-    env: envIn,
-    inputFingerprint,
-    builtDependencies: readWorkspaceBuiltDependencies({ monorepoRoot, dependencyDirs }),
-    publicationMode,
+  const initial = await inspectWorkspacePackageBuildState(packageDir, packageJson, {
+    monorepoRoot, dependencyDirs, env: envIn, publicationMode,
   });
   if (initial.expectedTargets.length === 0) return { built: false, reason: 'no-expected-files' };
-  if (!force && initial.complete && !initial.verifiedOutput.verificationNeeded) return { built: false, reason: 'already-built' };
+  if (!force && workspacePackageBuildStateCurrent(initial)) return { built: false, reason: 'already-built' };
 
   const env = await workspaceBuildBoundary.prepareEnv(packageDir, envIn);
   const lockPath = resolveWorkspacePackageBuildLockPath(packageDir, packageJson);
-  const workspaceBundleLockPath = buildEntersWorkspaceBundleLock(packageJson, { monorepoRoot, packageDir })
+  // UI manifests and bundles are produced in the private capture. Only a
+  // publisher of shared bundled dependency copies needs workspace custody.
+  const workspaceBundleLockPath = hasBundledWorkspaceDependencies(packageJson)
     ? resolveWorkspaceBundleLockPath(monorepoRoot)
     : null;
   if (inheritedAdmission) assertInheritedWorkspaceBuildResources({
     locks: [...(workspaceBundleLockPath ? [{ path: workspaceBundleLockPath }] : []), { path: lockPath }],
-    dependencyInstallDir: monorepoRoot, env,
+    env,
   });
   // Real process adapters run the complete publication transaction beneath
   // the joint admission owner. Injected compiler boundaries remain in-process
@@ -1403,7 +1514,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
     const resultDir = await mkdtemp(join(tmpdir(), 'happier-workspace-build-result-'));
     const resultPath = join(resultDir, 'result.json');
     const request = { monorepoRoot, packageDir, packageJsonPath, quiet, force, requestedBuildAt, timeoutMs,
-      publicationMode, buildMode, trailingPass, dependencyDirs, resultPath,
+      publicationMode, buildMode, dependencyDirs, resultPath,
       boundaryModule: workspaceBuildBoundary.workerModule,
       boundaryExport: workspaceBuildBoundary.workerExport,
       locks: [...(workspaceBundleLockPath ? [workspaceBundleLockPath] : []), lockPath] };
@@ -1439,7 +1550,6 @@ async function ensureWorkspacePackageBuilt(packageDir, {
         cwd: packageDir,
         env,
         signal,
-        dependencyInstallDir: monorepoRoot,
         admissionRequired: requiresTypeScriptAdmission({ env }),
         admissionClass: await resolveWorkspacePackageBuildAdmissionClass({ packageJson, cwd: packageDir, env, repoRoot: monorepoRoot }),
         inheritedAdmission,
@@ -1475,7 +1585,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
   // concurrent builds, so a second waiter-specific currentness probe is redundant.
   const resources = {
     locks: [...(workspaceBundleLockPath ? [{ path: workspaceBundleLockPath }] : []), { path: lockPath }],
-    dependencyInstallDir: monorepoRoot, env, signal,
+    env, signal,
   };
   const publish = (env, { waited }) => ensureWorkspacePackageBuiltUnderLock({
     monorepoRoot,
@@ -1493,7 +1603,6 @@ async function ensureWorkspacePackageBuilt(packageDir, {
     workspaceBuildBoundary,
     publicationMode,
     buildMode,
-    trailingPass,
     dependencyDirs,
   });
   if (inheritedAdmission) {
@@ -1502,32 +1611,9 @@ async function ensureWorkspacePackageBuilt(packageDir, {
   return await withWorkspaceBuildResources(resources, publish);
 }
 
-async function ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, options) {
-  const built = [];
-  const refreshed = [];
-  const pluginFailures = [];
-  const stalePackages = new Map();
-  return await withSingleTrailingBuildPass({
-    run: async (trailing) => await ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, {
-      ...options,
-      trailingPass: trailing,
-      // Preserve explicit force for packages not reached before drift, while
-      // completed siblings go through ordinary declaration admission again.
-      forcePackageNames: trailing
-        ? options.forcePackageNames?.filter((name) => !built.includes(name))
-        : options.forcePackageNames,
-      built,
-      refreshed,
-      pluginFailures,
-      stalePackages,
-    }),
-    onTrailingPass: () => process.stderr.write('[workspace-build] inputs changed; rebuilding changed packages in the single trailing pass\n'),
-  });
-}
-
-// Wait for already admitted siblings before retrying or returning a failure.
+// Wait for already admitted siblings before returning a failure.
 // Prefer a genuine build error over drift: movement must not hide compilation
-// failures or leave old work running alongside a new pass.
+// failures or leave admitted sibling work unsettled.
 async function settleWorkspaceBuilds(promises) {
   const results = await Promise.allSettled(promises);
   const failures = results.filter((result) => result.status === 'rejected');
@@ -1537,7 +1623,7 @@ async function settleWorkspaceBuilds(promises) {
   return results.map((result) => result.value);
 }
 
-async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, {
+async function ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, {
   quiet,
   env,
   forcePackageNames = [],
@@ -1551,24 +1637,23 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
   workspaceBuildBoundary,
   publicationMode,
   buildMode,
-  trailingPass,
   maxConcurrentBuilds,
   inheritedAdmission,
   isolatePluginFailures = false,
-  built,
-  refreshed,
-  pluginFailures,
-  stalePackages,
   signal,
 }) {
+  const built = [];
+  const refreshed = [];
+  const pluginFailures = [];
+  const stalePackages = new Map();
   signal?.throwIfAborted();
   const visited = new Set(visitedNames);
   const forced = new Set(forcePackageNames);
   const changedClosures = new Set();
   const closureBuildPromises = new Map();
   // Scheduling shares one graph observation. Admission and publication still
-  // read current inputs independently, and drift starts a fresh graph pass.
-  const { packageDirsByName, packageJsonByDir } = !trailingPass && workspaceGraphIn
+  // read current inputs independently. No observation survives this demand.
+  const { packageDirsByName, packageJsonByDir } = workspaceGraphIn
     ? workspaceGraphIn : await readWorkspacePackageGraph(monorepoRoot);
   const workspacePackageNames = new Set(packageDirsByName.keys());
   const admittedWorkspacePackageNames = await collectWorkspaceDependencyClosure(
@@ -1587,7 +1672,7 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
   const scheduleConcurrentPackageBuild = createAsyncConcurrencyLimiter(inheritedAdmission ? 1 : maxConcurrentBuilds);
   const scheduleBundledWorkspacePackageBuild = createAsyncConcurrencyLimiter(1);
   const schedulePackageBuild = (packageJson, packageDir, operation) => (
-    buildEntersWorkspaceBundleLock(packageJson, { monorepoRoot, packageDir })
+    hasBundledWorkspaceDependencies(packageJson)
       // Queue before taking general build capacity: a sibling otherwise starts
       // waiting on the shared publication lease held by this same invocation.
       ? scheduleBundledWorkspacePackageBuild(() => scheduleConcurrentPackageBuild(operation))
@@ -1688,7 +1773,6 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
             workspaceBuildBoundary,
             publicationMode,
             buildMode,
-            trailingPass,
             dependencyDirs,
             signal,
             inheritedAdmission,
@@ -1908,6 +1992,7 @@ export async function syncWorkspaceComponentBundledDependencies(componentDir, {
         syncBundledWorkspacePackages({
           repoRoot: monorepoRoot,
           hostPackageDirs: [componentDir],
+          publicationMode: resolvedPublicationMode,
           packages: collectBundledWorkspaceDependencyNames(componentPackageJson)
             .filter((packageName) => !pluginFailures.some((failure) => failure.packageName === packageName))
             .map((packageName) => packageName.split('/').at(-1))

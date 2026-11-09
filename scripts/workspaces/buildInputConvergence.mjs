@@ -159,6 +159,18 @@ export async function mountInstalledNodeModules({ sourceModules, targetModules, 
     const source = join(installedModules, entry.name);
     const target = join(targetModules, entry.name);
     const info = entry.isSymbolicLink() ? await stat(source) : entry;
+    const captured = await lstat(target).catch(error => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (captured) {
+      // Preserve physical captured package inputs, while filling the remaining
+      // scope from installed tools. Never recurse through an installed link.
+      if (captured.isDirectory() && info.isDirectory()) {
+        await mountInstalledNodeModules({ sourceModules: source, targetModules: target });
+      }
+      continue;
+    }
     if (info.isDirectory()) await symlink(source, target, process.platform === 'win32' ? 'junction' : 'dir');
     // Files such as .modules.yaml need no shared writes or Windows symlink privilege.
     else await copyFile(source, target);
@@ -239,12 +251,12 @@ export function isTerminalBuildFailure(error) {
 
 /** Preserve terminal phase failures through the generator's existing IPC. */
 /** @param {unknown} error */
-export function serializeTerminalBuildFailure(error) {
-  if (!isTerminalBuildFailure(error)) return null;
+export function serializeTerminalBuildFailure(error, { includeRetryableDrift = false } = {}) {
+  if (!isTerminalBuildFailure(error) && !(includeRetryableDrift && error instanceof BuildInputDriftError)) return null;
   return { buildFailure: {
     code: error instanceof BuildInputDriftError ? 'BUILD_INPUTS_CHANGED' : 'WORKSPACE_PACKAGE_BUILD_FAILED',
     message: error.message,
-    ...(error instanceof BuildInputDriftError ? { trailingPassExhausted: true } : {}),
+    ...(error instanceof BuildInputDriftError ? { trailingPassExhausted: error.trailingPassExhausted } : {}),
   } };
 }
 
@@ -255,8 +267,8 @@ export function readTerminalBuildFailure(value) {
   if (!failure || typeof failure !== 'object' || !('message' in failure) || typeof failure.message !== 'string'
     || !('code' in failure)) throw new Error('Invalid private build failure result');
   if (failure.code === 'WORKSPACE_PACKAGE_BUILD_FAILED') return new WorkspacePackageBuildError(new Error(failure.message));
-  if (failure.code === 'BUILD_INPUTS_CHANGED' && 'trailingPassExhausted' in failure && failure.trailingPassExhausted === true) {
-    return new BuildInputDriftError(failure.message, { trailingPassExhausted: true });
+  if (failure.code === 'BUILD_INPUTS_CHANGED' && 'trailingPassExhausted' in failure && typeof failure.trailingPassExhausted === 'boolean') {
+    return new BuildInputDriftError(failure.message, { trailingPassExhausted: failure.trailingPassExhausted });
   }
   throw new Error('Invalid private build failure result');
 }

@@ -103,6 +103,34 @@ function csv(value, label) {
   return values;
 }
 
+/** Historical confirmation phrases name the promotion intent, not the 0.3 source branch.
+ * @param {string} action
+ * @returns {'dev' | 'v0.3' | 'preview'}
+ */
+export function resolveReleasePromotionSourceBranch(action) {
+  if (action === 'release preview to main' || action === 'reset main from preview') return 'preview';
+  return action === 'release dev to dev' ? 'dev' : 'v0.3';
+}
+
+/** The public owner of release target/confirmation/source intent, shared by CLI and hosted admission. */
+export function resolveReleasePromotionIntent({ environment, confirm }) {
+  const sourceBranch = resolveReleasePromotionSourceBranch(confirm);
+  if (environment === 'dev' && confirm === 'release dev to dev') return { target: environment, sourceBranch, mode: 'dev_release' };
+  if (environment === 'preview' && confirm === 'release dev to preview') return { target: environment, sourceBranch, mode: 'preview_release' };
+  if (environment === 'preview-and-production' && confirm === 'release dev to preview and main') return { target: environment, sourceBranch, mode: 'combined_release' };
+  if (environment === 'production') {
+    const modes = new Map([
+      ['release preview to main', 'promote_main_from_preview_fast_forward'],
+      ['reset main from preview', 'promote_main_from_preview_reset'],
+      ['release dev to main', 'promote_main_from_dev_fast_forward'],
+      ['reset main from dev', 'promote_main_from_dev_reset'],
+    ]);
+    const mode = modes.get(confirm);
+    if (mode) return { target: environment, sourceBranch, mode };
+  }
+  throw new Error(`Confirmation mismatch or unsupported release environment: ${environment} / ${confirm}`);
+}
+
 /**
  * @param {{
  * authorizedPromotionSourceSha?: string; candidateRunId?: string; candidateVersion?: string;
@@ -157,32 +185,12 @@ export function validateReleaseDispatch(input) {
   if (operationId && !ATTEMPT.test(attemptId)) throw new Error('hmaint_attempt_id must match attempt_<positive integer>.');
   if (!RELEASE_NOTES.test(releaseNotesId)) throw new Error('release_notes_id has an invalid format.');
 
-  let mode;
-  let sourceRef = 'dev';
-  let baseRef = 'preview';
-  let compareLabel = 'preview..dev';
-  if (environment === 'preview') {
-    if (confirm !== 'release dev to preview') throw new Error('Confirmation mismatch for preview releases.');
-    mode = 'preview_release';
-  } else if (environment === 'production') {
-    baseRef = 'main';
-    const modes = new Map([
-      ['release preview to main', 'promote_main_from_preview_fast_forward'],
-      ['reset main from preview', 'promote_main_from_preview_reset'],
-      ['release dev to main', 'promote_main_from_dev_fast_forward'],
-      ['reset main from dev', 'promote_main_from_dev_reset'],
-    ]);
-    mode = modes.get(confirm);
-    if (!mode) throw new Error(`Unknown confirmation phrase: ${confirm}`);
-    if (confirm === 'release preview to main' || confirm === 'reset main from preview') {
-      sourceRef = 'preview';
-      compareLabel = 'main..preview';
-    }
-  } else {
-    throw new Error(`Unsupported release environment: ${environment}`);
-  }
+  if (!['preview', 'production'].includes(environment)) throw new Error(`Unsupported release environment: ${environment}`);
+  const { mode, sourceBranch: sourceRef } = resolveReleasePromotionIntent({ environment, confirm });
+  const baseRef = environment === 'production' ? 'main' : 'preview';
+  const compareLabel = `${baseRef}..${sourceRef}`;
 
-  if (input.eventName === 'workflow_dispatch' && !['dev', 'preview', 'main'].includes(text(input.refName))) {
+  if (input.eventName === 'workflow_dispatch' && !['v0.3', 'dev', 'preview', 'main'].includes(text(input.refName))) {
     throw new Error(`Refusing workflow_dispatch from untrusted ref '${text(input.refName)}'.`);
   }
   const deployTargets = text(input.deployTargets).toLowerCase().replaceAll(/\s/gu, '').split(',').filter(Boolean);

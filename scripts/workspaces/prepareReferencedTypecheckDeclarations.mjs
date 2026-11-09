@@ -1,13 +1,16 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, readdir, rm } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
-import { readReferencedUiTypecheckProjects, readTypecheckAmbientModules, readTypecheckProject } from './deriveTypecheckProjects.mjs';
+import { readTypecheckProject } from './deriveTypecheckProjects.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
 import { readWorkspaceBuildInputs, readWorkspaceComponentDependencyGraph } from './ensureWorkspacePackagesBuilt.mjs';
-import { readBuildInputIdentity } from './buildInputConvergence.mjs';
+import { BuildInputDriftError, readBuildInputDependencies, readBuildInputIdentity, readTerminalBuildFailure, serializeTerminalBuildFailure,
+  withBuildInputDependencies, withSingleTrailingBuildPass } from './buildInputConvergence.mjs';
+import { resolveDependencyInstallRoot, waitForDependencyRefresh } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
 import { runWorkspaceBuildAdmission, withWorkspaceBuildResources } from '../../apps/stack/scripts/utils/proc/workspace_build_admission.mjs';
 import { resolveRemoteCommandPolicy } from '../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs';
 import { requiresTypeScriptAdmission } from './resolveTypeScriptCliInvocation.mjs';
@@ -16,7 +19,6 @@ import { coerceHappyMonorepoRootFromPath } from '../../apps/stack/scripts/utils/
 import { collectInternalWorkspaceDependencyNames } from './workspacePackageDependencies.mjs';
 import { callerHoldsWorkspaceBundleLock } from './workspaceBundleLock.mjs';
 import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
-import { callerHoldsDependencyConsumption } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
 import { resolvePackageBuildOutputTargetMatches, resolvePackageDeclarationTarget } from './packageBuildOutputTargets.mjs';
 import { createDistTypeScriptProjectConfig, readTypeScriptBuildInputFileNames } from './buildTypeScriptPackageDist.mjs';
 
@@ -68,7 +70,7 @@ async function workspaceDeclarationInputs(componentDir) {
   return { ordered, repoDir };
 }
 
-async function declarationInputKey(pkg, dependencyKeys, env) {
+async function declarationInputKey(pkg, dependencyKeys, env, dependencyIdentity) {
   const config = createDistTypeScriptProjectConfig({ projectPath: pkg.configPath, compilerOptions: {
     noEmit: false, declaration: true, emitDeclarationOnly: true, noCheck: true,
     incremental: true, declarationMap: false, sourceMap: false,
@@ -85,7 +87,7 @@ async function declarationInputKey(pkg, dependencyKeys, env) {
     for (const name of ['pnpm-lock.yaml', 'pnpm-workspace.yaml']) if (existsSync(resolve(dir, name))) files.push(resolve(dir, name));
   }
   const key = await readBuildInputIdentity({ sourceDir: pkg.dir, files: files.map(file => relative(pkg.dir, file)),
-    options: ['native-input-declarations', config, pkg.source.parsed.options, dependencyKeys] });
+    options: ['native-input-declarations', config, pkg.source.parsed.options, dependencyKeys, dependencyIdentity] });
   return { key, config };
 }
 
@@ -124,30 +126,13 @@ function declarationImplementationInputs(tsBuildInfoFile, inputRoot) {
     });
 }
 
-/** The compiler's emitted-file inventory proves writes by this invocation.
- * Reuse the declaration owner's output calculation; pre-existing files alone
- * cannot admit a consumer after a failed declaration producer.
- */
-export function referencedTypecheckDeclarationsFresh(project, emittedFiles, invocation, cwd = process.cwd()) {
-  try {
-    const { parsed } = readTypecheckProject(resolve(cwd, project.project));
-    Object.assign(parsed.options, ts.parseCommandLine(invocation.argsSuffix ?? []).options);
-    if (parsed.options.noEmit || parsed.options.noEmitOnError
-      || !(parsed.options.declaration || parsed.options.composite)) return false;
-    const emitted = new Set(emittedFiles.map(file => resolve(cwd, file)));
-    const buildInfo = ts.getTsBuildInfoEmitOutputFilePath(parsed.options);
-    // Old input inventories can hide a newly imported implementation. The
-    // completed native inventory must itself belong to this emitted pass.
-    if (!buildInfo || !emitted.has(resolve(buildInfo))) return false;
-    const inputs = declarationImplementationInputs(buildInfo,
-      parsed.options.rootDir ?? dirname(resolve(cwd, project.authoredProject ?? project.project)));
-    parsed.fileNames = [...new Set([...parsed.fileNames, ...inputs])];
-    const expected = expectedDeclarationOutputs(parsed);
-    return expected.size > 0 && [...expected].every(file => emitted.has(file) && existsSync(file));
-  } catch {
-    // An unreadable/incomplete declaration inventory never replaces the
-    // compiler's failure result or admits consumers against uncertain output.
-    return false;
+async function discardSpannedDeclarations(pending) {
+  for (const { pkg } of pending) {
+    // Publication owns declarations in this package's outDir. Preserve JavaScript,
+    // build stamps and other package outputs when discarding this emitted pass.
+    for (const file of await declarationOutputFiles(pkg)) await rm(resolve(pkg.output, file), { force: true });
+    await rm(resolve(pkg.cache, 'incremental.tsbuildinfo'), { force: true });
+    await rm(resolve(pkg.cache, 'inputs.json'), { force: true });
   }
 }
 
@@ -187,11 +172,19 @@ async function pruneObsoleteDeclarations(pkg, project, config) {
 }
 
 /** Derive canonical declarations without touching JavaScript or build stamps.
- * Existing package publication locks and dependency custody are acquired jointly
+ * Existing package publication locks are acquired jointly
  * within the consumer's compilation envelope; warm consumers start no emitter
  * or package build. Publication custody ends before the consumer starts.
  */
-export async function prepareWorkspaceTypecheckDeclarations(componentDir, {
+export async function prepareWorkspaceTypecheckDeclarations(componentDir, options = {}) {
+  await waitForDependencyRefresh({ installDir: resolveDependencyInstallRoot(componentDir), env: options.env, signal: options.signal });
+  if (options.underLock) return await prepareWorkspaceTypecheckDeclarationsPass(componentDir, options);
+  // A retry starts outside publication/admission scopes. Child emitters report
+  // drift to this phase owner instead of starting a second convergence loop.
+  return await withSingleTrailingBuildPass({ run: () => prepareWorkspaceTypecheckDeclarationsPass(componentDir, options) });
+}
+
+async function prepareWorkspaceTypecheckDeclarationsPass(componentDir, {
   env = process.env, runPreparation = runWorkspaceBuildAdmission, underLock = false,
   withinTypecheckAdmission = false, signal,
   admissionClass = resolveRemoteCommandPolicy(['node', 'scripts/workspaces/runTypeScriptCli.mjs', '--noEmit'],
@@ -204,60 +197,87 @@ export async function prepareWorkspaceTypecheckDeclarations(componentDir, {
   if (underLock) {
     const leases = JSON.parse(env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES || '[]');
     const values = [env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD, ...leases];
-    if (!callerHoldsDependencyConsumption(env) || locks.some(({ path }) =>
+    if (locks.some(({ path }) =>
       !values.some(value => callerHoldsWorkspaceBundleLock(path, value)))) {
-      throw new Error('Declaration preparation requires inherited package publication and dependency custody');
+      throw new Error('Declaration preparation requires inherited package publication custody');
     }
   }
-  const keys = new Map();
-  const stale = [];
   const pending = [];
-  for (const pkg of ordered) {
-    const dependencies = collectInternalWorkspaceDependencyNames(pkg.manifest, pkg.name,
-      { workspacePackageNames: keys.keys() }).map(name => keys.get(name));
-    const { key, config } = await declarationInputKey(pkg, dependencies, env);
-    keys.set(pkg.name, key);
-    if (await declarationCacheCurrent(pkg, key)) continue;
-    stale.push(pkg.name);
-    if (!underLock) continue;
-    await mkdir(pkg.cache, { recursive: true });
-    const project = resolve(pkg.cache, 'tsconfig.json');
-    await writeJsonAtomic(project, config);
-    pending.push({ pkg, project, key, config });
-  }
-  if (pending.length) {
-    // The input-key cache already selects only invalidated packages. Force
-    // those projects so changed external declarations cannot be hidden by a
-    // solution builder's root-file timestamp shortcut.
-    const args = ['--build', ...pending.map(({ project }) => project), '--singleThreaded', '--force'];
-    const invocation = resolveTypeScriptCliInvocation({ args, workspaceDir: repoDir, env,
-      invocationKind: 'build', admissionClass });
-    if (env.HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS === '1') process.stderr.write(`[typecheck-declarations] starting ${JSON.stringify({ at: new Date().toISOString(), declarations: pending.length })}\n`);
-    const result = await runCommand(invocation.command, [...invocation.argsPrefix, ...args], { cwd: repoDir, env, signal, stdio: 'inherit' });
-    if (result.error) throw result.error;
-    if (result.signal || result.status !== 0) throw Object.assign(new Error('Dependency declaration emission failed'), { exitCode: result.status, signal: result.signal });
-    for (const { pkg, key, project, config } of pending) {
-      const outputs = await pruneObsoleteDeclarations(pkg, project, config);
-      await writeJsonAtomic(resolve(pkg.cache, 'inputs.json'), { key, outputs, outputKey: await declarationOutputKey(pkg) });
+  const prepare = async publication => {
+    const dependencyState = publication?.state ?? await readBuildInputDependencies({ sourceDir: repoDir, env });
+    const keys = new Map();
+    const stale = [];
+    for (const pkg of ordered) {
+      const dependencies = collectInternalWorkspaceDependencyNames(pkg.manifest, pkg.name,
+        { workspacePackageNames: keys.keys() }).map(name => keys.get(name));
+      const { key, config } = await declarationInputKey(pkg, dependencies, env, dependencyState.identity);
+      keys.set(pkg.name, key);
+      if (await declarationCacheCurrent(pkg, key)) continue;
+      stale.push(pkg.name);
+      if (!underLock) continue;
+      await mkdir(pkg.cache, { recursive: true });
+      const project = resolve(pkg.cache, 'tsconfig.json');
+      await writeJsonAtomic(project, config);
+      pending.push({ pkg, project, key, config });
     }
+    if (pending.length) {
+      // Force invalidated projects so changed external declarations cannot be
+      // hidden by a solution builder's root-file timestamp shortcut.
+      const args = ['--build', ...pending.map(({ project }) => project), '--singleThreaded', '--force'];
+      const invocation = resolveTypeScriptCliInvocation({ args, workspaceDir: repoDir, env,
+        invocationKind: 'build', admissionClass });
+      if (env.HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS === '1') process.stderr.write(`[typecheck-declarations] starting ${JSON.stringify({ at: new Date().toISOString(), declarations: pending.length })}\n`);
+      const result = await runCommand(invocation.command, [...invocation.argsPrefix, ...args], { cwd: repoDir, env, signal, stdio: 'inherit' });
+      if (result.error) throw result.error;
+      if (result.signal || result.status !== 0) throw Object.assign(new Error('Dependency declaration emission failed'), { exitCode: result.status, signal: result.signal });
+      for (const { pkg, key, project, config } of pending) {
+        const outputs = await pruneObsoleteDeclarations(pkg, project, config);
+        const outputKey = await declarationOutputKey(pkg);
+        await publication.assertCurrent();
+        await writeJsonAtomic(resolve(pkg.cache, 'inputs.json'), { key, outputs, outputKey });
+      }
+    }
+    return stale;
+  };
+  let stale;
+  try {
+    stale = underLock
+      ? await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, (_env, publication) => prepare(publication))
+      : await prepare();
+  } catch (error) {
+    if (error instanceof BuildInputDriftError) await discardSpannedDeclarations(pending);
+    throw error;
   }
   if (stale.length && !underLock) {
     if (withinTypecheckAdmission) {
-      return await withWorkspaceBuildResources({ locks, dependencyInstallDir: repoDir, env, signal,
+      return await withWorkspaceBuildResources({ locks, env, signal,
         typecheckDeclarationPhase: true }, async acquiredEnv => await prepareWorkspaceTypecheckDeclarations(componentDir, {
           env: acquiredEnv, underLock: true, admissionClass, signal,
         }));
     }
-    const workerArgs = [fileURLToPath(import.meta.url), '--workspace-declarations', componentDir];
-    const measure = process.platform === 'linux' && env.HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS === '1';
-    const result = await runPreparation({ command: measure ? '/usr/bin/time' : process.execPath,
-      args: measure ? ['-v', process.execPath, ...workerArgs] : workerArgs,
-      locks,
-      admissionClass, admissionRequired: requiresTypeScriptAdmission({ env }),
-      dependencyInstallDir: repoDir, repoDir, cwd: repoDir, env, stdio: 'inherit',
-    });
-    if (result.error) throw result.error;
-    if (result.signal || result.status !== 0) throw Object.assign(new Error('Dependency declaration preparation failed'), { exitCode: result.status, signal: result.signal });
+    const resultDir = await mkdtemp(resolve(tmpdir(), 'happier-declaration-result-'));
+    const resultPath = resolve(resultDir, 'result.json');
+    try {
+      const workerArgs = [fileURLToPath(import.meta.url), '--workspace-declarations', componentDir, resultPath];
+      const measure = process.platform === 'linux' && env.HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS === '1';
+      const result = await runPreparation({ command: measure ? '/usr/bin/time' : process.execPath,
+        args: measure ? ['-v', process.execPath, ...workerArgs] : workerArgs,
+        locks, admissionClass, admissionRequired: requiresTypeScriptAdmission({ env }),
+        repoDir, cwd: repoDir, env, signal, stdio: 'inherit',
+      });
+      if (result.error) throw result.error;
+      if (result.signal || result.status !== 0) {
+        if (!result.signal) {
+          const record = await readFile(resultPath, 'utf8').then(JSON.parse).catch(error => {
+            if (error.code === 'ENOENT') return null;
+            throw error;
+          });
+          const failure = readTerminalBuildFailure(record);
+          if (failure) throw failure;
+        }
+        throw Object.assign(new Error('Dependency declaration preparation failed'), { exitCode: result.status, signal: result.signal });
+      }
+    } finally { await rm(resultDir, { recursive: true, force: true }); }
   }
   return { ok: true, built: [], declarations: stale, elapsedMs: Math.round(performance.now() - started) };
 }
@@ -301,127 +321,12 @@ if (process.argv[2] === '--workspace-declarations' && process.argv[1]
     const result = await prepareWorkspaceTypecheckDeclarations(resolve(process.argv[3]), { underLock: true });
     process.stderr.write(`[typecheck-declarations] ${JSON.stringify({ emitted: result.declarations, elapsedMs: result.elapsedMs })}\n`);
   } catch (error) {
+    const failure = serializeTerminalBuildFailure(error, { includeRetryableDrift: true });
+    if (failure && process.argv[4]) await writeJsonAtomic(process.argv[4], failure);
     process.stderr.write(`${error.stack ?? error}\n`);
     exitWithCommandResult({ error: error.exitCode === undefined ? error : undefined, status: error.exitCode, signal: error.signal });
   }
 }
 
-function absoluteTypecheckPaths(project, configPath) {
-  const base = project.parsed.options.baseUrl ?? project.parsed.options.pathsBasePath ?? dirname(configPath);
-  return Object.fromEntries(Object.entries(project.parsed.options.paths ?? {})
-    .map(([name, targets]) => [name, targets.map(target => resolve(base, target))]));
-}
-
-/** Native TS7 resolves redirected declarations at their producer source/options.
- * Prepare those strict references without rewriting declaration imports/globals.
- */
-export async function prepareReferencedTypecheckDeclarations(projects, cwd, inventory) {
-  const consumers = projects.filter(project => {
-    const authored = project.authoredProject ?? project.project;
-    return authored && basename(authored).startsWith('tsconfig.test') && basename(dirname(resolve(cwd, authored))) === 'cli';
-  });
-  if (!consumers.length) return [];
-  const publicWorkspacePaths = Object.assign({}, ...consumers.map(consumer => {
-    const configPath = resolve(cwd, consumer.project);
-    return Object.fromEntries(Object.entries(absoluteTypecheckPaths(readTypecheckProject(configPath), configPath))
-      .filter(([name]) => name.startsWith('@happier-dev/')));
-  }));
-  const producers = [];
-  const redirects = new Map();
-  const ambientInputs = new Map();
-  const ambientModules = new Map();
-  const modulesFor = file => {
-    if (!ambientModules.has(file)) ambientModules.set(file, readTypecheckAmbientModules(file));
-    return ambientModules.get(file);
-  };
-  const preparedOwners = new Set();
-  for (const referencePath of readReferencedUiTypecheckProjects(consumers, cwd)) {
-    const uiDir = dirname(referencePath);
-    const uiProjects = ['foundation', 'core', 'source'].map(name => {
-      const project = resolve(uiDir, `tsconfig.${name}.json`);
-      const args = ['--singleThreaded', '--project', project];
-      return { project, authoredProject: project, args, authoredArgs: args };
-    });
-    const { prepareUiTypecheckProjects } = await import('../../apps/ui/scripts/deriveTypecheckProjects.mjs');
-    await prepareUiTypecheckProjects(uiProjects, cwd);
-    producers.push(...uiProjects);
-    redirects.set(referencePath, uiProjects.at(-1).project);
-    preparedOwners.add(resolve(uiDir, 'tsconfig.json'));
-  }
-  for (const foreign of inventory?.foreignProjects ?? []) {
-    if (preparedOwners.has(foreign.configPath)) continue;
-    const ownerDir = dirname(foreign.configPath);
-    const { cacheSuffix } = resolveTypeScriptCliInvocation({
-      args: ['-p', foreign.configPath, '--noEmit', 'false', '--emitDeclarationOnly'], workspaceDir: cwd,
-    });
-    const cache = resolve(ownerDir, `node_modules/.cache/tsc${cacheSuffix}`);
-    const project = resolve(cache, 'tsconfig.consumer-declarations.json');
-    const source = readTypecheckProject(foreign.configPath);
-    // Retain producer strictness and explicit aliases. Host workspace defaults
-    // also apply here: author examples may have old installed SDK/UI copies.
-    // Absolute paths preserve each alias's authored base in the cache config.
-    await mkdir(cache, { recursive: true });
-    await writeJsonAtomic(project, {
-      extends: foreign.configPath,
-      compilerOptions: { composite: true, declaration: true, emitDeclarationOnly: true, noEmit: false,
-        rootDir: resolve(ownerDir, '../..'), outDir: resolve(cache, 'consumer.declarations'),
-        tsBuildInfoFile: resolve(cache, 'consumer.typecheck.tsbuildinfo'), disableSourceOfProjectReferenceRedirect: true,
-        ...(Object.keys(publicWorkspacePaths).length ? {
-          paths: { ...publicWorkspacePaths, ...absoluteTypecheckPaths(source, foreign.configPath) },
-        } : {}) },
-      files: foreign.files,
-      include: [], exclude: [],
-    });
-    const args = ['--singleThreaded', '--project', project];
-    producers.push({ project, authoredProject: project, args, authoredArgs: args });
-    redirects.set(foreign.configPath, project);
-    ambientInputs.set(foreign.configPath, foreign.ambientInputs ?? []);
-    preparedOwners.add(foreign.configPath);
-  }
-  for (const consumer of consumers) {
-    const configPath = resolve(cwd, consumer.project);
-    const { config, parsed } = readTypecheckProject(configPath);
-    const authored = resolve(cwd, consumer.authoredProject ?? consumer.project);
-    const references = (config.references ?? []).map(reference => {
-      const path = resolve(dirname(configPath), reference.path);
-      return { ...reference, path: redirects.get(path) ?? path };
-    });
-    const roots = new Set(parsed.fileNames);
-    const requiredOwners = new Set([...(inventory?.testContexts ?? [])].filter(([file]) => roots.has(file))
-      .flatMap(([, context]) => context.owners.map(owner => owner.configPath)));
-    for (const owner of requiredOwners) {
-      const path = redirects.get(owner);
-      if (path && !references.some(reference => reference.path === path)) references.push({ path });
-    }
-    const primaryInputs = inventory?.consumerPrimaryAmbientInputs?.get(authored) ?? [];
-    const primaryNamespaces = new Set(primaryInputs
-      .flatMap(file => modulesFor(file).namespaces));
-    const primaryModules = new Set(primaryInputs.flatMap(file => modulesFor(file).moduleDefinitions));
-    const consumerAmbientInputs = [...requiredOwners].flatMap(owner => {
-      return (ambientInputs.get(owner) ?? []).filter(file => {
-        // Reached ambient modules/type namespaces form declaration contracts,
-        // including external augmentations, but
-        // never replace consumer-owned primary bindings or runtime globals.
-        const contribution = modulesFor(file);
-        return !contribution.hasOtherGlobals
-          && !contribution.namespaces.some(name => primaryNamespaces.has(name))
-          && !contribution.moduleDefinitions.some(name => primaryModules.has(name))
-          && contribution.modules.length + contribution.namespaces.length > 0;
-      });
-    });
-    const files = [...new Set([...parsed.fileNames, ...consumerAmbientInputs])];
-    const target = configPath === authored ? resolve(dirname(authored), 'node_modules/.cache/tsc', basename(authored)) : configPath;
-    if (!redirects.size) continue;
-    await mkdir(dirname(target), { recursive: true });
-    await writeJsonAtomic(target, configPath === authored
-      ? { extends: authored, files, include: [], exclude: [], references }
-      : { ...config, files, references });
-    if (target !== configPath) {
-      consumer.args = consumer.args.map((arg, index) => ['--project', '-p'].includes(consumer.args[index - 1])
-        ? target : arg.startsWith('--project=') ? `--project=${target}` : arg);
-      consumer.project = target;
-    }
-  }
-  return producers;
-}
+export { prepareReferencedTypecheckDeclarations, orderTypecheckProjects } from './prepareTypecheckSourceReferences.mjs';
 

@@ -24,7 +24,7 @@ function context(source) {
 
 function evaluate(expression, state) {
   if (typeof expression !== 'string') return expression;
-  const body = expression.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
+  const body = expression.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replaceAll('needs.*.result', 'Object.values(needs).map(job => job.result)');
   return Function('inputs', 'needs', 'always', 'contains', 'format', `return (${body});`)(
     state.inputs, state.needs, () => true, (value, part) => value.includes(part),
     (pattern, ...args) => pattern.replace(/\{(\d+)\}/g, (_, index) => args[Number(index)]),

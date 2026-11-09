@@ -1,0 +1,95 @@
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import ts from 'typescript';
+import { coerceHappyMonorepoRootFromPath } from '../../apps/stack/scripts/utils/paths/paths.mjs';
+import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
+import { packageNameOfSpecifier, readWorkspacePackages, SOURCE_CONDITION, workspaceSourceCompilerPaths } from '../../packages/cli-common/sourceRuntimeEntries.mjs';
+import { typecheckCompilerOptions } from './resolveTypeScriptCliInvocation.mjs';
+
+export async function readWorkspaceTypecheckSources(directory) {
+  const repoRoot = coerceHappyMonorepoRootFromPath(directory);
+  const packages = repoRoot ? await readWorkspacePackages(repoRoot) : new Map();
+  return { repoRoot, packageNames: new Set(packages.keys()), paths: workspaceSourceCompilerPaths(packages) };
+}
+
+function workspaceDeclarationPaths(options, configPath, sources) {
+  const base = options.baseUrl ?? options.pathsBasePath ?? dirname(configPath);
+  return Object.fromEntries(Object.entries(options.paths ?? {})
+    .filter(([name, targets]) => sources.packageNames.has(packageNameOfSpecifier(name))
+      && targets.length > 0 && targets.every(target => /\.d\.[cm]?ts$/u.test(target)))
+    .map(([name, targets]) => [name, targets.map(target => resolve(base, target))]));
+}
+
+function matchesPath(name, pattern) {
+  const wildcard = pattern.indexOf('*');
+  return wildcard < 0 ? name === pattern
+    : name.startsWith(pattern.slice(0, wildcard)) && name.endsWith(pattern.slice(wildcard + 1));
+}
+
+export function sourceTypecheckCompilerOptions(options, configPath, sources) {
+  if (!sources.repoRoot) return {};
+  const base = options.baseUrl ?? options.pathsBasePath ?? dirname(configPath);
+  const declarations = workspaceDeclarationPaths(options, configPath, sources);
+  const configRelative = relative(sources.repoRoot, configPath);
+  const repositoryProject = !isAbsolute(configRelative) && configRelative !== '..'
+    && !configRelative.startsWith('../') && !configRelative.startsWith('..\\');
+  return {
+    customConditions: [...new Set([...(options.customConditions ?? []), SOURCE_CONDITION])],
+    paths: {
+      ...Object.fromEntries(Object.entries(options.paths ?? {})
+        .filter(([name]) => !sources.packageNames.has(packageNameOfSpecifier(name)))
+        .map(([name, targets]) => [name, targets.map(target => resolve(base, target))])),
+      ...Object.fromEntries(Object.entries(sources.paths)
+        .filter(([name]) => !Object.keys(declarations).some(pattern => matchesPath(name, pattern)))),
+      ...declarations,
+    },
+    // A generated incremental config otherwise infers its cache directory as
+    // the root. Repository source checks include implementations across packages;
+    // external scratch consumers without a root retain compiler inference.
+    // Package builds keep their authored output boundary.
+    ...(options.noEmit && (options.rootDir || repositoryProject) ? { rootDir: sources.repoRoot } : {}),
+  };
+}
+
+/** Source consumers read authored workspace exports. Explicit declaration
+ * boundaries prepare current output through the existing publication owner.
+ * Authored project identity remains available for diagnostics. */
+export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
+  const sources = await readWorkspaceTypecheckSources(cwd);
+  if (!sources.repoRoot) return;
+  const preparedDeclarations = new Set();
+  for (const project of projects) {
+    const options = typecheckCompilerOptions(project.args, cwd);
+    if (!options?.configFilePath) continue;
+    const original = options.configFilePath;
+    if (Object.keys(workspaceDeclarationPaths(options, original, sources)).length) {
+      const componentDir = dirname(resolve(cwd, project.authoredProject ?? original));
+      if (!preparedDeclarations.has(componentDir)) {
+        // Explicit declaration consumers use the existing publication/currentness
+        // owner; a source check must never silently read stale package output.
+        const { prepareWorkspaceTypecheckDeclarations } = await import('./prepareReferencedTypecheckDeclarations.mjs');
+        await prepareWorkspaceTypecheckDeclarations(componentDir);
+        preparedDeclarations.add(componentDir);
+      }
+    }
+    const authored = ts.readConfigFile(original, ts.sys.readFile);
+    if (authored.error) throw new Error(ts.flattenDiagnosticMessageText(authored.error.messageText, '\n'));
+    const cache = /^tsc(?:\.tsrs)?$/u.test(basename(dirname(original)))
+      ? dirname(original) : resolve(dirname(original), 'node_modules/.cache/tsc');
+    const target = resolve(cache, `source-${basename(original)}`);
+    await writeJsonAtomic(target, {
+      extends: original,
+      compilerOptions: sourceTypecheckCompilerOptions(options, original, sources),
+      // Project references are not inherited through extends.
+      references: (authored.config.references ?? []).map(reference => ({ ...reference,
+        path: resolve(dirname(original), reference.path) })),
+    });
+    let replaced = false;
+    project.args = project.args.map((arg, index) => {
+      if (['--project', '-p'].includes(project.args[index - 1])) { replaced = true; return target; }
+      if (arg.startsWith('--project=')) { replaced = true; return `--project=${target}`; }
+      return arg;
+    });
+    if (!replaced) project.args.push('--project', target);
+    project.project = target;
+  }
+}

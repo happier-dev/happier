@@ -1,20 +1,20 @@
-import { holdNativeAdmissionFixtureMemory, installNativeAdmissionControllerFixture, installWorkspaceAdmissionProcessFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
-import { resolveHeavyweightMemoryFloorKiB } from '../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs';
-import * as diagnosticMessages from './commitTypeCoherenceDiagnostics.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 import { delimiter, join } from 'node:path';
-import { existsSync } from 'node:fs';
-import * as coherence from './checkCommitTypeCoherence.mjs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { checkCommitTypeCoherence } from './checkCommitTypeCoherence.mjs';
+import * as coherence from './checkCommitTypeCoherence.mjs';
+import * as diagnosticMessages from './commitTypeCoherenceDiagnostics.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
 import { installUiTypecheckFixtureDependencies } from '../testing/lib/typecheckProjectFixture.mjs';
+import { resolveHeavyweightMemoryFloorKiB } from '../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs';
+import { holdNativeAdmissionFixtureMemory, installNativeAdmissionControllerFixture, installWorkspaceAdmissionProcessFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
 
 // A shared dirty checkout: the worktree holds both halves of a change, a commit takes only one.
 async function checkout(t) {
@@ -394,42 +394,6 @@ test('the public checker CLI checks and finalizes a private packet with its mess
   assert.equal(git('rev-parse', 'HEAD^'), checked.base);
 });
 
-test('inserted lines move inherited diagnostics without hiding a new changed-line error', async (t) => {
-  const { repo, write, commitOnly } = await checkout(t);
-  const inherited = "export const inherited: string = 1;\n";
-  await write('consumer.ts', inherited);
-  const base = commitOnly('consumer.ts');
-  await write('consumer.ts', '// inserted\n// inserted again\n' + inherited + "export const fresh: boolean = 1;\n");
-  const tree = commitOnly('consumer.ts');
-  assert.deepEqual(checkCommitTypeCoherence({ repo, base, tree }).fresh.map(({ file, line, code }) => [file, line, code]),
-    [['consumer.ts', 4, 2322]]);
-});
-
-test('changed-line matching consumes inherited messages once and preserves new messages at the same position', async (t) => {
-  const { repo, write, commitOnly } = await checkout(t);
-  await write('consumer.ts', 'export const inherited: string = 1;\n');
-  const base = commitOnly('consumer.ts');
-  await write('consumer.ts', 'export const inherited: boolean = 1;\n');
-  const changed = commitOnly('consumer.ts');
-  assert.deepEqual(checkCommitTypeCoherence({ repo, base, tree: changed }).fresh.map(({ code }) => code), [2322]);
-  // One replaced hunk retains an identical diagnostic; its duplicate is still new.
-  await write('consumer.ts', 'export const renamed: string = 1; export const duplicate: string = 1;\n');
-  const duplicated = commitOnly('consumer.ts');
-  assert.equal(checkCommitTypeCoherence({ repo, base, tree: duplicated }).fresh.length, 1);
-});
-
-test('the checker CLI identifies and refuses source files without a compiler owner', async (t) => {
-  const { repo, write, commitOnly } = await checkout(t);
-  await rm(join(repo, 'tsconfig.json'));
-  const base = commitOnly('tsconfig.json');
-  await write('consumer.ts', 'export const changed = 1;\n');
-  const tree = commitOnly('consumer.ts');
-  const result = spawnSync(process.execPath, [fileURLToPath(new URL('./checkCommitTypeCoherence.mjs', import.meta.url)),
-    `--base=${base}`, `--tree=${tree}`], { cwd: repo, encoding: 'utf8' });
-  assert.match(result.stdout, /unowned[^\n]*consumer\.ts/u);
-  assert.equal(result.status, 1, result.stderr);
-});
-
 test('a consumer committed without its uncommitted producer is incoherent at the commit', async (t) => {
   const { repo, write, commitOnly } = await checkout(t);
   await write(
@@ -536,6 +500,42 @@ test('diagnostics already present at the base are not attributed to the slice', 
     }).fresh.map((row) => row.code),
     [2322],
   );
+});
+
+test('inserted lines move inherited diagnostics without hiding a new changed-line error', async (t) => {
+  const { repo, write, commitOnly } = await checkout(t);
+  const inherited = "export const inherited: string = 1;\n";
+  await write('consumer.ts', inherited);
+  const base = commitOnly('consumer.ts');
+  await write('consumer.ts', '// inserted\n// inserted again\n' + inherited + "export const fresh: boolean = 1;\n");
+  const tree = commitOnly('consumer.ts');
+  assert.deepEqual(checkCommitTypeCoherence({ repo, base, tree }).fresh.map(({ file, line, code }) => [file, line, code]),
+    [['consumer.ts', 4, 2322]]);
+});
+
+test('changed-line matching consumes inherited messages once and preserves new messages at the same position', async (t) => {
+  const { repo, write, commitOnly } = await checkout(t);
+  await write('consumer.ts', 'export const inherited: string = 1;\n');
+  const base = commitOnly('consumer.ts');
+  await write('consumer.ts', 'export const inherited: boolean = 1;\n');
+  const changed = commitOnly('consumer.ts');
+  assert.deepEqual(checkCommitTypeCoherence({ repo, base, tree: changed }).fresh.map(({ code }) => code), [2322]);
+  // One replaced hunk retains an identical diagnostic; its duplicate is still new.
+  await write('consumer.ts', 'export const renamed: string = 1; export const duplicate: string = 1;\n');
+  const duplicated = commitOnly('consumer.ts');
+  assert.equal(checkCommitTypeCoherence({ repo, base, tree: duplicated }).fresh.length, 1);
+});
+
+test('the checker CLI identifies and refuses source files without a compiler owner', async (t) => {
+  const { repo, write, commitOnly } = await checkout(t);
+  await rm(join(repo, 'tsconfig.json'));
+  const base = commitOnly('tsconfig.json');
+  await write('consumer.ts', 'export const changed = 1;\n');
+  const tree = commitOnly('consumer.ts');
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('./checkCommitTypeCoherence.mjs', import.meta.url)),
+    `--base=${base}`, `--tree=${tree}`], { cwd: repo, encoding: 'utf8' });
+  assert.match(result.stdout, /unowned[^\n]*consumer\.ts/u);
+  assert.equal(result.status, 1, result.stderr);
 });
 
 test('an exact same-directory rename retains its diagnostic baseline without hiding new importer failures', async (t) => {
@@ -815,6 +815,83 @@ registerHooks({ resolve(specifier, context, next) {
   const observed = (await readFile(trace, 'utf8')).trim().split('\n');
   assert.ok(observed.includes('compiler'), 'positive control observes compiler loading');
   assert.ok(observed.includes('admission'), 'positive control observes a real admission request');
+});
+
+test('the source-local CLI refuses compiler capacity before checking a private Git tree', { skip: process.platform !== 'linux' }, async (t) => {
+  const { repo, write } = await checkout(t);
+  await write('producer.ts', 'export const original = 1;\nexport const added = 2;\n');
+  await write('consumer.ts', "import { added } from './producer';\nexport const value: number = added;\n");
+  const git = (...args) => execFileSync('git', args, {
+    cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_INDEX_FILE: join(repo, 'slice.index') },
+  }).trim();
+  const base = git('rev-parse', 'HEAD');
+  git('read-tree', base);
+  git('add', '--', 'consumer.ts');
+  const tree = git('write-tree');
+  const native = await installWorkspaceAdmissionProcessFixture(t, repo);
+  const floor = resolveHeavyweightMemoryFloorKiB('compilation', { machine: 'local' });
+  const sourceEntry = new URL('./checkCommitTypeCoherence.mjs', import.meta.url);
+  const entry = join(repo, 'native-owner/scripts/workspaces/checkCommitTypeCoherence.mjs');
+  await mkdir(join(repo, 'native-owner/scripts/workspaces'), { recursive: true });
+  // Preserve the isolated worker's repository-relative command identity while
+  // loading the actual CLI, as the canonical native fixture's forwarders do.
+  await writeFile(entry, `process.argv[1] = ${JSON.stringify(fileURLToPath(sourceEntry))}; await import(${JSON.stringify(sourceEntry.href)});\n`);
+  const trace = join(repo, 'api-processes.jsonl');
+  const preload = join(repo, 'observe-api-process.mjs');
+  // Observe the real OS child launch, admission slot and inherited cgroup;
+  // the compiler, Git trees and admission lifecycle remain real.
+  await writeFile(preload, `
+import { createRequire, syncBuiltinESMExports } from 'node:module';
+import { appendFileSync, readFileSync, readdirSync } from 'node:fs';
+import { readSlotAddress } from ${JSON.stringify(new URL('../../apps/stack/scripts/utils/proc/admission_socket.mjs', import.meta.url).href)};
+const cp = createRequire(import.meta.url)('node:child_process');
+const spawn = cp.spawn;
+cp.spawn = (command, args, options) => {
+  const child = spawn(command, args, options);
+  if (args?.[0] === '--api') {
+    const root = process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT;
+    const slot = root && readdirSync(root).map(name => readSlotAddress(root, name))
+      .find(value => value?.pid === Number(process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT));
+    appendFileSync(${JSON.stringify(trace)}, JSON.stringify({ pid: child.pid, floorKiB: slot?.floorKiB,
+      cgroup: readFileSync('/proc/' + child.pid + '/cgroup', 'utf8'),
+      parentCgroup: readFileSync('/proc/self/cgroup', 'utf8') }) + '\\n');
+  }
+  return child;
+};
+syncBuiltinESMExports();
+`);
+  native.env.NODE_OPTIONS += ` --import=${pathToFileURL(preload).href}`;
+  const run = () => spawnSync(native.launcher, ['--local', '--', process.execPath,
+    entry,
+    `--base=${base}`, `--tree=${tree}`], {
+    cwd: repo, env: { ...native.env, CI: '' }, encoding: 'utf8',
+  });
+
+  // Physical capacity, rather than current pressure, settles as a refusal:
+  // there is no reason to queue a compiler that can never fit this worker.
+  await native.setMemoryObservation({ availableMemoryKiB: floor - 1, totalMemoryKiB: floor - 1 });
+  const refused = run();
+  assert.equal(refused.status, 75, refused.stderr + refused.stdout);
+  assert.match(refused.stderr, /HSTACK_MEMORY_CAPACITY/u);
+  await assert.rejects(readFile(trace, 'utf8'), { code: 'ENOENT' }, 'refusal happens before the native API child starts');
+  assert.doesNotMatch(refused.stdout, /INCOHERENT|coherent/u, 'a refused compiler must not publish a verdict');
+
+  await native.setMemoryObservation({ availableMemoryKiB: floor * 2, totalMemoryKiB: floor * 2 });
+  const checked = run();
+  t.diagnostic(`admitted CLI status=${checked.status}; stderr=${JSON.stringify(checked.stderr)}`);
+  assert.equal(checked.status, 1, checked.stderr + checked.stdout);
+  assert.match(checked.stdout, /INCOHERENT/u, checked.stderr);
+  assert.match(checked.stdout, /consumer\.ts.*TS2305/u, 'the admitted compiler reads the private tree, not the adapted worktree');
+  const processes = (await readFile(trace, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  assert.ok(processes.length > 0, 'the admitted check starts a real native API child');
+  for (const child of processes) {
+    assert.equal(child.floorKiB, floor, 'the native compiler inherits the canonical compilation reservation');
+    assert.equal(child.cgroup, child.parentCgroup, 'the API child stays in its admitted parent cgroup');
+    assert.throws(() => process.kill(child.pid, 0), { code: 'ESRCH' }, 'the API child is gone when the CLI settles');
+  }
+  const status = await native.brokerStatus();
+  assert.equal(status.activeCount, 0, 'the terminal CLI releases its compiler reservation');
+  assert.equal(status.waitingCount, 0);
 });
 
 test('retains the nested cause in native compiler diagnostic messages', () => {

@@ -1,6 +1,6 @@
-/** Exported host seams are available to first-party hosts, not external authors. */
+/** Reserved namespaces never belong to the external author API. */
 export const AUTHOR_EXCLUDED_ENTRYPOINT_ROOTS = Object.freeze({
-  '@happier-dev/plugin-sdk': Object.freeze(['./host']),
+  '@happier-dev/plugin-sdk': Object.freeze(['./host', './first-party']),
   '@happier-dev/plugin-ui': Object.freeze(['./presentation']),
 });
 

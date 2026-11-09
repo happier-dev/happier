@@ -39,7 +39,7 @@ const RESUMABLE_VERIFIED_COMPLETION_SURFACES = new Map([
   ['runner_rolling_release', 'runnerRolling'],
   ['ui_web_rolling_release', 'uiWebRolling'],
 ]);
-const TRUSTED_RELEASE_CONTROL_BRANCHES = new Set(['dev', 'preview', 'main']);
+const TRUSTED_RELEASE_CONTROL_BRANCHES = new Set(['v0.3', 'dev', 'preview', 'main']);
 const RESUMABLE_WORKFLOW_EVENTS = new Map([
   ['.github/workflows/nightly-dev.yml', new Set(['schedule', 'workflow_dispatch'])],
   ['.github/workflows/release.yml', new Set(['workflow_dispatch'])],

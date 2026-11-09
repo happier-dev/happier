@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -91,4 +92,11 @@ test('public release contract does not expose packaged SDK feature QA', () => {
     buildPublicReleaseContractV1().validationSuites.some((suite) => suite.id === 'sdk-dual-origin'),
     false,
   );
+});
+
+test('public release-contract CLI advertises packet materialization and SDK approval through protocol v1', () => {
+  const contract = JSON.parse(execFileSync(process.execPath, ['scripts/pipeline/run.mjs', 'release-contract'], { encoding: 'utf8' }));
+  assert.equal(contract.conductorProtocol.version, 1);
+  assert.ok(contract.conductorProtocol.capabilities.includes('approved-release-packet-v1'));
+  assert.ok(contract.conductorProtocol.capabilities.includes('public-sdk-release-approval'));
 });

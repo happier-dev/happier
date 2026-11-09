@@ -558,3 +558,15 @@ test('release resume binds the conductor operation and authorized source when su
     expected: releaseExpected,
   }), /operation/);
 });
+
+
+test('resume accepts the named v0.3 control branch without changing source identity', () => {
+  assert.deepEqual(inspectReleaseResumeOrigin({
+    originRun: originRun({ path: '.github/workflows/release.yml', head_branch: 'v0.3' }),
+    artifacts: [statusArtifact()],
+    expected: { ...expected, workflowPath: '.github/workflows/release.yml' },
+  }), {
+    artifactDigest: DIGEST, artifactId: 1234, workflowSha: SOURCE_SHA,
+    statusArtifactName: 'happier-release-status',
+  });
+});

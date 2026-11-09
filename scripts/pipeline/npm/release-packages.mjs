@@ -741,6 +741,14 @@ async function main() {
         }
 
         pkg.prepare();
+        if (!dryRun && (pkg.key === 'cli' || pkg.key === 'stack')) {
+          await import('../../../packages/cli-common/registerSourceRuntime.mjs');
+          const { readValidatedWindowsServiceLauncher } = await import('@happier-dev/cli-common/service');
+          await readValidatedWindowsServiceLauncher(withinRepo(repoRoot, path.join(
+            pkg.dir, 'node_modules', '@happier-dev', 'cli-common',
+            'native', 'windows', 'bin', 'windows-x64', 'happier-service-launcher.exe',
+          )));
+        }
 
         const outName = `${pkg.key}-${nextVersion}.tgz`;
         const tarballPath = packTo(repoRoot, pkg.dir, pkg.outDir, outName, opts);

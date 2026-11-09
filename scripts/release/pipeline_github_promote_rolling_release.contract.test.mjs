@@ -436,6 +436,7 @@ test('rolling promotion removes an abandoned staging draft from an older target 
       },
       encoding: 'utf8',
     });
+    assert.match(readFileSync(testFixture.log, 'utf8'), /make_latest=false/, 'rolling publication cannot claim Latest before channel promotion');
     assert.equal(existsSync(testFixture.staleOtherDraftState), false);
     assert.equal(existsSync(testFixture.staleOtherRefState), false);
     const log = readFileSync(testFixture.log, 'utf8');

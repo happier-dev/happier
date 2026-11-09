@@ -8,6 +8,7 @@ export const LINUX_HOST_GRAPHICS_LIBRARY_PATTERNS = [
   'libwayland-cursor.so',
   'libwayland-egl.so',
   'libwayland-server.so',
+  'libgtk-layer-shell.so',
 ];
 
 /** @param {string} filePath */

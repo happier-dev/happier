@@ -62,7 +62,7 @@ test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmi
   assert.equal(dispatch.jobs.tests.with.runner_pool, '${{ inputs.runner_pool }}');
 
   const guard = tests.jobs.trusted_ref_guard;
-  assert.equal(guard['runs-on'], 'ubuntu-latest');
+  assert.equal(guard['runs-on'], 'ubuntu-24.04');
   assert.deepEqual(guard.outputs, {
     ubuntu_2204: '${{ steps.runner_pool.outputs.ubuntu_2204 }}',
     ubuntu_2404: '${{ steps.runner_pool.outputs.ubuntu_2404 }}',
@@ -121,8 +121,8 @@ test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmi
   assert.ok(needs(cliProxyJob).includes('trusted_ref_guard'), 'the CLIProxyAPI matrix must wait for runner admission');
 
   assert.equal(tests.jobs.ui['runs-on'], 'ubuntu-22.04', 'the tiny UI result aggregator should not consume accelerated minutes');
-  assert.equal(tests.jobs['release-contracts']['runs-on'], 'ubuntu-latest', 'release control contracts should remain on GitHub');
-  assert.equal(tests.jobs['artifact-verify']['runs-on'], 'ubuntu-latest', 'release artifact verification should remain on GitHub');
+  assert.equal(tests.jobs['release-contracts']['runs-on'], 'ubuntu-24.04', 'release control contracts should remain on GitHub');
+  assert.equal(tests.jobs['artifact-verify']['runs-on'], 'ubuntu-24.04', 'release artifact verification should remain on GitHub');
   assert.equal(tests.jobs['mobile-e2e-android']['runs-on'], 'ubuntu-22.04', 'Android acceleration remains unproven');
   assert.deepEqual(tests.jobs.cli.permissions, { contents: 'read' });
   assert.deepEqual(tests.jobs.stack.permissions, { contents: 'read' });
@@ -136,12 +136,12 @@ test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmi
     'self-host-systemd-e2e',
     'stress',
   ]) {
-    assert.equal(tests.jobs[jobName]['runs-on'], 'ubuntu-latest', `${jobName} should remain on GitHub initially`);
+    assert.equal(tests.jobs[jobName]['runs-on'], 'ubuntu-24.04', `${jobName} should remain on GitHub initially`);
   }
-  assert.equal(tests.jobs.release_actor_guard['runs-on'], 'ubuntu-latest');
-  assert.equal(tests.jobs.providers['runs-on'], 'ubuntu-latest');
-  assert.equal(tests.jobs['installers-smoke-macos']['runs-on'], 'macos-latest');
-  assert.equal(tests.jobs['installers-smoke-windows']['runs-on'], 'windows-latest');
+  assert.equal(tests.jobs.release_actor_guard['runs-on'], 'ubuntu-24.04');
+  assert.equal(tests.jobs.providers['runs-on'], 'ubuntu-24.04');
+  assert.equal(tests.jobs['installers-smoke-macos']['runs-on'], 'macos-26');
+  assert.equal(tests.jobs['installers-smoke-windows']['runs-on'], 'windows-2022');
   assert.equal(tests.jobs['ui-e2e-wsrepl-lima'], undefined, 'retired WSREPL must not retain a CI owner');
   assert.ok(tests.jobs['workspace-sync-real'], 'the real workspace-sync runner must own the replaced CI job');
   // Its job/invocation/binary/selection/summary wiring is owned by

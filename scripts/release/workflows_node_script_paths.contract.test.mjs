@@ -5,6 +5,7 @@ import path from 'node:path';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
+import { resolveWorkflowScriptPath } from './workflow-script-flags.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
@@ -15,27 +16,6 @@ const workflowsDir = path.join(repoRoot, '.github', 'workflows');
  */
 function normalizePath(p) {
   return p.replaceAll('\\\\', '/');
-}
-
-/**
- * Resolve a runtime script path through the workflow's checkout mount points.
- * A nested checkout is another copy of the repository, while `..` from that
- * checkout can intentionally return to trusted control at the workspace root.
- *
- * @param {string} scriptRel
- * @param {string} workingDirectory
- * @param {string[]} checkoutRoots
- */
-function resolveRepositoryScript(scriptRel, workingDirectory, checkoutRoots) {
-  const runtimeRel = path.posix.normalize(path.posix.join(normalizePath(workingDirectory), normalizePath(scriptRel)));
-  if (runtimeRel === '..' || runtimeRel.startsWith('../')) return null;
-
-  const checkoutRoot = checkoutRoots.find(
-    (root) => root === '' || runtimeRel === root || runtimeRel.startsWith(`${root}/`),
-  );
-  if (checkoutRoot === undefined) return null;
-  const repositoryRel = checkoutRoot === '' ? runtimeRel : path.posix.relative(checkoutRoot, runtimeRel);
-  return path.join(repoRoot, repositoryRel);
 }
 
 test('workflows only reference existing node script entrypoints', () => {
@@ -75,8 +55,8 @@ test('workflows only reference existing node script entrypoints', () => {
           const scriptRel = String(match[1] ?? '').trim();
           if (!scriptRel || path.isAbsolute(scriptRel)) continue;
 
-          const abs = resolveRepositoryScript(scriptRel, workingDirectory, checkoutRoots);
-          if (!abs || !fs.existsSync(abs)) {
+          const abs = path.join(repoRoot, resolveWorkflowScriptPath(scriptRel, workingDirectory, checkoutRoots));
+          if (!fs.existsSync(abs)) {
             missing.push({ workflow: normalizePath(workflowName), script: normalizePath(scriptRel) });
           }
         }

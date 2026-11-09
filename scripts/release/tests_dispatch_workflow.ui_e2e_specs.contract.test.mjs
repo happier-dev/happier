@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
+import YAML from 'yaml';
 
 const repoRoot = new URL('../..', import.meta.url).pathname;
 
@@ -17,5 +18,11 @@ test('manual tests dispatch can run an exact bounded UI E2E spec selection', asy
   assert.match(reusable, /node scripts\/ci\/select-ui-e2e-shard\.mjs --shard "\$\{\{ matrix\.shard \}\}\/18"/, 'full runs should balance complete spec files through the canonical shard selector');
   assert.doesNotMatch(reusable, /test:e2e:ui -- --shard=/, 'the workflow should not use index-based Playwright sharding');
   assert.match(reusable, /\[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18\]/, 'an empty selection should preserve the complete eighteen-shard gate');
-  assert.match(reusable, /name:\s*ui-e2e-playwright-artifacts[\s\S]*?compression-level:\s*0/, 'failure artifacts should skip recompressing browser media');
+  const mediaUploads = YAML.parse(reusable).jobs['ui-e2e'].steps.filter((step) =>
+    step.uses?.startsWith('actions/upload-artifact@') && step.with.name.includes('ui-e2e-playwright-artifacts'),
+  );
+  assert.ok(mediaUploads.length > 0, 'UI E2E failures should retain browser media');
+  for (const upload of mediaUploads) {
+    assert.equal(upload.with['compression-level'], 0, 'failure artifacts should skip recompressing browser media');
+  }
 });

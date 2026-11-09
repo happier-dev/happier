@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { resolveNpmCommandInvocation, resolvePnpmCommandInvocation } from '../workspaces/execPnpmCommand.mjs';
-import { withDependencyRefreshLock } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
+import { resolveLockedInstallEnv, withDependencyRefreshLock } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
+
+import { runHostAdmittedTask } from '../../apps/stack/scripts/utils/proc/admission_client.mjs';
 
 const repoDir = resolve(process.argv[2] ?? process.cwd());
 const { packageManager } = JSON.parse(readFileSync(join(repoDir, 'package.json'), 'utf8'));
@@ -14,9 +16,10 @@ if (!pin) throw new Error('Root packageManager must pin an exact pnpm version wi
 const [, version, integrity] = pin;
 const temporaryDir = mkdtempSync(join(tmpdir(), 'happier-setup-pnpm-'));
 
-function run(invocation, stdio = 'inherit', cwd = repoDir) {
+function run(invocation, stdio = 'inherit', cwd = repoDir, env = process.env) {
   return execFileSync(invocation.command, invocation.args, {
     cwd,
+    env,
     stdio,
     encoding: 'utf8',
     ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
@@ -34,25 +37,26 @@ function installedVersionMatches() {
 }
 
 try {
-  // npm ships with Node even where Corepack does not (Node 25+). Verify the
-  // registry archive against the root pin before running its native installer.
-  const packed = JSON.parse(run(resolveNpmCommandInvocation([
-    'pack', `pnpm@${version}`, '--ignore-scripts', '--json', '--pack-destination', temporaryDir,
-  ], { npmExecPath: process.env.npm_execpath }), 'pipe'));
-  const archivePath = join(temporaryDir, packed[0].filename);
-  const actualIntegrity = createHash('sha512').update(readFileSync(archivePath)).digest('hex');
-  if (actualIntegrity !== integrity.toLowerCase()) throw new Error('pnpm archive integrity mismatch');
   if (!installedVersionMatches()) {
-    // The existing dependency owner serializes cold setup with dependency
-    // consumers. Warm launches must not replace pnpm's live node-gyp payload.
-    await withDependencyRefreshLock({ installDir: repoDir }, async () => {
-      if (!installedVersionMatches()) {
-        run(resolveNpmCommandInvocation(['install', '--global', archivePath], { npmExecPath: process.env.npm_execpath }));
-      }
-      if (!installedVersionMatches()) throw new Error(`Expected installed pnpm ${version}`);
-    });
+    // Admission precedes the canonical dependency writer; warm launches need
+    // neither the unused archive nor mutation custody.
+    await runHostAdmittedTask({ className: 'dependency-install', repoDir }, admittedEnv =>
+      withDependencyRefreshLock({ installDir: repoDir, env: admittedEnv }, async context => {
+        if (installedVersionMatches()) return;
+        const installEnv = resolveLockedInstallEnv(admittedEnv, context);
+        // npm ships with Node even where Corepack does not (Node 25+). Verify
+        // the registry archive against the root pin before installing it.
+        const packed = JSON.parse(run(resolveNpmCommandInvocation([
+          'pack', `pnpm@${version}`, '--ignore-scripts', '--json', '--pack-destination', temporaryDir,
+        ], { npmExecPath: process.env.npm_execpath }), 'pipe', repoDir, installEnv));
+        const archivePath = join(temporaryDir, packed[0].filename);
+        const actualIntegrity = createHash('sha512').update(readFileSync(archivePath)).digest('hex');
+        if (actualIntegrity !== integrity.toLowerCase()) throw new Error('pnpm archive integrity mismatch');
+        run(resolveNpmCommandInvocation(['install', '--global', archivePath], { npmExecPath: process.env.npm_execpath }), 'inherit', repoDir, installEnv);
+        if (!installedVersionMatches()) throw new Error(`Expected installed pnpm ${version}`);
+      }));
   }
-  console.log(`pnpm ${version} ready; root archive integrity verified`);
+  console.log(`pnpm ${version} ready`);
 } finally {
   rmSync(temporaryDir, { recursive: true, force: true });
 }

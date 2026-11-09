@@ -10,10 +10,135 @@ import test from 'node:test';
 import ts from 'typescript';
 import { installUiTypecheckFixtureDependencies } from '../testing/lib/typecheckProjectFixture.mjs';
 import { readTypecheckProject } from './deriveTypecheckProjects.mjs';
+import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
 
 const runner = fileURLToPath(new URL('./runTypeScriptCli.mjs', import.meta.url));
+const typecheckCompilers = (project, workspaceDir) => resolveTypeScriptCliInvocation({
+  args: ['--project', project], workspaceDir,
+  env: { ...process.env, HAPPIER_TYPESCRIPT_COMPILER: 'auto' },
+}).cacheSuffix === '.tsrs' ? ['tsrs', 'microsoft'] : ['microsoft'];
 
-test('finite UI consumers retain contextual types across emitted partition imports', async t => {
+test('CLI common declaration sources do not depend on their public SDK consumer', async () => {
+  const root = fileURLToPath(new URL('../../packages/cli-common/', import.meta.url));
+  const { parsed } = readTypecheckProject(join(root, 'tsconfig.json'));
+  const reverseDependencies = [];
+  for (const file of parsed.fileNames.filter(file => !/\.(?:test|spec)\.[cm]?tsx?$/.test(file))) {
+    const source = ts.preProcessFile(await readFile(file, 'utf8'), true, true);
+    for (const dependency of source.importedFiles) {
+      if (dependency.fileName === '@happier-dev/plugin-sdk' || dependency.fileName.startsWith('@happier-dev/plugin-sdk/')) {
+        reverseDependencies.push(`${relative(root, file)} -> ${dependency.fileName}`);
+      }
+    }
+  }
+  assert.deepEqual(reverseDependencies, [], 'SDK facades already depend on CLI common declaration owners; reverse imports close a project-reference cycle');
+});
+
+test('CLI ambient libraries preserve Node cancellation without browser globals', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-cli-cancellation-types-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const require = createRequire(import.meta.url);
+  await writeFile(join(root, 'source.ts'), [
+    'const controller = new AbortController();',
+    'const signal = controller.signal;',
+    'AbortSignal.any([signal]);',
+    'controller.abort(new Error("cancelled"));',
+    'const reason: unknown = signal.reason;',
+    'signal.throwIfAborted();',
+    'const requestSignal: NonNullable<RequestInit["signal"]> = signal;',
+    'const requestReason: unknown = requestSignal.reason;',
+    'requestSignal.throwIfAborted();',
+    'setTimeout(() => {}, 1).unref();',
+    '// @ts-expect-error The Node host does not provide browser windows.',
+    'window;',
+    '// @ts-expect-error The Node host does not provide a DOM document.',
+    'document;',
+    '// @ts-expect-error DOM element types must not enter the Node program.',
+    'const element: HTMLElement = {};',
+    'export {};',
+  ].join('\n'));
+  await writeFile(join(root, 'tsconfig.json'), JSON.stringify({
+    extends: fileURLToPath(new URL('../../apps/cli/tsconfig.json', import.meta.url)),
+    compilerOptions: {
+      rootDir: root, incremental: false, composite: false,
+      typeRoots: [dirname(dirname(require.resolve('@types/node/package.json')))],
+    },
+    files: ['source.ts'], include: [], exclude: [],
+  }));
+  for (const compiler of typecheckCompilers('tsconfig.json', root)) {
+    const result = spawnSync(process.execPath, [runner, '--project', 'tsconfig.json', '--pretty', 'false'], {
+      cwd: root, env: { ...process.env, HAPPIER_TYPESCRIPT_COMPILER: compiler }, encoding: 'utf8',
+    });
+    assert.ifError(result.error);
+    assert.equal(result.signal, null, result.stdout + result.stderr);
+    assert.equal(result.status, 0, `${compiler}: ${result.stdout}${result.stderr}`);
+  }
+});
+
+test('ambient module imports keep native globals at their producer boundary', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-native-ambient-boundary-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const cli = join(root, 'apps/cli');
+  const browser = join(root, 'packages/browser');
+  const portable = join(root, 'packages/portable');
+  const put = async (path, value) => {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, typeof value === 'string' ? value : JSON.stringify(value));
+  };
+  const require = createRequire(import.meta.url);
+  const common = { strict: true, target: 'es2022', module: 'esnext', moduleResolution: 'bundler',
+    lib: ['es2022'], types: ['node'], skipLibCheck: false,
+    typeRoots: [dirname(dirname(require.resolve('@types/node/package.json')))] };
+  await put(join(cli, 'package.json'), { name: 'native-ambient-cli' });
+  await put(join(browser, 'package.json'), { name: 'native-ambient-browser' });
+  await put(join(cli, 'tsconfig.json'), { compilerOptions: { ...common, noEmit: true, jsx: 'react' }, include: ['src/**/*.ts'] });
+  await put(join(browser, 'tsconfig.json'), { compilerOptions: { ...common, noEmit: true, jsx: 'react-jsx', lib: ['es2022', 'dom'] }, include: ['src/**/*.ts'] });
+  await put(join(portable, 'tsconfig.json'), { compilerOptions: { ...common, declaration: true, noEmit: true }, include: ['src/**/*.ts'], exclude: ['src/test-support/**'] });
+  await put(join(portable, 'src/model.ts'), '// @ts-expect-error Native globals do not belong to the portable producer.\nnativeHostGlobal;\nexport function portableName(): string { return "portable"; }');
+  await put(join(portable, 'src/test-support/host.ts'), 'export function hostSupport(): string { return typeof nativeHostGlobal; }');
+  const names = ['foundation', 'services', 'core', 'source', 'test', 'test-ui'];
+  for (const [index, name] of names.entries()) await put(join(cli, `tsconfig.${name}.json`), {
+    extends: './tsconfig.json', compilerOptions: index < 4 ? { composite: true, noEmit: false,
+      declaration: true, emitDeclarationOnly: true, rootDir: root, outDir: `node_modules/.cache/${name}` } : {},
+    files: ['src/entry.ts'], include: [], references: index > 0 ? [{ path: `./tsconfig.${names[index < 4 ? index - 1 : 3]}.json` }] : [],
+  });
+  await put(join(cli, 'src/entry.ts'), 'export const host = "node";');
+  // Explicit CLI roots remain CLI-owned even when vendored sources also have
+  // an independent build config, as in the UI's Tauri guest sources.
+  await put(join(cli, 'src/vendor/tsconfig.json'), { compilerOptions: { ...common, declaration: true, types: [] }, include: ['*.ts'] });
+  await put(join(cli, 'src/vendor/model.ts'), 'export const timer = setTimeout(() => {}, 1).unref();');
+  // External native declarations reproduce the Codegen -> barrel -> globals
+  // edge without substituting the internal derivation or reference owners.
+  await put(join(root, 'node_modules/native-platform/package.json'), { name: 'native-platform', types: './index.d.ts' });
+  await put(join(root, 'node_modules/native-platform/index.d.ts'), '/// <reference path="./Codegen.d.ts" />\n/// <reference path="./portable.d.ts" />\nexport interface Platform { host: "native" } declare global { var nativeHostGlobal: object; }');
+  await put(join(root, 'node_modules/native-platform/Codegen.d.ts'), 'declare module "native-platform/codegen" { import type { Platform } from "native-platform"; export type NativePlatform = Platform; }');
+  await put(join(root, 'node_modules/native-platform/portable.d.ts'), 'declare namespace NativeContract { interface Name { value: string } }');
+  await put(join(browser, 'src/model.ts'), 'import type { Platform } from "native-platform"; import { portableName } from "../../portable/src/model"; import { hostSupport } from "../../portable/src/test-support/host"; const platform: Platform = { host: "native" }; export function platformName(): NativeContract.Name { return { value: platform.host + portableName() + hostSupport() }; }');
+  await put(join(cli, 'src/native.test.ts'), [
+    'import { platformName } from "../../../packages/browser/src/model";',
+    'import { portableName } from "../../../packages/portable/src/model";',
+    'const portable: string = portableName();',
+    'const name: string = platformName().value;',
+    'AbortSignal.any([new AbortController().signal]).throwIfAborted();',
+    '// @ts-expect-error Native platform globals stay in the producer.',
+    'nativeHostGlobal;',
+    '// @ts-expect-error Native browser globals stay in the producer.',
+    'window;',
+    '// @ts-expect-error Native browser globals stay in the producer.',
+    'document;',
+    'export {};',
+  ].join('\n'));
+  for (const compiler of typecheckCompilers('tsconfig.json', cli)) {
+    const result = spawnSync(process.execPath, [runner, '--verifyProjectCoverage', 'tsconfig.json',
+      ...names.flatMap(name => ['--project', `tsconfig.${name}.json`])], {
+      cwd: cli, env: { ...process.env, HAPPIER_TYPESCRIPT_COMPILER: compiler }, encoding: 'utf8',
+    });
+    assert.ifError(result.error);
+    assert.equal(result.signal, null, result.stdout + result.stderr);
+    assert.equal(result.status, 0, `${compiler}: ${result.stdout}${result.stderr}`);
+  }
+});
+
+test('finite UI consumers retain workspace owner membership and contextual types across emitted partitions', async t => {
   const root = await mkdtemp(join(tmpdir(), 'happier-typecheck-partition-imports-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const ui = join(root, 'apps/ui');
@@ -45,9 +170,29 @@ test('finite UI consumers retain contextual types across emitted partition impor
   await put(join(ui, 'sources/entry.ts'), 'import { createAdapter, type Profile, type Link } from "@/model"; export function realActions(request: Parameters<typeof createAdapter>[0]) { return createAdapter(request); } export function readProfile(): Profile { return { name: "home" }; } export function profileName(profile: Pick<Profile, "name" | "canonicalServerUrl">): string { return profile.name; } export function readLink(): Link { return { id: "link", serverId: "server", accountId: "account" }; }');
   const consumer = 'import { realActions, readProfile, profileName, readLink } from "@/entry"; import type { Profile, Link } from "@/model"; const profile: Profile = { name: "home" }; const link: Link = readLink(); export const action = realActions(async request => request.enabled); export const name = profileName(profile); export const otherName = profileName(readProfile()); export const serverId: string = link.serverId; export const accountId: string = link.accountId;';
   await put(join(ui, 'sources/consumer.test.ts'), consumer);
+  // Match UI imports of workspace JSX libraries and CLI-owned private aliases.
+  // These sources are discovered outside the editor roots and need references
+  // prepared from the UI inventory, just like the CLI finite programs.
+  await put(join(root, 'packages/ci/package.json'), { name: '@happier-dev/fixture-ci', exports: {
+    './ui': { 'happier-source': './src/ui.ts', types: './dist/ui.d.ts' },
+  } });
+  await put(join(root, 'packages/ci/tsconfig.json'), { compilerOptions: {
+    strict: true, types: [], target: 'es2022', module: 'esnext', moduleResolution: 'bundler', jsx: 'react',
+  }, include: ['src/**/*.ts'] });
+  await put(join(root, 'packages/ci/src/ui.ts'), 'export { run } from "./run";');
+  await put(join(root, 'packages/ci/src/run.ts'), 'export const run: number = 1;');
+  await put(join(root, 'apps/cli/tsconfig.json'), { compilerOptions: {
+    strict: true, types: [], target: 'es2022', module: 'esnext', moduleResolution: 'bundler',
+    paths: { '@/*': ['./src/*'] },
+  }, include: ['src/**/*.ts'] });
+  await put(join(root, 'apps/cli/package.json'), { name: '@fixture/cli' });
+  await put(join(root, 'apps/server/package.json'), { name: '@fixture/server' });
+  await put(join(root, 'apps/cli/src/fixture.testkit.ts'), 'export { host } from "@/host";');
+  await put(join(root, 'apps/cli/src/host.ts'), 'export const host: string = "cli";');
+  await put(join(ui, 'sources/workspace.ts'), 'export { run } from "@happier-dev/fixture-ci/ui"; export { host } from "../../cli/src/fixture.testkit";');
   const run = () => {
     const result = spawnSync(process.execPath, [runner, '--singleThreaded', ...names.flatMap(name => ['--project', `tsconfig.${name}.json`])], {
-      cwd: ui, env: process.env, encoding: 'utf8',
+      cwd: ui, env: { ...process.env, HAPPIER_TYPESCRIPT_COMPILER: 'microsoft' }, encoding: 'utf8',
     });
     assert.ifError(result.error);
     assert.equal(result.signal, null, result.stdout + result.stderr);
@@ -55,6 +200,13 @@ test('finite UI consumers retain contextual types across emitted partition impor
   };
   const green = run();
   assert.equal(green.status, 0, green.output);
+  for (const [owner, files] of [
+    ['packages/ci', ['ui.ts', 'run.ts']], ['apps/cli', ['fixture.testkit.ts', 'host.ts']],
+  ]) {
+    const config = readTypecheckProject(join(root, '.project/tmp/typecheck-declarations/projects', owner, 'consumer/tsconfig.consumer-declarations.json'));
+    for (const file of files) assert.ok(config.parsed.fileNames.includes(join(root, owner, 'src', file)),
+      'new workspace imports belong to their declaration producer closure');
+  }
   const declaration = await readFile(join(ui, 'node_modules/.cache/tsc/ui.source.declarations/apps/ui/sources/entry.d.ts'), 'utf8');
   t.diagnostic(`Native cross-partition declaration: ${declaration.trim()}`);
   assert.doesNotMatch(declaration, /ui\.core\.declarations/, 'producer-source resolution cannot interpret an output-directory-relative import');

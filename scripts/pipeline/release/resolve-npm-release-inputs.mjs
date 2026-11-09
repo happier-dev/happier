@@ -59,7 +59,7 @@ export function resolveNpmReleaseInputs(input) {
   let sourceRef = String(input.sourceRef ?? '').trim();
   if (sourceRef === 'auto') sourceRef = channel === 'preview' ? 'preview' : 'main';
   const expectedSourceRef = channel === 'preview' ? 'preview' : 'main';
-  if (sourceRef !== expectedSourceRef) {
+  if (sourceRef !== expectedSourceRef && sourceRef !== String(input.authorizedSha ?? '').trim()) {
     const label = channel === 'preview' ? 'Preview' : 'Production';
     throw new Error(`${label} releases must run from ${expectedSourceRef} (got source_ref='${sourceRef}').`);
   }

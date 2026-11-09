@@ -8,6 +8,69 @@ import { withoutV03GateSkip } from './testsWorkflowTestkit.mjs';
 
 const root = new URL('../../', import.meta.url);
 
+test('reusable release validations isolate artifacts while retaining canonical source CI evidence', async () => {
+  const read = async (name) => YAML.parse(await readFile(new URL(`../../.github/workflows/${name}.yml`, import.meta.url), 'utf8'));
+  const workflow = await read('tests');
+  assert.equal(workflow.on.workflow_call.inputs.artifact_namespace?.default, '', 'ordinary source CI retains its public artifact names');
+  assert.match(workflow.concurrency.group, /inputs\.artifact_namespace/, 'sibling validations must not replace pending invocations');
+  const uploads = [];
+  const downloads = [];
+  for (const [id, job] of Object.entries(workflow.jobs)) {
+    // The v0.3 source gate and its artifact consumers never run in explicit reusable calls.
+    if (id === 'gate' || id.startsWith('gate-')) continue;
+    for (const step of job.steps ?? []) {
+      if (!/upload-artifact|download-artifact|download-ci-cli-build/.test(step.uses ?? '')) continue;
+      assert.match(step.with.name, /inputs\.artifact_namespace/, `${step.name} must isolate repeated reusable invocations`);
+      (step.uses.includes('upload-artifact') ? uploads : downloads).push(step.with.name);
+    }
+  }
+  assert.match(workflow.jobs['gate-prepare'].if, /!inputs\.select_jobs_explicitly/);
+  assert.ok(uploads.some((name) => name.endsWith('ci-lane-summary')));
+  for (const name of downloads) assert.ok(uploads.includes(name), `download has no matching producer: ${name}`);
+  const verification = await read('release-verify');
+  const namespace = verification.jobs.verify.with.artifact_namespace;
+  assert.match(namespace, /inputs\.channel/);
+  for (const key of Object.keys(verification.on.workflow_call.inputs).filter((key) => /^candidate_.*_version$/.test(key))) {
+    assert.ok(namespace.includes(`inputs.${key}`), `${key} must distinguish sibling product verifications`);
+  }
+  const source = await read('release-source-validation');
+  assert.equal(source.jobs.platform.with.artifact_namespace, 'source-platform');
+  const render = (template, inputs) => template.replace(/\$\{\{\s*(.*?)\s*\}\}/g, (_, expression) => {
+    if (expression.startsWith('github.')) {
+      const github = { workflow: 'Combined release', event_name: 'workflow_dispatch', ref: 'refs/heads/dev' };
+      assert.ok(expression.slice(7) in github, `Unsupported GitHub fixture field: ${expression}`);
+      return github[expression.slice(7)];
+    }
+    const optional = expression.match(/^inputs\.artifact_namespace != '' && (format\(.*\)) \|\| ''$/);
+    if (optional && !inputs.artifact_namespace) return '';
+    const format = (optional?.[1] ?? expression).match(/^format\('([^']*)', (inputs\.[a-z_]+(?:, inputs\.[a-z_]+)*)\)$/);
+    assert.ok(format, `Unsupported workflow format expression: ${expression}`);
+    const values = format[2].split(', ').map((field) => {
+      assert.ok(field.slice(7) in inputs, `Missing fixture input: ${field}`);
+      return inputs[field.slice(7)];
+    });
+    return format[1].replace(/\{(\d+)\}/g, (_, index) => {
+      assert.ok(Number(index) < values.length, `Missing format argument: ${index}`);
+      return values[Number(index)];
+    });
+  });
+  const versionInputs = Object.keys(verification.on.workflow_call.inputs).filter((key) => /^candidate_.*_version$/.test(key));
+  const namespaces = ['', source.jobs.platform.with.artifact_namespace];
+  for (const channel of ['preview', 'production']) {
+    for (const product of versionInputs) {
+      const inputs = Object.fromEntries(versionInputs.map((key) => [key, key === product ? '1.2.3' : '']));
+      namespaces.push(render(namespace, { ...inputs, channel }));
+    }
+  }
+  const summaryName = uploads.find((name) => name.endsWith('ci-lane-summary'));
+  const renderedNames = namespaces.map((artifact_namespace) => render(summaryName, { artifact_namespace }));
+  assert.equal(renderedNames[0], 'ci-lane-summary', 'ordinary source CI keeps its canonical summary');
+  assert.equal(new Set(renderedNames).size, namespaces.length, 'every channel/product invocation needs a distinct artifact name');
+  const renderedGroups = namespaces.map((artifact_namespace) => render(workflow.concurrency.group, { artifact_namespace }));
+  assert.equal(new Set(renderedGroups).size, namespaces.length, 'every channel/product invocation needs a distinct concurrency group');
+
+});
+
 async function readWorkflow(path) {
   return readFile(new URL(path, root), 'utf8');
 }
@@ -25,7 +88,7 @@ test('push runs keep their complete verdict; only superseded pull request runs s
   const parsed = YAML.parse(await readWorkflow('.github/workflows/tests.yml'));
   assert.equal(
     parsed?.concurrency?.group,
-    'tests-${{ github.workflow }}-${{ github.ref }}',
+    "tests-${{ github.workflow }}-${{ github.ref }}${{ inputs.artifact_namespace != '' && format('-{0}', inputs.artifact_namespace) || '' }}",
     'the reusable tests workflow must not share its caller concurrency group and cancel the caller',
   );
   const cancels = (event_name, ref_name) => evaluateWorkflowExpression(parsed.concurrency['cancel-in-progress'], { event_name, ref_name });
@@ -133,7 +196,9 @@ test('reusable tests callers explicitly select jobs without inheriting caller ev
   ]) {
     assert.equal(
       withoutV03GateSkip(parsed?.jobs?.[job]?.if),
-      `\${{ inputs.select_jobs_explicitly && inputs.${input} }}`,
+      job === 'self-host-schtasks-e2e'
+        ? "${{ (inputs.select_jobs_explicitly && inputs.run_self_host_schtasks) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_self_host_schtasks == 'true') }}"
+        : `\${{ inputs.select_jobs_explicitly && inputs.${input} }}`,
       `${job} must honor explicit reusable inputs even when GitHub preserves the caller event`,
     );
   }

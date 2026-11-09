@@ -70,6 +70,7 @@ function bool(value, label) {
 /**
  * @param {{
  *   profileId: string;
+ *   sourceBinarySmokeValidated?: boolean;
  *   hasCliCandidate: boolean;
  *   hasServerCandidate: boolean;
  *   hasPublishedRelayPredecessor: boolean;
@@ -90,6 +91,8 @@ export function resolveReleaseValidationPlan(input) {
   const { includeSuiteIds: included, waiveSuiteIds: waived } = validateReleaseValidationRefinements(input);
   for (const suiteId of included) automatic.add(suiteId);
   for (const suiteId of waived) automatic.delete(suiteId);
+  // Only the canonical source admission supplies this result; artifact verification remains distinct.
+  if (input.sourceBinarySmokeValidated === true) automatic.delete('binary-smoke');
   return {
     run_installers_smoke: String(automatic.has('installers-smoke')),
     run_artifact_verify: String(automatic.has('artifact-verify')),
@@ -110,6 +113,7 @@ export function resolveReleaseValidationPlan(input) {
 export async function main(argv = process.argv.slice(2)) {
   const options = {
     profile: { type: 'string', default: '' },
+    'source-binary-smoke-validated': { type: 'string', default: 'false' },
     'has-cli-candidate': { type: 'string', default: 'false' },
     'has-server-candidate': { type: 'string', default: 'false' },
     'has-published-relay-predecessor': { type: 'string', default: 'false' },
@@ -124,6 +128,7 @@ export async function main(argv = process.argv.slice(2)) {
   const csv = (value) => String(value ?? '').split(',').map((item) => item.trim()).filter(Boolean);
   const result = resolveReleaseValidationPlan({
     profileId: String(values.profile ?? ''),
+    sourceBinarySmokeValidated: bool(values['source-binary-smoke-validated'], '--source-binary-smoke-validated'),
     hasCliCandidate: bool(values['has-cli-candidate'], '--has-cli-candidate'),
     hasServerCandidate: bool(values['has-server-candidate'], '--has-server-candidate'),
     hasPublishedRelayPredecessor: bool(values['has-published-relay-predecessor'], '--has-published-relay-predecessor'),

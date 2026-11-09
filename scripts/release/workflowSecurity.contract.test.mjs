@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { parseArgs } from 'node:util';
 
 import YAML from 'yaml';
 import { collectPublisherExternalActionUses } from './workflowSecurityTestkit.mjs';
@@ -434,7 +435,9 @@ test('workflow security W3: the real mobile shell preserves shell-significant re
       });
       assert.equal(result.status, 0, result.stderr);
       const args = (await readFile(join(root, 'argv'), 'utf8')).split('\0').slice(0, -1);
-      assert.equal(args[args.indexOf('--release-message') + 1], message);
+      const index = args.indexOf('--release-message');
+      const messageArgs = index >= 0 ? args.slice(index, index + 2) : args.filter((arg) => arg.startsWith('--release-message='));
+      assert.equal(parseArgs({ args: messageArgs, options: { 'release-message': { type: 'string' } } }).values['release-message'], message);
       await assert.rejects(access(sentinel), { code: 'ENOENT' });
     }
   } finally {

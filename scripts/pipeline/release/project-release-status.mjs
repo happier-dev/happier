@@ -11,7 +11,7 @@ import { summarizeReleaseStatus } from './summarize-release-status.mjs';
 /** @param {Record<string, string | undefined>} env @param {string} name */
 const value = (env, name) => env[name] === 'true';
 /** @param {Record<string, string | undefined>} env @param {string} name */
-const result = (env, name) => ['success', 'skipped'].includes(env[name] ?? '') ? env[name] : 'failed';
+const result = (env, name) => ['success', 'skipped', 'pending'].includes(env[name] ?? '') ? env[name] : 'failed';
 /** @param {Record<string, string | undefined>} env @param {string} name @param {readonly string[]} allowed */
 const choice = (env, name, allowed) => allowed.includes(env[name] ?? '') ? env[name] : allowed[0];
 
@@ -50,12 +50,12 @@ export function projectReleaseStatus(mode, env) {
     identity: { sourceSha, verified: false, ...identity },
     recoveryHint,
   });
-  const promoted = (id, name, resumeCompleteName, recoveryHint) => {
+  const promoted = (id, name, resumeCompleteName, recoveryHint, candidateVerifiedName) => {
     const complete = exact(name) || value(env, resumeCompleteName);
     return {
       id,
       result: complete ? 'success' : result(env, name),
-      identity: { sourceSha, verified: complete && exact('RELEASE_VERIFY_RESULT') },
+      identity: { sourceSha, verified: complete && (exact('RELEASE_VERIFY_RESULT') || value(env, candidateVerifiedName)) },
       recoveryHint,
     };
   };
@@ -140,6 +140,8 @@ export function projectReleaseStatus(mode, env) {
     channel: env.RELEASE_CHANNEL,
     sourceSha,
     requestedSurfaces: [
+      ...(env.CHANNEL_PROMOTION_RESULT === undefined ? [] : [requested('channel_promotion', true, false, 'verified')]),
+      ...(env.GITHUB_LATEST_RESULT === undefined ? [] : [requested('github_latest', env.RELEASE_CHANNEL === 'production', false, 'accepted')]),
       requested('candidate', true, true, 'verified'), requested('immutable_candidate_verification', true, true, 'verified'),
       requested('cli-immutable-candidate', request.cli, false, 'verified'), requested('hstack-immutable-candidate', request.stack, false, 'verified'), requested('server-immutable-candidate', request.server, false, 'verified'), requested('runner-immutable-candidate', request.runner, false, 'verified'), requested('ui-web-immutable-candidate', request.uiWeb, false, 'verified'),
       requested('cli_rolling_release', request.cli, false, 'verified'), requested('hstack_rolling_release', request.stack, false, 'verified'), requested('server_rolling_release', request.server, false, 'verified'), requested('runner_rolling_release', request.runner, false, 'verified'), requested('ui_web_rolling_release', request.uiWeb, false, 'verified'),
@@ -148,6 +150,8 @@ export function projectReleaseStatus(mode, env) {
       requested('npm_plugin_sdk', request.pluginSdk, false, 'verified'), requested('npm_plugin_ui', request.pluginSdk, false, 'verified'), requested('npm_sdk', request.sdk, false, 'verified'),
     ],
     surfaces: [
+      ...(env.CHANNEL_PROMOTION_RESULT === undefined ? [] : [observed('channel_promotion', 'CHANNEL_PROMOTION_RESULT', exact('CHANNEL_PROMOTION_RESULT'), { job: env.RELEASE_CHANNEL === 'production' ? 'promote_main' : 'promote_preview' })]),
+      ...(env.GITHUB_LATEST_RESULT === undefined ? [] : [accepted('github_latest', 'GITHUB_LATEST_RESULT', '', { job: 'promote_github_latest' })]),
       observed('candidate', 'CANDIDATE_RESULT', exact('CANDIDATE_RESULT'), { job: 'prepare_release_candidate' }),
       observed('immutable_candidate_verification', 'IMMUTABLE_VERIFICATION_RESULT', exact('IMMUTABLE_VERIFICATION_RESULT'), { job: 'verify_release_candidates' }),
       candidate('cli-immutable-candidate', 'cli', request.cli, 'CLI_CANDIDATE_RESULT', 'CLI_VERSION', 'CLI_RESUME_VERIFIED', { job: 'publish_cli_binaries' }),
@@ -155,11 +159,11 @@ export function projectReleaseStatus(mode, env) {
       candidate('server-immutable-candidate', 'server', request.server, 'SERVER_CANDIDATE_RESULT', 'SERVER_VERSION', 'SERVER_RESUME_VERIFIED', { job: 'publish_server_runtime' }),
       candidate('runner-immutable-candidate', 'runner', request.runner, 'RUNNER_CANDIDATE_RESULT', 'RUNNER_VERSION', 'RUNNER_RESUME_VERIFIED', { job: 'publish_runner_binaries' }),
       candidate('ui-web-immutable-candidate', 'ui-web', request.uiWeb, 'UI_WEB_CANDIDATE_RESULT', 'UI_WEB_VERSION', 'UI_WEB_RESUME_VERIFIED', { job: 'publish_ui_web' }),
-      promoted('cli_rolling_release', 'CLI_RESULT', 'CLI_ROLLING_RESUME_COMPLETE', { job: 'promote_cli_binaries' }),
-      promoted('hstack_rolling_release', 'STACK_RESULT', 'STACK_ROLLING_RESUME_COMPLETE', { job: 'promote_hstack_binaries' }),
-      promoted('server_rolling_release', 'SERVER_RESULT', 'SERVER_ROLLING_RESUME_COMPLETE', { job: 'promote_server_runtime' }),
-      promoted('runner_rolling_release', 'RUNNER_RESULT', 'RUNNER_ROLLING_RESUME_COMPLETE', { job: 'promote_runner_binaries' }),
-      promoted('ui_web_rolling_release', 'UI_WEB_RESULT', 'UI_WEB_ROLLING_RESUME_COMPLETE', { job: 'promote_ui_web' }),
+      promoted('cli_rolling_release', 'CLI_RESULT', 'CLI_ROLLING_RESUME_COMPLETE', { job: 'promote_cli_binaries' }, 'CLI_RESUME_VERIFIED'),
+      promoted('hstack_rolling_release', 'STACK_RESULT', 'STACK_ROLLING_RESUME_COMPLETE', { job: 'promote_hstack_binaries' }, 'HSTACK_RESUME_VERIFIED'),
+      promoted('server_rolling_release', 'SERVER_RESULT', 'SERVER_ROLLING_RESUME_COMPLETE', { job: 'promote_server_runtime' }, 'SERVER_RESUME_VERIFIED'),
+      promoted('runner_rolling_release', 'RUNNER_RESULT', 'RUNNER_ROLLING_RESUME_COMPLETE', { job: 'promote_runner_binaries' }, 'RUNNER_RESUME_VERIFIED'),
+      promoted('ui_web_rolling_release', 'UI_WEB_RESULT', 'UI_WEB_ROLLING_RESUME_COMPLETE', { job: 'promote_ui_web' }, 'UI_WEB_RESUME_VERIFIED'),
       accepted('deploy_ui', 'DEPLOY_UI_RESULT', 'DEPLOY_UI_RESUME_COMPLETE', { job: 'deploy_ui' }, deployUiResumeIdentity),
       accepted('deploy_server', 'DEPLOY_SERVER_RESULT', 'DEPLOY_SERVER_RESUME_COMPLETE', { job: 'deploy_server' }),
       accepted('deploy_website', 'DEPLOY_WEBSITE_RESULT', 'DEPLOY_WEBSITE_RESUME_COMPLETE', { job: 'deploy_website' }),

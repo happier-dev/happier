@@ -95,12 +95,12 @@ export function buildLocalCandidateCommands(input) {
           path.join('scripts', 'pipeline', 'release', PRODUCT_SCRIPT[product]),
           '--channel', publicChannel,
           '--allow-stable', allowStable,
-          '--release-message', input.releaseMessage,
+          `--release-message=${input.releaseMessage}`,
           '--phase', 'publish-immutable',
           '--base-version', normalizeRollingBaseVersion(version),
           '--version', version,
           '--authorized-sha', input.sourceSha,
-          '--run-contracts', index === 0 ? 'true' : 'false',
+          '--run-contracts', 'auto',
           '--check-installers', index === 0 ? 'true' : 'false',
         ],
       });
@@ -130,7 +130,7 @@ export function buildLocalCandidateCommands(input) {
           path.join('scripts', 'pipeline', 'release', PRODUCT_SCRIPT[product]),
           '--channel', publicChannel,
           '--allow-stable', allowStable,
-          '--release-message', input.releaseMessage,
+          `--release-message=${input.releaseMessage}`,
           '--phase', 'promote-rolling',
           '--version', version,
           '--authorized-sha', input.sourceSha,
@@ -180,6 +180,8 @@ export function main(argv = process.argv.slice(2)) {
     return commands;
   }
   const repoRoot = path.resolve(process.cwd());
+  // One fixed source/channel batch: a successful immutable publisher has run or consumed contracts.
+  const batchEnv = { ...process.env };
   for (const command of commands) {
     console.log(`[pipeline] local release stage: ${command.stage}`);
     if (dryRun) {
@@ -188,9 +190,12 @@ export function main(argv = process.argv.slice(2)) {
     }
     execFileSync(process.execPath, command.args, {
       cwd: repoRoot,
-      env: process.env,
+      env: { ...batchEnv },
       stdio: 'inherit',
     });
+    if (command.stage.startsWith('publish-immutable:')) {
+      batchEnv.HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT = 'success';
+    }
   }
   return commands;
 }

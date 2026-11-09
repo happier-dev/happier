@@ -1,6 +1,7 @@
 import { appendFile, readFile } from 'node:fs/promises';
 import { dirname, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { resolveReleaseMetadataCi } from './classify-source-ci-paths.mjs';
 import { collectWorkspacePackageJsonPaths } from '../../apps/stack/scripts/utils/proc/workspace_package_manifests.mjs';
 import {
   collectInternalWorkspaceDependencyNames,
@@ -68,7 +69,14 @@ async function main() {
   let input = '';
   for await (const chunk of process.stdin) input += chunk;
   const changedPaths = input.split('\0').filter(Boolean);
-  const packages = await selectAffectedGatePackages({ changedPaths });
+  const metadata = process.env.GITHUB_EVENT_NAME === 'push'
+    ? await resolveReleaseMetadataCi({
+      repoRoot: process.cwd(), repository: String(process.env.GITHUB_REPOSITORY ?? ''),
+      sourceBranch: String(process.env.GITHUB_REF_NAME ?? ''),
+      baseSha: String(process.env.BASE_SHA ?? ''), sourceSha: String(process.env.GITHUB_SHA ?? ''),
+    })
+    : { metadataOnly: false, baseSha: '', baseRunId: '' };
+  const packages = metadata.metadataOnly ? [] : await selectAffectedGatePackages({ changedPaths });
   if (process.env.GITHUB_OUTPUT) {
     const serverDbContract = changedPaths.some((path) => path.startsWith('apps/server/prisma/'));
     // Eight disjoint UI ranges reduce per-job retention and share preparation.
@@ -81,7 +89,7 @@ async function main() {
       })) : []),
     ] };
     await appendFile(process.env.GITHUB_OUTPUT,
-      `packages=${JSON.stringify(packages)}\nunit_matrix=${JSON.stringify(unitMatrix)}\nserver_db_contract=${serverDbContract}\n`);
+      `packages=${JSON.stringify(packages)}\nunit_matrix=${JSON.stringify(unitMatrix)}\nserver_db_contract=${serverDbContract}\nmetadata_only=${metadata.metadataOnly}\nmetadata_base_sha=${metadata.baseSha}\nmetadata_base_run_id=${metadata.baseRunId}\n`);
   }
   process.stdout.write(`${JSON.stringify(packages)}\n`);
 }

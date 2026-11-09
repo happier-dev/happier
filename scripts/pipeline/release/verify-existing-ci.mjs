@@ -2,9 +2,12 @@
 // @ts-check
 
 import { spawnSync } from 'node:child_process';
-import { appendFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
+import { projectSourceSuiteReuse } from './source-suite-evidence.mjs';
 
 const TRUSTED_CI_EVENTS = new Set(['push', 'workflow_dispatch', 'merge_group']);
 
@@ -56,6 +59,33 @@ function fetchWorkflowRuns(repository, workflow, sourceBranch, sourceSha) {
   return parsed.workflow_runs;
 }
 
+/** A metadata child may consume source evidence only from a non-metadata gate.
+ * @param {{repository: string; sourceSha: string; sourceBranch: string; runId: string}} expected
+ */
+export async function verifyCanonicalGateBaseline(expected) {
+  const run = fetchWorkflowRun(expected.repository, expected.runId);
+  selectExactSuccessfulCiRun([run], expected);
+  if (String(run.id) !== expected.runId || run.path !== '.github/workflows/tests.yml' || run.event !== 'push') throw new Error('Invalid canonical gate baseline run');
+  const root = await mkdtemp(join(tmpdir(), 'happier-gate-baseline-'));
+  try {
+    const download = spawnSync('gh', ['run', 'download', expected.runId, '--repo', expected.repository, '--name', 'ci-lane-summary', '--dir', root], { encoding: 'utf8' });
+    if (download.error) throw download.error;
+    if (download.status !== 0) throw new Error('Cannot download gate baseline evidence');
+    const summary = JSON.parse(await readFile(join(root, 'ci-summary.json'), 'utf8'));
+    if (summary.schemaVersion !== 1 || String(summary.runId) !== expected.runId || summary.sourceSha !== expected.sourceSha
+      || !Array.isArray(summary.failures) || summary.failures.length || !Array.isArray(summary.lanes)) throw new Error('Invalid gate baseline summary');
+    const lanes = new Map(summary.lanes.map((lane) => [lane.id, lane]));
+    const outputs = lanes.get('gate-prepare')?.outputs;
+    if (outputs?.metadata_only !== 'false') throw new Error('Baseline must contain original source gates');
+    for (const id of ['gate-prepare', 'gate-compiler', 'gate-build-artifacts', 'installers-smoke-windows']) {
+      if (lanes.get(id)?.result !== 'success') throw new Error(`Baseline ${id} did not succeed`);
+    }
+    if (lanes.get('gate-unit')?.result !== 'success' && !(outputs.packages === '[]' && lanes.get('gate-unit')?.result === 'skipped')) throw new Error('Baseline source units did not succeed');
+    if (lanes.get('server-db-contract')?.result !== 'success' && !(outputs.server_db_contract === 'false' && lanes.get('server-db-contract')?.result === 'skipped')) throw new Error('Baseline database contract did not succeed');
+  } finally { await rm(root, { recursive: true, force: true }); }
+  return run;
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const { values } = parseArgs({
     args: argv,
@@ -64,16 +94,19 @@ export async function main(argv = process.argv.slice(2)) {
       'source-sha': { type: 'string' }, 'source-branch': { type: 'string' },
       'run-id': { type: 'string', default: '' },
       'github-output': { type: 'string', default: '' },
+      'source-profile': { type: 'string', default: '' },
     },
     allowPositionals: false,
   });
+  const sourceProfile = String(values['source-profile'] ?? '').trim();
+  if (sourceProfile && !['integrated', 'stable'].includes(sourceProfile)) throw new Error('Unsupported source validation profile');
   const repository = String(values.repository ?? '').trim();
   const workflow = String(values.workflow ?? '').trim();
   const sourceSha = String(values['source-sha'] ?? '').trim();
   const sourceBranch = String(values['source-branch'] ?? '').trim();
   if (!/^[^/\s]+\/[^/\s]+$/u.test(repository)) throw new Error('--repository must be owner/repo');
   if (!/^[0-9a-f]{40}$/u.test(sourceSha)) throw new Error('--source-sha must be a full lowercase commit ID');
-  if (!['dev', 'preview', 'main'].includes(sourceBranch)) throw new Error('--source-branch must be dev, preview, or main');
+  if (!['v0.3', 'dev', 'preview', 'main'].includes(sourceBranch)) throw new Error('--source-branch must be v0.3, dev, preview, or main');
   if (!/^[A-Za-z0-9_.-]+\.ya?ml$/u.test(workflow)) throw new Error('--workflow must be a workflow filename');
   const expected = { repository, sourceSha, sourceBranch };
   const requestedRunId = String(values['run-id'] ?? '').trim();
@@ -88,9 +121,21 @@ export async function main(argv = process.argv.slice(2)) {
     const runs = fetchWorkflowRuns(repository, workflow, sourceBranch, sourceSha);
     run = selectExactSuccessfulCiRun(runs, expected);
   }
+  let sourceSuiteReuse = {};
+  if (sourceProfile) {
+    const root = await mkdtemp(join(tmpdir(), 'happier-source-suites-'));
+    try {
+      const download = spawnSync('gh', ['run', 'download', String(run.id), '--repo', repository, '--name', 'ci-lane-summary', '--dir', root], { encoding: 'utf8' });
+      if (download.error || download.status !== 0) throw new Error('Source suite summary unavailable');
+      sourceSuiteReuse = projectSourceSuiteReuse(JSON.parse(await readFile(join(root, 'ci-summary.json'), 'utf8')), { runId: String(run.id), sourceSha, profile: sourceProfile });
+    } catch {
+      // Older CI remains valid ordinary evidence; absent suite proof runs the suite.
+      sourceSuiteReuse = projectSourceSuiteReuse(null, { runId: String(run.id), sourceSha, profile: sourceProfile });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }
   const output = { runId: Number(run.id), runUrl: String(run.html_url ?? ''), sourceSha, sourceBranch };
   const githubOutput = String(values['github-output'] ?? '').trim();
-  if (githubOutput) await appendFile(githubOutput, `ci_run_id=${output.runId}\nci_run_url=${output.runUrl}\n`, 'utf8');
+  if (githubOutput) await appendFile(githubOutput, `ci_run_id=${output.runId}\nci_run_url=${output.runUrl}\n${Object.entries(sourceSuiteReuse).map(([key, value]) => `${key}=${value}\n`).join('')}`, 'utf8');
   else process.stdout.write(`${JSON.stringify(output)}\n`);
   return output;
 }

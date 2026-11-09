@@ -5,8 +5,6 @@
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { readFile } from 'node:fs/promises';
-import { verifyReleaseArtifactBytes } from '@happier-dev/release-runtime/releaseArtifactVerification';
-import { parseReleaseManifestV1 } from '@happier-dev/release-runtime/releaseManifest';
 
 import {
   parseWorkflowRunPath,
@@ -121,6 +119,7 @@ export function validateCandidateVersions(input) {
  * @param {{
  *   channel: string;
  *   versions: Partial<Record<'cli' | 'stack' | 'server' | 'runner' | 'ui-web', string>>;
+ *   verifyChannelRef?: boolean;
  *   verifyDeploy: { ui: boolean; server: boolean; website: boolean; docs: boolean };
  *   verifyRelease: Record<'cli' | 'stack' | 'server' | 'runner' | 'ui-web', boolean>;
  * }} input
@@ -139,7 +138,7 @@ export function resolveCandidateVerificationTargets(input) {
       : 'preview';
   const deploymentChannel = stable ? 'production' : releaseSuffix;
   const sourceBranch = stable ? 'main' : releaseSuffix;
-  const refs = [`heads/${sourceBranch}`];
+  const refs = input.verifyChannelRef === false ? [] : [`heads/${sourceBranch}`];
   for (const target of /** @type {const} */ (['ui', 'server', 'website', 'docs'])) {
     if (input.verifyDeploy[target]) {
       refs.push(`heads/deploy/${deploymentChannel}/${target}`);
@@ -442,6 +441,11 @@ async function readRollingManifest(baseUrl, repository, tag, token) {
  * @param {string} token @param {string} product @param {string} version @param {string} publicKey
  */
 async function readAuthenticatedManifest(baseUrl, repository, tag, token, product, version, publicKey) {
+  // Pure candidate-target resolution also runs before dependencies are installed.
+  const [{ verifyReleaseArtifactBytes }, { parseReleaseManifestV1 }] = await Promise.all([
+    import('@happier-dev/release-runtime/releaseArtifactVerification'),
+    import('@happier-dev/release-runtime/releaseManifest'),
+  ]);
   const release = asRecord(await githubJson(`${baseUrl}/repos/${repository}/releases/tags/${encodeURIComponent(tag)}`, token));
   const assets = Array.isArray(release.assets) ? release.assets.map(asRecord) : [];
   /** @param {string} name */
@@ -497,6 +501,7 @@ export async function main(argv = process.argv.slice(2)) {
       tags: { type: 'string', default: '' },
       manifests: { type: 'string', default: '' },
       'derive-targets': { type: 'string', default: 'false' },
+      'verify-channel-ref': { type: 'string', default: 'true' },
       'verify-deploy-ui': { type: 'string', default: 'false' },
       'verify-deploy-server': { type: 'string', default: 'false' },
       'verify-deploy-website': { type: 'string', default: 'false' },
@@ -584,6 +589,7 @@ export async function main(argv = process.argv.slice(2)) {
     ? resolveCandidateVerificationTargets({
         channel: String(values.channel ?? ''),
         versions: validatedCandidates.versions,
+        verifyChannelRef: parseBoolean(values['verify-channel-ref'], '--verify-channel-ref'),
         verifyDeploy: {
           ui: parseBoolean(values['verify-deploy-ui'], '--verify-deploy-ui'),
           server: parseBoolean(values['verify-deploy-server'], '--verify-deploy-server'),

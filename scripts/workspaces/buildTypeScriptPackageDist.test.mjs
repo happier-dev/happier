@@ -15,7 +15,7 @@ import { withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
 import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
 import { runCaptureResult } from '../../apps/stack/scripts/utils/proc/proc.mjs';
-import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
+import { buildNativeAdmissionFixtureEnv, holdNativeAdmissionFixtureMemory, installNativeAdmissionFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
 import { writeFakeBin } from '../../apps/stack/scripts/testkit/core/fake_bin_harness.mjs';
 import { spawnTestProcess } from '../../apps/stack/scripts/testkit/core/spawn_test_process.mjs';
 import { withPatchedProcessEnv } from '../../apps/stack/scripts/testkit/core/env_scope.mjs';
@@ -174,7 +174,7 @@ try {
     });
     return { child, exited, stdout: () => stdout, stderr: () => stderr };
   };
-  return { packageDir, launcher, admissionRoot, memoryPath, loaderPath, entries, start };
+  return { ...native, packageDir, memoryPath, loaderPath, entries, start };
 }
 
 async function waitForNativeDistBuildState(fixture, run, condition) {
@@ -257,13 +257,16 @@ test('standalone dist API waits for package leases without reserving capacity an
   const ready = new Promise(resolveReady => { entered = resolveReady; });
   const holder = withWorkspaceBundleLock(async () => { entered(); await new Promise(resolveRelease => { release = resolveRelease; }); }, { lockPath });
   await ready;
+  // Low available memory can recover only when admitted resident pages drain.
+  // Use the canonical physical-memory fixture rather than an impossible worker.
+  const pressure = await holdNativeAdmissionFixtureMemory(t, fixture, { totalKiB: 73400320, availableKiB: 1 });
   const run = fixture.start();
   try {
     await waitForNativeDistBuildState(fixture, run, async () =>
       (await fixture.entries('waiters')).length === 1
       && run.stderr().includes('Workspace publication lease is busy:'));
     assert.equal((await fixture.entries('waiters')).length, 1, 'the public API must enter joint admission before waiting for a foreign package lease');
-    assert.deepEqual(await fixture.entries('owners'), []);
+    assert.deepEqual(await fixture.entries('owners'), [pressure.ownerPath.split(sep).at(-1)]);
     release();
     await holder;
     await waitForNativeDistBuildState(fixture, run, () =>
@@ -271,9 +274,9 @@ test('standalone dist API waits for package leases without reserving capacity an
     assert.match(run.stderr(), /class=compilation/, 'effective strict options must govern outer admission despite a raw --noCheck');
     assert.equal(existsSync(lockPath), false, 'a capacity waiter must release its package lease');
     await withWorkspaceBundleLock(async () => {
-      assert.deepEqual(await fixture.entries('owners'), []);
+      assert.deepEqual(await fixture.entries('owners'), [pressure.ownerPath.split(sep).at(-1)]);
       assert.equal(run.stdout(), '');
-      await writeFile(fixture.memoryPath, '31457280 73400320\n');
+      await pressure.release(() => writeFile(fixture.memoryPath, '31457280 73400320\n'));
     }, { lockPath });
     assert.deepEqual(await run.exited, { status: 0, signal: null }, run.stderr());
     assert.deepEqual(JSON.parse(run.stdout()), { outputDir: join(fixture.packageDir, 'dist'), promoted: true });
@@ -932,7 +935,7 @@ test('buildTypeScriptPackageDist builds UI from the current staged manifest with
           writeFileSync(join(outputDir, 'manifest.js'), 'export const PLUGIN_MANIFEST = { id: "current" };\n');
           return { status: 0 };
         }
-        if (args.includes('build:ui')) {
+        if (args.includes('--manifest-path')) {
           const manifestFlag = args.indexOf('--manifest-path');
           const manifestPath = manifestFlag === -1
             ? join(packageDir, '.happier-plugin', 'plugin.json') : args[manifestFlag + 1];
@@ -976,7 +979,7 @@ export const PLUGIN_MANIFEST = { contributes: { ui: { renderers: [{ kind: 'react
   // compilation, artifact validation or publication inside the SDK.
   const packageManagerShim = join(packageDir, 'package-manager.cjs');
   await writeFile(packageManagerShim, `const { spawnSync } = require('node:child_process');
-const result = spawnSync(process.execPath, ['--import', ${JSON.stringify(fileURLToPath(new URL('../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url)))}, ${JSON.stringify(fileURLToPath(new URL('../../packages/plugin-sdk/src/ui/build/bin.ts', import.meta.url)))}, ...process.argv.slice(4)], { env: process.env, stdio: 'inherit' });
+const result = spawnSync(process.argv[3], process.argv.slice(4), { env: process.env, stdio: 'inherit' });
 process.exitCode = result.status ?? 1;
 `);
   for (const artifact of ['first', 'second']) {
@@ -1345,7 +1348,7 @@ test('buildTypeScriptPackageDist permits an incremental repeat but does not repl
   await cp(fixtureDir, packageDir, { recursive: true });
   await writeJson(join(repoDir, 'package.json'), { private: true, workspaces: ['apps/*', 'packages/*'] });
   await writeFile(join(repoDir, 'pnpm-lock.yaml'), '# fixture\n');
-  await writeFile(join(repoDir, 'pnpm-workspace.yaml'), 'packages: []\n');
+  await writeFile(join(repoDir, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/*"\n');
   for (const app of ['cli', 'server', 'ui']) {
     await mkdir(join(repoDir, 'apps', app), { recursive: true });
     await writeJson(join(repoDir, 'apps', app, 'package.json'), { name: `@fixture/${app}` });
@@ -1367,6 +1370,8 @@ test('buildTypeScriptPackageDist permits an incremental repeat but does not repl
   };
   const buildOptions = {
     packageDir,
+    env: { ...process.env, HAPPIER_STACK_REPO_DIR: repoDir,
+      HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: '', HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR: '' },
     args: ['-p', 'tsconfig.json'],
     stdio: 'ignore',
     resolveTypeScriptCliInvocationImpl: () => ({ command: 'tsc', argsPrefix: [] }),
@@ -1375,18 +1380,19 @@ test('buildTypeScriptPackageDist permits an incremental repeat but does not repl
 
   const admit = () => ensureWorkspacePackagesBuiltByName(repoDir, [packageJson.name], {
     quiet: true,
-    env: { ...process.env, HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
+    env: { ...buildOptions.env, HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
     // Only the compiler process is substituted. Canonical package admission
     // invokes the real staged builder and publishes its real input receipt.
     workspaceBuildBoundary: {
       async prepareEnv(_dir, env) { return { ...env }; },
-      async runPackageBuild(_dir, { env }) {
-        await buildTypeScriptPackageDist({ ...buildOptions, outputDir: env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, env });
+      async runPackageBuild(buildDir, { env }) {
+        await buildTypeScriptPackageDist({ ...buildOptions, packageDir: buildDir, outputDir: env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, env });
       },
     },
   });
+  const isCurrent = () => isWorkspacePackageOutputCurrent(packageDir, { env: buildOptions.env });
   await admit();
-  assert.equal(isWorkspacePackageOutputCurrent(packageDir), true);
+  assert.equal(isCurrent(), true);
   const recordPath = join(packageDir, 'dist', BUILD_INPUT_RECORD);
   const beforeRecord = await readFile(recordPath, 'utf8');
   const before = statSync(join(packageDir, 'dist'));
@@ -1402,15 +1408,15 @@ test('buildTypeScriptPackageDist permits an incremental repeat but does not repl
   assert.equal(after.ino, before.ino, 'identical staged bytes must not replace the last-green dist directory');
   assert.equal(after.mtimeMs, before.mtimeMs, 'identical staged bytes must not mutate the last-green dist directory');
   assert.equal(afterHash, beforeHash);
-  assert.equal(isWorkspacePackageOutputCurrent(packageDir), true);
+  assert.equal(isCurrent(), true);
 
   // Retaining a receipt must never bless changed source or changed output.
   await writeJson(join(packageDir, 'package.json'), { ...packageJson, dependencies: { '@fixture/dependency': '1.0.0' } });
-  assert.equal(isWorkspacePackageOutputCurrent(packageDir), false);
+  assert.equal(isCurrent(), false);
   await writeJson(join(packageDir, 'package.json'), packageJson);
-  assert.equal(isWorkspacePackageOutputCurrent(packageDir), true);
+  assert.equal(isCurrent(), true);
   await writeFile(join(packageDir, 'src/index.ts'), 'export const built = false;\n');
-  assert.equal(isWorkspacePackageOutputCurrent(packageDir), false);
+  assert.equal(isCurrent(), false);
   await buildTypeScriptPackageDist({
     ...buildOptions,
     runCommandImpl: (_command, args) => {
@@ -1420,7 +1426,7 @@ test('buildTypeScriptPackageDist permits an incremental repeat but does not repl
     },
   });
   assert.equal(existsSync(recordPath), false, 'changed emitted bytes invalidate the prior receipt');
-  assert.equal(isWorkspacePackageOutputCurrent(packageDir), false);
+  assert.equal(isCurrent(), false);
 });
 
 test('native strict package promotion checks identical QA output and preserves the emitted UI and internal closure', async (t) => {
@@ -1431,6 +1437,8 @@ test('native strict package promotion checks identical QA output and preserves t
   await mkdir(dirname(packageDir), { recursive: true });
   await cp(fixtureDir, packageDir, { recursive: true });
   await writeJson(join(repoDir, 'package.json'), { private: true, workspaces: ['apps/*', 'packages/*'] });
+  await writeFile(join(repoDir, 'pnpm-lock.yaml'), '# fixture\n');
+  await writeFile(join(repoDir, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/*"\n');
   for (const app of ['cli', 'server', 'ui']) {
     await mkdir(join(repoDir, 'apps', app), { recursive: true });
     await writeJson(join(repoDir, 'apps', app, 'package.json'), { name: `@fixture/${app}` });
@@ -1450,8 +1458,8 @@ test('native strict package promotion checks identical QA output and preserves t
   let uiBuilds = 0;
   const boundary = {
     prepareEnv: async (_dir, env) => ({ ...env }),
-    runPackageBuild: (_dir, { env }) => buildTypeScriptPackageDist({
-      packageDir, env, outputDir: env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR,
+    runPackageBuild: (buildDir, { env }) => buildTypeScriptPackageDist({
+      packageDir: buildDir, env, outputDir: env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR,
       args: ['-p', 'tsconfig.json', '--happier-staged-output-script', 'build:ui'],
       resolvePnpmCommandInvocationImpl: () => ({ command: 'fixture-ui-process', args: [] }),
       async runCommandImpl(command, args, options) {

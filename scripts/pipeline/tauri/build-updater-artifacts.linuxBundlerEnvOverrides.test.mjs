@@ -6,7 +6,7 @@ import { resolveLinuxTauriBundlerEnvOverrides } from './build-updater-artifacts.
 test('resolveLinuxTauriBundlerEnvOverrides defaults to a safe config for AppImage bundling', () => {
   assert.deepEqual(resolveLinuxTauriBundlerEnvOverrides({}), {
     APPIMAGE_EXTRACT_AND_RUN: '1',
-    LINUXDEPLOY_EXCLUDED_LIBRARIES: 'libwayland-client.so*;libwayland-cursor.so*;libwayland-egl.so*;libwayland-server.so*',
+    LINUXDEPLOY_EXCLUDED_LIBRARIES: 'libwayland-client.so*;libwayland-cursor.so*;libwayland-egl.so*;libwayland-server.so*;libgtk-layer-shell.so*',
     NO_STRIP: '1',
     RUST_BACKTRACE: '1',
     RUST_LOG: 'tauri_bundler=debug',

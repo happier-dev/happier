@@ -122,7 +122,7 @@ exit 0
   );
 
   const log = fs.readFileSync(ghLog, 'utf8');
-  assert.match(log, /gh release edit dev-test --title Dev Test --notes Rolling dev build\./);
+  assert.match(log, /gh release edit dev-test --latest=false --title Dev Test --notes Rolling dev build\./);
   assert.match(log, /gh release upload dev-test /);
   assert.doesNotMatch(log, /Full diff:/);
   assert.doesNotMatch(log, /### Commits/);

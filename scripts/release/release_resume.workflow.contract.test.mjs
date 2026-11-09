@@ -223,17 +223,15 @@ test('full release resume binds the prior run to the same operation and authoriz
   assert.equal(parsed.jobs.publish_npm.with.cli_version, '${{ needs.publish_cli_binaries.outputs.version }}');
   assert.equal(parsed.jobs.publish_npm.with.stack_version, '${{ needs.publish_hstack_binaries.outputs.version }}');
   assert.equal(parsed.jobs.publish_npm.with.server_version, '${{ needs.publish_server_runtime.outputs.version }}');
-  assert.equal(parsed.jobs.verify_release_candidates.with.verify_cli_release, "${{ needs.publish_cli_binaries.result == 'success' && needs.resolve_resume.outputs.cli_version == '' }}");
-  assert.equal(parsed.jobs.verify_release_candidates.with.verify_stack_release, "${{ needs.publish_hstack_binaries.result == 'success' && needs.resolve_resume.outputs.stack_version == '' }}");
-  assert.equal(parsed.jobs.verify_release_candidates.with.verify_server_release, "${{ needs.publish_server_runtime.result == 'success' && needs.resolve_resume.outputs.server_version == '' }}");
-  assert.equal(parsed.jobs.verify_release_candidates.with.verify_runner_release, "${{ needs.publish_runner_binaries.result == 'success' && needs.resolve_resume.outputs.runner_version == '' }}");
-  assert.equal(parsed.jobs.verify_release_candidates.with.verify_ui_web_release, "${{ needs.publish_ui_web.result == 'success' && needs.resolve_resume.outputs.ui_web_version == '' }}");
+  for (const product of ['cli', 'stack', 'server', 'runner', 'ui_web']) {
+    assert.equal(parsed.jobs[`verify_${product}_candidate`].with[`verify_${product}_release`], true);
+  }
   const statusSource = parsed.jobs.release_status.steps.map((step) => step.run ?? '').join('\n');
   assert.match(statusSource, /project-release-status\.mjs[\s\S]*--mode standard/);
   const projection = parsed.jobs.release_status.steps.find((step) => String(step.name).includes('Project release status facts'));
-  assert.equal(projection.env.CLI_RESUME_VERIFIED, '${{ needs.verify_resume_candidates.outputs.cli_verified }}');
-  assert.equal(projection.env.SERVER_RESUME_VERIFIED, '${{ needs.verify_resume_candidates.outputs.server_verified }}');
-  assert.equal(projection.env.RUNNER_RESUME_VERIFIED, '${{ needs.verify_resume_candidates.outputs.runner_verified }}');
+  assert.equal(projection.env.CLI_RESUME_VERIFIED, "${{ needs.verify_cli_candidate.result == 'success' }}");
+  assert.equal(projection.env.SERVER_RESUME_VERIFIED, "${{ needs.verify_server_candidate.result == 'success' }}");
+  assert.equal(projection.env.RUNNER_RESUME_VERIFIED, "${{ needs.verify_runner_candidate.result == 'success' }}");
 });
 
 test('failed aggregate verification independently certifies successful immutable siblings for resume', () => {
@@ -280,7 +278,6 @@ test('failed aggregate verification independently certifies successful immutable
 
   for (const [name, groupedJob, candidates] of [
     ['nightly-dev.yml', 'release_verify', ['cli', 'hstack', 'runner', 'server_runtime', 'ui_web']],
-    ['release-channel.yml', 'verify_release_candidates', ['publish_cli_binaries', 'publish_hstack_binaries', 'publish_server_runtime', 'publish_runner_binaries', 'publish_ui_web']],
   ]) {
     const parsed = workflow(name);
     const independent = parsed.jobs.verify_resume_candidates;

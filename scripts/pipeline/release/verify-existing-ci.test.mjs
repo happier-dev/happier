@@ -65,7 +65,7 @@ test('explicit run-id attestation fetches that run and writes evidence only for 
   t.after(() => rm(root, { recursive: true, force: true }));
   const trustedRun = {
     id: 123, html_url: 'https://github.com/happier-dev/happier/actions/runs/123',
-    path: '.github/workflows/tests.yml', head_sha: sha, head_branch: 'dev',
+    path: '.github/workflows/tests.yml', head_sha: sha, head_branch: 'v0.3',
     event: 'push', head_repository: { full_name: 'happier-dev/happier' },
     status: 'completed', conclusion: 'success',
   };
@@ -93,10 +93,10 @@ test('explicit run-id attestation fetches that run and writes evidence only for 
     requests.length = 0;
     const outputPath = join(root, label);
     const args = ['--repository', 'happier-dev/happier', '--source-sha', sha,
-      '--source-branch', 'dev', '--run-id', '123', '--github-output', outputPath];
+      '--source-branch', 'v0.3', '--run-id', '123', '--github-output', outputPath];
     if (label === 'trusted') {
       assert.deepEqual(await main(args), {
-        runId: 123, runUrl: trustedRun.html_url, sourceSha: sha, sourceBranch: 'dev',
+        runId: 123, runUrl: trustedRun.html_url, sourceSha: sha, sourceBranch: 'v0.3',
       });
       assert.equal(await readFile(outputPath, 'utf8'), `ci_run_id=123\nci_run_url=${trustedRun.html_url}\n`);
     } else {

@@ -185,7 +185,7 @@ test('install.ps1 keeps payload reversion internal without invoking the current 
   const legacyBackupDecision = payloadReversionBody.indexOf('$legacyCurrentBackupPath = ""');
   const publicationTry = payloadReversionBody.indexOf('try {', legacyBackupDecision);
   const publicationCatch = payloadReversionBody.indexOf('catch {', publicationTry);
-  const shimPublication = payloadReversionBody.indexOf('Sync-InstallerCliPayloadReversionShim', publicationTry);
+  const shimPublication = payloadReversionBody.indexOf('Sync-InstallerCliShim', publicationTry);
   const legacyBackupCleanup = payloadReversionBody.indexOf('Remove-Item -Path $legacyCurrentBackupPath', publicationTry);
   assert.ok(publicationTry >= 0 && publicationCatch >= 0, 'expected a payload-reversion publication transaction');
   assert.ok(

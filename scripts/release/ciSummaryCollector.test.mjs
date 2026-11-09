@@ -142,7 +142,8 @@ test('a selected path-filtered job cannot report success without executing its c
 test('every path-filtered job publishes whether its guarded command actually executed', () => {
   const workflow = YAML.parse(readFileSync(new URL('../../.github/workflows/tests.yml', import.meta.url), 'utf8'));
   const pathFilteredJobs = Object.entries(workflow?.jobs ?? {})
-    .filter(([, job]) => (job?.steps ?? []).some((step) => String(step?.uses ?? '').includes('dorny/paths-filter')));
+    // ci_plan produces selection; it is not a guarded test-command consumer.
+    .filter(([id, job]) => id !== 'ci_plan' && (job?.steps ?? []).some((step) => String(step?.uses ?? '').includes('dorny/paths-filter')));
   assert.deepEqual(pathFilteredJobs.map(([id]) => id).sort(), ['action-map-drift', 'ui-e2e', 'workspace-sync-real']);
   const ordinary = jobsForSelectedInputs({ inputs: {}, eventName: 'push' });
   for (const [id, job] of pathFilteredJobs) {

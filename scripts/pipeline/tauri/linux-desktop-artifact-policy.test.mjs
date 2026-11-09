@@ -14,9 +14,11 @@ test('Linux AppImage policy identifies host graphics libraries that must not be 
     'libwayland-cursor.so',
     'libwayland-egl.so',
     'libwayland-server.so',
+    'libgtk-layer-shell.so',
   ]);
   assert.equal(isLinuxHostGraphicsLibrary('usr/lib/libwayland-client.so.0'), true);
   assert.equal(isLinuxHostGraphicsLibrary('usr/lib/libwebkit2gtk-4.1.so.0'), false);
+  assert.equal(isLinuxHostGraphicsLibrary('usr/lib/libgtk-layer-shell.so.0'), true);
 });
 
 test('Linux package metadata validation uses the owning package inspector', () => {

@@ -21,6 +21,16 @@ import {
 
 const SOURCE_SHA = 'a'.repeat(40);
 
+test('pre-promotion verification checks selected bytes and deployed refs without requiring the channel branch to move early', () => {
+  const targets = resolveCandidateVerificationTargets({
+    channel: 'production', versions: { cli: '1.2.3' }, verifyChannelRef: false,
+    verifyDeploy: { ui: true, server: false, website: false, docs: false },
+    verifyRelease: { cli: true, stack: false, server: false, runner: false, 'ui-web': false },
+  });
+  assert.deepEqual(targets.refs, ['heads/deploy/production/ui']);
+  assert.deepEqual(targets.tags, ['cli-v1.2.3']);
+});
+
 test('candidate verification derives refs, tags, and manifests from one script-owned release mapping', () => {
   assert.deepEqual(resolveCandidateVerificationTargets({
     channel: 'production',

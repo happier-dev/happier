@@ -159,7 +159,7 @@ test('publish-ui-web passes a malicious release message only through quoted envi
     ));
     assert.ok(step, `${jobName} release-message step`);
     assert.equal(step.env?.RELEASE_MESSAGE, '${{ inputs.release_message }}');
-    assert.match(String(step.run), /--release-message "\$RELEASE_MESSAGE"/);
+    assert.match(String(step.run), /--release-message(?:=|\s+)"\$RELEASE_MESSAGE"/);
     assert.doesNotMatch(String(step.run), /\$\{\{\s*inputs\.release_message\s*\}\}/);
   }
 });

@@ -185,7 +185,7 @@ export function admitNpmPublication(input) {
  * validatedSourceSha: string; ciResult: string; sourceChecksWaived?: boolean;
  * publishServerRuntimeNeeded: boolean; publishCliBinariesNeeded: boolean; publishStack?: boolean; publishRunner?: boolean;
  * risks: { mysqlContract: boolean; platformServices: boolean; trustRoots: boolean };
- * gates: { mysql: string; platform: string; trustRoots: string; mutagenEngine: string };
+ * gates: { mysql: string; platform: string; trustRoots: string };
  * npmPublication?: Parameters<typeof admitNpmPublication>[0];
  * publicSdkPublication?: Parameters<typeof admitPublicSdkPublication>[0] }} input
  */
@@ -201,9 +201,6 @@ export function admitRelease(input) {
   }
   if (input.environment === 'production' && input.checksProfile !== 'full') {
     throw new Error('production releases require checks_profile=full');
-  }
-  if (input.gates.mutagenEngine !== 'success') {
-    throw new Error('release publication requires a successful external Mutagen engine release gate');
   }
   const requiredSourceGates = resolveRequiredSourceValidationGates({
     serverRuntimeNeeded: input.publishServerRuntimeNeeded,
@@ -251,7 +248,6 @@ export function admitReleaseFromEnvironment(env) {
       mysql: String(env.MYSQL_GATE_RESULT ?? ''),
       platform: String(env.PLATFORM_GATE_RESULT ?? ''),
       trustRoots: String(env.TRUST_ROOT_GATE_RESULT ?? ''),
-      mutagenEngine: String(env.MUTAGEN_ENGINE_GATE_RESULT ?? ''),
     },
     ...(!publishPluginSdk && !publishSdk ? {} : {
       publicSdkPublication: {

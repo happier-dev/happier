@@ -36,7 +36,7 @@ export async function resolveAuthorizedReleaseSource(params) {
   if (FULL_SHA.test(sourceRef) || authorizedSha) {
     const exactSha = authorizedSha || sourceRef;
     try {
-      git(repoRoot, ['fetch', '--no-tags', '--depth=1', remoteUrl, exactSha]);
+      git(repoRoot, ['fetch', '--no-tags', ...(params.allowSourceAncestor === true ? [] : ['--depth=1']), remoteUrl, exactSha]);
     } catch {
       throw new Error(`Exact authorized release source SHA was not found: ${exactSha}`);
     }
@@ -44,7 +44,17 @@ export async function resolveAuthorizedReleaseSource(params) {
     if (fetched !== exactSha) throw new Error('Fetched release source SHA did not match the authorized input');
     if (authorizedSha && sourceRef && sourceRef !== authorizedSha) {
       const resolved = await resolveAuthorizedReleaseSource({ repoRoot, remoteUrl, sourceRef });
-      if (resolved.sha !== authorizedSha) throw new Error(`Source ref did not match caller-authorized SHA: ${sourceRef}`);
+      if (resolved.kind === 'branch' && params.allowSourceAncestor === true) {
+        const shallow = git(repoRoot, ['rev-parse', '--is-shallow-repository']) === 'true';
+        git(repoRoot, ['fetch', '--no-tags', ...(shallow ? ['--unshallow'] : []), remoteUrl, resolved.sha]);
+        try {
+          git(repoRoot, ['merge-base', '--is-ancestor', authorizedSha, resolved.sha]);
+        } catch {
+          throw new Error(`Caller-authorized SHA is not an ancestor of the source branch: ${sourceRef}`);
+        }
+      } else if (resolved.sha !== authorizedSha) {
+        throw new Error(`Source ref did not match caller-authorized SHA: ${sourceRef}`);
+      }
     }
     return { sha: fetched, kind: 'sha', canonicalRef: fetched };
   }
@@ -73,6 +83,7 @@ async function main() {
       remote: { type: 'string', default: 'origin' },
       'github-output': { type: 'string' },
       'authorized-sha': { type: 'string', default: '' },
+      'allow-source-ancestor': { type: 'boolean', default: false },
     },
     allowPositionals: false,
   });
@@ -81,6 +92,7 @@ async function main() {
     remoteUrl: String(values.remote ?? 'origin'),
     sourceRef: String(values['source-ref'] ?? ''),
     authorizedSha: String(values['authorized-sha'] ?? ''),
+    allowSourceAncestor: values['allow-source-ancestor'] === true,
   });
   const githubOutput = String(values['github-output'] ?? '').trim();
   if (githubOutput) {

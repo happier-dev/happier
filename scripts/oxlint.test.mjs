@@ -10,6 +10,23 @@ import { runNodeCapture } from '../apps/stack/scripts/testkit/core/run_node_capt
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const oxlint = join(repoRoot, 'node_modules/oxlint/bin/oxlint');
 
+test('UI protocol imports use published subpaths while other packages may use the root', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-protocol-import-policy-' });
+  await copyFile(join(repoRoot, '.oxlintrc.json'), fixture.path('.oxlintrc.json'));
+  await mkdir(fixture.path('apps/ui/sources'), { recursive: true });
+  await mkdir(fixture.path('packages/example'), { recursive: true });
+  await writeFile(fixture.path('apps/ui/sources/root.ts'), "import { Value } from '@happier-dev/protocol';\nexport { Value };\n");
+  await writeFile(fixture.path('apps/ui/sources/types.ts'), "import type { Value } from '@happier-dev/protocol';\nexport type { Value };\n");
+  await writeFile(fixture.path('apps/ui/sources/leaf.ts'), "export { Value } from '@happier-dev/protocol/example';\n");
+  await writeFile(fixture.path('packages/example/root.ts'), "export { Value } from '@happier-dev/protocol';\n");
+  const result = await runNodeCapture([oxlint, '--format=json'], { cwd: fixture.root });
+  const diagnostics = JSON.parse(result.stdout).diagnostics;
+  assert.deepEqual([...new Set(diagnostics.map(diagnostic => diagnostic.filename))].sort(), [
+    'apps/ui/sources/root.ts', 'apps/ui/sources/types.ts',
+  ]);
+  assert.equal(result.code, 1, result.stdout + result.stderr);
+});
+
 test('root lint policy catches defects in authored code and both UI contribution paths', async (t) => {
   const fixture = await createTempFixture(t, {
     prefix: 'happier-oxlint-policy-',

@@ -4,6 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import YAML from 'yaml';
 
 const repoRoot = resolve(new URL('../..', import.meta.url).pathname);
 const DEV_SOURCE_SHA = '1111111111111111111111111111111111111111';
@@ -26,7 +27,7 @@ set -eu
 echo "git $*" >> ${JSON.stringify(log)}
 if [ "$1" = diff ] && [ "$2" = --cached ]; then exit 0; fi
 if [ "$1" = rev-parse ] && [ "$2" = --abbrev-ref ]; then printf 'dev\n'; exit 0; fi
-if [ "$1" = ls-remote ] && [ "$3" = refs/heads/dev ]; then printf '${DEV_SOURCE_SHA}\trefs/heads/dev\n'; exit 0; fi
+if [ "$1" = ls-remote ] && [ "$3" = refs/heads/v0.3 ]; then printf '${DEV_SOURCE_SHA}\trefs/heads/v0.3\n'; exit 0; fi
 if [ "$1" = fetch ]; then exit 0; fi
 if [ "$1" = cat-file ]; then exit 0; fi
 if [ "$1" = rev-parse ] && [ "$2" = FETCH_HEAD ]; then printf '${DEV_SOURCE_SHA}\n'; exit 0; fi
@@ -106,7 +107,7 @@ set -eu
 echo "git $*" >> ${JSON.stringify(log)}
 if [ "$1" = rev-parse ] && [ "$2" = --is-inside-work-tree ]; then printf 'true\\n'; exit 0; fi
 if [ "$1" = status ] && [ "$2" = --porcelain=v1 ]; then printf '%s\\n' "\${HAPPIER_TEST_GIT_STATUS:-}"; exit 0; fi
-if [ "$1" = ls-remote ] && [ "$3" = refs/heads/dev ]; then printf '${DEV_SOURCE_SHA}\\trefs/heads/dev\\n'; exit 0; fi
+if [ "$1" = ls-remote ] && [ "$3" = refs/heads/v0.3 ]; then printf '${DEV_SOURCE_SHA}\\trefs/heads/v0.3\\n'; exit 0; fi
 if [ "$1" = fetch ]; then exit 0; fi
 if [ "$1" = cat-file ]; then exit 0; fi
 if [ "$1" = rev-parse ] && [ "$2" = FETCH_HEAD ]; then printf '${DEV_SOURCE_SHA}\\n'; exit 0; fi
@@ -410,4 +411,150 @@ exit 0
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+
+test('detached local dispatch consumes the complete target-owned dry-run transport', () => {
+  const confirmChoices = YAML.parse(readFileSync(join(repoRoot, '.github/workflows/release.yml'), 'utf8')).on.workflow_dispatch.inputs.confirm.options;
+  const root = mkdtempSync(join(tmpdir(), 'hosted-release-transport-'));
+  const bin = join(root, 'bin');
+  const capture = join(root, 'dispatch.json');
+  mkdirSync(bin);
+  executable(join(bin, 'git'), `#!/bin/sh
+set -eu
+if [ "$1" = rev-parse ] && [ "$2" = --is-inside-work-tree ]; then printf 'true\\n'; exit 0; fi
+if [ "$1" = status ] || [ "$1" = diff ]; then exit 0; fi
+if [ "$1" = rev-parse ] && [ "$2" = --abbrev-ref ]; then printf 'HEAD\\n'; exit 0; fi
+if [ "$1" = ls-remote ]; then printf '%s\\t%s\\n' "\${HAPPIER_TEST_SOURCE_SHA}" "$3"; exit 0; fi
+if [ "$1" = fetch ] || [ "$1" = cat-file ]; then exit 0; fi
+if [ "$1" = rev-parse ] && [ "$2" = FETCH_HEAD ]; then printf '%s\\n' "\${HAPPIER_TEST_SOURCE_SHA}"; exit 0; fi
+exit 2
+`);
+  executable(join(bin, 'gh'), `#!${process.execPath}
+const fs = require('node:fs');
+fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify(process.argv.slice(2)));
+`);
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, HAPPIER_TEST_SOURCE_SHA: DEV_SOURCE_SHA };
+  try {
+    for (const [environment, confirm, sourceBranch] of [
+      ['preview', 'release dev to preview', 'v0.3'],
+      ['production', 'release preview to main', 'preview'],
+      ['production', 'reset main from preview', 'preview'],
+      ['production', 'release dev to main', 'v0.3'],
+      ['production', 'reset main from dev', 'v0.3'],
+      ['preview-and-production', 'release dev to preview and main', 'v0.3'],
+    ]) {
+      const args = ['scripts/pipeline/run.mjs', 'release', '--confirm', confirm,
+        '--repository', 'happier-dev/happier', '--deploy-environment', environment,
+        '--deploy-targets', 'ui,server', '--ui-expo-action', 'ota', '--desktop-mode', 'build_and_publish',
+        '--source-sha', DEV_SOURCE_SHA, '--workflow-control-sha', WORKFLOW_CONTROL_SHA,
+        '--operation-id', 'rel_transport_20261101', '--attempt-id', 'attempt_3',
+        '--resume-run-id', '123', '--ci-run-id', '456', '--force-deploy', 'true',
+        '--waive-ci', 'true', '--override-reason', 'Approved exact candidate waiver',
+        '--release-notes-id', '2026-11-01.1', '--allow-dirty', 'true'];
+      const planned = spawnSync(process.execPath, [...args, '--dry-run', '--json'], { cwd: repoRoot, env, encoding: 'utf8' });
+      assert.equal(planned.status, 0, planned.stderr);
+      const plan = JSON.parse(planned.stdout);
+      assert.equal(plan.sourceBranch, sourceBranch);
+      assert.ok(confirmChoices.includes(plan.hostedDispatch.inputs.confirm), `release.yml must admit emitted confirmation: ${plan.hostedDispatch.inputs.confirm}`);
+      assert.equal(plan.hostedDispatch.ref, 'v0.3');
+      assert.equal(plan.hostedDispatch.inputs.workflow_control_sha, WORKFLOW_CONTROL_SHA);
+      assert.equal(plan.hostedDispatch.inputs.hmaint_attempt_id, 'attempt_3');
+      assert.equal(plan.hostedDispatch.inputs.validation_profile, environment === 'preview' ? 'integrated' : 'stable');
+      assert.equal(plan.hostedDispatch.inputs.authorized_promotion_source_sha, DEV_SOURCE_SHA);
+      const grantArgs = [...args, '--release-profile', 'integrated',
+        '--include-validation-suites', 'binary-smoke', '--waive-validation-suites', 'source-contracts',
+        '--approve-public-sdk-release', 'true', '--plugin-sdk-ready', 'true',
+        '--plugin-sdk-api-classification', 'compatible', '--plugin-sdk-migration-notes', '2026-11-01.1',
+        '--sdk-auth-readiness', 'waived', '--sdk-auth-waiver', 'approved-auth-review',
+        '--sdk-api-classification', 'breaking', '--sdk-migration-notes', '2026-11-01.1',
+        '--qualified-v4-activation-approval', 'true',];
+      const grantResult = spawnSync(process.execPath, [...grantArgs, '--dry-run', '--json'], { cwd: repoRoot, env, encoding: 'utf8' });
+      assert.equal(grantResult.status, 0, grantResult.stderr);
+      const grantPlan = JSON.parse(grantResult.stdout);
+      const replayPath = join(root, 'approved-replay.json');
+      const priorGrant = structuredClone(grantPlan);
+      priorGrant.hostedDispatch.inputs.ci_run_id = '455';
+      writeFileSync(replayPath, JSON.stringify(priorGrant));
+      const replayArgs = ['scripts/pipeline/run.mjs', 'release', '--dry-run', '--json',
+        '--ci-run-id', '456', '--approved-intent', replayPath];
+      const replayed = spawnSync(process.execPath, replayArgs, { cwd: repoRoot, env, encoding: 'utf8' });
+      assert.equal(replayed.status, 0, `${confirm}: approved input replay must retain nondefault grants: ${replayed.stderr}`);
+      assert.deepEqual(JSON.parse(replayed.stdout), grantPlan, 'approved JSON alone supplies the complete public grant');
+      for (const changedArgs of [
+        ['--force-deploy', 'false'], ['--workflow-control-sha', 'b'.repeat(40)],
+        ['--attempt-id', 'attempt_4'],
+        ['--deploy-targets', 'ui,server,website'],
+        ['--sdk-auth-readiness', 'ready'],
+      ]) {
+        const refusedReplay = spawnSync(process.execPath, [...replayArgs, ...changedArgs], { cwd: repoRoot, env, encoding: 'utf8' });
+        assert.equal(refusedReplay.status, 1, `explicit ${changedArgs[0]} overrides must refuse grant drift`);
+        assert.match(refusedReplay.stderr, /approved release intent/i);
+        assert.equal(refusedReplay.stdout, '');
+      }
+      if (environment === 'preview-and-production') {
+        const resumeArgs = [...replayArgs, '--resume-run-id', '124', '--attempt-id', 'attempt_4',
+          '--workflow-control-sha', 'b'.repeat(40), '--ci-run-id', '789'];
+        const resumed = spawnSync(process.execPath, resumeArgs, { cwd: repoRoot, env, encoding: 'utf8' });
+        assert.equal(resumed.status, 0, `resume must retain the approved grant: ${resumed.stderr}`);
+        const resumedPlan = structuredClone(grantPlan);
+        resumedPlan.resumeRunId = '124';
+        Object.assign(resumedPlan.hostedDispatch.inputs, { resume_run_id: '124', hmaint_attempt_id: 'attempt_4',
+          workflow_control_sha: 'b'.repeat(40), ci_run_id: '789' });
+        assert.deepEqual(JSON.parse(resumed.stdout), resumedPlan, 'only admitted resume bindings and exact CI refresh');
+        const skippedAttempt = spawnSync(process.execPath, [...resumeArgs, '--attempt-id', 'attempt_5'], { cwd: repoRoot, env, encoding: 'utf8' });
+        assert.equal(skippedAttempt.status, 1, 'only the next attempt can rebind resume control');
+        assert.match(skippedAttempt.stderr, /approved release intent/i);
+        assert.equal(skippedAttempt.stdout, '');
+        const resumedDrift = spawnSync(process.execPath, [...resumeArgs, '--force-deploy', 'false'], { cwd: repoRoot, env, encoding: 'utf8' });
+        assert.equal(resumedDrift.status, 1, 'resume must retain all other grant fields');
+        assert.match(resumedDrift.stderr, /approved release intent/i);
+        assert.equal(resumedDrift.stdout, '');
+      }
+      if (environment === 'preview') {
+        const approvedPath = join(root, 'approved-intent.json');
+        const approved = structuredClone(plan);
+        approved.hostedDispatch.inputs.ci_run_id = '455';
+        writeFileSync(approvedPath, JSON.stringify(approved));
+        const finalArgs = [...args, '--dry-run', '--json', '--approved-intent', approvedPath];
+        const accepted = spawnSync(process.execPath, finalArgs, { cwd: repoRoot, env, encoding: 'utf8' });
+        assert.equal(accepted.status, 0, accepted.stderr);
+        assert.deepEqual(JSON.parse(accepted.stdout), plan, 'only the exact child CI binding may refresh');
+        for (const [label, changedArgs] of [
+          ['scope', ['--deploy-targets', 'ui,server,website']],
+          ['control', ['--workflow-control-sha', 'b'.repeat(40)]],
+          ['hosted approval', ['--force-deploy', 'false']],
+          ['SDK', ['--sdk-auth-readiness', 'ready']],
+          ['notes', ['--release-notes-id', 'changed-notes']],
+          ['profile', ['--release-profile', 'stable']],
+        ]) {
+          const refused = spawnSync(process.execPath, [...finalArgs, ...changedArgs], { cwd: repoRoot, env, encoding: 'utf8' });
+          assert.equal(refused.status, 1, `${label} grant drift must refuse`);
+          assert.match(refused.stderr, /approved release intent/i, label);
+          assert.equal(refused.stdout, '', 'a refused grant must not emit dispatch transport');
+        }
+        const changedSource = structuredClone(approved);
+        changedSource.authorizedPromotionSourceSha = '3'.repeat(40);
+        writeFileSync(approvedPath, JSON.stringify(changedSource));
+        const reboundRefusal = spawnSync(process.execPath, finalArgs, { cwd: repoRoot, env, encoding: 'utf8' });
+        assert.equal(reboundRefusal.status, 1, 'the materializer-authorized child must remain bound');
+        assert.match(reboundRefusal.stderr, /approved release intent/i);
+      }
+      const executed = spawnSync(process.execPath, args, { cwd: repoRoot, env, encoding: 'utf8' });
+      assert.equal(executed.status, 0, executed.stderr);
+      const { repository, workflow, ref, inputs } = plan.hostedDispatch;
+      assert.deepEqual(JSON.parse(readFileSync(capture, 'utf8')), [
+        'workflow', 'run', workflow, '--repo', repository, '--ref', ref,
+        ...Object.entries(inputs).flatMap(([key, value]) => ['-f', `${key}=${value}`]),
+      ]);
+    }
+    const changed = spawnSync(process.execPath, ['scripts/pipeline/run.mjs', 'release',
+      '--confirm', 'release dev to preview', '--repository', 'happier-dev/happier',
+      '--deploy-environment', 'preview', '--source-sha', DEV_SOURCE_SHA,
+      '--release-notes-id', '2026-11-01.1', '--allow-dirty', 'true'], {
+      cwd: repoRoot, env: { ...env, HAPPIER_TEST_SOURCE_SHA: PREVIEW_SOURCE_SHA }, encoding: 'utf8',
+    });
+    assert.equal(changed.status, 1, 'changed approved source must refuse before dispatch');
+    assert.match(changed.stderr, /(?:did not match|not an ancestor|does not match)/i);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

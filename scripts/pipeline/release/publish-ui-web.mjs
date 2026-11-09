@@ -201,7 +201,7 @@ async function main() {
   }
 
   const dryRun = values['dry-run'] === true;
-  const runContracts = resolveAutoBool(values['run-contracts'], '--run-contracts', process.env.GITHUB_ACTIONS === 'true');
+  const runContracts = resolveAutoBool(values['run-contracts'], '--run-contracts', false);
   const checkInstallers = parseBool(values['check-installers'], '--check-installers');
   const releaseMessage = String(values['release-message'] ?? '').trim();
   const phase = String(values.phase ?? 'publish').trim();
@@ -268,7 +268,8 @@ async function main() {
 
   if (phase !== 'promote-rolling') await preflightMinisignKey(opts);
 
-  if (runContracts) {
+  // Trusted local/reusable caller projects source admission; this is not a proof token.
+  if (phase !== 'promote-rolling' && (runContracts || process.env.HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT !== 'success')) {
     run(opts, 'pnpm', ['--silent', 'run', 'test:release:contracts'], { cwd: repoRoot, env: { ...process.env, HAPPIER_EMBEDDED_POLICY_ENV: embeddedPolicy } });
   }
   if (checkInstallers) {
@@ -286,7 +287,7 @@ async function main() {
       '--target-sha', targetSha,
       '--prerelease', prerelease,
       '--notes', notes,
-      '--release-message', releaseMessage,
+      `--release-message=${releaseMessage}`,
       '--repo', repoSlug,
       '--public-key', 'scripts/release/installers/happier-release.pub',
       ...(dryRun ? ['--dry-run'] : []),
@@ -375,8 +376,7 @@ async function main() {
       'false',
       '--prune-assets',
       'false',
-      '--release-message',
-      releaseMessage,
+      `--release-message=${releaseMessage}`,
       ...(dryRun ? ['--dry-run'] : []),
     ],
     { cwd: repoRoot },
@@ -391,7 +391,7 @@ async function main() {
       '--target-sha', targetSha,
       '--prerelease', prerelease,
       '--notes', notes,
-      '--release-message', releaseMessage,
+      `--release-message=${releaseMessage}`,
       '--repo', repoSlug,
       '--public-key', 'scripts/release/installers/happier-release.pub',
       ...(dryRun ? ['--dry-run'] : []),

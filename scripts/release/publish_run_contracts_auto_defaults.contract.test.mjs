@@ -8,7 +8,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const publishedVersionsFixture = JSON.stringify({ github: {}, npm: {} });
 
-test('publish-cli-binaries defaults to run-contracts=auto (skips locally)', async () => {
+test('publish-cli-binaries defaults to run-contracts=auto (runs locally without admitted source proof)', async () => {
   const out = execFileSync(
     process.execPath,
     [
@@ -27,6 +27,7 @@ test('publish-cli-binaries defaults to run-contracts=auto (skips locally)', asyn
       cwd: repoRoot,
       env: {
         ...process.env,
+        HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT: '',
         GITHUB_ACTIONS: '',
         GH_REPO: 'happier-dev/happier',
         HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: publishedVersionsFixture,
@@ -37,7 +38,7 @@ test('publish-cli-binaries defaults to run-contracts=auto (skips locally)', asyn
     },
   );
 
-  assert.doesNotMatch(out, /test:release:contracts/, 'local default should not run release contract tests');
+  assert.match(out, /test:release:contracts/, 'standalone auto must run source contracts when proof is absent');
 });
 
 test('publish-cli-binaries defaults to run-contracts=auto (runs on GitHub Actions)', async () => {
@@ -59,6 +60,7 @@ test('publish-cli-binaries defaults to run-contracts=auto (runs on GitHub Action
       cwd: repoRoot,
       env: {
         ...process.env,
+        HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT: '',
         GITHUB_ACTIONS: 'true',
         GH_REPO: 'happier-dev/happier',
         HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: publishedVersionsFixture,
@@ -72,7 +74,7 @@ test('publish-cli-binaries defaults to run-contracts=auto (runs on GitHub Action
   assert.match(out, /test:release:contracts/, 'GitHub Actions default should run release contract tests');
 });
 
-test('publish-ui-web defaults to run-contracts=auto (skips locally)', async () => {
+test('publish-ui-web defaults to run-contracts=auto (runs locally without admitted source proof)', async () => {
   const out = execFileSync(
     process.execPath,
     [
@@ -91,6 +93,7 @@ test('publish-ui-web defaults to run-contracts=auto (skips locally)', async () =
       cwd: repoRoot,
       env: {
         ...process.env,
+        HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT: '',
         GITHUB_ACTIONS: '',
         GH_REPO: 'happier-dev/happier',
         HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: publishedVersionsFixture,
@@ -101,5 +104,5 @@ test('publish-ui-web defaults to run-contracts=auto (skips locally)', async () =
     },
   );
 
-  assert.doesNotMatch(out, /test:release:contracts/, 'local default should not run release contract tests');
+  assert.match(out, /test:release:contracts/, 'standalone auto must run source contracts when proof is absent');
 });

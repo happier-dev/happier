@@ -9,6 +9,7 @@ import ts from 'typescript';
 import { deriveTypecheckProjects, readTypecheckProject } from './deriveTypecheckProjects.mjs';
 import { verifyTypeScriptProjectCoverage } from './prepareTypeScriptProjectBuild.mjs';
 import { prepareReferencedTypecheckDeclarations } from './prepareReferencedTypecheckDeclarations.mjs';
+import { prepareWorkspaceSourceTypecheckProjects } from './workspaceSourceTypecheck.mjs';
 import { prepareUiTypecheckProjects } from '../../apps/ui/scripts/deriveTypecheckProjects.mjs';
 import { deriveCliTypecheckProjects, prepareCliTypecheckProjects } from '../../apps/cli/scripts/deriveTypecheckProjects.mjs';
 import { installUiTypecheckFixtureDependencies } from '../testing/lib/typecheckProjectFixture.mjs';
@@ -72,6 +73,22 @@ for (const failure of ['ENOENT', 'ENOTDIR', 'EISDIR']) {
   });
 }
 
+test('Vitest setup roots belong to the test program rather than source declarations', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-compiler-setup-owner-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'src'), { recursive: true });
+  await writeFile(join(root, 'src/entry.ts'), 'export const entry = true;');
+  await writeFile(join(root, 'src/vitestSetup.ts'), 'export const setup = true;');
+  await writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { noEmit: true, types: [] }, include: ['src/**/*.ts'] }));
+  for (const name of ['foundation', 'services', 'core', 'source', 'test', 'test-ui']) await writeFile(join(root, `tsconfig.${name}.json`), JSON.stringify({ extends: './tsconfig.json', files: [], include: [] }));
+  const inventory = await deriveCliTypecheckProjects(root);
+  const owners = [];
+  for (const project of inventory) {
+    if (readTypecheckProject(project.configPath).parsed.fileNames.includes(join(root, 'src/vitestSetup.ts'))) owners.push(project.project);
+  }
+  assert.deepEqual(owners, ['test'], 'setup-only cross-app imports must not introduce a source declaration cycle');
+});
+
 test('compiler switches isolate internal declarations and keep references on the selected graph', async t => {
   const root = await mkdtemp(join(tmpdir(), 'happier-typecheck-compiler-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -109,7 +126,7 @@ test('compiler switches isolate internal declarations and keep references on the
   }
 });
 
-test('app compiler programs resolve current SDK declarations over installed author-example copies', async t => {
+test('app compiler programs resolve current workspace source over installed author-example copies', async t => {
   const root = await mkdtemp(join(tmpdir(), 'happier-compiler-author-example-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const exampleDir = join(root, 'packages/plugin-sdk/examples/public-authoring');
@@ -129,15 +146,23 @@ test('app compiler programs resolve current SDK declarations over installed auth
     await mkdir(installed, { recursive: true });
     await writeFile(join(installed, 'package.json'), JSON.stringify({ name: pkg.name,
       exports: Object.fromEntries(Object.entries(pkg.exports).map(([name, target]) => [name, { types: target }])) }));
+    const directory = join(root, 'packages', pkg.directory);
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, 'package.json'), JSON.stringify({ name: pkg.name,
+      exports: Object.fromEntries(Object.entries(pkg.exports).map(([name, target]) => [name, {
+        'happier-source': target.replace('./dist/', './src/').replace('.d.ts', '.ts'), types: target,
+      }])) }));
     for (const target of Object.values(pkg.exports)) {
-      for (const [directory, declaration] of [
-        [installed, 'export declare const outdated: true;'],
-        [join(root, 'packages', pkg.directory), 'export declare const current: true;'],
-      ]) {
-        await mkdir(dirname(join(directory, target)), { recursive: true });
-        await writeFile(join(directory, target), declaration);
-      }
+      await mkdir(dirname(join(installed, target)), { recursive: true });
+      await writeFile(join(installed, target), 'export declare const outdated: true;');
+      const source = target.replace('./dist/', './src/').replace('.d.ts', '.ts');
+      await mkdir(dirname(join(directory, source)), { recursive: true });
+      await writeFile(join(directory, source), 'export const current = true;');
     }
+  }
+  for (const app of ['ui', 'cli', 'server']) {
+    await mkdir(join(root, 'apps', app), { recursive: true });
+    await writeFile(join(root, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
   }
   for (const app of ['ui', 'cli']) {
     const packageDir = join(root, 'apps', app);
@@ -145,49 +170,22 @@ test('app compiler programs resolve current SDK declarations over installed auth
     const authored = ts.parseConfigFileTextToJson('tsconfig.json',
       await readFile(new URL(`../../apps/${app}/tsconfig.json`, import.meta.url), 'utf8'));
     assert.equal(authored.error, undefined);
-    const { options, errors } = ts.parseJsonConfigFileContent({
+    await writeFile(join(packageDir, 'tsconfig.json'), JSON.stringify({
       compilerOptions: authored.config.compilerOptions, files: [join(exampleDir, 'usageCoach.ts')],
-    }, ts.sys, packageDir, undefined, join(packageDir, 'tsconfig.json'));
-    assert.equal(errors.length, 0);
+    }));
+    const project = { project: 'tsconfig.json', authoredProject: 'tsconfig.json', args: ['--noEmit', '-p', 'tsconfig.json'] };
+    await prepareWorkspaceSourceTypecheckProjects([project], packageDir);
+    const { parsed: { options } } = readTypecheckProject(project.project);
+    assert.ok(options.customConditions.includes('happier-source'));
+    assert.equal(options.paths['@happier-dev/plugin-sdk/*'], undefined, 'old declaration wildcards cannot bypass source exports');
     for (const pkg of packages) for (const [subpath, target] of Object.entries(pkg.exports)) {
       const name = pkg.name + (subpath === '.' ? '' : subpath.slice(1));
       const resolved = ts.resolveModuleName(name, join(exampleDir, 'usageCoach.ts'), options, ts.sys).resolvedModule;
-      assert.equal(resolved?.resolvedFileName, join(root, 'packages', pkg.directory, target),
-        `${app}: ${name} must use its current workspace declaration, not an old installed example dependency`);
+      assert.equal(resolved?.resolvedFileName,
+        join(root, 'packages', pkg.directory, target.replace('./dist/', './src/').replace('.d.ts', '.ts')),
+        `${app}: ${name} must use its canonical workspace source`);
     }
   }
-  // CLI prepares foreign declaration producers before checking its own tests.
-  // Those programs must retain the host's public workspace identity as well.
-  const cli = join(root, 'apps/cli');
-  const cliAuthored = ts.parseConfigFileTextToJson('tsconfig.json',
-    await readFile(new URL('../../apps/cli/tsconfig.json', import.meta.url), 'utf8')).config;
-  await mkdir(join(cli, 'src'), { recursive: true });
-  await writeFile(join(cli, 'src/entry.ts'), 'export const entry = true;');
-  await writeFile(join(cli, 'src/owner.test.ts'),
-    'export { current } from "../../../packages/plugin-sdk/examples/public-authoring/usageCoach";');
-  await writeFile(join(cli, 'tsconfig.json'), JSON.stringify({ ...cliAuthored, include: ['src/**/*.ts'] }));
-  for (const name of ['foundation', 'services', 'core', 'source', 'test', 'test-ui']) {
-    await writeFile(join(cli, `tsconfig.${name}.json`), JSON.stringify({ extends: './tsconfig.json', files: [], include: [] }));
-  }
-  await writeFile(join(exampleDir, 'usageCoach.ts'), 'export { current } from "@happier-dev/plugin-sdk/actions";');
-  await mkdir(join(exampleDir, 'internal'), { recursive: true });
-  await writeFile(join(exampleDir, 'internal/owner.ts'), 'export const owner = true;');
-  await writeFile(join(exampleDir, 'tsconfig.json'), JSON.stringify({
-    compilerOptions: { module: 'esnext', moduleResolution: 'bundler', lib: ['ES2022', 'DOM'],
-      paths: { 'example-internal/*': ['./internal/*'] } }, files: ['usageCoach.ts'],
-  }));
-  const inventory = await deriveCliTypecheckProjects(cli);
-  const consumer = { project: inventory.find(project => project.project === 'test').configPath,
-    authoredProject: join(cli, 'tsconfig.test.json') };
-  const producers = await prepareReferencedTypecheckDeclarations([consumer], cli, inventory);
-  const producer = producers.find(project => project.project.startsWith(exampleDir));
-  assert.ok(producer, 'the example has a real independently prepared DOM declaration program');
-  const { parsed } = readTypecheckProject(producer.project);
-  assert.equal(ts.resolveModuleName('@happier-dev/plugin-sdk/actions', join(exampleDir, 'usageCoach.ts'),
-    parsed.options, ts.sys).resolvedModule?.resolvedFileName, join(root, 'packages/plugin-sdk/dist/actions/index.d.ts'));
-  assert.equal(ts.resolveModuleName('example-internal/owner', join(exampleDir, 'usageCoach.ts'),
-    parsed.options, ts.sys).resolvedModule?.resolvedFileName, join(exampleDir, 'internal/owner.ts'),
-  'foreign private aliases retain their own resolution base');
 });
 
 test('CLI browser-library dependencies do not become the UI compiler owner', async t => {
@@ -224,14 +222,14 @@ test('CLI browser-library dependencies do not become the UI compiler owner', asy
   assert.ok(node.files.includes(join(cli, 'src/node.test.ts')), 'DOM declarations do not turn a Node test into UI composition');
   assert.ok(!ui.files.includes(join(cli, 'src/node.test.ts')));
   assert.ok(ui.files.includes(join(cli, 'src/ui.test.ts')));
-  assert.deepEqual(node.compilerOptions, {}, 'ordinary tests keep the authored CLI environment');
-  assert.deepEqual(ui.compilerOptions, { lib: ['dom', 'dom.iterable', 'es2022'] },
+  assert.equal(node.compilerOptions.lib, undefined, 'ordinary tests keep the authored CLI libraries');
+  assert.deepEqual(ui.compilerOptions.lib, ['dom', 'dom.iterable', 'es2022'],
     'only additive libraries cross the host boundary; JSX and export conditions stay consumer-owned');
   const browser = inventory.foreignProjects.find(project => project.configPath === join(root, 'packages/browser/tsconfig.json'));
-  assert.ok(browser.files.includes(join(root, 'packages/browser/src/document.ts')), 'the foreign producer remains independently prepared');
+  assert.equal(browser, undefined, 'shared dependencies retain the consumer environment');
 });
 
-test('library ownership follows the producer program, not excluded consumer test support', async t => {
+test('library-only dependency differences retain the consuming program environment', async t => {
   const root = await mkdtemp(join(tmpdir(), 'happier-compiler-program-owner-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const cli = join(root, 'apps/cli');
@@ -255,10 +253,7 @@ test('library ownership follows the producer program, not excluded consumer test
   }
   const inventory = await deriveCliTypecheckProjects(cli);
   const browser = inventory.foreignProjects.find(project => project.configPath === join(root, 'packages/browser/tsconfig.json'));
-  assert.ok(browser.files.includes(join(root, 'packages/browser/src/excluded/document.ts')),
-    'an imported producer implementation remains owned even when excluded as a root');
-  assert.ok(!browser.files.includes(join(root, 'packages/browser/src/testkit/runtime.test-support.ts')),
-    'excluded consumer-only support must not be compiled under the producer environment');
+  assert.equal(browser, undefined, 'dependencies do not acquire package-owned declaration environments');
 });
 
 test('foreign declaration roots retain their transitive implementation membership', async t => {
@@ -446,7 +441,8 @@ test('dependency partitions keep cycles whole and prerequisites before their con
   const root = await mkdtemp(join(tmpdir(), 'happier-compiler-graph-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const files = {
-    'src/leaf.ts': 'export const leaf = 1;',
+    'src/leaf.ts': 'export * as providers from "../dependency/providerNamespace.js"; export const leaf = 1;',
+    'dependency/providerNamespace.ts': 'export const provider = 1;',
     'src/service.ts': 'import { leaf } from "./leaf"; export const service = leaf;',
     'src/a.ts': 'import "./b"; import "./service";',
     'src/b.ts': 'import "./c";',
@@ -472,6 +468,8 @@ test('dependency partitions keep cycles whole and prerequisites before their con
   const owned = path => configs.findIndex(config => config.files.includes(resolve(root, path)));
   for (const path of Object.keys(files).filter(path => !path.endsWith('.d.ts'))) assert.equal(configs.filter(config => config.files.includes(resolve(root, path))).length, 1, path);
   assert.equal(owned('src/leaf.ts'), 0);
+  assert.ok(owned('dependency/providerNamespace.ts') <= owned('src/leaf.ts'),
+    'namespace re-exports outside the authored root glob join the prerequisite closure');
   assert.equal(owned('src/service.ts'), 1);
   for (const path of ['src/a.ts', 'src/b.ts', 'src/c.ts']) assert.equal(owned(path), 2, path);
   assert.equal(owned('src/entry.ts'), 3);

@@ -19,6 +19,7 @@ import {
 } from './workspaceBundleLock.mjs';
 import { withOptionalCliSharedDepsBuildLock } from '../../apps/cli/scripts/optionalWorkspaceBundleLock.mjs';
 import { withPatchedProcessEnv } from '../../apps/stack/scripts/testkit/core/env_scope.mjs';
+import { createWorkspaceBuildResourceObservation } from '../../apps/stack/scripts/utils/proc/workspace_build_admission.mjs';
 
 for (const mode of ['async', 'sync']) for (const ownerKind of ['lock', 'priority-claim']) {
   test(`workspace bundle ${mode} retires ${ownerKind} history without growing quarantine names`, () => {
@@ -150,6 +151,42 @@ for (const mode of ['async', 'sync']) for (const blocker of ['priority scope', '
     }
   });
 }
+
+test('workspace admission observes a same-host owner dying with a fresh heartbeat and unchanged lock bytes', {
+  timeout: 10_000,
+}, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'workspace-dead-holder-observation-'));
+  const lockPath = join(root, 'publication.lock');
+  const source = `import {withWorkspaceBundleLock} from ${JSON.stringify(new URL('./workspaceBundleLock.mjs', import.meta.url).href)};
+    await withWorkspaceBundleLock(async () => {
+      process.stdin.once('data', () => process.exit(0));
+      process.stdout.write('held');
+      await new Promise(() => {});
+    }, {lockPath: process.argv[1], startWorkspaceLockHeartbeatImpl: () => null});`;
+  const owner = spawn(process.execPath, ['--input-type=module', '-e', source, lockPath], {
+    stdio: ['pipe', 'pipe', 'inherit'],
+  });
+  const exited = once(owner, 'close');
+  try {
+    await once(owner.stdout, 'data');
+    const observation = createWorkspaceBuildResourceObservation({ locks: [{ path: lockPath }] });
+    const liveSnapshot = observation.readSnapshot();
+    const ownerValue = JSON.parse(readFileSync(lockPath, 'utf8'));
+    writeFileSync(lockPath, JSON.stringify({ ...ownerValue, updatedAtMs: Date.now() + 1 }));
+    assert.equal(observation.readSnapshot(), liveSnapshot, 'heartbeat writes do not retry admission');
+    const rawBeforeDeath = readFileSync(lockPath, 'utf8');
+    owner.stdin.end('exit');
+    assert.equal((await exited)[0], 0);
+    assert.equal(readFileSync(lockPath, 'utf8'), rawBeforeDeath, 'death leaves the fresh lease untouched');
+    const deadSnapshot = observation.readSnapshot();
+    assert.equal(await withWorkspaceBundleLock(() => 'reclaimed', { lockPath, wait: false }), 'reclaimed');
+    assert.notEqual(deadSnapshot, liveSnapshot, 'the admission observer must expose canonical dead-owner reclamation');
+  } finally {
+    if (owner.exitCode === null) owner.stdin.end('exit');
+    await exited;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 // These temporary-lock fixtures exercise standalone contention. The routed
 // runner's charged-payload restriction belongs to its real workspace leases,
@@ -426,7 +463,9 @@ for (const mode of ['async', 'sync']) {
             assert.equal(waited, true);
             assertOwned();
             if (${JSON.stringify(race)} === 'restored-by-reaper-with-successor') {
-              fs.unlinkSync(claimPath);
+              // Cleanup may already have retired the restored own claim;
+              // the successor must survive either publication-time state.
+              fs.rmSync(claimPath, { force: true });
               fs.writeFileSync(claimPath, successorRaw);
             }
             return 'published';
@@ -1243,6 +1282,65 @@ for (const testCase of cases.values()) {
     });
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
+for (const mode of ['async', 'sync']) {
+  for (const ownerKind of ['lock', 'priority-claim']) {
+    test(`workspace bundle ${mode} reobserves ${ownerKind} cleanup after a peer recoverer retires its quarantine`, () => {
+      // Interleave real recoverers at the native rename boundary, before the
+      // first contender can read its newly quarantined stale snapshot.
+      const script = `
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+const root = fs.mkdtempSync(join(tmpdir(), 'workspace-peer-reclaim-'));
+const lockPath = join(root, 'publication.lock');
+const ownerPath = lockPath + ${JSON.stringify(ownerKind === 'priority-claim' ? '.priority-claim' : '')};
+const retainedPath = ownerPath + '.reclaim-history';
+fs.writeFileSync(retainedPath, JSON.stringify({
+  pid: 2147483000, createdAtMs: 1, updatedAtMs: 1,
+}));
+const nativeRename = fs.renameSync;
+const events = [];
+let peerRan = false;
+let withWorkspaceBundleLockSync;
+const options = { lockPath, pollIntervalMs: 1, startWorkspaceLockHeartbeatImpl: () => null };
+fs.renameSync = (from, to) => {
+  const result = nativeRename(from, to);
+  if (from === retainedPath && !peerRan) {
+    peerRan = true;
+    assert.equal(fs.existsSync(to), true);
+    withWorkspaceBundleLockSync(({ assertOwned }) => {
+      assertOwned(); events.push('peer');
+    }, options);
+    assert.equal(fs.existsSync(to), false, 'peer must retire the first recoverer quarantine');
+  }
+  return result;
+};
+syncBuiltinESMExports();
+try {
+  const owner = await import(${JSON.stringify(new URL('./workspaceBundleLock.mjs', import.meta.url).href)});
+  withWorkspaceBundleLockSync = owner.withWorkspaceBundleLockSync;
+  const result = ${mode === 'async' ? 'await owner.withWorkspaceBundleLock' : 'owner.withWorkspaceBundleLockSync'}(({ assertOwned }) => {
+    assertOwned(); events.push('contender'); return 'published';
+  }, options);
+  assert.equal(result, 'published');
+  assert.equal(peerRan, true);
+  assert.deepEqual(events, ['peer', 'contender']);
+  assert.deepEqual(fs.readdirSync(root), []);
+} finally {
+  fs.renameSync = nativeRename;
+  fs.rmSync(root, { recursive: true, force: true });
+}
+`;
+      const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+        encoding: 'utf8', timeout: 5_000,
+      });
+      assert.equal(result.status, 0, result.stderr);
+    });
   }
 }
 

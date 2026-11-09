@@ -23,6 +23,8 @@ import {
   writeChecksumsFile,
 } from './lib/binary-release.mjs';
 
+const { readValidatedWindowsServiceLauncher } = await import('@happier-dev/cli-common/service');
+
 async function main() {
   const repoRoot = resolveRepoRoot();
   const { kv } = parseArgs(process.argv.slice(2));
@@ -46,6 +48,10 @@ async function main() {
     availableTargets: CLI_STACK_TARGETS,
     requested: kv.get('--targets'),
   });
+
+  if (targets.some((target) => target.os === 'windows' && target.arch === 'x64')) {
+    await readValidatedWindowsServiceLauncher(join(repoRoot, 'packages', 'cli-common', 'native', 'windows', 'bin', 'windows-x64', 'happier-service-launcher.exe'));
+  }
 
   // The hstack binary compiles against the bundled workspace copies under apps/stack/node_modules.
   // Prepare that dependency tree first so bun can resolve vendored runtime deps like zod.
@@ -81,6 +87,12 @@ async function main() {
       buildTempDir: tempDir,
       outDir,
       compiledPath,
+      additionalStageEntries: target.os === 'windows' && target.arch === 'x64'
+        ? [{
+          sourcePath: join(repoRoot, 'packages', 'cli-common', 'native', 'windows', 'bin', 'windows-x64', 'happier-service-launcher.exe'),
+          targetPath: 'happier-service-launcher.exe',
+        }]
+        : [],
     });
     artifacts.push(artifact);
   }

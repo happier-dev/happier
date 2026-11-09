@@ -100,3 +100,11 @@ test('resolveNpmReleaseInputs requires an exact caller-authorized candidate SHA'
     /authorized_sha must be exactly 40 lowercase hexadecimal characters/,
   );
 });
+
+
+test('npm release inputs accept the admitted exact candidate before channel promotion', () => {
+  const authorizedSha = 'e'.repeat(40);
+  const input = { channel: 'production', npmTag: 'latest', sourceRef: authorizedSha, authorizedSha, publishCli: true };
+  assert.equal(resolveNpmReleaseInputs(input).authorizedSha, authorizedSha);
+  assert.throws(() => resolveNpmReleaseInputs({ ...input, sourceRef: 'f'.repeat(40) }), /releases must run from/);
+});

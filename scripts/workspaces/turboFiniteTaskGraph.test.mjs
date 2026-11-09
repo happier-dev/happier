@@ -166,10 +166,12 @@ test('the finite Turbo graph is activated through the current package manager wi
     pluginSdk.scripts['api:finite:prepared'],
     'node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --check',
   );
-  assert.equal(pluginSdk.scripts['test:finite'], 'pnpm --silent run test:prepared');
+  // SDKVENDOR owner decision (2026-10-28): cached upstream tasks do not
+  // establish the consuming worker's physical vendored declaration closure.
+  assert.equal(pluginSdk.scripts['test:finite'], 'node ./scripts/bundleWorkspaceDeps.mjs --declarations --run-script=test:prepared');
   assert.equal(
     pluginSdk.scripts['typecheck:finite'],
-    'pnpm --silent run typecheck:tests:prepared',
+    'node ./scripts/bundleWorkspaceDeps.mjs --declarations --run-script=typecheck:tests:prepared',
   );
 
   assert.equal(pluginUi.scripts['prepare:finite'], undefined);

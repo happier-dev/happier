@@ -40,7 +40,7 @@ test('performance workflow admits fork PR labels and hot paths with no write aut
   assert.equal(source.on.pull_request_target, undefined);
   assert.deepEqual(source.permissions, { contents: 'read', actions: 'read' });
   assert.deepEqual(source.on.push.branches, ['dev', 'main']);
-  assert.equal(source.jobs.performance['runs-on'], 'ubuntu-latest');
+  assert.equal(source.jobs.performance['runs-on'], 'ubuntu-24.04');
   assert.equal(source.jobs.performance['continue-on-error'], true);
   const checkout = source.jobs.performance.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
   assert.equal(checkout.with['persist-credentials'], false);
@@ -73,7 +73,7 @@ test('informational release metrics run beside publication without becoming a re
   assert.equal(nightly.jobs.verify_source_ci.needs.includes('performance'), false);
   assert.equal(nightly.jobs.performance.uses, './.github/workflows/performance-release.yml');
   const perf = await workflow('performance-release.yml');
-  assert.equal(perf.jobs.performance['runs-on'], 'ubuntu-latest');
+  assert.equal(perf.jobs.performance['runs-on'], 'ubuntu-24.04');
   assert.equal(perf.jobs.performance['continue-on-error'], true);
   assert.deepEqual(perf.permissions, { contents: 'read' });
   assert.equal(perf.jobs.performance.steps.find((step) => step.name === 'Run release performance check').run, 'node scripts/pipeline/perf/run-workflow.mjs --release');

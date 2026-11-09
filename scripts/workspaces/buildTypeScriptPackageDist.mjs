@@ -21,6 +21,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { StringDecoder } from 'node:string_decoder';
 import ts from 'typescript';
+import { workspaceSourceCompilerPaths } from '../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { exitWithCommandResult, runCommand } from '../../apps/stack/scripts/utils/proc/proc.mjs';
 import { resolveRemoteCommandPolicy } from '../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs';
 import { runWorkspaceBuildAdmission } from '../../apps/stack/scripts/utils/proc/workspace_build_admission.mjs';
@@ -179,14 +180,14 @@ async function runStagedOutputScripts({
   resolvePnpmCommandInvocationImpl,
 }) {
   for (const scriptName of stagedOutputScripts) {
-    await withWorkspaceOutputScriptArgs({ packageDir, scriptName, env }, async (args) => {
+    await withWorkspaceOutputScriptArgs({ packageDir, scriptName, env }, async (args, childEnv) => {
       const invocation = resolvePnpmCommandInvocationImpl(args, {
         npmExecPath: env.npm_execpath,
       });
       const result = await runCommandImpl(invocation.command, invocation.args, {
         ownedProcessGroup: true,
         cwd: packageDir,
-        env,
+        env: childEnv,
         stdio,
         ...(invocation.windowsVerbatimArguments
           ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
@@ -256,6 +257,13 @@ function withOutputCompilerArgs(args, outputDir, tsBuildInfoFile) {
 
 export function createDistTypeScriptProjectConfig({ projectPath, compilerOptions = {} }) {
   const projectDir = dirname(projectPath);
+  const manifestPath = resolve(projectDir, 'package.json');
+  const manifest = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : undefined;
+  // Cached emitter configs live outside the package, where TS cannot reverse
+  // self-imports from dist to source. Never read output that this emitter replaces.
+  const selfPaths = manifest?.name ? workspaceSourceCompilerPaths(new Map([
+    [manifest.name, { root: projectDir, manifest }],
+  ])) : {};
   // The retained TypeScript API owns config parsing and effective type roots.
   // Compilation and option validation use resolveTypeScriptCliInvocation.
   const config = ts.getParsedCommandLineOfConfigFile(projectPath, {}, {
@@ -280,10 +288,11 @@ export function createDistTypeScriptProjectConfig({ projectPath, compilerOptions
         }),
       } : {}),
       ...compilerOptions,
-      ...(compilerOptions.paths ? {
+      ...(compilerOptions.paths || Object.keys(selfPaths).length ? {
         paths: {
           ...Object.fromEntries(Object.entries(config.options.paths ?? {}).map(([key, targets]) => [key,
             targets.map(target => resolve(config.options.baseUrl ?? config.options.pathsBasePath ?? projectDir, target))])),
+          ...selfPaths,
           ...compilerOptions.paths,
         },
       } : {}),
@@ -385,7 +394,6 @@ async function runAdmittedPackageDistBuild({ packageDir, args, env, stdio, lockP
     }
   };
   const result = await runWorkspaceBuildAdmission({
-    dependencyInstallDir: packageDir,
     command: process.execPath,
     args: [fileURLToPath(import.meta.url), DIST_BUILD_WORKER_FLAG, JSON.stringify({ args, stdio })],
     locks: [{ path: lockPath, errorLabel }], cwd: packageDir, repoDir: repoRoot, env,

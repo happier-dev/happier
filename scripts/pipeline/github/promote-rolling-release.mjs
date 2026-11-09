@@ -563,6 +563,7 @@ async function main() {
           '-f', `name=${stagingName}`,
           '-f', 'body=',
           '-F', 'draft=true',
+          '-f', 'make_latest=false',
           '-F', `prerelease=${prerelease}`,
         ], { env: ghEnv });
       } catch (error) {
@@ -652,6 +653,7 @@ async function main() {
           name: title,
           body,
           draft: false,
+          make_latest: 'false',
           prerelease,
         },
         env: ghEnv,

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { watch } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -15,7 +16,9 @@ import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLoc
 import { WORKSPACE_BUILD_MODE_ENV } from './workspaceChildBuildEnv.mjs';
 import { ensureWorkspacePackagesBuiltByName, isWorkspacePackageOutputCurrent } from './ensureWorkspacePackagesBuilt.mjs';
 import { parseWorkspaceBuildArgs } from './ensureWorkspacePackagesBuiltCli.mjs';
+import { sourceTypecheckCompilerOptions } from './workspaceSourceTypecheck.mjs';
 import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
+import { readSlotAddress } from '../../apps/stack/scripts/utils/proc/admission_socket.mjs';
 
 const runner = fileURLToPath(new URL('./runTypeScriptCli.mjs', import.meta.url));
 const serverRunner = fileURLToPath(new URL('../../apps/server/scripts/runTypeScriptCli.mjs', import.meta.url));
@@ -204,6 +207,186 @@ esac
     },
   };
 }
+
+test('source compiler preserves inferred roots and only widens authored noEmit roots', () => {
+  const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+  const sources = { repoRoot, packageNames: new Set(), paths: {} };
+  const configPath = join(tmpdir(), 'source-contract', 'tsconfig.json');
+  const inferred = sourceTypecheckCompilerOptions({ noEmit: true }, configPath, sources);
+  assert.equal(Object.hasOwn(inferred, 'rootDir'), false, 'a scratch consumer and source imports share the compiler-inferred root');
+  const server = sourceTypecheckCompilerOptions({ noEmit: true }, join(repoRoot, 'apps/server/tsconfig.json'), sources);
+  assert.equal(server.rootDir, repoRoot, 'repository source checks include cross-package implementations even without an authored root');
+  const authored = { rootDir: join(repoRoot, 'packages/fixture/src') };
+  assert.equal(sourceTypecheckCompilerOptions({ ...authored, noEmit: true }, configPath, sources).rootDir, repoRoot);
+  assert.equal(Object.hasOwn(sourceTypecheckCompilerOptions({ ...authored, emitDeclarationOnly: true }, configPath, sources), 'rootDir'), false,
+    'real declaration emission retains its authored boundary');
+});
+
+for (const finite of [false, true]) {
+test(`public source compiler takes no package-dist reservations for stale transitive dependencies (${finite ? 'mixed CLI finite' : 'noEmit'})`, { skip: process.platform !== 'linux' }, async t => {
+  const setup = await fixture(t, { exitCode: 0, compilerBody: `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const { readSlotAddress } = require(${JSON.stringify(fileURLToPath(new URL('../../apps/stack/scripts/utils/proc/admission_socket.mjs', import.meta.url)))});
+    const slots = fs.readdirSync(process.env.FIXTURE_NATIVE_ROOT)
+      .filter(name => readSlotAddress(process.env.FIXTURE_NATIVE_ROOT, name));
+    if (slots.length !== 1) throw new Error('reader must own only its compiler reservation');
+    if (process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD || process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES) throw new Error('reader retained publication custody');
+    for (const name of ['first', 'middle', 'last']) {
+      const dir = path.join(process.cwd(), 'packages', name);
+      const args = process.argv.slice(2);
+      const project = JSON.parse(fs.readFileSync(args[args.findIndex(arg => ['-p', '--project'].includes(arg)) + 1], 'utf8'));
+      if (!project.compilerOptions.customConditions.includes('happier-source')) throw new Error('missing source condition');
+      if (project.compilerOptions.paths['@fixture/' + name][0] !== path.join(dir, 'src/index.ts')) throw new Error('reader did not use canonical source');
+      const source = fs.readFileSync(project.compilerOptions.paths['@fixture/' + name][0], 'utf8');
+      if (name === 'first' && source !== process.env.FIXTURE_FIRST_SOURCE) throw new Error('reader did not consume the changed source');
+      if (fs.existsSync(path.join(dir, 'dist/index.js'))) throw new Error('typecheck published dependency output');
+    }
+  ` });
+  await writeFile(join(setup.root, 'package.json'), JSON.stringify({ private: true, packageManager: repositoryPackageManager,
+    dependencies: { '@fixture/last': 'workspace:*' } }));
+  await writeFile(join(setup.root, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n  - apps/*\n');
+  await writeFile(join(setup.root, 'pnpm-lock.yaml'), '# fixture\n');
+  await writeFile(join(setup.root, 'tsconfig.json'), JSON.stringify({
+    compilerOptions: { noEmit: true, module: 'ESNext', moduleResolution: 'Bundler' }, files: ['source.ts'],
+  }));
+  await writeFile(join(setup.root, 'source.ts'), 'export const ready = true;\n');
+  const finiteNames = ['foundation', 'services', 'core', 'source', 'test', 'test-ui'];
+  if (finite) for (const name of finiteNames) await writeFile(join(setup.root, `tsconfig.${name}.json`), JSON.stringify({
+    extends: './tsconfig.json', files: [], include: [],
+    compilerOptions: name.startsWith('test') ? { noEmit: true } : {
+      composite: true, noEmit: false, declaration: true, emitDeclarationOnly: true,
+      outDir: `node_modules/.cache/tsc/${name}.declarations`,
+    },
+  }));
+  const compilerArgs = finite ? finiteNames.flatMap(name => ['--project', `tsconfig.${name}.json`]) : ['-p', 'tsconfig.json'];
+  const compilerReservations = finite ? finiteNames.length : 1;
+  for (const app of ['cli', 'ui', 'server']) {
+    await mkdir(join(setup.root, 'apps', app), { recursive: true });
+    await writeFile(join(setup.root, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+  }
+  const names = ['first', 'middle', 'last'];
+  const admissionRoot = setup.admission.admissionRoot;
+  for (const [index, name] of names.entries()) {
+    const dir = join(setup.root, 'packages', name);
+    await mkdir(join(dir, 'src'), { recursive: true });
+    await writeFile(join(dir, 'src/index.ts'), 'export const ready = true;\n');
+    await writeFile(join(dir, 'package.json'), JSON.stringify({ name: `@fixture/${name}`, type: 'module',
+      main: './dist/index.js', exports: { '.': { 'happier-source': './src/index.ts', types: './dist/index.d.ts', default: './dist/index.js' } }, scripts: { build: 'node compile.mjs' },
+      ...(index ? { dependencies: { [`@fixture/${names[index - 1]}`]: 'workspace:*' } } : {}) }));
+    // Only the compiler/package-manager process is substituted; graph, input
+    // capture, native admission and publication custody use the real owners.
+    await writeFile(join(dir, 'compile.mjs'), "throw new Error('source typecheck attempted package-dist publication');\n");
+  }
+  const pnpm = join(setup.root, 'pnpm.mjs');
+  await writeFile(pnpm, `import {readFileSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
+const args=process.argv.slice(2).filter(arg=>arg!=='--silent');
+const manifest=JSON.parse(readFileSync('package.json','utf8'));
+const result=spawnSync('/bin/sh',['-c',manifest.scripts[args[1]]],{env:process.env,stdio:'inherit'});
+process.exitCode=result.status??1;
+`);
+  const check = async (firstSource = 'export const ready = true;\n') => {
+    const admissions = new Set();
+    const observer = watch(admissionRoot, (event, name) => {
+      if (event === 'rename' && name && readSlotAddress(admissionRoot, String(name))) admissions.add(String(name));
+    });
+    try {
+      const { child, stderr } = setup.start([runner, ...compilerArgs], { env: {
+        npm_execpath: pnpm, FIXTURE_NATIVE_ROOT: admissionRoot, FIXTURE_FIRST_SOURCE: firstSource,
+      } });
+      assert.deepEqual(await once(child, 'close'), [0, null], stderr());
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(alive(Number(await readFile(setup.pidFile, 'utf8'))), false, 'the compiler process is terminal');
+      await waitUntil(async () => {
+        const status = await setup.admission.brokerStatus();
+        return status.activeCount === 0 && status.waitingCount === 0;
+      }, 'terminal compiler reservations and waiters must be released');
+      return admissions.size;
+    } finally { observer.close(); }
+  };
+  assert.equal(await check(), compilerReservations, 'missing dependency outputs require only compiler reservations');
+  assert.equal(await check(), compilerReservations, 'a repeated source check requires only compiler reservations');
+  await writeFile(join(setup.root, 'packages/first/src/index.ts'), 'export const ready = false;\n');
+  assert.equal(await check('export const ready = false;\n'), compilerReservations, 'a dependency source change requires no publication reservation');
+  const firstManifest = join(setup.root, 'packages/first/package.json');
+  await writeFile(firstManifest, JSON.stringify({ ...JSON.parse(await readFile(firstManifest, 'utf8')), scripts: {} }));
+  const missing = setup.start([runner, ...compilerArgs], { env: {
+    npm_execpath: pnpm, FIXTURE_NATIVE_ROOT: admissionRoot, FIXTURE_FIRST_SOURCE: 'export const ready = false;\n',
+  } });
+  assert.deepEqual(await once(missing.child, 'close'), [0, null], missing.stderr());
+  assert.doesNotMatch(missing.stderr(), /unknown.*class|invalid.*class/i);
+});
+}
+
+test('genuine declaration emission prepares current package producers without source projection', async t => {
+  const setup = await fixture(t, { exitCode: 0, compilerBody: `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const output = path.join(process.cwd(), 'packages/producer/dist/index.d.ts');
+    if (!fs.existsSync(output)) throw new Error('genuine declaration producer was not built');
+    if (fs.readFileSync(output, 'utf8') !== 'fresh-declaration') throw new Error('genuine declaration producer is stale');
+    const args = process.argv.slice(2);
+    if (args[args.indexOf('-p') + 1] !== 'tsconfig.json') throw new Error('genuine emission was source-projected');
+  ` });
+  await writeFile(join(setup.root, 'package.json'), JSON.stringify({ private: true, packageManager: repositoryPackageManager,
+    dependencies: { '@fixture/producer': 'workspace:*' } }));
+  await writeFile(join(setup.root, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n  - apps/*\n');
+  await writeFile(join(setup.root, 'pnpm-lock.yaml'), '# fixture\n');
+  await writeFile(join(setup.root, 'source.ts'), 'export const ready = true;\n');
+  await writeFile(join(setup.root, 'tsconfig.json'), JSON.stringify({
+    compilerOptions: { declaration: true, emitDeclarationOnly: true, rootDir: '.', outDir: './emitted' }, files: ['source.ts'],
+  }));
+  for (const app of ['cli', 'ui', 'server']) {
+    await mkdir(join(setup.root, 'apps', app), { recursive: true });
+    await writeFile(join(setup.root, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+  }
+  const producer = join(setup.root, 'packages', 'producer');
+  await mkdir(join(producer, 'src'), { recursive: true });
+  await writeFile(join(producer, 'src/index.ts'), 'fresh-declaration');
+  await writeFile(join(producer, 'package.json'), JSON.stringify({ name: '@fixture/producer', type: 'module',
+    main: './dist/index.js', types: './dist/index.d.ts', exports: { '.': {
+      'happier-source': './src/index.ts', types: './dist/index.d.ts', default: './dist/index.js',
+    } }, scripts: { build: 'node compile.mjs' } }));
+  await writeFile(join(producer, 'compile.mjs'), `import {mkdirSync,readFileSync,writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+mkdirSync(process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR,{recursive:true});
+for(const name of ['index.js','index.d.ts']) writeFileSync(join(process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR,name),readFileSync('src/index.ts'));
+`);
+  const pnpm = join(setup.root, 'pnpm.mjs');
+  await writeFile(pnpm, `import {readFileSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
+const args=process.argv.slice(2).filter(arg=>arg!=='--silent');
+const manifest=JSON.parse(readFileSync('package.json','utf8'));
+const result=spawnSync('/bin/sh',['-c',manifest.scripts[args[1]]],{env:process.env,stdio:'inherit'});
+process.exitCode=result.status??1;
+`);
+  const { child, stderr } = setup.start([runner, '-p', 'tsconfig.json', '--declaration', '--emitDeclarationOnly'], {
+    env: { npm_execpath: pnpm },
+  });
+  assert.deepEqual(await once(child, 'close'), [0, null], stderr());
+});
+
+test('source compiler reports captured inputs changed during checking and preserves its terminal verdict', async t => {
+  const setup = await fixture(t, { exitCode: 7, compilerBody: `
+    const fs = require('node:fs');
+    fs.appendFileSync('compiler-starts', 'started\\n');
+    fs.writeFileSync('source.ts', 'export const ready = false;\\n');
+  ` });
+  await writeFile(join(setup.root, 'source.ts'), 'export const ready = true;\n');
+  await writeFile(join(setup.root, 'tsconfig.json'), JSON.stringify({
+    compilerOptions: { noEmit: true, types: [] }, files: ['source.ts'],
+  }));
+  const { child, stderr } = setup.start([runner, '-p', 'tsconfig.json']);
+  assert.deepEqual(await once(child, 'close'), [7, null], stderr());
+  const observation = stderr().split('\n').find(line => line.startsWith('[typecheck-inputs] '));
+  assert.ok(observation, 'moving inputs must be attributable beside the completed compiler verdict');
+  const report = JSON.parse(observation.slice('[typecheck-inputs] '.length));
+  assert.ok(Number.isFinite(Date.parse(report.capturedAt)));
+  assert.deepEqual(report.changed, ['source.ts']);
+  assert.equal(await readFile(join(setup.root, 'compiler-starts'), 'utf8'), 'started\n');
+  assert.doesNotMatch(stderr(), /BUILD_INPUTS_CHANGED|trailingPassExhausted/);
+});
 
 for (const scenario of ['stale', 'current', 'pass']) {
   test(`failed emitting compiler declaration hint: ${scenario}`, async t => {
@@ -422,10 +605,12 @@ test('public CLI compiler checks its selected roots and admits concurrent additi
 });
 
 for (const windows of [false, true]) {
-  for (const outcome of ['success', 'failure', 'diagnostics-fresh', 'diagnostics-stale', 'diagnostics-missing', 'diagnostics-partial', 'diagnostics-transitive-partial', 'diagnostics-stale-inventory', 'crash', 'signal']) {
+  for (const outcome of ['success', 'failure', 'diagnostics-incremental', 'diagnostics-missing', 'crash', 'signal']) {
     const failPreparation = outcome === 'failure';
     const producerDiagnostics = outcome.startsWith('diagnostics-');
-    const continues = outcome === 'success' || outcome === 'diagnostics-fresh';
+    // Brief cli-delta-despite-ui-diags-1031 §2: every CLI partition is
+    // checked after producer diagnostics; only fatal compiler results stop it.
+    const continues = !['failure', 'crash', 'signal'].includes(outcome);
     test(`referenced UI declarations prepare cold CLI compilation (${windows ? 'Windows' : 'POSIX'}, ${outcome})`, async (t) => {
       const setup = await fixture(t, { windows, exitCode: 0, compilerBody: `
         const fs = require('node:fs');
@@ -441,32 +626,17 @@ for (const windows of [false, true]) {
             if (outcome === 'crash') { process.stdout.write('compiler crashed\\n'); process.exit(1); }
             if (outcome === 'signal') { process.kill(process.pid, 'SIGTERM'); return; }
             fs.mkdirSync(path.join(uiDir, 'declarations'), { recursive: true });
-            if (outcome === 'diagnostics-transitive-partial') {
-              // A source change after finite derivation reaches the compiler
-              // but is absent from the configured root membership.
-              fs.writeFileSync(path.join(uiDir, 'late.ts'), 'export interface Late { value: true; }\\n');
-              fs.appendFileSync(path.join(uiDir, 'source.ts'), 'export type { Late } from "./late";\\n');
-              fs.writeFileSync(path.join(uiDir, 'declarations', 'late.d.ts'), 'export interface Late { value: false; }\\n');
-            }
-            if (!['diagnostics-stale', 'diagnostics-missing'].includes(outcome)) {
+            if (outcome !== 'diagnostics-missing') {
               fs.writeFileSync(path.join(uiDir, 'declarations', 'source.d.ts'), fs.readFileSync(path.join(uiDir, 'source.ts')));
-              if (process.argv.includes('--listEmittedFiles')) process.stdout.write('TSFILE: ' + path.join(uiDir, 'declarations', 'source.d.ts') + '\\n');
-              if (outcome !== 'diagnostics-partial') {
-                fs.writeFileSync(path.join(uiDir, 'declarations', 'extra.d.ts'), 'export declare const extra: true;\\n');
-                if (process.argv.includes('--listEmittedFiles')) process.stdout.write('TSFILE: ' + path.join(uiDir, 'declarations', 'extra.d.ts') + '\\n');
-              }
-            }
-            const buildInfo = path.join(uiDir, 'fixture.typecheck.tsbuildinfo');
-            if (outcome !== 'diagnostics-stale-inventory') {
-              fs.writeFileSync(buildInfo, JSON.stringify({ fileNames: ['source.ts', 'extra.ts',
-                ...(outcome === 'diagnostics-transitive-partial' ? ['late.ts'] : [])] }));
-              if (process.argv.includes('--listEmittedFiles')) process.stdout.write('TSFILE: ' + buildInfo + '\\n');
             }
             if (outcome.startsWith('diagnostics-')) {
               process.stdout.write(path.join(uiDir, 'source.ts') + '(1,7): error TS2322: captured producer diagnostic\\n');
               process.exit(2);
             }
           }
+        } else if (process.env.PRODUCER_OUTCOME === 'diagnostics-incremental') {
+          process.stdout.write(path.join(root, 'apps/cli/source.ts') + '(1,7): error TS2322: captured CLI diagnostic\\n');
+          process.exit(2);
         } else if (path.basename(project) === 'tsconfig.test.json'
           && !fs.existsSync(path.join(uiDir, 'declarations', 'source.d.ts'))) process.exit(24);
         else if (path.basename(project) === 'tsconfig.test.json'
@@ -512,12 +682,6 @@ for (const windows of [false, true]) {
         ],
       }));
       await assert.rejects(readFile(join(uiDir, 'declarations', 'source.d.ts')), { code: 'ENOENT' });
-      if (outcome === 'diagnostics-stale' || outcome === 'diagnostics-partial') {
-        await mkdir(join(uiDir, 'declarations'));
-        await writeFile(join(uiDir, 'declarations', 'source.d.ts'), 'export declare const value: false;\n');
-        await writeFile(join(uiDir, 'declarations', 'extra.d.ts'), 'export declare const extra: false;\n');
-      }
-      if (outcome === 'diagnostics-stale-inventory') await writeFile(join(uiDir, 'fixture.typecheck.tsbuildinfo'), JSON.stringify({ fileNames: ['source.ts', 'extra.ts'] }));
       await writeFile(join(setup.root, '.gitignore'), 'node_modules/\ndeclarations/\n');
       const git = (...args) => spawnSync('git', args, { cwd: setup.root, encoding: 'utf8' });
       assert.equal(git('init', '-q').status, 0);
@@ -532,18 +696,20 @@ for (const windows of [false, true]) {
         env: { DECLARATION_FIXTURE_ROOT: setup.root, FAIL_DECLARATION_PREPARATION: failPreparation ? '1' : '', PRODUCER_OUTCOME: outcome },
       });
       assert.deepEqual(await once(child, 'exit'), outcome === 'signal' ? (windows ? [143, null] : [null, 'SIGTERM'])
-        : [failPreparation ? 23 : producerDiagnostics ? 2 : outcome === 'crash' ? 1 : 0, null], stderr());
+        : [failPreparation ? 23 : outcome === 'diagnostics-missing' ? 24
+          : producerDiagnostics ? 2 : outcome === 'crash' ? 1 : 0, null], stderr());
       const compiled = (await readFile(join(setup.root, 'compiler-projects.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
       assert.deepEqual(compiled, failPreparation ? [join(uiDir, 'node_modules/.cache/tsc/tsconfig.foundation.json')] : [
         ...['foundation', 'core', 'source'].map(name => join(uiDir, `node_modules/.cache/tsc/tsconfig.${name}.json`)),
         ...(continues ? [join(cliDir, 'tsconfig.source.json'), join(cliDir, 'node_modules/.cache/tsc/tsconfig.test.json')] : []),
       ]);
-      if (outcome === 'diagnostics-fresh') {
+      if (outcome === 'diagnostics-incremental') {
         assert.match(stderr(), /complete with producer diagnostics/);
         assert.match(stderr(), /apps\/cli: 0 new in touched paths/);
         const saved = JSON.parse(await readFile(snapshot, 'utf8'));
         assert.deepEqual(saved.diagnosticsByPath['apps/ui/source.ts'], [{ line: 1, column: 7, code: 2322 }]);
-      } else if (!continues) {
+        assert.deepEqual(saved.diagnosticsByPath['apps/cli/source.ts'], [{ line: 1, column: 7, code: 2322 }]);
+      } else if (!continues || outcome === 'diagnostics-missing') {
         assert.match(stderr(), /unavailable: no complete diagnostic result/);
         assert.equal(await readFile(snapshot, 'utf8'), previous);
       }
