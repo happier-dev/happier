@@ -63,7 +63,7 @@ async function readHealth(
 ): Promise<PluginConnectedAccountHealthResult> {
   if (modeId === 'api-key') {
     return await readCredential(credentials, API_KEY_CREDENTIAL_KEY)
-      ? { status: 'connected', displayName: 'Gemini API key', scopes: [] }
+      ? { status: 'connected', credentialKind: 'token', displayName: 'Gemini API key', scopes: [] }
       : {
           status: 'unavailable',
           diagnostic: diagnostic(
@@ -131,6 +131,7 @@ const geminiConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
           await context.attemptCredentials.set(API_KEY_CREDENTIAL_KEY, apiKey);
           return {
             status: 'connected',
+            credentialKind: 'token',
             ...(context.attempt.kind === 'reconnect'
               ? { accountId: context.attempt.account.accountId }
               : {}),

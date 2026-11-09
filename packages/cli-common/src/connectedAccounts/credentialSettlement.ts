@@ -59,6 +59,7 @@ export function createConnectedAccountCredentialSettlement(params: Readonly<{
     const settle = async (request: ConnectedAccountAttemptSettlementRequest, reconciliation: boolean): Promise<SettlementResult> => {
         const account = { service: request.service, accountId: request.accountId };
         const metadata = QualifiedConnectedAccountCredentialMetadataV4Schema.parse({
+            ...(request.credentialKind ? { kind: request.credentialKind } : {}),
             ...(request.providerIdentity ? { providerIdentity: request.providerIdentity } : {}),
             ...(request.authenticationProvenance ? { authenticationProvenance: request.authenticationProvenance } : {}),
             displayName: request.displayName, scopes: request.scopes,

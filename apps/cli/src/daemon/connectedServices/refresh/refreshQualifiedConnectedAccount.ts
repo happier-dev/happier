@@ -312,6 +312,9 @@ export async function refreshQualifiedConnectedAccount(input: Readonly<{
       await invocation.basis.prepareCredentialReplacement({
         ...mutation,
         metadata: {
+          ...(invocation.result.credentialKind
+            ? { kind: invocation.result.credentialKind }
+            : {}),
           ...(invocation.result.providerIdentity
             ? { providerIdentity: invocation.result.providerIdentity }
             : {}),

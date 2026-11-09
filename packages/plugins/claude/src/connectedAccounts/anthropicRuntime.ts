@@ -26,7 +26,7 @@ async function readHealth(
   credentials: ConnectedAccountCredentialReader,
 ): Promise<PluginConnectedAccountHealthResult> {
   return await readToken(credentials)
-    ? { status: 'connected', displayName: 'Anthropic API key', scopes: [] }
+    ? { status: 'connected', credentialKind: 'token', displayName: 'Anthropic API key', scopes: [] }
     : {
         status: 'unavailable',
         diagnostic: diagnostic(
@@ -93,6 +93,7 @@ const anthropicConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime 
           await context.attemptCredentials.set(TOKEN_CREDENTIAL_KEY, token, { signal });
           return {
             status: 'connected',
+            credentialKind: 'token',
             ...(context.attempt.kind === 'reconnect'
               ? { accountId: context.attempt.account.accountId }
               : {}),

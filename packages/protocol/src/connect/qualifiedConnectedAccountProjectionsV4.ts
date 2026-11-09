@@ -1,8 +1,10 @@
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
-import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
+import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
+import { ConnectedServiceCredentialKindSchema } from './connectedServiceCredentialKind.js';
 
 import {
   PluginContributionLocalIdSchema,
@@ -83,6 +85,9 @@ export const QualifiedProviderAccountUsageRecordResponseV4Schema = lazyZodSchema
 const QualifiedConnectedAccountServiceRefZodSchema = asProtocolZod(
   QualifiedConnectedAccountServiceRefSchema,
 );
+export const QualifiedConnectedAccountServiceListV4Schema = lazyZodSchema(() => z.array(
+  QualifiedConnectedAccountServiceRefZodSchema,
+));
 
 export const QualifiedConnectedAccountGroupRefSchema = lazyZodSchema(() => z.strictObject({
   service: QualifiedConnectedAccountServiceRefZodSchema,
@@ -171,13 +176,23 @@ export const QualifiedConnectedAccountListResponseV4Schema = lazyZodSchema(() =>
 }));
 export type QualifiedConnectedAccountListResponseV4 = z.infer<typeof QualifiedConnectedAccountListResponseV4Schema>;
 
+/** Every account the Account holds for the explicitly requested services. */
+export const QualifiedConnectedAccountMultiServiceListResponseV4Schema = lazyZodSchema(() => z.strictObject({
+  services: QualifiedConnectedAccountServiceListV4Schema,
+  accounts: z.array(QualifiedConnectedAccountProfileV4Schema),
+}));
+
 export const QualifiedConnectedAccountConfigurationTargetV4Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('account'),
   ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
 }));
 
 export const QualifiedConnectedAccountCredentialMetadataV4Schema =
-  QualifiedConnectedAccountPresentationMetadataV4Schema;
+  lazyZodSchema(() => z.strictObject({
+    ...QualifiedConnectedAccountPresentationMetadataV4Schema.shape,
+    /** Actual credential category observed by the authenticating provider; omission remains unknown. */
+    kind: z.optional(ConnectedServiceCredentialKindSchema),
+  }));
 
 export const QualifiedConnectedAccountConfigurationSnapshotV4Schema =
   createQualifiedConnectedAccountRevisionSemanticsV4Schema({
@@ -196,7 +211,7 @@ export const QualifiedConnectedAccountCredentialSnapshotV4Schema =
       z.nullable(QualifiedConnectedAccountConfigurationRevisionV4Schema),
     content: StoredJsonContentEnvelopeSchema,
     // Health is server-owned and read-only here. Credential replacement metadata
-    // stays presentation-only; health mutations use the fenced health endpoint.
+    // contains descriptive credential facts; health mutations use the fenced health endpoint.
     metadata: QualifiedConnectedAccountCredentialMetadataV4Schema,
     health: z.optional(ConnectedServiceCredentialHealthV1Schema),
   });
@@ -216,7 +231,8 @@ export const QualifiedConnectedAccountGroupV4Schema = lazyZodSchema(() => z.stri
   ref: QualifiedConnectedAccountGroupRefSchema,
   incarnation: QualifiedConnectedAccountGroupIncarnationV4Schema,
   displayName: z.nullable(z.string().check(z.trim(), z.minLength(1))),
-  policy: ConnectedServiceAuthGroupPolicyV1Schema,
+  // Older Home snapshots retain retired policy fields; only this stored-data read drops them.
+  policy: createStoredReadSchema(ConnectedServiceAuthGroupPolicyV1Schema),
   activeConnectedAccountId: zMini.nullable(asProtocolZod(QualifiedConnectedAccountIdSchema)),
   generation: z.number().check(z.int(), z.nonnegative()),
   runtimeStateRevision: ConnectedServiceAuthGroupRuntimeStateRevisionV1Schema,

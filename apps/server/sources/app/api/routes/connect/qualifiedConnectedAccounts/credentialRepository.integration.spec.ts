@@ -99,6 +99,32 @@ describe("qualified Connected Account credential repository", () => {
         expect(AccountProfileSchema.parse({ id: owner.id, ...held }).connectedAccountsV4).toEqual(accounts);
     });
 
+    it('retains actual provider credential kinds for current modes through writer, inventory and profile decoding', async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: 'plain',
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: 'none' });
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const codex = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+        const cases = [{ modeId: 'device', kind: 'oauth' }, { modeId: 'native-import', kind: 'oauth' },
+            { modeId: 'custom-key', kind: 'token' }, { modeId: 'unclassified', kind: null }] as const;
+        for (const { modeId, kind } of cases) {
+            const observed = { ...metadata, ...(kind ? { kind } : {}) };
+            expect(await mutateQualifiedConnectedServiceCredential({ accountId: owner.id,
+                ref: { service: codex, accountId: modeId }, authenticationModeId: modeId,
+                expectedCredentialRevision: null,
+                content: { t: 'plain', v: { v: 1, values: { token: 'synthetic-credential' } } }, metadata: observed,
+            })).toMatchObject({ status: 'written' });
+        }
+        const accounts = await listQualifiedConnectedAccounts({ accountId: owner.id, service: codex });
+        expect(QualifiedConnectedAccountListResponseV4Schema.parse({ service: codex, accounts }).accounts)
+            .toEqual(expect.arrayContaining(cases.map(({ modeId, kind }) => expect.objectContaining({
+                ref: { service: codex, accountId: modeId }, kind,
+            }))));
+        const held = await inTx(tx => buildAccountConnectedServicesProjection({ tx, accountId: owner.id,
+            includeGroups: true, env: process.env }));
+        expect(AccountProfileSchema.parse({ id: owner.id, ...held }).connectedAccountsV4).toEqual(accounts);
+    });
+
     it('projects the producer auth failure into account status and clears it when connected', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const ref = { service, accountId: 'status-reason' };

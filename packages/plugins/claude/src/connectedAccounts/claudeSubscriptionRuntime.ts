@@ -219,6 +219,7 @@ function connectedResult(tokens: Pick<ClaudeTokens, 'providerAccountId' | 'provi
   const displayName = tokens.providerEmail || tokens.providerAccountId || 'Claude';
   return {
     status: 'connected' as const,
+    credentialKind: 'oauth' as const,
     ...(tokens.expiresAtMs === null ? {} : { expiresAt: tokens.expiresAtMs }),
     providerIdentity: {
       accountId: tokens.providerAccountId || null,
@@ -379,7 +380,7 @@ async function readHealth(
     === CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.authenticationModeId
   ) {
     return await readCredential(credentials, SETUP_TOKEN_KEY, options)
-      ? { status: 'connected', displayName: 'Claude setup token', scopes: CLAUDE_CODE_SETUP_TOKEN_SCOPES }
+      ? { status: 'connected', credentialKind: 'token', displayName: 'Claude setup token', scopes: CLAUDE_CODE_SETUP_TOKEN_SCOPES }
       : {
           status: 'unavailable',
           diagnostic: diagnostic(
@@ -413,6 +414,7 @@ async function readHealth(
   if (Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= Date.now()) {
     return {
       status: 'expired',
+      credentialKind: 'oauth',
       expiresAt,
       displayName: providerEmail || 'Claude',
       scopes,
@@ -424,6 +426,7 @@ async function readHealth(
   }
   return {
     status: 'connected',
+    credentialKind: 'oauth',
     displayName: providerEmail || 'Claude',
     scopes,
     ...(Number.isFinite(expiresAt) && expiresAt > 0 ? { expiresAt } : {}),
@@ -491,6 +494,7 @@ export function createClaudeSubscriptionConnectedAccountRuntime(
           await context.attemptCredentials.set(SETUP_TOKEN_KEY, setupToken, options);
           return {
             status: 'connected',
+            credentialKind: 'token',
             ...(context.attempt.kind === 'reconnect'
               ? { accountId: context.attempt.account.accountId }
               : {}),

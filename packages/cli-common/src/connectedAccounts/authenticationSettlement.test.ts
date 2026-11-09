@@ -84,7 +84,7 @@ describe('admitted authentication settlement', () => {
                 invoke: async ({ context }) => {
                     counts.providerCalls++;
                     await context.attemptCredentials.set('token', 'verified');
-                    return { status: 'connected', accountId: account.accountId, displayName: 'Review', scopes: [] };
+                    return { status: 'connected', credentialKind: 'token', accountId: account.accountId, displayName: 'Review', scopes: [] };
                 },
             },
             oauth: { create: async () => { throw new Error('unused'); } }, settlement,
@@ -102,6 +102,7 @@ describe('admitted authentication settlement', () => {
             expect(await owner.reconcile({ attemptId: 'attempt-one' })).toMatchObject(fault === 'credential-replaced'
                 ? { status: 'conflict', code: 'connect_credential_mutation_superseded' } : { status: 'connected', account });
             if (fault === 'credential-replaced') expect(stored?.content).toEqual({ t: 'plain', v: { v: 1, values: { token: 'old' } } });
+            else expect(stored?.metadata).toMatchObject({ kind: 'token' });
             expect(counts.providerCalls).toBe(1);
             expect(counts.writes).toBe(1);
             expect(counts.configurationReads).toBe(admittedReads.configuration);

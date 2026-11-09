@@ -11,6 +11,8 @@ import {
   buildCodexAuthorizationUrl,
   extractOpenAiAccountIdFromIdToken,
   readOpenAiIdentityFromIdToken,
+  readCodexAccessTokenExpiresAtMs,
+  resolveCodexTokenExpiresAtMs,
 } from '../agent/auth/services/openai/cloud/oauth.js';
 import {
   beginCodexDeviceAuthorization,
@@ -92,13 +94,13 @@ function parseResponseBody(body: Uint8Array): Record<string, unknown> | null {
   }
 }
 
-function readExpiresAtMs(value: unknown, now: number): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0
-    ? now + Math.trunc(value * 1000)
-    : null;
+function readCredentialExpiresAtMs(accessToken: string, storedExpiry: string): number | null {
+  const expiresAt = Number(storedExpiry);
+  return Number.isFinite(expiresAt) && expiresAt > 0
+    ? expiresAt : readCodexAccessTokenExpiresAtMs(accessToken);
 }
 
-async function writeTokens(
+export async function writeCodexConnectedAccountTokens(
   store: CredentialStore,
   tokens: CodexTokens,
   options?: Readonly<{ signal?: AbortSignal }>,
@@ -212,15 +214,17 @@ async function exchangeTokens(
       refreshToken,
       idToken,
       providerAccountId,
-      expiresAtMs: readExpiresAtMs(body?.expires_in, Date.now()),
+      expiresAtMs: resolveCodexTokenExpiresAtMs({ accessToken, expiresIn: body?.expires_in, now: Date.now() }),
     },
   };
 }
 
-function connectedResult(tokens: CodexTokens) {
+export function codexConnectedAccountResult(tokens: CodexTokens) {
   const identity = readOpenAiIdentityFromIdToken(tokens.idToken);
   return {
     status: 'connected' as const,
+    credentialKind: 'oauth' as const,
+    ...(tokens.expiresAtMs === null ? {} : { expiresAt: tokens.expiresAtMs }),
     ...(tokens.providerAccountId
       ? {
           accountId: tokens.providerAccountId,
@@ -242,7 +246,7 @@ async function readHealth(
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<PluginConnectedAccountHealthResult> {
   const accessToken = await readCredential(credentials, ACCESS_TOKEN_KEY, options);
-  const expiresAt = Number(await readCredential(credentials, EXPIRES_AT_MS_KEY, options));
+  const expiresAt = readCredentialExpiresAtMs(accessToken, await readCredential(credentials, EXPIRES_AT_MS_KEY, options));
   if (!accessToken) {
     return {
       status: 'unavailable',
@@ -254,9 +258,11 @@ async function readHealth(
   }
   const identity = readOpenAiIdentityFromIdToken(await readCredential(credentials, ID_TOKEN_KEY, options));
   const displayName = identity.name ?? identity.email ?? 'ChatGPT';
-  if (Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= Date.now()) {
+  if (expiresAt !== null && expiresAt <= Date.now()) {
     return {
       status: 'expired',
+      credentialKind: 'oauth',
+      expiresAt,
       displayName,
       scopes: CODEX_SCOPES,
       diagnostic: diagnostic(
@@ -267,6 +273,8 @@ async function readHealth(
   }
   return {
     status: 'connected',
+    credentialKind: 'oauth',
+    ...(expiresAt === null ? {} : { expiresAt }),
     displayName,
     scopes: CODEX_SCOPES,
   };
@@ -277,10 +285,10 @@ async function readCurrentAccessToken(
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<string> {
   const accessToken = await readCredential(credentials, ACCESS_TOKEN_KEY, options);
-  const expiresAt = Number(await readCredential(credentials, EXPIRES_AT_MS_KEY, options));
+  const expiresAt = readCredentialExpiresAtMs(accessToken, await readCredential(credentials, EXPIRES_AT_MS_KEY, options));
   if (
     !accessToken
-    || (Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= Date.now())
+    || (expiresAt !== null && expiresAt <= Date.now())
   ) {
     throw new Error('OpenAI Codex connected-account credentials are unavailable');
   }
@@ -290,41 +298,6 @@ async function readCurrentAccessToken(
 const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
   authentication: {
     modes: {
-      'native-import': {
-        kind: 'manual',
-        async complete(input, context, options) {
-          if (input.fields.source !== 'native') {
-            return {
-              status: 'rejected',
-              diagnostic: diagnostic('openai_codex_import_source_unsupported', 'The Codex import source is unsupported.'),
-            };
-          }
-          const signal = options?.signal ?? context.signal;
-          const { readCodexNativeAuthCredentials, CodexNativeImportError } = await import('../agent/cli/auth/nativeImport.js');
-          let native: Awaited<ReturnType<typeof readCodexNativeAuthCredentials>>;
-          try {
-            native = await readCodexNativeAuthCredentials({ signal });
-          } catch (error) {
-            if (signal.aborted) throw new DOMException('Credential import cancelled', 'AbortError');
-            if (error instanceof CodexNativeImportError && error.code === 'reauthorization_required') {
-              return {
-                status: 'rejected',
-                diagnostic: diagnostic('openai_codex_import_reauthorization_required', 'Sign in to Codex again before importing.'),
-              };
-            }
-            return {
-              status: 'unavailable',
-              diagnostic: diagnostic('openai_codex_import_credentials_unavailable', 'Codex native credentials are unavailable.'),
-            };
-          }
-          const tokens: CodexTokens = {
-            accessToken: native.accessToken, refreshToken: native.refreshToken, idToken: native.idToken,
-            providerAccountId: native.accountId, expiresAtMs: native.expiresAt,
-          };
-          await writeTokens(context.attemptCredentials, tokens, { signal });
-          return connectedResult(tokens);
-        },
-      },
       oauth: {
         kind: 'oauthAuthorizationCode',
         async begin(input) {
@@ -348,8 +321,8 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
             }),
           }, context, options);
           if (exchanged.status !== 'success') return exchanged;
-          await writeTokens(context.attemptCredentials, exchanged.tokens, options);
-          return connectedResult(exchanged.tokens);
+          await writeCodexConnectedAccountTokens(context.attemptCredentials, exchanged.tokens, options);
+          return codexConnectedAccountResult(exchanged.tokens);
         },
         async cancel() {},
       },
@@ -426,8 +399,8 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
             providerAccountId: result.tokens.account_id,
             expiresAtMs: result.tokens.expires_at ?? null,
           };
-          await writeTokens(context.attemptCredentials, tokens, options);
-          return connectedResult(tokens);
+          await writeCodexConnectedAccountTokens(context.attemptCredentials, tokens, options);
+          return codexConnectedAccountResult(tokens);
         },
         async cancel() {},
       },
@@ -468,12 +441,8 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
       };
     }
     if (exchanged.status !== 'success') return exchanged;
-    await writeTokens(context.stagedCredentials, exchanged.tokens, options);
-    return {
-      status: 'connected',
-      displayName: connectedResult(exchanged.tokens).displayName,
-      scopes: CODEX_SCOPES,
-    };
+    await writeCodexConnectedAccountTokens(context.stagedCredentials, exchanged.tokens, options);
+    return codexConnectedAccountResult(exchanged.tokens);
   },
   async revoke() {
     return { status: 'remoteUnsupported' };

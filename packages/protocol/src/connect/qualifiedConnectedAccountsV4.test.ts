@@ -57,6 +57,37 @@ const service = {
 const credentialRevision = 'csr_abcdefghijklmnopqrstuvwxyz';
 
 describe('qualified connected-account V4 wire contract', () => {
+  it('reads prior credential metadata and preserves only closed provider kind facts', () => {
+    const snapshot = { ref: { service, accountId: 'kind-account' }, authenticationModeId: 'device',
+      revisionSemantics: 'revisioned', credentialRevision, configurationRevision: null,
+      content: { t: 'plain', v: { v: 1, values: { accessToken: 'token' } } }, metadata: { scopes: [] } };
+    expect(QualifiedConnectedAccountCredentialSnapshotV4Schema.parse(snapshot).metadata).not.toHaveProperty('kind');
+    for (const kind of ['oauth', 'token']) {
+      expect(QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...snapshot,
+        metadata: { ...snapshot.metadata, kind } }).metadata).toMatchObject({ kind });
+    }
+    for (const kind of ['unknown', null]) {
+      expect(QualifiedConnectedAccountCredentialSnapshotV4Schema.safeParse({ ...snapshot,
+        metadata: { ...snapshot.metadata, kind } }).success).toBe(false);
+    }
+  });
+
+  it('carries optional sign-in provenance and refresh freshness without deriving missing history', () => {
+    const authenticationProvenance = { authenticatedAt: 1_000, machine: { serverId: 'home-a', machineId: 'machine-a' } };
+    const profile = { ref: { service, accountId: 'freshness' }, status: 'connected', authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned', credentialRevision, configurationReady: false, configurationRevision: null, scopes: [] };
+    expect(QualifiedConnectedAccountProfileV4Schema.parse({ ...profile, authenticationProvenance, lastRefreshSuccessAt: 2_000 }))
+      .toMatchObject({ authenticationProvenance, lastRefreshSuccessAt: 2_000 });
+    expect(QualifiedConnectedAccountProfileV4Schema.parse(profile)).not.toHaveProperty('authenticationProvenance');
+    expect(QualifiedConnectedAccountProfileV4Schema.parse(profile)).not.toHaveProperty('lastRefreshSuccessAt');
+    const snapshot = { ref: profile.ref, authenticationModeId: 'oauth', revisionSemantics: 'revisioned', credentialRevision,
+      configurationRevision: null, content: { t: 'plain', v: { v: 1, values: { accessToken: 'token' } } },
+      metadata: { scopes: [], authenticationProvenance } };
+    expect(QualifiedConnectedAccountCredentialSnapshotV4Schema.parse(snapshot)).toMatchObject({ metadata: { authenticationProvenance } });
+    expect(QualifiedConnectedAccountCredentialSnapshotV4Schema.safeParse({ ...snapshot,
+      metadata: { scopes: [], authenticationProvenance: { ...authenticationProvenance, machine: { machineId: 'unqualified' } } } }).success).toBe(false);
+  });
+
   it('carries persisted health on credential reads while keeping credential metadata writes separate', () => {
     const health = { v: 1, status: 'connected', reconnectRequired: false };
     const metadata = { scopes: [] };
@@ -180,6 +211,63 @@ describe('qualified connected-account V4 wire contract', () => {
     expect(resolveQualifiedConnectedAccountGroupActiveAccountV4({
       group,
       accounts: [legacyUnfenced],
+      authentication,
+      now: 100,
+    })).toBeNull();
+  });
+
+  it('returns null for a disabled active pool member without falling back to an enabled member', () => {
+    const authentication = PluginConnectedAccountAuthenticationV2Schema.parse({
+      defaultModeId: 'oauth',
+      modes: [{
+        id: 'oauth',
+        kind: 'oauthDeviceCode',
+        outcomeReconciliation: 'none',
+      }],
+    });
+    const active = QualifiedConnectedAccountProfileV4Schema.parse({
+      ref: { service, accountId: 'team/primary' },
+      status: 'connected',
+      authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned',
+      credentialRevision,
+      configurationRevision: null,
+      configurationReady: true,
+      scopes: [],
+    });
+    const other = QualifiedConnectedAccountProfileV4Schema.parse({
+      ...active,
+      ref: { service, accountId: 'team/other' },
+    });
+    const group = QualifiedConnectedAccountGroupV4Schema.parse({
+      v: 1,
+      ref: { service, groupId: 'team' },
+      incarnation: 'qualified-group-row-team',
+      displayName: 'Team',
+      policy: {},
+      activeConnectedAccountId: active.ref.accountId,
+      generation: 1,
+      runtimeStateRevision: 1,
+      state: {},
+      createdAt: 1,
+      updatedAt: 1,
+      members: [active, other].map((account, index) => ({
+        v: 1,
+        connectedAccountId: account.ref.accountId,
+        priority: index + 1,
+        enabled: index !== 0,
+        state: {},
+        createdAt: 1,
+        updatedAt: 1,
+      })),
+    });
+
+    for (const profile of [active, other]) {
+      expect(isQualifiedConnectedAccountProfileUsableV4({ profile, authentication, now: 100 })).toBe(true);
+    }
+    expect(resolveQualifiedConnectedAccountGroupActiveAccountV4({
+      group,
+      accounts: [active, other],
       authentication,
       now: 100,
     })).toBeNull();
@@ -1239,9 +1327,7 @@ describe('qualified connected-account V4 wire contract', () => {
       ['GET', '/v4/connect/qualified/provider-account-usage/sources/resolve'],
       ['POST', '/v4/connect/qualified/provider-account-usage'],
       ['GET', '/v4/connect/qualified/provider-account-usage/history'],
-      ['HEAD', '/v4/connect/qualified/provider-account-usage/history'],
       ['PUT', '/v4/connect/qualified/provider-account-usage/history'],
-      ['GET', '/v4/connect/qualified/provider-account-usage/history/document'],
       ['GET', '/v4/connect/qualified/provider-account-usage/record'],
       ['DELETE', '/v4/connect/qualified/provider-account-usage/record'],
       ['POST', '/v4/connect/qualified/provider-account-usage/record/refresh'],

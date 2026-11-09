@@ -1,3 +1,4 @@
+import { decodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 import { OPENAI_CODEX_OAUTH_PROFILE } from '../../../../../connectedAccounts/openAiCodexProfile.js';
 
 export function buildCodexAuthorizationUrl(params: Readonly<{
@@ -35,8 +36,30 @@ function parseJwtPayload(token: string): Record<string, unknown> {
   if (parts.length !== 3 || !parts[1]) {
     throw new Error('Invalid JWT format');
   }
-  const parsed: unknown = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+  const parsed: unknown = JSON.parse(new TextDecoder().decode(decodeBase64(parts[1], 'base64url')));
   return isRecord(parsed) ? parsed : {};
+}
+
+/** Reads expiry metadata only; this does not authenticate or verify the JWT. */
+export function readCodexAccessTokenExpiresAtMs(accessToken: string | null): number | null {
+  if (!accessToken) return null;
+  try {
+    const exp = parseJwtPayload(accessToken).exp;
+    return typeof exp === 'number' && Number.isFinite(exp) && Number.isFinite(exp * 1000)
+      ? exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveCodexTokenExpiresAtMs(params: Readonly<{
+  accessToken: string;
+  expiresIn: unknown;
+  now: number;
+}>): number | null {
+  return typeof params.expiresIn === 'number' && Number.isFinite(params.expiresIn) && params.expiresIn >= 0
+    ? params.now + Math.trunc(params.expiresIn * 1000)
+    : readCodexAccessTokenExpiresAtMs(params.accessToken);
 }
 
 export function extractOpenAiAccountIdFromIdToken(idToken: string): string {

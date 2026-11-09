@@ -4,6 +4,7 @@ import type { PluginContributionRef } from '../plugins/registration/contracts.js
 import type { PluginDiagnosticData } from '../plugins/errors.js';
 import type { SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { PluginConnectedAccountConfigurationFieldV2 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import type { ConnectedServiceCredentialKind } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
 
 export type ConnectedAccountRuntimeConfigurationTarget =
     | Readonly<{
@@ -92,6 +93,8 @@ export type ConnectedAccountAuthCompletionResult =
     }>
     | Readonly<{
         status: 'connected';
+        /** Actual credential category; manual/native import providers report it when known. */
+        credentialKind?: ConnectedServiceCredentialKind;
         /**
          * Immutable service-local account identity proposed by the plugin when it
          * has a truthful stable value. The host mints an opaque identity when this

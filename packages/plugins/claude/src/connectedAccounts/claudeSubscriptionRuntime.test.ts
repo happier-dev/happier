@@ -238,7 +238,7 @@ describe('Claude Subscription Connected Account', () => {
             ? { account: { uuid: 'provider-user', has_claude_max: true }, organization: { uuid: 'new-organization', rate_limit_tier: 'max_5x' } }
             : { access_token: 'new-access', refresh_token: 'new-refresh' })) };
       } } },
-    })).resolves.toMatchObject({ status: 'connected', providerIdentity: {
+    })).resolves.toMatchObject({ status: 'connected', credentialKind: 'oauth', providerIdentity: {
       accountId: 'provider-user', organizationId: 'new-organization',
     } });
     expect(staged.values.get('subscriptionType')).toBe('max');
@@ -390,7 +390,7 @@ describe('Claude Subscription Connected Account', () => {
       const attempted = credentialStore();
       const callContext = context(attempted);
       const result = await mode().complete({ fields: { source: 'native' } }, callContext);
-      expect(result).toMatchObject({ status: 'connected', scopes });
+      expect(result).toMatchObject({ status: 'connected', credentialKind: 'oauth', scopes });
       expect(result).toHaveProperty('providerIdentity', { accountId: null, email: null, organizationId: null });
       expect(attempted.values.get('accessToken')).toBe('native-access');
       expect(attempted.values.get('refreshToken')).toBe('native-refresh');
@@ -481,6 +481,7 @@ describe('Claude Subscription Connected Account', () => {
     expect(connected).toMatchObject({
       status: 'connected',
       displayName: 'Claude setup token',
+      credentialKind: 'token',
       scopes: ['user:inference'],
     });
     expect(connected).not.toHaveProperty('accountId');

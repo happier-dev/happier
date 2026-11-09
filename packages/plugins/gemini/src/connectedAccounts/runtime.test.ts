@@ -62,7 +62,7 @@ describe('Gemini Connected Account modes', () => {
         operation: { kind: 'submitManual', fields }, context: { ...context,
           configuration: { ...context.configuration, target: { ...context.configuration.target, modeId } } },
         registerRawForRedaction() {}, async invokeCallback(work) { return work(); } });
-    expect(await invoke('api-key', { token: ' gemini-private ' })).toMatchObject({ status: 'connected' });
+    expect(await invoke('api-key', { token: ' gemini-private ' })).toMatchObject({ status: 'connected', credentialKind: 'token' });
     expect(staged.values.get('apiKey')).toBe('gemini-private');
     staged.values.clear();
     expect(await invoke('service-account', { credentialsJson: '{' })).toMatchObject({ status: 'rejected', diagnostic: { code: 'gemini_service_account_invalid' } });
@@ -106,6 +106,7 @@ describe('Gemini Connected Account modes', () => {
     } as Parameters<typeof mode.complete>[1]);
     expect(connected).toMatchObject({
       status: 'connected',
+      credentialKind: 'token',
     });
     if (connected.status !== 'connected') throw new Error('Gemini API-key connect was rejected');
     expect(connected).not.toHaveProperty('accountId');

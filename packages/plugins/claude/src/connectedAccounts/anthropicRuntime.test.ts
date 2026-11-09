@@ -65,7 +65,7 @@ describe('Anthropic API-key Connected Account', () => {
 
   it('verifies a valid-shaped key with a read-only provider call before storing it', async () => {
     const h = authenticationContext();
-    await expect(manualMode().complete({ fields: { token: ' sk-ant-verified ' } }, h.context)).resolves.toMatchObject({ status: 'connected' });
+    await expect(manualMode().complete({ fields: { token: ' sk-ant-verified ' } }, h.context)).resolves.toMatchObject({ status: 'connected', credentialKind: 'token' });
     expect(h.request).toHaveBeenCalledWith({ url: 'https://api.anthropic.com/v1/models', method: 'GET',
       headers: { 'x-api-key': 'sk-ant-verified', 'anthropic-version': '2023-06-01' }, redirect: 'error' }, { signal: h.context.signal });
     expect(h.credentials.values).toEqual(new Map([['token', 'sk-ant-verified']]));
@@ -90,7 +90,7 @@ describe('Anthropic API-key Connected Account', () => {
     const h = authenticationContext();
     const credentials = credentialStore(new Map([['token', 'legacy-stored-key']]));
     const context = { ...h.context, account: { service: h.context.service, accountId: 'retained-account' }, credentials: credentials.store };
-    await expect(anthropicConnectedAccountRuntime.status(context)).resolves.toMatchObject({ status: 'connected' });
+    await expect(anthropicConnectedAccountRuntime.status(context)).resolves.toMatchObject({ status: 'connected', credentialKind: 'token' });
     await expect(anthropicConnectedAccountRuntime.materialize({ kind: 'environment', keys: ['ANTHROPIC_API_KEY'] }, context)).resolves.toEqual({
       kind: 'environment', env: { ANTHROPIC_API_KEY: 'legacy-stored-key' },
     });

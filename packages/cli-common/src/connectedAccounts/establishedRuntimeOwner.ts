@@ -14,7 +14,7 @@ import { projectConnectedAccountConfiguredEndpoints, type ConnectedAccountConfig
 import type { ConnectedAccountRuntimeEstablishedInvocation, ConnectedAccountRuntimeEstablishedOperation, ConnectedAccountRuntimeEstablishedResult, ConnectedAccountRuntimeQuotaBase, ConnectedAccountEstablishedRuntimeInvoker } from './establishedRuntimeTypes.js';
 import { QualifiedConnectedAccountMaterialError } from './materialError.js';
 import { assertNotAborted, type ConnectedAccountEstablishedReadScope, type ConnectedAccountEstablishedPhaseObserver } from './establishedReadScope.js';
-import { readCredentialRedactionValues } from '../plugins/http/credentialRedactionValues.js';
+import { createConnectedAccountCredentialRedaction } from './credentialRedaction.js';
 
 type ConnectedServiceAccountEncryptionMode = 'plain' | 'e2ee' | 'unknown';
 type ConnectedAccountConfigurationSecrets = Parameters<typeof createConnectedAccountConfigurationOwner>[0]['secrets'];
@@ -187,6 +187,7 @@ export type QualifiedConnectedAccountEstablishedInvocationBasis = Readonly<{
   /** Host-private public configuration strings, excluding actual secret collisions. */
   materializationPublicValues?: readonly string[];
   credentialHealth?: QualifiedConnectedAccountCredentialSnapshotV4['health'] | null;
+  credentialProviderIdentity?: QualifiedConnectedAccountCredentialSnapshotV4['metadata']['providerIdentity'];
   credentialConfigurationRevision: string | null;
   runtimeConfigurationRevision: string;
   occurrenceId: string;
@@ -203,6 +204,7 @@ export type QualifiedConnectedAccountCredentialMutationPreparationInput =
     set: Readonly<Record<string, string>>;
     delete: readonly string[];
     metadata?: Readonly<{
+      kind?: QualifiedConnectedAccountCredentialSnapshotV4['metadata']['kind'];
       providerIdentity?: QualifiedConnectedAccountCredentialSnapshotV4['metadata']['providerIdentity'];
       displayName?: string;
       scopes?: readonly string[];
@@ -821,17 +823,9 @@ export function createConnectedAccountEstablishedRuntimeOwner<
           throw new Error('Connected-account established configuration is unavailable');
         }
         const baseConfiguration = admittedConfiguration.snapshot;
-        const materializationSecrets = new Set<string>();
-        const observeSecret = (value: string | null): string | null => {
-          if (input.operation.kind === 'materialize' && value !== null) {
-            for (const variant of readCredentialRedactionValues({ rawCredential: value, authorizationValue: value })) {
-              materializationSecrets.add(variant);
-            }
-          }
-          return value;
-        };
-        for (const value of Object.values(credentialPayload.values)) observeSecret(value);
-        for (const value of Object.values(initialConfigurationRecord?.secretValues ?? {})) observeSecret(value);
+        const redaction = createConnectedAccountCredentialRedaction({ mode, credential: credentialPayload,
+          configuration: baseConfiguration.values, configurationSecrets: initialConfigurationRecord?.secretValues });
+        const { observeSecret } = redaction;
         const exactConfiguration: PluginConnectedAccountRuntimeConfiguration =
           params.isAccountRuntimeCurrent || params.runAccountOperation || input.signal || input.operation.kind === 'materialize'
             ? Object.freeze<PluginConnectedAccountRuntimeConfiguration>({
@@ -884,6 +878,7 @@ export function createConnectedAccountEstablishedRuntimeOwner<
               runtimeConfigurationRevision,
           }),
           operation: input.operation,
+          readCredentialRedactionValue: redaction.readCredentialRedactionValue,
           assertProviderCallAllowed: input.assertProviderCallAllowed,
           context: Object.freeze({
             account: input.account,
@@ -930,23 +925,13 @@ export function createConnectedAccountEstablishedRuntimeOwner<
           },
           ...(input.signal ? { signal: input.signal } : {}),
         }), input.signal));
-        const publicValues = new Set<string>();
-        const collectPublicStrings = (value: JsonValue): void => {
-          if (typeof value === 'string') {
-            if (value.length > 0 && ![...materializationSecrets].some(secret => value.includes(secret))) publicValues.add(value);
-          } else if (value !== null && typeof value === 'object') {
-            for (const child of Object.values(value)) collectPublicStrings(child);
-          }
-        };
-        if (input.operation.kind === 'materialize') {
-          for (const value of Object.values(baseConfiguration.values)) collectPublicStrings(value);
-        }
         return Object.freeze({
           result,
           basis: Object.freeze({
             credentialRevision: initial.credential.credentialRevision,
-            ...(input.operation.kind === 'materialize' ? { materializationPublicValues: Object.freeze([...publicValues]) } : {}),
+            ...(input.operation.kind === 'materialize' ? { materializationPublicValues: redaction.readPublicValues() } : {}),
             credentialHealth: observedCredentialHealth,
+            credentialProviderIdentity: initial.credential.metadata.providerIdentity,
             credentialConfigurationRevision:
               initial.credential.configurationRevision,
             runtimeConfigurationRevision,
@@ -956,7 +941,8 @@ export function createConnectedAccountEstablishedRuntimeOwner<
             async prepareCredentialReplacement(
               mutation: QualifiedConnectedAccountCredentialMutationPreparationInput,
             ) {
-              // A returned refresh replacement must survive caller cancellation.
+              // A returned refresh replacement must survive caller cancellation
+              // and registry retirement: the provider may have consumed its token.
               const signal = input.operation.kind === 'refresh' ? undefined : input.signal;
               if (input.operation.kind !== 'refresh' && !isCurrent()) {
                 throw new Error(

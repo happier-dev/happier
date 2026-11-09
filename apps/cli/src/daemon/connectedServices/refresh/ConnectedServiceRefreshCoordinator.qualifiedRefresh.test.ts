@@ -131,6 +131,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
       }
       expect(harness.controller.isRuntimeRegistryCurrent(harness.registry)).toBe(false);
       expect(await harness.readCredential()).toMatchObject({ credentialRevision: harness.secondRevision,
+        metadata: { kind: 'oauth' },
         health: { status: 'connected', reconnectRequired: false } });
       expect(harness.mutateCredential).toHaveBeenCalledOnce();
       expect(harness.mutateCredentialHealth).toHaveBeenCalledOnce();
@@ -1264,7 +1265,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
       randomBytes: (length) => new Uint8Array(length),
     });
     let metadata: QualifiedConnectedAccountCredentialSnapshotV4['metadata'] = {
-      displayName: 'Novel account', scopes: [],
+      displayName: 'Novel account', scopes: [], kind: 'oauth',
     };
     const readCredential = vi.fn(async () => ({
       ref: novelAccount,
@@ -1388,6 +1389,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
         ref: novelAccount,
         expectedCredentialRevision: firstRevision,
         expectedConfigurationRevision: null,
+        metadata: expect.objectContaining({ kind: 'oauth' }),
       }),
     }));
     expect(onCredentialUpdated).toHaveBeenCalledWith(novelAccount);

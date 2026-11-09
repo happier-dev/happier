@@ -67,6 +67,73 @@ function materializationContext(
 }
 
 describe('OpenAI Codex Connected Account', () => {
+  it.each([
+    { expiresIn: undefined, lifetimeMs: 900_000 },
+    { expiresIn: 72.5, lifetimeMs: 72_500 },
+    { expiresIn: 0, lifetimeMs: 0 },
+  ])('publishes access-token expiry after device authorization and refresh (expires_in=$expiresIn)', async ({ expiresIn, lifetimeMs }) => {
+    const runtime = activateConnectedAccountRuntime();
+    const now = Date.parse('2026-11-02T12:00:00Z');
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    const accessToken = jwt({ exp: (now + 900_000) / 1000 });
+    const idToken = jwt({ exp: 1, chatgpt_account_id: 'expiry-account' });
+    const attempted = credentialStore(new Map([
+      ['deviceAuthId', 'synthetic-device'], ['deviceUserCode', 'synthetic-code'], ['devicePollIntervalMs', '5000'],
+    ]));
+    const services = { http: { async request(input: Readonly<{ url: string }>) {
+      return { status: 200, finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(
+        input.url.endsWith('/api/accounts/deviceauth/token')
+          ? { authorization_code: 'synthetic-authorization', code_verifier: 'synthetic-verifier' }
+          : { access_token: accessToken, refresh_token: 'synthetic-refresh', id_token: idToken,
+              ...(expiresIn === undefined ? {} : { expires_in: expiresIn }) },
+      )) };
+    } } };
+    try {
+      const mode = runtime.authentication.modes.device;
+      if (!mode || mode.kind !== 'oauthDeviceCode') throw new Error('Device mode unavailable');
+      await expect(mode.poll({
+        signal: new AbortController().signal, services, attemptCredentials: attempted.store,
+      } as Parameters<typeof mode.poll>[0])).resolves.toMatchObject({ status: 'connected', expiresAt: now + lifetimeMs });
+      expect(attempted.values.get('expiresAtMs')).toBe(String(now + lifetimeMs));
+      await expect(runtime.status(materializationContext(attempted.store))).resolves.toMatchObject({
+        status: lifetimeMs === 0 ? 'expired' : 'connected', expiresAt: now + lifetimeMs,
+      });
+
+      clock.mockReturnValue(now + 30_000);
+      const staged = credentialStore();
+      const refreshedExpiry = expiresIn === undefined ? now + 900_000 : now + 30_000 + lifetimeMs;
+      await expect(runtime.refresh({
+        ...materializationContext(attempted.store), services, stagedCredentials: staged.store,
+        operation: { operationId: 'expiry-refresh', configurationRevision: 'configuration-1' },
+      } as Parameters<typeof runtime.refresh>[0])).resolves.toMatchObject({ status: 'connected', expiresAt: refreshedExpiry });
+      expect(staged.values.get('expiresAtMs')).toBe(String(refreshedExpiry));
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it.each([
+    { accessToken: jwt({ exp: 4_102_444_800 }), storedExpiry: undefined, expiresAt: 4_102_444_800_000 },
+    { accessToken: jwt({ exp: 4_102_444_800 }), storedExpiry: '1', expiresAt: 1 },
+    { accessToken: jwt({ exp: 1 }), storedExpiry: undefined, expiresAt: 1000 },
+    { accessToken: 'malformed-access', storedExpiry: undefined, expiresAt: undefined },
+    { accessToken: jwt({ exp: '4102444800' }), storedExpiry: undefined, expiresAt: undefined },
+  ])('reports stored or access-JWT expiry without borrowing ID-token expiry ($expiresAt)', async ({ accessToken, storedExpiry, expiresAt }) => {
+    const credentials = credentialStore(new Map([
+      ['accessToken', accessToken], ['idToken', jwt({ exp: 1 })],
+      ...(storedExpiry === undefined ? [] : [['expiresAtMs', storedExpiry] as [string, string]]),
+    ]));
+    const runtime = activateConnectedAccountRuntime();
+    const context = materializationContext(credentials.store);
+    const status = await runtime.status(context);
+    const expired = expiresAt !== undefined && expiresAt <= Date.now();
+    expect(status.status).toBe(expired ? 'expired' : 'connected');
+    expect(status.expiresAt).toBe(expiresAt);
+    const headers = runtime.materialize({ kind: 'httpHeaders', origin: 'https://api.openai.com', headerNames: ['Authorization'] }, context);
+    if (expired) await expect(headers).rejects.toThrow('credentials are unavailable');
+    else await expect(headers).resolves.toMatchObject({ kind: 'httpHeaders' });
+  });
+
   it('materializes native auth within one round of independent credential reads', async () => {
     const values = new Map([
       ['accessToken', 'codex-access'], ['idToken', 'codex-id'],
@@ -191,9 +258,14 @@ describe('OpenAI Codex Connected Account', () => {
 
   it.each(['access_token', 'id_token'])('accepts a freshly returned %s while retaining refresh and identity metadata', async (tokenField) => {
     const runtime = activateConnectedAccountRuntime();
+    const oldIdToken = jwt({ email: 'old@example.test' });
+    const freshToken = tokenField === 'id_token'
+      ? jwt({ 'https://api.openai.com/profile': { email: 'refreshed@example.test' } })
+      : 'fresh-access';
+    const email = tokenField === 'id_token' ? 'refreshed@example.test' : 'old@example.test';
     const credentials = credentialStore(new Map([
       ['accessToken', 'old-access'], ['refreshToken', 'old-refresh'],
-      ['idToken', 'old-id'], ['providerAccountId', 'account-1'],
+      ['idToken', oldIdToken], ['providerAccountId', 'account-1'],
     ]));
     const staged = credentialStore();
     await expect(runtime.refresh({
@@ -201,13 +273,15 @@ describe('OpenAI Codex Connected Account', () => {
       operation: { operationId: 'refresh-1', configurationRevision: 'configuration-1' },
       stagedCredentials: staged.store,
       services: { http: { async request() {
-        return { status: 200, finalUrl: 'https://auth.openai.com/oauth/token', headers: {}, body: new TextEncoder().encode(JSON.stringify({ [tokenField]: 'fresh-token' })) };
+        return { status: 200, finalUrl: 'https://auth.openai.com/oauth/token', headers: {}, body: new TextEncoder().encode(JSON.stringify({ [tokenField]: freshToken })) };
       } } },
-    } as Parameters<typeof runtime.refresh>[0])).resolves.toMatchObject({ status: 'connected' });
-    expect(staged.values.get('accessToken')).toBe('fresh-token');
+    } as Parameters<typeof runtime.refresh>[0])).resolves.toMatchObject({
+      status: 'connected', credentialKind: 'oauth', providerIdentity: { accountId: 'account-1', email }, displayName: email,
+    });
+    expect(staged.values.get('accessToken')).toBe(freshToken);
     expect(staged.values.get('refreshToken')).toBe('old-refresh');
     expect(staged.values.get('providerAccountId')).toBe('account-1');
-    expect(staged.values.get('idToken')).toBe(tokenField === 'id_token' ? 'fresh-token' : 'old-id');
+    expect(staged.values.get('idToken')).toBe(tokenField === 'id_token' ? freshToken : oldIdToken);
   });
 
   it('registers exactly the authentication modes declared by the descriptor', () => {
@@ -751,7 +825,7 @@ describe('OpenAI Codex Connected Account', () => {
     } as Parameters<NonNullable<PluginConnectedAccountRuntime['quota']>>[0]))
       .resolves.toMatchObject({
         observedAtMs: expect.any(Number),
-        planLabel: 'pro',
+        planLabel: 'ChatGPT Pro (More)',
         limits: expect.arrayContaining([
           { id: 'session', used: 50, limit: 200, remaining: 150, utilizationPct: 25, remainingPct: 75, resetsAtMs: 1_700_000_000_000,
             label: '5-hour', windowDurationMs: 18_000_000, scope: 'session', limitScope: 'account', confidence: 'exact' },

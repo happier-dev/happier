@@ -119,6 +119,7 @@ export type ConnectedAccountAttemptSettlementRequest = Readonly<{
     service: PluginContributionRef;
     accountId: string;
     authenticationModeId: string;
+    credentialKind?: QualifiedConnectedAccountCredentialSnapshotV4['metadata']['kind'];
     directExportContract?: typeof CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 | null;
     contributionContractVersion?: string;
     expectedCredentialRevision: string | null;
@@ -2062,6 +2063,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             service: attempt.admission.service,
             accountId,
             authenticationModeId: attempt.admission.modeId,
+            ...(result.credentialKind ? { credentialKind: result.credentialKind } : {}),
             directExportContract:
                 attempt.admission.descriptor.kind === 'manual'
                     ? attempt.admission.descriptor.directExport?.contractVersion ?? null

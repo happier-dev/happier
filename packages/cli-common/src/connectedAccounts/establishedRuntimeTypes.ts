@@ -2,6 +2,7 @@ import type { ConnectedAccountMaterializationRequest } from '@happier-dev/protoc
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { ConnectedServiceQuotaRecoveryCreditsV1, ConnectedServiceQuotaRecoveryCreditDetailsByIdV1, ConnectedServiceQuotaRecoveryCreditV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
+import type { ConnectedServiceCredentialKind } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
 import type { PluginDiagnosticData } from '../plugins/errors.js';
 import type { ConnectedAccountCredentialStore, ConnectedAccountProviderIdentity, ConnectedAccountRuntimeConfiguration } from './authenticationTypes.js';
 
@@ -16,7 +17,7 @@ export type ConnectedAccountMaterialization = Readonly<{
     | Readonly<{ kind: 'files'; files: Readonly<Record<string, Uint8Array>> }>
 );
 export type ConnectedAccountHealthResult =
-    | Readonly<{ status: 'connected' | 'expired' | 'reconnectRequired' | 'unavailable'; providerIdentity?: ConnectedAccountProviderIdentity; displayName?: string; scopes?: readonly string[]; diagnostic?: PluginDiagnosticData }>
+    | Readonly<{ status: 'connected' | 'expired' | 'reconnectRequired' | 'unavailable'; credentialKind?: ConnectedServiceCredentialKind; expiresAt?: number; providerIdentity?: ConnectedAccountProviderIdentity; displayName?: string; scopes?: readonly string[]; diagnostic?: PluginDiagnosticData }>
     | Readonly<{ status: 'rejected'; diagnostic: PluginDiagnosticData }>;
 export type ConnectedAccountEstablishedReadContext = Readonly<{
     account: QualifiedConnectedAccountRef;
@@ -64,6 +65,8 @@ export type ConnectedAccountRuntimeEstablishedTarget = Readonly<{
 }>;
 export type ConnectedAccountRuntimeEstablishedInvocation<TOperation extends ConnectedAccountRuntimeEstablishedOperation = ConnectedAccountRuntimeEstablishedOperation> = Readonly<{
     target: ConnectedAccountRuntimeEstablishedTarget; operation: TOperation;
+    /** Host-only owner classification; absent for callers without an admitted configuration pair. */
+    readCredentialRedactionValue?(key: string, value: string | null): string | null;
     context: Pick<ConnectedAccountEstablishedReadContext, 'account' | 'configuration' | 'credentials'>;
     isConfigurationCurrent(configuration: ConnectedAccountRuntimeConfiguration): boolean | Promise<boolean>;
     configurationRevocationSignal?(configuration: ConnectedAccountRuntimeConfiguration): AbortSignal | undefined;

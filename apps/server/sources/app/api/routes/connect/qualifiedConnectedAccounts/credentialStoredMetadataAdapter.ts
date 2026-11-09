@@ -112,7 +112,7 @@ export function resolveQualifiedConnectedAccountStoredMetadata(
             revisionSemantics: "revisioned",
             credentialRevision: stored.credentialRevision,
             presentation: stored.values,
-            kind: null,
+            kind: stored.values.kind ?? null,
             health: stored.health ?? null,
             status: deriveConnectedServiceCredentialStatus(stored),
             directExportContract: stored.directExportContract ?? null,

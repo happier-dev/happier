@@ -1,13 +1,14 @@
 import { sameStrictJsonValue as isDeepStrictEqual } from '@happier-dev/protocol/json/strictJsonValue';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
-import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1, PluginConnectedAccountConfigurationFieldV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { ConnectedAccountSourceCustodyV1Schema, connectedAccountSourceCustodyV1Equal } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { QualifiedConnectedAccountAuthenticationProvenanceV4Schema, QualifiedConnectedAccountProviderIdentityV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { StoredJsonContentEnvelope } from '@happier-dev/protocol';
 import { z } from 'zod/mini';
+import { ConnectedServiceCredentialKindSchema } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
 
 import {
   CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS,
@@ -17,6 +18,7 @@ import {
   type ConnectedAccountAttemptTransactionStoreApi,
 } from './attemptTransactionApi.js';
 import type { PkceCodes } from './pkce.js';
+import { ConnectedAccountManualAttemptDraftSchema } from './manualAttemptDraft.js';
 import type {
   ConnectedAccountAttemptAddressOwner,
   ConnectedAccountAttemptAddressSnapshot,
@@ -47,6 +49,7 @@ const PreparedSettlementShape = {
   service: ServiceSchema,
   accountId: BoundedIdSchema,
   authenticationModeId: BoundedIdSchema,
+  credentialKind: z.optional(ConnectedServiceCredentialKindSchema),
   directExportContract: z.optional(z.nullable(z.literal(CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1))),
   expectedCredentialRevision: z.nullable(z.string().check(z.maxLength(4_096))),
   expectedCredentialConfigurationRevision:
@@ -84,7 +87,9 @@ const SnapshotBaseShape = {
 } as const;
 const OAuthSnapshotSchema = z.strictObject({
   ...SnapshotBaseShape,
-  phase: z.enum(['starting', 'awaitingOAuth', 'outcomeUnknown']),
+  phase: z.enum(['starting', 'awaitingOAuth', 'configurationRequired', 'outcomeUnknown']),
+  configurationFields: z.optional(z.array(PluginConnectedAccountConfigurationFieldV2Schema)),
+  authenticationProvenance: z.optional(QualifiedConnectedAccountAuthenticationProvenanceV4Schema),
   authorizationUrl: z.optional(z.string().check(z.minLength(1))),
   issuer: z.optional(z.string().check(z.minLength(1))),
   issuerResponseParameterRequired: z.optional(z.boolean()),
@@ -164,10 +169,19 @@ function assertOAuthSnapshotAdvance(
   > = {
     starting: 0,
     awaitingOAuth: 1,
+    configurationRequired: 2,
     outcomeUnknown: 2,
   };
+  // Account selection changes configuration only at this existing continuation.
+  // The provider may also stage discovered configuration during completion.
+  const configurationAdvanced = current.phase === 'configurationRequired'
+    || next.configurationFields !== undefined;
   if (
-    !sameSnapshotIdentity(current, next)
+    !sameSnapshotIdentity(configurationAdvanced ? {
+      ...current,
+      expectedConfigurationRevision: next.expectedConfigurationRevision,
+      stagedAccountConfigurationContent: next.stagedAccountConfigurationContent,
+    } : current, next)
     || phaseRank[next.phase] < phaseRank[current.phase]
     || (
       current.authorizationUrl !== undefined
@@ -265,8 +279,10 @@ export function createConnectedAccountAttemptTransactionAdapters(
   async function readOAuthPayload(input: Readonly<{
     attemptId: string;
     record: ConnectedAccountAttemptTransactionRecord;
-  }>): Promise<OAuthPayload> {
+  }>): Promise<OAuthPayload | null> {
     const opened = await open(input.record);
+    // Before OAuth begins this same addressed record contains only a form draft.
+    if (input.record.scope.phase === 'configurationRequired' && opened === null) return null;
     const parsed = createStoredReadSchema(OAuthPayloadSchema).parse(opened);
     if (parsed.snapshot.attemptId !== input.attemptId) {
       throw new Error(
@@ -428,8 +444,9 @@ export function createConnectedAccountAttemptTransactionAdapters(
     },
     async read(attemptId, addressedRecord) {
       const record = addressedRecord ?? await api.read({ attemptId });
-      if (!record || record.kind !== 'oauth' || record.scope.phase === 'configurationRequired') return null;
+      if (!record || record.kind !== 'oauth') return null;
       const payload = await readOAuthPayload({ attemptId, record });
+      if (!payload) return null;
       return createOAuthHandle({ payload, record });
     },
   });
@@ -437,6 +454,9 @@ export function createConnectedAccountAttemptTransactionAdapters(
   const address: ConnectedAccountAttemptAddressOwner = Object.freeze({
     async acknowledge(snapshot) {
       const current = await api.read({ attemptId: snapshot.attemptId });
+      if (!current && snapshot.phase === 'starting') {
+        throw new ConnectedAccountAttemptTransactionApiError('connected_account_attempt_transaction_conflict');
+      }
       if (current && (current.kind !== snapshot.kind
         || (current.scope.phase !== 'configurationRequired' && current.scope.phase !== 'awaitingManual'))) {
         throw new ConnectedAccountAttemptTransactionApiError('connected_account_attempt_transaction_conflict');
@@ -447,7 +467,8 @@ export function createConnectedAccountAttemptTransactionAdapters(
       const candidate = {
         kind: snapshot.kind,
         attemptId: snapshot.attemptId,
-        content: current?.content ?? await seal(null),
+        content: snapshot.kind === 'manual' ? await seal(snapshot.manual ? { manual: snapshot.manual } : null)
+          : current?.content ?? await seal(null),
         scope: scopeFor(snapshot, current?.scope),
       };
       const record = current
@@ -457,6 +478,11 @@ export function createConnectedAccountAttemptTransactionAdapters(
     },
     async read(attemptId) {
       return await api.read({ attemptId });
+    },
+    async readManualDraft(record) {
+      const opened = await open(record);
+      if (opened === null) return null;
+      return createStoredReadSchema(ConnectedAccountManualAttemptDraftSchema).parse(opened).manual;
     },
     async clear(attemptId) {
       const record = await api.read({ attemptId });
