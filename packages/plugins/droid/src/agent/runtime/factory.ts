@@ -31,6 +31,7 @@ function launch<TRequest extends AgentSessionOpenRequest | AgentExecutionRunOpen
     request: { ...request, configuration: { ...request.configuration, model: { ...request.configuration.model, value: model.id } } },
     options: { transport: { kind: 'stdio' as const, executable: { kind: 'systemTool' as const, id: DROID_ACP_COMMAND.toolId }, args },
       definition: { ...definition, models: {
+        ...(customModel ? { catalogConfidence: 'account_unverified' as const } : {}),
         projectModel: (_raw, normalized) => normalized,
         projectModelState({ normalizedModelState }) {
           const matches = normalizedModelState.availableModels.filter(option => option.id.startsWith('custom:') && option.name === droidProviderModelDisplayName(model.id));

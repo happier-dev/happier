@@ -56,7 +56,7 @@ describe('Droid ChatGPT static access launch', () => {
     const input = { environment: { FACTORY_API_KEY: 'ambient' }, connectedAccounts: {
       ...connectedAccounts, watch: () => ({ dispose() {} }),
     }, signal };
-    await expect(prepare(input)).rejects.toMatchObject({ code: 'model_selection_required' });
+    await expect(prepare(input)).rejects.toMatchObject({ code: 'agent_startup_model_reconciliation_failed' });
     expect(connectedAccounts.materialize).not.toHaveBeenCalled();
     connectedAccounts.getBinding.mockResolvedValueOnce(null);
     const native = await prepare(input);
@@ -120,7 +120,7 @@ describe('Droid ChatGPT static access launch', () => {
       ...(failure === 'provider-binding' ? { providerBinding: { connectionId: 'selected-provider', upstream: { protocol: 'openai-responses', normalizedUrl: 'https://provider.example/v1', credential: 'none' },
         model: { id: 'other', name: 'Other' }, materialization: { v: 1, kind: 'configFile', rootPath: '/private/provider', relativePaths: ['droid/settings.json'] } } } : {}) };
     await expect(runtime.sessions!.open(request, context)).rejects.toMatchObject({ code: failure === 'provider-binding' ? 'droid_connected_account_provider_conflict'
-      : failure === 'missing-model' || failure === 'inherited-model' ? 'model_selection_required' : 'droid_connected_account_materialization_invalid' });
+      : failure === 'missing-model' || failure === 'inherited-model' ? 'agent_startup_model_reconciliation_failed' : 'droid_connected_account_materialization_invalid' });
     expect(open).not.toHaveBeenCalled();
     expect(connectedAccounts.materialize).toHaveBeenCalledTimes(failure === 'wrong-materialization' || failure === 'missing-account' ? 1 : 0);
   });

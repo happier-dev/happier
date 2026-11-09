@@ -26,7 +26,10 @@ export async function prepareDroidConnectedAccount<Request extends LaunchRequest
   if (request.providerBinding) throw new PluginError({ code: 'droid_connected_account_provider_conflict', message: 'Choose either a Droid Provider connection or a ChatGPT Connected Account.' });
   const model = request.configuration?.model;
   if (!model?.value?.trim() || model.selectionSource !== 'explicit') {
-    throw new PluginError({ code: 'model_selection_required', message: 'Choose an explicit model for the Droid ChatGPT Connected Account.' });
+    throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
+      message: 'Choose an explicit model for the Droid ChatGPT Connected Account.',
+      details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
+        phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
   }
   const materialized = await context.services.connectedAccounts.materialize(DROID_CHATGPT_PURPOSE, REQUEST_AUTH, { signal: context.signal, expectedAccount: binding.account });
   const invalid = () => new PluginError({ code: 'droid_connected_account_materialization_invalid', message: 'Droid requires ChatGPT bearer access and account identity headers.' });

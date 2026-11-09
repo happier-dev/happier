@@ -1014,7 +1014,9 @@ Gemini wire endpoints, Kilo accepts its declared native drivers,
 Copilot CLI accepts Chat Completions and Anthropic, Droid consumes its native
 custom-model settings, and Pi and Oh My Pi accept credentialed OpenAI Responses.
 Pi and Oh My Pi register only the selected model in a private native home;
-undeclared model metadata uses the native owner's defaults. A Chat-only gateway
+undeclared model metadata uses the native owner's defaults. Oh My Pi refuses an
+empty public-header value because its native configuration would omit it.
+A Chat-only gateway
 cannot drive Gemini CLI. Protocol mismatch remains the typed
 `no_compatible_protocol` refusal; capability and credential requirements apply
 independently. A custom connection may declare a contributed protocol such as
@@ -1064,8 +1066,9 @@ remain unverified inventory. The shared Session publication owner withholds thei
 model choices and ACP model-option choices while retaining the active model and
 explicit native model controls.
 CodeBuddy, Droid and Kilo reuse their launch preparation for selected-account preflight.
-Without an explicit model, preparation returns `model_selection_required` before
-native startup; choose a model and retry the launch. Kilo uses its existing OpenAI
+Without an explicit model, preparation refuses before native startup; choose a
+model and retry the launch. CodeBuddy and Droid retain `model_selection_required`
+as the typed startup failure reason through Session status and launch recovery. Kilo uses its existing OpenAI
 model namespace policy for both initial and later model choices.
 
 OpenCode's native model inventory likewise does not establish ChatGPT account

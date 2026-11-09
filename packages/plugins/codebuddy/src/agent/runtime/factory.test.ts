@@ -47,7 +47,7 @@ describe('CodeBuddy selected account default', () => {
       if (!prepare) throw new Error('Missing native account preparation');
       const input = { environment: { CODEBUDDY_API_KEY: 'ambient' },
         connectedAccounts: { getBinding, materialize, watch: () => ({ dispose() {} }) }, signal: new AbortController().signal };
-      await expect(prepare(input)).rejects.toMatchObject({ code: 'model_selection_required' });
+      await expect(prepare(input)).rejects.toMatchObject({ code: 'agent_startup_model_reconciliation_failed' });
       expect(materialize).not.toHaveBeenCalled();
       getBinding.mockResolvedValueOnce(null);
       const native = await prepare(input);
@@ -75,7 +75,7 @@ describe('CodeBuddy selected account default', () => {
       await expect(runtime.sessions!.open({ kind: 'create', sessionId: 'default-model', cwd: '/repo', configuration: {
         mode: { value: null, updatedAtMs: 0 }, model: { ...model, updatedAtMs: 1 },
         permissionIntent: { value: null, updatedAtMs: 0 }, options: {},
-      } }, context)).rejects.toMatchObject({ code: 'model_selection_required' });
+      } }, context)).rejects.toMatchObject({ code: 'agent_startup_model_reconciliation_failed' });
       expect(materialize).not.toHaveBeenCalled();
       expect(open).not.toHaveBeenCalled();
     } finally { await activation.dispose(); }

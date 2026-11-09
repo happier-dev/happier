@@ -41,7 +41,7 @@ describe('CodeBuddy subscription native configuration', () => {
   it.each(['', '  '])('refuses an absent explicit model %j', (modelId) => {
     expect(() => buildCodeBuddySubscriptionConfiguration({ modelId, materialized: {
       kind: 'httpHeaders', headers: { authorization: 'Bearer dummy', 'chatgpt-account-id': 'fixture' },
-    } })).toThrow(expect.objectContaining({ code: 'model_selection_required' }));
+    } })).toThrow(expect.objectContaining({ code: 'agent_startup_model_reconciliation_failed' }));
   });
 
   it('refuses materialization without the selected account identity', () => {

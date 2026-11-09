@@ -2,15 +2,19 @@ import { Console } from 'node:console';
 import { PassThrough } from 'node:stream';
 import axios from 'axios';
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentRuntimeFactory, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { SessionTurnMutationV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { projectSessionSummaryV1, SessionStatusResultSchema } from '@happier-dev/protocol/sessions/control/contract';
 
 import { createPiAgentRuntime } from '../../../../../packages/plugins/pi/src/agent/runtime/engine.js';
+import { createCodeBuddyAgentRuntime } from '../../../../../packages/plugins/codebuddy/src/agent/runtime/factory.js';
+import { CODEBUDDY_CODEX_PURPOSE } from '../../../../../packages/plugins/codebuddy/src/agent/runtime/connectedAccounts.js';
+import { createDroidAgentRuntime } from '../../../../../packages/plugins/droid/src/agent/runtime/factory.js';
+import { DROID_CHATGPT_PURPOSE } from '../../../../../packages/plugins/droid/src/agent/runtime/connectedAccount.js';
 import { PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID } from '../../../../../packages/plugins/pi/src/agent/auth/services/requestAuth/purposes.js';
 import { sanitizeNativeAgentSessionBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
-import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { classifyPrimarySessionRuntimeIssue, readSessionPreparationFailureDiagnostic } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { reportSessionRunnerFailure } from '@/cli/resolveSessionRunnerFailureExitCode';
 import { readSessionRunnerFailureCause } from '@/session/shared/spawnSessionContract';
@@ -21,29 +25,43 @@ import { projectSessionSpawnFailure } from './projectSessionSpawnFailure';
 
 vi.mock('axios');
 
-describe('Pi Connected Account default refusal', () => {
-  it('retains model-pick guidance through native startup, durable status and launch Action projection', async () => {
+describe('Connected Account default refusal', () => {
+  it.each(['pi', 'codebuddy', 'droid'] as const)('retains %s model-pick guidance through native startup, durable status and launch Action projection', async agentId => {
+    const factories: Readonly<Record<typeof agentId, AgentRuntimeFactory>> = {
+      pi: createPiAgentRuntime, codebuddy: createCodeBuddyAgentRuntime, droid: createDroidAgentRuntime,
+    };
+    const purpose = { pi: PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
+      codebuddy: CODEBUDDY_CODEX_PURPOSE, droid: DROID_CHATGPT_PURPOSE }[agentId];
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     // The Connected Account and OS adapters are genuine host boundaries. Keep the
-    // Pi preparation, refusal, host classifiers and persistence writer real.
+    // Agent preparation, refusal, host classifiers and persistence writer real.
     const context = {
       signal: new AbortController().signal,
       services: {
         connectedAccounts: {
+          materialize: vi.fn(async () => { throw new Error('Default model must not acquire credentials'); }),
           watch(_purpose: string, callback: () => void) { callback(); return { dispose() {} }; },
-          async getBinding(purpose: string) { return purpose === PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID
+          async getBinding(requested: string) { return requested === purpose
             ? { purpose, service, account: { service, accountId: 'primary' }, target: { kind: 'account', displayName: 'Primary' } }
             : null; },
         },
-        exec: { clients: { spawn: vi.fn(() => { throw new Error('Default model must not start native Pi'); }) } },
+        exec: { clients: { spawn: vi.fn(() => { throw new Error('Default model must not start the native Agent'); }) } },
       },
+      protocols: { acp: { open: vi.fn(async () => { throw new Error('Default model must not open native ACP'); }) } },
     } as unknown as AgentSessionRuntimeContext;
-    const failure = await createPiAgentRuntime().sessions.open({
-      kind: 'create', sessionId: 'pi-default-refusal', cwd: '/workspace',
+    const runtime = await factories[agentId]({ plugin: { id: `happier.agent.${agentId}`, version: '0.0.0' },
+      agent: { id: agentId }, signal: context.signal });
+    if (!runtime.sessions) throw new Error('Missing Agent Session runtime');
+    const failure = await runtime.sessions.open({
+      kind: 'create', sessionId: `${agentId}-default-refusal`, cwd: '/workspace',
       configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
         permissionIntent: { value: 'read-only', updatedAtMs: 0 }, options: {} },
     }, context).catch((error: unknown) => sanitizeNativeAgentSessionBoundaryError(error, true));
-    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'pi', error: failure });
+    expect(readSessionPreparationFailureDiagnostic(failure).failureCause).toMatchObject({
+      code: 'agent_startup_model_reconciliation_failed', phase: 'client_start',
+      failureReason: 'model_selection_required', retryable: false,
+    });
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: agentId, error: failure });
     expect(issue).toMatchObject({ code: 'agent_startup_model_reconciliation_failed',
       sanitizedPreview: expect.stringMatching(/choose.*model/iu),
       failureCause: { phase: 'client_start', failureReason: 'model_selection_required', retryable: false } });
@@ -98,5 +116,7 @@ describe('Pi Connected Account default refusal', () => {
     expect(result).toMatchObject({ type: 'error', retryable: false,
       launchError: { code: issue.code, message: issue.sanitizedPreview, failureCause } });
     expect(context.services.exec.clients.spawn).not.toHaveBeenCalled();
+    expect(context.services.connectedAccounts.materialize).not.toHaveBeenCalled();
+    expect(context.protocols.acp.open).not.toHaveBeenCalled();
   });
 });

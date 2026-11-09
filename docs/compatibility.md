@@ -1,5 +1,27 @@
 # Compatibility and version skew
 
+## Managed Provider model observations and restriction copy (unreleased 0.3)
+
+Managed connected-account purposes may declare localized
+`operationRestriction.summary` and `operationRestriction.sentence`. The existing
+managed-purpose resolver and public purpose projection retain this passive copy.
+Operation admission remains with the family's existing dispatcher; copy changes
+do not change managed runtime identity or security consent fingerprints.
+
+The current connection-model response adds optional `catalogObserved` and
+per-purpose `sourceCatalogs` so absent observation differs from observed empty
+without discarding usable model descriptors. SDK model-result types derive from
+this Protocol response. The existing `providers.models.refresh` Action accepts a
+connection operand for explicit source refresh; model listing stays current-only.
+Both refresh operands use the existing dangerous-Action approval default for
+agents because explicit refresh can contact Providers.
+
+These closed development contracts reload together under the unpublished 0.3
+direct cut. No persisted record, wire epoch or predecessor adapter is introduced.
+The inspected `../0.2` frontier at
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75`, including scoped local changes, has
+none of these Provider declaration, RPC or managed-family paths.
+
 ## Native provider failure evidence (unreleased 0.3)
 
 Agent plugins normalize native provider errors before reporting structured
@@ -687,6 +709,18 @@ That request retains mounted producer demand until cancellation; value watches
 continue to answer on material changes. The updated UI and daemon load together.
 Older strict development daemons reject the field. No released contract,
 persistence format, protocol epoch or migration changes.
+
+The same inventory-watch request also accepts optional `launcherProjection`, containing
+the canonical launcher scope/projection and the targets the caller already holds.
+That watch returns the existing launcher snapshot shape only when its material targets
+change. Guest reads use the launcher's requester-owned managed bindings; broad Machine
+inventory remains unavailable to them. Unrelated activity never settles the projected
+watch or discloses an inventory generation. Echoing targets costs payload proportional
+to the caller's actual projection and closes the snapshot/watch gap without a cursor
+registry. Cancellation and the existing parked-watch owner retain the observation
+lifetime. Matching development Protocol, daemon and UI load together; older strict
+development daemons reject the optional field. No released compatibility adapter,
+persistence, protocol epoch or migration changes.
 
 
 ## Triage exact PR status lookup (unreleased 0.3)
@@ -7551,6 +7585,16 @@ predecessor adapter is introduced.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 native Agent model snapshots and ACP model controls add optional
+`catalogConfidence`, using the existing Provider catalog confidence vocabulary.
+The shared publication owner consumes this presentation provenance to withhold
+`account_unverified` choices; active model identity and private native controls
+remain intact. Matching SDK, native Agent producers and CLI host reload together.
+This in-process additive presentation fact changes no Host Event, persisted
+record, routing, authority, wire epoch or npm version. Omission preserves the
+existing native catalog publication path; no older-host support is claimed for
+selected-account declarations that require the new projection.
+
 Unreleased 0.3 Connected Account completion results and V4 presentation metadata
 accept optional `includesApiKey: true`. It records an additional key actually
 created during successful authentication; credential kind, manual key mode and
@@ -7594,8 +7638,8 @@ consume new codes. The inspected `../0.2` frontier
 including no scoped local changes, so their read compatibility remains.
 
 Unreleased 0.3 startup diagnostics add `model_selection_required` to the existing
-closed `SessionRuntimeFailureCauseV1.failureReason` vocabulary. Pi's refusal of
-an unverified ChatGPT default keeps the existing model reconciliation code and
+closed `SessionRuntimeFailureCauseV1.failureReason` vocabulary. Pi, CodeBuddy and Droid refusals of
+an unverified ChatGPT default keep the existing model reconciliation code and
 phase; matching host, runner decoder, launch Action and UI retain the precise
 reason and present model selection rather than retrying unchanged input. This is
 a direct cut: matching Protocol, Pi and host/UI readers reload together because

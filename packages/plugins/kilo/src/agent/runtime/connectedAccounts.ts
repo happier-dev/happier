@@ -76,6 +76,11 @@ export async function prepareKiloConnectedAccount(request: Pick<AgentSessionOpen
       KILO_AUTH_CONTENT: JSON.stringify({ openai: { type: 'oauth', access: MARKER, refresh: '', expires: 0 } }),
       KILO_CONFIG_CONTENT: JSON.stringify({ enabled_providers: ['openai'], plugin: [pathToFileURL(path).href] }),
     },
-    models: { projectModel: (_rawModel, model) => model, resolveModelUpdate: ({ modelId }) => resolveModel(modelId) },
+    models: {
+      // The native catalog sees the OAuth marker, not selected-account entitlement.
+      catalogConfidence: 'account_unverified',
+      projectModel: (_rawModel, model) => model,
+      resolveModelUpdate: ({ modelId }) => resolveModel(modelId),
+    },
   };
 }
