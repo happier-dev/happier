@@ -12,6 +12,7 @@ import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountS
 import type { VoiceConversationScopeMetadata } from '@/voice/persistence/voiceConversationScopeMetadata';
 import type { VoiceIdleTarget } from '@/voice/runtime/voiceTargetStore';
 import { createSpokenActionConfirmation, type SpokenActionConfirmation } from '@/voice/tools/spokenActionConfirmation';
+import { resolveRetainedVoiceTarget } from '@/voice/binding/resolveRetainedVoiceTarget';
 
 type VoiceSessionConversationContext = Readonly<{
   accountScope: ServerAccountScope;
@@ -184,6 +185,7 @@ const SNAPSHOT_FIELDS = {
   errorCode: true,
   errorMessage: true,
   errorProviderMessage: true,
+  errorProviderError: true,
   errorConnectedServiceDiagnostic: true,
   errorRecoveryAction: true,
   errorPresentation: true,
@@ -210,12 +212,14 @@ function normalizeVoiceSessionSnapshot(snapshot: VoiceSessionSnapshot): VoiceSes
     sessionId: normalizeNonEmptyString(snapshot.sessionId),
     // Zustand merges snapshots: omitted capability facts must retire with their owner.
     canCommitInput: snapshot.canCommitInput,
+    inputEndsOnSilence: snapshot.inputEndsOnSilence,
     canHoldToTalk: snapshot.canHoldToTalk,
     micMuted: snapshot.micMuted === true ? true : undefined,
     // Ensure optional error fields clear when omitted from a later snapshot.
     errorCode: snapshot.errorCode,
     errorMessage: snapshot.errorMessage,
     errorProviderMessage: snapshot.errorProviderMessage,
+    errorProviderError: snapshot.errorProviderError,
     errorConnectedServiceDiagnostic: snapshot.errorConnectedServiceDiagnostic,
     errorRecoveryAction: snapshot.errorRecoveryAction,
     errorPresentation: snapshot.errorPresentation,
@@ -367,9 +371,9 @@ export function getVoiceSessionRestartTarget(providerId: string, accountScope: S
   const adapterId = ended?.adapterId ?? (failed ? lastAttemptSnapshot.adapterId : null);
   const scope = ended?.accountScope ?? (failed ? activeAttemptConversationContext?.accountScope : null);
   if (adapterId !== providerId || !areServerAccountScopesEqual(scope, accountScope)) return null;
-  const target = ended ? ended.targetSessionAddress
+  const target = resolveRetainedVoiceTarget(ended ? ended.targetSessionAddress
     : activeAttemptBinding ? activeAttemptBinding.targetSessionAddress
-    : activeAttemptConversationContext?.targetSessionAddress ?? null;
+    : activeAttemptConversationContext?.targetSessionAddress ?? null);
   return target ? { kind: 'session', sessionAddress: target } : { kind: 'global' };
 }
 

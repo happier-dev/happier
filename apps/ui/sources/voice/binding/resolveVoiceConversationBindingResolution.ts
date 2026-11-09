@@ -22,6 +22,7 @@ import { readPreferredVoiceConversationBindingMetadata } from './voiceConversati
 import { sync } from '@/sync/sync';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { resolveVoiceConversationSelection } from './resolveVoiceConversationSelection';
+import { resolveRetainedVoiceTarget } from './resolveRetainedVoiceTarget';
 
 /**
  * Read the provider-owned transcript-mode decision for a voice adapter from the
@@ -71,20 +72,26 @@ function resolveHiddenCarrierLogicalTarget(conversationSessionAddress: SessionAd
         preferredMetadata: metadata,
         sourceServerId: conversationSessionAddress.serverId,
     });
+    let target: SessionAddress | null;
     if (existing && !areSessionAddressesEqual(existing.targetSessionAddress, conversationSessionAddress)) {
-        return existing.targetSessionAddress;
+        target = existing.targetSessionAddress;
+    } else {
+        const scope = readVoiceConversationScopeMetadata(metadata);
+        if (scope?.kind === 'voice_home') return null;
+        const rootAddress = scope?.kind === 'session_root'
+            ? normalizeSessionAddress(conversationSessionAddress.serverId, scope.sessionRootId) : null;
+        if (rootAddress && !areSessionAddressesEqual(rootAddress, conversationSessionAddress)) {
+            target = rootAddress;
+        } else {
+            // Existing self targets came from treating the carrier as a coding Session.
+            // Only its recorded scope can recover that lost target; never chase carriers.
+            if (existing || scope?.kind === 'session_root') {
+                throw Object.assign(new Error('session_unavailable'), { code: 'session_unavailable' });
+            }
+            return null;
+        }
     }
-    const scope = readVoiceConversationScopeMetadata(metadata);
-    if (scope?.kind === 'voice_home') return null;
-    const rootAddress = scope?.kind === 'session_root'
-        ? normalizeSessionAddress(conversationSessionAddress.serverId, scope.sessionRootId) : null;
-    if (rootAddress && !areSessionAddressesEqual(rootAddress, conversationSessionAddress)) return rootAddress;
-    // Existing self targets came from treating the carrier as a coding Session.
-    // Only its recorded scope can recover that lost target; never chase carriers.
-    if (existing || scope?.kind === 'session_root') {
-        throw Object.assign(new Error('session_unavailable'), { code: 'session_unavailable' });
-    }
-    return null;
+    return resolveRetainedVoiceTarget(target);
 }
 
 export async function ensureVoiceConversationBindingResolution(params: Readonly<{

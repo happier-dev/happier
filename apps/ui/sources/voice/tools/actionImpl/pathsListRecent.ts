@@ -10,12 +10,14 @@ import { normalizeNonEmptyString, resolveVoiceMachineLabel } from './shared';
 import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
+import { resolveActiveLocalVoiceAgentBinding } from '@/voice/context/resolveActiveLocalVoiceAgentBinding';
 
 function resolveDefaultMachineId(state: any): string | null {
   const machines = Object.values(state?.machines ?? {}) as Array<{ id: string; replacedByMachineId?: string | null; replacedAt?: unknown }>;
   const voiceTarget = useVoiceTargetStore.getState();
   const targetSessionAddress = resolveVoiceActionTargetAddress({
     scope: voiceTarget.scope,
+    binding: resolveActiveLocalVoiceAgentBinding()?.binding,
     primaryActionSessionAddress: voiceTarget.primaryActionSessionAddress,
     lastFocusedSessionAddress: voiceTarget.lastFocusedSessionAddress,
   });

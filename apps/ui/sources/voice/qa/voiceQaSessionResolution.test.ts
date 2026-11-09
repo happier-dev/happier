@@ -89,6 +89,24 @@ describe('voiceQaSessionResolution', () => {
     });
   });
 
+  it('keeps an explicit Global binding instead of reviving the last focused target', () => {
+    const staleTarget = { serverId: 'server-b', sessionId: 'old-target' };
+    useVoiceTargetStore.setState({ primaryActionSessionAddress: staleTarget, lastFocusedSessionAddress: staleTarget });
+    syncLatestLocalVoiceQaResolvedSessions(
+      { getVoiceTargetState: useVoiceTargetStore.getState, qaStore: useVoiceQaStore },
+      '__voice_agent__',
+      {
+        adapterId: 'local_conversation', controlSessionId: '__voice_agent__',
+        conversationSessionId: 'voice-carrier',
+        conversationSessionAddress: { serverId: activeServerId, sessionId: 'voice-carrier' },
+        targetSessionAddress: null, transcriptMode: 'native_session', updatedAt: 1,
+      },
+    );
+    expect(useVoiceQaStore.getState()).toMatchObject({
+      targetSessionAddress: null, runtimeSessionId: 'voice-carrier',
+    });
+  });
+
   it('rejects an ambiguous bare target', () => {
     storage.setState({ sessionListIndexByServerId: {
       a: [{ type: 'session', sessionId: 'same', serverId: 'a', serverName: 'A' }],

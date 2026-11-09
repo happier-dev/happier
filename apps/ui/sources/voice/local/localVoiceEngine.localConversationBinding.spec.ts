@@ -170,6 +170,38 @@ describe('local voice engine local conversation binding', () => {
         });
     }, 60_000);
 
+    it('keeps the lifecycle, working binding and permission delivery on the Session opened by Voice', async () => {
+        await configureAgentMode();
+        const state = await getStorage();
+        const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
+        const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+        const { setPrimaryActionSessionId } = await import('@/voice/tools/actionImpl/sessionTargets');
+        const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+        const { resolveEffectiveVoiceTargetState } = await import('@/voice/context/resolveEffectiveVoiceTargetState');
+        const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
+        const lifecycle = createVoiceSessionLifecycleController();
+        lifecycle.setConfiguredProviderId('local_conversation');
+        const first = { serverId: localVoiceHomeId, sessionId: 'session-1' };
+        const second = { serverId: localVoiceHomeId, sessionId: 'session-2' };
+        try {
+            await lifecycle.toggle(first);
+            setVoiceSessionSnapshot(lifecycle.getSnapshot());
+            state.__setState({ sessions: { ...state.getState().sessions,
+                [second.sessionId]: createSessionFixture({ id: second.sessionId, serverId: second.serverId,
+                    active: true, presence: 'online', metadata: { machineId: 'machine-1', path: '/second', host: 'voice.test' } }),
+            } });
+            expect(await setPrimaryActionSessionId({ ...second, updateLastFocused: true })).toMatchObject({ ok: true });
+            expect(voiceSessionBindingStore.getState().getByControlSessionId(VOICE_AGENT_GLOBAL_SESSION_ID)?.targetSessionAddress).toEqual(second);
+            expect(lifecycle.getAttemptTargetSessionAddress()).toEqual(second);
+            // A stale focus projection cannot make two Sessions the current permission target.
+            useVoiceTargetStore.getState().setPrimaryActionSessionAddress(first);
+            expect(resolveEffectiveVoiceTargetState(first).primaryActionSessionAddress).toEqual(second);
+            expect(resolveEffectiveVoiceTargetState(second).primaryActionSessionAddress).toEqual(second);
+        } finally {
+            await lifecycle.dispose();
+        }
+    });
+
     it.each(['stt', 'tts'] as const)('explains an offline daemon %s Machine on Home Start before preparing a carrier on the online root Machine', async (surface) => {
         await configureAgentMode();
         const storage = await getStorage();

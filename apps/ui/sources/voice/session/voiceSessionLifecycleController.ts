@@ -1,6 +1,7 @@
 import { getCurrentAppShellVoiceProviderActivation } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { getVoiceAdapterRegistry, resolveVoiceAdapterSurfaceCapabilities } from './voiceAdapterRegistry';
 import type { VoiceConversationSelection } from '@/voice/binding/voiceConversationBindingTypes';
+import { resolveVoiceBindingBySessionId } from '@/voice/binding/resolveVoiceBindingBySessionId';
 import { storage } from '@/sync/domains/state/storage';
 import { captureVoiceAttemptRecoveryTarget } from './voiceAttemptRecoveryTarget';
 import { canDismissVoiceSessionFailedAttempt, getVoiceSessionSnapshot, recordVoiceSessionEndReason, type VoiceSessionEndReason } from './voiceSessionStore';
@@ -221,6 +222,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
     let heldInput: Readonly<{ sessionId: string; adapter: VoiceAdapterController; handle: VoiceHeldInput }> | null = null;
     let disposed = false;
     let disposePromise: Promise<void> | null = null;
+    let attemptTargetSnapshot: SessionAddress | null = null;
     const listeners = new Set<() => void>();
     const adapterUnsubs = new Map<VoiceAdapterController, () => void>();
     const adapterStopPromises = new Map<string, {
@@ -1286,10 +1288,18 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         },
         getSnapshot: () => publishedSnapshot,
         getAttemptTargetSessionAddress: () => {
-            if (pendingStart) return pendingStart.requestedTargetSessionAddress;
-            return startingAdapter?.requestedTargetSessionAddress
+            const binding = publishedSnapshot.sessionId ? resolveVoiceBindingBySessionId({
+                sessionId: publishedSnapshot.sessionId,
+                adapterId: publishedSnapshot.adapterId,
+            }) : null;
+            const target = pendingStart ? pendingStart.requestedTargetSessionAddress
+                : binding ? binding.targetSessionAddress
+                : startingAdapter?.requestedTargetSessionAddress
                 ?? attemptConnectivityLease?.requestedTargetSessionAddress
                 ?? recoveryBinding?.requestedTargetSessionAddress ?? null;
+            // Binding resolution normalizes addresses; external-store readers need a stable snapshot.
+            if (!areSessionAddressesEqual(attemptTargetSnapshot, target)) attemptTargetSnapshot = target;
+            return attemptTargetSnapshot;
         },
         getConfiguredProviderId: () => configuredProviderId,
         interrupt: async (sessionId) => {

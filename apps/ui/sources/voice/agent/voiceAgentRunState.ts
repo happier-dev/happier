@@ -32,6 +32,7 @@ export type VoiceAgentSessionState = Readonly<{
     id?: string;
     serverId?: string;
     active?: boolean;
+    archivedAt?: number | null;
     activeAt?: number;
     presence?: string | number | null;
     modelMode?: unknown;

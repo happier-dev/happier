@@ -138,7 +138,7 @@ describe('ensureVoiceConversationBindingResolution', () => {
     storage.setState({ settings: localSettings(), settingsScope: scope, profileScope: scope, sessions: {} });
     storage.setState({ sessions: Object.fromEntries([
       carrier('voice-home'),
-      ...['s1', 's2', 's9'].flatMap(id => [createSessionFixture({ id, serverId: connection.home.id,
+      ...['s1', 's2', 's9'].flatMap(id => [createSessionFixture({ id, serverId: connection.home.id, active: true,
         metadata: { machineId: 'machine-1', path: `/project/${id}`, host: 'tester.local', flavor: 'codex' } }), carrier(`voice-root-${id}`, id)]),
     ].map(session => [session.id, session])) });
     resetVoiceAdapterRegistryForTests();
@@ -227,6 +227,26 @@ describe('ensureVoiceConversationBindingResolution', () => {
       targetSessionId: 's1', targetServerId: connection.home.id,
     });
     expect(network.requests.some(request => request.method === RPC_METHODS.SESSION_SPAWN_NEW)).toBe(false);
+  });
+
+  it.each([
+    { state: 'inactive', active: false, archivedAt: null },
+    { state: 'archived', active: true, archivedAt: 1 },
+  ])('Home continuation drops an $state recorded target while an explicit live target still wins', async ({ active, archivedAt }) => {
+    seedCarrierBinding('voice-home', address('s1'));
+    storage.getState().applySessions([{ ...storage.getState().sessions.s1!, active, archivedAt,
+      activeAt: Date.now(), updatedAt: Date.now() }]);
+    const continued = await voiceSessionBindingManager.ensureBound({ adapterId: 'local_conversation',
+      controlSessionId: '__voice_agent__', requestedTargetServerId: connection.home.id,
+      conversationSelection: { kind: 'continue', conversationSessionAddress: address('voice-home') } });
+    expect(continued?.targetSessionAddress).toBeNull();
+    expect(await readPersistedBinding('voice-home')).toMatchObject({ targetSessionId: null });
+
+    const explicit = await voiceSessionBindingManager.ensureBound({ adapterId: 'local_conversation',
+      controlSessionId: '__voice_agent__', requestedTargetServerId: connection.home.id,
+      requestedTargetSessionId: 's2',
+      conversationSelection: { kind: 'continue', conversationSessionAddress: address('voice-home') } });
+    expect(explicit?.targetSessionAddress).toEqual(address('s2'));
   });
 
   it('VI-LIFE hydrates an explicitly continued conversation after detail residency releases its Session', async () => {

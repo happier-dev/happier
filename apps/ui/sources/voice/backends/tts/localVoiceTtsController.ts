@@ -19,15 +19,17 @@ export function createLocalVoiceTtsController(options?: Readonly<{
 
   const playback = createVoicePlaybackController();
   let sayState: ReturnType<LocalVoiceTtsController['readSay']> = 'idle';
+  let saySource: ReturnType<LocalVoiceTtsController['readSaySource']> = null;
   const listeners = new Set<() => void>();
   const publish = (next: ReturnType<LocalVoiceTtsController['readSay']>) => {
     if (sayState === next) return;
     sayState = next;
+    if (next === 'idle') saySource = null;
     for (const listener of listeners) listener();
   };
   const controller: LocalVoiceTtsController = {
     speak: async (ctx) => {
-      const preparation = prepareLocalVoiceTtsRequest(ctx);
+      const preparation = await prepareLocalVoiceTtsRequest(ctx);
       if (!preparation) return;
       const controller = controllers.get(ctx.tts.provider);
       if (controller) {
@@ -48,6 +50,7 @@ export function createLocalVoiceTtsController(options?: Readonly<{
       throw Object.assign(new Error('voice_tts_provider_unavailable'), { code: 'provider_unavailable' });
     },
     readSay: () => sayState,
+    readSaySource: () => saySource,
     subscribeSay: (listener) => {
       listeners.add(listener);
       return () => { listeners.delete(listener); };
@@ -64,6 +67,7 @@ export function createLocalVoiceTtsController(options?: Readonly<{
       const epoch = playback.captureEpoch();
       const current = () => playback.isEpochCurrent(epoch);
       const abort = () => { if (current()) controller.stopSay(); };
+      saySource = ctx.source ?? null;
       publish('preparing');
       ctx.signal?.addEventListener('abort', abort, { once: true });
       try {
@@ -97,6 +101,7 @@ export const localVoiceTtsController: LocalVoiceTtsController = {
   },
   stopSay: () => sharedController?.stopSay() ?? false,
   readSay: () => sharedController?.readSay() ?? 'idle',
+  readSaySource: () => sharedController?.readSaySource() ?? null,
   subscribeSay: (listener) => {
     sharedController ??= createLocalVoiceTtsController();
     return sharedController.subscribeSay(listener);

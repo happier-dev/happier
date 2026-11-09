@@ -41,13 +41,15 @@ export function resolveEffectiveVoiceTargetState(
         options?.targetSessionAddress ?? normalizeNonEmptyString(options?.targetSessionId),
     );
     const activeLocalBinding = resolveActiveLocalVoiceAgentBinding();
-    const boundTargetAddress = explicitTargetAddress
-        ?? activeLocalBinding?.binding?.targetSessionAddress
-        ?? null;
+    const boundTargetAddress = activeLocalBinding?.binding
+        ? activeLocalBinding.binding.targetSessionAddress
+        : explicitTargetAddress;
+    const primaryActionSessionAddress = activeLocalBinding?.binding || explicitTargetAddress
+        ? boundTargetAddress : store.primaryActionSessionAddress;
 
     if (!currentAddress || !areSessionAddressesEqual(boundTargetAddress, currentAddress)) {
         return {
-            primaryActionSessionAddress: store.primaryActionSessionAddress,
+            primaryActionSessionAddress,
             voiceLiveContextSessionAddresses,
         };
     }

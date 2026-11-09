@@ -131,8 +131,8 @@ export function syncLatestLocalVoiceQaResolvedSessions(
 ): VoiceSessionBinding | null {
     const normalizedControlSessionId = normalizeVoiceQaText(controlSessionId);
     const latestBinding = deps.getLocalBinding?.(normalizedControlSessionId || controlSessionId) ?? fallbackBinding;
-    const latestTargetSessionAddress = latestBinding?.targetSessionAddress
-        ?? resolveEffectiveVoiceQaSessionAddress(
+    const latestTargetSessionAddress = latestBinding ? latestBinding.targetSessionAddress
+        : resolveEffectiveVoiceQaSessionAddress(
             normalizedControlSessionId === '__voice_agent__' ? null : controlSessionId,
             deps.getVoiceTargetState,
         );

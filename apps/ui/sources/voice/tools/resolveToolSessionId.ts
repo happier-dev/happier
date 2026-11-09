@@ -5,6 +5,7 @@ import { resolveVoiceActionTargetAddress, useVoiceTargetStore } from '@/voice/ru
 import { normalizeNonEmptyString } from './actionImpl/shared';
 import { acquireAdmittedSessionReferenceCorpusOptions } from './actionImpl/admittedSessionReferenceCorpus';
 import { resolveVoiceSessionReference } from './actionImpl/sessionReference';
+import { resolveActiveLocalVoiceAgentBinding } from '@/voice/context/resolveActiveLocalVoiceAgentBinding';
 
 export async function resolveToolSessionAddress(opts: Readonly<{
   explicitSessionId?: unknown;
@@ -40,6 +41,7 @@ export async function resolveToolSessionAddress(opts: Readonly<{
   const { scope, primaryActionSessionAddress, lastFocusedSessionAddress } = useVoiceTargetStore.getState();
   return resolveVoiceActionTargetAddress({
     scope,
+    binding: resolveActiveLocalVoiceAgentBinding()?.binding,
     currentSessionAddress,
     primaryActionSessionAddress,
     lastFocusedSessionAddress,

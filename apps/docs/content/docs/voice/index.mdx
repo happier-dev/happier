@@ -35,9 +35,9 @@ Dictation has its own speech setup and remains available when conversations are 
 - **Individual services and billing choices** add their own gates: **Happier Voice** needs the server-side
   `voice.happierVoice` feature, and the daemon-backed **Local voice** agent needs
   **Settings → Features → Voice agent**, which defaults on independently of
-  Experiments in 0.3 development. Its Subagents prerequisite remains experimental
-  and must be enabled. **Machine speech** also defaults on; explicit off
-  choices for either preference are preserved.
+  Experiments in 0.3 development. Its **Subagents** prerequisite and **Machine
+  speech** also default on independently of Experiments; explicit off choices
+  for these preferences are preserved.
 
 No conversation provider is selected until you pick one. Opening Voice settings or
 checking setup does not acquire the microphone or start a provider. In 0.3 development,
@@ -69,11 +69,20 @@ the microphone **Mute** control below instead suspends recording. See
 semantics. This describes unreleased source contracts; loaded Voice, composer and
 device validation remain separate from tool discovery.
 
+An explicit reply or pass names the original admitted request through
+`session.message.reply`; it does not select a fresh destination. Pass means the
+addressee has nothing to add, while silence and an observation timeout do not.
+The app's [Matching selection](/extending/happier-tools#session-messaging-03-development)
+previews the same authorized target set used by Voice's Action tools.
+
 ### Session targets and preferences in development
 
 The development Voice lifecycle distinguishes a particular session from global
-mode. Opening another session does not retarget a running conversation; Mute,
-Interrupt, End and recovery address the captured attempt. These operations keep
+mode. Navigating to another session leaves the running conversation's target
+unchanged. Asking Local Voice to open or select a session changes its working
+target; the call's target label and permission delivery follow that selection.
+A Home call does not inherit an archived target from its previous conversation.
+Mute, Interrupt, End and recovery address the captured attempt. These operations keep
 the ordinary configurable approval policy, and microphone consent still requires
 the device's permission flow. A headless caller without an answering client
 cannot start client-local audio.
@@ -143,6 +152,11 @@ provider is **Off**, and it has its own speech-to-text selection under
 **Device STT (experimental)**; choose **Same as Local Voice** if you would rather it
 follow whatever Local voice is using.
 
+In 0.3 development, recognizers that stream partial results show a live preview
+in the composer while you speak. Finishing inserts the final transcript once;
+Cancel clears the preview. Providers that transcribe a finished recording,
+including daemon-backed Local neural dictation on web, return text after you stop.
+
 ### Setup, Try and Brief in development
 
 In 0.3 development, **Set up voice** on Home and in Voice settings guides you
@@ -159,11 +173,17 @@ service that does not use a computer does not require one for this check.
 
 Home's **Brief me** uses the work and attention already shown in Inbox: items that
 need you, failed work and ready work. It reports incomplete information and follows
-your Voice sharing settings when speaking. In 0.3 development, Local Voice and
+your Voice sharing settings when speaking. Its scope stays with your Account's Inbox
+when Voice is attached to a Session. In 0.3 development, Local Voice and
 realtime modes with host approval tools can approve or deny the requests they
 present on your behalf, unless you turn off
 **Voice agent can approve requests**. The ordinary request UI remains available.
 Native Codex Realtime is excluded; tap its requests or switch to Local Voice.
+
+Local Voice names the requesting Session when your sharing settings allow it and
+describes the requested action without reading the shell command aloud. You can
+answer with “Yes, allow it” or “No, deny it”. It speaks the settled outcome before
+listening again when the original turn has already finished.
 
 To continue on another device, open the same synced conversation and start Voice
 there. After the new attempt connects, a continuation note is synchronized. The
@@ -237,10 +257,15 @@ back into that same field for editing; it never presses Send. Cancel discards
 the recording, and a field that was closed or belongs to a previous Account is
 unavailable.
 
+In 0.3 development, **Read aloud** on an assistant reply highlights that reply
+while audio is being prepared and played. Stopping playback or reaching the end
+clears the highlight.
+
 In 0.3 development, if the microphone is blocked, the Voice presence shows **Microphone blocked** with
 **Allow** until you allow it or dismiss the attempt; if no microphone is found, it says
 so and offers **Retry**.
-Permission requests still need a tap, and ending Voice leaves them pending.
+Microphone permission still needs a tap. Ending Voice leaves unanswered coding
+permission requests pending.
 
 In 0.3 development, the rebindable **Start or end Voice** command defaults to
 ⌥⌘V on macOS (Ctrl+Alt+V on other desktop hosts). Tooltips show the resolved

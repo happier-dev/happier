@@ -17,6 +17,8 @@ describe('native Voice permission input', () => {
 
   it.each([
     { label: 'Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false },
+    { label: 'Yes, allow it', enabled: true, answer: 'Yes, allow it.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
+    { label: 'No, deny it', enabled: true, answer: 'No, deny it.', approved: false, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'No', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false },
     { label: 'delegated Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true },
     { label: 'delegated Yes with a final acknowledgement during queued readout', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, replacedReadout: true },
@@ -170,7 +172,9 @@ describe('native Voice permission input', () => {
         } else {
           const { t } = await import('@/text');
           expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual([t('session.usageLimitRecovery.banner.title')]);
-          await expectNextCommitAccepted();
+          expect(lifecycle.getSnapshot()).toMatchObject({ status: 'error', errorCode: 'provider_error',
+            errorMessage: 'usage_limit', errorRecoveryAction: 'open_settings' });
+          expect(lifecycle.getSnapshot().canCommitInput).not.toBe(true);
         }
         return;
       }
@@ -185,10 +189,11 @@ describe('native Voice permission input', () => {
         storage.getState().applySessions([createSessionFixture({ id: 'delegated-next', serverId: target.serverId,
           active: true, metadataLayoutVersion: 1,
           ownerMetadataView: { flavor: 'claude', machineId: 'machine-1', path: '/project' } })]);
-        // Publish a target change through the binding owner's actual store,
-        // retaining the conversation that the real lifecycle admitted above.
-        voiceSessionBindingStore.getState().bind({ ...binding, updatedAt: Date.now(),
-          targetSessionAddress: { serverId: target.serverId, sessionId: 'delegated-next' } });
+        // Reach the same target-selection entry as session.open, retaining the
+        // conversation admitted by the real lifecycle above.
+        const { setPrimaryActionSessionId } = await import('@/voice/tools/actionImpl/sessionTargets');
+        expect(await setPrimaryActionSessionId({ serverId: target.serverId, sessionId: 'delegated-next', updateLastFocused: true }))
+          .toMatchObject({ ok: true });
         expect(voiceSessionBindingStore.getState().getByControlSessionId(binding.controlSessionId)?.targetSessionAddress)
           .toEqual({ serverId: target.serverId, sessionId: 'delegated-next' });
       }
@@ -264,6 +269,7 @@ describe('native Voice permission input', () => {
       }
       if (retarget) {
         expect(lifecycle.getSnapshot()).toMatchObject({ mode: 'speaking' });
+        expect(lifecycle.getAttemptTargetSessionAddress()).toEqual({ serverId: target.serverId, sessionId: actualRequestSessionId });
         expect(lifecycle.getSnapshot().canCommitInput).not.toBe(true);
         finishReadout?.();
       }
@@ -345,6 +351,11 @@ describe('native Voice permission input', () => {
         return;
       }
       const originalResult = await submitted;
+      if (carrierSettled) {
+        const { t } = await import('@/text');
+        expect(expoSpeechSpeak.mock.calls.slice(precedingSpeechCount + 1).map(([text]) => text))
+          .toContain(approved ? t('approvals.status.approved') : t('approvals.status.rejected'));
+      }
       expect(sessionRpcWithServerScope.mock.calls.map(([request]) => request)).toContainEqual(expect.objectContaining({
         sessionId: actualRequestSessionId, method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
         payload: expect.objectContaining({ id: 'native-write', approved }),

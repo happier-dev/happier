@@ -51,6 +51,8 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { sync } from '@/sync/sync';
 import type { VoiceConversationSelection } from '@/voice/binding/voiceConversationBindingTypes';
 import { readSafeVoiceRuntimeFailureCode } from '@/voice/runtime/voiceRuntimeFailureCode';
+import { getConnectedAccountCatalogValue } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
+import { resolveSavedSecretReference } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 
 const registry = createDefaultVoiceProviderRegistry();
 
@@ -99,7 +101,10 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
     const admission = resolveVoiceStartAdmission({ bindingScope: idleTarget.kind,
         daemonLocalVoiceUnavailable: !voiceAgentEnabled, globalStartAuthorized: idleTarget.kind === 'global' && capabilities?.allowsGlobalStart === true,
         providerId, platform: resolveCurrentVoiceRuntimePlatform(Platform.OS), providerSettings: registry.get(providerId)?.providerSettings ?? null,
-        registry, startSessionId: idleTarget.kind === 'session' ? idleTarget.sessionAddress?.sessionId ?? null : null, voiceSettings });
+        registry, startSessionId: idleTarget.kind === 'session' ? idleTarget.sessionAddress?.sessionId ?? null : null, voiceSettings,
+        credentialContext: { settings: state.settings,
+            connectedPurposes: getConnectedAccountCatalogValue(state.profileScope, 'purposes').value,
+            resolveSavedSecret: ref => resolveSavedSecretReference(state.profileScope, state.settings.secrets, ref, { includeMaterial: false }) } });
     // Feature probes can await: read the incumbent again before any command is offered or dispatched.
     snapshot = voiceSessionManager.getSnapshot();
     const attemptId = getVoiceSessionPresentedAttemptId();
@@ -133,7 +138,7 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
             sessionMetadata: metadata, connectedServiceEntries: getConnectedServiceRegistrySnapshot().entries }) };
     const recoveryAction = snapshot.errorRecoveryAction ?? (snapshot.presentationState === 'reconnecting' && snapshot.reconnectRetryAvailable ? 'retry' : null);
     const recovery = resolveVoiceSurfaceRecovery(recoveryAction);
-    const setupIncomplete = !admission.connectedServicesBindingReady;
+    const setupIncomplete = !admission.connectedServicesBindingReady || !admission.credentialReady;
     const surfaceState = resolveVoiceSurfaceState(snapshot);
     const control = resolveVoiceAttemptControl({ surfaceState, tone: resolveVoiceSurfaceStatusPresentation(surfaceState).tone,
         status: snapshot.status, sessionId: snapshot.sessionId, canStop: snapshot.canStop,

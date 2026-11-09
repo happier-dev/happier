@@ -25,13 +25,14 @@ const { getVoiceSessionEndedAttempt } = await import('@/voice/session/voiceSessi
 const { getSessionName } = await import('@/utils/sessions/sessionUtils');
 const { voiceSettingsParse } = await import('@/sync/domains/settings/voiceSettings');
 const { t } = await import('@/text');
+const { useVoiceAttemptControl, VOICE_ATTEMPT_IDLE_TARGET_GLOBAL } = await import('@/components/voice/attempt/useVoiceAttemptControl');
 
 afterAll(restoreLoader);
 afterEach(standardCleanup);
 
 describe('retained ended Voice target presentation', () => {
     it.each(['session_root', 'voice_home'] as const)(
-        'retains the effective %s target after starting a continued carrier and ending', async kind => {
+        'keeps the working target across %s continuation, Voice open and End', async kind => {
             await loadLocalVoiceEngineWithCompatState();
             const storage = await getStorage();
             const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
@@ -41,17 +42,22 @@ describe('retained ended Voice target presentation', () => {
             const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
             const { getVoiceSessionPresentedBinding } = await import('@/voice/session/voiceSessionStore');
             const carrier = { serverId: localVoiceHomeId, sessionId: 'continued-carrier' };
-            const target = kind === 'session_root' ? { serverId: localVoiceHomeId, sessionId: 's1' } : null;
+            const retainedTarget = { serverId: localVoiceHomeId, sessionId: 's1' };
+            const target = kind === 'session_root' ? retainedTarget : null;
             const scope = kind === 'session_root'
                 ? { kind, sessionRootId: 's1' } : { kind };
             const binding = {
                 adapterId: 'local_conversation', controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
                 conversationSessionId: carrier.sessionId, conversationSessionAddress: carrier,
-                targetSessionAddress: target, transcriptMode: 'native_session' as const, updatedAt: Date.now(),
+                targetSessionAddress: retainedTarget, transcriptMode: 'native_session' as const, updatedAt: Date.now(),
             };
             const voice = storage.getState().settings.voice;
             const config = readLocalConversationVoiceSettings(voice);
             storage.__setState({ sessions: { ...storage.getState().sessions,
+                s1: createSessionFixture({ id: 's1', serverId: localVoiceHomeId, active: kind === 'session_root',
+                    archivedAt: kind === 'voice_home' ? 1 : null,
+                    metadata: { path: '/repo', host: 'test', machineId: 'machine-1', flavor: 'claude',
+                        agentRuntimeCapabilitiesV1: { localControl: { supported: true } } } }),
                 [carrier.sessionId]: createSessionFixture({ id: carrier.sessionId, serverId: carrier.serverId,
                     metadata: writeVoiceConversationBindingMetadata(writeVoiceConversationScopeMetadata({
                         ...createSessionFixture().metadata!,
@@ -67,21 +73,64 @@ describe('retained ended Voice target presentation', () => {
                     } },
                 }),
             } });
-            const view = await renderScreen(<VoiceSessionRuntime />);
+            let control: ReturnType<typeof useVoiceAttemptControl> | undefined;
+            function PresentedTarget() {
+                control = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_GLOBAL);
+                return null;
+            }
+            const view = await renderScreen(<><VoiceSessionRuntime /><PresentedTarget /></>);
             try {
                 const controller = getVoiceSessionLifecycleController()!;
                 await act(async () => { await controller.toggle(carrier); });
                 expect(controller.getSnapshot()).toMatchObject({ status: 'connected', canStop: true });
-                expect(controller.getAttemptTargetSessionAddress()).toEqual(carrier);
+                expect(controller.getAttemptTargetSessionAddress()).toEqual(target);
+                expect.soft(control?.targetSessionAddress).toEqual(target);
                 expect(getVoiceSessionPresentedBinding()).toMatchObject({
                     conversationSessionAddress: carrier, targetSessionAddress: target,
                 });
+                const opened = { serverId: localVoiceHomeId, sessionId: 'newly-opened' };
+                const { openSessionForVoiceTool } = await import('@/voice/tools/actionImpl/openSession');
+                const { resolveToolSessionAddress } = await import('@/voice/tools/resolveToolSessionId');
+                await act(async () => {
+                    storage.__setState({ sessions: { ...storage.getState().sessions,
+                        [opened.sessionId]: createSessionFixture({ id: opened.sessionId, serverId: opened.serverId,
+                            active: true, metadata: { path: '/new', host: 'test', machineId: 'machine-1' } }),
+                    } });
+                    expect(await openSessionForVoiceTool(opened)).toMatchObject({ ok: true });
+                });
+                expect(getVoiceSessionPresentedBinding()?.targetSessionAddress).toEqual(opened);
+                expect.soft(control?.targetSessionAddress).toEqual(opened);
+                expect.soft(await resolveToolSessionAddress({ currentServerId: carrier.serverId,
+                    currentSessionId: target?.sessionId })).toEqual(opened);
+                const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+                const selected = voiceSessionBindingStore.getState().getByControlSessionId(VOICE_AGENT_GLOBAL_SESSION_ID)!;
+                await act(async () => { voiceSessionBindingStore.getState().bind({ ...selected,
+                    targetSessionAddress: null, updatedAt: selected.updatedAt + 1 }); });
+                expect.soft(control?.targetSessionAddress).toBeNull();
+                await act(async () => { voiceSessionBindingStore.getState().bind({ ...selected,
+                    updatedAt: selected.updatedAt + 2 }); });
+                expect.soft(control?.targetSessionAddress).toEqual(opened);
                 await act(async () => { await controller.stop(controller.getSnapshot().sessionId!); });
                 expect(getVoiceSessionEndedAttempt()).toMatchObject({
-                    conversationSessionAddress: carrier, targetSessionAddress: target,
+                    conversationSessionAddress: carrier, targetSessionAddress: opened,
                     accountScope: { serverId: localVoiceHomeId, accountId: 'account-a' },
                     reason: { kind: 'stopped' },
                 });
+                const { getVoiceSessionRestartTarget } = await import('@/voice/session/voiceSessionStore');
+                await act(async () => {
+                    storage.__setState({ sessions: { ...storage.getState().sessions,
+                        [opened.sessionId]: { ...storage.getState().sessions[opened.sessionId]!, active: false, archivedAt: 1 },
+                    } });
+                });
+                expect.soft(getVoiceSessionRestartTarget('local_conversation', storage.getState().profileScope)).toEqual({ kind: 'global' });
+                const { executeVoiceConversationAction } = await import('@/sync/ops/actions/voiceConversationAction');
+                await act(async () => {
+                    const started = await executeVoiceConversationAction('ui.voice_global.new_conversation',
+                        { target: { kind: 'global' }, expectedAttempt: null }, { navigate() {} });
+                    expect(started, started.status === 'unavailable' ? started.code : '').toMatchObject({ status: 'completed' });
+                });
+                expect(getVoiceSessionPresentedBinding()?.conversationSessionAddress).not.toEqual(carrier);
+                expect(getVoiceSessionPresentedBinding()?.targetSessionAddress).toBeNull();
             } finally {
                 await view.unmount();
             }

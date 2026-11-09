@@ -1,6 +1,8 @@
 import { VoiceRuntimePlatformSchema, type VoiceRuntimePlatform } from '@happier-dev/protocol/voice/realtime/capabilities';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
-import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
+import { projectVoiceProviderSettings, type VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
+import { projectVoiceCredentialReadiness } from '@/voice/credentials/credentialReadiness';
+import { projectVoiceProviderRequirements, projectVoiceReadinessRequirement } from '@/voice/registry/readiness';
 import {
     isExternalVoiceProviderConnectedServicesBindingReady,
     type ExternalVoiceProviderSettingsDescriptor,
@@ -17,6 +19,7 @@ export type VoiceStartAdmission = Readonly<{
      * and a second derivation of it is a second answer waiting to diverge.
      */
     connectedServicesBindingReady: boolean;
+    credentialReady: boolean;
 }>;
 
 /**
@@ -45,6 +48,7 @@ export function resolveVoiceStartAdmission(input: Readonly<{
     /** The session a scoped start would bind to, when the caller has one. */
     startSessionId: string | null;
     voiceSettings: Pick<VoiceSettings, 'providerId' | 'providers'>;
+    credentialContext?: Omit<Parameters<typeof projectVoiceCredentialReadiness>[0], 'entry' | 'envelope'>;
 }>): VoiceStartAdmission {
     const providerReadyForBinding = resolveVoiceProviderIdForBindingScope(
         input.voiceSettings,
@@ -64,14 +68,26 @@ export function resolveVoiceStartAdmission(input: Readonly<{
             input.voiceSettings.providers?.[input.providerId] ?? null,
             input.providerSettings,
         );
+    const envelope = input.voiceSettings.providers?.[input.providerId] ?? null;
+    const projection = entry ? projectVoiceProviderSettings(entry, envelope) : null;
+    const requirements = projection?.requirements ?? (entry ? projectVoiceProviderRequirements(entry, projection?.modeId) : null);
+    // Built-in Local's aggregate speech requirements have no provider credential
+    // slot; its speech engines own those facts. Compose the selected conversation
+    // declaration's credential through the same owner Settings uses.
+    const hasCredentialSlot = entry?.kind === 'voice.conversation-provider.v1' && Boolean(entry.declaration?.credentials);
+    const credentialReady = !hasCredentialSlot || !requirements?.includes('credential') || (entry !== null && input.credentialContext !== undefined
+        && projectVoiceReadinessRequirement(entry.roles[0] ?? 'realtime_conversation', input.providerId, 'credential',
+            projectVoiceCredentialReadiness({ ...input.credentialContext, entry, envelope }).credential) === null);
     return {
         canStart:
             !input.daemonLocalVoiceUnavailable
             && providerReadyForBinding
             && platformSupported
             && connectedServicesBindingReady
+            && credentialReady
             && (input.globalStartAuthorized || Boolean(input.startSessionId)),
         connectedServicesBindingReady,
+        credentialReady,
     };
 }
 

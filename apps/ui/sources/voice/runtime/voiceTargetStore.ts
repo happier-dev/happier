@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { accountSettingsScopeKeySuffix, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import type { DesktopAppWindowSurface } from '@/desktop/window/appWindowSurface';
+import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
 
 import {
   areSessionAddressesEqual,
@@ -63,15 +64,17 @@ function normalizeAddress(value: SessionAddress | null | undefined): SessionAddr
 
 /**
  * Resolves the one action target shared by Voice tools and presentation.
- * Session-scoped Voice is bound to its admitted Session and must never fall
- * through to a retained global target.
+ * A running binding owns the working target, including Global's null target.
+ * Without one, Session-scoped Voice never borrows a retained global target.
  */
 export function resolveVoiceActionTargetAddress(input: Readonly<{
   scope: VoiceAssistantScope;
+  binding?: Pick<VoiceSessionBinding, 'targetSessionAddress'> | null;
   currentSessionAddress?: SessionAddress | null;
   primaryActionSessionAddress?: SessionAddress | null;
   lastFocusedSessionAddress?: SessionAddress | null;
 }>): SessionAddress | null {
+  if (input.binding) return input.binding.targetSessionAddress;
   const currentSessionAddress = normalizeAddress(input.currentSessionAddress);
   if (currentSessionAddress) return currentSessionAddress;
   if (input.scope !== 'global') return null;

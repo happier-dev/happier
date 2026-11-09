@@ -65,6 +65,8 @@ import { VoiceConversationActionOutputSchemas, type VoiceConversationActionId } 
 import { createFrontDoorUiActionExecutor, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { projectVoiceAttemptPresentation } from './projectVoiceAttemptPresentation';
 import type { VoiceAttemptPresentation } from '@happier-dev/protocol/voice/attemptPresentation';
+import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
+import { useSavedSecretReferenceResolver } from '@/components/secrets/useSavedSecretCatalog';
 
 import {
     resolveVoiceAttemptControl,
@@ -87,8 +89,8 @@ const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
  *
  * Shell/shortcut consumers use the default policy; Home/New Session and existing-session composers
  * state their explicit intent. It is *only* about starting.
- * Once an attempt exists its session binding is immutable and every surface mirrors and settles
- * that attempt, so this value never reaches a stop, a mute, or a recovery.
+ * Once an attempt exists every surface mirrors and settles that attempt; its binding owns any
+ * later working-target selection, so this value never reaches a stop, a mute, or a recovery.
  */
 export type VoiceAttemptIdleTarget = VoiceStartIntent;
 
@@ -220,6 +222,15 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     );
     const presentedEnded = snap.status === 'disconnected' ? ended : null;
     const currentAccountScope = useActiveServerAccountScope();
+    const voiceSettingsV1 = useSetting('voiceSettingsV1');
+    const secrets = useSetting('secrets');
+    const credentialEntry = voiceProviderRegistry.get(providerId);
+    const hasCredentialSlot = credentialEntry?.kind === 'voice.conversation-provider.v1' && Boolean(credentialEntry.declaration?.credentials);
+    const connectedPurposes = useConnectedAccountCatalog('purposes', currentAccountScope,
+        { enabled: hasCredentialSlot }, snapshot => snapshot.value);
+    const savedSecretReferences = useSavedSecretReferenceResolver({
+        scope: hasCredentialSlot ? currentAccountScope : null, includeMaterial: false,
+    });
     const { executeValue } = useMountedActionExecution(currentAccountScope);
     const executeControl = React.useCallback(async (
         actionId: VoiceConversationActionId, input: unknown, tag: string, operation?: UiActionOperation,
@@ -300,6 +311,8 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         // `null` for the global target: a global start binds no surface session by definition.
         startSessionId,
         voiceSettings: canonicalVoice,
+        credentialContext: { settings: { voiceSettingsV1, secrets }, connectedPurposes,
+            resolveSavedSecret: savedSecretReferences.resolve },
     });
     /*
      * §2.2's middle rung. A provider the user selected but has not finished connecting refuses the
@@ -314,7 +327,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
      * refusal a surface acts on. A refusal with no declared setup behind it — a server feature the
      * settings screen cannot switch on — is not a setup the user can finish, and stays terminal.
      */
-    const setupIncomplete = !startAdmission.connectedServicesBindingReady;
+    const setupIncomplete = !startAdmission.connectedServicesBindingReady || !startAdmission.credentialReady;
     const setupDismissed = useVoiceSetupDismissed();
     const capturing = resolveVoiceMicCaptureActive({
         status: snap.status,
@@ -340,7 +353,19 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         () => (agentRuntime ? { localId: agentRuntime.localId, pluginId: agentRuntime.pluginId } : null),
         [agentRuntime?.localId, agentRuntime?.pluginId],
     );
-    const capturedAttemptTarget = expectedAttempt ? voiceSessionManager.getAttemptTargetSessionAddress() : null;
+    const subscribeBindingSources = React.useCallback((notify: () => void) => {
+        const unsubscribeSessions = storage.subscribe(notify, { sessions: true, sessionListRowsByServerId: true });
+        const unsubscribeBindings = voiceSessionBindingStore.subscribe(notify);
+        return () => {
+            unsubscribeSessions();
+            unsubscribeBindings();
+        };
+    }, []);
+    const readAttemptTarget = React.useCallback(
+        () => expectedAttempt ? voiceSessionManager.getAttemptTargetSessionAddress() : null,
+        [expectedAttempt, snap.sessionId, snap.adapterId],
+    );
+    const capturedAttemptTarget = React.useSyncExternalStore(subscribeBindingSources, readAttemptTarget, readAttemptTarget);
     const recoveryBindingScope = expectedAttempt ? capturedAttemptTarget ? 'session' : 'global' : bindingScope;
     /*
      * The session a recovery is about: the running attempt's control session, or — when nothing is
@@ -473,14 +498,6 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         () => !hiddenTarget && targetSessionId && targetServerId ? { serverId: targetServerId, sessionId: targetSessionId } : null,
         [hiddenTarget, targetServerId, targetSessionId],
     );
-    const subscribeBindingSources = React.useCallback((notify: () => void) => {
-        const unsubscribeSessions = storage.subscribe(notify, { sessions: true, sessionListRowsByServerId: true });
-        const unsubscribeBindings = voiceSessionBindingStore.subscribe(notify);
-        return () => {
-            unsubscribeSessions();
-            unsubscribeBindings();
-        };
-    }, []);
     // The conversation the user can return to, with the Home its binding named.
     const bindingCacheRef = React.useRef<Readonly<{
         sessions: unknown;
@@ -617,6 +634,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         sessionId: snap.sessionId ?? null,
         canStop: snap.canStop === true,
         canCommitInput: snap.canCommitInput === true,
+        inputEndsOnSilence: snap.inputEndsOnSilence === true,
         muted: snap.micMuted === true,
         capturing,
         startAdmitted: ownsVoiceRuntime && startAdmission.canStart,
@@ -645,6 +663,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         presentedSessionIsHidden,
         snap.canStop,
         snap.canCommitInput,
+        snap.inputEndsOnSilence,
         snap.micMuted,
         snap.sessionId,
         snap.status,

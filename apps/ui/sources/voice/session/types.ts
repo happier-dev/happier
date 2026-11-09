@@ -76,12 +76,15 @@ export type VoiceSessionSnapshot = Readonly<{
   mode: VoiceSessionMode;
   canStop: boolean;
   canCommitInput?: boolean;
+  /** The capture finishes the turn itself on silence; Send is only an early finish. */
+  inputEndsOnSilence?: boolean;
   canHoldToTalk?: boolean;
   micMuted?: boolean;
   errorCode?: string;
   errorMessage?: string;
   /** Sanitized provider prose from the runtime error-copy owner. */
   errorProviderMessage?: string;
+  errorProviderError?: import('@happier-dev/protocol/providers/errors').ProviderErrorV1;
   errorConnectedServiceDiagnostic?: ConnectedServiceUxDiagnosticV1;
   errorRecoveryAction?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceMachineRecoveryAction;
   errorPresentation?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceMachineErrorPresentation;

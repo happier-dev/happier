@@ -14,6 +14,7 @@ import type { VoiceMachineError } from '@/voice/runtime/machine/voiceMachineErro
 import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
 import { readVoiceProviderSettingsConfig, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { storage } from '@/sync/domains/state/storage';
+import { sync } from '@/sync/sync';
 import { getAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -26,6 +27,10 @@ import { getVoiceSessionAttemptId } from '@/voice/session/voiceSessionStore';
 import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
 import { isCapturedVoiceExecutionMachineCurrent, resolveVoiceExecutionMachineId } from '@/voice/settings/executionMachine';
 import type { BundledSpeechPreparation } from '@/voice/runtime/bundledSpeech/bundledSpeechRuntime';
+import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+
+/** Ephemeral presentation identity; never included in synthesis or Action payloads. */
+export type VoiceReadAloudSource = Readonly<{ sessionAddress: SessionAddress; routeMessageId: string }>;
 
 export type LocalVoiceTtsRequest = Readonly<{
     sessionId?: string | null;
@@ -82,9 +87,10 @@ export type LocalVoiceTtsProviderController = Readonly<{
 
 export type LocalVoiceTtsController = Readonly<{
     speak: (ctx: LocalVoiceTtsRequest) => Promise<void>;
-    say: (ctx: Omit<LocalVoiceTtsRequest, 'registerPlaybackStopper'> & { signal?: AbortSignal }) => Promise<Readonly<{ status: 'completed' | 'cancelled' }>>;
+    say: (ctx: Omit<LocalVoiceTtsRequest, 'registerPlaybackStopper'> & { signal?: AbortSignal; source?: VoiceReadAloudSource }) => Promise<Readonly<{ status: 'completed' | 'cancelled' }>>;
     stopSay: () => boolean;
     readSay: () => 'idle' | 'preparing' | 'speaking';
+    readSaySource: () => VoiceReadAloudSource | null;
     subscribeSay: (listener: () => void) => () => void;
 }>;
 
@@ -230,7 +236,7 @@ async function speakWithLocalNeuralTts(ctx: LocalVoiceTtsRequest): Promise<void>
     await speakWithLocalNeuralDeviceRuntime(playbackRequest, selection);
 }
 
-export function prepareLocalVoiceTtsRequest(ctx: LocalVoiceTtsRequest): BundledSpeechPreparation | null {
+export async function prepareLocalVoiceTtsRequest(ctx: LocalVoiceTtsRequest): Promise<BundledSpeechPreparation | null> {
     const accountLifetime = captureActiveServerAccountScopeCurrentness();
     const serverId = getAppliedActiveServerSnapshot().serverId;
     const attemptId = getVoiceSessionAttemptId();
@@ -247,17 +253,14 @@ export function prepareLocalVoiceTtsRequest(ctx: LocalVoiceTtsRequest): BundledS
             : ctx.sessionId ? resolveSessionAddressFromLocalState(storage.getState(), ctx.sessionId) : null;
     };
     const target = resolveTarget();
-    const metadata = target ? readVoiceSessionOwnerMetadataFromState(storage.getState(), target, { activeServerId: serverId }) : null;
-    const work = metadata?.work;
-    const preference = readSessionVoicePreferenceV1(work && typeof work === 'object' && 'voicePreference' in work
-        ? work.voicePreference : undefined);
+    let metadata = target ? readVoiceSessionOwnerMetadataFromState(storage.getState(), target, { activeServerId: serverId }) : null;
     const isCurrent = () => {
         if (!accountLifetime.isCurrent() || getVoiceSessionAttemptId() !== attemptId
             || !areServerProfileIdentifiersEquivalent(serverId, getAppliedActiveServerSnapshot().serverId)) return false;
         const current = resolveBinding();
         if (!binding) return current === null && (target === null ? resolveTarget() === null
             : areSessionAddressesEqual(resolveTarget(), target)
-                && readVoiceSessionOwnerMetadataFromState(storage.getState(), target, { activeServerId: serverId }) !== null);
+                && (metadata === null || readVoiceSessionOwnerMetadataFromState(storage.getState(), target, { activeServerId: serverId }) !== null));
         return current?.controlSessionId === binding.controlSessionId
             && current.conversationSessionId === binding.conversationSessionId
             && current.updatedAt === binding.updatedAt
@@ -266,12 +269,20 @@ export function prepareLocalVoiceTtsRequest(ctx: LocalVoiceTtsRequest): BundledS
             && (!target || metadata === null || readVoiceSessionOwnerMetadataFromState(storage.getState(), target, { activeServerId: serverId }) !== null);
     };
     if (!isCurrent()) return null;
+    if (target && !metadata && areServerProfileIdentifiersEquivalent(target.serverId, serverId)) {
+        await sync.ensureSessionVisibleForMessageRoute(target.sessionId, { serverId: target.serverId, hydrateMessages: false });
+        if (!isCurrent()) return null;
+        metadata = readVoiceSessionOwnerMetadataFromState(storage.getState(), target, { activeServerId: serverId });
+    }
     // The incumbent speech Machine chooser is Home-local. An inactive Home's
     // retained Session cannot authorize speech on the active Home's daemon.
     if (target && (!metadata || !areServerProfileIdentifiersEquivalent(target.serverId, serverId))) {
         reportTtsFailure(ctx, new Error('session_metadata_unavailable'));
         return null;
     }
+    const work = metadata?.work;
+    const preference = readSessionVoicePreferenceV1(work && typeof work === 'object' && 'voicePreference' in work
+        ? work.voicePreference : undefined);
     return Object.freeze({
         targetSessionAddress: target, preference, isCurrent,
         onVoiceApplied: inUseVoice => {
@@ -286,7 +297,7 @@ export async function speakWithBundledSpeechTts(
     ctx: LocalVoiceTtsRequest,
     preparation?: BundledSpeechPreparation,
 ): Promise<boolean> {
-    const prepared = preparation ?? prepareLocalVoiceTtsRequest(ctx);
+    const prepared = preparation ?? await prepareLocalVoiceTtsRequest(ctx);
     if (!prepared) return true;
     const originMachineId = resolveVoiceExecutionMachineId();
     // Loading the complete first-party registry while the built-in TTS controller
