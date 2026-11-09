@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import * as React from 'react';
-import { act } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -8,7 +7,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { Button } from '@happier-dev/plugin-ui';
 
-import { TriageListFailureDetails, TriageListFailureStatus } from './sourceFailure.js';
+import { TriageListFailureStatus, TriageOutsideSourcesNotice } from './sourceFailure.js';
+import { readTriageSourceFailureRowV1 } from './windowState.js';
 
 const mounted: PluginUiTestkit[] = [];
 afterEach(async () => {
@@ -43,13 +43,20 @@ describe('source failure presentation', () => {
     await expect(fixture.queryByRole('button', { name: 'Details' })).resolves.toBeUndefined();
   });
 
-  it('keeps each typed refusal on demand where the reader goes to fix it', async () => {
-    const fixture = await mount(<TriageListFailureDetails failure={FAILURE} />);
-    const diagnostic = 'Native GitHub — plugin_activation_failed · retryable=false Stored GitHub — github_credential_mismatch';
-    await expect(fixture.queryByText(diagnostic)).resolves.toBeUndefined();
-    await act(async () => {
-      await fixture.press(await fixture.findByRole('button', { name: 'Details' }));
-    });
-    await expect(fixture.getByText(diagnostic)).resolves.toBeDefined();
+  it('says sources outside the view in one line whose Review opens the source health surface (VIEW-HEALTH)', async () => {
+    const opened: string[] = [];
+    const fixture = await mount(<TriageOutsideSourcesNotice attention={{ count: 6, target: 'manageSources' }}
+      onReview={(target) => { opened.push(target); }} />);
+    await expect(fixture.getByText('6 other sources need attention')).resolves.toBeDefined();
+    await fixture.press(await fixture.getByRole('button', { name: 'Review' }));
+    expect(opened).toEqual(['manageSources']);
+    const one = await mount(<TriageOutsideSourcesNotice attention={{ count: 1, target: 'manageSources' }} onReview={() => {}} />);
+    await expect(one.getByText('1 other source needs attention')).resolves.toBeDefined();
+  });
+
+  it('gives each connection its own reason, fix and on-demand cause for its Manage sources row', () => {
+    const [native, stored] = FAILURE.sources.map((source) => readTriageSourceFailureRowV1(source));
+    expect(native).toMatchObject({ fix: 'connection', details: 'Native GitHub — plugin_activation_failed · retryable=false' });
+    expect(stored).toMatchObject({ fix: 'connection', details: 'Stored GitHub — github_credential_mismatch' });
   });
 });

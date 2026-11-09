@@ -1,20 +1,22 @@
 import * as React from 'react';
-import { Button, Status, TechnicalDetailsDisclosure, Text, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
+import { Button, Status, Text, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
 
 import {
   readTriageListFailureLine,
-  readTriageListFailureNotice,
   type TriageListShellFailureV1,
 } from './windowState.js';
+import type { TriageOutsideSourcesAttentionV1 } from '../../projection/sourceHealth.js';
 
 /** The press beside a failure line: it never outweighs the sentence it serves. */
 export function TriageFailureLineAction(props: Readonly<{
   label: string;
+  /** Names what it acts on where several sit together ("Retry acme/widgets"); defaults to the label. */
+  accessibilityLabel?: string;
   busy?: boolean;
   disabled?: boolean;
   onPress: () => unknown;
 }>): React.ReactElement {
-  return <Button accessibilityLabel={props.label} variant="plain" size="small" onPress={props.onPress}
+  return <Button accessibilityLabel={props.accessibilityLabel ?? props.label} variant="plain" size="small" onPress={props.onPress}
     {...(props.busy === undefined ? {} : { busy: props.busy })}
     {...(props.disabled === undefined ? {} : { disabled: props.disabled })}>
     <Text variant="meta" tone="secondary" value={props.label} />
@@ -36,16 +38,20 @@ export function TriageListFailureStatus(props: Readonly<{
     action={line.recovery === 'manageSources' ? props.manageSources ?? props.retry : props.retry} />;
 }
 
-/** Each connection's own reason and its typed cause, where the reader went to fix them (Manage sources). */
-export function TriageListFailureDetails(props: Readonly<{ failure: TriageListShellFailureV1 }>): React.ReactElement {
+/**
+ * Sources outside the selected view that need attention, said once in the status line (UI refinements 2026-11-08):
+ * the view keeps its own state, and Review opens the one source-health surface (Manage sources).
+ */
+export function TriageOutsideSourcesNotice(props: Readonly<{
+  attention: TriageOutsideSourcesAttentionV1;
+  onReview: (target: TriageOutsideSourcesAttentionV1['target']) => void;
+}>): React.ReactElement {
   const text = usePluginTranslation();
-  const { locale } = useSurfaceContext();
-  const notice = readTriageListFailureNotice(props.failure, text, locale);
-  return <TechnicalDetailsDisclosure
-    title={text('plugins.triage.surface.detail.tab.details', 'Details')}
-    lines={[
-      { key: 'source-reason', label: notice.title, value: notice.description },
-      ...(notice.details === undefined ? [] : [{ key: 'source-invocation', label: notice.title, value: notice.details }]),
-    ]}
-  />;
+  const { count, target } = props.attention;
+  const label = count === 1
+    ? text('plugins.triage.surface.sources.outsideAttention.one', '1 other source needs attention')
+    : text('plugins.triage.surface.sources.outsideAttention.other', '{count} other sources need attention', { count });
+  return <Status tone="warning" label={label}
+    action={<TriageFailureLineAction label={text('plugins.triage.surface.sources.outsideAttention.review', 'Review')}
+      onPress={() => { props.onReview(target); }} />} />;
 }

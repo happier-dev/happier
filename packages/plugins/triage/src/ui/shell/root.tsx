@@ -48,7 +48,7 @@ import {
 } from '@happier-dev/plugin-ui';
 
 import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
-import { TriageFailureLineAction, TriageListFailureStatus } from './sourceFailure.js';
+import { TriageFailureLineAction, TriageListFailureStatus, TriageOutsideSourcesNotice } from './sourceFailure.js';
 import { TriageSourceMark } from '../list/sourceMark.js';
 import { PullRequestFailureDetails } from '../../sessions/pullRequestGlance/PullRequestReadFailure.js';
 import { sameTriageSourceIdentity } from '../../corpus/identity/components.js';
@@ -2508,6 +2508,12 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
 
   // Retained rows can yield to the host's outage notice. Without rows, the list's own
   // settled failure and recovery must remain visible: execution readiness is not a body state.
+  // Sources outside the selected view keep their own health out of this view's body: one line, Review opens Manage
+  // sources, the one source-health surface (UI refinements 2026-11-08; typed by the view-health projection).
+  const outsideSourcesAttention = listWindow?.outsideSourcesAttention ?? null;
+  const outsideSourcesNotice = outsideSourcesAttention === null ? null : (
+    <TriageOutsideSourcesNotice attention={outsideSourcesAttention} onReview={() => setEditingSources(true)} />
+  );
   const listFailureStatus = listWindow?.failure == null || (hostSpeaksForOutage && rowCount > 0) ? null : (
     <TriageListFailureStatus failure={listWindow.failure} manageSources={sourceManagementStatusAction}
       retry={<TriageFailureLineAction label={retryLabel}
@@ -2861,6 +2867,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           {/* Rows are still listed, so one unread connection is a status line with its fix beside it, not a card that
               leads every page: the name and why, then its recovery (lab c7: the page's name and rows lead). */}
           {rowCount === 0 || emptyBelowPins?.kind === 'sourceFailure' ? null : listFailureStatus}
+          {outsideSourcesNotice}
 
           {/*
             Pins are durable user intent with no upstream owner, so the way they
