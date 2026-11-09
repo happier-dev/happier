@@ -1,9 +1,11 @@
 import { createTestApiSessionClient } from '@/testkit/backends/createTestApiSessionClient';
+import { createAccountSessionClientTransport } from '@/api/client/createAccountSessionClientTransport';
+import { createSessionSocketTransport } from '@/api/session/connection/createSessionSocketTransport';
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot,
-    getActiveAccountSettingsSnapshot, readAccountRoleOverridesFromSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot, commitActiveAccountSettingsSnapshot,
+    clearActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, readAccountRoleOverridesFromSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
@@ -66,6 +68,10 @@ describe('ApiSessionClient live account settings convergence', () => {
         readCredentialsMock.mockResolvedValue(credentials);
         readStoredCredentialsMock.mockResolvedValue(credentials);
         resetActiveAccountSettingsSnapshotForTests();
+        // Socket fixtures have an admitted Machine binding. Feature discovery
+        // is an HTTP boundary too; don't race online against an absent contract.
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json({ features: {},
+            capabilities: { session: { pendingInput: { protocolVersion: 1 } } } })));
     });
 
     it('applies a plain settings update with token-only credentials', async () => {
@@ -129,8 +135,12 @@ describe('ApiSessionClient live account settings convergence', () => {
             if (path === '/v1/account/entity-rows/profiles/transfer') return { status: 200, data: { status: 'absent' } };
             return { status: 404, data: {} };
         });
-        const { client, userSocket } = createClient();
+        // Online precedes the initial connection's recovery work. Start this
+        // live-hint cost measurement after that independently owned read ends.
+        const connected = deferred<void>();
+        const { client, userSocket } = createClient({ onSessionFollowInvalidated: () => connected.resolve() });
         await vi.waitFor(() => expect((client as never as { currentConnectionState: { phase: string } }).currentConnectionState.phase).toBe('online'));
+        await connected.promise;
         process.env.HAPPY_ENABLE_V2_CHANGES = 'true';
         userSocket.trigger('update', update({ t: 'account-change' }, 'unrelated-account-hint'));
         await vi.waitFor(() => expect(get.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v2/changes')).toHaveLength(1));
@@ -155,6 +165,7 @@ describe('ApiSessionClient live account settings convergence', () => {
         await Promise.allSettled([...clients].map((client) => client.close()));
         clients.clear();
         vi.restoreAllMocks();
+        vi.unstubAllGlobals();
         if (previousEnableV2Changes === undefined) delete process.env.HAPPY_ENABLE_V2_CHANGES;
         else process.env.HAPPY_ENABLE_V2_CHANGES = previousEnableV2Changes;
     });
@@ -164,11 +175,15 @@ describe('ApiSessionClient live account settings convergence', () => {
         const userSocket = createApiSessionSocketStub({ connected: true });
         bindApiSessionSocketPairMock(mockIo, { sessionSocket, userSocket,
             fallbackSocket: createApiSessionSocketStub({ connected: true }) });
+        const accountTransport = createAccountSessionClientTransport('fake-token');
         const client = createTestApiSessionClient(ApiSessionClient, 'fake-token', createMockSession({
             pendingCount: 1,
             pendingVersion: 3,
             latestTurnStatus: 'in_progress',
-        }), options);
+        }), { localMachineId: 'machine', transport: { ...accountTransport,
+            createSessionSocketTransport: binding => createSessionSocketTransport({ ...binding,
+                token: 'fake-token', serverUrl: accountTransport.serverUrl, accessKeyBinding: 'preestablished' }),
+        }, ...options });
         clients.add(client);
         return { client, sessionSocket, userSocket };
     }
@@ -198,26 +213,54 @@ describe('ApiSessionClient live account settings convergence', () => {
         expect(await reader.readCurrentAutonomousCheckIn(origin)).toBeNull();
     });
 
-    it('admits a Discussion-origin Follow wake with Never pause over Account five and holds unreadable origin policy', async () => {
+    it.each(['network', 'cache'] as const)('admits a Discussion-origin Follow wake from %s settings despite an unrelated publication and holds unreadable origin policy', async source => {
         const credentials = { token: 'fake-token', encryption: null } as const;
         readStoredCredentialsMock.mockResolvedValue(credentials);
-        let override: { afterTurns: number | null } | null = { afterTurns: null };
+        let override: { afterTurns: number | null } | null | undefined = { afterTurns: null };
         const features = () => ({ status: 'ready' as const, features: FeaturesResponseSchema.parse({
             features: { sessions: { enabled: true, autonomousExchange: { enabled: true }, conversations: { enabled: true } },
                 sharing: { enabled: true, session: { enabled: true } } }, capabilities: {},
         }) });
-        const requestDiscussion = vi.spyOn(axios, 'request').mockImplementation(async () => override === null
-            ? { status: 503, data: {} }
-            : { status: 200, data: { discussionId: 'originating-discussion',
-                settings: { coordination: { autonomousCheckIn: override } } } });
+        let publishedUnrelatedPreference = false;
+        let retireAccountDuringRead = false;
+        let changeCheckInDuringRead = false;
+        const requestDiscussion = vi.spyOn(axios, 'request').mockImplementation(async () => {
+            if (retireAccountDuringRead) {
+                const snapshot = getActiveAccountSettingsSnapshot()!;
+                clearActiveAccountSettingsSnapshot();
+                commitActiveAccountSettingsSnapshot({ ...snapshot, settingsVersion: snapshot.settingsVersion + 1 });
+            }
+            if (!publishedUnrelatedPreference) {
+                publishedUnrelatedPreference = true;
+                const snapshot = getActiveAccountSettingsSnapshot()!;
+                const rawSettings = { ...snapshot.rawSettings, codexBackendMode: 'appServer' };
+                commitActiveAccountSettingsSnapshot({ ...snapshot, rawSettings,
+                    settings: accountSettingsParse(rawSettings), settingsVersion: snapshot.settingsVersion + 1 });
+            }
+            if (changeCheckInDuringRead) {
+                changeCheckInDuringRead = false;
+                const snapshot = getActiveAccountSettingsSnapshot()!;
+                const rawSettings = { ...snapshot.rawSettings, coordinationAutonomousCheckIn: { afterTurns: null } };
+                commitActiveAccountSettingsSnapshot({ ...snapshot, rawSettings,
+                    settings: accountSettingsParse(rawSettings), settingsVersion: snapshot.settingsVersion + 1 });
+            }
+            return override === null
+                ? { status: 503, data: {} }
+                : { status: 200, data: { discussionId: 'originating-discussion',
+                    settings: override === undefined ? {} : { coordination: { autonomousCheckIn: override } } } };
+        });
         const { createDiscussionAutonomousCheckInReader } = await import('@/discussions/discussionActionDeps');
         const { configuration } = await import('@/configuration');
         const readDiscussionAutonomousCheckIn = createDiscussionAutonomousCheckInReader({ credentials,
             serverId: configuration.activeServerId, serverHttpBaseUrl: 'http://discussion-wake.test',
             resolveServerFeaturesSnapshot: features });
         const { client, sessionSocket } = createClient({ readDiscussionAutonomousCheckIn, getServerFeaturesSnapshot: features });
-        setActiveAccountSettingsSnapshot({ source: 'network', rawSettings: {}, settings: accountSettingsParse({}),
+        setActiveAccountSettingsSnapshot({ source, rawSettings: {}, settings: accountSettingsParse({}),
             settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
+        // The receiver may start from disk before its first network read. The
+        // real publication owner must admit confirmation of that same revision.
+        commitActiveAccountSettingsSnapshot({ ...getActiveAccountSettingsSnapshot()!, source: 'network', loadedAtMs: 2 });
+        const settingsReads = vi.spyOn(axios, 'get');
         const origin = { serverId: client.getServerBinding().serverId, discussionId: 'originating-discussion' };
         let reportedOrigin: typeof origin | undefined = origin;
         // Home is the network boundary; keep the actual check-in reducer and
@@ -252,8 +295,22 @@ describe('ApiSessionClient live account settings convergence', () => {
         expect(await client.observePendingSessionFollow(options)).toMatchObject({
             wakeAdmission: { status: 'held', code: 'session_input_target_unavailable' },
         });
+        // One canonical admitted snapshot supplies every wake. Reading check-in
+        // must not reopen Account preferences per delivery or inventory its Sessions.
+        expect(settingsReads.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v2/account/settings')).toHaveLength(0);
         reportedOrigin = undefined;
         override = { afterTurns: null };
+        expect(await client.observePendingSessionFollow(options)).toMatchObject({
+            wakeAdmission: { status: 'held', code: 'session_input_target_unavailable' },
+        });
+        reportedOrigin = origin;
+        override = undefined;
+        changeCheckInDuringRead = true;
+        expect(await client.observePendingSessionFollow(options)).toMatchObject({
+            wakeAdmission: { status: 'held', code: 'session_input_target_unavailable' },
+        });
+        override = { afterTurns: null };
+        retireAccountDuringRead = true;
         expect(await client.observePendingSessionFollow(options)).toMatchObject({
             wakeAdmission: { status: 'held', code: 'session_input_target_unavailable' },
         });

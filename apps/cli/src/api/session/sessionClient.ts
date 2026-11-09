@@ -222,7 +222,7 @@ import {
     applyAccountSettingsV2Update,
     refreshActiveAccountSettingsFromServer,
 } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { accountSettingsKeysChanged, getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { refreshActivePromptLibraryCatalogAfterChange } from '@/settings/prompts/hydratePromptLibraryCatalog';
 import { refreshDemandedActiveMcpServerCatalog } from '@/settings/mcp/hydrateMcpServerCatalog';
@@ -652,6 +652,9 @@ export class ApiSessionClient extends EventEmitter {
         'takeWorkerUpdate' | 'waitForWorkerUpdateChange' | 'prepareWorkerUpdates' | 'setWorkerUpdatePublisher'> | null = null;
     private readonly pendingRequestSettlementAdmissions = new Set<Promise<void>>();
     private readonly pendingSessionTurnMutationUpdates = new Set<Promise<void>>();
+    /** This runner's own Turn begins by Turn id: the readiness event an accepted settlement waits on. */
+    private readonly ownTurnBeginUpdates = new Map<string, Promise<void>>();
+    private readonly ownTurnBeginWaiters = new Map<string, Set<() => void>>();
     private readonly pendingTranscriptMessageUpdates = new Set<Promise<unknown>>();
     private readonly locallyAuthoredTranscriptObservationUserLocalIds = new Set<string>();
     private readonly pendingProviderInputSettlementWrites = new Set<Promise<void>>();
@@ -1496,6 +1499,7 @@ export class ApiSessionClient extends EventEmitter {
                         provenance: params.provenance,
                         ...(params.surfaceItemReference === undefined ? {} : { surfaceItemReference: params.surfaceItemReference }),
                         ...(params.approvalRequestArtifactId === undefined ? {} : { approvalRequestArtifactId: params.approvalRequestArtifactId }),
+                        ...(params.append === undefined ? {} : { append: params.append }),
                     }),
                     params.admission === undefined && params.observeCommitSignal === undefined && params.awaitDelivery === undefined ? undefined : {
                         ...(params.admission ? { admission: params.admission } : {}),
@@ -2435,11 +2439,15 @@ export class ApiSessionClient extends EventEmitter {
             || !this.hasOwnerMetadataAuthority()
             || snapshot.scopeKey !== resolveAccountSettingsScopeKey(credentials)
             || originatingDiscussion && !this.readDiscussionAutonomousCheckIn) return null;
+        const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
         try {
             const override = originatingDiscussion && this.readDiscussionAutonomousCheckIn
                 ? await this.readDiscussionAutonomousCheckIn(originatingDiscussion) : undefined;
             if (override === null || this.closed || this.accountSettingsSyncBarrier !== null
-                || getActiveAccountSettingsSnapshot() !== snapshot
+                || getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken
+                || accountSettingsKeysChanged(snapshot, getActiveAccountSettingsSnapshot(), {
+                    settings: ['coordinationAutonomousCheckIn'],
+                })
                 || !(await this.readCurrentOwnerCredentials())) return null;
             return { afterTurns: resolveAutonomousExchangeAfterTurnsV1(
                 snapshot.settings.coordinationAutonomousCheckIn.afterTurns, override) };
@@ -3322,12 +3330,14 @@ export class ApiSessionClient extends EventEmitter {
             after: unknown;
             updaterStack: string | undefined;
         }> | undefined;
+        let changedFields: string[] = [];
         await this.commitMetadataLocked((metadata, context) => {
             // CAS may re-run the updater. Only its final successful application
             // describes the committed transition. The client snapshot can still
             // be stale on an unchanged legacy readback, or advance independently.
             const previousGoal = readSessionWorkStateV1FromMetadata(metadata);
             const updated = handler(metadata, context);
+            changedFields = readChangedMetadataFieldNames(metadata, updated);
             const updatedGoal = readSessionWorkStateV1FromMetadata(updated);
             goalChanged = hasEffectiveSessionGoalChange(
                 previousGoal,
@@ -3347,6 +3357,10 @@ export class ApiSessionClient extends EventEmitter {
             } : undefined;
             return updated;
         }, publisherPrecondition, expectedMetadataRevision);
+        // Field names only (never values): attributes each committed tuple write to its producer.
+        logger.infoFile('[API] Session metadata fields changed', {
+            sessionId: this.sessionId, publisher: publisherPrecondition !== undefined, fields: changedFields,
+        });
         if (goalChanged) {
             logger.debug('[Session Follow] Committed Goal transition', {
                 sessionId: this.sessionId,
@@ -4229,7 +4243,39 @@ export class ApiSessionClient extends EventEmitter {
                 }
             });
         this.trackPendingUpdate(this.pendingSessionTurnMutationUpdates, update);
+        if (mutation.action === 'begin') {
+            this.ownTurnBeginUpdates.set(mutation.turnId, update.catch(() => undefined));
+            for (const wake of this.ownTurnBeginWaiters.get(mutation.turnId) ?? []) wake();
+            this.ownTurnBeginWaiters.delete(mutation.turnId);
+        }
         return update;
+    }
+
+    /**
+     * Resolves once this runner's begin for the Turn has been queued, persisted and offered
+     * to the Home. Provider acceptance can settle while the accepted lifecycle still holds
+     * that begin, so an absent begin is awaited as an event rather than polled.
+     */
+    private async waitForOwnTurnBeginPublication(turnId: string | undefined, signal: AbortSignal): Promise<void> {
+        if (signal.aborted) return;
+        if (turnId !== undefined && !this.ownTurnBeginUpdates.has(turnId)) {
+            await new Promise<void>((resolve) => {
+                const waiters = this.ownTurnBeginWaiters.get(turnId) ?? new Set<() => void>();
+                const done = () => {
+                    signal.removeEventListener('abort', done);
+                    waiters.delete(done);
+                    if (waiters.size === 0 && this.ownTurnBeginWaiters.get(turnId) === waiters) this.ownTurnBeginWaiters.delete(turnId);
+                    resolve();
+                };
+                waiters.add(done);
+                this.ownTurnBeginWaiters.set(turnId, waiters);
+                signal.addEventListener('abort', done, { once: true });
+            });
+            if (signal.aborted) return;
+        }
+        const begin = turnId === undefined ? undefined : this.ownTurnBeginUpdates.get(turnId);
+        await (begin ?? Promise.all([...this.pendingSessionTurnMutationUpdates].map(update => update.catch(() => undefined))));
+        await this.durableMutationOutbox.flush('flush').catch(() => undefined);
     }
 
     enqueueRegisteredSessionStateFieldMutation(mutation: RegisteredSessionStateFieldMutationV1): Promise<void> {
@@ -5287,14 +5333,17 @@ export class ApiSessionClient extends EventEmitter {
                     }
                     if (error instanceof PendingQueueAcceptedSettlementError
                         && error.settlementError === 'turn-publication-pending' && !awaitedOwnTurnPublication) {
-                        // The Home waits for this runner's own queued Turn begin. Retry when
-                        // that publication drains instead of after a timer; a Turn still
-                        // unpublished afterwards keeps the bounded backoff below.
+                        // The Home waits for this runner's own Turn begin. Retry when that exact
+                        // begin is offered (queued later by the accepted lifecycle, if need be)
+                        // instead of after a timer; a Turn still unpublished afterwards keeps the
+                        // bounded backoff below.
                         awaitedOwnTurnPublication = true;
-                        const drained = (async () => {
-                            await Promise.all([...this.pendingSessionTurnMutationUpdates].map(update => update.catch(() => undefined)));
-                            await this.durableMutationOutbox.flush('flush').catch(() => undefined);
-                        })();
+                        // Only a new Turn's begin is still owed by this runner; a follow-up or
+                        // steer joins a Turn that may predate this process.
+                        const retained = this.terminalPendingSettlementLocalIds.get(localId);
+                        const acceptedTurn = retained?.kind === 'accepted' ? retained.acceptedTurn : undefined;
+                        const drained = this.waitForOwnTurnBeginPublication(
+                            acceptedTurn?.kind === 'newTurn' ? acceptedTurn.turnId : undefined, authority.abortSignal);
                         // Supersession still cancels the wait, as the abortable backoff did.
                         await new Promise<void>((resolve) => {
                             const signal = authority.abortSignal;
@@ -5546,4 +5595,12 @@ export class ApiSessionClient extends EventEmitter {
     async popPendingMessage(): Promise<boolean> {
         return await this.interactionApi.popPendingMessage();
     }
+}
+
+function readChangedMetadataFieldNames(previous: Metadata, next: Metadata): string[] {
+    if (previous === next) return [];
+    const before = previous as unknown as Readonly<Record<string, unknown>>;
+    const after = next as unknown as Readonly<Record<string, unknown>>;
+    return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(key => before[key] !== after[key]
+        && JSON.stringify(before[key]) !== JSON.stringify(after[key])).sort();
 }
