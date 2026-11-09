@@ -691,6 +691,8 @@ export function createProviderSettingsAccountHarness() {
             waivedActions?: readonly ActionSettingsActionId[];
             machines?: readonly Machine[];
             features?: ReturnType<typeof createRootLayoutFeaturesResponse>;
+            /** Genuine Home HTTP overrides installed before the first Account bootstrap read. */
+            httpAnswers?: Readonly<Record<string, HomeDomainAnswer>>;
             /** Explicit synthetic E2EE Account fixture, not a key-presence mode decision. */
             e2eeSecret?: Uint8Array;
         }> = {}) {
@@ -794,6 +796,7 @@ export function createProviderSettingsAccountHarness() {
             }
             const machines = options.machines ?? installedProviderSettingsHarness.current?.state.machines;
             if (machines) await publishMachines(serverId, machines);
+            for (const [path, answer] of Object.entries(options.httpAnswers ?? {})) home.answer(serverId, path, answer);
             connection = await restoreServerAccountForTest({ serverUrl, accountId, request: bootstrapHome.request, credentials,
                 ...(options.activation ? { activation: options.activation } : {}) });
             // Account restoration scopes its bootstrap port to one Home. Subsequent

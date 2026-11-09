@@ -28,6 +28,7 @@ import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@h
 import { ServerIdentityCapabilitiesSchema } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { PluginSourceCustodyV1Schema, type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 
@@ -106,7 +107,7 @@ const daemonAgentProjectionState = vi.hoisted(() => ({
 const projectionReloadSpy = vi.hoisted(() => vi.fn());
 
 const machineState = vi.hoisted(() => ({
-    machines: [] as Array<{ id: string; active: boolean; activeAt?: number; metadata?: { displayName?: string } }>,
+    machines: [] as Array<{ id: string; active: boolean; activeAt?: number; presenceProtocolVersion?: 1; metadata?: { displayName?: string } }>,
 }));
 
 // One settings fixture behind both settings readers, so a narrowed `useSettingsSelector` read and a
@@ -149,6 +150,7 @@ let browser: Awaited<ReturnType<typeof installBrowserRuntimeForTests>>;
 let prepared = false;
 let daemonReadFails = false;
 let daemonReadUnsupported = false;
+let accountRegistryReadFailure: 'materializations' | 'intents' | null = null;
 let preparedScope = '';
 let purposeBoundary: ReturnType<typeof createConnectedPurposeCatalogHttpBoundary> | undefined;
 const machineRpcRequests = installSessionActionRpcBoundary(request => {
@@ -218,7 +220,16 @@ async function prepareAccountFixture() {
         const machines = machineState.machines.map(row => createMachineFixture({ ...row,
             metadata: { ...createMachineFixture().metadata!, ...row.metadata }, activeAt: row.activeAt ?? (row.active ? Date.now() : 0) }));
         await account.restore({ accountId: scope.accountId ?? undefined, serverIdentityId: homeIdentity ?? undefined, features,
-            settings: SETTINGS_FIXTURE, machines });
+            settings: SETTINGS_FIXTURE, machines,
+            // A failed Machine read is partial coverage once Account discovery answered.
+            // These notice cases need the real failed Account discovery boundary.
+            httpAnswers: accountRegistryReadFailure ? {
+                [accountRegistryReadFailure === 'materializations'
+                    ? PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']
+                    : PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']]: {
+                    status: 503, body: { error: connectedServiceRegistryState.errorReason },
+                },
+            } : undefined });
         const purposes = createConnectedPurposeCatalogHttpBoundary();
         purposeBoundary = purposes;
         homes.answer(account.serverId, purposes.path, { select: async (_input, request) => {
@@ -264,8 +275,8 @@ async function renderScreen(element: React.ReactElement) {
     const screen = await renderUiScreen(element, { wrapper: ConnectedServicesTestProviders });
     const hasOnlineMachine = machineState.machines.some(machine => machine.active);
     await waitForHomeGovernance(() => expect(getConnectedServiceRegistrySnapshot().status).toBe(
-        wantsStale ? 'ready' : connectedServiceRegistryState.status));
-    if (wantsStale && hasOnlineMachine) {
+        wantsStale && !accountRegistryReadFailure ? 'ready' : connectedServiceRegistryState.status));
+    if (wantsStale && hasOnlineMachine && !accountRegistryReadFailure) {
         // Transient transport failure intentionally retains admitted current
         // declarations. An explicit unsupported reply withdraws that authority.
         daemonReadUnsupported = true;
@@ -287,6 +298,7 @@ async function renderScreen(element: React.ReactElement) {
 describe('ConnectedServicesSettingsView', () => {
     beforeEach(async () => {
         daemonReadUnsupported = false;
+        accountRegistryReadFailure = null;
         browser = await installBrowserRuntimeForTests({ url: 'https://connected-services.test/' });
         await account.reset();
         prepared = false;
@@ -355,6 +367,8 @@ describe('ConnectedServicesSettingsView', () => {
 
     it('muse.experience.pc14 keeps settled Credentials idle for 60 seconds without timers or requests', async () => {
         const { ConnectedServicesSettingsView } = await import('./ConnectedServicesSettingsView');
+        // Current Homes push presence transitions; an unmarked row deliberately uses the legacy expiry clock.
+        machineState.machines = [{ id: 'machine-a', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 }];
         await prepareAccountFixture();
         vi.useFakeTimers();
         const census = installTimerCensus();
@@ -401,6 +415,8 @@ describe('ConnectedServicesSettingsView', () => {
     });
 
     it('keeps boundary diagnostics out of the primary row and exposes only bounded product-safe support detail', async () => {
+        // This case exercises the List row; Cards became the device default under owner R7 (2026-11-09).
+        storage.getState().applyLocalSettings({ connectedServicesIndexViewV1: 'list' });
         const longDiagnostic = `unexpected-${'x'.repeat(512)}`;
         connectedServiceRegistryState.entries = [{
             serviceId: 'bitbucket', connectCommand: 'happier connect bitbucket', supportsOauth: false, supportsToken: false,
@@ -443,6 +459,7 @@ describe('ConnectedServicesSettingsView', () => {
     });
 
     it('keeps projection failure detail product-safe in the failure banner, and retries the read', async () => {
+        accountRegistryReadFailure = 'materializations';
         connectedServiceRegistryState.status = 'error';
         connectedServiceRegistryState.errorReason = '/private/plugin/registry?token=never-render-this';
         connectedServiceRegistryState.entries = [];
@@ -469,7 +486,8 @@ describe('ConnectedServicesSettingsView', () => {
         await waitForHomeGovernance(() => expect(projectionReloadSpy).toHaveBeenCalledTimes(1));
     });
 
-    it('says in the rail\'s "+" menu why machine services are missing, keeps saved accounts choosable, and retries that read once', async () => {
+    it('says in the rail\'s "+" menu when Account discovery failed, keeps saved accounts choosable, and retries that read once', async () => {
+        accountRegistryReadFailure = 'materializations';
         connectedServiceRegistryState.status = 'error';
         connectedServiceRegistryState.errorReason = 'transport';
         connectedServiceRegistryState.entries = [];
@@ -494,6 +512,9 @@ describe('ConnectedServicesSettingsView', () => {
     });
 
     it('shows a stale registry read failure once while retaining accounts and service-specific causes', async () => {
+        // The Machine inventory answers before Account declaration discovery fails.
+        accountRegistryReadFailure = 'intents';
+        storage.getState().applyLocalSettings({ connectedServicesIndexViewV1: 'list' });
         connectedServiceRegistryState.status = 'stale';
         connectedServiceRegistryState.errorReason = 'transport';
         connectedServiceRegistryState.entries = [{
