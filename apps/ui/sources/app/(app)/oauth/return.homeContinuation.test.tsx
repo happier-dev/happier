@@ -14,7 +14,7 @@ import { router } from 'expo-router';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { executeHomeAuthentication } from '@/auth/flows/executeHomeAuthentication';
-import type { AuthEntryProjectionV1 } from '@happier-dev/protocol';
+import type { AuthEntryProjectionV1 } from '@happier-dev/protocol/auth/entry';
 import { initializeAuthRouteRuntimeForTests } from '@/dev/testkit/harness/authRouteRuntimeHarness';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 

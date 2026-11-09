@@ -4,7 +4,7 @@ import { renderScreen } from '@/dev/testkit';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { WorkspaceDestinationBody } from '@/components/appShell/workspace/WorkspaceDestinationBody';
-import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { registerWorkspaceRouteContext } from '@/components/appShell/workspace/workspaceRouteContext';
 import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
 import { initializeAuthRouteRuntimeForTests } from '@/dev/testkit/harness/authRouteRuntimeHarness';
@@ -58,13 +58,13 @@ describe('Settings mirror and hosted collection ownership', () => {
             closeTabs: () => {}, dispatch: () => {}, navigationForTab: () => ({ push: () => {}, replace: () => {}, back: () => {} }),
             registerBackStep: () => () => {}, back: () => {}, forward: () => {},
         };
-        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><WorkspaceNavigationContext.Provider value={navigation}>
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><WorkspaceNavigationProvider value={navigation}>
             <SettingsLayout />
             <DestinationInstanceHost tabId="settings-tab" ref={target} pathname={boundary.pathname} focused visible
                 navigation={navigation.navigationForTab('settings-tab')}>
                 <WorkspaceDestinationBody target={target} pathname={boundary.pathname} renderSession={() => null} renderSessionDetails={() => null} />
             </DestinationInstanceHost>
-        </WorkspaceNavigationContext.Provider></InjectedAuthProvider>);
+        </WorkspaceNavigationProvider></InjectedAuthProvider>);
         expect(screen.root.findAllByType(page === 'server' ? HomesProvider : TokensProvider.type)).toHaveLength(1);
     });
 });

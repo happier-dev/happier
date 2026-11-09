@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { RestoreIndexEmbedded } from '@/components/onboarding/restore/RestoreIndexEmbedded';
-import { WizardModalShell } from '@/components/onboarding/ui/WizardModalShell';
+import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { t } from '@/text';
 import { promptLegacyPairingUpdateRequired } from '@/auth/pairing/legacyPairingUpdateRequired';
@@ -14,7 +14,7 @@ import {
     HOME_QR_INVITE_RESTORE_ROUTE_PARAM,
     parseHomeQrInviteDeepLink,
 } from '@/auth/pairing/pairingUrl';
-import type { HomeQrInviteV2 } from '@happier-dev/protocol';
+import type { HomeQrInviteV2 } from '@happier-dev/protocol/crypto/qrProvisioningV2';
 import {
     HOME_QR_ENTRY_INTENT_ROUTE_PARAM,
     parseHomeQrEntryIntentRouteParam,
@@ -28,6 +28,7 @@ export default function RestoreIndex() {
         entryIntent?: string | string[];
         provider?: string | string[];
         reason?: string | string[];
+        view?: string | string[];
     }>>();
     const routedEntryIntent = parseHomeQrEntryIntentRouteParam(
         params[HOME_QR_ENTRY_INTENT_ROUTE_PARAM],
@@ -57,6 +58,8 @@ export default function RestoreIndex() {
     ));
     const approvesRequesterDevice = inviteDirection === 'requester_displays';
     const [navigationLocked, setNavigationLocked] = React.useState(false);
+    // `view=link` (a dead terminal link's "Enter URL manually") opens on the link field.
+    const requestedView = Array.isArray(params.view) ? params.view[0] : params.view;
     const restoreRedirectReason = Array.isArray(params.reason) ? params.reason[0] : params.reason;
     const restoreRedirectProvider = Array.isArray(params.provider) ? params.provider[0] : params.provider;
     const hasProviderRestoreRedirect = restoreRedirectReason === 'provider_already_linked'
@@ -98,11 +101,9 @@ export default function RestoreIndex() {
             testID="unauth-shell-route-restore"
             style={{ flex: 1 }}
         >
-            <WizardModalShell
+            <AuthRouteStepFrame
                 testID="restore-wizard"
-                stepIndex={1}
-                stepCount={3}
-                showProgress={!approvesRequesterDevice}
+                progress={approvesRequesterDevice ? undefined : { index: 1, count: 3 }}
                 title={t(
                     approvesRequesterDevice
                         ? 'connect.approveNewDeviceTitle'
@@ -119,19 +120,18 @@ export default function RestoreIndex() {
                 )}
                 onBack={handleBack}
                 backDisabled={navigationLocked}
-                showSkip={false}
             >
                 <View testID="restore-route-content">
                     <RestoreIndexEmbedded
                         entryIntent={entryIntent}
-                        initialView={hasProviderRestoreRedirect ? 'qr' : undefined}
+                        initialView={hasProviderRestoreRedirect ? 'qr' : requestedView === 'link' ? 'paste' : undefined}
                         onBack={handleBack}
                         initialPairingLink={initialPairingLink}
                         onNavigationLockChange={setNavigationLocked}
                         onInviteDirectionChange={setInviteDirection}
                     />
                 </View>
-            </WizardModalShell>
+            </AuthRouteStepFrame>
         </View>
     );
 }

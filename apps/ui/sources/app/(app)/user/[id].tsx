@@ -1,5 +1,6 @@
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import React, { useEffect, useState } from 'react';
-import { View, Linking } from 'react-native';
+import { View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '@/auth/context/AuthContext';
 import { getUserProfile } from '@/sync/api/social/apiFriends';
@@ -24,6 +25,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { HappyError } from '@/utils/errors/errors';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { isSafeBadgeUrl } from '@/utils/url/urlSafety';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -41,6 +43,7 @@ export default function UserProfileScreen() {
     const navigateToSession = useNavigateToSession();
     const { theme } = useUnistyles();
     const sessions = useAllSessions();
+    const isSessionVisible = useSessionRecordingVisibility();
     // This route is explicitly an active-Home social surface, so the runtime-
     // scoped decision is the exact one; a Session-qualified target is not known here.
     const sharingSupported = useFeatureEnabled('sharing.session');
@@ -173,7 +176,8 @@ export default function UserProfileScreen() {
     })();
 
     const sharedSessions = userProfile.status === 'friend' && sharingSupported
-        ? sessions.filter(session => session.owner === userProfile.id && typeof session.serverId === 'string')
+        ? sessions.filter(session => session.owner === userProfile.id && typeof session.serverId === 'string'
+            && isSessionVisible({ sessionId: session.id, serverId: session.serverId }))
         : [];
 
     const headerFacts: PageHeaderMetaFact[] = [
@@ -267,12 +271,9 @@ export default function UserProfileScreen() {
                                             await Modal.alert(t('common.error'), t('errors.invalidShareLink'));
                                             return;
                                         }
-                                        const supported = await Linking.canOpenURL(badge.url);
-                                        if (!supported) {
+                                        if (!await requestOpenExternalUrl(badge.url, { serverId })) {
                                             await Modal.alert(t('common.error'), t('errors.invalidShareLink'));
-                                            return;
                                         }
-                                        await Linking.openURL(badge.url);
                                     } catch {
                                         await Modal.alert(t('common.error'), t('errors.invalidShareLink'));
                                     }

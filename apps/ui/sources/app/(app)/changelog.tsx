@@ -7,7 +7,7 @@ import { getChangelogEntries, getLatestReleaseId, setLastViewedReleaseId } from 
 import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
-import type { FeatureId } from '@happier-dev/protocol';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { Text } from '@/components/ui/text/Text';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -20,7 +20,6 @@ const CHANGELOG_FEATURE_ID = 'app.ui.changelog' as const satisfies FeatureId;
 const styles = StyleSheet.create((theme, runtime) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.surface.base,
     },
     content: {
         paddingHorizontal: theme.space.s16,
@@ -46,7 +45,6 @@ const styles = StyleSheet.create((theme, runtime) => ({
         marginBottom: theme.space.s12,
     },
     entryBodyContainer: {
-        backgroundColor: theme.colors.surface.inset,
         borderRadius: 12,
         padding: theme.space.s16,
     },
@@ -114,7 +112,7 @@ function ChangelogScreenEnabled() {
                 {entries.map((entry) => (
                     <View key={entry.id} style={styles.entryContainer}>
                         <Text style={styles.versionHeader}>
-                            {t('changelog.version', { version: entry.versionLabel })}
+                            {entry.title}
                         </Text>
                         <Text style={styles.dateText}>
                             {entry.date}

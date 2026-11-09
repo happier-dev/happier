@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useRouter } from 'expo-router';
 
 import { LostAccessEmbedded } from '@/components/onboarding/restore/LostAccessEmbedded';
-import { WizardModalShell } from '@/components/onboarding/ui/WizardModalShell';
+import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { t } from '@/text';
 
@@ -12,16 +12,14 @@ export default function LostAccessScreen() {
         safeRouterBack({ router, fallbackHref: '/' });
     }, [router]);
     return (
-        <WizardModalShell
+        <AuthRouteStepFrame
             testID="restore-lost-access-wizard"
-            stepIndex={1}
-            stepCount={3}
+            progress={{ index: 1, count: 3 }}
             title={t('setupOnboarding.authLostAccessTitle')}
             subtitle={t('setupOnboarding.authLostAccessSubtitle')}
             onBack={handleBack}
-            showSkip={false}
         >
-            <LostAccessEmbedded onBack={handleBack} />
-        </WizardModalShell>
+            <LostAccessEmbedded />
+        </AuthRouteStepFrame>
     );
 }

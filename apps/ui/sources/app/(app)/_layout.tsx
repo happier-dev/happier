@@ -1,4 +1,5 @@
-import { router, usePathname } from 'expo-router';
+import { router } from 'expo-router';
+import { useCurrentRoutePathname } from '@/components/appShell/workspace/currentRouteLocation';
 import { WorkspaceRootStack as Stack } from '@/components/appShell/workspace/WorkspaceRootStack';
 import type { ExtendedStackNavigationOptions } from 'expo-router/build/layouts/StackClient';
 import { getFocusedRouteNameFromRoute, type ParamListBase, type RouteProp } from '@react-navigation/native';
@@ -22,7 +23,6 @@ import { tryRenderWebPortal } from '@/components/ui/popover/portal';
 import { AuthenticatedAppRuntimeMounts } from '@/components/appShell/runtime/AuthenticatedAppRuntimeMounts';
 import { DesktopMainWindowRuntimes } from '@/desktop/DesktopMainWindowRuntimes';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { withSessionsFallbackBack } from '@/components/navigation/root/sessionsFallbackBack';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { useSetting } from '@/sync/domains/state/storage';
 import {
@@ -34,9 +34,15 @@ import { RootLayoutNavigationEffects } from '@/components/navigation/root/RootLa
 import { renderRootLayoutRedirectGate } from '@/components/navigation/root/RootLayoutRedirectGate';
 import { useOnboardingJourneySessionActive } from '@/components/onboarding/tour/state/journeySession';
 import { VoiceAnnouncer } from '@/components/voice/surface/VoiceAnnouncer';
-import { ActivityPersonalSessionMembershipProvider } from '@/activity/source/activityPersonalSessionMembership';
 import { buildUniversalSearchRouteScreenOptions } from '@/components/appShell/search/universalSearchRouteScreenOptions';
 import { buildSessionRouteScreenOptions } from '@/components/navigation/sessionRouteScreenOptions';
+import { NavigatorSafeAreaBleed } from '@/components/navigation/safeArea/HorizontalSafeArea';
+import { renderAppStackScreen } from '@/components/navigation/appStackScreenLayout';
+import { ROOT_STACK_ANCHOR } from '@/components/navigation/root/rootStackAnchor';
+import { withSessionsFallbackBack } from '@/components/navigation/root/sessionsFallbackBack';
+
+// Direct modal links need a presenting Home screen, including when linking rebuilds the stack.
+export const unstable_settings = { anchor: ROOT_STACK_ANCHOR.routeName };
 
 type StackScreenOptions = ExtendedStackNavigationOptions;
 type ModalRouteNavigation = Readonly<{
@@ -78,7 +84,7 @@ function AuthenticatedAppRuntimeMountsGate({
     isAuthenticated: boolean;
     isDesktopShell: boolean;
 }>): React.ReactElement | null {
-    const pathname = usePathname();
+    const pathname = useCurrentRoutePathname();
     const onboardingJourneyActive = useOnboardingJourneySessionActive();
     if (onboardingJourneyActive) return null;
 
@@ -94,14 +100,12 @@ function AuthenticatedAppRuntimeMountsGate({
     );
 }
 
-function MobileBottomChromeMountGate(props: Readonly<{
-    newSessionRendersFloatingComposer: boolean;
-}>): React.ReactElement | null {
+function MobileBottomChromeMountGate(): React.ReactElement | null {
     const onboardingJourneyActive = useOnboardingJourneySessionActive();
     if (onboardingJourneyActive) return null;
     // The retained navigator is hidden while the workspace owns the visible session.
     // Keep its single bottom-chrome host visible and in the same React registry.
-    const chrome = <MobileBottomChromeHost newSessionRendersFloatingComposer={props.newSessionRendersFloatingComposer} />;
+    const chrome = <MobileBottomChromeHost />;
     return <>{tryRenderWebPortal({
         shouldPortalWeb: Platform.OS === 'web',
         portalTargetOnWeb: 'body',
@@ -131,24 +135,19 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
         variant: newSessionVariant,
         platformOs: Platform.OS,
     });
-    const stackContentStyle = React.useMemo(
-        () => ({
-            backgroundColor: isDesktopOverlayWindow ? 'transparent' : theme.colors.surface.base,
-        }),
-        [isDesktopOverlayWindow, theme.colors.surface.base],
-    );
+
 
     // Use custom header on Android and Mac Catalyst, native header on iOS (non-Catalyst)
     const shouldUseCustomHeader = useAppStackUsesCustomHeader();
     const appShellPresent = useAppShellColumn().present;
     const rootStackScreenOptions = React.useMemo(() => createAppStackScreenOptions({
-        contentStyle: stackContentStyle,
+        contentStyle: isDesktopOverlayWindow ? NEW_SESSION_TRANSPARENT_CONTENT_STYLE : undefined,
         headerBackTitle: t('common.back'),
         shouldUseCustomHeader,
         theme,
     }), [
         shouldUseCustomHeader,
-        stackContentStyle,
+        isDesktopOverlayWindow,
         preferredLanguage,
         theme.colors.chrome.header.background,
         theme.colors.chrome.header.foreground,
@@ -229,7 +228,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
     }), [preferredLanguage]);
 
     return (
-            <ActivityPersonalSessionMembershipProvider enabled={isAuthenticated}>
+            <>
             {/*
               * The one automatic Voice announcer for the whole app (§5.4a). It sits
               * OUTSIDE `AuthenticatedAppRuntimeMountsGate` on purpose: that gate returns
@@ -261,7 +260,8 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
               * carries the title. Settings re-provides its own value.
               */}
             <NavigationTitleChromeProvider showsTitle={!appShellPresent}>
-            <Stack screenOptions={rootStackScreenOptions} layout={renderRootLayoutRedirectGate}>
+            <NavigatorSafeAreaBleed>
+            <Stack screenOptions={rootStackScreenOptions} layout={renderRootLayoutRedirectGate} screenLayout={renderAppStackScreen}>
                 <Stack.Screen
                     name="index"
                     options={rootStackRouteOptions['index']}
@@ -293,6 +293,10 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 <Stack.Screen
                     name="oauth/mcp/callback"
                     options={rootStackRouteOptions['oauth/mcp/callback']}
+                />
+                <Stack.Screen
+                    name="oauth/connected-account/callback"
+                    options={rootStackRouteOptions['oauth/connected-account/callback']}
                 />
                 {/* All tabs (phone): a full page over the session, reached by pulling the session title down. */}
                 <Stack.Screen
@@ -411,6 +415,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 <Stack.Screen name="projects/[workspaceRefId]/changes" options={rootStackRouteOptions['projects/[workspaceRefId]/changes']} />
                 <Stack.Screen name="projects/[workspaceRefId]/scripts" options={rootStackRouteOptions['projects/[workspaceRefId]/scripts']} />
                 <Stack.Screen name="projects/[workspaceRefId]/services" options={rootStackRouteOptions['projects/[workspaceRefId]/services']} />
+                <Stack.Screen name="projects/[workspaceRefId]/deployments" options={rootStackRouteOptions['projects/[workspaceRefId]/deployments']} />
                 <Stack.Screen name="projects/[workspaceRefId]/context" options={rootStackRouteOptions['projects/[workspaceRefId]/context']} />
                 <Stack.Screen name="projects/[workspaceRefId]/memory" options={rootStackRouteOptions['projects/[workspaceRefId]/memory']} />
                 {/*
@@ -527,6 +532,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                     name="artifacts/new"
                     options={rootStackRouteOptions['artifacts/new']}
                 />
+                <Stack.Screen name="bot-template" options={rootStackRouteOptions['bot-template']} />
                 <Stack.Screen
                     name="artifacts/edit/[id]"
                     options={rootStackRouteOptions['artifacts/edit/[id]']}
@@ -567,6 +573,10 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                     name="new/pick/secret-requirement"
                     options={rootStackRouteOptions['new/pick/secret-requirement']}
                 />
+                <Stack.Screen name="new/pick/preview-machine" options={rootStackRouteOptions['new/pick/preview-machine']} />
+                <Stack.Screen name="new/pick/secret" options={rootStackRouteOptions['new/pick/secret']} />
+                <Stack.Screen name="new/pick/resume" options={rootStackRouteOptions['new/pick/resume']} />
+                <Stack.Screen name="new/pick/resume-browse" options={rootStackRouteOptions['new/pick/resume-browse']} />
                 <Stack.Screen
                     name="new/index"
                     options={({ navigation }) => {
@@ -618,9 +628,10 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                     options={rootStackRouteOptions['zen/view']}
                 />
             </Stack>
+            </NavigatorSafeAreaBleed>
             </NavigationTitleChromeProvider>
-            <MobileBottomChromeMountGate newSessionRendersFloatingComposer={newSessionRendersFloatingComposer} />
-            </ActivityPersonalSessionMembershipProvider>
+            <MobileBottomChromeMountGate />
+            </>
     );
 });
 

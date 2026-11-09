@@ -64,7 +64,6 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
     const [sessionReminderAutoClearOnOpen, setSessionReminderAutoClearOnOpen] = useSettingMutable('sessionReminderAutoClearOnOpen');
     const [sessionListAttentionStandingDefault, setSessionListAttentionStandingDefault] = useSettingMutable('sessionListAttentionStandingDefaultV1');
     const [workspaceFaviconsEnabled, setWorkspaceFaviconsEnabled] = useSettingMutable('workspaceFaviconsEnabled');
-    const [workspaceMachineSubtitlesEnabled, setWorkspaceMachineSubtitlesEnabled] = useSettingMutable('workspaceMachineSubtitlesEnabled');
     const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
     const applySessionListViewOption = useSessionListViewOptionWriter();
     // Account settings intentionally describe the currently selected Home set;
@@ -424,24 +423,6 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
                         }
                         showChevron={false}
                         onPress={() => setWorkspaceFaviconsEnabled(workspaceFaviconsEnabled === false)}
-                    />
-                </SettingAnchor>
-                <SettingAnchor setting={SESSION_SETTINGS.settings.workspaceMachineSubtitles}>
-                    <Item
-                        testID="settings-session-workspaceMachineSubtitles-item"
-                        title={t(SESSION_SETTINGS.settings.workspaceMachineSubtitles.titleKey)}
-                        subtitle={workspaceMachineSubtitlesEnabled !== false
-                            ? t('settingsSession.sessionList.workspaceMachineSubtitlesEnabledSubtitle')
-                            : t('settingsSession.sessionList.workspaceMachineSubtitlesDisabledSubtitle')}
-                        rightElement={
-                            <Switch
-                                testID="settings-session-workspaceMachineSubtitles-toggle"
-                                value={workspaceMachineSubtitlesEnabled !== false}
-                                onValueChange={(next) => setWorkspaceMachineSubtitlesEnabled(Boolean(next))}
-                            />
-                        }
-                        showChevron={false}
-                        onPress={() => setWorkspaceMachineSubtitlesEnabled(workspaceMachineSubtitlesEnabled === false)}
                     />
                 </SettingAnchor>
             </ItemGroup>

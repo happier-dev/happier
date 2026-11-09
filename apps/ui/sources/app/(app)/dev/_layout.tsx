@@ -8,6 +8,8 @@ import { useUnistyles } from 'react-native-unistyles';
 import { createAppStackScreenOptions, useAppStackUsesCustomHeader } from '@/components/navigation/createAppStackScreenOptions';
 import { useRootStackRouteOptions } from '@/components/navigation/root/useRootStackRouteOptions';
 import { NavigationTitleChromeProvider, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
+import { NavigatorSafeAreaBleed } from '@/components/navigation/safeArea/HorizontalSafeArea';
+import { renderAppStackScreen } from '@/components/navigation/appStackScreenLayout';
 
 export default function DevRouteLayout(): React.ReactElement | null {
     const { theme } = useUnistyles();
@@ -34,8 +36,8 @@ export default function DevRouteLayout(): React.ReactElement | null {
     const routeName = devIndex < 0 ? 'index' : segments[devIndex + 1] ?? 'index';
     if (!isDevRouteEnabled()) return null;
     return <NavigationTitleChromeProvider showsTitle={inheritedShowsTitle && routeOptions[routeName]?.headerShown !== false}>
-        <Stack screenOptions={screenOptions}>
+        <NavigatorSafeAreaBleed><Stack screenOptions={screenOptions} screenLayout={renderAppStackScreen}>
             {Object.entries(routeOptions).map(([name, options]) => <Stack.Screen key={name} name={name} options={options} />)}
-        </Stack>
+        </Stack></NavigatorSafeAreaBleed>
     </NavigationTitleChromeProvider>;
 }

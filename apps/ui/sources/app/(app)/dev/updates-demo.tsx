@@ -23,7 +23,7 @@ import type { UpdatesContentModel, UpdatesGroup } from '@/updates/useUpdatesCont
  * with representative facts, one app state at a time (`?state=available|downloading|ready|failed`).
  * Used for visual QA of states a live machine rarely shows on demand. Dev tools only.
  */
-type DemoState = 'available' | 'downloading' | 'ready' | 'failed';
+type DemoState = 'available' | 'downloading' | 'ready' | 'failed' | 'checking';
 
 const IDLE = { running: false, step: null, errorMessage: null } as const;
 
@@ -120,6 +120,15 @@ function buildDemoGroups(state: DemoState): UpdatesGroup[] {
         remoteUpdateAdvertised: null,
         task: IDLE,
     });
+    const windows = buildRemoteCliUpdateItem({
+        machineId: 'windows', title: 'Happier CLI', online: true, platform: 'win32', happyCliVersion: '0.2.16-dev.9',
+        facts: {
+            currentVersion: '0.2.16-dev.9', latestVersion: '0.2.16-dev.9', channel: 'dev',
+            installSource: 'managed', updateCommand: 'hdev self update', canUpdateRemotely: false, lastUpdate: null,
+        },
+        remoteUpdateAdvertised: false,
+        task: IDLE,
+    });
     return [
         { id: 'app', kind: 'app', machineName: null, machineId: null, online: true, lastSeenAt: null, items: [app] },
         {
@@ -127,6 +136,7 @@ function buildDemoGroups(state: DemoState): UpdatesGroup[] {
             items: [thisCli, claude, codex, gh].filter((item): item is NonNullable<typeof item> => item != null),
         },
         { id: 'machine:studio', kind: 'machine', machineName: 'Studio-Mac-mini', machineId: 'studio', online: true, lastSeenAt: null, items: [remote] },
+        { id: 'machine:windows', kind: 'machine', machineName: 'Windows', machineId: 'windows', online: true, lastSeenAt: null, items: [windows] },
         { id: 'machine:nas', kind: 'machine', machineName: 'nas.local', machineId: 'nas', online: false, lastSeenAt: Date.now() - 3 * 60 * 60 * 1000, items: [offline] },
     ];
 }
@@ -147,7 +157,7 @@ export default function UpdatesDemoScreen() {
     const params = useLocalSearchParams<{ state?: string; only?: string }>();
     // `only=` renders one section at the top, for a capture that nothing else scrolls over.
     const only = params.only === 'pills' || params.only === 'popover' || params.only === 'screen' ? params.only : null;
-    const state: DemoState = params.state === 'downloading' || params.state === 'ready' || params.state === 'failed' ? params.state : 'available';
+    const state: DemoState = params.state === 'downloading' || params.state === 'ready' || params.state === 'failed' || params.state === 'checking' ? params.state : 'available';
     const model = React.useMemo<UpdatesContentModel>(() => {
         const groups = buildDemoGroups(state);
         return {
@@ -161,6 +171,7 @@ export default function UpdatesDemoScreen() {
             updateAll: asyncNoop,
             stopAfterCurrent: noop,
             batch: null,
+            checking: state === 'checking',
             checkNow: noop,
             skipAppVersion: null,
             openWhatsNew: noop,

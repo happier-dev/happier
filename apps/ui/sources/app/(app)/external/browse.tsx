@@ -10,7 +10,7 @@ import {
     canBrowseExternalSessions,
     resolveExternalSessionBrowseLockedSource,
 } from '@/components/sessions/external/browse/resolveExternalSessionBrowseLockedSourceOption';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useExternalSessionBrowseSettings } from '@/agents/catalog/useAgentUiSettings';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { getConnectedMetadataCatalog } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
 import { useMachine, useProfile } from '@/sync/store/hooks';
@@ -36,7 +36,6 @@ const ExternalSessionsBrowseRouteContent = React.memo(function ExternalSessionsB
 }>) {
     const router = useRouter();
     const navigation = useNavigation();
-    const settings = useSettings();
     const profile = useProfile();
     const routeScope = props.routeScope;
     const scoped = routeScope.kind !== 'unscoped';
@@ -54,6 +53,7 @@ const ExternalSessionsBrowseRouteContent = React.memo(function ExternalSessionsB
     // Keep Browse mounted so invalidation cannot discard its query and hits;
     // the screen still requires current daemon authority before opening a row.
     const projection = daemonMergedProjection.inputs?.pluginProjectionV2 ?? null;
+    const settings = useExternalSessionBrowseSettings(projection, resolvedScope ? [resolvedScope.agentId] : []);
     const lockScope = React.useMemo(() => {
         if (!resolvedScope || !projection) {
             return null;

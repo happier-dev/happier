@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { useGlobalSearchParams, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
+import { useCurrentRouteParams } from '@/components/appShell/workspace/currentRouteLocation';
 import { Platform } from 'react-native';
 
 import { UniversalSearchController } from '@/components/appShell/search/UniversalSearchController';
@@ -21,7 +22,7 @@ function readRouteTerminalJump(params: UniversalSearchRouteParams) {
 /** Native presents Search as this route: the transparent overlay (`universalSearchRoutePresentation`). */
 function UniversalSearchNativeRoute(): React.ReactElement {
     const router = useRouter();
-    const params = useGlobalSearchParams<UniversalSearchRouteParams>();
+    const params = useCurrentRouteParams<UniversalSearchRouteParams>();
     const runtime = useUniversalSearchRuntime();
     const symbols = runtime.routeSymbols;
     const initialQuery = typeof params.q === 'string' ? params.q : '';
@@ -60,7 +61,7 @@ function UniversalSearchNativeRoute(): React.ReactElement {
  */
 function UniversalSearchWebLink(): null {
     const router = useRouter();
-    const params = useGlobalSearchParams<UniversalSearchRouteParams>();
+    const params = useCurrentRouteParams<UniversalSearchRouteParams>();
     const runtime = useUniversalSearchRuntime();
     const handedOver = React.useRef(false);
     React.useEffect(() => {

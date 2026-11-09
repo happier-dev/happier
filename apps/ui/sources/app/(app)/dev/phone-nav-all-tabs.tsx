@@ -8,7 +8,7 @@ import type { SessionSwitcherRow } from '@/components/navigation/mobile/chrome/l
 import { SessionHeaderPullHint } from '@/components/sessions/shell/SessionHeaderPull';
 import { SessionAllTabsOverviewBody, SessionAllTabsPageView } from '@/components/sessions/shell/SessionAllTabsOverview';
 import { buildSessionAllTabsSections } from '@/components/sessions/shell/useSessionAllTabsOpener';
-import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
+import { SessionPaneHeader } from '@/components/sessions/shell/view/SessionPaneHeader';
 import { resolveSessionHeaderPullFrame, SESSION_HEADER_PULL_ARM_PX, SESSION_HEADER_PULL_OPEN_PX } from '@/components/sessions/shell/sessionHeaderPullGesture';
 import { buildServerScopedSessionKey } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 
@@ -98,7 +98,7 @@ export default function PhoneNavAllTabsDevScreen() {
                 <View>
                     <SessionHeaderPullHint progress={progress} offset={offset} ready top={0} />
                     <View style={{ transform: [{ translateY: pulled.offset }] }}>
-                        <ChatHeaderView title="Fix settings modal remount" subtitle="happier · MacBook Pro" includeTopInset={false} />
+                        <SessionPaneHeader title="Fix settings modal remount" subtitle="happier · MacBook Pro" includeTopInset={false} />
                     </View>
                 </View>
             </View>

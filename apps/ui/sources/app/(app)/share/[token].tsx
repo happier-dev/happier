@@ -1,5 +1,5 @@
 import { readAccountNameFromLegacyProfileV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
-import type { SessionMessageV1 } from '@happier-dev/protocol';
+import type { SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
@@ -594,7 +594,7 @@ export default memo(function PublicShareViewerScreen() {
 
     if (isLoading || (dataset !== null && !hasCurrentPublishedDataset)) {
         return (
-            <View style={[styles.center, { backgroundColor: theme.colors.background.canvas }]}>
+            <View style={styles.center}>
                 <ActivitySpinner size="large" color={theme.colors.text.link} />
             </View>
         );
@@ -602,7 +602,7 @@ export default memo(function PublicShareViewerScreen() {
 
     if (error) {
         return (
-            <View style={[styles.center, { backgroundColor: theme.colors.background.canvas }]}>
+            <View style={styles.center}>
                 <Icon
                     name={errorKind === 'metadata_privacy_upgrade_required' ? 'clock' : 'warning-circle'}
                     size={64}
@@ -667,7 +667,7 @@ export default memo(function PublicShareViewerScreen() {
     return (
         <>
             <Stack.Screen options={SHARE_SCREEN_OPTIONS} />
-            <View style={{ flex: 1, backgroundColor: theme.colors.surface.base }}>
+            <View style={{ flex: 1 }}>
                 <PaneHeaderScrollScope>
                 <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1000 }}>
                     <PaneHeader

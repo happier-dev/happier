@@ -1,0 +1,293 @@
+import * as React from 'react';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('socket.io-client', async (importOriginal) =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+import 'fake-indexeddb/auto';
+import { computeContentPublicKeyFingerprint} from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { McpServersSettingsV1Schema} from '@happier-dev/protocol/mcp/servers/settingsV1';
+import { SavedSecretResourceMaterialV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { renderScreen } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
+import { SecretsSettingsPage, type SecretsSettingsPageProps } from '@/components/settings/secrets/SecretsSettingsPage';
+import { SavedSecretAccessEditor } from '@/components/secrets/SavedSecretAccessEditor';
+import { SavedSecretCreateEditor } from '@/components/secrets/SavedSecretCreateEditor';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import { encodeBase64 } from '@/encryption/base64';
+import { Modal } from '@/modal';
+import { t } from '@/text';
+import { storage } from '@/sync/domains/state/storage';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import { resetSavedSecretCatalogEngineForTests } from '@/sync/engine/settings/savedSecretCatalogEngine';
+import { resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
+import { getSavedSecretCatalogSnapshot } from '@/sync/store/settings/savedSecretCatalogSnapshot';
+import Screen from './secrets';
+
+installDisconnectedServerSocketBoundary();
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+vi.mock('@expo/vector-icons', async () => {
+    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+    return createExpoVectorIconsMock();
+});
+vi.mock('expo-crypto', async (importOriginal) => ({
+    ...await importOriginal<typeof import('expo-crypto')>(),
+    // Node has no Expo native module; keep real randomness at that SDK boundary.
+    randomUUID: () => crypto.randomUUID(),
+}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ router: { push: vi.fn() } }).module;
+});
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock();
+});
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
+await loadSyncSingletonForTests();
+
+const PageComponent = Reflect.get(SecretsSettingsPage, 'type') as React.ComponentType<SecretsSettingsPageProps>;
+const AccessComponent = Reflect.get(SavedSecretAccessEditor, 'type') as React.ComponentType<React.ComponentProps<typeof SavedSecretAccessEditor>>;
+const CreateComponent = Reflect.get(SavedSecretCreateEditor, 'type') as React.ComponentType<React.ComponentProps<typeof SavedSecretCreateEditor>>;
+const ownerCorrupt = {
+    materialStatus: 'resource_corrupt', relationship: 'owner',
+    repair: { kind: 'delete_resource', resourceId: 'opaque-corrupt-row', expectedRevision: -3 },
+} as const;
+
+describe('SecretsSettingsScreen shared feature decision', () => {
+    let account: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undefined;
+    const screens: Array<Awaited<ReturnType<typeof renderScreen>>> = [];
+    const initialStorage = storage.getState();
+    beforeEach(() => { vi.clearAllMocks(); });
+    afterEach(async () => {
+        for (const screen of screens.splice(0).reverse()) await screen.unmount();
+        resetSavedSecretCatalogEngineForTests();
+        resetSavedSecretCatalogSnapshotsForTests();
+        await account?.dispose();
+        account = undefined;
+        storage.setState(initialStorage, true);
+    });
+    async function render(options: Parameters<typeof createSecretSettingsTestHarness>[0] = {}, resourceMode?: 'plain' | 'e2ee') {
+        account = await createSecretSettingsTestHarness({ ...options, settings: options.settings ?? settingsParse({
+            actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+                approvalWaivedSurfaces: { 'secrets.shared.create': ['ui'], 'secrets.shared.promote': ['ui'] } }),
+        }) });
+        if (resourceMode) await account.addOwnerResource(resourceMode);
+        const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}><Screen /></InjectedAuthProvider>);
+        screens.push(screen);
+        const page = (): SecretsSettingsPageProps => screen.tree.findByType<typeof PageComponent>(PageComponent).props;
+        if (options.sharedEnabled !== false && !options.rejectSettingsWrites) {
+            await vi.waitFor(() => expect(page().onSharePersonal).toBeTypeOf('function'));
+        }
+        if (resourceMode) await vi.waitFor(() => expect(page().sharedEntries).toHaveLength(1));
+        return { screen, page, account };
+    }
+    async function nextAccount() {
+        for (const screen of screens.splice(0).reverse()) await screen.unmount();
+        resetSavedSecretCatalogEngineForTests();
+        resetSavedSecretCatalogSnapshotsForTests();
+        await account?.dispose();
+        account = undefined;
+    }
+
+    it('opens the grant picker for a private resource and writes nothing until it is saved', async () => {
+        const { screen, page, account } = await render({}, 'plain');
+        const secret = page().sharedEntries[0];
+        const resourcesBeforeOpening = [...account.resources];
+        const settingsWritesBeforeOpening = [...account.settingsWrites];
+        await act(async () => { page().onManageAccessShared?.(secret); });
+        const editor = screen.tree.findByType(AccessComponent).props;
+        expect(storage.getState().settingsScope).toEqual(account.scope);
+        expect(storage.getState().settingsVersion).not.toBeNull();
+        expect(editor.target).toEqual({ kind: 'shared', entry: secret });
+        expect(editor.scope).toEqual(account.scope);
+        expect(page().accessEditor?.key).toBe(secret.ref);
+        expect(account.settingsWrites).toEqual(settingsWritesBeforeOpening);
+        expect(account.resources).toEqual(resourcesBeforeOpening);
+        await act(async () => { editor.onClose(); });
+        expect(page().accessEditor).toBeNull();
+        expect(screen.tree.findAllByType(AccessComponent)).toHaveLength(0);
+        expect(account.settingsWrites).toEqual(settingsWritesBeforeOpening);
+        expect(account.request.mock.calls.some(([url]) => new URL(String(url)).pathname.endsWith('/promote'))).toBe(false);
+    });
+
+    it('keeps private resource editing available when Teams is disabled', async () => {
+        const { screen, page } = await render({ sharedEnabled: false });
+        expect(page().onRenamePersonal).toBeTypeOf('function');
+        expect(page().onRotatePersonal).toBeTypeOf('function');
+        expect(page().onDeletePersonal).toBeTypeOf('function');
+        await act(async () => { page().onAdd(); });
+        const editor = screen.tree.findByType(CreateComponent).props;
+        expect(editor.onCreatePersonal).toBeTypeOf('function');
+        expect(editor.sharedAvailable).toBe(true);
+        expect(page().onRenameShared).toBeTypeOf('function');
+        expect(page().onRotateShared).toBeTypeOf('function');
+        expect(page().onManageAccessShared).toBeTypeOf('function');
+        expect(page().onDeleteShared).toBeTypeOf('function');
+        expect(page().onRetrySharedCatalog).toBeTypeOf('function');
+        expect(page().approvalId).toBeNull();
+    });
+
+    it('exposes shared mutations when the exact Home decision is enabled', async () => {
+        const { screen, page } = await render();
+        await act(async () => { page().onAdd(); });
+        expect(screen.tree.findByType(CreateComponent).props.sharedAvailable).toBe(true);
+        expect(page().onSharePersonal).toBeTypeOf('function');
+        expect(page().onRenameShared).toBeTypeOf('function');
+        expect(page().onRotateShared).toBeTypeOf('function');
+        expect(page().onManageAccessShared).toBeTypeOf('function');
+        expect(page().onDeleteShared).toBeTypeOf('function');
+    });
+
+    it('keeps current material and catalog recovery reachable while retained source admission is blocked', async () => {
+        const rawSettings = { secrets: [{ id: 'future-material',
+            name: 'Retained source', kind: 'token', encryptedValue: { _isSecretValue: true, encryptedValue: { t: 'future-secret-envelope', c: 'opaque' } },
+            createdAt: 1, updatedAt: 1 }] };
+        const { screen, page, account } = await render({ rawSettings, settings: settingsParse(rawSettings) }, 'plain');
+        await vi.waitFor(() => expect(getSavedSecretCatalogSnapshot(account.scope)).toMatchObject({
+            status: 'ready', legacyImport: { status: 'pending', reason: 'source-uncharacterized' },
+        }));
+        await vi.waitFor(() => expect(page().onRetrySharedCatalog).toBeTypeOf('function'));
+        expect(account.settingsWrites).toEqual([]);
+        expect(account.promotions).toEqual([]);
+        expect(page().resolveSharedReference('happier:shared-secret:v1:resource-a')).toMatchObject({ status: 'ready' });
+        expect(account.persistedRawSettings).toMatchObject({ secrets: [{ id: 'future-material' }] });
+        await act(async () => { page().onAdd(); });
+        expect(screen.tree.findByType(CreateComponent).props.sharedAvailable).toBe(true);
+    });
+
+    it('preserves exact shared-secret rotation bytes, including an all-whitespace value', async () => {
+        const { page, account } = await render({}, 'plain');
+        vi.mocked(Modal.confirm).mockResolvedValue(true);
+        await act(async () => { await page().onRotateShared?.(page().sharedEntries[0], '  token\n'); });
+        await vi.waitFor(() => expect(account.updates).toHaveLength(1));
+        expect(account.updates[0].storedContent).toEqual({ t: 'plain', v: { v: 1, name: 'Shared token', kind: 'token', value: '  token\n' } });
+        await vi.waitFor(() => expect(page().sharedEntries[0].revision).toBe(4));
+        await act(async () => { await page().onRotateShared?.(page().sharedEntries[0], '   '); });
+        await vi.waitFor(() => expect(account.updates).toHaveLength(2));
+        expect(account.updates[1].storedContent).toEqual({ t: 'plain', v: { v: 1, name: 'Shared token', kind: 'token', value: '   ' } });
+        expect(account.resources[0]).toEqual(expect.objectContaining({ storedContent: account.updates[1].storedContent }));
+    });
+
+    it('confirms the trust change before an end-to-end encrypted secret becomes Home-managed', async () => {
+        const { page, account } = await render({ mode: 'e2ee' }, 'e2ee');
+        vi.mocked(Modal.confirm).mockResolvedValue(false);
+        await act(async () => { page().onMakeSharedHomeManaged?.(page().sharedEntries[0]); });
+        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        expect(account.updates).toEqual([]);
+        expect(account.resources[0]).toEqual(expect.objectContaining({ encryptionMode: 'e2ee' }));
+        vi.mocked(Modal.confirm).mockResolvedValue(true);
+        await act(async () => { page().onMakeSharedHomeManaged?.(page().sharedEntries[0]); });
+        await vi.waitFor(() => expect(account.updates).toHaveLength(1));
+        expect(account.updates[0]).toEqual(expect.objectContaining({ resourceId: 'resource-a', expectedRevision: 3, toMode: 'plain',
+            storedContent: { t: 'plain', v: { v: 1, name: 'Shared token', kind: 'token', value: 'shared-value' } } }));
+        await vi.waitFor(() => expect(page().sharedEntries[0].encryptionMode).toBe('plain'));
+        await act(async () => { page().onEncryptShared?.(page().sharedEntries[0]); });
+        await vi.waitFor(() => expect(account.updates).toHaveLength(2));
+        expect(account.updates[1]).toEqual(expect.objectContaining({ expectedRevision: 4, toMode: 'e2ee', storedContent: { t: 'encrypted', c: expect.any(String) } }));
+        expect(JSON.stringify(account.updates[1])).not.toContain('shared-value');
+        await vi.waitFor(() => expect(page().resolveSharedReference('happier:shared-secret:v1:resource-a')).toEqual(expect.objectContaining({
+            status: 'ready', revision: 5,
+            secret: expect.objectContaining({ encryptedValue: { _isSecretValue: true, value: 'shared-value' } }),
+        })));
+        expect(vi.mocked(Modal.confirm).mock.calls.filter(([title]) => title === t('secrets.catalog.convertToPlainTitle'))).toHaveLength(2);
+    });
+
+    it('offers each conversion direction only where the Account and the Home policy allow it', async () => {
+        const plain = await render();
+        expect(plain.page().onEncryptShared).toBeUndefined();
+        expect(plain.account.encryption).toBeNull();
+        await nextAccount();
+        const requiredE2ee = await render({ mode: 'e2ee', plaintextStorageEnabled: false });
+        expect(requiredE2ee.page().onMakeSharedHomeManaged).toBeUndefined();
+        expect(requiredE2ee.page().onEncryptShared).toBeTypeOf('function');
+        await nextAccount();
+        const both = await render({ mode: 'e2ee', plaintextStorageEnabled: true });
+        expect(both.page().onMakeSharedHomeManaged).toBeTypeOf('function');
+        expect(both.page().onEncryptShared).toBeTypeOf('function');
+    });
+
+    async function renderCorrupt(settings?: ReturnType<typeof settingsParse>) {
+        account = await createSecretSettingsTestHarness({ settings: settings ?? settingsParse({}) });
+        account.resources.push(SavedSecretResourceMaterialV1Schema.parse({ entry: ownerCorrupt }),
+            SavedSecretResourceMaterialV1Schema.parse({ entry: { materialStatus: 'resource_corrupt', relationship: 'recipient', repair: null } }));
+        const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}><Screen /></InjectedAuthProvider>);
+        screens.push(screen);
+        const page = (): SecretsSettingsPageProps => screen.tree.findByType<typeof PageComponent>(PageComponent).props;
+        await vi.waitFor(() => expect(page().corruptEntries).toHaveLength(2));
+        return { page, account };
+    }
+    it('confirms owner corrupt-row deletion and sends its exact opaque identity and revision', async () => {
+        const { page, account } = await renderCorrupt();
+        vi.mocked(Modal.confirm).mockResolvedValue(true);
+        await act(async () => { page().onDeleteCorruptShared?.(ownerCorrupt); });
+        await vi.waitFor(() => expect(account.deletes).toEqual([{ resourceId: 'opaque-corrupt-row', expectedRevision: -3,
+            expectedSettingsVersion: storage.getState().settingsVersion,
+            referenceCensus: { accountMode: 'plain', profileTransferRevision: 'absent',
+                profiles: { referenceGuardRevision: 3, rows: [] },
+                catalogs: { mcp: 'absent', acp: 'absent', providerConnections: 'absent', connectedConfigurations: 'absent', connectedPurposes: 'absent', registrySources: 'absent' },
+                remoteHosts: { revision: 'absent', resourceRefs: [] }, notificationChannels: { revision: 'absent', resourceRefs: [] } },
+        }]));
+        // The confirmation is the shared-secret delete Action's approval, not a caller-owned destructive dialog.
+        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        expect(Modal.confirm).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.objectContaining({ confirmText: expect.any(String) }));
+        expect(account.resources).toHaveLength(1);
+        expect(account.resources[0].entry.relationship).toBe('recipient');
+    });
+
+    it('names the bindings when the owner reference census refuses a corrupt-row deletion', async () => {
+        const mcp = McpServersSettingsV1Schema.parse({ v: 1, strictMode: false,
+            servers: [{ id: 'srv', name: 'server', transport: 'stdio', stdio: { command: 'node', args: [] },
+                env: { TOKEN: { t: 'savedSecret', secretId: 'happier:shared-secret:v1:opaque-corrupt-row' } }, createdAt: 1, updatedAt: 1 }], bindings: [] });
+        const { page, account } = await renderCorrupt();
+        account.catalogRows.set(MCP_SERVER_CATALOG_ROWS_ROUTE_V1, { status: 'present', revision: 1,
+            content: { t: 'plain', v: McpServerCatalogV1Schema.parse({ v: 1, servers: mcp.servers, bindings: mcp.bindings }) } });
+        vi.mocked(Modal.confirm).mockResolvedValue(true);
+        await act(async () => { page().onDeleteCorruptShared?.(ownerCorrupt); });
+        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('servers[0].env.TOKEN')));
+        expect(account.deletes).toEqual([]);
+        expect(account.resources).toHaveLength(2);
+    });
+
+    it('prepares the envelopes this custodian owes when the surface is opened', async () => {
+        account = await createSecretSettingsTestHarness({ mode: 'e2ee' });
+        const { resourceDataKey } = await account.addOwnerResource('e2ee');
+        const recipient = await createEncryptionFromAuthCredentials({ token: 'recipient-token', secret: encodeBase64(new Uint8Array(32).fill(9), 'base64url') });
+        account.recipients.push({ account: { kind: 'account', accountId: 'account-b', name: 'Bob', firstName: 'Bob', lastName: null, username: null, avatarUrl: null },
+            readiness: { status: 'available', contentPublicKey: encodeBase64(recipient.contentDataKey, 'base64'),
+                contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(recipient.contentDataKey) }, envelopeStatus: 'missing' });
+        const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}><Screen /></InjectedAuthProvider>);
+        screens.push(screen);
+        await vi.waitFor(() => expect(account?.repairs).toHaveLength(1));
+        const repair = account.repairs[0];
+        expect(repair).toEqual({ resourceId: 'resource-a', expectedRevision: 3,
+            keyEnvelopes: [{ recipientAccountId: 'account-b', encryptedDataKey: expect.any(String),
+                recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(recipient.contentDataKey) }] });
+        expect(await recipient.decryptEncryptionKey(repair.keyEnvelopes[0].encryptedDataKey, account.scope)).toEqual(resourceDataKey);
+        expect(JSON.stringify(repair)).not.toContain(encodeBase64(resourceDataKey, 'base64'));
+        expect(account.updates).toEqual([]);
+    });
+
+    it('asks a plaintext Account for nothing, since it custodies no envelopes at all', async () => {
+        const { account } = await render({}, 'plain');
+        expect(account.encryption).toBeNull();
+        expect('secret' in account.credentials).toBe(false);
+        expect(account.repairs).toEqual([]);
+        expect(account.request.mock.calls.some(([url]) => new URL(String(url)).pathname.endsWith('/envelope-census'))).toBe(false);
+    });
+});

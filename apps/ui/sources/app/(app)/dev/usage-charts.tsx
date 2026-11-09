@@ -4,7 +4,6 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { createUsageChartHarnessSlice } from '@/dev/usage/usageChartHarnessSlice';
 import type { UsageBodyProps } from '@/components/settings/usage/widgets/usageBodyKit';
-import type { UsageWidgetBodyModel } from '@/components/settings/usage/useUsageWidgetResource';
 import {
   UsageDayStyleBody, UsageDaylightStyleBody, UsagePlanetBody, UsageRecordsStyleBody, UsageRunLengthBody, UsageScoreBody,
   UsageSkyStyleBody, UsageSteeringStyleBody, UsageWeekTideStyleBody,
@@ -19,7 +18,7 @@ import {
  */
 export default function UsageChartsHarness() {
   const { slice, query } = React.useMemo(() => createUsageChartHarnessSlice(), []);
-  const model = React.useMemo(() => ({ refresh: async () => {} }) as unknown as UsageWidgetBodyModel, []);
+  const model = React.useMemo(() => ({ refresh: async () => {} }), []);
   const props = (id: UsageBodyProps['id'], testID: string, presentation?: UsageBodyProps['presentation']): UsageBodyProps => ({
     id, model, slice, query, serverId: 'harness', testID, ...(presentation ? { presentation } : {}) });
   const card = (title: string, body: React.ReactNode, inRow = false) => <View style={[styles.card, inRow ? styles.rowItem : null]}><Text style={styles.title}>{title}</Text>{body}</View>;

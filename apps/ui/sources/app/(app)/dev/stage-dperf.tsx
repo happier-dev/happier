@@ -1,10 +1,18 @@
 import * as React from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, useWindowDimensions } from 'react-native';
+import { Stack } from 'expo-router';
+import { SafeAreaFrameContext, SafeAreaInsetsContext, useSafeAreaFrame, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { DemoStage } from '@/components/onboarding/tour/stage/DemoStage';
-import { type StageFrame, stageFrames } from '@/components/onboarding/tour/stage/stageFrames';
+import { resolveStageFramesForHostDevice, stageFrames, type StageFrame } from '@/components/onboarding/tour/stage/stageFrames';
+import { StagePhoneCaptureContext } from '@/components/onboarding/tour/stage/StagePhoneCaptureContext';
+import { StagePhoneNavigationHost } from '@/components/onboarding/tour/stage/StagePhoneNavigationHost';
+import { NavigationTitleChromeProvider } from '@/components/ui/layout/navigationTitleChrome';
+import { MOBILE_MAX_WIDTH_PX } from '@/components/onboarding/unauthShell/useUnauthShellLayout';
 import {
     preloadStageSurfaces,
+    stageSurfaceById,
     type StageSurfaceId,
 } from '@/components/onboarding/tour/stage/stageSurfaces';
 import { isDevRouteEnabled } from '@/auth/routing/devRoutePolicy';
@@ -21,20 +29,57 @@ export const DPERF_STAGE_FRAME_IDS = [
 
 const DPERF_STAGE_FRAME_ID_SET = new Set<string>(DPERF_STAGE_FRAME_IDS);
 
-// All registered frames are mounted so a pinned capture can target any beat.
-const DPERF_STAGE_FRAMES = stageFrames satisfies readonly StageFrame[];
-
 // The runtime warm-up only preloads the perf-cadence loop surfaces; a pinned
 // beat's surface materializes lazily through the DemoStage Suspense boundary.
 const DPERF_LOOP_STAGE_FRAMES = stageFrames.filter((frame) => DPERF_STAGE_FRAME_ID_SET.has(frame.id));
 
-function readPinnedStageFrameId(): string | null {
-    if (typeof window === 'undefined') return null;
+function readStageRouteOptions(): Readonly<{ pinnedFrameId: string | null; phoneCapture: boolean }> {
+    const defaults = { pinnedFrameId: null, phoneCapture: false };
+    if (typeof window === 'undefined') return defaults;
     const search = typeof window.location?.search === 'string' ? window.location.search : '';
-    if (!search) return null;
-    const requested = new URLSearchParams(search).get('frame');
-    if (!requested) return null;
-    return stageFrames.some((frame) => frame.id === requested) ? requested : null;
+    const params = new URLSearchParams(search);
+    const requested = params.get('frame');
+    return {
+        pinnedFrameId: requested && stageFrames.some((frame) => frame.id === requested) ? requested : null,
+        phoneCapture: params.get('capture') === 'phone',
+    };
+}
+
+const PHONE_CAPTURE_INSETS = { top: 59, bottom: 34, left: 0, right: 0 };
+
+function PhoneCaptureSurface(props: Readonly<{ frame: StageFrame }>): React.ReactElement | null {
+    const { theme } = useUnistyles();
+    const viewport = useSafeAreaFrame();
+    const insets = useSafeAreaInsets();
+    const surface = stageSurfaceById.get(props.frame.surface);
+    if (!surface) return null;
+    const Surface = surface.component;
+    const contentId = `demo-stage-frame-${props.frame.id}`;
+    return (
+        <View
+            testID="demo-stage-phone-screen"
+            style={[styles.captureScreen, { backgroundColor: theme.colors.surface.base }]}
+            dataSet={{
+                'frame-id': props.frame.id,
+                'viewport-width': String(viewport.width),
+                'viewport-height': String(viewport.height),
+                'safe-area-top': String(insets.top),
+                'safe-area-bottom': String(insets.bottom),
+                'safe-area-left': String(insets.left),
+                'safe-area-right': String(insets.right),
+            }}
+        >
+            <React.Suspense fallback={<View testID={`${contentId}-loading`} />}>
+                <View testID={`${contentId}-content`} style={styles.captureScreen}>
+                    {surface.phoneSafeArea === 'capture' ? (
+                        <StagePhoneNavigationHost surface={props.frame.surface}>
+                            <Surface device="phone" />
+                        </StagePhoneNavigationHost>
+                    ) : <Surface device="phone" />}
+                </View>
+            </React.Suspense>
+        </View>
+    );
 }
 
 const DPERF_STAGE_SURFACE_IDS: readonly StageSurfaceId[] = Array.from(
@@ -90,7 +135,10 @@ export function StageDperfDevRouteContent(props: Readonly<{
     runtimeDeps?: StageDperfRouteRuntimeDeps;
 }>): React.ReactElement {
     const runtimeDeps = props.runtimeDeps ?? DEFAULT_STAGE_DPERF_ROUTE_RUNTIME_DEPS;
-    const pinnedFrameId = React.useMemo(() => readPinnedStageFrameId(), []);
+    const { width, height } = useWindowDimensions();
+    const frames = resolveStageFramesForHostDevice(width <= MOBILE_MAX_WIDTH_PX ? 'phone' : 'desktop');
+    const { pinnedFrameId, phoneCapture } = React.useMemo(readStageRouteOptions, []);
+    const captureViewport = React.useMemo(() => ({ x: 0, y: 0, width, height }), [height, width]);
     const [ready, setReady] = React.useState(false);
     const [activeFrameId, setActiveFrameId] = React.useState<string>(pinnedFrameId ?? DPERF_STAGE_FRAME_IDS[0]);
     const intervalRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
@@ -143,7 +191,7 @@ export function StageDperfDevRouteContent(props: Readonly<{
             setReady(true);
             // A pinned frame holds still for a deterministic screenshot; otherwise
             // cycle the two perf-cadence frames as before.
-            if (pinnedFrameId) return;
+            if (pinnedFrameId || phoneCapture) return;
             intervalRef.current = setInterval(() => {
                 setActiveFrameId((currentFrameId) => resolveNextDperfStageFrameId(currentFrameId));
             }, 1400);
@@ -158,13 +206,28 @@ export function StageDperfDevRouteContent(props: Readonly<{
             stopLoop();
             void cleanupRuntime().catch(() => undefined);
         };
-    }, [pinnedFrameId, runtimeDeps]);
+    }, [phoneCapture, pinnedFrameId, runtimeDeps]);
+
+    const activeFrame = frames.find((frame) => frame.id === activeFrameId) ?? frames[0];
 
     return (
         <View testID="stage-dperf-route" style={styles.root}>
-            {ready ? (
+            {phoneCapture ? <Stack.Screen options={{ headerShown: false }} /> : null}
+            {ready && phoneCapture && activeFrame ? (
+                <NavigationTitleChromeProvider showsTitle={false}>
+                    <StagePhoneCaptureContext.Provider value>
+                        {/* SafeAreaProvider's web measurement replaces initialMetrics with env() zeros.
+                            These canonical contexts keep the capture's simulated device metrics fixed. */}
+                        <SafeAreaFrameContext.Provider value={captureViewport}>
+                            <SafeAreaInsetsContext.Provider value={PHONE_CAPTURE_INSETS}>
+                                <PhoneCaptureSurface frame={activeFrame} />
+                            </SafeAreaInsetsContext.Provider>
+                        </SafeAreaFrameContext.Provider>
+                    </StagePhoneCaptureContext.Provider>
+                </NavigationTitleChromeProvider>
+            ) : ready ? (
                 <DemoStage
-                    frames={DPERF_STAGE_FRAMES}
+                    frames={frames}
                     activeFrameId={activeFrameId}
                 />
             ) : null}
@@ -178,6 +241,12 @@ export default function StageDperfDevRoute(): React.ReactElement | null {
 }
 
 const styles = StyleSheet.create({
+    captureScreen: {
+        flex: 1,
+        minHeight: 0,
+        minWidth: 0,
+        overflow: 'hidden',
+    },
     root: {
         alignItems: 'stretch',
         flex: 1,

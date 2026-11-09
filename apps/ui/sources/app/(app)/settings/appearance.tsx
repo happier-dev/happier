@@ -1,3 +1,5 @@
+import { BotMotionSchema } from '@happier-dev/protocol/account/settings/accountSettings';
+import { useThemeProfiles } from '@/sync/store/useThemeProfiles';
 import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
 import { UI_FONT_SCALE_PRESETS } from '@/components/ui/text/uiFontScale';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
@@ -19,6 +21,12 @@ import { requestHomeCustomize } from '@/components/hub/header/homeCustomizeReque
 import { useMachineSummarySettingValue } from '@/components/machines/summary/useMachineSummarySetting';
 import { machineSummaryStyleTitle } from '@/components/machines/summary/MachineSummaryStyleTiles';
 import { AvatarStylePreview } from '@/components/settings/appearance/AvatarStylePreview';
+import { BotFaceStylePreview } from '@/components/settings/appearance/BotFaceStylePreview';
+import { NeedsYouHighlightPreview, WorkingIndicatorPreview } from '@/components/settings/appearance/NeedsYouHighlightPreview';
+import { HAPPIER_NEEDS_YOU_HIGHLIGHTS } from '@happier-dev/plugin-ui/presentation';
+import { BOT_FACE_STYLES } from '@/components/sessions/bots/face/botFaceIdentity';
+import { AvatarStyleSchema } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { Settings } from '@/sync/domains/settings/settings';
 import { APPEARANCE_SETTINGS } from '@/components/settings/appearance/appearanceSettings';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import React from 'react';
@@ -37,6 +45,7 @@ import * as Localization from 'expo-localization';
 import { Switch } from '@/components/ui/forms/Switch';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Slider } from '@/components/ui/forms/Slider';
+import { useLocalSettingPreview } from '@/sync/store/settingsPreview';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -47,16 +56,13 @@ import { Modal } from '@/modal';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t, getLanguageNativeName, SUPPORTED_LANGUAGES } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { useWindowFoldMetrics } from '@/utils/platform/useWindowFoldMetrics';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { resolveThemeMode, useApplyThemeSelection } from '@/components/settings/appearance/useApplyThemeSelection';
-import {
-    DEFAULT_THEME_PROFILES_LOCAL_STATE,
-} from '@/theme/profiles/themeProfilePersistence';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
-// Define known avatar styles for this version of the app
-type KnownAvatarStyle = 'pixelated' | 'gradient' | 'brutalist';
+type AvatarStyle = Settings['avatarStyle'];
 
 type UiFontScalePresetId = keyof typeof UI_FONT_SCALE_PRESETS;
 const UI_FONT_SCALE_PRESET_IDS = Object.keys(UI_FONT_SCALE_PRESETS) as UiFontScalePresetId[];
@@ -71,9 +77,8 @@ const isDetailsPaneTabsBehavior = (value: string): value is DetailsPaneTabsBehav
     value === 'preview' || value === 'persistent'
 );
 
-const isKnownAvatarStyle = (style: string): style is KnownAvatarStyle => {
-    return style === 'pixelated' || style === 'gradient' || style === 'brutalist';
-};
+const AVATAR_STYLES: readonly AvatarStyle[] = AvatarStyleSchema.options;
+const isKnownAvatarStyle = (style: string): style is AvatarStyle => (AVATAR_STYLES as readonly string[]).includes(style);
 
 export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen() {
     const router = useRouter();
@@ -84,17 +89,25 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
     const scope = storage(state => state.settingsScope);
     const resetAction = useMountedActionExecution(scope, { retainInvocation: true });
     const deviceType = useDeviceType();
+    const foldMetrics = useWindowFoldMetrics();
+    const [systemTabBarEnabled, setSystemTabBarEnabled] = useLocalSettingMutable('systemTabBarEnabled');
     const panelsSupported = Platform.OS === 'web' || deviceType === 'tablet';
     const { arrangement: paneArrangement, setArrangement: setPaneArrangement } = usePaneArrangement();
     const { placement: rightPanelPlacement, setPlacement: setRightPanelPlacement } = useRightPanelPlacement();
     const [avatarStyle, setAvatarStyle] = useSettingMutable('avatarStyle');
     const [homeBotFacesEnabled, setHomeBotFacesEnabled] = useSettingMutable('homeBotFacesEnabled');
+    const [botFaceStyle, setBotFaceStyle] = useSettingMutable('botFaceStyle');
+    const [botMotion, setBotMotion] = useSettingMutable('botMotion');
+    const [needsYouHighlight, setNeedsYouHighlight] = useLocalSettingMutable('sessionListNeedsYouHighlight');
+    const [workingIndicator, setWorkingIndicator] = useSettingMutable('sessionListNarrowWorkingIndicatorStyle');
+    const [playfulWorkingWords, setPlayfulWorkingWords] = useSettingMutable('sessionListWorkingStatusAnimatedTextEnabled');
     const [showFlavorIcons, setShowFlavorIcons] = useSettingMutable('showFlavorIcons');
     const [showChatCodeBlockWrapControls, setShowChatCodeBlockWrapControls] = useSettingMutable('showChatCodeBlockWrapControls');
     const [wrapChatCodeBlocks, setWrapChatCodeBlocks] = useSettingMutable('wrapChatCodeBlocks');
     const [themePreference] = useLocalSettingMutable('themePreference');
-    const [themeProfiles] = useLocalSettingMutable('themeProfiles');
+    const themeProfiles = useThemeProfiles();
     const [uiFontScale, setUiFontScale] = useLocalSettingMutable('uiFontScale');
+    const previewUiFontScale = useLocalSettingPreview('uiFontScale');
     const [uiContentWidthMode, setUiContentWidthMode] = useLocalSettingMutable('uiContentWidthMode');
     const [uiItemDensity, setUiItemDensity] = useLocalSettingMutable('uiItemDensity');
     const [uiMultiPanePanelsEnabled, setUiMultiPanePanelsEnabled] = useLocalSettingMutable('uiMultiPanePanelsEnabled');
@@ -119,11 +132,10 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
     const widgetsSummary = useWidgetsAppearanceSummary();
     const motionSummary = useMotionAppearanceSummary();
     const machineSummaryStyle = useMachineSummarySettingValue().style;
-    const safeThemeProfiles = themeProfiles ?? DEFAULT_THEME_PROFILES_LOCAL_STATE;
     // The Themes row summarizes the library: which theme each mode uses and how many there are. The
     // library screen owns choosing them.
     const themesSummary = React.useMemo(() => {
-        const options = buildThemePresetSourceOptions(safeThemeProfiles);
+        const options = buildThemePresetSourceOptions(themeProfiles);
         const nameFor = (profileId: string | null) => {
             const option = profileId ? options.find((candidate) => candidate.id === profileId) : null;
             return option?.title ?? t('common.default');
@@ -133,11 +145,11 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
             slots: <Text style={styles.themesSummary}>{t('settingsAppearance.themesSummary', {
                 light: '{light}', dark: '{dark}',
             }).split(/(\{light\}|\{dark\})/).map((part, index) => part === '{light}' || part === '{dark}'
-                ? <Text key={index} style={styles.themeName}>{nameFor(safeThemeProfiles.activeProfileIds[part === '{light}' ? 'light' : 'dark'])}</Text>
+                ? <Text key={index} style={styles.themeName}>{nameFor(themeProfiles.activeProfileIds[part === '{light}' ? 'light' : 'dark'])}</Text>
                 : part)}</Text>,
             count: t('settingsAppearance.themesCount', { builtIn: options.length - custom, custom }),
         };
-    }, [safeThemeProfiles]);
+    }, [themeProfiles]);
     const gitBadgeMenuItems = React.useMemo((): readonly DropdownMenuItem[] => {
         return [
             { id: 'changedFiles', title: t('settingsAppearance.tabBarBadges.gitChangedFiles') },
@@ -259,7 +271,7 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
     }, [resetAction.execute, resetAction.isCurrent]);
 
     // Ensure we have a valid style for display, defaulting to gradient for unknown values
-    const displayStyle: KnownAvatarStyle = isKnownAvatarStyle(avatarStyle) ? avatarStyle : 'gradient';
+    const displayStyle: AvatarStyle = isKnownAvatarStyle(avatarStyle) ? avatarStyle : 'gradient';
     
     // Language display
     const getLanguageDisplayText = () => {
@@ -322,9 +334,9 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                         value={themeModeValue}
                         onChange={(next) => {
                             if (next === 'adaptive') {
-                                return applyThemeSelection('adaptive', safeThemeProfiles);
+                                return applyThemeSelection('adaptive', themeProfiles);
                             } else if (next === 'light' || next === 'dark') {
-                                return applyThemeSelection(next, safeThemeProfiles);
+                                return applyThemeSelection(next, themeProfiles);
                             }
                         }}
                         options={[
@@ -383,6 +395,7 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                                 leading={<Text style={[styles.textSizeGlyph, styles.textSizeGlyphSmall]}>{t('settingsAppearance.textSizeGlyph')}</Text>}
                                 trailing={<Text style={[styles.textSizeGlyph, styles.textSizeGlyphLarge]}>{t('settingsAppearance.textSizeGlyph')}</Text>}
                                 onValueChange={selectUiFontSizeIndex}
+                                onValuePreview={index => previewUiFontScale(index === undefined ? undefined : UI_FONT_SCALE_PRESETS[UI_FONT_SCALE_PRESET_IDS[index]])}
                             />
                         }
                     />
@@ -480,7 +493,7 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                         />
                     </SettingAnchor>
                 ) : null}
-                {/* Where the right panels stand, beside the arrangement it shapes (calm-shell R4-2). */}
+                {/* How the right panel stands against the page, beside the arrangement it shapes (calm-shell R4-2, R11-3). */}
                 {panelsSupported && deviceType !== 'phone' ? (
                     <SettingAnchor setting={APPEARANCE_SETTINGS.settings.rightPanelPlacement}>
                         <Item
@@ -587,15 +600,101 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                                 onChange={(next) => {
                                     if (next && isKnownAvatarStyle(next)) setAvatarStyle(next);
                                 }}
-                                options={[
-                                    { id: 'pixelated', title: t('settingsAppearance.avatarOptions.pixelated'), preview: <AvatarStylePreview style="pixelated" /> },
-                                    { id: 'gradient', title: t('settingsAppearance.avatarOptions.gradient'), preview: <AvatarStylePreview style="gradient" /> },
-                                    { id: 'brutalist', title: t('settingsAppearance.avatarOptions.brutalist'), preview: <AvatarStylePreview style="brutalist" /> },
-                                ]}
+                                options={AVATAR_STYLES.map((id) => ({
+                                    id, title: t(`settingsAppearance.avatarOptions.${id}`), preview: <AvatarStylePreview style={id} />,
+                                }))}
                             />
                         }
                     />
                 </SettingAnchor>
+                {/* The Bots' default face (an explicit per-Bot style still wins); the real face in each style. */}
+                <SettingAnchor setting={APPEARANCE_SETTINGS.settings.botFaceStyle}>
+                    <Item
+                        title={t(APPEARANCE_SETTINGS.settings.botFaceStyle.titleKey)}
+                        subtitle={t('settingsAppearance.botFaceStyleDescription')}
+                        subtitleLines={0}
+                        accessoryLayout="stacked"
+                        showChevron={false}
+                        rightElement={
+                            <SelectionTiles
+                                variant="visual"
+                                tileSizing="fill"
+                                accessibilityLabel={t('settingsAppearance.botFaceStyle')}
+                                testIdPrefix="settings-appearance-botFaceStyle"
+                                value={botFaceStyle}
+                                onChange={(next) => { if (next && next !== botFaceStyle) setBotFaceStyle(next); }}
+                                options={BOT_FACE_STYLES.map((id) => ({
+                                    id, title: t(`bots.face.styles.${id}`), preview: <BotFaceStylePreview style={id} />,
+                                }))}
+                            />
+                        }
+                    />
+                </SettingAnchor>
+                <SettingAnchor setting={APPEARANCE_SETTINGS.settings.botMotion}>
+                    <SegmentedChoiceItem
+                        title={t('settingsAppearance.botMotion')}
+                        subtitle={t(`settingsAppearance.botMotionDescriptions.${botMotion}`)}
+                        value={botMotion}
+                        onChange={next => { if (next !== botMotion) setBotMotion(next); }}
+                        options={BotMotionSchema.options.map(id => ({ id, label: t(`settingsAppearance.botMotionOptions.${id}`) }))}
+                        testIDPrefix="settings-appearance-botMotion"
+                    />
+                </SettingAnchor>
+                {/* How a session that needs you stands out mid-list (owner ruling 2026-11-01); the real row in each style. */}
+                <SettingAnchor setting={APPEARANCE_SETTINGS.settings.sessionListNeedsYouHighlight}>
+                    <Item
+                        title={t('settingsAppearance.needsYouHighlight.title')}
+                        subtitle={t('settingsAppearance.needsYouHighlight.description')}
+                        subtitleLines={0}
+                        accessoryLayout="stacked"
+                        showChevron={false}
+                        rightElement={
+                            <SelectionTiles
+                                variant="visual"
+                                tileSizing="fill"
+                                accessibilityLabel={t('settingsAppearance.needsYouHighlight.title')}
+                                testIdPrefix="settings-appearance-needsYouHighlight"
+                                value={needsYouHighlight}
+                                onChange={(next) => {
+                                    const choice = HAPPIER_NEEDS_YOU_HIGHLIGHTS.find((id) => id === next);
+                                    if (choice && choice !== needsYouHighlight) setNeedsYouHighlight(choice);
+                                }}
+                                options={HAPPIER_NEEDS_YOU_HIGHLIGHTS.map((id) => ({
+                                    id, title: t(`settingsAppearance.needsYouHighlight.${id}`), preview: <NeedsYouHighlightPreview highlight={id} />,
+                                }))}
+                            />
+                        }
+                    />
+                </SettingAnchor>
+                {/* The restored 0.2 working mark and playful working words (owner amendment 2026-11-01). */}
+                <SettingAnchor setting={APPEARANCE_SETTINGS.settings.sessionListWorkingIndicator}>
+                    <Item
+                        title={t('settingsAppearance.workingIndicator.title')}
+                        subtitle={t('settingsAppearance.workingIndicator.description')}
+                        subtitleLines={0}
+                        accessoryLayout="stacked"
+                        showChevron={false}
+                        rightElement={
+                            <SelectionTiles
+                                variant="visual"
+                                accessibilityLabel={t('settingsAppearance.workingIndicator.title')}
+                                testIdPrefix="settings-appearance-workingIndicator"
+                                value={workingIndicator}
+                                onChange={(next) => { if ((next === 'spinner' || next === 'pulse') && next !== workingIndicator) setWorkingIndicator(next); }}
+                                options={(['spinner', 'pulse'] as const).map((id) => ({
+                                    id, title: t(`settingsAppearance.workingIndicator.${id}`), preview: <WorkingIndicatorPreview style={id} />,
+                                }))}
+                            />
+                        }
+                    />
+                </SettingAnchor>
+                <SettingRow
+                    setting={APPEARANCE_SETTINGS.settings.sessionListWorkingStatusAnimatedText}
+                    subtitleLines={0}
+                    rightElement={<Switch testID="settings-appearance-playfulWorkingWords-switch" value={playfulWorkingWords !== false}
+                        onValueChange={setPlayfulWorkingWords} />}
+                    showChevron={false}
+                />
                 <SettingRow
                     setting={APPEARANCE_SETTINGS.settings.agentIcons}
                     subtitleLines={0}
@@ -662,6 +761,19 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
 
             {/* Tab bar (phones and tablets) */}
             <ItemGroup title={t('settingsAppearance.tabBarAppearance.title')} description={t('settingsAppearance.tabBarAppearance.footer')}>
+                {Platform.OS === 'ios' && foldMetrics?.verticalBarEdge != null && (
+                    <SettingRow
+                        setting={APPEARANCE_SETTINGS.settings.systemTabBar}
+                        rightElement={
+                            <Switch
+                                testID="settings-appearance-systemTabBar-switch"
+                                value={systemTabBarEnabled}
+                                onValueChange={setSystemTabBarEnabled}
+                            />
+                        }
+                        showChevron={false}
+                    />
+                )}
                 <SettingAnchor setting={APPEARANCE_SETTINGS.settings.tabBarSize}>
                     <SegmentedChoiceItem
                         title={t(APPEARANCE_SETTINGS.settings.tabBarSize.titleKey)}

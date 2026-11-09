@@ -170,8 +170,8 @@ it('adopts a preauth terminal Home address and opens its sign-in without changin
     await screen.unmount();
 });
 
-it.each(['web-link', 'native-link', 'scanner-hook'])(
-    'opens descriptor Home sign-in over its HTTPS endpoint while keeping canonical pairing custody (%s)',
+it.each(['web-link', 'native-link', 'scanner-hook', 'same-address'])(
+    'opens descriptor Home sign-in while keeping canonical pairing custody and established routing (%s)',
     async (entryPoint) => {
     const homeConnectionDescriptor = {
         v: 1 as const,
@@ -212,7 +212,10 @@ it.each(['web-link', 'native-link', 'scanner-hook'])(
     const profiles = await import('@/sync/domains/server/serverProfiles');
     profiles.resetServerProfilesRuntimeForTests();
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-    await upsertAndActivateServer({ serverUrl: 'https://saved.example.test', source: 'manual', scope: 'device' });
+    await upsertAndActivateServer({
+        serverUrl: entryPoint === 'same-address' ? homeConnectionDescriptor.canonicalServerUrl : 'https://saved.example.test',
+        source: 'manual', scope: 'device',
+    });
     const beforeService = profiles.resolveSelectedAccountServiceEndpoint();
     const href = buildTerminalConnectWebHref(captured);
     routeBoundary.params = Object.fromEntries(new URLSearchParams(href.split('#')[1]));
@@ -227,20 +230,25 @@ it.each(['web-link', 'native-link', 'scanner-hook'])(
         });
     }
     await vi.waitFor(() => expect(replaceSpy).toHaveBeenCalledWith(`/?server=${encodeURIComponent(homeConnectionDescriptor.canonicalServerUrl)}`));
-    if (entryPoint === 'web-link') expect(custodyAtHashClear).toMatchObject(captured);
+    if (entryPoint === 'web-link' || entryPoint === 'same-address') expect(custodyAtHashClear).toMatchObject(captured);
 
     expect(profiles.getActiveServerSnapshot()).toMatchObject({
         serverUrl: homeConnectionDescriptor.canonicalServerUrl,
     });
     const authEntry = await renderHook(() => useAuthEntryOptions(), { wrapper: signedOut });
     await vi.waitFor(() => expect(authEntry.getCurrent().serverAvailability).toBe('ready'));
-    expect(authEntry.getCurrent().homeTransport).toMatchObject({ runtimeOrigin: homeConnectionDescriptor.endpoints[0].url });
+    if (entryPoint === 'same-address') {
+        // An established Home keeps its routing: QR advice cannot replace its transport.
+        expect(authEntry.getCurrent().homeTransport).toBeUndefined();
+    } else {
+        expect(authEntry.getCurrent().homeTransport).toMatchObject({ runtimeOrigin: homeConnectionDescriptor.endpoints[0].url });
+    }
     expect(authEntry.getCurrent().observedHomeServerIdentityId).toBe(homeConnectionDescriptor.homeServerIdentityId);
     expect(profiles.resolveSelectedAccountServiceEndpoint()).toEqual(beforeService);
     const custodyStorage = new MMKV({ id: scopedStorageId('pending-terminal-connect', readStorageScopeFromEnv()) });
     const envelope = parsePendingTerminalConnectPreAuthEnvelope(JSON.parse(custodyStorage.getString('record:pre-auth:v1')!));
     expect(envelope?.record).toMatchObject(captured);
-    expect(runtimeFetchSpy.mock.calls.some((args) => String(args[0]).startsWith('http://localhost:3010/'))).toBe(false);
+    expect(runtimeFetchSpy.mock.calls.some((args) => String(args[0]).startsWith('http://localhost:3010/'))).toBe(entryPoint === 'same-address');
     await authEntry.unmount();
     await screen.unmount();
 });

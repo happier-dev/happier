@@ -1,5 +1,9 @@
 import {
     Action as PluginAction,
+    ApprovalPrompt as PluginApprovalPrompt,
+    CollectionSavedViewsStrip as PluginCollectionSavedViewsStrip,
+    PageHeader as PluginPageHeader,
+    type CollectionSavedViewStripItem,
     ActionPanel as PluginActionPanel,
     Button as PluginButton,
     Badge as PluginBadge,
@@ -46,6 +50,7 @@ import {
     Tabs as PluginTabs,
 } from '@happier-dev/plugin-ui';
 import { CountedDisclosureItem as PluginCountedDisclosureItem } from '@happier-dev/plugin-ui/components';
+import { PluginCheckboxSpecimen } from '@/components/dev/pluginUi/CheckboxSpecimen';
 import {
     HappierBadge,
     HappierBanner,
@@ -63,8 +68,9 @@ import {
 import type { PluginUiHostApi, RenderContext, SurfaceContext } from '@happier-dev/plugin-sdk/ui';
 import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui';
 import { Ionicons } from '@expo/vector-icons';
-import { CollectionPreviewSample } from '@/components/dev/pluginUi/CollectionPreviewSample';
+import { CollectionPreviewSample, CollectionSingleLineSample } from '@/components/dev/pluginUi/CollectionPreviewSample';
 import { FindBarSpecimen } from '@/components/dev/pluginUi/FindBarSpecimen';
+import { SavedSkillCardSpecimen } from '@/components/dev/pluginUi/SavedSkillCardSpecimen';
 import { CorePageAnatomySample, PluginPageAnatomySample } from '@/components/dev/pluginUi/PageAnatomySample';
 import { CoreNavigationColumnSample, PluginNavigationColumnSample } from '@/components/dev/pluginUi/NavigationColumnSample';
 import { appShellColumnSurface } from '@/components/navigation/shell/appRail/appShellColumnSurface';
@@ -213,12 +219,12 @@ function createDemoSurfaceHost(initial: SurfaceContext): DemoSurfaceHost {
             wireVersion: 1,
             methods: ['context', 'watchContext'],
         }),
-        actionControl: async () => {
-            throw Object.assign(new Error('Host Action controls are unavailable in this gallery'), { code: 'unsupported_method' });
-        },
         context: async () => current,
         widgetArea: async () => {
             throw new Error('dev surface has no Widget area');
+        },
+        actionControl: async () => {
+            throw Object.assign(new Error('Host Action controls are unavailable in this gallery'), { code: 'unsupported_method' });
         },
         watchContext: async (listener: (context: SurfaceContext) => void) => {
             listeners.add(listener);
@@ -243,8 +249,17 @@ function createDemoSurfaceHost(initial: SurfaceContext): DemoSurfaceHost {
         openNewSession: async () => {
             throw new Error('dev surface cannot open New Session');
         },
+        openManagedMachineConfiguration: async () => {
+            throw new Error('dev surface cannot open Machine configuration');
+        },
+        openDeployment: async () => {
+            throw new Error('dev surface cannot open a deployment');
+        },
         openAutomationEvent: async () => {
             throw new Error('dev surface cannot open Automation Event authoring');
+        },
+        revealSessionInput: async () => {
+            throw new Error('dev surface cannot reveal Session input');
         },
         openConnectedAccounts: async () => {
             throw new Error('dev surface cannot open Connected Accounts');
@@ -293,15 +308,13 @@ function createDemoSurfaceHost(initial: SurfaceContext): DemoSurfaceHost {
         releaseComposerContent: async () => {
             throw new Error('dev surface has no Composer');
         },
-        revealSessionInput: async () => {
-            throw new Error('dev surface cannot reveal Session input');
-        },
         readSession: async () => null,
         readMachineDisplayName: async () => ({ status: 'unavailable' }),
         readEntityDragItem: async () => { throw new Error('dev surface has no mounted entity runtime'); },
         updateEntityDragDrop: async () => { throw new Error('dev surface has no mounted entity runtime'); },
         watchEntityDragDrop: async () => { throw new Error('dev surface has no mounted entity runtime'); },
         readStoredImage: async () => { throw new Error('dev surface has no stored images'); },
+        downloadFile: async () => { throw new Error('dev surface has no download destination'); },
         watchLiveStream: async () => { throw new Error('dev surface has no live streams'); },
         watchSession: async () => {
             throw new Error('dev surface has no Session store');
@@ -311,6 +324,9 @@ function createDemoSurfaceHost(initial: SurfaceContext): DemoSurfaceHost {
         openSurface: async () => undefined,
         replacePageLocation: async () => {
             throw new Error('dev surface has no page location');
+        },
+        setUnsavedChanges: async () => {
+            throw new Error('dev surface has no page guard');
         },
         notify: async () => undefined,
         confirm: async () => false,
@@ -328,7 +344,7 @@ function createDemoSurfaceHost(initial: SurfaceContext): DemoSurfaceHost {
     } satisfies RenderContext;
     return {
         renderContext: Object.freeze(renderContext),
-        presentationHost: createPluginUiPrivatePresentationHost({ displayName: 'Happier Dev' }),
+        presentationHost: createPluginUiPrivatePresentationHost({ displayName: 'Happier Dev' }, { pluginId: 'dev.happier.gallery' }),
         push(next: SurfaceContext) {
             current = next;
             for (const listener of listeners) listener(next);
@@ -385,8 +401,14 @@ function Sample({ title, children }: Readonly<{ title: string; children: React.R
 function PluginStateSamples() {
     return (
         <View>
+            <Sample title="Saved skill card — four states">
+                <SavedSkillCardSpecimen />
+            </Sample>
             <Sample title="Plugin Collection — table, peek, table → split">
                 <CollectionPreviewSample />
+            </Sample>
+            <Sample title="Plugin Collection — single-line list rows">
+                <CollectionSingleLineSample />
             </Sample>
             <Sample title="Plugin State — loading">
                 <PluginState resource={{ freshness: 'unknown', pending: 'initial', subscription: 'unsupported' }} />
@@ -410,7 +432,7 @@ function PluginStateSamples() {
                 <PluginLoadingState title="Checking the workspace" description="This usually takes a moment." testID="plugin-loading-state" />
             </Sample>
             <Sample title="Plugin ErrorState">
-                <PluginErrorState title="Could not reach the server" description="Retry once the daemon is back." testID="plugin-error-state" />
+                <PluginErrorState title="Could not reach the server" description="Retry once the daemon is back." details="unavailable · host_api_method_unavailable:executeAction" testID="plugin-error-state" />
             </Sample>
             <Sample title="Plugin Spinner tones">
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
@@ -422,6 +444,13 @@ function PluginStateSamples() {
                 <PluginStatus tone="success" label="Connected" testID="plugin-status-success" />
                 <PluginStatus tone="warning" label="Degraded" pulsing />
                 <PluginStatus tone="danger" label="Disconnected" />
+                <PluginStatus
+                    tone="warning"
+                    label="Some sources could not be read"
+                    value="acme/ledger — Not installed or enabled on this machine."
+                    action={<PluginButton title="Manage sources" variant="secondary" size="small" onPress={() => {}} />}
+                    testID="plugin-status-notice-reason"
+                />
             </Sample>
             <Sample title="Plugin ReviewSeverity">
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
@@ -433,6 +462,10 @@ function PluginStateSamples() {
                 </View>
             </Sample>
             <PluginButtonSamples />
+            <PluginBuiltInParitySamples />
+            <Sample title="Plugin Checkbox — Viewed in a Files row">
+                <PluginCheckboxSpecimen />
+            </Sample>
             <PluginActionSamples />
             <PluginExpandedSamples />
         </View>
@@ -646,6 +679,48 @@ function PluginButtonSamples() {
  * wiring, exactly like an external author's component (§3.9). Everything it
  * reads arrives through the environment the artifact entry wrapper installs.
  */
+const PARITY_VIEWS: readonly CollectionSavedViewStripItem[] = [
+    { id: 'mine', label: 'Assigned to me', icon: 'issue' },
+    { id: 'team', label: 'My team', icon: 'pin' },
+    { id: 'open', label: 'Everything open', icon: 'search' },
+];
+
+/** The built-in page pieces through the public components, for side-by-side checks against a core page. */
+function PluginBuiltInParitySamples() {
+    const [viewId, setViewId] = React.useState('mine');
+    const [views, setViews] = React.useState(PARITY_VIEWS);
+    return (
+        <>
+            <Sample title="PageHeader: hanging controls, copyable id">
+                <PluginPageHeader title="Release reviews" description="Everything waiting before the next release." actionsLayout="hang"
+                    leading={<PluginBrandMark externallyLabelled />}
+                    meta={[{ key: 'repo', text: 'acme/payments' }, { key: 'path', text: '/srv/repositories/acme/payments/reviews/2026', mono: true }]}
+                    actions={<PluginButton title="Refresh" variant="plain" onPress={() => undefined} />} testID="parity-header" />
+            </Sample>
+            <Sample title="CollectionSavedViewsStrip">
+                <PluginCollectionSavedViewsStrip scope="dev-gallery" testID="parity-strip" items={views} selectedId={viewId}
+                    labels={{ title: 'Views', add: 'New view' }} onSelect={(id) => { if (id !== null) setViewId(id); }} onAdd={() => undefined}
+                    onReorder={async (id, beforeId) => {
+                        setViews((current) => {
+                            const moved = current.find((view) => view.id === id);
+                            if (moved === undefined) return current;
+                            const rest = current.filter((view) => view.id !== id);
+                            const at = beforeId === null ? rest.length : rest.findIndex((view) => view.id === beforeId);
+                            return [...rest.slice(0, at), moved, ...rest.slice(at)];
+                        });
+                        return true;
+                    }} shortcuts />
+            </Sample>
+            <Sample title="ApprovalPrompt: compact">
+                <View style={{ maxWidth: 360 }}>
+                    <PluginApprovalPrompt chrome="compact" tone="attention" eyebrow="Bash" title="Publish the release notes" testID="parity-compact"
+                        footer={<PluginButton title="Allow" variant="primary" onPress={() => undefined} />} />
+                </View>
+            </Sample>
+        </>
+    );
+}
+
 function PluginSurfaceSamples() {
     return (
         <View>

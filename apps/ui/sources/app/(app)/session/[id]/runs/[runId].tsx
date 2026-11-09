@@ -1,6 +1,7 @@
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
+import { DetailsStartSheetHost } from '@/components/appShell/panes/panePresentation';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -11,7 +12,6 @@ import {
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { buildScopedSessionRouteHref, createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
-import { useSessionRealtimeTranscriptConsumer } from '@/hooks/session/useSessionRealtimeTranscriptConsumer';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { isSessionRouteHydrationAvailable, isSessionRouteHydrationMissing } from '@/sync/domains/session/sessionRouteHydrationState';
 import { t } from '@/text';
@@ -20,6 +20,7 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 function normalizeParam(value: unknown): string | null {
     if (typeof value === 'string' && value.trim().length > 0) return value.trim();
@@ -41,10 +42,6 @@ export function SessionRunDetailsScreen() {
     const hydrateReady = isSessionRouteHydrationAvailable(routeHydrationState);
     const hydrateMissing = isSessionRouteHydrationMissing(routeHydrationState);
     const exactSessionServerId = routeHydrationState.serverId ?? routeScope.serverId;
-    // The run detail view derives a live transcript fallback from the session's messages but is a
-    // separate navigation screen that does not mark the session surface visible. Register it as an
-    // explicit transcript consumer so hidden durable messages keep materializing while it is open.
-    useSessionRealtimeTranscriptConsumer(sessionId, exactSessionServerId);
     const detailsRef = React.useRef<SessionExecutionRunDetailsViewHandle | null>(null);
     const headerTint = theme.colors.chrome.header.foreground ?? theme.colors.text.primary;
     const parentSessionHref = sessionId
@@ -52,22 +49,21 @@ export function SessionRunDetailsScreen() {
         : '/';
 
     const headerRight = React.useCallback(() => (
-        <Pressable
+        <HappierPressable
             accessibilityRole="button"
             accessibilityLabel={t('runs.runDetails.a11y.refreshRun')}
             onPress={() => {
                 void detailsRef.current?.reload();
             }}
             testID="session-run-details-refresh"
-            hitSlop={10}
             style={({ pressed }) => ({ padding: theme.space.s4, opacity: pressed ? motionTokens.press.opacity : 1 })}
         >
             <Icon name="arrow-clockwise" size={20} color={headerTint} />
-        </Pressable>
+        </HappierPressable>
     ), [headerTint]);
 
     const headerLeft = React.useCallback(() => (
-        <Pressable
+        <HappierPressable
             accessibilityRole="button"
             accessibilityLabel={t('common.back')}
             onPress={() => safeRouterBack({
@@ -76,11 +72,10 @@ export function SessionRunDetailsScreen() {
                 fallbackHref: parentSessionHref,
             })}
             testID="session-run-details-back"
-            hitSlop={10}
             style={({ pressed }) => ({ padding: theme.space.s4, opacity: pressed ? motionTokens.press.opacity : 1 })}
         >
             <Icon name="arrow-left" size={20} color={headerTint} />
-        </Pressable>
+        </HappierPressable>
     ), [headerTint, navigation, parentSessionHref, router]);
 
     const screenOptions = React.useMemo(() => ({
@@ -94,21 +89,21 @@ export function SessionRunDetailsScreen() {
 
     // The Run reads on the page paper like its Session; the canvas is the navigation plane.
     return (
-        <View style={{ flex: 1, paddingBottom: bottomChromeHeight, backgroundColor: theme.colors.surface.base }}>
+        <View style={{ flex: 1, paddingBottom: bottomChromeHeight }}>
             <Stack.Screen options={screenOptions} />
             {!hydrateReady && !hydrateMissing ? (
                 <ActivitySpinner size="small" color={theme.colors.text.secondary} />
             ) : !sessionId || !runId || hydrateMissing ? (
                 <SessionInvalidLinkFallback />
             ) : (
-                <SessionExecutionRunDetailsView
+                <DetailsStartSheetHost><SessionExecutionRunDetailsView
                     ref={detailsRef}
                     sessionId={sessionId}
                     runId={runId}
                     serverId={exactSessionServerId}
                     retryInputLocalId={retryInputLocalId ?? undefined}
                     presentation="screen"
-                />
+                /></DetailsStartSheetHost>
             )}
         </View>
     );

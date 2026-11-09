@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { useLocalSearchParams, useNavigation } from 'expo-router';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { TeamAuthEntrySurface } from '@/components/teams/entry/TeamAuthEntrySurface';
 import type { TeamAuthEntrySelection } from '@/components/teams/entry/TeamAuthEntrySurface';
@@ -18,7 +19,9 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import type { TeamInvitationPostAuthContinuationV1 } from '@happier-dev/protocol/teams';
 import { TeamJoinScreen } from '@/components/teams/join/TeamJoinScreen';
 import { UnauthenticatedRouteShell } from '@/components/onboarding/unauthShell';
+import { UnauthenticatedRouteStep, type AuthRouteStepAction } from '@/components/onboarding/ui/AuthRouteStepFrame';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { openAddHome } from '@/components/homes/add/openAddHome';
 
 function TeamSignInStateShell(props: Readonly<{
     children: React.ReactNode;
@@ -26,6 +29,31 @@ function TeamSignInStateShell(props: Readonly<{
     onBack: () => void;
 }>) {
     return <UnauthenticatedRouteShell testID="team-sign-in-shell" stepId={props.stepId} onBack={props.onBack}>{props.children}</UnauthenticatedRouteShell>;
+}
+
+/** A terminal answer about this Team link or its Home, read as one step like Team join's. */
+function TeamSignInStateStep(props: Readonly<{
+    stepId: string;
+    testID: string;
+    title: string;
+    subtitle: string;
+    onBack: () => void;
+    primary?: AuthRouteStepAction;
+    secondary?: AuthRouteStepAction;
+}>) {
+    return (
+        <UnauthenticatedRouteStep
+            shellTestID="team-sign-in-shell"
+            stepId={props.stepId}
+            testID={props.testID}
+            title={props.title}
+            subtitle={props.subtitle}
+            onBack={props.onBack}
+            primary={props.primary}
+            secondary={props.secondary}
+            status
+        />
+    );
 }
 
 /**
@@ -138,18 +166,15 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
     // while a Home it simply has not adopted is the ordinary first-device case.
     if (!teamId || home.kind === 'unresolved' || home.kind === 'ambiguous') {
         return (
-            <TeamSignInStateShell stepId="unknown-target" onBack={goBackHome}>
-                <SurfaceStateCard
-                    testID={home.kind === 'ambiguous'
-                        ? 'team-sign-in-ambiguous-home'
-                        : 'team-sign-in-unknown-target'}
-                    kind="unavailable"
-                    title={t('teams.entry.unknownTargetTitle')}
-                    reason={t('teams.entry.unknownTargetBody')}
-                    action={{ label: t('common.back'), onPress: goBackHome }}
-                    accessibilitySemantics="status"
-                />
-            </TeamSignInStateShell>
+            <TeamSignInStateStep
+                stepId="unknown-target"
+                testID={home.kind === 'ambiguous'
+                    ? 'team-sign-in-ambiguous-home'
+                    : 'team-sign-in-unknown-target'}
+                title={t('teams.entry.unknownTargetTitle')}
+                subtitle={t('teams.entry.unknownTargetBody')}
+                onBack={goBackHome}
+            />
         );
     }
     // Nothing is asked of any endpoint until the acquisition owner has proven
@@ -169,31 +194,27 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
     }
     if (home.kind === 'acquisition_failed') {
         return (
-            <TeamSignInStateShell stepId="unreachable-home" onBack={goBackHome}>
-                <SurfaceStateCard
-                    testID="team-sign-in-unreachable-home"
-                    kind="unavailable"
-                    title={t('teams.join.unknownHomeTitle')}
-                    reason={t('server.notificationAddServerHint')}
-                    action={{ label: t('common.retry'), onPress: home.retry }}
-                    secondaryAction={{ label: t('server.addServerTitle'), onPress: () => router.push('/server') }}
-                    accessibilitySemantics="status"
-                />
-            </TeamSignInStateShell>
+            <TeamSignInStateStep
+                stepId="unreachable-home"
+                testID="team-sign-in-unreachable-home"
+                title={t('teams.join.unknownHomeTitle')}
+                subtitle={t('teams.join.unknownHomeBody')}
+                onBack={goBackHome}
+                primary={{ testID: 'team-sign-in-unreachable-home-action', label: t('common.retry'), onPress: home.retry }}
+                secondary={{ testID: 'team-sign-in-unreachable-home-secondary-action', label: t('server.addServerTitle'), onPress: () => openAddHome(router) }}
+            />
         );
     }
     if (home.kind === 'unknown_home') {
         return (
-            <TeamSignInStateShell stepId="unknown-home" onBack={goBackHome}>
-                <SurfaceStateCard
-                    testID="team-sign-in-add-home"
-                    kind="unavailable"
-                    title={t('teams.join.unknownHomeTitle')}
-                    reason={t('server.notificationAddServerHint')}
-                    action={{ label: t('server.addServerTitle'), onPress: () => router.push('/server') }}
-                    accessibilitySemantics="status"
-                />
-            </TeamSignInStateShell>
+            <TeamSignInStateStep
+                stepId="unknown-home"
+                testID="team-sign-in-add-home"
+                title={t('teams.join.unknownHomeTitle')}
+                subtitle={t('teams.join.unknownHomeBody')}
+                onBack={goBackHome}
+                primary={{ testID: 'team-sign-in-add-home-action', label: t('server.addServerTitle'), onPress: () => openAddHome(router) }}
+            />
         );
     }
     // Only a Home with a local credential has a scope to wait for. A Home this
@@ -238,16 +259,13 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
             </TeamSignInStateShell>
         );
         if (postAuthState.kind === 'unavailable') return (
-            <TeamSignInStateShell stepId="post-auth-unavailable" onBack={goBackHome}>
-                <SurfaceStateCard
-                    testID="team-sign-in-post-auth-unavailable"
-                    kind="unavailable"
-                    title={t('teams.join.inactiveTitle')}
-                    reason={t('teams.join.askForNew')}
-                    action={{ label: t('common.back'), onPress: goBackHome }}
-                    accessibilitySemantics="status"
-                />
-            </TeamSignInStateShell>
+            <TeamSignInStateStep
+                stepId="post-auth-unavailable"
+                testID="team-sign-in-post-auth-unavailable"
+                title={t('teams.join.inactiveTitle')}
+                subtitle={t('teams.join.askForNew')}
+                onBack={goBackHome}
+            />
         );
         return (
             <TeamJoinScreen

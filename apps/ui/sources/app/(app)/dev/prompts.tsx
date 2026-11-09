@@ -5,7 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { PromptsSpecimen, type PromptsSpecimenState } from '@/components/dev/prompts/PromptsSpecimen';
 
-const STATES: readonly PromptsSpecimenState[] = ['picker', 'nothingSaved', 'noMatches', 'olderLoading', 'composer', 'message', 'save', 'saveInPlace'];
+const STATES: readonly PromptsSpecimenState[] = ['picker', 'nothingSaved', 'noMatches', 'olderLoading', 'libraryError', 'libraryPartial', 'previewError', 'composer', 'message', 'save', 'saveInPlace'];
 
 /** Dev-only: the composer prompt picker and library button in the lab's states, credential-free for clean-browser visual QA. */
 export default function PromptsDevScreen() {

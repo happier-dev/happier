@@ -9,10 +9,11 @@ import { Item } from '@/components/ui/lists/Item';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
 import { Modal } from '@/modal';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { Icon } from '@/components/ui/icons/Icon';
 
 export default function LogsScreen() {
+    const writeClipboard = useClipboardWrite();
     const [logs, setLogs] = React.useState<string[]>([]);
     const listRef = React.useRef<VirtualizedListRef>(null);
     const copyFeedback = useHappierCopyFeedback();
@@ -64,7 +65,7 @@ export default function LogsScreen() {
         }
 
         const allLogs = logs.join('\n');
-        const copied = await setClipboardStringSafe(allLogs);
+        const copied = await writeClipboard(allLogs);
         if (!copied) {
             Modal.alert('Error', 'Failed to copy logs to clipboard');
             return;

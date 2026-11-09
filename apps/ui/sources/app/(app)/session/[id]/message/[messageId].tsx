@@ -1,9 +1,10 @@
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
+import { DetailsStartSheetHost } from '@/components/appShell/panes/panePresentation';
 import * as React from 'react';
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { View } from 'react-native';
 import type { ViewStyle } from 'react-native';
-import { storage, useMessage, useTranscriptApprovalArtifactsForSession, useResolvedSessionMessageRouteId, useSession, useSessionTranscriptIds } from "@/sync/domains/state/storage";
+import { storage, useMessage, useTranscriptApprovalArtifactsForSession, useResolvedSessionMessageRouteId, useSession, useSessionTranscriptLoaded } from "@/sync/domains/state/storage";
 import { resolveSessionMessageRouteId } from '@happier-dev/session-core/messages';
 import { sync } from '@/sync/sync';
 import { Deferred } from "@/components/ui/forms/Deferred";
@@ -93,7 +94,7 @@ function SessionMessageRouteLoaded(props: { sessionId: string; messageId: string
     const router = useRouter();
     const bottomChromeHeight = useSessionCockpitBottomChromeHeight();
     const session = useSession(props.sessionId);
-    const { isLoaded: messagesLoaded } = useSessionTranscriptIds(props.sessionId);
+    const messagesLoaded = useSessionTranscriptLoaded(props.sessionId);
     const resolvedMessageId = useResolvedSessionMessageRouteId(props.sessionId, props.messageId);
     const resolvedJumpChildId = useResolvedSessionMessageRouteId(props.sessionId, props.jumpChildId ?? '');
     const jumpChildId = props.jumpChildId ? (resolvedJumpChildId ?? props.jumpChildId) : null;
@@ -249,7 +250,7 @@ function SessionMessageRouteLoaded(props: { sessionId: string; messageId: string
         <>
             <View style={{ ...styles.routeContent, paddingBottom: bottomChromeHeight }}>
                 <NavigationBackChromeProvider control={hosted ? pageBack : inheritedBack}>
-                    <Deferred>
+                    <DetailsStartSheetHost><Deferred>
                         <SessionMessageDetailsView
                             message={message}
                             sessionId={props.sessionId}
@@ -258,7 +259,7 @@ function SessionMessageRouteLoaded(props: { sessionId: string; messageId: string
                             header={toolPageHeader}
                             declinedApproval={declinedApproval}
                         />
-                    </Deferred>
+                    </Deferred></DetailsStartSheetHost>
                 </NavigationBackChromeProvider>
             </View>
         </>

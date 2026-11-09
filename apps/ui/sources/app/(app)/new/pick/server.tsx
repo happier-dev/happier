@@ -6,7 +6,6 @@ import { NewSessionServerSelectionContent } from '@/components/sessions/new/comp
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 import { t } from '@/text';
-import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { buildNewSessionPickerFallbackHref } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 
 export default React.memo(function ServerPickerScreen() {
@@ -16,7 +15,6 @@ export default React.memo(function ServerPickerScreen() {
     const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
     const { height: windowHeight } = useWindowDimensions();
     const maxHeight = Math.min(760, Math.max(420, Math.floor(windowHeight * 0.88)));
-    const presentation = useNewSessionPickerRoutePresentation();
     const close = React.useCallback(
         () => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref }),
         [navigation, pickerFallbackHref, router],
@@ -30,8 +28,7 @@ export default React.memo(function ServerPickerScreen() {
         title: t('common.homeProductName'),
         headerTitle: t('common.homeProductName'),
         headerLeft,
-        presentation,
-    }), [headerLeft, presentation]);
+    }), [headerLeft]);
 
     return (
         <>

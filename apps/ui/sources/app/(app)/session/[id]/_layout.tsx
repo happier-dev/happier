@@ -1,21 +1,17 @@
 import * as React from 'react';
 import { Slot, useLocalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { useExpoSceneMirrorsWorkspace } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
 import { useNavigationState, useRoute } from '@react-navigation/native';
-import { useShallow } from 'zustand/react/shallow';
 
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
-import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { storage, useSession } from '@/sync/domains/state/storage';
+import { useSessionSelector } from '@/sync/domains/state/storage';
 import { isVoiceTranscriptHistorySession } from '@/voice/persistence/voiceTranscriptHistorySession';
-import { buildScopedSessionRouteHref, createSessionRouteServerScope, readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
-import { useActiveRetainedSessionListQueryStates } from '@/components/sessions/shell/sessionListPaneRetention';
-import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
-import { listServerProfiles, resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
+import { readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
+import { useSessionRouteQualification } from '@/hooks/session/useSessionRouteQualification';
 import { SessionViewerDestinationScope } from '@/components/sessions/viewer/SessionViewerDestinationScope';
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
-import { isSessionRoutePathActive } from '@/sync/domains/session/sessionSurfaceVisibility';
 
 function useSessionLayoutParams() {
     const layoutParams = useLocalSearchParams<Record<string, string | string[] | undefined>>();
@@ -47,26 +43,15 @@ export default function OrdinarySessionRouteLayout() {
     const router = useRouter();
     const pathname = usePathname();
     const params = useSessionLayoutParams();
+    const mirrorsWorkspace = useExpoSceneMirrorsWorkspace();
     const { id, ...routeQuery } = params;
-    const sessionId = normalizeSessionId(id);
-    const queryStates = useActiveRetainedSessionListQueryStates();
-    const profilesGeneration = useServerProfilesGeneration();
-    const homeServerIds = React.useMemo(() => listServerProfiles().map(resolveServerProfileScopeId), [profilesGeneration]);
-    const [resolvedServerId, ...candidateServerIds] = storage(useShallow((state) => {
-        const scope = createSessionRouteServerScope(params, state, { queryStates, homeServerIds });
-        return [scope.serverId, ...scope.candidateAddresses.map((address) => address.serverId)] as const;
-    }));
-    const session = useSession(sessionId);
-    const explicitServerId = readSessionRouteServerId(params);
+    // A workspace-hosted Session is qualified by its destination host (HostedSessionRouteQualification);
+    // this layout qualifies only the Expo-owned (native/unhosted) route.
+    const hosted = useDestinationInstanceKey() !== null;
+    const { sessionId, explicitServerId, resolvedServerId, candidateServerIds, qualifiedHref } = useSessionRouteQualification({
+        params, query: routeQuery, pathname, enabled: !mirrorsWorkspace && !hosted,
+    });
     const promotedServerId = explicitServerId === null ? resolvedServerId : null;
-    // Expo retains local Session params beneath overlays and other routes. Only
-    // qualify this Session's current route; another route still owns its URL.
-    const qualifiedHref = promotedServerId && isSessionRoutePathActive(pathname, sessionId) ? buildScopedSessionRouteHref({
-        sessionId,
-        serverId: promotedServerId,
-        suffix: pathname.slice(`/session/${encodeURIComponent(sessionId)}`.length),
-        query: routeQuery,
-    }) : null;
     React.useEffect(() => {
         if (qualifiedHref) {
             // The destination navigation owner must update the retained leaf,
@@ -74,12 +59,17 @@ export default function OrdinarySessionRouteLayout() {
             router.replace(qualifiedHref);
         }
     }, [qualifiedHref, router]);
-    const isVoiceTranscriptHistory = isVoiceTranscriptHistorySession(session && (!explicitServerId || session.serverId === explicitServerId)
-        ? {
-            active: session.active,
-            metadata: readSessionOwnerMetadataView(session),
-        }
-        : null);
+    // Select the one carrier fact: the whole record changes on every streamed turn write.
+    const isVoiceTranscriptHistory = useSessionSelector(sessionId, undefined, (session) => isVoiceTranscriptHistorySession(
+        session && (!explicitServerId || session.serverId === explicitServerId)
+            ? { active: session.active, metadata: readSessionOwnerMetadataView(session) }
+            : null,
+    ));
+
+    // The workspace's destination host owns this Session's Home, viewer and Board execution. Under
+    // Expo's hidden URL mirror its leaves draw only navigation metadata, and its params may still name the
+    // previous Session of the same route pattern; a scope or fallback here would be a second owner.
+    if (mirrorsWorkspace) return <Slot />;
 
     // The nested route reconstructs its hydration scope from route params. Do not
     // mount it while the sole authoritative legacy candidate is still unqualified.

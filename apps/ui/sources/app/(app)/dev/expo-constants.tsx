@@ -10,11 +10,12 @@ import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import { config } from '@/config';
 import { resolveExpoReleaseChannel } from '@/sync/runtime/appVariant';
 import { Icon } from '@/components/ui/icons/Icon';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 interface JsonViewerProps {
     title: string;
@@ -23,11 +24,12 @@ interface JsonViewerProps {
 }
 
 function JsonViewer({ title, data, defaultExpanded = false }: JsonViewerProps) {
+    const writeClipboard = useClipboardWrite();
     const [isExpanded, setIsExpanded] = useState(defaultExpanded);
     const copyFeedback = useHappierCopyFeedback();
     
     const handleCopy = async () => {
-        const copied = await setClipboardStringSafe(JSON.stringify(data, null, 2));
+        const copied = await writeClipboard(JSON.stringify(data, null, 2));
         if (!copied) {
             Modal.alert('Error', 'Failed to copy to clipboard');
             return;
@@ -66,9 +68,10 @@ function JsonViewer({ title, data, defaultExpanded = false }: JsonViewerProps) {
                 <Text style={{ flex: 1, fontSize: 16, ...Typography.default('semiBold') }}>
                     {title}
                 </Text>
-                <Pressable
+                <HappierPressable
                     onPress={handleCopy}
-                    hitSlop={10}
+                    // Nested in the card header, whose own press is the header: the copy control keeps its drawn box.
+                    hitReach={0}
                     style={{ padding: 4 }}
                 >
                     {copyFeedback.isCopied('json') ? (
@@ -76,7 +79,7 @@ function JsonViewer({ title, data, defaultExpanded = false }: JsonViewerProps) {
                     ) : (
                         <Icon name="copy" size={20} color="#007AFF" />
                     )}
-                </Pressable>
+                </HappierPressable>
             </Pressable>
             
             {isExpanded && (

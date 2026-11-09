@@ -19,7 +19,6 @@ export function SessionUsageScreenRoute() {
         const { layoutId: _layoutId, ...owned } = buildUsageRouteParams(filters);
         router.setParams(owned);
     }, [router]);
-    const handleLayoutChange = React.useCallback((layoutId: string) => router.setParams({ layoutId }), [router]);
     const routeScope = React.useMemo(() => createSessionRouteServerScope(params as Record<string, unknown>), [params]);
     const sessionId = normalizeSessionId(params.id);
     const routeHydrationState = useHydrateSessionForRoute(
@@ -36,7 +35,7 @@ export function SessionUsageScreenRoute() {
         return <ActivitySpinner size="small" />;
     }
 
-    return <UsageWidgetPage sessionId={sessionId} initialFilters={initialFilters} onFiltersChange={handleFiltersChange} onLayoutChange={handleLayoutChange} />;
+    return <UsageWidgetPage sessionId={sessionId} initialFilters={initialFilters} onFiltersChange={handleFiltersChange} />;
 }
 
 export { SessionUsageScreenRoute as WorkspaceRouteBody };

@@ -1,7 +1,8 @@
 import React from 'react';
+import { Platform } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { t } from '@/text';
-import { WizardModalShell } from '@/components/onboarding/ui/WizardModalShell';
+import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { SecretKeyLoginForm } from '@/components/account/restore/SecretKeyLoginForm';
 import { admitInternalRouteHref, normalizeInternalReturnPath } from '@/utils/path/routeUtils';
@@ -9,6 +10,8 @@ import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthent
 import { Text } from '@/components/ui/text/Text';
 import { useAuth } from '@/auth/context/AuthContext';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
+import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import {
     buildApiTokenCreateResumePath,
@@ -59,26 +62,22 @@ export default function Restore() {
         : returnTo;
 
     return (
-        <WizardModalShell
+        <AuthRouteStepFrame
             testID="restore-manual-wizard"
-            stepIndex={1}
-            stepCount={3}
-            // A standalone page: Settings, token repair and the session view reach it too, so it claims no step.
-            showProgress={false}
             title={t('setupOnboarding.authSecretKeyTitle')}
             subtitle={t('setupOnboarding.authSecretKeySubtitle')}
             onBack={() => safeRouterBack({ router, fallbackHref: '/restore' })}
-            showSkip={false}
         >
             <>
                 {hasExactTargetRequest ? exactTarget ? (
                     <SecretKeyLoginForm
+                        returnTo={completedReturnTo ?? '/'}
                         target={{ ...exactTarget, ...(expectedAccountId ? { expectedAccountId } : {}),
                             requireKeyChallengeV2: Boolean(expectedAccountId) }}
                         onAuthenticated={async () => {
                             const switched = await setActiveServerAndSwitch({
                                 serverId: exactTarget.serverId,
-                                scope: 'device',
+                                scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()),
                                 refreshAuth: auth.refreshFromActiveServer,
                             });
                             if (switched !== 'blocked') {
@@ -92,9 +91,9 @@ export default function Restore() {
                         {t('settingsAccount.nativePassword.serverUnavailable')}
                     </Text>
                 ) : (
-                    <SecretKeyLoginForm onSuccess={completedReturnTo ? () => router.replace(admitInternalRouteHref(completedReturnTo)) : undefined} />
+                    <SecretKeyLoginForm returnTo={completedReturnTo ?? '/'} onSuccess={completedReturnTo ? () => router.replace(admitInternalRouteHref(completedReturnTo)) : undefined} />
                 )}
             </>
-        </WizardModalShell>
+        </AuthRouteStepFrame>
     );
 }
