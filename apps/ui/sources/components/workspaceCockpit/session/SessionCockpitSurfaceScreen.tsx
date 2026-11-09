@@ -97,6 +97,7 @@ import { PageBottomBarSeatProvider } from '@/components/ui/layout/useFloatingChr
 import { usePhoneAskSheet } from '@/components/sessions/composer/phoneAsk/phoneAskSheetState';
 import { resolveSessionCockpitComposerRenderer } from './sessionCockpitComposerRenderer';
 import { useWorkspaceFileOpener } from '@/components/workspaces/files/useWorkspaceFileOpener';
+import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 
 // The one Work tab the desktop sidebar mounts too.
 const SessionWorkView = retryableLazy<React.ComponentProps<typeof import('@/components/sessions/work/SessionWorkView')['SessionWorkView']>>(
@@ -453,6 +454,12 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
     const revealChatSurface = React.useCallback(() => {
         switchSurface('chat');
     }, [switchSurface]);
+    // Escape closes the full Companion back to Chat, where the person came from (owner ruling 2026-11-09).
+    useEscapeLayer({
+        enabled: Platform.OS === 'web' && isFocused && props.surface === 'companion',
+        priority: ESCAPE_LAYER_PRIORITIES.pane,
+        onEscape: () => { revealChatSurface(); return true; },
+    });
     const revealWorkState = React.useCallback(() => {
         props.onRequestOpenWorkState?.();
         revealChatSurface();

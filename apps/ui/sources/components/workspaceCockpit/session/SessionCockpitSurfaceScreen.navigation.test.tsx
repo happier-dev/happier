@@ -795,6 +795,24 @@ describe('SessionCockpitSurfaceScreen navigation surface', () => {
         await screen.unmount();
     });
 
+    it('closes the full Companion with Escape and returns to Chat', async () => {
+        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+        const { SessionCockpitChromeRegistryProvider } = await import('./SessionCockpitChromeRegistry');
+        const { SessionCockpitShell } = await import('./SessionCockpitShell');
+        const { dispatchEscapeToLayerStack } = await import('@/keyboard/escape');
+        await renderScreen(
+            <AppPaneProvider>
+                <SessionCockpitChromeRegistryProvider>
+                    <SessionCockpitShell surface="companion" routeServerId="server-1" scopeId="session:session-1"
+                        sessionId="session-1" terminalTabAvailable={false} />
+                </SessionCockpitChromeRegistryProvider>
+            </AppPaneProvider>,
+        );
+        expect(cockpitNavigatorState.activeSurface).toBe('companion');
+        await act(async () => { dispatchEscapeToLayerStack({ key: 'Escape' }); });
+        expect(cockpitNavigatorState.activeSurface).toBe('chat');
+    });
+
     it('routes repeated Companion work reveals to the separate Chat scene without losing its draft', async () => {
         const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
         const { SessionCockpitChromeRegistryProvider } = await import('./SessionCockpitChromeRegistry');
