@@ -1,5 +1,7 @@
 import type { ActionExecutorContext, ActionExecutorDeps, ActionPreparedOperation, HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1 } from './types.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
+import { SessionStatusResultSchema } from '../../sessions/control/contract.js';
+import { resolveSessionIdFromInput, resolveServerIdForSession } from './sessionScope.js';
 import { isPresentUserHostInvocation } from '../invocationAuthority.js';
 import { type ApprovalRequestV1 } from '../../approvals/approvalRequestV1.js';
 import { getActionSpec, type ActionSpec } from '../actionSpecs.js';
@@ -358,6 +360,29 @@ export async function prepareApprovalRequest(params: Readonly<{
   const widgetLibraryName = fragmentAction.success
     ? libraryItem?.name ?? readWidgetLayoutFragmentApprovalNameV1(params.input) : null;
   const summaryInput = libraryItem ? { ...readRecord(params.input), fragment: { name: libraryItem.name } } : params.input;
+  const nativePermissionAnswer = params.actionId === 'session.permission.respond'
+    && readRecord(params.input).nativeChoice !== undefined;
+  let sessionPermissionRequest: Record<string, unknown> | null = null;
+  if (nativePermissionAnswer && params.deps.sessionStatusGet) {
+    const sessionId = resolveSessionIdFromInput(params.input, params.context);
+    if (sessionId) {
+      try {
+        const serverId = resolveServerIdForSession(params.deps, params.context, sessionId);
+        const status = SessionStatusResultSchema.safeParse(await params.deps.sessionStatusGet({ sessionId,
+          context: params.context, ...(serverId ? { serverId } : {}), ...(params.context.signal ? { signal: params.context.signal } : {}) }));
+        const request = status.success && status.data.session.id === sessionId
+          ? status.data.pendingRequests?.find(request => request.kind === 'permission'
+            && request.requestId === readRecord(params.input).requestId) : undefined;
+        if (request?.nativeChoices) sessionPermissionRequest = { sessionId, requestId: request.requestId,
+          ...(request.turnId === undefined ? {} : { turnId: request.turnId }),
+          nativeChoices: { ...request.nativeChoices,
+            choices: request.nativeChoices.choices.map(({ response: _response, ...choice }) => choice) } };
+      } catch {
+        // Unavailable display context uses the presenter's existing unavailable result.
+        params.context.signal?.throwIfAborted();
+      }
+    }
+  }
   let widgetPresentation: ApprovalPresentationContext['widgetPresentation'];
   if (params.actionId === 'widgets.item.add' || params.actionId === 'widgets.item.remove') {
     const surface = readWidgetActionSurfaceV1(params.input);
@@ -452,6 +477,8 @@ export async function prepareApprovalRequest(params: Readonly<{
     // whose raw operands stay with the originating waiter.
     actionArgs: projectApprovalReviewInput(spec, params.input),
     summary: customizedSummary || defaultPreview.summary,
+    // The host's scoped read owns these labels; custom previews cannot replace them.
+    ...(nativePermissionAnswer ? { sessionPermissionRequest } : {}),
     ...(widgetLibraryName ? { widgetLibraryName } : {}),
     ...(computerApprovalDisplay ? { computerApprovalDisplay } : {}),
     ...(widgetPresentation ? { widgetPresentation } : {}),

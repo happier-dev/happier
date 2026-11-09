@@ -1,4 +1,6 @@
 import { StructuredQuestionAnswersV1Schema } from '../tools/structuredQuestionAnswersV1.js';
+import { NativePermissionChoiceAnswerV1Schema, NativePermissionChoiceV1Schema, NativePermissionChoicesV1Schema } from '../sessions/permissions/respondRpcParamsV1.js';
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { readApprovalExecutionFailure } from '../approvals/approvalExecutionFailure.js';
 import { StoredApprovalRequestSchema, ApprovalRequestV1Schema, ApprovalRequestV2Schema, type StoredApprovalRequestV2, type ApprovalExecutionOriginV1, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '../approvals/targetActionApprovalRequestV1.js';
@@ -824,6 +826,47 @@ export function projectApprovalReviewInput(spec: ActionSpec, input: unknown): un
   return review.inputSchema ? review.inputSchema.parse(projected) : projected;
 }
 
+const NativePermissionApprovalOccurrenceSchema = lazyZodSchema(() => {
+  const offer = NativePermissionChoicesV1Schema.shape;
+  return z.strictObject({
+    sessionId: z.string(), requestId: z.string(), turnId: z.optional(z.string()),
+    nativeChoices: z.strictObject({ ...offer,
+      choices: z.array(z.omit(NativePermissionChoiceV1Schema, { response: true })),
+    }),
+  });
+});
+
+/** Read the host-captured occurrence, never labels supplied with the answer. */
+function describeNativePermissionChoice(input: Readonly<{
+  actionId: string; actionArgs: Record<string, unknown>; preview?: unknown;
+}>): ApprovalActionFieldsPresentation {
+  const answer = NativePermissionChoiceAnswerV1Schema.safeParse(input.actionArgs.nativeChoice);
+  const occurrence = NativePermissionApprovalOccurrenceSchema.safeParse(readApprovalPresentationPreview(input)?.sessionPermissionRequest);
+  const captured = occurrence.success ? occurrence.data : null;
+  const choice = answer.success && captured
+    && (input.actionArgs.sessionId === undefined || captured.sessionId === input.actionArgs.sessionId)
+    && captured.requestId === input.actionArgs.requestId
+    && (input.actionArgs.turnId === undefined || captured.turnId === input.actionArgs.turnId)
+    && captured.nativeChoices.requirementId === answer.data.requirementId
+    ? captured.nativeChoices.choices.find(choice => choice.id === answer.data.choiceId) : undefined;
+  if (!captured || !choice || !choice.label.trim()) {
+    const unavailable = { path: 'nativeChoice', reason: 'missing_required_context' as const };
+    return { rows: [{ kind: 'unrepresentable', title: 'Permission choice', ...unavailable }], unrepresentable: unavailable };
+  }
+  const scopeLabels = { once: 'Once', session: 'This session', localPersistent: 'Saved locally' } satisfies Record<typeof choice.scope, string>;
+  return { rows: [
+    { kind: 'value', path: 'sessionId', title: 'Session', value: captured.sessionId,
+      reference: { kind: 'session', id: captured.sessionId } },
+    { kind: 'value', path: 'requestId', title: 'Request id', value: captured.requestId, technical: true },
+    ...(captured.turnId ? [{ kind: 'value' as const, path: 'turnId', title: 'Turn id', value: captured.turnId, technical: true as const }] : []),
+    { kind: 'value', path: 'nativeChoice', title: 'Permission choice', value: choice.label },
+    { kind: 'value', path: 'nativeChoice.scope', title: 'Scope', value: choice.scope,
+      selectedOptions: [{ label: scopeLabels[choice.scope] }] },
+    ...(choice.rulePreview ? [{ kind: 'value' as const, path: 'nativeChoice.rulePreview', title: 'Rule', value: choice.rulePreview }] : []),
+    ...(answer.success && answer.data.feedback ? [{ kind: 'value' as const, path: 'nativeChoice.feedback', title: 'Feedback', value: answer.data.feedback }] : []),
+  ], unrepresentable: null };
+}
+
 /** One Protocol-owned reading governs both rendered fields and approval admission. */
 export function describeApprovalActionFields(input: Readonly<{
   actionId: string;
@@ -837,6 +880,10 @@ export function describeApprovalActionFields(input: Readonly<{
     spec = getActionSpec(input.actionId as ActionId);
   } catch {
     return { rows: [], unrepresentable: { path: '', reason: 'missing_required_context' } };
+  }
+  if (input.actionId === 'session.permission.respond' && isRecord(input.actionArgs)
+    && input.actionArgs.nativeChoice !== undefined) {
+    return describeNativePermissionChoice({ ...input, actionArgs: input.actionArgs });
   }
   const review = spec.approvalPresentation;
   const settled = input.status && ['executed', 'failed', 'outcome_unknown', 'rejected', 'canceled'].includes(input.status);

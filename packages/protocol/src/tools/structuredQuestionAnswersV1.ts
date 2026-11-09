@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
-import { MAX_INTERACTION_TRANSIENT_CHOICES_V1, MAX_INTERACTION_TRANSIENT_QUESTIONS_V1 } from '../plugins/interactions/transientV1.js';
+import { MAX_INTERACTION_TRANSIENT_CHOICES_V1, MAX_INTERACTION_TRANSIENT_QUESTIONS_V1 } from '../plugins/interactions/transientV1Limits.js';
 
 const STRUCTURED_QUESTION_ANSWERS_V1_LIMITS = Object.freeze({
   maxQuestions: MAX_INTERACTION_TRANSIENT_QUESTIONS_V1,
@@ -10,6 +10,46 @@ const STRUCTURED_QUESTION_ANSWERS_V1_LIMITS = Object.freeze({
 });
 
 export type StructuredQuestionAnswersV1 = Readonly<Record<string, ReadonlyArray<string>>>;
+
+/** Custom text and commentary retain their native meaning beside selected answers. */
+export type StructuredQuestionAnswerDetailsV1 = Readonly<Record<string, Readonly<{
+  freeText?: string;
+  note?: string;
+}>>>;
+
+export const StructuredQuestionAnswerDetailsV1Schema = lazyZodSchema(() => z.record(
+  z.string().check(z.minLength(1), z.maxLength(STRUCTURED_QUESTION_ANSWERS_V1_LIMITS.maxStringLength)),
+  z.readonly(z.strictObject({
+    freeText: z.optional(z.string().check(z.maxLength(STRUCTURED_QUESTION_ANSWERS_V1_LIMITS.maxStringLength))),
+    note: z.optional(z.string().check(z.maxLength(STRUCTURED_QUESTION_ANSWERS_V1_LIMITS.maxStringLength))),
+  })),
+).check(z.superRefine((details, ctx) => {
+  if (Object.keys(details).length > STRUCTURED_QUESTION_ANSWERS_V1_LIMITS.maxQuestions) {
+    ctx.addIssue({ code: 'custom', message: 'Too many structured questions' });
+  }
+  const totalLength = Object.entries(details).reduce((total, [question, detail]) => (
+    total + question.length + (detail.freeText?.length ?? 0) + (detail.note?.length ?? 0)
+  ), 0);
+  if (totalLength > STRUCTURED_QUESTION_ANSWERS_V1_LIMITS.maxTotalStringLength) {
+    ctx.addIssue({ code: 'custom', message: 'Structured answer details exceed the total size limit' });
+  }
+})));
+
+/** Bounds apply to selected options, independently of custom text and notes. */
+export const StructuredQuestionSelectionConstraintsV1Schema = lazyZodSchema(() => z.strictObject({
+  minSelections: z.optional(z.number().check(z.int(), z.gte(0))),
+  maxSelections: z.optional(z.number().check(z.int(), z.gte(0))),
+}).check(z.refine(value => value.minSelections === undefined || value.maxSelections === undefined
+  || value.minSelections <= value.maxSelections, 'Selection minimum must not exceed maximum')));
+export type StructuredQuestionSelectionConstraintsV1 = z.infer<typeof StructuredQuestionSelectionConstraintsV1Schema>;
+
+export function isStructuredQuestionSelectionCountValid(
+  constraints: StructuredQuestionSelectionConstraintsV1,
+  count: number,
+): boolean {
+  return (constraints.minSelections === undefined || count >= constraints.minSelections)
+    && (constraints.maxSelections === undefined || count <= constraints.maxSelections);
+}
 
 /**
  * Exact structured-question answer carrier. Each question owns an ordered array,

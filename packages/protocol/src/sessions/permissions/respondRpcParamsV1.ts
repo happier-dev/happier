@@ -1,35 +1,23 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
-import { StructuredQuestionAnswersV1Schema, type StructuredQuestionAnswersV1 } from '../../tools/structuredQuestionAnswersV1.js';
+import { StructuredQuestionAnswerDetailsV1Schema, StructuredQuestionAnswersV1Schema, type StructuredQuestionAnswerDetailsV1, type StructuredQuestionAnswersV1 } from '../../tools/structuredQuestionAnswersV1.js';
 
-export const SessionPermissionRespondDecisionV1Schema = lazyZodSchema(() => z.enum([
-  'approved', 'approved_for_session', 'approved_execpolicy_amendment', 'denied', 'abort',
-]));
-/** Released Action callers used allow/deny; current callers use the RPC vocabulary. */
-export const SessionPermissionRespondActionDecisionV1Schema = lazyZodSchema(() => z.enum([
-  'allow', 'deny', ...SessionPermissionRespondDecisionV1Schema.options,
-]));
-export type SessionPermissionRespondActionDecisionV1 = z.infer<typeof SessionPermissionRespondActionDecisionV1Schema>;
-
-/** Non-authorizing, executing-client evidence; an Account actor is not a device. */
-export const SessionPermissionAnsweringClientCategoryV1Schema = lazyZodSchema(() => z.enum([
-  'ios', 'android', 'web', 'desktop',
-]));
-export type SessionPermissionAnsweringClientCategoryV1 = z.infer<typeof SessionPermissionAnsweringClientCategoryV1Schema>;
+import { NativePermissionChoiceAnswerV1Schema, SessionPermissionRespondPayloadV1Schema,
+  type SessionPermissionRespondActionDecisionV1 } from './nativeChoicesV1.js';
+export * from './nativeChoicesV1.js';
 
 const common = {
-  id: z.string(), turnId: z.optional(z.string()), reason: z.optional(z.string()),
-  answeringClientCategory: z.optional(SessionPermissionAnsweringClientCategoryV1Schema),
-  mode: z.optional(z.enum(['default', 'acceptEdits', 'bypassPermissions', 'plan'])),
-  allowedTools: z.optional(z.array(z.string())),
-  decision: z.optional(SessionPermissionRespondDecisionV1Schema),
-  execPolicyAmendment: z.optional(z.strictObject({ command: z.array(z.string()) })),
-  updatedPermissions: z.optional(z.unknown()), answers: z.optional(StructuredQuestionAnswersV1Schema),
+  ...SessionPermissionRespondPayloadV1Schema.shape,
+  id: z.string(), turnId: z.optional(z.string()),
+  answers: z.optional(StructuredQuestionAnswersV1Schema),
+  answerDetails: z.optional(StructuredQuestionAnswerDetailsV1Schema),
+  nativeChoice: z.optional(NativePermissionChoiceAnswerV1Schema),
 };
 /** Closed mutation carrier; approval authority remains with admission and the runtime. */
-export const SessionPermissionRespondRpcParamsV1Schema = lazyZodSchema(() => z.discriminatedUnion('approved', [
+export const SessionPermissionRespondRpcParamsV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...common, approved: z.literal(true) }),
   z.strictObject({ ...common, approved: z.literal(false) }),
+  z.strictObject({ ...common, approved: z.optional(z.never()), nativeChoice: NativePermissionChoiceAnswerV1Schema }),
 ]));
 export type SessionPermissionRespondRpcParamsV1 = z.infer<typeof SessionPermissionRespondRpcParamsV1Schema>;
 
@@ -49,11 +37,19 @@ export type SessionUserActionAnswerRpcParamsV1 = z.infer<typeof SessionUserActio
 /** One Action-to-RPC compatibility seam, consumed by both first-party hosts. */
 export function buildSessionPermissionRespondRpcParamsV1(input: Readonly<
   Omit<SessionPermissionRespondRpcParamsV1, 'approved' | 'decision' | 'execPolicyAmendment'> & {
-    decision: SessionPermissionRespondActionDecisionV1;
+    decision?: SessionPermissionRespondActionDecisionV1;
     execPolicyAmendment?: unknown;
   }
 >): SessionPermissionRespondRpcParamsV1 {
+  if (input.nativeChoice) {
+    return SessionPermissionRespondRpcParamsV1Schema.parse({
+      id: input.id, nativeChoice: input.nativeChoice,
+      ...(input.turnId === undefined ? {} : { turnId: input.turnId }),
+      ...(input.answeringClientCategory === undefined ? {} : { answeringClientCategory: input.answeringClientCategory }),
+    });
+  }
   const { decision, ...fields } = input;
+  if (decision === undefined) throw new Error('permission_decision_required');
   const rpcDecision = decision === 'deny' ? 'denied'
     : decision === 'allow' ? input.execPolicyAmendment ? 'approved_execpolicy_amendment' : undefined
     : decision;
@@ -73,7 +69,31 @@ export function buildSessionUserActionAnswerMap(input: unknown): StructuredQuest
     const question = String(entry.question ?? '');
     if (!question.trim() || !Array.isArray(entry.values)) continue;
     const values: readonly unknown[] = entry.values;
-    if (values.length > 0 && values.every((value): value is string => typeof value === 'string')) answers[question] = [...values];
+    if (values.every((value): value is string => typeof value === 'string')) answers[question] = [...values];
   }
   return answers;
+}
+
+/** Preserve explicit native text/comment fields without joining them into choice values. */
+export function buildSessionUserActionAnswerDetails(input: unknown): StructuredQuestionAnswerDetailsV1 {
+  const details: Record<string, { freeText?: string; note?: string }> = Object.create(null);
+  if (!Array.isArray(input)) return details;
+  for (const entry of input) {
+    if (!entry || typeof entry !== 'object' || typeof entry.question !== 'string') continue;
+    if (typeof entry.freeText !== 'string' && typeof entry.note !== 'string') continue;
+    details[entry.question] = {
+      ...(typeof entry.freeText === 'string' ? { freeText: entry.freeText } : {}),
+      ...(typeof entry.note === 'string' ? { note: entry.note } : {}),
+    };
+  }
+  return StructuredQuestionAnswerDetailsV1Schema.parse(details);
+}
+
+/** Project both parts of a typed answer to the existing per-question Action entries. */
+export function buildSessionUserActionAnswerItems(
+  answers: StructuredQuestionAnswersV1,
+  answerDetails?: StructuredQuestionAnswerDetailsV1,
+): readonly Readonly<{ question: string; values: readonly string[]; freeText?: string; note?: string }>[] {
+  const questionIds = new Set([...Object.keys(answers), ...Object.keys(answerDetails ?? {})]);
+  return [...questionIds].map(question => ({ question, values: [...(answers[question] ?? [])], ...answerDetails?.[question] }));
 }

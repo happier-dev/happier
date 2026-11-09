@@ -2,21 +2,25 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import { StrictJsonValueSchema, type JsonValue } from '../../json/strictJsonValue.js';
+import { isStructuredQuestionSelectionCountValid, StructuredQuestionSelectionConstraintsV1Schema } from '../../tools/structuredQuestionAnswersV1.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginIdSchema } from '../pluginId.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 import { PluginExecutionScopeV1Schema } from '../invocationScopeV1.js';
 import { PluginUiRuntimeOccurrenceIdV1Schema } from '../ui/runtimeOccurrenceV1.js';
+import { NativePermissionChoicesV1Schema, NativePermissionChoiceAnswerV1Schema } from '../../sessions/permissions/nativeChoicesV1.js';
+import {
+  MAX_INTERACTION_TRANSIENT_QUESTIONS_V1,
+  MAX_INTERACTION_TRANSIENT_CHOICES_V1,
+  MAX_INTERACTION_TRANSIENT_IDENTIFIER_UTF8_BYTES_V1,
+  MAX_INTERACTION_TRANSIENT_TITLE_OR_LABEL_CODE_POINTS_V1,
+  MAX_INTERACTION_TRANSIENT_PROMPT_CODE_POINTS_V1,
+  MAX_INTERACTION_TRANSIENT_TEXT_ANSWER_CODE_POINTS_V1,
+  MAX_INTERACTION_TRANSIENT_JSON_BYTES_V1,
+} from './transientV1Limits.js';
+export * from './transientV1Limits.js';
 
 const textEncoder = new TextEncoder();
-
-export const MAX_INTERACTION_TRANSIENT_QUESTIONS_V1 = 32;
-export const MAX_INTERACTION_TRANSIENT_CHOICES_V1 = 64;
-export const MAX_INTERACTION_TRANSIENT_IDENTIFIER_UTF8_BYTES_V1 = 128;
-export const MAX_INTERACTION_TRANSIENT_TITLE_OR_LABEL_CODE_POINTS_V1 = 512;
-export const MAX_INTERACTION_TRANSIENT_PROMPT_CODE_POINTS_V1 = 4_096;
-export const MAX_INTERACTION_TRANSIENT_TEXT_ANSWER_CODE_POINTS_V1 = 16_384;
-export const MAX_INTERACTION_TRANSIENT_JSON_BYTES_V1 = 256 * 1024;
 
 function utf8ByteLength(value: string): number {
   return textEncoder.encode(value).byteLength;
@@ -225,6 +229,23 @@ const InteractionTransientAuthorChoiceV1Schema = lazyZodSchema(() => z.strictObj
   description: z.optional(boundedPrompt('Interaction choice descriptions')),
 }));
 
+function validateQuestionSelectionConstraints(
+  question: Readonly<{ type: 'singleChoice' | 'multipleChoice'; choices: readonly unknown[]; minSelections?: number; maxSelections?: number }>,
+  context: z.core.$RefinementCtx,
+): void {
+  const parsed = StructuredQuestionSelectionConstraintsV1Schema.safeParse({
+    ...(question.minSelections === undefined ? {} : { minSelections: question.minSelections }),
+    ...(question.maxSelections === undefined ? {} : { maxSelections: question.maxSelections }),
+  });
+  if (!parsed.success) for (const issue of parsed.error.issues) context.addIssue({ ...issue });
+  if ((question.minSelections !== undefined || question.maxSelections !== undefined) && question.type !== 'multipleChoice') {
+    context.addIssue({ code: 'custom', message: 'Selection bounds require a multiple-choice question.' });
+  }
+  if (question.minSelections !== undefined && question.minSelections > question.choices.length) {
+    context.addIssue({ code: 'custom', path: ['minSelections'], message: 'Selection minimum exceeds the offered choices.' });
+  }
+}
+
 const TextQuestionV1Schema = lazyZodSchema(() => z.strictObject({
   id: boundedIdentifier('Interaction question ids'),
   prompt: boundedPrompt('Interaction question prompts'),
@@ -232,6 +253,7 @@ const TextQuestionV1Schema = lazyZodSchema(() => z.strictObject({
   initialValue: z.optional(boundedPrompt('Interaction question initial values')),
   type: z.literal('text'),
   required: z.boolean(),
+  allowNote: z.optional(z.boolean()),
 }));
 const ChoiceQuestionV1Schema = lazyZodSchema(() => z.strictObject({
   id: boundedIdentifier('Interaction question ids'),
@@ -240,9 +262,12 @@ const ChoiceQuestionV1Schema = lazyZodSchema(() => z.strictObject({
   type: z.union([z.literal('singleChoice'), z.literal('multipleChoice')]),
   required: z.boolean(),
   allowCustom: z.boolean(),
+  allowNote: z.optional(z.boolean()),
+  ...StructuredQuestionSelectionConstraintsV1Schema.shape,
   choices: z.array(InteractionTransientChoiceV1Schema).check(z.minLength(1), z.maxLength(MAX_INTERACTION_TRANSIENT_CHOICES_V1)),
 }).check(z.superRefine((question, context) => {
   issueForDuplicateIds(question.choices, context, ['choices'], 'Interaction choice');
+  validateQuestionSelectionConstraints(question, context);
 })));
 
 export const InteractionTransientQuestionV1Schema = lazyZodSchema(() => z.union([
@@ -258,6 +283,7 @@ const AuthorTextQuestionV1Schema = lazyZodSchema(() => z.strictObject({
   initialValue: z.optional(boundedPrompt('Interaction question initial values')),
   type: z.literal('text'),
   required: z.optional(z.boolean()),
+  allowNote: z.optional(z.boolean()),
 }));
 const AuthorChoiceQuestionV1Schema = lazyZodSchema(() => z.strictObject({
   id: boundedIdentifier('Interaction question ids'),
@@ -266,9 +292,12 @@ const AuthorChoiceQuestionV1Schema = lazyZodSchema(() => z.strictObject({
   type: z.union([z.literal('singleChoice'), z.literal('multipleChoice')]),
   required: z.optional(z.boolean()),
   allowCustom: z.optional(z.boolean()),
+  allowNote: z.optional(z.boolean()),
+  ...StructuredQuestionSelectionConstraintsV1Schema.shape,
   choices: z.array(InteractionTransientAuthorChoiceV1Schema).check(z.minLength(1), z.maxLength(MAX_INTERACTION_TRANSIENT_CHOICES_V1)),
 }).check(z.superRefine((question, context) => {
   issueForDuplicateIds(question.choices, context, ['choices'], 'Interaction choice');
+  validateQuestionSelectionConstraints(question, context);
 })));
 export const InteractionTransientAuthorQuestionV1Schema = lazyZodSchema(() => z.union([
   AuthorTextQuestionV1Schema,
@@ -305,6 +334,7 @@ const ApprovalRequestV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>
   description: z.optional(boundedPrompt('Interaction approval descriptions')),
   subject: InteractionTransientApprovalSubjectV1Schema,
   allowedPersistenceScopes: z.optional(z.tuple([z.literal('session')])),
+  nativeChoices: z.optional(NativePermissionChoicesV1Schema),
 })).check(z.superRefine((request, context) => {
   issueForInvalidPayload(request, context, 'Interaction requests');
   if (request.scope.kind === 'app' && request.allowedPersistenceScopes !== undefined) {
@@ -343,6 +373,7 @@ const ApprovalAuthorRequestV1Schema = lazyZodSchema(() => z.strictObject({
   description: z.optional(boundedPrompt('Interaction approval descriptions')),
   subject: InteractionTransientApprovalSubjectV1Schema,
   allowSessionPersistence: z.optional(z.boolean()),
+  nativeChoices: z.optional(NativePermissionChoicesV1Schema),
 }));
 const ConfirmationAuthorRequestV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('confirmation'),
@@ -414,6 +445,7 @@ export function normalizeInteractionTransientRequestV1(
           title: request.title,
           ...(request.description === undefined ? {} : { description: request.description }),
           subject: request.subject,
+          ...(request.nativeChoices === undefined ? {} : { nativeChoices: request.nativeChoices }),
           ...(request.allowSessionPersistence === true && parsedStamp.data.scope.kind === 'session'
             ? { allowedPersistenceScopes: ['session'] as const }
             : {}),
@@ -457,14 +489,17 @@ export const InteractionTransientQuestionAnswerV1Schema = lazyZodSchema(() => z.
   z.strictObject({
     kind: z.literal('text'),
     value: boundedTextAnswer('Interaction text answers'),
+    note: z.optional(boundedTextAnswer('Interaction answer notes')),
   }),
   z.strictObject({
     kind: z.literal('singleChoice'),
     answer: InteractionTransientChoiceSelectionV1Schema,
+    note: z.optional(boundedTextAnswer('Interaction answer notes')),
   }),
   z.strictObject({
     kind: z.literal('multipleChoice'),
-    answers: z.array(InteractionTransientChoiceSelectionV1Schema).check(z.minLength(1), z.maxLength(MAX_INTERACTION_TRANSIENT_CHOICES_V1)),
+    answers: z.array(InteractionTransientChoiceSelectionV1Schema).check(z.maxLength(MAX_INTERACTION_TRANSIENT_CHOICES_V1)),
+    note: z.optional(boundedTextAnswer('Interaction answer notes')),
   }),
 ]).check(z.superRefine((answer, context) => {
   if (answer.kind !== 'multipleChoice') return;
@@ -492,17 +527,20 @@ const QuestionsTerminalResultV1Schema = lazyZodSchema(() => z.strictObject({
   status: InteractionTerminalStatusV1Schema,
 }));
 const ApprovalApprovedResultV1Schema = lazyZodSchema(() => z.strictObject({
+  nativeChoice: z.optional(NativePermissionChoiceAnswerV1Schema),
   requestId: boundedIdentifier('Interaction result request ids'),
   kind: z.literal('approval'),
   status: z.literal('approved'),
   persistence: z.optional(z.enum(['once', 'session'])),
 }));
 const ApprovalDeclinedResultV1Schema = lazyZodSchema(() => z.strictObject({
+  nativeChoice: z.optional(NativePermissionChoiceAnswerV1Schema),
   requestId: boundedIdentifier('Interaction result request ids'),
   kind: z.literal('approval'),
   status: z.literal('declined'),
 }));
 const ApprovalTerminalResultV1Schema = lazyZodSchema(() => z.strictObject({
+  nativeChoice: z.optional(NativePermissionChoiceAnswerV1Schema),
   requestId: boundedIdentifier('Interaction result request ids'),
   kind: z.literal('approval'),
   status: InteractionTerminalStatusV1Schema,
@@ -573,6 +611,7 @@ function isQuestionAnswerValid(
   question: InteractionTransientQuestionV1,
   answer: InteractionTransientQuestionAnswerV1,
 ): boolean {
+  if (answer.note !== undefined && question.allowNote !== true) return false;
   if (question.type === 'text') {
     return answer.kind === 'text' && (!question.required || answer.value.trim().length > 0);
   }
@@ -584,7 +623,10 @@ function isQuestionAnswerValid(
       : question.allowCustom && selection.value.trim().length > 0;
   }
   if (answer.kind !== 'multipleChoice') return false;
-  return answer.answers.length > 0
+  const countIsValid = question.minSelections !== undefined || question.maxSelections !== undefined
+    ? isStructuredQuestionSelectionCountValid(question, answer.answers.filter(selection => selection.kind === 'choice').length)
+    : answer.answers.length > 0;
+  return countIsValid
     && answer.answers.every((selection) => (
       selection.kind === 'choice'
         ? question.choices.some((choice) => choice.id === selection.choiceId)
