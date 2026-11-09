@@ -9,11 +9,6 @@ import type {
   AgentSessionOpenRequest,
   AgentSessionRuntime,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
-import {
-  CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
-  CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1,
-} from '@happier-dev/protocol/agents/claude/connected-account-materialization';
 
 import { OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES } from '../auth/services/accountPurposes.js';
 import { OH_MY_PI_SYSTEM_TOOL_ID } from '../systemTool.js';
@@ -32,7 +27,7 @@ const OH_MY_PI_ACP_RUNTIME_DEFINITION = Object.freeze({
 
 type OhMyPiOpenRequest = AgentSessionOpenRequest | AgentExecutionRunOpenRequest;
 
-type PreparedOhMyPiConnectedAccounts<Request extends OhMyPiOpenRequest> = Readonly<{
+type PreparedOhMyPiConnectedAccounts<Request extends Pick<OhMyPiOpenRequest, 'launchEnvironment'>> = Readonly<{
   request: Request;
   isInvalidated(): boolean;
   bind(session: AgentSessionRuntime): AgentSessionRuntime;
@@ -70,9 +65,11 @@ function isExpectedService(
   return actual.pluginId === expected.pluginId && actual.localId === expected.localId;
 }
 
-async function prepareOhMyPiQualifiedAccounts<Request extends OhMyPiOpenRequest>(
+export async function prepareOhMyPiQualifiedAccounts<Request extends Pick<OhMyPiOpenRequest, 'launchEnvironment'>>(
   request: Request,
-  context: AgentRuntimeContext,
+  context: Readonly<{ signal: AbortSignal; services: Readonly<{
+    connectedAccounts: Pick<AgentRuntimeContext['services']['connectedAccounts'], 'getBinding' | 'materialize' | 'watch'>;
+  }> }>,
 ): Promise<PreparedOhMyPiConnectedAccounts<Request>> {
   const subscriptions: Array<Readonly<{ dispose(): void }>> = [];
   const initialObservations: Promise<void>[] = [];
@@ -129,32 +126,11 @@ async function prepareOhMyPiQualifiedAccounts<Request extends OhMyPiOpenRequest>
     }
 
     const materializedEnvironment = await Promise.all(bound.map(async ({ declaration, binding }) => {
-      let materialized: Awaited<ReturnType<
-        AgentRuntimeContext['services']['connectedAccounts']['materialize']
-      >>;
-      try {
-        materialized = await context.services.connectedAccounts.materialize(
-          declaration.purpose,
-          declaration.purpose === 'claude-subscription'
-            ? CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1
-            : { kind: 'environment', keys: [declaration.materializationKey] },
-          { signal: context.signal, expectedAccount: binding.account },
-        );
-      } catch (error) {
-        if (
-          declaration.purpose === 'claude-subscription'
-          && isPluginError(error)
-          && error.code
-            === CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.oauth
-              .requestAuthRequiredErrorCode
-        ) {
-          throw new PluginError({
-            code: 'plugin_ohmypi_claude_subscription_oauth_unsupported',
-            message: 'Oh My Pi does not support Claude OAuth Connected Accounts because it has no request-auth consumer.',
-          });
-        }
-        throw error;
-      }
+      const materialized = await context.services.connectedAccounts.materialize(
+        declaration.purpose,
+        { kind: 'environment', keys: [declaration.materializationKey] },
+        { signal: context.signal, expectedAccount: binding.account },
+      );
       if (materialized.kind !== 'environment') {
         throw new Error(
           `Oh My Pi Connected Account purpose ${declaration.purpose} returned an invalid environment materialization.`,

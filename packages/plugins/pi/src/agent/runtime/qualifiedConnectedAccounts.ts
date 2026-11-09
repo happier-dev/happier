@@ -1,14 +1,16 @@
 import { dirname } from 'node:path';
 
-import { isPluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import {
   CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
   CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1,
-} from '@happier-dev/plugin-sdk/first-party/connected-accounts';
+} from '@happier-dev/protocol/agents/claude/connected-account-materialization';
 import type {
   AgentLaunchEnvironment,
   AgentRuntimeContext,
   AgentSessionRuntime,
+  AgentSessionOpenRequest,
+  AgentExecutionRunOpenRequest,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { replacePiAuthConfig } from '../auth/services/authConfig.js';
@@ -122,7 +124,11 @@ function mergeQualifiedLaunchEnvironment(input: Readonly<{
 
 export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
   launchEnvironment?: AgentLaunchEnvironment;
-  context: Pick<AgentRuntimeContext, 'services' | 'signal'>;
+  request?: Pick<AgentSessionOpenRequest | AgentExecutionRunOpenRequest, 'kind' | 'configuration'>;
+  context: Readonly<{
+    signal: AbortSignal;
+    services: Readonly<{ connectedAccounts: Pick<ConnectedAccounts, 'getBinding' | 'materialize' | 'watch'> }>;
+  }>;
 }>): Promise<PreparedPiQualifiedConnectedAccounts> {
   const { connectedAccounts } = input.context.services;
   const subscriptions: Array<Readonly<{ dispose(): void }>> = [];
@@ -202,6 +208,16 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
       }),
     );
     const [claudeSubscription, openaiCodex, openai, anthropic] = bindings;
+    // Pi's authenticated registry advertises candidates, not ChatGPT account
+    // entitlement. A fresh launch must not silently pick an arbitrary candidate.
+    const selectedModel = input.request?.configuration?.model;
+    if (openaiCodex && input.request && input.request.kind !== 'resume'
+      && (!readNonBlank(selectedModel?.value) || selectedModel?.value === 'default')) {
+      throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
+        message: 'Choose an explicit model for the Pi ChatGPT Connected Account. Its native catalog does not establish account entitlement.',
+        details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
+          phase: 'client_start', failureReason: 'unknown' } } });
+    }
     if (claudeSubscription && anthropic) {
       throw new Error('Pi cannot bind Claude Subscription and direct Anthropic credentials simultaneously');
     }

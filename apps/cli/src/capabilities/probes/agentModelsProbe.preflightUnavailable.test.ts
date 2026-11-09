@@ -69,7 +69,7 @@ describe('probeAgentModelsBestEffort (authoritative preflight unavailable)', () 
     })).resolves.toEqual({
       agentId: 'ohMyPi',
       availableModels: [],
-      supportsFreeform: false,
+      supportsFreeform: true,
       source: 'unavailable',
       cacheable: false,
       refreshError: true,

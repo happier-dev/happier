@@ -5,6 +5,7 @@ import { buildPiRuntimeModelsSnapshot } from '../models/catalog.js';
 import { buildPiModelDiscoveryExtensionSource, parsePiModelDiscoveryLine } from '../models/discoveryExtension.js';
 import { PI_REQUEST_AUTH_CAPABILITY_PATH_ENV, resolvePiRequestAuthExtensionPath } from '../auth/services/requestAuth/index.js';
 import { buildPiCommandCatalogDiscoveryExtensionSource, parsePiPreflightCommandCatalog } from './catalogs.js';
+import { preparePiQualifiedConnectedAccounts } from '../runtime/qualifiedConnectedAccounts.js';
 
 export type PiPreflightModel = AgentSessionModel;
 
@@ -54,6 +55,14 @@ function createPiDiscoveryCommand(
 }
 
 export const PI_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
+  prepareLaunchEnvironment: async ({ environment, connectedAccounts, signal }) => {
+    const prepared = await preparePiQualifiedConnectedAccounts({
+      launchEnvironment: { values: environment, unset: [] },
+      context: { signal, services: { connectedAccounts } },
+    });
+    return { environment: prepared.launchEnvironment.values, unset: prepared.launchEnvironment.unset,
+      dispose: prepared.dispose };
+  },
   models: Object.freeze({
     command: createPiDiscoveryCommand(PI_MODEL_DISCOVERY_ARGS, buildPiModelDiscoveryExtensionSource),
     parseOutput: ({ stderr }) => parsePiPreflightModelObservation(stderr),

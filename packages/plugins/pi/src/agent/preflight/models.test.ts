@@ -1,10 +1,41 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { AgentPreflightSessionControlsContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { PI_PREFLIGHT_SESSION_CONTROLS } from './models.js';
+import { PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID } from '../auth/services/requestAuth/purposes.js';
+import { PI_REQUEST_AUTH_CAPABILITY_PATH_ENV, resolvePiRequestAuthExtensionPath } from '../auth/services/requestAuth/index.js';
 
 const observation = (models: unknown[]) => JSON.stringify({ type: 'happier-pi-model-catalog', models });
 
 describe('Pi structured preflight model discovery', () => {
+  it('prepares the selected Codex binding before the native probe consumes its extension', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pi-preflight-auth-'));
+    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+    const declaration: AgentPreflightSessionControlsContributionV1 = PI_PREFLIGHT_SESSION_CONTROLS;
+    let prepared: Awaited<ReturnType<NonNullable<typeof declaration.prepareLaunchEnvironment>>> | undefined;
+    try {
+      expect(declaration.prepareLaunchEnvironment).toBeTypeOf('function');
+      prepared = await declaration.prepareLaunchEnvironment?.({
+        environment: { PI_CODING_AGENT_DIR: directory, [PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]: join(directory, 'capability.json') },
+        connectedAccounts: {
+          watch(_purpose, listener) { void listener({ kind: 'resync' }); return { dispose() {} }; },
+          async getBinding(purpose) { return purpose === PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID
+            ? { purpose, service, account: { service, accountId: 'primary' }, target: { kind: 'account', displayName: 'Primary' } } : null; },
+          async materialize() { throw new Error('Codex request auth must remain request scoped'); },
+        },
+        signal: new AbortController().signal,
+      });
+      const command = PI_PREFLIGHT_SESSION_CONTROLS.models.command;
+      const args = command.prepareCommand?.({ accountSettings: null, environment: prepared!.environment }).args;
+      expect(args).toContainEqual({ kind: 'environmentPath', key: 'PI_CODING_AGENT_DIR', relativePath: resolvePiRequestAuthExtensionPath('') });
+      expect(await readFile(resolvePiRequestAuthExtensionPath(directory), 'utf8')).toContain(PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID);
+      expect(JSON.parse(await readFile(join(directory, 'auth.json'), 'utf8'))).toEqual({});
+    } finally { await prepared?.dispose(); await rm(directory, { recursive: true, force: true }); }
+  });
+
   it('preserves friendly names, nested model ids, and model-scoped Thinking support', () => {
     expect(PI_PREFLIGHT_SESSION_CONTROLS.models.parseOutput?.({
       ok: true, stdout: '', exitCode: 0,

@@ -1,4 +1,5 @@
 import type { AgentPreflightSessionControlsContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { prepareOhMyPiQualifiedAccounts } from '../runtime/engine.js';
 
 type OhMyPiPreflightModelOption = Readonly<{
   id: string;
@@ -15,66 +16,37 @@ export type OhMyPiPreflightModel = Readonly<{
   modelOptions?: readonly OhMyPiPreflightModelOption[];
 }>;
 
-export const OH_MY_PI_ACP_COMMAND = Object.freeze({ toolId: 'ohmypi-cli', args: Object.freeze(['--mode', 'acp']) });
+export const OH_MY_PI_ACP_COMMAND = Object.freeze({ toolId: 'ohmypi-cli', args: Object.freeze(['acp']) });
 
-const OH_MY_PI_CLI_MODELS_COMMAND_ARGS = ['--list-models'] as const;
-
-const OH_MY_PI_THINKING_MODEL_OPTION: OhMyPiPreflightModelOption = Object.freeze({
-  id: 'reasoning_effort',
-  name: 'Thinking',
-  type: 'select',
-  currentValue: 'medium',
-  options: Object.freeze([
-    Object.freeze({ value: 'low', name: 'Low' }),
-    Object.freeze({ value: 'medium', name: 'Medium' }),
-    Object.freeze({ value: 'high', name: 'High' }),
-    Object.freeze({ value: 'xhigh', name: 'Max' }),
-  ]),
-});
-
-function readThinkingSupport(value: string | undefined): boolean | null {
-  const normalized = value?.trim().toLowerCase();
-  if (normalized === 'yes') return true;
-  if (normalized === 'no') return false;
-  return null;
-}
-
-function isUnavailableDiagnostic(line: string): boolean {
-  const normalized = line.trim().toLowerCase();
-  return normalized.startsWith('no models available')
-    || normalized.includes('set api keys in environment variables');
-}
+export const OH_MY_PI_CLI_MODELS_COMMAND_ARGS = Object.freeze(['models', '--json']);
 
 export function buildOhMyPiPreflightModelsFromListModelsOutput(
   outputRaw: string,
 ): readonly OhMyPiPreflightModel[] | null {
-  const lines = outputRaw
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length === 0) return null;
-
+  let output: unknown;
+  try { output = JSON.parse(outputRaw); } catch { return null; }
+  if (!output || typeof output !== 'object' || !('models' in output) || !Array.isArray(output.models)) return null;
   const models: OhMyPiPreflightModel[] = [];
-  for (const line of lines) {
-    const lower = line.toLowerCase();
-    if (isUnavailableDiagnostic(line)) return null;
-    if (lower.startsWith('provider') && lower.includes('model')) continue;
-
-    const parts = line.split(/\s+/).filter(Boolean);
-    if (parts.length < 5) continue;
-
-    const provider = parts[0]?.trim();
-    const model = parts[1]?.trim();
+  // Native models --json already filters eligibility through its AuthStorage.
+  const entries: readonly unknown[] = output.models;
+  for (const value of entries) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const entry = value as Readonly<Record<string, unknown>>;
+    if (entry.kind !== 'chat') continue;
+    const provider = typeof entry.provider === 'string' ? entry.provider.trim() : '';
+    const model = typeof entry.id === 'string' ? entry.id.trim() : '';
     if (!provider || !model) continue;
-
-    const supportsThinking = readThinkingSupport(parts[4]);
-    if (supportsThinking === null) continue;
-
+    const thinkingValues: readonly unknown[] = Array.isArray(entry.thinking) ? entry.thinking : [];
+    const thinking = thinkingValues.filter((value): value is string => typeof value === 'string' && value.length > 0);
     models.push({
       id: `${provider}/${model}`,
       name: model,
       description: provider,
-      ...(supportsThinking === true ? { modelOptions: [OH_MY_PI_THINKING_MODEL_OPTION] } : {}),
+      ...(thinking.length > 0 ? { modelOptions: [{
+        id: 'reasoning_effort', name: 'Thinking', type: 'select',
+        currentValue: thinking.includes('medium') ? 'medium' : thinking[0]!,
+        options: thinking.map((value) => ({ value, name: value })),
+      } satisfies OhMyPiPreflightModelOption] } : {}),
     });
   }
 
@@ -82,6 +54,13 @@ export function buildOhMyPiPreflightModelsFromListModelsOutput(
 }
 
 export const OH_MY_PI_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
+  prepareLaunchEnvironment: async ({ environment, connectedAccounts, signal }) => {
+    const prepared = await prepareOhMyPiQualifiedAccounts({ launchEnvironment: { values: environment, unset: [] } }, {
+      signal, services: { connectedAccounts },
+    });
+    return { environment: prepared.request.launchEnvironment.values,
+      unset: prepared.request.launchEnvironment.unset, dispose: prepared.cleanup };
+  },
   catalogs: Object.freeze({ kind: 'acp' as const, command: OH_MY_PI_ACP_COMMAND }),
   models: Object.freeze({
     command: Object.freeze({ toolId: 'ohmypi-cli', args: OH_MY_PI_CLI_MODELS_COMMAND_ARGS }),

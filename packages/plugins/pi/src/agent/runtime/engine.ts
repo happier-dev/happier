@@ -83,6 +83,7 @@ async function openPiSession(
     let runtime: AgentSessionRuntime | null = null;
     try {
       const preparedConnectedAccounts = preparePiQualifiedConnectedAccounts({
+        request,
         launchEnvironment: readEnvironment(request),
         context: { ...context, signal: lifecycle.signal },
       });
@@ -229,6 +230,7 @@ async function openPiExecutionRun(
       try {
         prepared = await lifecycle.waitFor(
           preparePiQualifiedConnectedAccounts({
+            request,
             launchEnvironment: request.launchEnvironment,
             context: { ...context, signal: lifecycle.signal },
           }),

@@ -777,8 +777,11 @@ reuses its native account preparation after the host admits the exact selected-a
 It receives only that operation's Connected Accounts service and sanitized launch environment;
 ordinary catalog callbacks continue to receive environment presence facts. The host removes
 prepared assets before retiring account materialization. Its complete prepared environment also
-retains explicit key removals; the daemon cannot reintroduce a removed native home. OpenCode uses the same qualified-account
-preparer for this path and Session launch, so pre-start discovery sees its native account config.
+retains explicit key removals; the daemon cannot reintroduce a removed native home. OpenCode,
+Pi and Oh My Pi use the same qualified-account preparer for this path and Session launch, so
+pre-start discovery sees the selected account's native configuration and request-auth assets.
+An unavailable catalog preserves an Agent's declared freeform selection capability, allowing
+an explicit model choice without treating discovery failure as proof that selection is unsupported.
 Explicit CLI model probes, including configured ACP definitions, run on the selected Machine.
 
 OpenCode server-mode model discovery reads the managed native server's provider inventory through
@@ -1028,6 +1031,12 @@ through the existing scoped execution lifecycle. Runtime discovery runs in the b
 session-start event. Both use Pi's registry refresh and cache; explicit refresh forwards `force`,
 and only configured providers are selected. Current-model and thinking-value updates preserve the
 catalog observation time rather than reporting new membership.
+
+Pi's native registry supplies model candidates, not proof of ChatGPT account entitlement.
+A new Session or finite Run with a Connected ChatGPT account therefore requires a concrete
+model choice and returns the existing `agent_startup_model_reconciliation_failed` refusal for an automatic default. Retained
+Sessions can resume their native model, and an explicit choice still uses Pi's model-selection
+path; the provider remains authoritative for whether that account accepts the chosen model.
 
 Older Pi APIs without a completion receipt expose their structured local choices as a static/error
 fallback. That fallback cannot replace a previous successful dynamic observation. Offline, failed,
