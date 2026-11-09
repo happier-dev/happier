@@ -1,6 +1,8 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -57,6 +59,55 @@ function withFixtureProject<T>(files: Readonly<Record<string, string>>, run: (pa
 }
 
 describe('importCycleGuard analyzer', () => {
+  it('ignores deferred cycles but catches eager reads through a deferred return edge', () => {
+    withFixtureProject({
+      'a.ts': "import { b } from './b.js'; export const a = () => b;",
+      'b.ts': "import { a } from './a.js'; export const b = () => a;",
+    }, ({ sourceRoot, tsconfigPath }) => {
+      expect(analyzeRuntimeImportCycles({ sourceRoot, tsconfigPath, evaluationOnly: true }).cycles).toEqual([]);
+    });
+    withFixtureProject({
+      'a.ts': "import { b } from './b.js'; export const a = { b };",
+      'b.ts': "import { a } from './a.js'; export const b = () => a;",
+    }, ({ sourceRoot, tsconfigPath }) => {
+      const result = analyzeRuntimeImportCycles({ sourceRoot, tsconfigPath, evaluationOnly: true });
+      expect(result.cycles).toHaveLength(1);
+      expect(result.cycles[0]).toMatchObject({ read: { from: 'a.ts', to: 'b.ts', binding: 'b' } });
+    });
+  });
+
+  it('distinguishes instance initialization from static fields and immediate calls', () => {
+    for (const [initializer, eager] of [
+      ['class A { field = b; method() { return b; } }', false],
+      ['class A { static field = b; }', true],
+      ['const A = (() => b)();', true],
+    ] as const) {
+      withFixtureProject({
+        'a.ts': `import { b } from './b.js'; ${initializer} export { A };`,
+        'b.ts': "import { A } from './a.js'; export const b = () => A;",
+      }, ({ sourceRoot, tsconfigPath }) => {
+        expect(analyzeRuntimeImportCycles({ sourceRoot, tsconfigPath, evaluationOnly: true }).cycles.length > 0).toBe(eager);
+      });
+    }
+  });
+
+  it('rejects a seeded new Protocol cycle at the command boundary and accepts its baseline', () => {
+    withFixtureProject({
+      'a.ts': "import { b } from './b.js'; export const a = b;",
+      'b.ts': "import { a } from './a.js'; export const b = a;",
+    }, ({ rootDir, sourceRoot, tsconfigPath }) => {
+      const args = [fileURLToPath(new URL('../importCycleGuard.mjs', import.meta.url)), '--protocol',
+        '--source-root', sourceRoot, '--tsconfig', tsconfigPath, '--baseline', join(rootDir, 'baseline.json')];
+      const rejected = spawnSync(process.execPath, args, { encoding: 'utf8' });
+      expect(rejected.status).toBe(1);
+      expect(rejected.stderr).toContain('new cycle');
+      expect(rejected.stderr).toContain('a.ts');
+      expect(spawnSync(process.execPath, [...args, '--write-baseline'], { encoding: 'utf8' }).status).toBe(0);
+      const accepted = spawnSync(process.execPath, args, { encoding: 'utf8' });
+      expect(accepted.status, accepted.stderr).toBe(0);
+    });
+  });
+
   it('detects runtime strongly connected components through alias and relative imports deterministically', () => {
     withFixtureProject(
       {
