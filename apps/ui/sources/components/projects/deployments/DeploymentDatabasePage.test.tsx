@@ -250,8 +250,9 @@ async function renderDatabase(
     [];
   if (input.answers?.missedSchedule) {
     const { deploymentDataTargetOperands } = await import('./deploymentRestore');
-    const target = deploymentDataTargetOperands(detail);
-    if (!target || !detail.runtimeTargetLink?.activeDeploymentId) throw new Error('Expected deployed backup target');
+    const runtimeTargetLink = detail.targetLinks[0]?.targetLink ?? null;
+    const target = deploymentDataTargetOperands({ environment: detail.environment, runtimeTargetLink });
+    if (!target || !runtimeTargetLink?.activeDeploymentId) throw new Error('Expected deployed backup target');
     const response = AutomationDefinitionDetailsResponseSchema.parse({ automations: [{
       id: 'nightly-backups', name: 'Nightly backups', description: null, enabled: true,
       targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
@@ -264,7 +265,7 @@ async function renderDatabase(
         workspace: { directory: '~' }, executionTarget: { kind: 'detached_run' },
         inlineDefinition: createNightlyBackupsWorkflowV1(),
         inputs: { backupTarget: { ...target, serverId: serverIdentityId,
-          deploymentId: detail.runtimeTargetLink.activeDeploymentId, configRevision: 1 },
+          deploymentId: runtimeTargetLink.activeDeploymentId, configRevision: 1 },
           retention: backup.retention, verificationLevel: 'manifestReadBack' },
       } } },
     }], nextCursor: null });
@@ -521,8 +522,8 @@ describe('Environment → Data → Add (P10)', () => {
       await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.added')
         ?? screen.findByTestId('project-deployments.add.refused')
         ?? screen.findByTestId('project-deployments.add.progress')).not.toBeNull());
-      expect(receivedApplyResults).toEqual([outcome === 'applied' ? { ok: true }
-        : { ok: false, errorCode: outcome === 'partial' ? 'deployment_access_denied' : outcome }]);
+      expect(receivedApplyResults).toEqual([outcome === 'template_service_conflict'
+        ? { ok: false, errorCode: outcome } : { ok: true }]);
       expect(applied).toEqual([expect.objectContaining({ mode: 'apply', intent: 'add', environment: { kind: 'existing',
         environmentId: detail.environment.id, expectedRevision: detail.environment.revision },
         templateRef: expect.objectContaining({ sourceId, itemId: 'postgresql' }),
