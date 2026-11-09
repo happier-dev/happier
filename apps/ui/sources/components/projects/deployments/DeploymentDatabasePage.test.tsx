@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
 import {
@@ -19,7 +20,17 @@ import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/extern
 import {
   createHomeGovernanceHarness,
   installHomeGovernanceBoundaries,
+  waitForHomeGovernance,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
+import { deriveMarketplaceSourceId } from '@happier-dev/protocol/marketplace';
+import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/registries';
+import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -351,6 +362,130 @@ async function renderDatabase(
 }
 
 describe('Environment → Data → Add (P10)', () => {
+  it.each(['applied', 'template_service_conflict'] as const)('applies the reviewed database from the Add button through the confirmed Action front door (%s)', async outcome => {
+    const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
+    const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const serverUrl = `https://database-add-${outcome}.test`;
+    const catalogUrl = `${serverUrl}/apps.json`;
+    const sourceId = deriveMarketplaceSourceId(catalogUrl);
+    const serverId = await homes.addHome({ name: 'Database Add', serverUrl, serverIdentityId: 'srv_database_add',
+      accountId: 'account-owner', currentAccount: true });
+    const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'registry-sources', value: { v: 2,
+      sources: [{ id: sourceId, title: 'Apps', url: catalogUrl, format: 'happier-catalog', kinds: ['app'], enabled: true, addedAt: 1 }],
+      disabledSourceIds: [] } }] });
+    for (const path of ['/v1/account/entity-rows/prompt-library', '/v1/account/entity-rows/prompt-library/registry-sources']) {
+      homes.answer(serverId, path, { body: await (await catalog.handle(path))!.json() });
+    }
+    const bundled: unknown = JSON.parse(await readFile(new URL('../../../../../../packages/plugins/deployment-templates/resources/registry/apps.json', import.meta.url), 'utf8'));
+    if (!bundled || typeof bundled !== 'object' || !('apps' in bundled) || !Array.isArray(bundled.apps)) throw new Error('Expected bundled catalog');
+    const entry: unknown = bundled.apps.find((value: { itemId: string }) => value.itemId === 'postgresql');
+    if (!entry || typeof entry !== 'object' || !('app' in entry)) throw new Error('Expected bundled PostgreSQL');
+    const app = DeploymentTemplateV1Schema.parse(entry.app);
+    homes.answer(serverId, '/apps.json', { body: { schemaVersion: 1, apps: [{ itemId: 'postgresql', app }] } });
+    const account = await captureLazyActionAccountContext(serverId);
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    storage.setState({ settingsScope: account.accountLifetime.scope, profileScope: account.accountLifetime.scope });
+    storage.getState().activateProfileScope(account.accountLifetime.scope);
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, runtimeTargetLink: createDeploymentTargetLinkHeaderV1(), memberVersions: {},
+      content: { ...base.content, definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
+        document: 'services:\n  app:\n    image: app:1\n', profiles: [], services: ['app'], primaryService: 'app' } } };
+    const link = detail.runtimeTargetLink;
+    if (link.targetKind !== 'ownServer') throw new Error('Expected own server');
+    const member = link.members[0]!;
+    homes.answer(serverId, `/v1/deployments/environments/${detail.environment.id}`, { body: {
+      ok: true, environment: { ...detail.environment, controllerMachineId: member.machineId }, targetLinks: [] } });
+    const applied: unknown[] = [];
+    const receivedApplyResults: Array<Readonly<{ ok: boolean; errorCode?: string }>> = [];
+    const templateHost = (raw: unknown) => {
+        const input = DeploymentTemplateInstantiateInputV1Schema.parse(raw);
+        if (input.mode === 'preview') return DeploymentTemplateInstantiateResultV1Schema.parse({ kind: 'preview',
+          review: { templateRef: input.templateRef, profiles: app.compose.profiles, services: app.compose.services, bindings: [],
+            generatedSecrets: app.generatedSecrets.map(secret => ({ name: secret.key, phase: 'runtime', key: secret.key, profile: secret.profile })),
+            domains: [], ...(input.deploy ? { deploy: input.deploy } : {}) } });
+        applied.push(input);
+        if (outcome !== 'applied') return ActionExecuteFailureSchema.parse({ ok: false, errorCode: outcome, error: outcome });
+        return DeploymentTemplateInstantiateResultV1Schema.parse({ kind: 'applied', environmentId: detail.environment.id,
+          revision: 2, targetLinkId: link.id, savedSecrets: [], definition: { kind: 'stored', contentRevision: 2,
+            composeDigest: `sha256:${'c'.repeat(64)}` } });
+    };
+    const { createUiDeploymentActionDeps } = await import('@/sync/api/deployments/deploymentActions');
+    const { resolveActionsSettingsV1FromState } = await import('@/sync/domains/settings/actionsSettings');
+    const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+      resolveEnvironmentApprovalScope: createUiDeploymentActionDeps(account).resolveEnvironmentApprovalScope,
+      // Installed host preparation/effects are the system boundary. Protocol policy and confirmation stay real.
+      prepareDeploymentTemplateInstantiation: async ({ input }) => {
+        const preview = DeploymentTemplateInstantiateResultV1Schema.parse(templateHost({ ...input, mode: 'preview' }));
+        if (preview.kind !== 'preview') throw new Error('Expected template preview');
+        return { input, preview: projectNativeJsonValueForTransport(preview.review), hostReviewedChildren: {
+          children: input.deploy ? [{ action: 'deployments.deploy' as const, role: 'template.deploy' }] : [],
+          executeAdmittedAction: async () => {
+            const result = templateHost(input);
+            return 'errorCode' in result ? result : { ok: true as const, result };
+          },
+        } };
+      },
+      deploymentTemplateInstantiate: async input => templateHost(input),
+    }));
+    const boundary = await answerExternalActionAccountForHome(homes, serverId, { actionId: 'deployments.templates.instantiate',
+      machineId: member.machineId, installationId: member.installationId, tokenEpoch: 0,
+      failure: result => ActionExecuteFailureSchema.safeParse(result).data ?? null,
+      execute: async (input, transport) => {
+        if (!('authentication' in transport.authorization.binding) || !account.serverIdentityId)
+          throw new Error('Expected Account-authorized Home ingress');
+        const result = await receiver.execute('deployments.templates.instantiate', input, {
+          surface: transport.invocation.surface,
+          authority: transport.invocation.authority === 'present_user' ? resolveInvocationAuthority({
+            credential: transport.authorization.binding.authentication.kind, surface: transport.invocation.surface,
+            actionId: 'deployments.templates.instantiate' }) : transport.invocation.authority,
+          actionCaller: transport.invocation.caller, presentUserConfirmation: transport.invocation.presentUserConfirmation,
+          serverId, serverIdentityId: account.serverIdentityId, runtimeAccountId: account.accountId,
+          externalActionTarget: transport.target, externalActionExecutionAuthorization: transport.authorization,
+          originalActionEnvelope: transport.envelope, actionRequestId: transport.requestId,
+          actionsSettings: resolveActionsSettingsV1FromState(storage.getState()),
+          signExternalActionApprovalInput: ({ actionId, input, target, requesterConfirmation, sessionTargetsV1 }) =>
+            boundary.signApprovalInput({ authorizationToken: transport.authorization.token, actionId, input, target,
+              ...(requesterConfirmation ? { requesterConfirmation } : {}), ...(sessionTargetsV1 ? { sessionTargetsV1 } : {}) }),
+        });
+        if (DeploymentTemplateInstantiateInputV1Schema.parse(input).mode === 'apply') receivedApplyResults.push({
+          ok: result.ok, ...(!result.ok ? { errorCode: result.errorCode } : {}) });
+        return result.ok ? result.result : result;
+      } });
+    const opened: string[] = [];
+    const review = { ...noReview, request: vi.fn() };
+    const screen = await renderScreen(<ModalProvider />);
+    try {
+      await act(async () => showDeploymentAddSheet({ detail, review, machineName: () => 'vps-2',
+        catalogFilters: {}, lifetime: account.accountLifetime, onOpenRecovery: destination => opened.push(destination) }));
+      const rowId = `store.kind.app.row.app|${sourceId}|postgresql`;
+      await waitForHomeGovernance(() => expect(screen.findByTestId(rowId)).not.toBeNull());
+      await screen.pressByTestIdAsync(rowId);
+      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.confirm')?.props.disabled).toBe(false));
+      await screen.pressByTestIdAsync('project-deployments.add.confirm');
+      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.added')
+        ?? screen.findByTestId('project-deployments.add.refused')).not.toBeNull());
+      expect(receivedApplyResults).toEqual([outcome === 'applied' ? { ok: true } : { ok: false, errorCode: outcome }]);
+      expect(applied).toEqual([expect.objectContaining({ mode: 'apply', environment: { kind: 'existing',
+        environmentId: detail.environment.id, expectedRevision: detail.environment.revision },
+        templateRef: expect.objectContaining({ sourceId, itemId: 'postgresql' }),
+        bindings: [{ purpose: 'variable', name: 'DB_PASSWORD', phase: 'runtime', source: { kind: 'generated', key: 'DB_PASSWORD' } }],
+        generatedSecretAudience: { accountGrants: [], teamGrants: [], groupGrants: [] } })]);
+      expect(review.request).not.toHaveBeenCalled();
+      expect(homes.artifacts(serverId).list()).toEqual([]);
+      if (outcome === 'applied') expect(screen.findByTestId('project-deployments.add.refused')).toBeNull();
+      else {
+        const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+        expect(screen.getTextContent()).toContain(readDeploymentRefusalRecoveryV1(outcome)!.remedy);
+        expect(screen.findByTestId('project-deployments.add.added')).toBeNull();
+        await screen.pressByTestIdAsync('project-deployments.add.refused.next');
+        expect(opened).toEqual(['source']);
+      }
+    } finally { await screen.unmount(); account.dispose(); }
+  });
+
   it('says a refused Add once, from the shared recovery owner, beside its one next step', async () => {
     const { DeploymentAddRefusal } = await import('./DeploymentDatabasePage');
     const opened: string[] = [];

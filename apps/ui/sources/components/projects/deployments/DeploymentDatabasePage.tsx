@@ -666,7 +666,7 @@ function DeploymentAddReview(props: Readonly<{
   const add = () => {
     if (!templateRef || !operands) return;
     void press.press(async () => {
-      await actions.instantiateTemplate({ ...operands, mode: 'apply', templateRef, deploy: { requestKey: randomUUID() } });
+      await actions.instantiateTemplate({ ...operands, mode: 'apply', templateRef, deploy: { requestKey: randomUUID() } }, { confirmed: true });
       return { ok: true };
     });
   };
