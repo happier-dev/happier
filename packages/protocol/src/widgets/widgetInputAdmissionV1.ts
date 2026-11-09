@@ -4,6 +4,7 @@ import type { WidgetConnectedAccountPurposeBindingV1 } from './widgetConnectedAc
 import type { WidgetSizeDeclarationV1 } from './widgetPresentationV1.js';
 import type { WidgetPublicSnapshotPresentationV1 } from './widgetPublicSnapshotV1.js';
 import type { WidgetDefinitionV1 } from './widgetDefinitionV1.js';
+import type { PLUGIN_UI_INLINE_SURFACE_SLOTS_V1 } from '../plugins/contributions/ui/surfaceRegistry.js';
 export { WidgetConnectedAccountPurposeBindingV1Schema, type WidgetConnectedAccountPurposeBindingV1 } from './widgetConnectedAccountPurposeBindingV1.js';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue, type PluginJsonSchemaValidator } from '../plugins/actions/jsonSchemaValidation.js';
 import { resolveWidgetBindingsV1, type WidgetInputBindingsV1, type WidgetBindingResolutionInputV1, type WidgetBindingResolutionV1, type WidgetInstanceV1 } from './widgetInstanceV1.js';
@@ -12,6 +13,8 @@ import { WorkspaceRefV1Schema, type WorkspaceRefV1 } from '../workspaces/workspa
 import { resolveWorkspaceRefV1, workspaceAddressFromRefV1, type WorkspaceRefResolutionContextV1 } from '../workspaces/workspaceRefResolutionV1.js';
 
 export type WidgetInputDescriptorV1 = Readonly<{
+    /** Current installed declaration metadata; never persisted in an instance or bound input. */
+    target?: keyof typeof PLUGIN_UI_INLINE_SURFACE_SLOTS_V1.widget.targets;
     publicPresentation?: WidgetPublicSnapshotPresentationV1;
     authoredDefinition?: WidgetDefinitionV1;
     sizeDeclaration?: WidgetSizeDeclarationV1;
@@ -62,9 +65,9 @@ export function readWidgetInputTargetV1(descriptor: WidgetInputDescriptorV1): Wi
     return declared[0] ?? { kind: 'app' };
 }
 
-/** Placement selects presentation, never target authority. Exact targets are admitted at each read. */
-export function isWidgetTargetHostableV1(descriptor: WidgetInputDescriptorV1, _surface: string): boolean {
-    return readWidgetInputTargetV1(descriptor).kind !== 'invalid';
+/** Project declarations require host-owned Project context; other targets retain their input admission. */
+export function isWidgetTargetHostableV1(descriptor: WidgetInputDescriptorV1, surface: string): boolean {
+    return (descriptor.target !== 'project' || surface === 'project') && readWidgetInputTargetV1(descriptor).kind !== 'invalid';
 }
 
 /** Discover only declared target intent before reaching its own Resource/purpose authority. */

@@ -21,3 +21,4 @@ export function buildBrowserContextAnnotationStructuredBlockV2(
     ...(item.pageTitle ? { pageTitle: item.pageTitle } : {}),
   };
 }
+

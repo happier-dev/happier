@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { getActionSpec } from './actionSpecs.js';
-import { USAGE_PRICE_ACTION_IDS } from '../usage/usageActionIdsV1.js';
 import { z } from 'zod/mini';
 
 import { bindHomeDomainHttpRequestV1, readHomeDomainConfirmedRollbackV1 } from './homeDomainHttpBinding.js';
 import { bindHomeDomainActionHttpRequestV1 } from './homeDomainActionFamily.js';
 import { DeleteSessionOrganizationTagRequestSchema } from '../sessions/organization/mutations.js';
+import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
+import { getActionSpec } from './actionSpecs.js';
+import { USAGE_PRICE_ACTION_IDS } from '../usage/usageActionIdsV1.js';
 
 describe('Home-domain HTTP binding', () => {
   it.each([
@@ -16,6 +17,18 @@ describe('Home-domain HTTP binding', () => {
     expect(spec.serverTransport).toBeDefined();
     expect(bindHomeDomainHttpRequestV1({ transport: spec.serverTransport!, inputSchema: spec.inputSchema, input: {} }))
       .toEqual({ method, path, body });
+  });
+  it('binds set-shaped credential discovery through the original Action while retaining finite Team reads', () => {
+    expect(bindHomeDomainActionHttpRequestV1('teams.credentials.entitled.list', { teamIds: ['team-a', 'team-b'] })).toEqual({
+      method: 'POST', path: '/v1/teams/credential-resources/entitled/discover',
+      body: { teamIds: ['team-a', 'team-b'], limit: 50 },
+    });
+    expect(bindHomeDomainActionHttpRequestV1('teams.credentials.entitled.list', { teamId: 'team-a' })).toEqual({
+      method: 'POST', path: '/v1/teams/credential-resources/entitled/list', body: { teamId: 'team-a', limit: 50 },
+    });
+    expect(() => bindHomeDomainActionHttpRequestV1('teams.credentials.entitled.list', {
+      teamId: 'team-a', teamIds: ['team-b'],
+    })).toThrow();
   });
   it('binds only the reviewed reclaim identity and notice through the closed Home Action', () => {
     const input = { accountId: 'person/one', username: 'held_name', reason: 'Impersonation', notice: 'Contact this Home operator.' };
@@ -36,6 +49,8 @@ describe('Home-domain HTTP binding', () => {
     expect(readHomeDomainConfirmedRollbackV1(500, body)).toBeNull();
     expect(readHomeDomainConfirmedRollbackV1(503, { ...body, statusCode: 500 })).toBeNull();
     expect(readHomeDomainConfirmedRollbackV1(503, { ...body, extra: true })).toBeNull();
+    // A deadline can retain an earlier ambiguous commit; it is not rollback proof.
+    expect(readHomeDomainConfirmedRollbackV1(503, { error: 'database_transaction_timeout', statusCode: 503 })).toBeNull();
   });
 
   it('preserves a timeout only when the transaction owner explicitly confirms rollback', () => {
@@ -86,5 +101,14 @@ describe('Home-domain HTTP binding', () => {
       inputSchema: schema,
       input,
     })).toThrow('missing');
+  });
+
+  it.each([false, true] as const)('binds native optional fields to the same JSON bytes that HTTP signs (retained path fields: %s)', preserve => {
+    const bound = bindHomeDomainHttpRequestV1({ transport: { method: 'POST', path: '/v1/teams/:teamId/action',
+      ...(preserve ? { preservePathFieldsInBody: true as const } : {}) }, inputSchema: schema,
+      input: { v: 1, teamId: 'team_1', sourceId: 'source_1', query: undefined } });
+    expect(createCanonicalJsonSigningInput(bound.body)).toBe(createCanonicalJsonSigningInput({
+      v: 1, ...(preserve ? { teamId: 'team_1' } : {}), sourceId: 'source_1',
+    }));
   });
 });

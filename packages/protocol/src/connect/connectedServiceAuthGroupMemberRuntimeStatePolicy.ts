@@ -18,6 +18,7 @@ const CONNECTED_SERVICE_MEMBER_RUNTIME_BLOCKER_CLEAR_KEYS = [
     'credentialHealthStatus',
     'autoDisabledReason',
     'lastFailureKind',
+    'lastFailureProviderLimitId',
     'lastFailureCode',
     'lastObservedPlanType',
     'lastObservedAtMs',

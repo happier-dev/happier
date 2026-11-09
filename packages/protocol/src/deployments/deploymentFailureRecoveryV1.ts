@@ -160,6 +160,7 @@ const recoveries = {
 } as const;
 
 const missingFacts = {
+    buildMachineId: recovery('Choose a build machine in the Environment settings, then review the deployment again.', 'settings', 'Choose build machine'),
     cloudflare_selection_required: recovery('Choose the Cloudflare account and tunnel for this address before adding it.', 'domains', 'Choose Cloudflare tunnel'),
     domain_ingress_required: recovery('Choose how this address reaches the app before adding it to an Environment with several machines.', 'domains', 'Choose address route'),
     activeDomainMembers: recovery('This address has no active serving machine. Deploy the app to a machine before adding the address.', 'settings', 'Choose serving machines'),
@@ -189,6 +190,7 @@ const missingFacts = {
 const legacyGenericRemedy = 'Inspect the reported deployment phase and current target state. Restore the missing prerequisite or choose a supported target action, then retry the original request after confirming whether the previous change took effect.';
 const fallback = recovery('Happier could not complete this change. Check deployment history and the running app before trying again.', 'history', 'Review deployment');
 const transactionRollbackRecovery = recovery('The Home could not record this change and rolled it back. Review the deployment and try again.', 'review', 'Review deployment');
+const nativeConflictRecovery = recovery('Happier could not identify one running service generation for this change. Check the services on the serving machine before trying again.', 'machines', 'Check running services');
 
 function recoveryFor(details: Record<string, unknown>, errorCode?: string) {
     // The transport sets this fact only after consuming Home's confirmed rollback.
@@ -202,6 +204,9 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string) {
     const codes = [sourceAdmission?.reason, failure?.reason, failureCause?.errorCode, failure?.code, details.reason, details.code, errorCode];
     const code = codes.find((candidate): candidate is keyof typeof recoveries =>
         typeof candidate === 'string' && Object.hasOwn(recoveries, candidate));
+    if (code === 'deployment_conflict' && (details.step === 'native_execution'
+        || failure?.step === 'native_execution'
+        || failureCause?.phase === 'deployment.domain.native_execution')) return nativeConflictRecovery;
     const fact = failure?.requiredFact ?? details.requiredFact;
     if (code === 'required_fact_unavailable' && typeof fact === 'string' && Object.hasOwn(missingFacts, fact)) {
         return missingFacts[fact as keyof typeof missingFacts];
@@ -210,9 +215,14 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string) {
 }
 
 /** Existing storage projection stays closed: navigation belongs only to the read projection below. */
+export function projectDeploymentFailureRecoveryV1(details: Record<string, never>, errorCode?: string): z.infer<typeof DeploymentFailureRecoveryV1Schema>;
+export function projectDeploymentFailureRecoveryV1<T extends Record<string, unknown>>(details: T, errorCode?: string): T & {
+    requiredFact: string; remedy: string;
+};
 export function projectDeploymentFailureRecoveryV1<T extends Record<string, unknown>>(details: T, errorCode?: string): T & {
     requiredFact: string; remedy: string;
 } {
+    const recovery = recoveryFor(details, errorCode);
     const failure = isRecord(details.failure) ? details.failure : undefined;
     const sourceAdmission = isRecord(details.sourceAdmission) ? details.sourceAdmission
         : isRecord(failure?.sourceAdmission) ? failure.sourceAdmission : undefined;
@@ -223,13 +233,14 @@ export function projectDeploymentFailureRecoveryV1<T extends Record<string, unkn
             : typeof failure?.requiredFact === 'string' ? failure.requiredFact
                 : typeof sourceAdmission?.requiredFact === 'string' ? sourceAdmission.requiredFact
                     : undefined,
-        remedy: typeof details.remedy === 'string' && details.remedy !== legacyGenericRemedy ? details.remedy
+        remedy: typeof details.remedy === 'string' && details.remedy !== legacyGenericRemedy
+            && !(recovery === nativeConflictRecovery && details.remedy === recoveries.deployment_conflict.remedy) ? details.remedy
             : typeof failure?.remedy === 'string' ? failure.remedy
                 : typeof sourceAdmission?.remedy === 'string' ? sourceAdmission.remedy
                     : undefined,
     }, {
         requiredFact: details.step === 'native_execution' ? 'nativeExecutionResult' : 'deploymentActionResult',
-        remedy: recoveryFor(details, errorCode).remedy,
+        remedy: recovery.remedy,
     });
 }
 
@@ -253,4 +264,3 @@ export function readDeploymentFailureRecoveryV1(errorCode: string, details?: unk
 export function readDeploymentRefusalRecoveryV1(errorCode: string, details?: unknown): DeploymentFailureRecoveryPresentationV1 | null {
     return recoveryFor(isRecord(details) ? details : {}, errorCode) === fallback ? null : readDeploymentFailureRecoveryV1(errorCode, details);
 }
-

@@ -25,7 +25,8 @@ import {
   measureSerializedValidatedStrictPluginJsonUtf8Bytes,
 } from '../contributions/strictJsonValue.js';
 import type { JsonValue as StrictRuntimeJsonValue } from '../../json/strictJsonValue.js';
-import { forEachJsonSchemaChild } from '../../actions/actionInputJsonSchema.js';
+import { forEachJsonSchemaChild, jsonSchemaContainsReference } from '../../actions/actionInputJsonSchema.js';
+import { getResolvedLazyDefinitionValue } from '../../lazyZodSchema.js';
 
 export {
   containsEquivalentPluginJsonValue,
@@ -106,11 +107,30 @@ function assertSchemaSemantics(schema: Readonly<Record<string, unknown>>): void 
 /** @internal Only this owner's admitted/constructed immutable documents are reusable. */
 export { isNormalizedPluginJsonSchema } from '../contributions/jsonSchema.js';
 
+/**
+ * Caller graphs proven immutable at admission: every node frozen and every
+ * member a data property. Such a graph cannot change after the walk that
+ * admitted it, so its identity keeps the admitted schema (an admitted
+ * manifest declaration is dispatched through a new invocation each time).
+ */
+const immutableAdmittedSchemas = new WeakSet<object>();
+
+function isDeepFrozenDataGraph(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return true;
+  if (!Object.isFrozen(value)) return false;
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !('value' in descriptor) || !isDeepFrozenDataGraph(descriptor.value)) return false;
+  }
+  return true;
+}
+
 // Mutable declarations still pass admission on every read; unchanged bytes keep
 // one immutable compiler identity, and edits replace it instead of reusing stale code.
 export function normalizePluginJsonSchema(schema: object): PluginJsonSchemaV2 {
   const previous = normalizedPluginJsonSchemas.get(schema);
   if (previous === schema) return previous;
+  if (previous && immutableAdmittedSchemas.has(schema)) return previous;
   let normalized = cloneProtocolSchemaDocument(schema);
   // Only this strict-JSON owner's immutable graph can reuse established schema
   // validity. Object.freeze or a copied caller object does not establish it.
@@ -135,8 +155,11 @@ export function normalizePluginJsonSchema(schema: object): PluginJsonSchemaV2 {
   // JSON owner. Zod only verifies this established value; returning its
   // parser output would create a second mutable projection.
   assertSchemaSemantics(normalized as Readonly<Record<string, unknown>>);
-  if (previous && pluginJsonValuesEqual(previous, normalized)) return previous;
-  const jsonSchema = normalized as PluginJsonSchemaV2;
+  const jsonSchema = previous && pluginJsonValuesEqual(previous, normalized) ? previous : normalized as PluginJsonSchemaV2;
+  // Object.freeze alone (a frozen root, or accessors) proves nothing; a fully
+  // frozen data graph that just passed admission cannot drift from it.
+  if (isDeepFrozenDataGraph(schema)) immutableAdmittedSchemas.add(schema);
+  if (jsonSchema === previous) return previous;
   normalizedPluginJsonSchemas.set(schema, jsonSchema);
   normalizedPluginJsonSchemas.set(jsonSchema, jsonSchema);
   return jsonSchema;
@@ -198,10 +221,12 @@ type PreparedStoredProjection = Readonly<{
 
 function createTypedProtocolStoredReader<TOutput>(schema: Readonly<{
   safeParse(value: unknown): ProtocolSchemaSafeParseResult<TOutput>;
-}>, project: (value: unknown) => ReturnType<PreparedStoredProjection['safeParse']>): ProtocolStoredReadSchema<TOutput> {
+}>, project: (value: unknown) => ReturnType<PreparedStoredProjection['safeParse']> | null): ProtocolStoredReadSchema<TOutput> {
   const safeParse = (value: unknown): ProtocolSchemaSafeParseResult<TOutput> => {
     if (value === undefined) return schema.safeParse(value);
     const projected = project(value);
+    // `null`: no stored fields to drop, so the incumbent parser reads the value once.
+    if (projected === null) return schema.safeParse(value);
     if (!projected.success) return createProtocolFailure(projected.error.issues.map(issue =>
       createProtocolValidationIssue(issue.code, issue.message, issue.path)));
     // Only the incumbent typed parser owns domain constraints/normalization.
@@ -254,24 +279,44 @@ export function createProtocolStoredReadSchema<TOutput>(schema: Readonly<{
   jsonSchema: object;
   safeParse(value: unknown): ProtocolSchemaSafeParseResult<TOutput>;
 }>): ProtocolStoredReadSchema<TOutput> {
-  const storedParser = protocolSchemaLifetimes.get(schema)?.storedParser;
-  if (storedParser) return createTypedProtocolStoredReader(schema, storedParser);
+  const lifetime = readProtocolSchemaLifetime(schema);
+  const existing = lifetime?.storedReader;
+  if (existing) return existing as ProtocolStoredReadSchema<TOutput>;
+  if (lifetime?.supportsStoredRead) {
+    // The stored purpose runs this schema's own typed parser: every child is read
+    // through its stored reader (already input-valid output) and only unknown
+    // keys are dropped. Re-parsing that output as input re-walked each subtree
+    // once per ancestor without adding a constraint.
+    const parseStored = lifetime.parseStored.bind(lifetime) as (value: unknown) => ProtocolSchemaSafeParseResult<TOutput>;
+    const reader: ProtocolStoredReadSchema<TOutput> = Object.freeze({
+      safeParse: parseStored,
+      parse(value: unknown): TOutput {
+        const parsed = parseStored(value);
+        if (!parsed.success) throw parsed.error;
+        return parsed.data;
+      },
+    });
+    lifetime.storedReader = reader;
+    return reader;
+  }
   let projection: CanonicalComposableSchema | undefined;
   let needsProjection: boolean | undefined;
-  return createTypedProtocolStoredReader(schema, value => {
-    if (needsProjection === false) return schema.safeParse(value);
+  const reader = createTypedProtocolStoredReader(schema, value => {
+    if (needsProjection === false) return null;
     if (!projection) {
       const projected = projectProtocolStoredReadJsonSchema(schema.jsonSchema);
       needsProjection = projected.needsProjection;
       // Atomic owners may normalize before checking their exported bounds.
       // With no object fields to drop, only their incumbent parser is needed.
-      if (!needsProjection) return schema.safeParse(value);
+      if (!needsProjection) return null;
       const prepared = rehydrateCanonicalProtocolComposableSchema(projected.document);
       if (!prepared) return createProtocolSingleFailure('invalid_schema', 'Stored Protocol projection is not a canonical composable schema');
       projection = prepared;
     }
     return projection.safeParse(value);
   });
+  if (lifetime) lifetime.storedReader = reader;
+  return reader;
 }
 
 /** The one validator-neutral composition surface available to SDK authors. */
@@ -405,14 +450,15 @@ type ProtocolNormalizedParser<TOutput> = (
 ) => ProtocolSchemaSafeParseResult<TOutput>;
 
 type ProtocolParsePurpose = 'input' | 'stored';
-const protocolSchemaLifetimes = new WeakMap<object, Readonly<{
-  allowsUndefined: boolean;
-  storedParser?: (value: unknown) => ProtocolSchemaSafeParseResult<unknown>;
-}>>();
+const protocolSchemaLifetimes = new WeakMap<object, ProtocolSchemaLifetime<unknown>>();
+
+function readProtocolSchemaLifetime(schema: object): ProtocolSchemaLifetime<unknown> | undefined {
+  return protocolSchemaLifetimes.get(getResolvedLazyDefinitionValue(schema));
+}
 
 /** @internal Immutable parser identities captured by this owner need no author-graph copy. */
 export function isOwnedProtocolComposableSchema(value: unknown): value is ProtocolComposableSchema<unknown, unknown> {
-  return value !== null && typeof value === 'object' && protocolSchemaLifetimes.has(value);
+  return value !== null && typeof value === 'object' && readProtocolSchemaLifetime(value) !== undefined;
 }
 
 // Immutable parser-constructor proofs, not admission inferred from a JSON
@@ -442,20 +488,67 @@ function createProtocolComposableSchemaForPurpose<TInput, TOutput>(
   allowsUndefined = false,
   supportsStoredRead = true,
 ): ProtocolComposableSchema<TInput, TOutput> {
-  // Executable parsers do not need JSON Schema documents. Materialize each
-  // immutable projection once, only when a descriptor consumer requests it.
-  let normalizedProjection: PluginJsonSchemaV2 | undefined;
-  const readProjection = (): PluginJsonSchemaV2 => {
-    if (normalizedProjection === undefined) {
-      // The dialect belongs to the root, never to an embedded member.
+  const schema = Object.freeze(Object.defineProperties({}, protocolSchemaDescriptors)) as ProtocolComposableSchema<TInput, TOutput>;
+  protocolSchemaLifetimes.set(schema, new ProtocolSchemaLifetime(projection, parseNormalized, allowsUndefined, supportsStoredRead));
+  return schema;
+}
+
+// Shared accessors preserve the five own members and extracted-method API.
+// Bind only consumed methods, rather than allocating every operation per member.
+const protocolSchemaDescriptors: PropertyDescriptorMap = {
+  jsonSchema: { enumerable: true, get(this: object) { return readProtocolSchemaLifetime(this)!.readJsonSchema(); } },
+  parse: { enumerable: true, get(this: object) {
+    const state = readProtocolSchemaLifetime(this)!;
+    return state.parseMethod ??= state.parse.bind(state);
+  } },
+  safeParse: { enumerable: true, get(this: object) {
+    const state = readProtocolSchemaLifetime(this)!;
+    return state.safeParseMethod ??= state.safeParse.bind(state);
+  } },
+  optional: { enumerable: true, get(this: object) {
+    const state = readProtocolSchemaLifetime(this)!;
+    return state.optionalMethod ??= state.optional.bind(state);
+  } },
+  nullable: { enumerable: true, get(this: object) {
+    const state = readProtocolSchemaLifetime(this)!;
+    return state.nullableMethod ??= state.nullable.bind(state);
+  } },
+};
+
+class ProtocolSchemaLifetime<TOutput> {
+  private normalizedProjection: PluginJsonSchemaV2 | undefined;
+  private jsonSchema: PluginJsonSchemaV2 | undefined;
+  parseMethod?: (value: unknown) => TOutput;
+  safeParseMethod?: (value: unknown) => ProtocolSchemaSafeParseResult<TOutput>;
+  optionalMethod?: () => ProtocolComposableSchema<unknown, TOutput | undefined>;
+  nullableMethod?: () => ProtocolComposableSchema<unknown, TOutput | null>;
+  storedReader?: ProtocolStoredReadSchema<TOutput>;
+
+  constructor(
+    private projection: PluginJsonSchemaV2 | (() => PluginJsonSchemaV2) | undefined,
+    private readonly parseNormalized: (value: ProtocolJsonValue, purpose: ProtocolParsePurpose) => ProtocolSchemaSafeParseResult<TOutput>,
+    readonly allowsUndefined: boolean,
+    readonly supportsStoredRead: boolean,
+  ) {}
+
+  readProjection(): PluginJsonSchemaV2 {
+    if (this.normalizedProjection === undefined) {
+      const projection = this.projection!;
       const { $schema: _dialect, ...fragment } = typeof projection === 'function' ? projection() : projection;
-      normalizedProjection = snapshotConstructedProtocolSchema(fragment);
+      this.normalizedProjection = snapshotConstructedProtocolSchema(fragment);
+      // The admitted immutable document now owns this lifetime. Retire the
+      // author/composer graph, keeping its stable document identity for AJV.
+      this.projection = undefined;
     }
-    return normalizedProjection;
-  };
-  let jsonSchema: PluginJsonSchemaV2 | undefined;
-  const parseForPurpose = (value: unknown, purpose: ProtocolParsePurpose): ProtocolSchemaSafeParseResult<TOutput> => {
-    if (value === undefined && allowsUndefined) {
+    return this.normalizedProjection;
+  }
+
+  readJsonSchema(): PluginJsonSchemaV2 {
+    return this.jsonSchema ??= canonicalProtocolJsonSchema(this.readProjection());
+  }
+
+  parseForPurpose(value: unknown, purpose: ProtocolParsePurpose): ProtocolSchemaSafeParseResult<TOutput> {
+    if (value === undefined && this.allowsUndefined) {
       return Object.freeze({ success: true, data: undefined as TOutput });
     }
 
@@ -468,12 +561,13 @@ function createProtocolComposableSchemaForPurpose<TInput, TOutput>(
 
     let parsed: ProtocolSchemaSafeParseResult<TOutput>;
     try {
+      const parseNormalized = this.parseNormalized;
       parsed = parseNormalized(normalizedInput, purpose);
     } catch {
       return createProtocolSingleFailure('validator_error', 'Protocol validation did not produce a usable result');
     }
     if (!parsed.success) return parsed;
-    if (parsed.data === undefined && allowsUndefined) {
+    if (parsed.data === undefined && this.allowsUndefined) {
       return Object.freeze({ success: true, data: undefined as TOutput });
     }
 
@@ -486,44 +580,36 @@ function createProtocolComposableSchemaForPurpose<TInput, TOutput>(
       return createProtocolSingleFailure('invalid_output', 'Protocol normalization did not produce strict JSON data');
     }
     return Object.freeze({ success: true, data: normalizedOutput });
-  };
+  }
 
-  const safeParse = (value: unknown) => parseForPurpose(value, 'input');
-  const schema = Object.freeze({
-    get jsonSchema() {
-      return jsonSchema ??= canonicalProtocolJsonSchema(readProjection());
-    },
-    parse(value: unknown): TOutput {
-      const result = safeParse(value);
-      if (result.success) return result.data;
-      throw result.error;
-    },
-    safeParse,
-    optional(): ProtocolComposableSchema<TInput | undefined, TOutput | undefined> {
-      return createProtocolComposableSchemaForPurpose<TInput | undefined, TOutput | undefined>(
-        readProjection,
-        parseNormalized,
-        true,
-        supportsStoredRead,
-      );
-    },
-    nullable(): ProtocolComposableSchema<TInput | null, TOutput | null> {
-      return createProtocolComposableSchemaForPurpose<TInput | null, TOutput | null>(
-        () => ({ anyOf: [embedProtocolJsonSchema(readProjection(), ['anyOf', 0]), { type: 'null' }] }),
-        (value, purpose) => value === null
-          ? Object.freeze({ success: true, data: null as TOutput | null })
-          : parseNormalized(value, purpose) as ProtocolSchemaSafeParseResult<TOutput | null>,
-        allowsUndefined,
-        supportsStoredRead,
-      );
-    },
-  });
-  // This factory already owns the optional boundary, including atomic parsers
-  // that deliberately keep the generic stored-reader path.
-  protocolSchemaLifetimes.set(schema, { allowsUndefined,
-    ...(supportsStoredRead ? { storedParser: (value: unknown) => parseForPurpose(value, 'stored') } : {}),
-  });
-  return schema;
+  safeParse(value: unknown): ProtocolSchemaSafeParseResult<TOutput> {
+    return this.parseForPurpose(value, 'input');
+  }
+
+  parseStored(value: unknown): ProtocolSchemaSafeParseResult<TOutput> {
+    return this.parseForPurpose(value, 'stored');
+  }
+
+  parse(value: unknown): TOutput {
+    const result = this.safeParse(value);
+    if (result.success) return result.data;
+    throw result.error;
+  }
+
+  optional(): ProtocolComposableSchema<unknown, TOutput | undefined> {
+    return createProtocolComposableSchemaForPurpose(this.readProjection.bind(this), this.parseNormalized, true, this.supportsStoredRead);
+  }
+
+  nullable(): ProtocolComposableSchema<unknown, TOutput | null> {
+    const parseNormalized = this.parseNormalized;
+    return createProtocolComposableSchemaForPurpose(
+      () => ({ anyOf: [embedAdmittedProtocolProjection(this.readProjection(), ['anyOf', 0]), { type: 'null' }] }),
+      (value, purpose) => value === null
+        ? Object.freeze({ success: true, data: null as TOutput | null })
+        : parseNormalized(value, purpose) as ProtocolSchemaSafeParseResult<TOutput | null>,
+      this.allowsUndefined, this.supportsStoredRead,
+    );
+  }
 }
 
 /**
@@ -571,13 +657,23 @@ export function embedProtocolJsonSchema(projection: PluginJsonSchemaV2, path: re
   return embedded;
 }
 
+/**
+ * Places an admitted child document inside a composed parent. Admitted nodes
+ * are frozen strict snapshots, so a child without document-local pointers is
+ * shared by identity and the parent's snapshot admits it without a copy; only
+ * a child holding a `$ref` is copied to relocate its pointers.
+ */
+function embedAdmittedProtocolProjection(projection: PluginJsonSchemaV2, path: readonly (string | number)[]): PluginJsonSchemaV2 {
+  return jsonSchemaContainsReference(projection) ? embedProtocolJsonSchema(projection, path) : projection;
+}
+
 function protocolComposableProjection(schema: ProtocolComposableSchema<unknown, unknown>, path: readonly (string | number)[]): PluginJsonSchemaV2 {
   const { $schema: _dialect, ...projection } = normalizePluginJsonSchema(schema.jsonSchema);
-  return embedProtocolJsonSchema(projection, path);
+  return embedAdmittedProtocolProjection(projection, path);
 }
 
 function protocolSchemaAllowsUndefined(schema: ProtocolComposableSchema<unknown, unknown>): boolean {
-  const known = protocolSchemaLifetimes.get(schema);
+  const known = readProtocolSchemaLifetime(schema);
   if (known) return known.allowsUndefined;
   // Foreign/custom structural schemas still decide their own optional boundary.
   try {

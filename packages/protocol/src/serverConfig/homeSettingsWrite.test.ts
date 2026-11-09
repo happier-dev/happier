@@ -33,6 +33,22 @@ const REGISTRY = composeServerConfigRegistry(
 );
 
 describe('validateHomeSettingsWrite', () => {
+    it.each([
+        'HAPPIER_PERSONAL_HOME_RELOCATION_OPERATION_ID',
+        'HAPPIER_SERVER_STARTUP_RECEIPT_PATH',
+        'HAPPIER_SERVER_STARTUP_RECEIPT_NONCE',
+        'HAPPIER_UPDATER_FORWARD_RECOVERY_CAPABILITY',
+        'HAPPIER_RELEASE_SOURCE_SHA',
+        'HAPPIER_SERVER_FLAVOR',
+        'HAPPIER_HOME_IROH_HOLDER',
+    ])('refuses Home writes and clears for the producer-owned runtime fact %s', key => {
+        for (const value of ['stored-override', null]) {
+            expect(validateHomeSettingsWrite(SERVER_CONFIG_REGISTRY_BASE, { values: { [key]: value } })).toEqual({
+                ok: false, error: 'home_settings_invalid', key, reason: 'not_home_editable',
+            });
+        }
+    });
+
     it.each(['HAPPIER_RPC_FORWARD_CAPABILITIES_TIMEOUT_MS', 'HAPPIER_RPC_FORWARD_MAX_TIMEOUT_MS'])(
         'refuses the retired relay deadline override %s', key => {
             expect(validateHomeSettingsWrite(SERVER_CONFIG_REGISTRY_BASE, { values: { [key]: 120_000 } })).toEqual({

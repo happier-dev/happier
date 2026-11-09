@@ -1,6 +1,8 @@
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { MachineAdminAccessObservationV1Schema } from '../machines/adminAccessV1.js';
+import type { MachineDaemonRightsV1 } from '../machines/machineAuthorityV1.js';
 
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginUpdatePolicyV1Schema, type PluginUpdatePolicyV1 } from './pluginUpdatePolicyV1.js';
@@ -156,6 +158,8 @@ export const PluginInstallationReviewRequestInterceptorSchema: z.ZodMiniType<Plu
 );
 
 export type PluginInstallationReview = Readonly<{
+  /** Held daemon facts; no per-plugin probe. Missing historical facts remain unknown. */
+  daemonRights?: MachineDaemonRightsV1;
   pluginId: string;
   displayName: string;
   version: string;
@@ -265,6 +269,10 @@ const ReviewHostAccessBaseShape = {
 } as const;
 
 export const PluginInstallationReviewSchema: z.ZodMiniType<PluginInstallationReview> = lazyZodSchema(() => z.strictObject({
+  daemonRights: z.optional(z.strictObject({
+    observation: z.nullable(MachineAdminAccessObservationV1Schema),
+    freshness: z.enum(['current', 'stale']),
+  })),
   pluginId: ReviewNonEmptyStringSchema,
   displayName: ReviewNonEmptyStringSchema,
   version: ReviewNonEmptyStringSchema,

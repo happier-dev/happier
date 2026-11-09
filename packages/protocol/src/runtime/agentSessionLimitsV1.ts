@@ -14,12 +14,6 @@ export const AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 = Object.freeze({
   filePathMaxCodeUnits: 10_000,
   descriptionMaxCodeUnits: 8_000,
   compactInstructionsMaxCodeUnits: 32 * 1_024,
-  json: Object.freeze({
-    maxDepth: 24,
-    maxNodes: 8_192,
-    maxKeyUtf8Bytes: 256,
-    maxStringUtf8Bytes: 256 * 1_024,
-  }),
   usage: Object.freeze({
     breakdownMaxEntries: 64,
     breakdownKeyMaxCodeUnits: 128,
@@ -30,12 +24,6 @@ export const AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 = Object.freeze({
   }),
   safeIntegerMax: Number.MAX_SAFE_INTEGER,
   p0MeasuredCandidates: Object.freeze({
-    inputTextMaxCodeUnits: 512 * 1_024,
-    transcriptTextMaxCodeUnits: 512 * 1_024,
-    sendRequestMaxJsonBytes: 2_500_000,
-    eventMaxJsonBytes: 2_500_000,
-    fileEditMemberMaxCodeUnits: 1_000_000,
-    fileEditContentMaxJsonBytes: 2_000_000,
     conversationRollbackMaxAffectedTurns: 4_096,
     preWatchReplayBufferMaxEvents: 1_024,
     preWatchReplayBufferMaxJsonBytes: 8 * 1_024 * 1_024,

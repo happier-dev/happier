@@ -1,25 +1,25 @@
-import { MachineReachabilityObservationV1Schema } from './reachability/machineReachabilityPostureV1.js';
-import { MachineSetupDesiredV1Schema } from './setup/machineSetupSourcesV1.js';
-import { MachineAgentIsolationPolicyV1Schema, MachineAgentIsolationStatusV1Schema } from './agentIsolationV1.js';
-import { MachineAdminAccessV1Schema, MachineAdminAccessObservationV1Schema, StoredMachineAdminAccessObservationV1Schema } from './adminAccessV1.js';
-import { MachineServiceWatchesV1Schema } from './machineServiceWatchesV1.js';
-import { MachineReachabilityPostureV1Schema } from './reachability/machineReachabilityPostureV1.js';
-import { AccessProviderSelectionV1Schema } from '../plugins/contributions/accessProviders.js';
 import { z } from 'zod/mini';
 
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { CliUpdateFactsSchema } from './cliUpdateFacts.js';
+import { MachineDaemonPublicReleaseChannelLabelSchema, MachineDaemonStartupSourceSchema } from './ownership/daemonOwnership.js';
 import { IrohEndpointDescriptorV1Schema } from '../connectivity/iroh/endpointDescriptorV1.js';
 import { LocalServiceMachineSummaryV1Schema } from '../local/services/inventory/v1.js';
 import { WindowsRemoteSessionLaunchModeSchema } from '../sessions/metadata/windowsRemoteSessionLaunchMode.js';
 import { WorkspaceSyncRuntimeEventV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 import { PeerLoopbackEndpointCandidateV1Schema } from './peer/mediation/loopbackEndpointV1.js';
 import { MachineFinitePolicyV1Schema } from './machineFinitePolicyV1.js';
+import { MachineAgentIsolationPolicyV1Schema, MachineAgentIsolationStatusV1Schema } from './agentIsolationV1.js';
+import { MachineAdminAccessV1Schema, MachineAdminAccessObservationV1Schema, StoredMachineAdminAccessObservationV1Schema } from './adminAccessV1.js';
 import { MachineResourcesPolicyV1Schema } from './resources/machineResourcesPolicyV1.js';
 import { MachinePublishedResourceSummaryV1Schema } from './resources/machineResourceSummaryV1.js';
 import { MachineSetupObservationV1Schema } from './setup/machineSetupObservationV1.js';
-
+import { MachineSetupDesiredV1Schema } from './setup/machineSetupSourcesV1.js';
+import { MachineServiceWatchesV1Schema } from './machineServiceWatchesV1.js';
+import { AccessProviderSelectionV1Schema } from '../plugins/contributions/accessProviders.js';
+import { MachineReachabilityPostureV1Schema, MachineReachabilityObservationV1Schema } from './reachability/machineReachabilityPostureV1.js';
 import { ActivityDecisionV1Schema } from './managed/managedIntentV1.js';
 import { DevcontainerChildProjectionV1Schema, managedDevcontainerChildProjectionsEqualV1, type DevcontainerChildProjectionV1 } from './managed/devcontainerV1.js';
 
@@ -61,8 +61,16 @@ export const MachinePublishedMetadataV1Schema = lazyZodSchema(() => z.strictObje
   agentInventory: z.optional(MachinePublishedAgentInventoryV1Schema),
 }));
 
+/** Closed presentation facts only; each client owns localized recovery copy. */
+export const MachinePublishedTransferListenerDiagnosticV1Schema = lazyZodSchema(() => z.strictObject({
+  code: z.literal('tailscale_operator_authorization_refused'),
+  retryable: z.literal(false),
+}));
+export type MachinePublishedTransferListenerDiagnosticV1 = z.infer<typeof MachinePublishedTransferListenerDiagnosticV1Schema>;
+
 export const MachinePublishedTransferListenerV1Schema = lazyZodSchema(() => z.strictObject({
   enabled: z.boolean(), configured: z.boolean(), active: z.boolean(), available: z.optional(z.boolean()),
+  diagnostic: z.optional(MachinePublishedTransferListenerDiagnosticV1Schema),
 }));
 
 export const MachinePublishedTransferRuntimeV1Schema = lazyZodSchema(() => z.strictObject({
@@ -79,19 +87,26 @@ export const MachinePublishedWorkspaceSyncV1Schema = WorkspaceSyncRuntimeEventV1
 const PeerFlowSchema = lazyZodSchema(() => z.strictObject({ active: z.boolean() }));
 
 export const MachinePublishedDaemonStateV1Schema = lazyZodSchema(() => z.strictObject({
-  setup: z.optional(MachineSetupObservationV1Schema),
   status: z.string(),
+  setup: z.optional(MachineSetupObservationV1Schema),
   agentIsolation: z.optional(MachineAgentIsolationStatusV1Schema),
   adminAccess: z.optional(MachineAdminAccessObservationV1Schema),
+  reachability: z.optional(MachineReachabilityObservationV1Schema),
   pid: z.optional(z.number()),
+  providerSettingsV1: z.optional(z.record(z.string(), StrictJsonValueSchema)),
+  providerSettingsSourceV1: z.optional(z.strictObject({
+    pid: z.number().check(z.int(), z.positive()),
+    cliVersion: z.string(),
+    startedAt: z.number(),
+  })),
   httpPort: z.optional(z.number()),
   startedAt: z.optional(z.number()),
   runtimeId: z.optional(z.string()),
   contributionRegistryProjectionRevision: z.optional(z.number().check(z.int(), z.nonnegative())),
   cliVersion: z.optional(z.string()),
   startedWithCliVersion: z.optional(z.string()),
-  publicReleaseChannel: z.optional(z.enum(['stable', 'preview', 'dev'])),
-  startupSource: z.optional(z.enum(['manual', 'background-service', 'self-restart', 'installer', 'unknown'])),
+  publicReleaseChannel: z.optional(MachineDaemonPublicReleaseChannelLabelSchema),
+  startupSource: z.optional(MachineDaemonStartupSourceSchema),
   serviceManaged: z.optional(z.boolean()),
   serviceLabel: z.optional(z.string()),
   daemonPendingSessionActivationSupported: z.optional(z.boolean()),
@@ -114,7 +129,6 @@ export const MachinePublishedDaemonStateV1Schema = lazyZodSchema(() => z.strictO
   localServices: z.optional(LocalServiceMachineSummaryV1Schema),
   resources: z.optional(MachinePublishedResourceSummaryV1Schema),
   managedActivity: z.optional(ActivityDecisionV1Schema),
-  reachability: z.optional(MachineReachabilityObservationV1Schema)
 }));
 
 /** Persistence readers discard additive/retired fields; these are not disclosure proofs. */

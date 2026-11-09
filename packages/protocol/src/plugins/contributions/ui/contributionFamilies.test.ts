@@ -13,22 +13,18 @@ describe('plugin UI contribution families', () => {
         placementBindings: ['commandPalette'],
         dangerLevel: 'safe',
         execution: { target: 'daemon' },
-      }],
-      tools: [{
-        id: 'roundtrip-tool',
-        name: 'vertical_a_roundtrip',
-        title: 'Roundtrip',
-        surfaces: ['agent', 'mcp', 'cli'],
-        inputSchema: { type: 'object', additionalProperties: true },
-        outputSchema: { type: 'object', additionalProperties: true },
+        inputSchema: { type: 'object', properties: { operation: { type: 'string' } }, additionalProperties: true },
+        resultSchema: { type: 'object', additionalProperties: true },
         inputHints: {
           description: 'Input forwarded to the roundtrip action.',
           fields: [{ path: 'operation', title: 'Operation', widget: 'text' }],
         },
-        examples: { mcp: { argsExample: '{"operation":"packed-tool-dispatch"}' } },
-        promptSnippet: 'Use vertical_a_roundtrip.',
-        promptGuidelines: ['Invoke the declared action through this presentation.'],
-        action: 'roundtrip',
+        tool: {
+          name: 'vertical_a_roundtrip',
+          examples: { mcp: { argsExample: '{"operation":"packed-tool-dispatch"}' } },
+          promptSnippet: 'Use vertical_a_roundtrip.',
+          promptGuidelines: ['Invoke the declared action through this presentation.'],
+        },
       }],
       sessionHeaderActions: [{
         id: 'roundtrip-header',
@@ -61,15 +57,15 @@ describe('plugin UI contribution families', () => {
         }],
         translations: [{
           locale: 'en',
-          messages: { previewTitle: 'Preview' },
+          resourceId: 'copy-en',
         }],
       },
     });
 
-    expect(parsed.tools[0]).toMatchObject({
-      id: 'roundtrip-tool',
-      action: 'roundtrip',
-      surfaces: ['agent', 'mcp', 'cli'],
+    expect(parsed.actions[0]).toMatchObject({
+      id: 'roundtrip',
+      tool: { name: 'vertical_a_roundtrip' },
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
     });
     expect(parsed.sessionHeaderActions[0]).toMatchObject({
       id: 'roundtrip-header',

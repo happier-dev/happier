@@ -1,6 +1,10 @@
 import { expect, it, vi } from 'vitest';
 
 import * as strictJson from '../contributions/strictJsonValue.js';
+import { MachineProvisionerNativeCauseProtocolV1Schema, MachineProvisionerPowerResultV1Schema,
+  MachineProvisionerCheckInputV1Schema } from '../contributions/machineProvisioners.js';
+import { asProtocolZod } from './internalProtocolZodAdapter.js';
+import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 import {
   defineProtocolArray, defineProtocolLiteral, defineProtocolObject,
   defineProtocolString, defineProtocolUnion,
@@ -35,5 +39,14 @@ it('constructs unused parser trees without constructing strict JSON schema docum
     expect(projection.properties?.tags?.items?.type).toBe('string');
   } finally {
     clones.mockRestore();
+  }
+});
+
+it('projects provisioner nativeCause and role schemas as structured-cloneable plain documents', () => {
+  for (const schema of [MachineProvisionerNativeCauseProtocolV1Schema,
+    MachineProvisionerPowerResultV1Schema, MachineProvisionerCheckInputV1Schema]) {
+    const projected = zodSchemaToJsonSchemaObject(asProtocolZod(schema), { target: 'draft-7' });
+    expect(structuredClone(projected)).toEqual(projected);
+    expect(structuredClone(schema.jsonSchema)).toEqual(schema.jsonSchema);
   }
 });

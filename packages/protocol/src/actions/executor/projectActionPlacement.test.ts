@@ -18,15 +18,18 @@ function sourceReads(manifest?: ProjectManifestV1, workerStatus?: unknown, manag
   const inspection = ProjectDefinitionInspectOutputSchema.parse({
     definition: manifest ? { basis: { kind: 'present', hash: createHash('sha256').update(bytes!).digest('hex') },
       document: readProjectManifestDocument(bytes!) } : { basis: { kind: 'absent' }, document: null },
-    detection: { entries: [{ source: native, usage: 'script' }], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] },
+    detection: { entries: [{ source: native, usage: 'script' }], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] },
     importCandidates: [],
   });
   const reads: string[] = [];
   // These are remote SOURCE/Home Action responses. Placement, declaration
   // parsing, precedence and all strict response validation remain real.
-  const executeCanonicalAction: ProjectPlacementActionExecutorV1 = async actionId => {
+  const executeCanonicalAction: ProjectPlacementActionExecutorV1 = async (actionId, input) => {
     reads.push(actionId);
-    if (actionId === 'projects.inspect') return { ok: true, result: inspection };
+    if (actionId === 'projects.inspect') {
+      expect(input).toEqual({ workspace, read: { kind: 'placement' } });
+      return { ok: true, result: inspection };
+    }
     if (actionId === 'projects.worker.preferences.get') return { ok: true, result: { status: 'ready', revision: 1,
       provenance: 'saved', preference: { enabled: true, destination: exact.destination, unavailable: 'fail', allowAdHoc: false, scriptOverrides: {} } } };
     if (actionId === 'projects.worker.status') return { ok: true, result: workerStatus ?? { eligible: true, load: { kind: 'unknown' },
@@ -43,6 +46,26 @@ function sourceReads(manifest?: ProjectManifestV1, workerStatus?: unknown, manag
 }
 
 describe('Project Action declaration placement ceiling', () => {
+  it('enforces an explicit primary compute constraint before worker effects while omitted constraints stay portable', async () => {
+    const h = sourceReads();
+    const executeCanonicalAction: ProjectPlacementActionExecutorV1 = async (id, input) => {
+      const result = await h.executeCanonicalAction(id, input);
+      return id === 'projects.worker.preferences.get' ? { ok: true, result: {
+        status: 'ready', revision: 1, provenance: 'saved', preference: { enabled: true,
+          destination: exact.destination, unavailable: 'fail', allowAdHoc: true, scriptOverrides: {} },
+      } } : result;
+    };
+    const place = (extra: object = {}, context = {}) => resolveProjectActionMachineV1({
+      actionId: 'projects.compute.exec', input: { workspace, executable: '/usr/bin/tool', argv: [], cwd: '/repo', ...extra },
+      context, executeCanonicalAction, createRequestKey: () => 'request',
+    });
+    expect(await place({ execution: 'primary' })).toEqual({ ok: true, machineId: 'source' });
+    expect(await place({ execution: 'primary', choice: exact })).toMatchObject({ ok: false, errorCode: 'primary_only' });
+    expect(await place({ execution: 'primary' }, { executionRunTargetMachineId: 'worker' }))
+      .toMatchObject({ ok: false, errorCode: 'primary_only' });
+    expect(h.reads.filter(id => id === 'projects.worker.status' || id === 'machines.pools.resolve')).toHaveLength(0);
+    expect(await place()).toEqual({ ok: true, machineId: 'worker' });
+  });
   it('starts independent SOURCE and preference reads together before resolving placement', async () => {
     const h = sourceReads({ version: 1, scripts: { check: { execution: 'portable', source: native } } });
     let releaseInspection!: () => void;

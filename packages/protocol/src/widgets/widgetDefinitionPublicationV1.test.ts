@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AccountProfileSchema } from '../account/profile.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../actions/actionExecutor.js';
+import { ActionsSettingsV1Schema } from '../actions/actionSettings.js';
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { sameQualifiedConnectedAccountRef } from '../connect/qualifiedConnectedAccountPersistence.js';
 import { createWidgetActionInputResolverV1 } from './widgetActionInputResolverV1.js';
@@ -67,11 +68,11 @@ describe('shared widget publication purpose admission', () => {
         });
         const draft = { v: 1, name: 'Library copy', inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
             sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' }, provenance: { source: { kind: 'authored' } } };
-        const installed = WidgetDefinitionV1Schema.parse({ ...draft, id: 'saved-installed', networkOverride: { network: 'none' },
+        const installed = WidgetDefinitionV1Schema.parse({ ...draft, id: '859e0d79-80a9-4ebc-86ab-775b0868d404', networkOverride: { network: 'none' },
             body: { kind: 'installed', surface: { pluginId: 'acme.metrics', localId: 'widget' } } });
-        const html = WidgetDefinitionV1Schema.parse({ ...draft, id: 'saved-html', body: { kind: 'html', requestedCapabilities: { networkOrigins: ['https://cdn.example.com'] },
+        const html = WidgetDefinitionV1Schema.parse({ ...draft, id: 'f886bc99-2489-4bb8-8214-fac6458c9f38', body: { kind: 'html', requestedCapabilities: { networkOrigins: ['https://cdn.example.com'] },
             source: { v: 1, entrypoint: 'index.html', files: { 'index.html': { mime: 'text/html', contentBase64: 'PGgxPlJlc3VsdDwvaDE+' } } } } });
-        const declarative = WidgetDefinitionV1Schema.parse({ ...draft, id: 'saved-declarative',
+        const declarative = WidgetDefinitionV1Schema.parse({ ...draft, id: 'fb501d1b-236a-4cb5-87c7-64d77fe32bb8',
             body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Saved result' } } } });
         const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: account.serverId };
         for (const definition of [installed, html, declarative]) {
@@ -92,17 +93,17 @@ describe('shared widget publication purpose admission', () => {
             const instance = { v: 1, id: `${definition.id}-${surface.owner.kind}`, definition: { kind: 'artifact', artifactId: definition.id }, bindings: {} };
             const result = await executor.execute('widgets.item.add', { surface, instance }, context);
             expect(result).toMatchObject({ ok: true, result: { instance: { ...instance,
-                ...(definition.id === 'saved-declarative' ? {} : {
-                    networkOverride: definition.id === 'saved-installed' ? { network: 'none' } : { networkOrigins: ['https://cdn.example.com'] },
+                ...(definition.id === declarative.id ? {} : {
+                    networkOverride: definition.id === installed.id ? { network: 'none' } : { networkOrigins: ['https://cdn.example.com'] },
                 }) } } });
         }
         await widgetDefinitionArtifacts.update(installed.id, { networkOverride: { network: 'open' } });
         await widgetDefinitionArtifacts.update(html.id, { body: { ...html.body, requestedCapabilities: { network: 'open' } } });
         for (const surface of [home, board, project]) expect(await executor.execute('widgets.item.list', { surface }, context))
             .toMatchObject({ ok: true, result: { instances: expect.arrayContaining([
-                expect.objectContaining({ instance: expect.objectContaining({ id: `saved-installed-${surface.owner.kind}`, networkOverride: { network: 'none' } }) }),
-                expect.objectContaining({ instance: expect.objectContaining({ id: `saved-html-${surface.owner.kind}`, networkOverride: { networkOrigins: ['https://cdn.example.com'] } }) }),
-                expect.objectContaining({ instance: expect.objectContaining({ id: `saved-declarative-${surface.owner.kind}`, definition: { kind: 'artifact', artifactId: declarative.id } }) }),
+                expect.objectContaining({ instance: expect.objectContaining({ id: `${installed.id}-${surface.owner.kind}`, networkOverride: { network: 'none' } }) }),
+                expect.objectContaining({ instance: expect.objectContaining({ id: `${html.id}-${surface.owner.kind}`, networkOverride: { networkOrigins: ['https://cdn.example.com'] } }) }),
+                expect.objectContaining({ instance: expect.objectContaining({ id: `${declarative.id}-${surface.owner.kind}`, definition: { kind: 'artifact', artifactId: declarative.id } }) }),
             ]) } });
         const builtin = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'usage_daily' })!;
         const query = normalizeUsageQuery({ period: { startMs: 1000 }, metric: 'tokens' });
@@ -111,14 +112,14 @@ describe('shared widget publication purpose admission', () => {
         sourceItem = SessionSurfaceItemV1Schema.parse({ v: 1, title: 'Daily usage', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
             source: { kind: 'widget', instance: { v: 1, id: 'source-item', definition: builtin.definition, bindings, networkOverride: { network: 'none' } } } });
         const promoted = await executor.execute('widgets.definition.saveFromSession', { account, session: { serverId: account.serverId, sessionId: 'source-session' },
-            itemId: 'source-item', artifactId: 'saved-builtin' }, { ...context, bypassApprovals: true });
-        expect(promoted).toMatchObject({ ok: true, result: { definition: { id: 'saved-builtin', body: builtin.definition,
+            itemId: 'source-item', artifactId: '43a66c6b-7737-4525-8f3b-757e0cd82a90' }, { ...context, bypassApprovals: true });
+        expect(promoted).toMatchObject({ ok: true, result: { definition: { id: '43a66c6b-7737-4525-8f3b-757e0cd82a90', body: builtin.definition,
             inputs: builtin.inputs, inputSchema: builtin.inputSchema, sizeDeclaration: builtin.sizeDeclaration, networkOverride: { network: 'none' } }, suggestedBindings: bindings } });
-        const saved = await widgetDefinitionArtifacts.get('saved-builtin');
+        const saved = await widgetDefinitionArtifacts.get('43a66c6b-7737-4525-8f3b-757e0cd82a90');
         expect(saved?.body).toEqual(builtin.definition);
-        expect(await widgetDefinitionArtifacts.list()).toEqual(expect.arrayContaining([expect.objectContaining({ artifactId: 'saved-builtin', bodyKind: 'builtin' })]));
+        expect(await widgetDefinitionArtifacts.list()).toEqual(expect.arrayContaining([expect.objectContaining({ artifactId: '43a66c6b-7737-4525-8f3b-757e0cd82a90', bodyKind: 'builtin' })]));
         for (const surface of [home, project]) {
-            const instance = { v: 1, id: `saved-builtin-${surface.owner.kind}`, definition: { kind: 'artifact', artifactId: 'saved-builtin' }, bindings };
+            const instance = { v: 1, id: `saved-builtin-${surface.owner.kind}`, definition: { kind: 'artifact', artifactId: '43a66c6b-7737-4525-8f3b-757e0cd82a90' }, bindings };
             expect(await executor.execute('widgets.item.add', { surface, instance }, context)).toMatchObject({ ok: true,
                 result: { instance: { ...instance, networkOverride: { network: 'none' } } } });
         }
@@ -126,16 +127,16 @@ describe('shared widget publication purpose admission', () => {
             source: { kind: 'widget', instance: { v: 1, id: 'source-item', definition: { kind: 'inline', definition: saved }, bindings,
                 networkOverride: { network: 'open' } } } });
         expect(await executor.execute('widgets.definition.saveFromSession', { account, session: { serverId: account.serverId, sessionId: 'source-session' },
-            itemId: 'source-item', artifactId: 'saved-inline-builtin' }, { ...context, bypassApprovals: true })).toMatchObject({ ok: true,
+            itemId: 'source-item', artifactId: 'eb8a4343-41ed-4b86-894a-fdf7844fa468' }, { ...context, bypassApprovals: true })).toMatchObject({ ok: true,
                 result: { definition: { body: builtin.definition, networkOverride: { network: 'open' } }, suggestedBindings: bindings } });
         sourceItem = null;
-        expect((await widgetDefinitionArtifacts.get('saved-builtin'))?.networkOverride).toEqual({ network: 'none' });
+        expect((await widgetDefinitionArtifacts.get('43a66c6b-7737-4525-8f3b-757e0cd82a90'))?.networkOverride).toEqual({ network: 'none' });
         const sessionBuiltin = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'session_summary' })!;
         sourceItem = SessionSurfaceItemV1Schema.parse({ v: 1, title: 'Summary', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
             source: { kind: 'widget', instance: { v: 1, id: 'source-item', definition: sessionBuiltin.definition,
                 bindings: { session: { kind: 'value', value: { serverId: account.serverId, sessionId: 'source-session' } } } } } });
         expect(await executor.execute('widgets.definition.saveFromSession', { account, session: { serverId: account.serverId, sessionId: 'source-session' },
-            itemId: 'source-item', artifactId: 'saved-summary' }, { ...context, bypassApprovals: true })).toMatchObject({ ok: true,
+            itemId: 'source-item', artifactId: 'ab7c00c1-8e6f-44cd-8c2d-0137679cfd99' }, { ...context, bypassApprovals: true })).toMatchObject({ ok: true,
                 result: { definition: { body: sessionBuiltin.definition, inputs: sessionBuiltin.inputs, sessionInputPath: 'session' },
                     suggestedBindings: { session: { kind: 'context', slot: 'session' } } } });
         if (!saved) throw new Error('Expected saved builtin');
@@ -143,11 +144,11 @@ describe('shared widget publication purpose admission', () => {
             .toMatchObject({ canShare: true, publicLinkAllowed: true });
         // Unknown executable identities and extra body authority are refused at the real write Action, before persistence.
         for (const body of [{ kind: 'builtin', id: 'unknown-widget' }, { kind: 'builtin', id: 'usage_daily', resource: 'author' }]) {
-            expect(await executor.execute('widgets.definition.create', { account, artifactId: 'invalid-builtin',
+            expect(await executor.execute('widgets.definition.create', { account, artifactId: '22d3fb99-f1d8-4ee2-8a21-ea7dd848b6c2',
                 definition: { name: draft.name, sizeDeclaration: draft.sizeDeclaration, inputs: draft.inputs, inputSchema: draft.inputSchema, body } }, context))
                 .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
         }
-        expect(await widgetDefinitionArtifacts.get('invalid-builtin')).toBeNull();
+        expect(await widgetDefinitionArtifacts.get('22d3fb99-f1d8-4ee2-8a21-ea7dd848b6c2')).toBeNull();
     });
     it('resolves the existing purpose selection and freezes only viewer intent, rejecting private caller override input', async () => {
         const consumer = { pluginId: 'acme.metrics', localId: 'metrics' };
@@ -188,9 +189,10 @@ describe('shared widget publication purpose admission', () => {
         expect(await widgetInputs.resolve({ ref, instance, context: {} })).toEqual({ status: 'ready', input: { connection: selected } });
         const executor = createActionExecutor(deps);
         const context = { surface: 'agent' as const, authority: 'account_automation' as const, actionCaller: { kind: 'host' as const },
-            serverId: 'home', defaultSessionId: 'shared', actionRequestId: 'publish-widget' };
+            serverId: 'home', defaultSessionId: 'shared', actionRequestId: 'publish-widget',
+            actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'widgets.item.add': { approvalRequiredSurfaces: ['agent'] } } }) };
         expect(await executor.execute('widgets.item.add', { surface, instance, placement: {} }, context))
-            .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+            .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval' } });
         expect(pending).toMatchObject({ actionArgs: { instance } });
         expect(pending?.actionArgs).not.toHaveProperty('viewerValues');
         expect(JSON.stringify(pending?.actionArgs)).not.toContain('mine');

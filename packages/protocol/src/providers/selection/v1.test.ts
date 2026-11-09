@@ -24,8 +24,22 @@ import {
 } from './v1.js';
 import { readExactSessionActiveModelSelectionV1 } from './activeSelectionValidationV1.js';
 import { createProviderBindingSecurityFingerprintV1 } from '../securityFingerprintsV1.js';
+import { SessionModelSelectionV2Schema } from './v2.js';
 
 describe('provider model selection contracts', () => {
+  it('preserves opaque native model bytes through flat selection and legacy metadata without weakening Provider ids', () => {
+    for (const modelId of [' native/model ', ' default ']) {
+      const expected = { agentTargetKey: 'agent:codex', providerConnectionId: null, modelId };
+      expect(resolveSessionModelSelectionInputRefV1({ agentTargetKey: 'agent:codex', modelId })).toEqual(expected);
+      expect(resolveSessionModelSelectionIntentV1({ canonical: undefined, legacy: { v: 1, updatedAt: 1, modelId },
+        agentTargetKey: 'agent:codex' })?.selection).toEqual(expected);
+      expect(ProviderBoundModelRefSchema.safeParse({ ...expected, providerConnectionId: 'pc_work' }).success).toBe(false);
+      expect(SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 1,
+        ref: { source: 'native', agentTargetKey: expected.agentTargetKey, modelId } }).ref.modelId).toBe(modelId);
+      expect(SessionModelSelectionV2Schema.safeParse({ v: 2, updatedAt: 1,
+        ref: { source: 'account_provider_connection', ...expected, providerConnectionId: 'pc_work' } }).success).toBe(false);
+    }
+  });
   it('reads retained canonical model intent without letting retired keys select the legacy fallback', () => {
     const intent = { v: 1, selection: { agentTargetKey: 'agent:codex', providerConnectionId: 'pc_one', modelId: 'model/a' }, updatedAt: 1 };
     const annotated = { ...intent, retired: true, selection: { ...intent.selection, retired: true } };
@@ -595,7 +609,7 @@ describe('provider model selection contracts', () => {
     expect(SessionModelSelectionResolutionError).toBeTypeOf('function');
   });
 
-  it('normalizes deployed legacy padding and ignores malformed legacy model ids', () => {
+  it('preserves legacy native model ids and rejects blank native or malformed Provider ids', () => {
     expect(resolveSessionModelSelectionIntentV1({
       canonical: undefined,
       legacy: { v: 1, updatedAt: 9, modelId: ' legacy/model ' },
@@ -603,7 +617,7 @@ describe('provider model selection contracts', () => {
     })).toEqual({
       v: 1,
       updatedAt: 9,
-      selection: { agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: 'legacy/model' },
+      selection: { agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: ' legacy/model ' },
     });
 
     const canonical = {
@@ -626,15 +640,25 @@ describe('provider model selection contracts', () => {
       v: 1,
       updatedAt: 10,
       selection: { agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: 'invalid current model' },
+    }).success).toBe(true);
+    expect(SessionModelSelectionIntentV1Schema.safeParse({
+      v: 1, updatedAt: 10,
+      selection: { agentTargetKey: 'agent:codex', providerConnectionId: 'pc_1', modelId: 'invalid current model' },
     }).success).toBe(false);
   });
 
   it('owns target-requirement decisions across legacy normalization and canonical precedence', () => {
-    for (const modelId of [' default ', '   ', 'invalid legacy model']) {
+    for (const modelId of ['default', '   ']) {
       expect(sessionModelSelectionIntentRequiresAgentTargetV1({
         canonical: undefined,
         legacy: { v: 1, updatedAt: 10, modelId },
       })).toBe(false);
+    }
+    for (const modelId of [' default ', 'native model with spaces']) {
+      expect(sessionModelSelectionIntentRequiresAgentTargetV1({
+        canonical: undefined,
+        legacy: { v: 1, updatedAt: 10, modelId },
+      })).toBe(true);
     }
 
     expect(sessionModelSelectionIntentRequiresAgentTargetV1({

@@ -1,4 +1,5 @@
 import { accountSettingsParse, AttentionDeliveryPolicyV1Schema, resolveAttentionDeliveryPolicyDecision, type AttentionDeliveryPolicyV1 } from '../../account/settings/accountSettings.js';
+import { AttentionQuietHoursInputSchema } from '../../account/settings/attentionDeliveryPolicy.js';
 import { PUSH_NOTIFICATION_SOUND_IDS } from '../../push/pushNotificationActions.js';
 import type { NotificationChannelConfigurationPatch } from '../notificationConfigurationActionFamily.js';
 import type { NotificationChannelRecordV1 } from '../../account/settings/notificationChannelRecordV1.js';
@@ -77,9 +78,13 @@ export function readAccountNotificationPreference(policy: AttentionDeliveryPolic
 export function updateAccountNotificationPreference(policy: AttentionDeliveryPolicyV1, id: AccountNotificationPreference, value: SettingDomainValueV1): AttentionDeliveryPolicyV1 {
     const push = policy.channels.expo_push;
     if (id === 'mutePhoneWhenComputerFocused') return AttentionDeliveryPolicyV1Schema.parse({ ...policy, mutePhoneWhenComputerFocused: value });
-    if (id === 'quietHours') return AttentionDeliveryPolicyV1Schema.parse({ ...policy, quietHours: {
-        enabled: value === 'nightly', timezone: resolveNotificationQuietHoursTimezone(policy), windows: value === 'nightly' ? [{ ...NIGHTLY_QUIET_HOURS_WINDOW }] : [],
-    } });
+    if (id === 'quietHours') {
+        const custom = typeof value === 'object' && value !== null ? AttentionQuietHoursInputSchema.parse(value) : null;
+        return AttentionDeliveryPolicyV1Schema.parse({ ...policy, quietHours: custom
+            ? { ...policy.quietHours, ...custom }
+            : { enabled: value === 'nightly', timezone: resolveNotificationQuietHoursTimezone(policy),
+                windows: value === 'nightly' ? [{ ...NIGHTLY_QUIET_HOURS_WINDOW }] : [] } });
+    }
     if (id === 'soundPreset') {
         const eventSoundIds = { ...policy.sounds.eventSoundIds };
         delete eventSoundIds.permission_request;
@@ -150,9 +155,13 @@ export function applyNotificationChannelPreferencePatchToRawSettings(raw: Readon
 export function accountNotificationStorageBinding(id: AccountNotificationPreference): PortableAccountSettingBindingV1 {
     const choices = id === 'soundPreset' ? ['happier', 'system', 'silent'] : id === 'quietHours' ? ['off', 'nightly'] : undefined;
     return { scope: 'account', kind: 'owner', access: id === 'pushEnabled' ? 'read_only' : 'read_write',
-        ...(choices ? { allowedValues: choices } : {}),
+        ...(choices && id !== 'quietHours' ? { allowedValues: choices } : {}),
         read: settings => readAccountNotificationPreference(settings.attentionDeliveryPolicyV1, id),
         parse: value => {
+            if (id === 'quietHours' && typeof value === 'object' && value !== null) {
+                const parsed = AttentionQuietHoursInputSchema.safeParse(value);
+                return parsed.success ? { success: true, value: parsed.data } : { success: false };
+            }
             if (choices) return typeof value === 'string' && choices.includes(value)
                 ? { success: true, value } : { success: false };
             return typeof value === 'boolean' ? { success: true, value } : { success: false };

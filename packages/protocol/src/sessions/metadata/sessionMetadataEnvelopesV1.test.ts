@@ -1,6 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { describe, expect, it, vi } from 'vitest';
-import * as canonicalBase64 from '../../crypto/base64.js';
 import { projectSessionMetadataForWire } from './terminalMetadata.js';
 import { readSessionRoleIdV1, readSessionRolesV1, writeSessionRoleIdV1ToMetadata } from '../../prompts/roles/sessionRolesSnapshot.js';
 import { z } from 'zod/mini';
@@ -62,10 +61,53 @@ import {
   sealSessionOwnerMetadataEnvelopeV1,
   sealSessionOwnerMetadataV1,
   validateSessionOwnerMetadataEnvelopeForAccountModeV1,
-  withSessionOwnerMetadataCiphertextValidationReuseV1,
+  validateAdmittedSessionOwnerMetadataEnvelopeForAccountModeV1,
 } from './sessionMetadataEnvelopesV1.js';
 
 describe('metadata schema consumer contracts', () => {
+  it('keeps the template draft reference solely in the owner metadata projection', () => {
+    const templateDraftRef = { serverId: 'home', artifactId: '7e23f798-230a-42f3-931f-e38b20736333' };
+    const metadata = { work: { templateDraftRef } };
+    const created = createSessionOwnerMetadataV1({ metadata });
+    expect(created).toMatchObject({ ok: true, ownerMetadata: { work: { templateDraftRef } } });
+    if (!created.ok) throw new Error('Template draft reference rejected');
+    const sharedMetadata = projectSessionSharedMetadataV1({ metadata });
+    expect(sharedMetadata).not.toHaveProperty('work');
+    expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata, ownerMetadata: created.ownerMetadata })).toMatchObject(metadata);
+  });
+  it('round-trips retry progress only through shared metadata and clears it without owner residue', () => {
+    const progress = { turnId: 'turn-1', phase: 'retrying', attempt: 2, reason: 'connection_failed' };
+    const metadata = { sessionTurnProgressV1: progress };
+    const created = createSessionOwnerMetadataV1({ metadata });
+    expect(created).toEqual({ ok: true, ownerMetadata: { v: 1 } });
+    if (!created.ok) throw new Error('Retry progress rejected');
+    const sharedMetadata = projectSessionSharedMetadataV1({ metadata });
+    expect(sharedMetadata).toEqual({ v: 1, sessionTurnProgressV1: progress });
+    expect(SessionSharedMetadataV1Schema.safeParse(sharedMetadata).success).toBe(true);
+    expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata, ownerMetadata: created.ownerMetadata }))
+      .toMatchObject(metadata);
+    expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata: { v: 1 }, ownerMetadata: created.ownerMetadata }))
+      .not.toHaveProperty('sessionTurnProgressV1');
+    expect(projectSessionSharedMetadataV1({ metadata: {} })).toEqual({ v: 1 });
+    for (const invalid of [{ ...progress, message: 'private' }, { ...progress, attempt: 0 },
+      { ...progress, attempt: Number.MAX_SAFE_INTEGER + 1 }, { ...progress, reason: 'provider_message' }]) {
+      expect(SessionSharedMetadataV1Schema.safeParse({ v: 1, sessionTurnProgressV1: invalid }).success).toBe(false);
+      expect(projectSessionSharedMetadataV1({ metadata: { sessionTurnProgressV1: invalid } }))
+        .not.toHaveProperty('sessionTurnProgressV1');
+    }
+  });
+  it('retains the last MCP failure facts privately across Session resume', () => {
+    const metadata = { mcpCapabilityNoticeV1: { v: 1, items: [
+      { kind: 'mcp_server', itemId: 'linear', name: 'Linear', code: 'missing_value_ref', detail: 'env:LINEAR_API_KEY' },
+    ] } };
+    const created = createSessionOwnerMetadataV1({ metadata });
+    expect(created).toMatchObject({ ok: true, ownerMetadata: { runtime: metadata } });
+    if (!created.ok) throw new Error('MCP notice facts rejected');
+    const sharedMetadata = projectSessionSharedMetadataV1({ metadata });
+    expect(sharedMetadata).not.toHaveProperty('mcpCapabilityNoticeV1');
+    expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata, ownerMetadata: created.ownerMetadata }))
+      .toMatchObject(metadata);
+  });
   it('round-trips native work-state source bookkeeping through the private owner envelope', () => {
     const source = 'plugin-agent/acme.native-runtime-proof/agent/tasks';
     const metadata = writeSessionWorkStateV1ToMetadata({}, {
@@ -908,61 +950,25 @@ describe('session metadata privacy envelopes v1', () => {
     }
   });
 
-  it('reuses only canonical envelope proofs and restores validation after nested or throwing reads', () => {
-    const ciphertext = 'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==';
-    const retained = SessionOwnerMetadataEnvelopeV1Schema.parse({ t: 'encrypted', c: ciphertext });
-    if (retained.t !== 'encrypted') throw new Error('Expected encrypted owner fixture');
-    const validate = vi.spyOn(canonicalBase64, 'readCanonicalPaddedBase64DecodedLength');
-    const read = (envelope: unknown) => SessionOwnerMetadataEnvelopeV1Schema.safeParse(envelope);
-    try {
-      withSessionOwnerMetadataCiphertextValidationReuseV1([retained], () => {
-        expect(read({ ...retained }).success).toBe(true);
-        expect(read({ ...retained, unexpectedAuthority: true }).success).toBe(false);
-        withSessionOwnerMetadataCiphertextValidationReuseV1([], () => expect(read({ ...retained }).success).toBe(true));
-      });
-      expect(validate).not.toHaveBeenCalled();
-      // A raw lookalike cannot seed a proof, even when its c bytes are valid.
-      withSessionOwnerMetadataCiphertextValidationReuseV1([{ ...retained }], () => expect(read({ ...retained }).success).toBe(true));
-      expect(validate).toHaveBeenCalled();
-      validate.mockClear();
-      retained.c = `${ciphertext}\n`;
-      withSessionOwnerMetadataCiphertextValidationReuseV1([retained], () => expect(read(retained).success).toBe(false));
-      expect(validate).toHaveBeenCalledWith(retained.c);
-      retained.c = ciphertext;
-      validate.mockClear();
-      expect(() => withSessionOwnerMetadataCiphertextValidationReuseV1([retained], () => {
-        expect(read(retained).success).toBe(true);
-        throw new Error('Abort synchronous parse');
-      })).toThrow('Abort synchronous parse');
-      expect(validate).not.toHaveBeenCalled();
-      expect(read({ ...retained }).success).toBe(true);
-      expect(validate).toHaveBeenCalled();
-    } finally { validate.mockRestore(); }
-  });
 
-  it('carries ciphertext validation through Account-mode checks and subsequent schema reads', () => {
+  it('carries an admitted envelope through Account-mode checks without reparsing it', () => {
     const ciphertext = 'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==';
-    // Observe the actual payload scan without replacing any validation logic.
-    const scan = vi.spyOn(String.prototype, 'charCodeAt');
-    try {
-      const parsed = parseSessionOwnerMetadataEnvelopeV1(JSON.stringify({ t: 'encrypted', c: ciphertext }));
-      const admitted = validateSessionOwnerMetadataEnvelopeForAccountModeV1({ accountMode: 'e2ee', envelope: parsed });
-      expect(admitted.ok).toBe(true);
-      if (!admitted.ok) throw new Error('Expected admitted encrypted envelope');
-      const reread = SessionOwnerMetadataEnvelopeV1Schema.parse(admitted.envelope);
-      expect(reread).toEqual(parsed);
-      expect(scan.mock.contexts.filter(value => value === ciphertext).length).toBe(ciphertext.length - 2);
-      expect(validateSessionOwnerMetadataEnvelopeForAccountModeV1({ accountMode: 'plain', envelope: reread }))
-        .toEqual({ ok: false, reason: 'account_mode_mismatch' });
-      // Proof is tied to the exact parsed object and bytes, never an arbitrary lookalike.
-      scan.mockClear();
-      expect(SessionOwnerMetadataEnvelopeV1Schema.safeParse({ ...reread }).success).toBe(true);
-      expect(scan.mock.contexts.filter(value => value === ciphertext).length).toBe(ciphertext.length - 2);
-      if (reread.t !== 'encrypted') throw new Error('Expected encrypted envelope');
-      reread.c = `${ciphertext}\n`;
-      expect(SessionOwnerMetadataEnvelopeV1Schema.safeParse(reread).success).toBe(false);
-      expect(SessionOwnerMetadataEnvelopeV1Schema.safeParse({ ...admitted.envelope, forgedAuthority: true }).success).toBe(false);
-    } finally { scan.mockRestore(); }
+    const parsed = parseSessionOwnerMetadataEnvelopeV1(JSON.stringify({ t: 'encrypted', c: ciphertext }));
+    if (!parsed) throw new Error('Expected parsed owner envelope');
+    const admitted = validateAdmittedSessionOwnerMetadataEnvelopeForAccountModeV1({ accountMode: 'e2ee', envelope: parsed });
+    expect(admitted.ok).toBe(true);
+    if (!admitted.ok) throw new Error('Expected admitted encrypted envelope');
+    const reread = admitted.envelope;
+    expect(reread).toBe(parsed);
+    expect(validateAdmittedSessionOwnerMetadataEnvelopeForAccountModeV1({ accountMode: 'plain', envelope: reread }))
+      .toEqual({ ok: false, reason: 'account_mode_mismatch' });
+    // A new external input still receives complete strict admission.
+    expect(SessionOwnerMetadataEnvelopeV1Schema.safeParse({ ...reread }).success).toBe(true);
+    if (reread.t !== 'encrypted') throw new Error('Expected encrypted envelope');
+    reread.c = `${ciphertext}\n`;
+    expect(SessionOwnerMetadataEnvelopeV1Schema.safeParse(reread).success).toBe(false);
+    expect(SessionOwnerMetadataEnvelopeV1Schema.safeParse({ ...admitted.envelope, forgedAuthority: true }).success).toBe(false);
+
   });
 
   it.each(['plain', 'e2ee'] as const)('round-trips a Replay seed above the old field clamp through an admitted %s envelope', (accountMode) => {
@@ -1134,7 +1140,7 @@ describe('session metadata privacy envelopes v1', () => {
           ...ownerMetadata.runtime.agentRuntimeCapabilitiesV1,
           sessionCapabilities: {
             ...ownerMetadata.runtime.agentRuntimeCapabilitiesV1.sessionCapabilities,
-            usageLimitRecovery: { checkNow: 'supported' },
+            usageLimitRecovery: { checkNow: 'supported', undeclaredOperation: 'supported' },
           },
         },
       },
@@ -2019,7 +2025,7 @@ describe('session metadata privacy envelopes v1', () => {
     }).success).toBe(false);
   });
 
-  it('rejects a shared public Agent-state projection with more than 2,048 completion facts', () => {
+  it('preserves completion facts beyond the former local projection cap', () => {
     const completedRequests = Object.fromEntries(
       Array.from({ length: 2_049 }, (_, index) => [
         `request-${index}`,
@@ -2032,10 +2038,26 @@ describe('session metadata privacy envelopes v1', () => {
       ]),
     );
 
-    expect(SessionSharedMetadataV1Schema.safeParse({
-      v: 1,
-      publicAgentState: { completedRequests },
-    }).success).toBe(false);
+    const sharedMetadata = projectSessionSharedMetadataV1({ metadata: {}, agentState: { completedRequests } });
+    expect(sharedMetadata.publicAgentState?.completedRequests).toEqual(completedRequests);
+    expect(SessionSharedMetadataV1Schema.parse(sharedMetadata).publicAgentState?.completedRequests)
+      .toEqual(completedRequests);
+  });
+
+  it('preserves a valid shared summary beyond the former local text cap', () => {
+    const summary = { text: 's'.repeat(2_049), updatedAt: 1 };
+    const sharedMetadata = projectSessionSharedMetadataV1({ metadata: { summary } });
+    expect(sharedMetadata.summary).toEqual(summary);
+    expect(SessionSharedMetadataV1Schema.parse(sharedMetadata).summary).toEqual(summary);
+  });
+
+  it('admits a valid tuple ciphertext beyond the former local envelope cap', () => {
+    const ciphertext = 's'.repeat(10_000_001);
+    const ownerMetadata = createPlainSessionOwnerMetadataEnvelopeV1({ v: 1 });
+    const tuple = SessionMetadataEnvelopeTupleV1Schema.parse({ metadataLayoutVersion: 1,
+      sharedMetadata: { ciphertext, version: 1 }, ownerMetadata,
+      agentState: { ciphertext: null, version: 0 } });
+    expect(tuple.sharedMetadata.ciphertext).toBe(ciphertext);
   });
 
   it('allowlists only recipient-safe title, Agent presentation, operation presentation, and transcript completion facts', () => {

@@ -11,6 +11,7 @@ import {
   DISCUSSION_HTTP_PATHS_V1,
   DISCUSSION_AGENT_POST_EVENT_V1,
   buildDiscussionMutationRequestBodyV1,
+  DiscussionAttentionQueryV1Schema,
   DiscussionAgentPostRequestV1Schema,
   DiscussionAgentPostResponseV1Schema,
   DiscussionAgentApprovedReplayPublicationV1Schema,
@@ -40,13 +41,14 @@ import {
 import { areCoordinationMessageRefsEqualV1, areDiscussionMessageRefsEqualV1, CoordinationMessageRefV1Schema,
   createDiscussionMessageRefV1, DiscussionMessageRefV1Schema, parseCoordinationMessageRefV1 } from './messageRefs.js';
 import { SessionMessageRefV1Schema } from '../sessions/messages/sessionMessageRefV1.js';
-import { DiscussionInviteRequestV1Schema, DiscussionMessageAddressingV1Schema } from './participants.js';
+import { DiscussionInviteRequestV1Schema, DiscussionMessageAddressingV1Schema, DiscussionParticipantsListResponseV1Schema } from './participants.js';
 import { DiscussionAnchorV1Schema, DiscussionDocPassageReplyTargetV1Schema, DiscussionReplyTargetV1Schema } from './replyTargets.js';
 import { DiscussionDocEditProposalContentV1Schema } from './content.js';
 import { SESSION_DATA_KEY_ENVELOPE_BYTES_V1 } from '../sessions/encryption/sessionDataKeyEnvelopes.js';
 import { serializeDiscussionMutationEqualityIntentV1 } from './equality.js';
 import { TriageEntryRefV1Schema } from '../tasks/entryRefV1.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { readDiscussionChangeHintV1 } from './changes.js';
 import {
   DISCUSSION_RECENT_AUTHOR_AVATAR_STACK_V1,
   DiscussionLatestMessageV1Schema,
@@ -72,6 +74,23 @@ describe('session discussion content', () => {
       externalSource: { ...content.externalSource, credentialRef: 'forbidden' } }).success).toBe(false);
   });
 
+  it('limits the loaded attention frontier to exact Discussion selection', () => {
+    expect(DiscussionAttentionQueryV1Schema.parse({})).toEqual({});
+    const exact = { discussionId: 'discussion-a', afterCursor: 'loaded-frontier', cursor: 'page', limit: '1' };
+    expect(DiscussionAttentionQueryV1Schema.parse(exact)).toEqual({ ...exact, limit: 1 });
+    expect(DiscussionAttentionQueryV1Schema.safeParse({ afterCursor: exact.afterCursor }).success).toBe(false);
+    expect(DiscussionAttentionQueryV1Schema.safeParse({ ...exact, future: true }).success).toBe(false);
+  });
+  it('admits only bounded nonempty Discussion change flags so malformed hints cannot suppress refresh', () => {
+    for (const changes of [{ readState: true }, { resource: true }, { readState: true, resource: true }]) {
+      const hint = { v: 1, discussions: true, changes };
+      expect(readDiscussionChangeHintV1(hint)).toEqual(hint);
+    }
+    for (const changes of [{}, { readState: false }, { readState: true, future: true }]) {
+      expect(readDiscussionChangeHintV1({ v: 1, discussions: true, changes })).toBeNull();
+    }
+    expect(readDiscussionChangeHintV1({ v: 1, discussions: true })).toBeNull();
+  });
   it('admits attachment-only files and complete folder trees through strict writes and tolerant stored reads', () => {
     const file = { blobId: '00000000-0000-4000-8000-000000000001', mime: 'image/png', sizeBytes: 4, sha256: 'a'.repeat(64) };
     const attachment = { kind: 'folder', id: '00000000-0000-4000-8000-000000000002', name: 'Pictures',
@@ -436,9 +455,26 @@ describe('session discussion presentation projections', () => {
       recentAuthorAccountIds: ['account-1', 'account-2', 'account-3', 'account-4'],
     }).success).toBe(false);
   });
+
+  it('accepts an optional recipient-key preparation demand without requiring it from older Homes', () => {
+    const wire = { ...summary, recentAuthorAccountIds: [] };
+    expect(DiscussionSummaryV1Schema.parse(wire)).not.toHaveProperty('recipientKeyPreparationRequired');
+    expect(DiscussionSummaryV1Schema.parse({ ...wire, recipientKeyPreparationRequired: true }))
+      .toMatchObject({ recipientKeyPreparationRequired: true });
+    expect(DiscussionSummaryV1Schema.parse({ ...wire, recipientKeyPreparationRequired: false }))
+      .toMatchObject({ recipientKeyPreparationRequired: false });
+  });
 });
 
 describe('session discussion API schemas', () => {
+  it('carries explicit current/former Account actors in the strict participant roster projection', () => {
+    const actor = { v: 1 as const, accountId: 'former-account', accessibility: 'former' as const,
+      profile: { name: 'Retained Person', firstName: null, lastName: null, username: null, avatarUrl: null } };
+    expect(DiscussionParticipantsListResponseV1Schema.parse({
+      discussionId: 'discussion', ownerAccountId: 'owner', access: 'owner', grants: [], participants: [], accountActors: [actor],
+    }).accountActors).toEqual([actor]);
+  });
+
   it('derives only the proposal initialization marker from authored content before sealing', () => {
     const revision = { headerVersion: 1, bodyVersion: 2 };
     const proposal = DiscussionMessageContentV1Schema.parse({ kind: 'doc_edit_proposal', proposal: {

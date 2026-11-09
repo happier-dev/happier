@@ -52,6 +52,9 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     let stored: ApprovalRequest | null = null;
     const renamedSessions: string[] = [];
     const deliveries: Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0][] = [];
+    const cause = materializeActionRequestAttributionV1({ requestRef: 'original-person-input',
+      requester: { serverId: 'creator-profile', accountId: 'account' },
+      persona: { serverId: 'creator-profile', sessionId: 'origin-session' }, origin: null });
     // Artifact persistence, current-origin authorization and the Session write
     // adapter are boundaries; proposal admission and replay remain real.
     const executor = createActionExecutor({
@@ -68,6 +71,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     expect(await executor.execute('session.title.set', { title: 'Review the API' }, {
       surface: 'agent', authority: 'account_automation', serverId: 'creator-profile',
       serverIdentityId: 'same-home', runtimeAccountId: 'account', actionRequestId: 'title-proposal',
+      actionRequestAttributionV1: cause,
       defaultSessionId: 'origin-session', defaultSessionMachineId: 'machine',
       actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
         'session.title.set': { approvalRequiredSurfaces: ['agent'] },
@@ -81,13 +85,21 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       artifactId: 'origin-session-proposal', decision: 'approve',
     }, { surface: 'ui', authority: 'present_user', serverId: 'approver-profile',
       serverIdentityId: 'same-home', runtimeAccountId: 'account', defaultSessionId: 'other-focused-session',
+      actionRequestAttributionV1: { ...cause, requestRef: 'reviewer-input',
+        persona: { serverId: 'approver-profile', sessionId: 'other-focused-session' } },
       callerPermissionMode: 'yolo' }))
       .toMatchObject({ ok: true, result: { status: 'executed' } });
     expect(renamedSessions).toEqual(['origin-session']);
-    expect(deliveries).toMatchObject([{ sessionId: 'origin-session', localId: 'approval-result:origin-session-proposal',
-      callerSurface: 'mcp', actionCaller: { kind: 'host' }, reply: 'none', context: { authority: 'account_automation' } }]);
-    expect(deliveries[0].context).not.toHaveProperty('callerPermissionMode');
-    expect(deliveries[0].context).not.toHaveProperty('defaultSessionId');
+    expect(await executor.replayApprovedApprovalRequest({ artifactId: 'origin-session-proposal', callerAuthority: 'present_user',
+      currentAccount: { accountId: 'account', serverId: 'approver-profile', serverIdentityId: 'same-home' } }))
+      .toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(deliveries).toMatchObject(Array.from({ length: 2 }, () => ({ sessionId: 'origin-session', localId: 'approval-result:origin-session-proposal',
+      callerSurface: 'mcp', actionCaller: { kind: 'host' }, reply: 'none',
+      context: { authority: 'account_automation', actionRequestAttributionV1: cause } })));
+    for (const delivery of deliveries) {
+      expect(delivery.context).not.toHaveProperty('callerPermissionMode');
+      expect(delivery.context).not.toHaveProperty('defaultSessionId');
+    }
     for (const current of [
       { runtimeAccountId: 'another-account', serverIdentityId: 'same-home' },
       { runtimeAccountId: 'account', serverIdentityId: 'another-home' },
@@ -96,7 +108,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
         surface: 'ui', authority: 'present_user', serverId: 'approver-profile', ...current,
       })).toMatchObject({ ok: false, errorCode: 'approval_context_unavailable' });
     }
-    expect(deliveries).toHaveLength(1);
+    expect(deliveries).toHaveLength(2);
     expect(renamedSessions).toEqual(['origin-session']);
   });
 

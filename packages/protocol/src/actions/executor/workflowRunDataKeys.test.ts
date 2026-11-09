@@ -30,16 +30,19 @@ function recipient(accountId: string) {
 }
 
 describe('Workflow per-run key admission', () => {
-  it('keeps plain admission keyless without discovering encryption recipients', async () => {
+  it('keeps plain admission keyless without a separate census request', async () => {
     let admitted: Readonly<Record<string, unknown>> | undefined;
     const actionOwner = createWorkflowAccountRunActionOwner({
       resolveAccountId: async () => 'owner',
       resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
       storage: { execute: async (operation) => {
-        if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+        if (operation.operation === 'get') return { run: null, keyCensus: { runId, ownerAccountId: 'owner', access: 'owner',
+          encryptionMode: 'plain', visibleTeamId: null, dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [],
+          ownerAccountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } } };
         if (operation.operation === 'admit') {
           admitted = operation;
           return { kind: 'created', run: { sourceArtifactId: null, ownerAccountId: 'owner', visibleTeamId: null, id: runId, origin: { kind: 'direct' }, state: 'queued', revision: 0,
+            attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
             machineId: 'machine', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
             availability: { pause: true, resumeBoundary: false,
                restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
@@ -67,6 +70,7 @@ describe('Workflow per-run key admission', () => {
       document: { text: 'Approve the value', references: [], attachments: [] }, result: { kind: 'text' as const } }] };
     let admitted: Readonly<Record<string, unknown>> | undefined;
     const run = { sourceArtifactId: null, visibleTeamId: null, id: runId, ownerAccountId: 'owner',
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       origin: { kind: 'direct' }, state: 'queued', revision: 0, machineId: 'machine',
       workflowCustodyState: 'pending', originDeliveryAckRevision: null,
       availability: { pause: true, resumeBoundary: false,
@@ -77,12 +81,11 @@ describe('Workflow per-run key admission', () => {
       resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'e2ee', version: 1,
         contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(owner.material.contentPublicKeyFingerprint) }, material: owner.material }),
       storage: { execute: async (operation) => {
-        if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
-        if (operation.operation === 'run-key.census') return { runId, ownerAccountId: 'owner', access: 'owner',
+        if (operation.operation === 'get') return { run: null, keyCensus: { runId, ownerAccountId: 'owner', access: 'owner',
           ownerAccountCurrentness: { mode: 'e2ee', version: 1,
             contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(owner.material.contentPublicKeyFingerprint) },
           encryptionMode: 'e2ee', visibleTeamId: null, dataEncryptionKey: null, callerDataEncryptionKey: null,
-          recipients: [owner.census, viewer.census] };
+          recipients: [owner.census, viewer.census] } };
         if (operation.operation === 'admit') { admitted = operation; return { kind: 'created', run }; }
         throw new Error(`Unexpected operation ${String(operation.operation)}`);
       } },

@@ -41,6 +41,8 @@ export function normalizePromptInvocationTokenV1(token: string): string {
   return String(token ?? '').trim().toLowerCase();
 }
 
+export const RESERVED_PROMPT_INVOCATION_TOKENS_V1: ReadonlySet<string> = new Set(['/clear', '/compact']);
+
 /** A session-only template requires an actually addressed session, not a draft. */
 export function isPromptInvocationAvailable(
   entry: Pick<PromptInvocationEntryV1, 'availableIn'>,
@@ -61,7 +63,7 @@ export function validatePromptInvocationTokenV1(params: Readonly<{
   const token = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
   if (!PromptInvocationTokenV1Schema.safeParse(token).success) return { ok: false, reason: 'invalid' };
   const normalized = normalizePromptInvocationTokenV1(token);
-  if (normalized === '/clear' || normalized === '/compact') return { ok: false, reason: 'reserved' };
+  if (RESERVED_PROMPT_INVOCATION_TOKENS_V1.has(normalized)) return { ok: false, reason: 'reserved' };
   if (params.actionTokens.some((candidate) => candidate.startsWith('/') && normalizePromptInvocationTokenV1(candidate) === normalized)) {
     return { ok: false, reason: 'actionCollision' };
   }

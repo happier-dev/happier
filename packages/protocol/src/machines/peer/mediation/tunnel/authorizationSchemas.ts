@@ -1,11 +1,12 @@
 import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
-import { ProviderBrokerApplicationBindingV1Schema, ProviderBrokerRouteGrantPayloadV1Schema } from '../../../../providers/brokerRouteGrantV1.js';
+import { ProviderBrokerSourceApplicationBindingV1Schema, ProviderBrokerRouteGrantPayloadV1Schema } from '../../../../providers/brokerRouteGrantV1.js';
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../../../../auth/authToken.js';
 import { TeamCredentialSourceBindingV1Schema } from '../../../../teams/credentials/sourceBindingV1.js';
 
 import { createCanonicalJsonSigningInput } from '../../../../crypto/canonicalJson.js';
 import { VoiceMediaApplicationKindV1Schema } from '../voiceMediaV1.js';
+import { LocalServicePreviewDirectBindingV1Schema } from '../../../../local/services/preview/v1.js';
 
 export const PEER_TCP_TUNNEL_RELAY_AUTHORIZATION_AUDIENCE_V1 =
   'happier-tcp-tunnel-relay-authorization' as const;
@@ -52,7 +53,7 @@ export const ProviderBrokerResourceTestRelayBindingV1Schema = lazyZodSchema(() =
   requestId: z.string().check(z.minLength(1)),
   actorAccountId: z.string().check(z.minLength(1)),
   expectedResourceRevision: z.number().check(z.int(), z.nonnegative()),
-  application: ProviderBrokerApplicationBindingV1Schema,
+  application: ProviderBrokerSourceApplicationBindingV1Schema,
   source: TeamCredentialSourceBindingV1Schema,
   verifiedCredentialEvidence: z.optional(AuthTokenAuthenticationEvidenceSnapshotV1Schema),
 }));
@@ -95,6 +96,7 @@ export const PeerTcpTunnelRelayAuthorizationPayloadV2Schema = lazyZodSchema(() =
     relaySocketId: z.string().check(z.minLength(1), z.maxLength(PEER_TCP_TUNNEL_RELAY_SOCKET_ID_MAX_LENGTH)),
     destination: z.optional((<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(PeerTcpTunnelRelayAuthorizationDestinationV1Schema)),
     providerBroker: z.optional(ProviderBrokerRelayApplicationBindingV1Schema),
+    preview: z.optional(LocalServicePreviewDirectBindingV1Schema),
     capProfileId: z.string().check(z.minLength(1)),
     maxFrameBytes: PositiveIntSchema,
     maxIdleMs: z.optional(PositiveIntSchema),
@@ -104,6 +106,12 @@ export const PeerTcpTunnelRelayAuthorizationPayloadV2Schema = lazyZodSchema(() =
     exp: PositiveIntSchema,
     aud: z.literal(PEER_TCP_TUNNEL_RELAY_AUTHORIZATION_AUDIENCE_V1),
   }).check(z.superRefine((payload, ctx) => {
+    if (payload.preview && (payload.flowKind !== 'tcp_tunnel'
+      || payload.preview.machineId !== payload.targetMachineId
+      || payload.preview.target.host !== payload.destination?.host
+      || payload.preview.target.port !== payload.destination?.port)) {
+      ctx.addIssue({ code: 'custom', path: ['preview'], message: 'Preview relay requires its exact Machine and destination binding' });
+    }
     if (payload.flowKind === 'tcp_tunnel') {
       if (payload.maxIdleMs !== undefined || payload.maxDurationMs !== undefined || payload.maxTotalBytes !== undefined) {
         ctx.addIssue({ code: "custom", path: ['maxIdleMs'], message: 'TCP lifetime belongs to the consumer, not relay admission' });

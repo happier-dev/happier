@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
+import { getActionSpec } from './actionSpecs.js';
 import {
   NOTIFICATION_CONFIGURATION_ACTION_IDS,
   NotificationConfigurationActionInputSchemas,

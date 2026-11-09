@@ -5,6 +5,8 @@ import {
   cloneStrictPluginJsonValue,
   cloneStrictPluginJsonValueWithTraversalLimits,
   measureSerializedStrictPluginJsonUtf8Bytes,
+  measureSerializedValidatedStrictPluginJsonUtf8Bytes,
+  measurePluginJsonUtf8Bytes,
 } from './strictJsonValue.js';
 
 function nested(depth: number): unknown {
@@ -99,6 +101,36 @@ describe('cloneStrictPluginJsonValue', () => {
 
       expect(measureSerializedStrictPluginJsonUtf8Bytes(cloned, 'value'))
         .toBe(serializedUtf8Bytes(value));
+    }
+  });
+
+  it('measures a Usage query without allocating an encoded buffer for each JSON token', () => {
+    const value = { results: [{ accounting: { contributions: Array.from({ length: 128 }, (_, index) => ({
+      id: `event-${index}`, observedAtMs: index, sessionId: 'session',
+      tokens: { input: 1, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 3 },
+      cost: { reportedUsd: 0, estimatedUsd: 0.125, currency: 'USD' },
+      label: 'é 中 😀 \ud800',
+    })) } }] };
+    const expected = serializedUtf8Bytes(value);
+    const encoded = vi.spyOn(TextEncoder.prototype, 'encode');
+    try {
+      expect(measureSerializedValidatedStrictPluginJsonUtf8Bytes(value, 'usageQuery')).toBe(expected);
+      expect(encoded.mock.calls.length).toBe(0);
+    } finally { encoded.mockRestore(); }
+  });
+
+  it('preserves Unicode byte counts and exact serialized overflow boundaries', () => {
+    const text = Array.from({ length: 65_536 }, (_, index) => String.fromCharCode(index)).join('');
+    const value = { [text]: [text, '\ud800', '\udc00', '😀', -0, 1e30, null, true] };
+    const expected = serializedUtf8Bytes(value);
+    expect(measureSerializedValidatedStrictPluginJsonUtf8Bytes(value, 'value')).toBe(expected);
+    expect(measureSerializedValidatedStrictPluginJsonUtf8Bytes(value, 'value', expected)).toBe(expected);
+    expect(measureSerializedValidatedStrictPluginJsonUtf8Bytes(value, 'value', expected - 2)).toBe(expected - 1);
+    for (const raw of ['', 'ASCII', 'é', '中', '😀', '\u0000']) {
+      expect(measurePluginJsonUtf8Bytes(raw, 'raw')).toBe(new TextEncoder().encode(raw).byteLength);
+    }
+    for (const raw of ['\ud800', '\udc00', '\ud800x', 'x\udc00']) {
+      expect(() => measurePluginJsonUtf8Bytes(raw, 'raw')).toThrow('well-formed Unicode');
     }
   });
 

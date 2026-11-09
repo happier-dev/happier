@@ -2,6 +2,21 @@ import { describe, expect, it } from 'vitest';
 import * as sessions from './sessionHumanPresenceV1.js';
 
 describe('human presence V1 operation', () => {
+  it('negotiates admitted edit identities without content or a lease deadline', () => {
+    const pendingMessageEdits = [{ sessionId: 's', holdId: 'edit-device-1' }];
+    expect(sessions.SessionHumanPresenceVisibleReplaceV1Schema.safeParse({
+      v: 1, sessionIds: [], pendingMessageEdits,
+    })).toMatchObject({ success: true, data: { pendingMessageEdits } });
+    expect(sessions.SessionHumanPresenceVisibleReplaceResultV1Schema.safeParse({
+      v: 1, ok: true, admittedSessionIds: [], admittedPendingMessageEdits: pendingMessageEdits,
+    }).success).toBe(true);
+    expect(sessions.SessionHumanPresenceSnapshotV1Schema.safeParse({
+      v: 1, sessionId: 's', viewers: [], observedAt: 1, pendingMessageEditHoldIds: ['edit-device-1'],
+    }).success).toBe(true);
+    expect(sessions.SessionHumanPresenceVisibleReplaceV1Schema.safeParse({
+      v: 1, sessionIds: [], pendingMessageEdits: [{ ...pendingMessageEdits[0], accountId: 'other' }],
+    }).success).toBe(false);
+  });
   it('normalizes the whole visible set and rejects malformed or authority-bearing extra input', () => {
     expect(sessions.SessionHumanPresenceVisibleReplaceV1Schema?.safeParse({ v: 1, sessionIds: [' b ', 'a', 'b'] }))
       .toMatchObject({ success: true, data: { v: 1, sessionIds: ['a', 'b'] } });

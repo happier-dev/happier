@@ -10,6 +10,7 @@ import { isManagedRetainedControlInvocation } from '../machines/managed/actionsV
 import { isDeploymentEnvironmentUpdateNativeAdmissionV1, projectDeploymentNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 import { isPresentUserHostInvocation } from '../actions/invocationAuthority.js';
 import type { ActionExecutionPlacement } from '../actions/metadata.js';
+import { isLocalServiceStopActionIdV1 } from '../actions/actionIds.js';
 
 export type ApprovalExecutor =
   | Readonly<{ kind: 'app'; placement: ActionExecutionPlacement }>
@@ -68,6 +69,14 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
   }
   const input = spec.inputSchema.safeParse(request.actionArgs);
   if (!input.success) return { kind: 'unavailable', reason: 'invalid_input' };
+  // Stop consumes its exact native handle. The original Account keeps its Ask;
+  // the deciding app delivers a new signed Stop instead of moving the Artifact
+  // or disclosing Account credentials to the Service's Machine.
+  if (isLocalServiceStopActionIdV1(actionId) && origin.caller.kind === 'host'
+    && !origin.machineId && !origin.externalActionExecutionAuthorization && !origin.principalId && !origin.credentialId
+    && (origin.surface === 'cli' || origin.surface === 'mcp' || origin.surface === 'ui')) {
+    return { kind: 'app', placement: resolveActionExecutionPlacementForInput(spec, input.data) };
+  }
   // Workflow model invitations reserve a slot; the Workflow owns Session start.
   // Keep that caller on its daemon, just as Session publications keep theirs.
   // Ordinary Account proposals still belong to the deciding app.

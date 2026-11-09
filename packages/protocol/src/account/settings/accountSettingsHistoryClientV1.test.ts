@@ -44,13 +44,14 @@ describe('Account Settings history destination capture', () => {
     let catalogReads = 0;
     let openedSnapshots = 0;
     let listReads = 0;
-    let appearOnConfirmation = false;
-    let settingsVersion = 7;
-    let moveEmptyHead = false;
+    let currentnessReads = 0;
     const input = { destinationAuthority: { activeTransferredRoots: [] }, ports: {
       isCurrent: () => true,
-      readCurrentness: async () => AccountEncryptionCurrentnessResponseSchema.parse({ mode: 'plain', version: 1,
-        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1, settingsVersion }),
+      readCurrentness: async () => {
+        currentnessReads++;
+        return AccountEncryptionCurrentnessResponseSchema.parse({ mode: 'plain', version: 1,
+          signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1, settingsVersion: 7 });
+      },
       resolveTransferMaterial: () => null,
       unavailable: (_status: number, message: string): never => { throw new Error(message); },
       openSnapshot: (content: AccountSettingsStoredContentEnvelope): AccountSettingsPersistedObject => {
@@ -62,8 +63,6 @@ describe('Account Settings history destination capture', () => {
       request: async (path: string) => {
         if (path === '/v2/account/settings/history') {
           listReads++;
-          if (moveEmptyHead) settingsVersion++;
-          if (appearOnConfirmation && listReads === 2) hasHistory = true;
           return { status: 200, data: { snapshots: hasHistory ? [{
             version: 6, createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: 20 }] : [] } };
         }
@@ -77,19 +76,60 @@ describe('Account Settings history destination capture', () => {
       },
     } };
     expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual({ status: 'complete' });
-    expect(catalogReads).toBe(0);
-    moveEmptyHead = true;
-    expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual({ status: 'complete' });
-    expect(catalogReads).toBe(0);
-    moveEmptyHead = false;
-    listReads = 0;
-    appearOnConfirmation = true;
-    expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual({ status: 'cleanup-pending', versions: [6] });
-    expect(catalogReads).toBe(0);
-    appearOnConfirmation = false;
+    expect({ catalogReads, listReads, currentnessReads }).toEqual({ catalogReads: 0, listReads: 1, currentnessReads: 1 });
+    hasHistory = true;
     expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual({ status: 'complete' });
     expect(catalogReads).toBeGreaterThan(0);
     expect(openedSnapshots).toBe(1);
+  });
+
+  it('admits one finite capture per normalization, reports a newly retained row, and stops on local cancel', async () => {
+    const reads = { currentness: 0, transfer: 0, list: 0, detail: 0 };
+    let current = true;
+    let retainNewRow = false;
+    const row = (version: number) => ({ version, createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: 20 });
+    const checkpoint: AccountSettingsHistoryNormalizationCheckpointV1 = {};
+    const input = { checkpoint, destinationAuthority: { activeTransferredRoots: [] }, ports: {
+      isCurrent: () => current,
+      readCurrentness: async () => {
+        reads.currentness++;
+        return AccountEncryptionCurrentnessResponseSchema.parse({ mode: 'plain', version: 1,
+          signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1, settingsVersion: 7 });
+      },
+      resolveTransferMaterial: () => null,
+      unavailable: (_status: number, message: string): never => { throw new Error(message); },
+      openSnapshot: (content: AccountSettingsStoredContentEnvelope): AccountSettingsPersistedObject => {
+        if (content.t !== 'plain') throw new Error('Expected Plain snapshot');
+        return content.v;
+      },
+      resealSnapshot: (raw: AccountSettingsPersistedObject): AccountSettingsStoredContentEnvelope => ({ t: 'plain', v: raw }),
+      request: async (path: string) => {
+        if (path === PROFILE_TRANSFER_ROUTE_V1) { reads.transfer++; return { status: 200, data: { status: 'absent' } }; }
+        if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [] } };
+        if (privateAuthorityPaths.has(path)) return { status: 404, data: { error: 'not_found' } };
+        if (path === '/v2/account/settings/history') {
+          const pass = reads.list++;
+          // A concurrent Settings write retains its previous version during the scan.
+          return { status: 200, data: { snapshots: retainNewRow && pass > 0 ? [row(6), row(7)] : [row(6)] } };
+        }
+        if (path === '/v2/account/settings/history/6') {
+          reads.detail++;
+          return { status: 200, data: { version: 6, createdAt: '2026-01-01T00:00:00.000Z',
+            content: { t: 'plain', v: { preferredLanguage: 'de' } } } };
+        }
+        throw new Error(`Unexpected history request: ${path}`);
+      },
+    } };
+    expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual({ status: 'complete' });
+    expect(reads).toEqual({ currentness: 1, transfer: 1, list: 2, detail: 1 });
+    // A repeated request with unchanged inputs reuses the completed scan outright.
+    expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual({ status: 'complete' });
+    expect(reads).toEqual({ currentness: 2, transfer: 2, list: 3, detail: 1 });
+    input.checkpoint.completed = undefined;
+    retainNewRow = true;
+    expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual({ status: 'cleanup-pending', versions: [7] });
+    current = false;
+    await expect(normalizeAccountSettingsHistoryClientV1(input)).rejects.toThrow('Captured Account Settings scope retired');
   });
 
   it('does not mark a completed history scan pending when only the Account event cursor advances', async () => {
@@ -119,10 +159,11 @@ describe('Account Settings history destination capture', () => {
     expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual({ status: 'complete' });
   });
 
-  it('does not reuse completion when the history head moves during authority recapture', async () => {
+  it('does not reuse completion once the history head moved, but re-reads only rows it has not verified clean', async () => {
     let settingsVersion = 7;
-    let moveHead = false;
-    let detailReads = 0;
+    let listReads = 0;
+    const detailReads: number[] = [];
+    let inventory = [6];
     const checkpoint: AccountSettingsHistoryNormalizationCheckpointV1 = {};
     const input = { checkpoint, destinationAuthority: { activeTransferredRoots: [] }, ports: {
       isCurrent: () => true,
@@ -136,17 +177,19 @@ describe('Account Settings history destination capture', () => {
       },
       resealSnapshot: (raw: AccountSettingsPersistedObject): AccountSettingsStoredContentEnvelope => ({ t: 'plain', v: raw }),
       request: async (path: string) => {
-        if (path === PROFILE_TRANSFER_ROUTE_V1) {
-          if (moveHead) { settingsVersion++; moveHead = false; }
-          return { status: 200, data: { status: 'absent' } };
-        }
+        if (path === PROFILE_TRANSFER_ROUTE_V1) return { status: 200, data: { status: 'absent' } };
         if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [] } };
         if (privateAuthorityPaths.has(path)) return { status: 404, data: { error: 'not_found' } };
-        if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [{
-          version: 6, createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: 20 }] } };
-        if (path === '/v2/account/settings/history/6') {
-          detailReads++;
-          return { status: 200, data: { version: 6, createdAt: '2026-01-01T00:00:00.000Z',
+        if (path === '/v2/account/settings/history') {
+          listReads++;
+          return { status: 200, data: { snapshots: inventory.map(version => ({
+            version, createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: 20 })) } };
+        }
+        const detail = /^\/v2\/account\/settings\/history\/(\d+)$/.exec(path);
+        if (detail) {
+          const version = Number(detail[1]);
+          detailReads.push(version);
+          return { status: 200, data: { version, createdAt: '2026-01-01T00:00:00.000Z',
             content: { t: 'plain', v: { preferredLanguage: 'de' } } } };
         }
         throw new Error(`Unexpected history request: ${path}`);
@@ -154,11 +197,180 @@ describe('Account Settings history destination capture', () => {
     } };
     expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual({ status: 'complete' });
     expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual({ status: 'complete' });
-    expect(detailReads).toBe(1);
-    moveHead = true;
-    expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual({ status: 'cleanup-pending', versions: [6] });
+    expect(detailReads).toEqual([6]);
+    // A Settings write moves the head and retains the previous document as a new row.
+    settingsVersion = 8;
+    inventory = [7, 6];
+    const listsBefore = listReads;
     expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual({ status: 'complete' });
-    expect(detailReads).toBe(3);
+    // Completion was not reused (inventory re-listed), the new row was read, the verified row was not.
+    expect(listReads).toBeGreaterThan(listsBefore);
+    expect(detailReads).toEqual([6, 7]);
+  });
+
+  it('keeps verified-clean rows across destination revision bumps that cannot change a verdict', async () => {
+    let settingsVersion = 7;
+    let presentationRevision = 2;
+    const detailReads: number[] = [];
+    let inventory = [6, 5];
+    const checkpoint: AccountSettingsHistoryNormalizationCheckpointV1 = {};
+    const input = { checkpoint, destinationAuthority: { activeTransferredRoots: [] }, ports: {
+      isCurrent: () => true,
+      readCurrentness: async () => AccountEncryptionCurrentnessResponseSchema.parse({ mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1, settingsVersion }),
+      resolveTransferMaterial: () => null,
+      unavailable: (_status: number, message: string): never => { throw new Error(message); },
+      openSnapshot: (content: AccountSettingsStoredContentEnvelope): AccountSettingsPersistedObject => {
+        if (content.t !== 'plain') throw new Error('Expected Plain snapshot');
+        return content.v;
+      },
+      resealSnapshot: (raw: AccountSettingsPersistedObject): AccountSettingsStoredContentEnvelope => ({ t: 'plain', v: raw }),
+      request: async (path: string) => {
+        if (path === PROFILE_TRANSFER_ROUTE_V1) return { status: 200, data: { status: 'absent' } };
+        if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [] } };
+        // A tombstoned private catalog: its root is active authority, its revision is only CAS evidence.
+        if (path === '/v1/account/entity-rows/connected-metadata/presentation') {
+          return { status: 200, data: { status: 'deleted', revision: presentationRevision } };
+        }
+        if (privateAuthorityPaths.has(path)) return { status: 404, data: { error: 'not_found' } };
+        if (path === '/v2/account/settings/history') {
+          return { status: 200, data: { snapshots: inventory.map(version => ({
+            version, createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: 20 })) } };
+        }
+        const detail = /^\/v2\/account\/settings\/history\/(\d+)$/.exec(path);
+        if (detail) {
+          const version = Number(detail[1]);
+          detailReads.push(version);
+          return { status: 200, data: { version, createdAt: '2026-01-01T00:00:00.000Z',
+            content: { t: 'plain', v: { preferredLanguage: 'de' } } } };
+        }
+        throw new Error(`Unexpected history request: ${path}`);
+      },
+    } };
+    expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual({ status: 'complete' });
+    expect(detailReads).toEqual([6, 5]);
+    // Another device edits the tombstoned catalog and then Settings: same roots, new revision, one new row.
+    presentationRevision = 3;
+    settingsVersion = 8;
+    inventory = [7, 6, 5];
+    expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual({ status: 'complete' });
+    expect(detailReads).toEqual([6, 5, 7]);
+  });
+
+  it('keeps recovery-independent verified rows under saved-secret recovery and still re-reads rows recovery can change', async () => {
+    const accountId = 'history-verdict-recovery-account';
+    const secret = { id: 'legacy-token', name: 'Legacy token', kind: 'token' as const,
+      encryptedValue: { _isSecretValue: true as const, value: 'retained-private-fixture' }, createdAt: 1, updatedAt: 2 };
+    const resourceId = deriveSavedSecretImportResourceIdV1({ accountId, source: { kind: 'personal-saved-secret', secretId: secret.id } });
+    let settingsVersion = 7;
+    let currentSecrets: unknown[] = [secret];
+    const detailReads: number[] = [];
+    const mutated: number[] = [];
+    const rows: Record<number, AccountSettingsStoredContentEnvelope> = {
+      6: { t: 'plain', v: { preferredLanguage: 'de' } },
+      5: { t: 'plain', v: { secrets: [secret], preferredLanguage: 'fr' } },
+    };
+    const checkpoint: AccountSettingsHistoryNormalizationCheckpointV1 = {};
+    const input = () => ({ checkpoint, destinationAuthority: { activeTransferredRoots: [] },
+      savedSecretRecovery: { accountId, source: { raw: { secrets: currentSecrets }, version: settingsVersion },
+        resources: [{ resourceId, ownerAccountId: accountId, revision: 3, materialStatus: 'ready' as const }] }, ports: {
+        isCurrent: () => true,
+        readCurrentness: async () => AccountEncryptionCurrentnessResponseSchema.parse({ mode: 'plain', version: 1,
+          signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1, settingsVersion }),
+        resolveTransferMaterial: () => null,
+        unavailable: (_status: number, message: string): never => { throw new Error(message); },
+        openSnapshot: (content: AccountSettingsStoredContentEnvelope): AccountSettingsPersistedObject => {
+          if (content.t !== 'plain') throw new Error('Expected Plain snapshot');
+          return content.v;
+        },
+        resealSnapshot: (raw: AccountSettingsPersistedObject): AccountSettingsStoredContentEnvelope => ({ t: 'plain', v: raw }),
+        request: async (path: string, request: Readonly<{ method: 'GET' | 'POST'; body?: unknown }>) => {
+          if (path === PROFILE_TRANSFER_ROUTE_V1) return { status: 200, data: { status: 'absent' } };
+          if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [] } };
+          if (privateAuthorityPaths.has(path)) return { status: 404, data: { error: 'not_found' } };
+          if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [6, 5].map(version => ({
+            version, createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: 20 })) } };
+          const mutate = /^\/v2\/account\/settings\/history\/(\d+)\/mutate$/.exec(path);
+          if (mutate) {
+            const mutation = AccountSettingsV2HistoryMutationRequestSchema.parse(request.body);
+            if (mutation.operation.kind !== 'normalize') throw new Error('Expected history normalization');
+            mutated.push(Number(mutate[1])); rows[Number(mutate[1])] = mutation.operation.content!;
+            return { status: 200, data: { status: 'applied' } };
+          }
+          const detail = /^\/v2\/account\/settings\/history\/(\d+)$/.exec(path);
+          if (detail) {
+            const version = Number(detail[1]);
+            detailReads.push(version);
+            return { status: 200, data: { version, createdAt: '2026-01-01T00:00:00.000Z', content: rows[version] } };
+          }
+          throw new Error(`Unexpected history request: ${path}`);
+        },
+      } });
+    // Row 5's secret is still current Settings content, so it stays pending.
+    expect(await normalizeAccountSettingsHistoryClientV1(input())).toEqual({ status: 'cleanup-pending', versions: [5] });
+    expect(detailReads).toEqual([6, 5]);
+    // A later Settings write: the row without saved-secret content stays verified; the row whose
+    // secret is still current is re-read, because a later recovery source could transfer it.
+    settingsVersion = 8;
+    expect(await normalizeAccountSettingsHistoryClientV1(input())).toEqual({ status: 'cleanup-pending', versions: [5] });
+    expect(detailReads).toEqual([6, 5, 5]);
+    // The secret leaves the current source: recovery now proves its transfer and the row is scrubbed.
+    settingsVersion = 9; currentSecrets = [];
+    await normalizeAccountSettingsHistoryClientV1(input());
+    expect(detailReads).toEqual([6, 5, 5, 5]);
+    expect(mutated).toEqual([5]);
+  });
+
+  it('repeats a settled pending pass by reference only while nothing could have changed its answer', async () => {
+    let settingsVersion = 7;
+    let detailStatus = 200;
+    let unreadable = false;
+    let detailReads = 0;
+    let writes = 0;
+    const checkpoint: AccountSettingsHistoryNormalizationCheckpointV1 = {};
+    const input = { checkpoint, destinationAuthority: { activeTransferredRoots: [] }, ports: {
+      isCurrent: () => true,
+      readCurrentness: async () => AccountEncryptionCurrentnessResponseSchema.parse({ mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1, settingsVersion }),
+      resolveTransferMaterial: () => null,
+      unavailable: (_status: number, message: string): never => { throw new Error(message); },
+      openSnapshot: (content: AccountSettingsStoredContentEnvelope): AccountSettingsPersistedObject => {
+        if (unreadable) throw new Error('Unopenable snapshot');
+        if (content.t !== 'plain') throw new Error('Expected Plain snapshot');
+        return content.v;
+      },
+      resealSnapshot: (raw: AccountSettingsPersistedObject): AccountSettingsStoredContentEnvelope => ({ t: 'plain', v: raw }),
+      request: async (path: string, request: Readonly<{ method: 'GET' | 'POST' }>) => {
+        if (request.method === 'POST') writes++;
+        if (path === PROFILE_TRANSFER_ROUTE_V1) return { status: 200, data: { status: 'absent' } };
+        if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [] } };
+        if (privateAuthorityPaths.has(path)) return { status: 404, data: { error: 'not_found' } };
+        if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [{
+          version: 6, createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: 20 }] } };
+        if (path === '/v2/account/settings/history/6') {
+          detailReads++;
+          return { status: detailStatus, data: { version: 6, createdAt: '2026-01-01T00:00:00.000Z',
+            content: { t: 'plain', v: { inferenceOpenAIKey: 'synthetic-retained-value' } } } };
+        }
+        throw new Error(`Unexpected history request: ${path}`);
+      },
+    } };
+    const pending = { status: 'cleanup-pending', versions: [6] };
+    detailStatus = 503;
+    expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual(pending);
+    expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual(pending);
+    expect(detailReads, 'a transport failure proves nothing about the row').toBe(2);
+    detailStatus = 200;
+    expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual(pending);
+    expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual(pending);
+    expect(detailReads, 'a settled retained source reads no history again').toBe(3);
+    settingsVersion = 8;
+    unreadable = true;
+    expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual(pending);
+    expect(await normalizeAccountSettingsHistoryClientV1(input)).toEqual(pending);
+    expect(detailReads, 'a moved head rereads once; an unopenable row is settled too').toBe(4);
+    expect(writes).toBe(0);
+    expect(checkpoint.completed).toBeUndefined();
   });
 
   it.each([
@@ -172,10 +384,9 @@ describe('Account Settings history destination capture', () => {
     const snapshot = { version: reappeared ? 7 : 4, createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: 20 };
     let listReads = 0;
     let detailReads = 0;
-    let currentnessReads = 0;
     const input = { destinationAuthority: { activeTransferredRoots: [] }, ports: {
       isCurrent: () => true,
-      readCurrentness: async () => ({ ...currentness, settingsVersion: currentnessReads++ === 0 ? 7 : 8 }),
+      readCurrentness: async () => currentness,
       resolveTransferMaterial: () => null,
       unavailable: (_status: number, message: string): never => { throw new Error(message); },
       openSnapshot: (_content: AccountSettingsStoredContentEnvelope): AccountSettingsPersistedObject => {
@@ -192,7 +403,7 @@ describe('Account Settings history destination capture', () => {
         if (path === '/v2/account/settings/history') {
           const pass = listReads++;
           // A concurrent Settings write retains its previous version again after purge.
-          return { status: 200, data: { snapshots: pass === 0 || retained || reappeared && currentnessReads >= 2 ? [snapshot] : [] } };
+          return { status: 200, data: { snapshots: pass === 0 || retained || reappeared ? [snapshot] : [] } };
         }
         if (path === `/v2/account/settings/history/${snapshot.version}`) {
           detailReads += 1;

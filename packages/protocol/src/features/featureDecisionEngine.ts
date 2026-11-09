@@ -1,7 +1,7 @@
 import { createFeatureDecision, type FeatureDecision, type FeatureDecisionScope } from './decision.js';
 import type { FeaturesResponse } from '../features.js';
 import type { FeatureId } from './featureIds.js';
-import { FEATURE_CATALOG, FEATURE_IDS } from './catalog.js';
+import { FEATURE_CATALOG, FEATURE_IDS, getCanonicalFeatureId, getFeatureAliases } from './catalog.js';
 import type { FeatureBuildPolicyEvaluation } from './buildPolicy.js';
 import { readServerEnabledBit, tryWriteServerEnabledBitInPlace } from './serverEnabledBit.js';
 
@@ -102,6 +102,9 @@ export function applyFeatureDependencies(
     return;
   }
 
+  const canonical = getCanonicalFeatureId(params.featureId);
+  if (canonical !== params.featureId) return params.resolveDependencyDecision(canonical);
+
   const dependencies = DEPENDENCIES_BY_ID.get(params.featureId) ?? [];
   if (dependencies.length === 0) return params.baseDecision;
 
@@ -172,6 +175,7 @@ const DEPENDENTS_BY_ID: ReadonlyMap<FeatureId, readonly FeatureId[]> = (() => {
  * `applyFeatureDependencies` enforces, so a client previewing a change never rebuilds the closure.
  */
 export function listFeatureDependents(featureId: FeatureId): readonly FeatureId[] {
+  featureId = getCanonicalFeatureId(featureId);
   const found = new Set<FeatureId>();
   const pending: FeatureId[] = [featureId];
   while (pending.length > 0) {
@@ -210,6 +214,7 @@ export function evaluateServerFeatureDecisions(
   const evaluating = new Set<FeatureId>();
 
   const evaluate = (featureId: FeatureId): FeatureDecision => {
+    featureId = getCanonicalFeatureId(featureId);
     const known = decisions.get(featureId);
     if (known) return known;
     const base = evaluateFeatureDecisionBase({
@@ -246,7 +251,7 @@ export function evaluateServerFeatureDecisions(
 function applyServerFeatureDependencyClosureInPlace(response: FeaturesResponse): void {
   const decisions = evaluateServerFeatureDecisions({ serverPayload: response });
   for (const [featureId, decision] of decisions) {
-    if (decision.state === 'enabled') continue;
-    tryWriteServerEnabledBitInPlace(response, featureId, false);
+    if (decision.state === 'enabled' && getFeatureAliases(featureId).length === 0) continue;
+    tryWriteServerEnabledBitInPlace(response, featureId, decision.state === 'enabled');
   }
 }

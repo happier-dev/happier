@@ -3,6 +3,7 @@ import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { SessionViewerProjectionV1Schema } from '../personal/viewer.js';
 import { DEFAULT_SESSION_FOLLOW_CREATION_POLICIES_V1, PersonalFollowOnceV1Schema, matchesPersonalFollowOnceOccurrenceV1, projectPersonalFollowCustodyV1 } from './accountFollow.js';
 import { resolveSessionFollowActionRequest } from './actionTransport.js';
+import { SetSessionAutoFollowPreferencesRequestSchema } from './api.js';
 import type { FollowPolicyV1 } from './sessionFollowPolicyV1.js';
 
 describe('personal Follow one-shot occurrence', () => {
@@ -89,6 +90,19 @@ import {
 } from './index.js';
 
 describe('Account Follow protocol contract', () => {
+  it('normalizes canonical defaultRules and legacy preferences to the same persisted operational choices', () => {
+    const defaults = { assigned: true, direct: false, team: true, group: false };
+    const canonical = { defaultRules: defaults, managerPolicy: { preset: 'quiet' } };
+    const legacy = { ...defaults, managerPolicy: { preset: 'quiet' } };
+    expect(SetSessionAutoFollowPreferencesRequestSchema.safeParse(canonical)).toMatchObject({ success: true, data: legacy });
+    expect(SetSessionAutoFollowPreferencesRequestSchema.parse(legacy)).toEqual(legacy);
+    expect(resolveSessionFollowActionRequest('follow.preferences.set', legacy)).toEqual({
+      method: 'PUT', path: '/v2/account/session-follow-preferences', body: canonical,
+    });
+    expect(SetSessionAutoFollowPreferencesRequestSchema.safeParse({ ...canonical, assigned: false }).success).toBe(false);
+    expect(SetSessionAutoFollowPreferencesRequestSchema.safeParse({ defaultRules: { ...defaults, accountId: 'other' } }).success).toBe(false);
+  });
+
   it('defaults new Discussion participants to Quiet while manager and Run reports stay Important', () => {
     expect(DEFAULT_SESSION_FOLLOW_CREATION_POLICIES_V1).toEqual({
       managerPolicy: { preset: 'important' },

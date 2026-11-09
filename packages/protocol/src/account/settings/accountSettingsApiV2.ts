@@ -21,6 +21,12 @@ import {
 
 const textEncoder = new TextEncoder();
 
+/** Wire acceptance only; never Account mode, consent or feature-enabled authority. */
+export const ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_HTTP_HEADER = 'x-happier-account-settings-protocols';
+export const ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_HTTP_VALUE = 'remote-alert-policy-v1';
+/** Read-only currentness for the Settings version carried by the response. */
+export const ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER = 'x-happier-account-remote-alert-policy-status';
+
 function serializedUtf8ByteLength(value: unknown): number {
   const serialized = JSON.stringify(value);
   if (serialized === undefined) {

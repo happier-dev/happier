@@ -7,6 +7,16 @@ import {
 } from './pendingRequestedActionV1';
 
 describe('PendingRequestedActionV1', () => {
+  it('preserves explicit recovery in its new epoch while retained ordinary V1 remains readable', () => {
+    const recovery = { v: 2, kind: 'recover_execution_run' };
+    expect(PendingRequestedActionV1Schema.parse(recovery)).toEqual(recovery);
+    expect(normalizePendingRequestedActionV1(recovery, 'stored')).toEqual(recovery);
+    expect(normalizePendingRequestedActionV1({ v: 1, kind: 'enqueue' }, 'stored')).toEqual({ v: 1, kind: 'enqueue' });
+    for (const invalid of [
+      { ...recovery, v: 1 }, { ...recovery, extra: true }, { v: 2, kind: 'enqueue' },
+    ]) expect(PendingRequestedActionV1Schema.safeParse(invalid).success).toBe(false);
+  });
+
   it.each(['enqueue', 'steer_if_active', 'steer_now', 'send_now'] as const)(
     'accepts the canonical %s action',
     (kind) => {

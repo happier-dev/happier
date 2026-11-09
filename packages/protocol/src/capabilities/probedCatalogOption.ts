@@ -1,6 +1,7 @@
 import { AgentModelOptionOverrideRuleSchema, type AgentModelOptionOverrideRule } from '../models/descriptor.js';
 import { z } from 'zod/mini';
 import type { AgentModelsProbeObservation } from './agentProbeObservation.js';
+import { NonBlankOpaqueIdentifierSchema } from '../strings/opaqueIdentifier.js';
 
 /**
  * The single normalizer for a probed session-control option.
@@ -23,28 +24,37 @@ export type ProbedCatalogOption = Readonly<{
   id: string;
   name: string;
   description?: string;
+  category?: string;
   type: string;
   currentValue: ProbedCatalogOptionValue;
   options?: ReadonlyArray<ProbedCatalogOptionChoice>;
+  groups?: readonly Readonly<{ id: string; name: string; options: readonly ProbedCatalogOptionChoice[] }>[];
   /** @experimental Producer-declared. See {@link AgentModelOptionOverrideRule}. */
   overridesWhenOn?: AgentModelOptionOverrideRule;
 }>;
 
-const ProbeNonEmptyStringSchema = z.string().check(z.trim(), z.minLength(1));
+const ProbeNonEmptyStringSchema = NonBlankOpaqueIdentifierSchema;
 const ProbeDescriptionSchema = z.string();
 export const ProbedCatalogOptionValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+const ProbedCatalogOptionChoiceSchema = z.strictObject({
+  value: ProbedCatalogOptionValueSchema,
+  name: ProbeNonEmptyStringSchema,
+  description: z.optional(ProbeDescriptionSchema),
+});
 
-/** Native probe output, after the single plugin-ingress normalizer below. */
+/** Normalized catalog shared by native preflight and Session runtime observations. */
 export const ProbedCatalogOptionSchema: z.ZodMiniType<ProbedCatalogOption> = z.strictObject({
   id: ProbeNonEmptyStringSchema,
   name: ProbeNonEmptyStringSchema,
   description: z.optional(ProbeDescriptionSchema),
+  category: z.optional(z.string()),
   type: ProbeNonEmptyStringSchema,
   currentValue: ProbedCatalogOptionValueSchema,
-  options: z.optional(z.readonly(z.array(z.strictObject({
-    value: ProbedCatalogOptionValueSchema,
+  options: z.optional(z.readonly(z.array(ProbedCatalogOptionChoiceSchema))),
+  groups: z.optional(z.readonly(z.array(z.strictObject({
+    id: ProbeNonEmptyStringSchema,
     name: ProbeNonEmptyStringSchema,
-    description: z.optional(ProbeDescriptionSchema),
+    options: z.readonly(z.array(ProbedCatalogOptionChoiceSchema)),
   })))),
   overridesWhenOn: z.optional(AgentModelOptionOverrideRuleSchema),
 });
@@ -59,9 +69,15 @@ const ProbedCatalogOptionInputSchema = z.object({
   id: ProbeNonEmptyStringSchema,
   name: ProbeNonEmptyStringSchema,
   description: z.optional(ProbeDescriptionSchema),
+  category: z.optional(z.string()),
   type: ProbeNonEmptyStringSchema,
   currentValue: z.optional(z.unknown()),
   options: z.optional(z.array(z.unknown())),
+  groups: z.optional(z.array(z.object({
+    id: ProbeNonEmptyStringSchema,
+    name: ProbeNonEmptyStringSchema,
+    options: z.array(z.unknown()),
+  }))),
   // A malformed rule must not discard the whole option, so it is parsed separately below.
   overridesWhenOn: z.optional(z.unknown()),
 });
@@ -79,7 +95,7 @@ export function normalizeProbedCatalogOptionChoice(choiceRaw: unknown): ProbedCa
   return {
     value: normalizeProbedOptionValue(value),
     name,
-    ...(description ? { description } : {}),
+    ...(description !== undefined ? { description } : {}),
   };
 }
 
@@ -90,6 +106,11 @@ export function normalizeProbedCatalogOption(optionRaw: unknown): ProbedCatalogO
   const choices = parsed.data.options
     ?.map((choice) => normalizeProbedCatalogOptionChoice(choice))
     .filter((choice): choice is ProbedCatalogOptionChoice => choice !== null);
+  const groups = parsed.data.groups?.map(group => ({
+    id: group.id,
+    name: group.name,
+    options: group.options.map(normalizeProbedCatalogOptionChoice).filter((choice): choice is ProbedCatalogOptionChoice => choice !== null),
+  }));
 
   // Parsed through the canonical producer schema so a probe never publishes a rule shape the
   // strict owner-metadata envelope would reject.
@@ -100,8 +121,10 @@ export function normalizeProbedCatalogOption(optionRaw: unknown): ProbedCatalogO
     name: parsed.data.name,
     type: parsed.data.type,
     currentValue: normalizeProbedOptionValue(parsed.data.currentValue),
-    ...(parsed.data.description ? { description: parsed.data.description } : {}),
+    ...(parsed.data.description !== undefined ? { description: parsed.data.description } : {}),
+    ...(parsed.data.category !== undefined ? { category: parsed.data.category } : {}),
     ...(choices && choices.length > 0 ? { options: choices } : {}),
+    ...(groups ? { groups } : {}),
     ...(overridesWhenOn.success ? { overridesWhenOn: overridesWhenOn.data } : {}),
   };
 }

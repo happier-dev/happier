@@ -1,8 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
-import type { JsonValue } from '../../json/strictJsonValue.js';
-import { AgentRuntimeJsonValueV1Schema } from '../../runtime/agentSessionV1.js';
+import { StrictJsonValueSchema, type JsonValue } from '../../json/strictJsonValue.js';
 import { resolveTranscriptBodySemanticEvent } from './sessionMessageRole.js';
 
 function snapshotStructuralDto(
@@ -37,14 +36,23 @@ function snapshotStructuralDto(
 }
 
 const USER_CONTENT_KEYS = new Set(['type', 'text']);
-const RAW_RECORD_KEYS = new Set(['role', 'content']);
+const RAW_RECORD_KEYS = new Set(['role', 'content', 'media']);
+
+// Transient source bytes only. Session media staging/adoption consumes these
+// standard ACP blocks before any durable transcript write. No path authority.
+const ImportedImageSchema = lazyZodSchema(() => z.strictObject({
+  type: z.literal('image'),
+  mimeType: z.string(),
+  data: z.string(),
+}));
+type ImportedImage = z.infer<typeof ImportedImageSchema>;
 
 const AgentExternalSessionUserContentSchema = lazyZodSchema(() => (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((value, context) => snapshotStructuralDto(value, USER_CONTENT_KEYS, context)), z.strictObject({
     type: z.literal('text'),
     text: z.string(),
   })));
 
-const AgentExternalSessionAgentContentSchema = lazyZodSchema(() => AgentRuntimeJsonValueV1Schema.check(z.superRefine((content, context) => {
+const AgentExternalSessionAgentContentSchema = lazyZodSchema(() => StrictJsonValueSchema.check(z.superRefine((content, context) => {
     if (!content || typeof content !== 'object' || Array.isArray(content)) {
       context.addIssue({
         code: 'custom',
@@ -114,10 +122,12 @@ export type AgentExternalSessionTranscriptRawRecord =
   | Readonly<{
       role: 'user';
       content: Readonly<{ type: 'text'; text: string }>;
+      media?: readonly ImportedImage[];
     }>
   | Readonly<{
       role: 'agent';
       content: JsonValue;
+      media?: readonly ImportedImage[];
     }>;
 
 const AgentExternalSessionTranscriptRawRecordUnionSchema = lazyZodSchema(() => z.discriminatedUnion(
@@ -126,10 +136,12 @@ const AgentExternalSessionTranscriptRawRecordUnionSchema = lazyZodSchema(() => z
     z.strictObject({
       role: z.literal('user'),
       content: AgentExternalSessionUserContentSchema,
+      media: z.optional(z.array(ImportedImageSchema)),
     }),
     z.strictObject({
       role: z.literal('agent'),
       content: AgentExternalSessionAgentContentSchema,
+      media: z.optional(z.array(ImportedImageSchema)),
     }),
   ],
 ));

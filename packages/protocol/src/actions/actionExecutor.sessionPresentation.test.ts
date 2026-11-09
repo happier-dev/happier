@@ -42,7 +42,7 @@ describe('current-Session presentation Action', () => {
       bindings: { mcpToolName: 'session_presentation_apply' },
       surfaces: {
         ui: true,
-        voice: false,
+        voice: true,
         agent: true,
         mcp: true,
         cli: true,

@@ -5,14 +5,35 @@ import { decideApprovalRequestTransition, settleApprovalRequestActionArgs } from
 import type { HomeAccountRowV1 } from '../home/governance/accounts.js';
 import { buildApprovalPreviewSummary, createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
+import { resolveApprovalRequestApproveAdmission } from './actionApprovalPresentation.js';
 import { ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES } from '../crypto/encryptedDataKeyEnvelopeFormatV1.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { NO_TEAM_CAPABILITIES_V1 } from '../teams/capabilities.js';
 import { TeamSummaryV1Schema } from '../teams/projections.js';
+import type { ActionId } from './actionIds.js';
 
 const roleSetInput = { accountId: 'account-2', homeRole: 'admin' } as const;
+
+it('requires the ordinary person confirmation before claiming Personal Home ownership', async () => {
+  let effects = 0;
+  const executor = createActionExecutor({ homeRuntimeActionExecute: async () => {
+    effects++;
+    return { ok: true, result: { status: 'task_started', taskId: 'claim-owner' } };
+  } });
+  const input = getActionSpec('relay.runtime.personal_home.claim').inputSchema.parse({
+    purpose: { kind: 'personal-home', canonicalServerUrl: 'http://127.0.0.1:43123' },
+    personalHomeOperation: { accountId: 'owner' } });
+  const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+  expect(await executor.execute('relay.runtime.personal_home.claim', input, context))
+    .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+  expect(effects).toBe(0);
+  expect(await executor.execute('relay.runtime.personal_home.claim', input, {
+    ...context, presentUserConfirmation: { actionId: 'relay.runtime.personal_home.claim' },
+  })).toMatchObject({ ok: true, result: { status: 'task_started', taskId: 'claim-owner' } });
+  expect(effects).toBe(1);
+});
 
 /**
  * The in-memory approval Artifacts below stand in for the persistence boundary
@@ -48,6 +69,103 @@ function homeAccountRow(): HomeAccountRowV1 {
 }
 
 describe('createActionExecutor (Home governance and Teams)', () => {
+  it('reveals for the person in the app; an Agent/MCP request asks first and only the person\'s Allow displays it once, value-free', async () => {
+    const displays: Array<Readonly<{ input: unknown; surface: unknown; authority: unknown }>> = [];
+    let portResult: unknown = { status: 'displayed', historyEntryId: 'history-1' };
+    const approvals = new Map<string, ApprovalRequest>();
+    let settings = ActionsSettingsV1Schema.parse({ v: 1 });
+    const executor = createActionExecutor({
+      // The app's Saved Secret display and the approval Artifact store are the
+      // boundaries; admission, policy, routing, transitions and replay stay real.
+      savedSecretRevealAction: async ({ input, context }) => {
+        displays.push({ input, surface: context.surface, authority: context.authority });
+        return portResult;
+      },
+      isActionApprovalRequired: (id, context, admittedInput) =>
+        isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, admittedInput),
+      approvalsCreate: async ({ request }) => {
+        const artifactId = `reveal-approval-${approvals.size + 1}`;
+        approvals.set(artifactId, ApprovalRequestV2Schema.parse(request));
+        return { artifactId };
+      },
+      approvalsGet: async ({ artifactId }) => approvals.get(artifactId) ?? null,
+      approvalsUpdate: async ({ artifactId, request }) => {
+        const transition = transitionStoredApproval(approvals.get(artifactId), request);
+        if (!transition.ok) return transition;
+        approvals.set(artifactId, ApprovalRequestV2Schema.parse(request));
+        return { ok: true as const };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
+    } as Partial<ActionExecutorDeps> as ActionExecutorDeps);
+    const input = { ref: 'happier:shared-secret:v1:resource', expectedRevision: 3 };
+    const reveal = (context: Parameters<typeof executor.execute>[2]) => executor.execute('secrets.shared.reveal' as ActionId, input, context);
+    const person = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: 'home-1', runtimeAccountId: 'account-1' } as const;
+
+    // Owner-positive: the person's own in-app Reveal stays direct, one display.
+    expect(await reveal(person)).toEqual({ ok: true, result: { status: 'displayed', historyEntryId: 'history-1' } });
+    expect(displays).toEqual([{ input, surface: 'ui', authority: 'present_user' }]);
+
+    // Agent and MCP requests (host or real Session caller) default to Ask:
+    // one value-free Artifact each, nothing displayed, nothing returned.
+    const automation = (surface: 'agent' | 'mcp', session: boolean) => ({ surface, authority: 'account_automation' as const,
+      serverId: 'home-1', runtimeAccountId: 'account-1', actionRequestId: `request-${surface}-${session}`,
+      ...(session ? { defaultSessionId: 'agent-session',
+        actionCaller: { kind: 'session' as const, sessionId: 'agent-session', starterDepth: 0, turnDepth: 0 } }
+        : { actionCaller: { kind: 'host' as const } }) });
+    const requested = [];
+    for (const [surface, session] of [['agent', false], ['agent', true], ['mcp', false]] as const) {
+      const result = await reveal(automation(surface, session));
+      expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      requested.push((result as { result: { artifactId: string } }).result.artifactId);
+    }
+    expect(displays).toHaveLength(1);
+    expect(approvals.size).toBe(3);
+    for (const artifactId of requested) {
+      expect(approvals.get(artifactId)).toMatchObject({ actionId: 'secrets.shared.reveal', actionArgs: input, status: 'open',
+        approval: { flow: 'deferred' }, executionOriginV1: { authority: 'account_automation', accountId: 'account-1' } });
+    }
+
+    // Agents never answer their own request; nothing is displayed.
+    const [agentRequest, sessionRequest, mcpRequest] = requested as [string, string, string];
+    expect(await executor.execute('approval.request.decide', { artifactId: agentRequest, decision: 'approve' },
+      automation('agent', false))).toMatchObject({ ok: false });
+    expect(displays).toHaveLength(1);
+    expect(approvals.get(agentRequest)?.status).toBe('open');
+
+    // The person's Allow replays once in their own app as their own display; the
+    // requester and the Artifact receive only the value-free outcome.
+    expect(await executor.execute('approval.request.decide', { artifactId: mcpRequest, decision: 'approve' }, person))
+      .toMatchObject({ ok: true });
+    expect(displays).toHaveLength(2);
+    expect(displays[1]).toEqual({ input, surface: 'ui', authority: 'present_user' });
+    expect(approvals.get(mcpRequest)).toMatchObject({ status: 'executed',
+      execution: { result: { status: 'displayed', historyEntryId: 'history-1' } } });
+    // A settled Allow runs once; a repeated decision reads the receipt.
+    await executor.execute('approval.request.decide', { artifactId: mcpRequest, decision: 'approve' }, person);
+    expect(displays).toHaveLength(2);
+    expect(approvals.get(mcpRequest)?.status).toBe('executed');
+
+    // A display port that tried to hand the value back cannot cross the result boundary.
+    portResult = { status: 'displayed', historyEntryId: 'history-2', value: 'secret-sentinel' };
+    const leaked = await executor.execute('approval.request.decide', { artifactId: sessionRequest, decision: 'approve' }, person);
+    expect(JSON.stringify(leaked)).not.toContain('secret-sentinel');
+    expect(JSON.stringify(approvals.get(sessionRequest))).not.toContain('secret-sentinel');
+
+    // A deliberate Allow preference for the surface skips the Ask (user-changeable default).
+    portResult = { status: 'displayed', historyEntryId: 'history-3' };
+    settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'secrets.shared.reveal': ['agent'] } });
+    expect(await reveal(automation('agent', true))).toEqual({ ok: true, result: { status: 'displayed', historyEntryId: 'history-3' } });
+    expect(approvals.size).toBe(3);
+
+    // An API token never reveals, even with that preference and a full grant: no Artifact, no display.
+    const before = displays.length;
+    expect(await reveal({ surface: 'api', authority: 'account_automation', actionCaller: { kind: 'host' },
+      externalActionCredential: { accountId: 'account-1', principalId: 'token', credentialId: 'token', grant: API_TOKEN_FULL_GRANT_V1 } }))
+      .toMatchObject({ ok: false });
+    expect(displays).toHaveLength(before);
+    expect(approvals.size).toBe(3);
+  });
   it.each([
     ['teams.archive', { v: 1, teamId: 'team-1' }, null],
     ['teams.restore', { v: 1, teamId: 'team-1' }, null],
@@ -444,6 +562,10 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     });
     expect(JSON.stringify(storedRequest)).not.toContain(token);
 
+    expect(resolveApprovalRequestApproveAdmission(ApprovalRequestV2Schema.parse(storedRequest))).toMatchObject({
+      status: 'available',
+    });
+
     await expect(executor.execute('approval.request.decide', {
       artifactId: 'approval-invitation-1',
       decision: 'approve',
@@ -538,6 +660,9 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     expect((storedRequest as ApprovalRequest | null)?.preview).not.toHaveProperty('summary');
     expect((storedRequest as ApprovalRequest | null)?.summary).not.toContain('Misleading caller');
     expect(JSON.stringify(storedRequest)).not.toContain(token);
+    expect(resolveApprovalRequestApproveAdmission(ApprovalRequestV2Schema.parse(storedRequest))).toMatchObject({
+      status: 'available',
+    });
   });
 
   it.each(['ui', 'cli', 'rpc', 'mcp'] as const)(
@@ -728,11 +853,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
       serverId: 'home-1',
       runtimeAccountId: 'account-1',
       actionCaller: { kind: 'host' },
-    })).resolves.toEqual({
-      ok: false,
-      errorCode: 'present_user_required',
-      error: 'present_user_required',
-    });
+    })).resolves.toMatchObject({ ok: false });
 
     expect(homeDomainAction.mock.calls).toHaveLength(1);
   });

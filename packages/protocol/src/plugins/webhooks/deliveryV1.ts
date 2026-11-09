@@ -1,5 +1,7 @@
-import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
+import { normalizePluginJsonSchema } from '../actions/protocolComposableSchema.js';
 
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { readCanonicalPaddedBase64DecodedLength } from '../../crypto/base64.js';
@@ -17,7 +19,14 @@ export const PLUGIN_WEBHOOK_MAX_ENCRYPTED_BUNDLE_BYTES_V1 = 36_700_232;
 export const PLUGIN_WEBHOOK_MAX_STORED_ENVELOPE_BYTES_V1 = 51_380_224;
 
 const ASCII_TOKEN_128_SCHEMA = z.string().check(z.regex(/^[A-Za-z0-9._:-]{1,128}$/u));
-const GITHUB_EVENT_SCHEMA = z.string().check(z.regex(/^[A-Za-z0-9._-]{1,128}$/u));
+const WEBHOOK_EVENT_SCHEMA = z.string().check(z.regex(/^[A-Za-z0-9._-]{1,128}$/u));
+const SIGNED_WEBHOOK_VERIFIER_SCHEMA = z.enum(['github_hmac_sha256_v1', 'sentry_hmac_sha256_v1']);
+
+/** The one provider event header each signed verifier selects into delivery content. */
+const SELECTED_EVENT_HEADER_BY_VERIFIER_V1 = {
+  github_hmac_sha256_v1: 'x-github-event',
+  sentry_hmac_sha256_v1: 'sentry-hook-resource',
+} as const;
 const CONTENT_TYPE_SCHEMA = z.string().check(z.maxLength(128), z.regex(/^[!#$%&'*+.^_`|~0-9a-z-]+\/[!#$%&'*+.^_`|~0-9a-z-]+$/u));
 const DIAGNOSTIC_CODE_SCHEMA = z.string().check(z.regex(/^[a-z0-9._-]{1,64}$/u));
 const ENDPOINT_REVISION_SCHEMA = z.number().check(z.int(), z.positive(), z.int());
@@ -39,14 +48,25 @@ function isCanonicalPaddedBase64(value: string, expectedBytes?: number): boolean
 }
 
 const PluginWebhookSelectedHeaderV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
-  name: z.literal('x-github-event'),
-  value: GITHUB_EVENT_SCHEMA,
+  name: z.enum(['x-github-event', 'sentry-hook-resource']),
+  value: WEBHOOK_EVENT_SCHEMA,
 })));
 
+function checkSelectedEventHeaderV1(
+  selected: Readonly<{ name: string; value: string }> | undefined,
+  verified: Readonly<{ verifier: keyof typeof SELECTED_EVENT_HEADER_BY_VERIFIER_V1; eventType?: string | undefined }>,
+): string | null {
+  if (selected?.value !== verified.eventType) return 'Verified event type must match the selected event header';
+  if (selected && selected.name !== SELECTED_EVENT_HEADER_BY_VERIFIER_V1[verified.verifier]) {
+    return 'Selected event header must belong to the verifier';
+  }
+  return null;
+}
+
 const PluginWebhookVerifiedContentV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
-  verifier: z.literal('github_hmac_sha256_v1'),
+  verifier: SIGNED_WEBHOOK_VERIFIER_SCHEMA,
   providerDeliveryId: ASCII_TOKEN_128_SCHEMA,
-  eventType: z.optional(GITHUB_EVENT_SCHEMA),
+  eventType: z.optional(WEBHOOK_EVENT_SCHEMA),
   credentialVersionId: ASCII_TOKEN_128_SCHEMA,
 })));
 
@@ -62,10 +82,8 @@ export const PluginWebhookDeliveryContentV1Schema = lazyZodSchema(() => z.readon
   if (!isCanonicalPaddedBase64(value.rawBodyBase64, value.rawBodyBytes)) {
     context.addIssue({ code: 'custom', path: ['rawBodyBase64'], message: 'Raw body must be canonical padded base64 with the declared decoded length' });
   }
-  const eventHeader = value.headers[0]?.value;
-  if (eventHeader !== value.verified.eventType) {
-    context.addIssue({ code: 'custom', path: ['verified', 'eventType'], message: 'Verified event type must match the selected GitHub event header' });
-  }
+  const headerIssue = checkSelectedEventHeaderV1(value.headers[0], value.verified);
+  if (headerIssue) context.addIssue({ code: 'custom', path: ['verified', 'eventType'], message: headerIssue });
 }))));
 
 const PluginWebhookEncryptedContentV1Schema = lazyZodSchema(() => z.strictObject({
@@ -108,16 +126,15 @@ export const PluginWebhookActionInputV1Schema = lazyZodSchema(() => z.readonly(z
     rawBodyBase64: z.string().check(z.maxLength(PLUGIN_WEBHOOK_MAX_ENCODED_RAW_BODY_CHARS_V1)),
   }),
   verified: z.strictObject({
-    verifier: z.literal('github_hmac_sha256_v1'),
-    eventType: z.optional(GITHUB_EVENT_SCHEMA),
+    verifier: SIGNED_WEBHOOK_VERIFIER_SCHEMA,
+    eventType: z.optional(WEBHOOK_EVENT_SCHEMA),
   }),
 }).check(z.superRefine((value, context) => {
   if (!isCanonicalPaddedBase64(value.request.rawBodyBase64, value.request.rawBodyBytes)) {
     context.addIssue({ code: 'custom', path: ['request', 'rawBodyBase64'], message: 'Raw body must be canonical padded base64 with the declared decoded length' });
   }
-  if (value.request.headers[0]?.value !== value.verified.eventType) {
-    context.addIssue({ code: 'custom', path: ['verified', 'eventType'], message: 'Verified event type must match the selected GitHub event header' });
-  }
+  const headerIssue = checkSelectedEventHeaderV1(value.request.headers[0], value.verified);
+  if (headerIssue) context.addIssue({ code: 'custom', path: ['verified', 'eventType'], message: headerIssue });
 }))));
 
 export const PluginWebhookActionResultV1Schema = lazyZodSchema(() => z.readonly(z.discriminatedUnion('kind', [
@@ -125,6 +142,18 @@ export const PluginWebhookActionResultV1Schema = lazyZodSchema(() => z.readonly(
   z.strictObject({ kind: z.literal('retry'), code: DIAGNOSTIC_CODE_SCHEMA }),
   z.strictObject({ kind: z.literal('deadLetter'), code: DIAGNOSTIC_CODE_SCHEMA }),
 ])));
+
+/** Action declarations project the same parsers that retain dispatch refinements. */
+export const PluginWebhookActionInputV1DeclarationSchema = lazyDefinition(() => Object.freeze({
+  jsonSchema: normalizePluginJsonSchema(zodSchemaToJsonSchemaObject(PluginWebhookActionInputV1Schema, { target: 'draft-7' })),
+  parse: (value: unknown) => PluginWebhookActionInputV1Schema.parse(value),
+  safeParse: (value: unknown) => PluginWebhookActionInputV1Schema.safeParse(value),
+}));
+export const PluginWebhookActionResultV1DeclarationSchema = lazyDefinition(() => Object.freeze({
+  jsonSchema: normalizePluginJsonSchema(zodSchemaToJsonSchemaObject(PluginWebhookActionResultV1Schema, { target: 'draft-7' })),
+  parse: (value: unknown) => PluginWebhookActionResultV1Schema.parse(value),
+  safeParse: (value: unknown) => PluginWebhookActionResultV1Schema.safeParse(value),
+}));
 
 const PluginWebhookClaimTargetV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
   materialization: PluginMachineMaterializationRefV1Schema,

@@ -21,6 +21,23 @@ import {
 } from './installationIdentity.js';
 
 describe('machine installation identity protocol', () => {
+    it('binds personal stream source admission to Home, person and exact installed source occurrence', () => {
+        const keys = tweetnacl.sign.keyPair();
+        const liveStreamSourceAdmission = { homeServerIdentityId: 'home', actorAccountId: 'guest',
+            streamFamily: 'screen', sourceId: 'personal-source', sourceOccurrenceId: 'occurrence' };
+        const payload = { version: 1 as const, machineId: 'machine', installationId: 'installation',
+            accountId: 'custodian', liveStreamSourceAdmission };
+        const proof = signMachineInstallationProof({ payload, privateKey: keys.secretKey });
+        expect(verifyMachineInstallationProof({ payload, proof, publicKey: keys.publicKey })).toBe(true);
+        for (const changed of [{ homeServerIdentityId: 'another-home' }, { actorAccountId: 'another-person' },
+            { sourceId: 'owner-source' }, { sourceOccurrenceId: 'replacement' }]) {
+            expect(verifyMachineInstallationProof({ payload: { ...payload,
+                liveStreamSourceAdmission: { ...liveStreamSourceAdmission, ...changed } }, proof, publicKey: keys.publicKey })).toBe(false);
+        }
+        expect(MachineInstallationProofPayloadV1Schema.safeParse({ ...payload,
+            rpcAdmission: { context: { actorAccountId: 'guest', custodianAccountId: 'custodian',
+                machineId: 'machine', installationId: 'installation', role: 'use', encryptionMode: 'plain' } } }).success).toBe(false);
+    });
     it('binds a native credential binding read to one installed requester and refuses combined proof purposes', () => {
         const keys = tweetnacl.sign.keyPair();
         const parsed = MachineInstallationProofPayloadV1Schema.safeParse({ version: 1,
@@ -41,6 +58,73 @@ describe('machine installation identity protocol', () => {
             deploymentSecretLaunch: { requestBodyDigest: 'b'.repeat(43) } }).success).toBe(false);
         expect(MachineInstallationProofPayloadV1Schema.safeParse({ ...payload,
             managedPolicyCensus: { homeId: 'home' } }).success).toBe(false);
+    });
+    it('binds private Environment grant reads to the installed receiver and exact launch body', () => {
+        const keys = tweetnacl.sign.keyPair();
+        const payload = { version: 1 as const, machineId: 'guest', installationId: 'installation', accountId: 'owner',
+            deploymentSecretLaunch: { requestBodyDigest: 'a'.repeat(43) } };
+        const proof = signMachineInstallationProof({ payload, privateKey: keys.secretKey });
+        expect(verifyMachineInstallationProof({ payload, proof, publicKey: keys.publicKey })).toBe(true);
+        expect(verifyMachineInstallationProof({ payload: { ...payload,
+            deploymentSecretLaunch: { requestBodyDigest: 'b'.repeat(43) } }, proof, publicKey: keys.publicKey })).toBe(false);
+        expect(verifyMachineInstallationProof({ payload: { ...payload, installationId: 'replacement' }, proof,
+            publicKey: keys.publicKey })).toBe(false);
+        expect(MachineInstallationProofPayloadV1Schema.safeParse({ ...payload, accountId: undefined }).success).toBe(false);
+        expect(MachineInstallationProofPayloadV1Schema.safeParse({ ...payload,
+            managedPolicyCensus: { homeId: 'home' } }).success).toBe(false);
+    });
+    it('binds native deployment settlement to its exact installed operation, revision and transition body', () => {
+        const keys = tweetnacl.sign.keyPair();
+        const deploymentTransition = { serverId: 'home', environmentId: 'staging', deploymentId: 'receipt-a',
+            actionOperationId: 'operation-a', expectedRevision: 2, requestBodyDigest: 'a'.repeat(43) };
+        const payload = { version: 1 as const, machineId: 'guest', installationId: 'guest-installation',
+            accountId: 'owner', deploymentTransition };
+        const proof = signMachineInstallationProof({ payload, privateKey: keys.secretKey });
+        expect(verifyMachineInstallationProof({ payload, proof, publicKey: keys.publicKey })).toBe(true);
+        for (const changed of [
+            { deploymentId: 'foreign-receipt' }, { actionOperationId: 'foreign-operation' },
+            { expectedRevision: 3 }, { requestBodyDigest: 'b'.repeat(43) },
+        ]) expect(verifyMachineInstallationProof({ payload: { ...payload,
+            deploymentTransition: { ...deploymentTransition, ...changed } }, proof, publicKey: keys.publicKey })).toBe(false);
+        expect(MachineInstallationProofPayloadV1Schema.safeParse({ ...payload, accountId: undefined }).success).toBe(false);
+        expect(MachineInstallationProofPayloadV1Schema.safeParse({ ...payload,
+            managedPolicyCensus: { homeId: 'home' } }).success).toBe(false);
+    });
+    it('signs only the exact retained Section archive Stop child for receiver currentness', () => {
+        const sourceKeys = tweetnacl.sign.keyPair();
+        const receiverKeys = tweetnacl.sign.keyPair();
+        const originalActionEnvelope = { v: 1 as const, requestId: 'archive-root',
+            target: { kind: 'machine' as const, machineId: 'source' }, input: { sectionId: 'section' } };
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-root', binding: {
+            accountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 },
+            serverIdentityId: 'home', machineId: 'source', custodianAccountId: 'account', installationId: 'source-installation',
+            actionId: 'session.sections.archive', requestId: originalActionEnvelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope), target: originalActionEnvelope.target,
+        } });
+        const target = { kind: 'session' as const, sessionId: 'member' };
+        const method = `receiver:${RPC_METHODS.STOP_SESSION}`, requestId = 'source-issued', params = { sessionId: 'member' };
+        const externalActionExecution = { v: 1 as const, authorization, effectActionId: 'session.stop', target,
+            installationId: 'source-installation', machineSignature: signExternalActionMachineRpcRequestV1({
+                authorizationToken: authorization.token, effectActionId: 'session.stop', target, installationId: 'source-installation',
+                method, requestId, params, privateKey: sourceKeys.secretKey,
+            }) };
+        const context = { actorAccountId: 'account', custodianAccountId: 'account', machineId: 'receiver',
+            installationId: 'receiver-installation', role: 'use' as const, encryptionMode: 'plain' as const };
+        const workspaceSyncSourceExecution = { method, requestId, params, externalActionExecution, originalActionEnvelope };
+        const payload = { version: 1 as const, machineId: context.machineId, installationId: context.installationId,
+            accountId: 'account', rpcAdmission: { context, method, workspaceSyncSourceExecution, callerInputAuthorization: authorization } };
+        const proof = signMachineInstallationProof({ payload, privateKey: receiverKeys.secretKey });
+        expect(verifyMachineInstallationProof({ payload, proof, publicKey: receiverKeys.publicKey })).toBe(true);
+        for (const changed of [
+            { method: `receiver:${RPC_METHODS.SESSION_SPAWN_NEW}` },
+            { workspaceSyncSourceExecution: { ...workspaceSyncSourceExecution, params: { sessionId: 'foreign' } } },
+            { workspaceSyncSourceExecution: { ...workspaceSyncSourceExecution, externalActionExecution: { ...externalActionExecution, effectActionId: 'session.archive' } } },
+            { workspaceSyncSourceExecution: { ...workspaceSyncSourceExecution, externalActionExecution: { ...externalActionExecution,
+                target: { kind: 'machine', machineId: 'receiver' } } } },
+        ]) expect(MachineInstallationProofPayloadV1Schema.safeParse({ ...payload,
+            rpcAdmission: { ...payload.rpcAdmission, ...changed } }).success).toBe(false);
+        expect(verifyMachineInstallationProof({ payload: { ...payload, machineId: 'foreign' }, proof,
+            publicKey: receiverKeys.publicKey })).toBe(false);
     });
     it('binds the selected native receiver to one exact Session creation body and retained source child', () => {
         const keys = tweetnacl.sign.keyPair();
@@ -263,14 +347,28 @@ describe('machine installation identity protocol', () => {
         expect(verifyMachineInstallationProof({ payload, proof, publicKey: keyPair.publicKey })).toBe(true);
         expect(verifyMachineInstallationProof({ payload: { ...payload, rpcAdmission: { ...payload.rpcAdmission, managedIdleDecision: { ...payload.rpcAdmission.managedIdleDecision, since: 0 } } }, proof, publicKey: keyPair.publicKey })).toBe(false);
     });
-    it('binds exact managed currentness in the existing guest installation proof', () => {
+    it.each([false, true])('distinguishes reversible drain release with controller present=%s', (hasController) => {
+        const keyPair = tweetnacl.sign.keyPair();
+        const context = { actorAccountId: 'company', custodianAccountId: 'member', machineId: 'guest', installationId: 'guest-installation', role: 'manage' as const, encryptionMode: 'plain' as const };
+        const managedTarget = { homeId: 'home', managedId: 'retained', expectedRevision: 2,
+            ...(hasController ? { controller: { machineId: 'controller', installationId: 'controller-installation' } } : {}), action: 'resume' as const };
+        const payload = { version: 1 as const, installationId: context.installationId, machineId: context.machineId,
+            accountId: 'member', rpcAdmission: { context, method: 'guest:managed.admission.drain.confirm', managedTarget } };
+        const proof = signMachineInstallationProof({ payload, privateKey: keyPair.secretKey });
+        expect(verifyMachineInstallationProof({ payload, proof, publicKey: keyPair.publicKey })).toBe(true);
+        const changed = { ...payload, rpcAdmission: { ...payload.rpcAdmission,
+            managedTarget: { ...managedTarget, action: 'begin' as const } } };
+        expect(verifyMachineInstallationProof({ payload: changed, proof, publicKey: keyPair.publicKey })).toBe(false);
+    });
+    it.each([false, true])('binds exact managed currentness with controller present=%s in the existing guest installation proof', (hasController) => {
         const keyPair = tweetnacl.sign.keyPair();
         const context = { actorAccountId: 'alice', custodianAccountId: 'alice', machineId: 'guest', installationId: 'guest-installation', role: 'manage' as const, encryptionMode: 'plain' as const };
-        const managedTarget = { homeId: 'home', managedId: 'retained', expectedRevision: 2, controller: { machineId: 'controller', installationId: 'controller-installation' } };
+        const controller = { machineId: 'controller', installationId: 'controller-installation' };
+        const managedTarget = { homeId: 'home', managedId: 'retained', expectedRevision: 2, ...(hasController ? { controller } : {}) };
         const payload = { version: 1 as const, installationId: context.installationId, machineId: context.machineId, accountId: 'alice', rpcAdmission: { context, method: 'guest:managed.activity.read', managedTarget } };
         const proof = signMachineInstallationProof({ payload, privateKey: keyPair.secretKey });
         expect(verifyMachineInstallationProof({ payload, proof, publicKey: keyPair.publicKey })).toBe(true);
-        for (const changed of [{ managedId: 'other' }, { expectedRevision: 3 }, { controller: { ...managedTarget.controller, installationId: 'replacement' } }]) {
+        for (const changed of [{ managedId: 'other' }, { expectedRevision: 3 }, { controller: { ...controller, installationId: 'replacement' } }]) {
             expect(verifyMachineInstallationProof({ payload: { ...payload, rpcAdmission: { ...payload.rpcAdmission, managedTarget: { ...managedTarget, ...changed } } }, proof, publicKey: keyPair.publicKey })).toBe(false);
         }
     });

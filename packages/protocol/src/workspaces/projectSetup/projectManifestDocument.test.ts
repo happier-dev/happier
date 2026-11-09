@@ -46,7 +46,7 @@ describe('project manifest documents', () => {
     expect(readProjectManifestDocument('{\n"version":').bytes).toBe('{\n"version":');
     expect(readProjectManifestDocument('{"version":1,"scripts":{"bad":{"source":{"kind":"native","tool":"make","file":"../Makefile","target":"all"}}}}').status).toBe('invalid');
     expect(readProjectManifestDocument('{"version":1,"scripts":{"bad":{"future":true}}}').status).toBe('invalid');
-    expect(readProjectManifestDocument('{"version":1,"environment":{"kind":"toolchain","tool":"nix_flake"}}').status).toBe('valid');
+    expect(readProjectManifestDocument('{"version":1,"toolchain":{"kind":"toolchain","tool":"nix_flake"}}').status).toBe('valid');
   });
 
   it('keeps optional observed memory demand and converts edited demand to declared', () => {
@@ -59,12 +59,12 @@ describe('project manifest documents', () => {
   });
 
   it('retains nested unknown step fields and qualified environment facts through contained edits', () => {
-    const document = readProjectManifestDocument('{"version":1,"environment":{"kind":"pluginToolchain","adapter":{"pluginId":"example.pixi","localId":"environment","future":true},"configPath":"pixi.toml"},"workspace":{"setup":[{"kind":"command","command":"before","future":{"retain":true}}]},"environmentVariables":[{"name":"TOKEN","kind":"secret","required":true,"future":true}]}');
+    const document = readProjectManifestDocument('{"version":1,"toolchain":{"kind":"pluginToolchain","adapter":{"pluginId":"example.pixi","localId":"environment","future":true},"configPath":"pixi.toml"},"workspace":{"setup":[{"kind":"command","command":"before","future":{"retain":true}}]},"environmentVariables":[{"name":"TOKEN","kind":"secret","required":true,"future":true}]}');
     expect(document.status).toBe('valid');
     const edited = editProjectManifestDocument(document, [{ kind: 'set', path: ['workspace', 'setup', 0, 'command'], value: 'after' }]);
     if (edited.status !== 'valid') throw new Error('valid manifest required');
     expect(edited.bytes).toContain('"command":"after","future":{"retain":true}');
-    expect(edited.manifest.environment).toEqual({ kind: 'pluginToolchain', adapter: { pluginId: 'example.pixi', localId: 'environment' }, configPath: 'pixi.toml' });
+    expect(edited.manifest.toolchain).toEqual({ kind: 'pluginToolchain', adapter: { pluginId: 'example.pixi', localId: 'environment' }, configPath: 'pixi.toml' });
     expect(edited.manifest.environmentVariables).toEqual([{ name: 'TOKEN', kind: 'secret', required: true }]);
     expect(edited.diagnostics.filter(d => d.code === 'unrecognized_key')).toHaveLength(3);
   });

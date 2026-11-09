@@ -7,10 +7,9 @@ import {
   getDefaultActionToolExposureMode,
   resolveActionSurfaceAvailability,
   resolveActionToolExposureModeForSurface,
-  AGENT_DIRECT_ACTION_TOOL_ALLOW_LIST,
 } from './actionSurfaceAvailability.js';
 
-export { ACTION_TOOL_EXPOSURE_SURFACES, AGENT_DIRECT_ACTION_TOOL_ALLOW_LIST };
+export { ACTION_TOOL_EXPOSURE_SURFACES };
 
 /** Unbound hosts cannot supply the provenance of a Session-only, non-root command. */
 export function isActionExecutableFromStandaloneMcp(spec: ActionSpec): boolean {

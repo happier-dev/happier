@@ -5,6 +5,15 @@ import { readCanonicalPaddedBase64DecodedLength } from '../../../../crypto/base6
 import { createCanonicalJsonSigningInput } from '../../../../crypto/canonicalJson.js';
 import { MachineLiveStreamControlSidebandV1Schema } from './controlV1.js';
 import { MachineLiveStreamCodecIdV1Schema, getMachineLiveStreamPayloadDecodedByteLength } from './codecsV1.js';
+import { MachineLiveStreamSourceAdmissionBindingV1Schema } from './sourceAdmissionV1.js';
+export {
+  MachineLiveStreamSourceAdmissionBindingV1Schema,
+  MachineLiveStreamSourceAdmissionPayloadV1Schema,
+  MachineLiveStreamSourceAdmissionV1Schema,
+  type MachineLiveStreamSourceAdmissionBindingV1,
+  type MachineLiveStreamSourceAdmissionPayloadV1,
+  type MachineLiveStreamSourceAdmissionV1,
+} from './sourceAdmissionV1.js';
 
 export { getMachineLiveStreamPayloadDecodedByteLength } from './codecsV1.js';
 
@@ -42,7 +51,7 @@ export const MachineLiveStreamRelayCapsV1Schema = lazyZodSchema(() => z.looseObj
 export const MachineLiveStreamRouteKindV1Schema = lazyZodSchema(() => z.enum(['loopback_direct', 'server_relay']));
 export const MachineLiveStreamPayloadKindV1Schema = lazyZodSchema(() => z.enum(['image_delta', 'image_keyframe', 'metadata']));
 
-export const MachineLiveStreamRelayAuthorizationPayloadV1Schema = lazyZodSchema(() => z.looseObject({
+const relayAuthorizationPayloadShape = () => ({
     v: z.literal(1),
     grantId: z.string().check(z.minLength(1)),
     accountId: z.string().check(z.minLength(1)),
@@ -66,7 +75,28 @@ export const MachineLiveStreamRelayAuthorizationPayloadV1Schema = lazyZodSchema(
     iat: NonNegativeIntSchema,
     exp: PositiveIntSchema,
     aud: z.literal(MACHINE_LIVE_STREAM_RELAY_AUTHORIZATION_AUDIENCE_V1),
+  });
+
+/** V1 remains the custodian carrier; V2 is a closed, exact personal-viewer admission. */
+export const MachineLiveStreamRelayAuthorizationPayloadV1Schema = lazyZodSchema(() => z.union([
+  z.looseObject(relayAuthorizationPayloadShape()),
+  z.strictObject({
+    ...relayAuthorizationPayloadShape(),
+    v: z.literal(2),
+    viewerAccountId: z.string().check(z.minLength(1)),
+    viewerSocketId: z.string().check(z.minLength(1)),
+    sourceId: z.string().check(z.minLength(1)),
+    sourceMachineInstallationId: z.string().check(z.minLength(1)),
+    personalSourceAdmission: MachineLiveStreamSourceAdmissionBindingV1Schema,
   }).check(z.superRefine((payload, ctx) => {
+    if (payload.targetMachineId !== payload.sourceMachineId
+      || payload.viewerAccountId !== payload.personalSourceAdmission.actorAccountId
+      || payload.sourceId !== payload.personalSourceAdmission.sourceId
+      || payload.streamFamily !== payload.personalSourceAdmission.streamFamily) {
+      ctx.addIssue({ code: 'custom', message: 'Personal viewers bind the exact admitted source and person' });
+    }
+  })),
+]).check(z.superRefine((payload, ctx) => {
     if (payload.exp <= payload.iat) {
       ctx.addIssue({
         code: "custom",
@@ -124,6 +154,10 @@ export const MachineLiveStreamStartRequestV1Schema = lazyZodSchema(() => z.loose
     if (!authorization) return;
 
     const payload = authorization.payload;
+    if (payload.v === 2 && request.sourceOccurrenceId !== undefined
+      && request.sourceOccurrenceId !== payload.personalSourceAdmission.sourceOccurrenceId) {
+      ctx.addIssue({ code: 'custom', path: ['sourceOccurrenceId'], message: 'Personal streams bind the admitted source occurrence' });
+    }
     const expected = {
       sourceMachineId: request.sourceMachineId,
       targetMachineId: request.targetMachineId,

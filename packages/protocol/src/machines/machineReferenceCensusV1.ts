@@ -1,5 +1,3 @@
-import { MachineDeploymentDomainReferenceV1Schema } from './machineDeploymentDomainReferenceV1.js';
-export { MachineDeploymentDomainReferenceV1Schema, type MachineDeploymentDomainReferenceV1 } from './machineDeploymentDomainReferenceV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { readWorkBoardArtifactV1 } from '../boards/workBoardArtifactV1.js';
@@ -8,18 +6,29 @@ import type { ProfileCatalogSnapshotV1 } from '../profiles/profileCatalogV1.js';
 import type { WorkflowDefinitionArtifactOperations } from '../actions/executor/workflowDefinitions.js';
 import type { AutomationDefinitionListResponse } from '../automations/automationApiV3.js';
 import type { MachinePoolListOutputV1 } from './pools/v1.js';
-
+import { MachineDeploymentDomainReferenceV1Schema } from './machineDeploymentDomainReferenceV1.js';
+export { MachineDeploymentDomainReferenceV1Schema, type MachineDeploymentDomainReferenceV1 } from './machineDeploymentDomainReferenceV1.js';
 export const MachineReferenceV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
-deploymentRoles: z.optional(z.readonly(z.array(z.enum(['runtime', 'data', 'retiring', 'detached', 'controller', 'build', 'edge'])))),
-
   kind: z.enum(['board', 'profile', 'machine_pool', 'workflow_assignment', 'automation_assignment', 'deployment_environment']),
   id: z.string().check(z.trim(), z.minLength(1)), name: z.string(),
+  deploymentRoles: z.optional(z.readonly(z.array(z.enum(['runtime', 'data', 'retiring', 'detached', 'controller', 'build', 'edge'])))),
   deploymentDomains: z.optional(z.readonly(z.array(MachineDeploymentDomainReferenceV1Schema))),
 })));
+/** Exact relational deployment disclosure; private Environment/link content is never opened. */
+export const MachineDeploymentReferencesInputV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
+  homeId: z.string().check(z.trim(), z.minLength(1)), machineId: z.string().check(z.trim(), z.minLength(1)),
+  cursor: z.optional(z.string().check(z.minLength(1))),
+})));
+export const MachineDeploymentReferencesPageV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
+  homeId: z.string().check(z.trim(), z.minLength(1)), machineId: z.string().check(z.trim(), z.minLength(1)),
+  coverage: z.enum(['complete', 'partial']), references: z.readonly(z.array(MachineReferenceV1Schema)), nextCursor: z.nullable(z.string()),
+})));
+export type MachineDeploymentReferencesInputV1 = z.infer<typeof MachineDeploymentReferencesInputV1Schema>;
+export type MachineDeploymentReferencesPageV1 = z.infer<typeof MachineDeploymentReferencesPageV1Schema>;
 export const MachineReferenceCensusV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
   homeId: z.string().check(z.trim(), z.minLength(1)), machineId: z.nullable(z.string().check(z.trim(), z.minLength(1))),
   coverage: z.enum(['complete', 'partial']), references: z.readonly(z.array(MachineReferenceV1Schema)),
-  unavailable: z.readonly(z.array(z.enum(['target', 'artifacts', 'profiles', 'pools', 'assignments', 'requester_authority']))),
+  unavailable: z.readonly(z.array(z.enum(['target', 'artifacts', 'profiles', 'pools', 'assignments', 'deployments', 'requester_authority']))),
 })));
 export type MachineReferenceV1 = z.infer<typeof MachineReferenceV1Schema>;
 export type MachineReferenceCensusV1 = z.infer<typeof MachineReferenceCensusV1Schema>;
@@ -164,22 +173,16 @@ export async function readMachineReferenceCensusV1(input: Readonly<{
     } catch { unavailable.add('assignments'); }
     return references;
   };
+  const readDeployments = async () => {
+    if (!ports.readDeployments) { unavailable.add('deployments'); return []; }
+    const page = await readMachineDeploymentReferencesV1({ homeId: input.homeId, machineId: input.machineId!, signal: input.signal }, ports.readDeployments);
+    if (page.coverage !== 'complete') unavailable.add('deployments');
+    return page.references;
+  };
   // These Account-owned sources are independent. Preserve presentation order
   // while a slow family cannot serialize the other fresh checks behind it.
-  const families = await Promise.all([readBoards(), readProfiles(), readPools(), readAssignments()]);
+  const families = await Promise.all([readBoards(), readProfiles(), readPools(), readAssignments(), readDeployments()]);
   input.signal?.throwIfAborted();
   return { homeId: input.homeId, machineId: input.machineId, coverage: unavailable.size === 0 ? 'complete' : 'partial', references: families.flat(),
-    unavailable: (['artifacts', 'profiles', 'pools', 'assignments'] as const).filter(source => unavailable.has(source)) };
+    unavailable: (['artifacts', 'profiles', 'pools', 'assignments', 'deployments'] as const).filter(source => unavailable.has(source)) };
 }
-
-export const MachineDeploymentReferencesPageV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
-  homeId: z.string().check(z.trim(), z.minLength(1)), machineId: z.string().check(z.trim(), z.minLength(1)),
-  coverage: z.enum(['complete', 'partial']), references: z.readonly(z.array(MachineReferenceV1Schema)), nextCursor: z.nullable(z.string()),
-})));
-
-export const MachineDeploymentReferencesInputV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
-  homeId: z.string().check(z.trim(), z.minLength(1)), machineId: z.string().check(z.trim(), z.minLength(1)),
-  cursor: z.optional(z.string().check(z.minLength(1))),
-})));
-export type MachineDeploymentReferencesInputV1 = z.infer<typeof MachineDeploymentReferencesInputV1Schema>;
-export type MachineDeploymentReferencesPageV1 = z.infer<typeof MachineDeploymentReferencesPageV1Schema>;

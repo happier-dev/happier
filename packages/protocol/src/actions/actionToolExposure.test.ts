@@ -38,12 +38,40 @@ import {
 } from './actionToolExposure.js';
 
 describe('actionToolExposure', () => {
+  it('reports the effective foreign Session HTML settings state from the shared policy', () => {
+    for (const [mode, settingsState, available] of [
+      [undefined, 'disabled', false], ['allowed', 'enabled', true], ['ask_first', 'approval_required', true],
+    ] as const) {
+      const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {},
+        callerSurfacePolicies: { foreign_session_html: mode ? { 'session.message.send': mode } : {} },
+      });
+      expect(resolveActionSurfaceAvailability({ actionId: 'session.message.send', surface: 'ui',
+        callerSurface: 'foreign_session_html', settings,
+      })).toMatchObject({ available, settingsState });
+    }
+  });
+  it.each(['machines.list', 'execution.run.list'] as const)('projects admitted built-in and contributed declarations through the same surface, settings and exposure policy (%s)', actionId => {
+    const spec = getActionSpec(actionId);
+    const definition = { ...actionSpecToActionDefinitionV1(spec), id: 'acme.triage/actions/list-machines' };
+    for (const override of [undefined, { enabled: false }, { disabledSurfaces: ['api'] }, { toolExposureModes: { agent: 'direct' } }] as const) {
+      const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {
+        ...(override ? { [spec.id]: override, [definition.id]: override } : {}),
+      } });
+      for (const surface of ['api', 'agent', 'mcp', 'rpc'] as const) {
+        const builtin = resolveActionSurfaceAvailability({ actionId: spec.id, surface, settings });
+        const contributed = resolveActionSurfaceAvailability({ actionId: definition.id, surface, settings, definition });
+        expect(contributed).toEqual({ ...builtin, actionId: definition.id });
+      }
+    }
+  });
+
   it('publishes settings parity and mounted tab opening as direct Session Agent tools', () => {
     for (const actionId of [
       'settings.list',
       'settings.get',
       'settings.set',
       'settings.reset',
+      'settings.invoke',
       'workspace.tabs.open',
     ] as const) {
       const spec = getActionSpec(actionId);
@@ -163,7 +191,7 @@ describe('actionToolExposure', () => {
       expect(isActionDiscoverableOnToolSurface(spec, 'mcp'), id).toBe(true);
       expect(isActionDiscoverableOnToolSurface(spec, 'agent'), id).toBe(true);
       expect(resolveActionToolExposureMode(spec, 'agent'), id).toBe('discoverable_only');
-      expect(resolveActionSurfaceAvailability({ actionId: id, surface: 'cli' }).available, id).toBe(false);
+      expect(resolveActionSurfaceAvailability({ actionId: id, surface: 'cli' }).available, id).toBe(id === 'ui.find');
     }
     const picker = getActionSpec('ui.prompts.picker.open');
     expect(isActionDiscoverableOnToolSurface(picker, 'agent')).toBe(true);

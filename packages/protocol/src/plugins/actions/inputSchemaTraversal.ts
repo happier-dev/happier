@@ -24,20 +24,23 @@ export function expandDeclaredInputAlternatives(
  * Resolves one declared input path. By default every representable input arm
  * must carry the path. Conditional ordinary hints may instead resolve only
  * the branches declaring it; no declaration anywhere still returns `null`.
+ * Read-only confirmation fields additionally traverse array members. Editing
+ * and credential bindings retain their existing object-only path contract.
  */
 export function resolveDeclaredInputLeaves(
   inputSchema: PluginJsonSchemaV2,
   path: string,
-  policy: 'every-arm' | 'conditional-field' = 'every-arm',
+  policy: 'every-arm' | 'conditional-field' | 'review-field' = 'every-arm',
 ): readonly PluginJsonSchemaV2[] | null {
   let frontier: readonly PluginJsonSchemaV2[] = [inputSchema];
   for (const segment of path.split('.')) {
     const next: PluginJsonSchemaV2[] = [];
     for (const position of frontier) {
       for (const arm of expandDeclaredInputAlternatives(position)) {
-        const property = arm.type === 'object' ? arm.properties?.[segment] : undefined;
+        const property = policy === 'review-field' && segment === '[]' && arm.type === 'array' ? arm.items
+          : arm.type === 'object' ? arm.properties?.[segment] : undefined;
         if (!property) {
-          if (policy === 'conditional-field') continue;
+          if (policy !== 'every-arm') continue;
           return null;
         }
         next.push(property);

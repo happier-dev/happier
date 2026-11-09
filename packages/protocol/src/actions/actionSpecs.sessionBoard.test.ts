@@ -70,13 +70,13 @@ describe('Session Board Action catalog rows', () => {
     }
   });
 
-  it('classifies the read and the consequential shared writes distinctly', () => {
+  it('classifies reversible Board edits separately from content removal', () => {
     expect(getActionSpec('session.board.get').safety).toBe('safe');
     expect(getActionSpec('session.board.get').sideEffectClass).toBe('read');
     expect(getActionSpec('session.board.get').approval).toEqual({ result: 'required' });
 
     for (const actionId of ['session.board.item.upsert', 'session.board.layout.update'] as const) {
-      expect(getActionSpec(actionId).safety, actionId).toBe('danger');
+      expect(getActionSpec(actionId).safety, actionId).toBe('safe');
       expect(getActionSpec(actionId).sideEffectClass, actionId).toBe('write');
       expect(getActionSpec(actionId).approval, actionId).toEqual({ result: 'optional', flow: 'deferred' });
     }
@@ -89,9 +89,12 @@ describe('Session Board Action catalog rows', () => {
   it('derives shared-write approval defaults from safety and keeps them user-overridable', () => {
     expect(isAgentInitiatedApprovalRequiredByDefault('session.board.get')).toBe(false);
     for (const actionId of ['session.board.item.upsert', 'session.board.layout.update', 'session.board.item.remove'] as const) {
-      expect(isAgentInitiatedApprovalRequiredByDefault(actionId), actionId).toBe(true);
+      const removal = actionId === 'session.board.item.remove';
+      expect(isAgentInitiatedApprovalRequiredByDefault(actionId), actionId).toBe(removal);
       const inherited = ActionsSettingsV1Schema.parse({ v: 1 });
-      expect(isApprovalRequiredByActionsSettings(actionId, inherited, { surface: 'agent' }), actionId).toBe(true);
+      expect(isApprovalRequiredByActionsSettings(actionId, inherited, { surface: 'agent' }), actionId).toBe(removal);
+      const required = setActionApprovalOverride({ settings: inherited, actionId, surface: 'agent', approvalRequired: true });
+      expect(isApprovalRequiredByActionsSettings(actionId, required, { surface: 'agent' }), actionId).toBe(true);
       const waived = setActionApprovalOverride({ settings: inherited, actionId, surface: 'agent', approvalRequired: false });
       expect(isApprovalRequiredByActionsSettings(actionId, waived, { surface: 'agent' }), actionId).toBe(false);
     }

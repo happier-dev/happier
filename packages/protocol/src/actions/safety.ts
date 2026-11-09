@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
-import { ACTION_ID_FAMILIES_V1, type RuntimeActionIdV1 } from './actionIds.js';
+import { ACTION_ID_FAMILIES_V1, COMPUTER_RECORDING_ACTION_IDS_V1, type RuntimeActionIdV1 } from './actionIds.js';
 import { RUNTIME_SIDE_EFFECT_DANGER_ACTION_IDS } from './danger.js';
 
 export { ActionSafetySchema, type ActionSafety } from './safetyVocabulary.js';
@@ -36,7 +36,7 @@ const RUNTIME_DIAGNOSTIC_HOST_EFFECT_ACTION_IDS: ReadonlySet<RuntimeActionIdV1> 
 ]);
 
 const RUNTIME_RECORDING_HOST_EFFECT_ACTION_IDS: ReadonlySet<RuntimeActionIdV1> = new Set<RuntimeActionIdV1>(
-  ACTION_ID_FAMILIES_V1.browser_recording,
+  [...ACTION_ID_FAMILIES_V1.browser_recording, ...Object.values(COMPUTER_RECORDING_ACTION_IDS_V1)],
 );
 
 const RUNTIME_EXTERNAL_NAVIGATION_HOST_EFFECT_ACTION_IDS: ReadonlySet<RuntimeActionIdV1> = new Set<RuntimeActionIdV1>([
@@ -65,6 +65,7 @@ export function runtimeActionSideEffectClass(actionId: RuntimeActionIdV1): Runti
     actionId.endsWith('.snapshot')
     || actionId.endsWith('.status')
     || actionId.endsWith('.list')
+    || actionId === COMPUTER_RECORDING_ACTION_IDS_V1.list
     || actionId.includes('.listForView')
     || actionId.includes('.observability.')
     || actionId.includes('.queryElements')

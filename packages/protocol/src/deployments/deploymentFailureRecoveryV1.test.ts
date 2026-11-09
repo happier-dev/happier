@@ -3,6 +3,16 @@ import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1, 
 import { DeploymentReceiptFailureV1Schema } from './deploymentReceiptEventsV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from './deploymentDomainFailureV1.js';
 
+it.each([
+    { step: 'native_execution' },
+    { failureCause: { phase: 'deployment.domain.native_execution', errorCode: 'deployment_conflict' } },
+    { step: 'native_execution', remedy: readDeploymentFailureRecoveryV1('deployment_conflict').remedy },
+])('routes a native conflict to the running services rather than a nonexistent review: %j', details => {
+    const result = readDeploymentFailureRecoveryV1('deployment_conflict', details);
+    expect(result.nextAction.destination).toBe('machines');
+    expect(readDeploymentFailureRecoveryV1('deployment_conflict').nextAction.destination).toBe('review');
+});
+
 // These codes reach people through Deploy, Domain review, and Store preparation.
 const reachableFailures = [
     ['deployment_source_unavailable', 'source'],

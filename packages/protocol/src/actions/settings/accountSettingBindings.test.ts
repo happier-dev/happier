@@ -41,6 +41,7 @@ describe('portable coupled Account setting mutations', () => {
             expect(buildBuiltInAccountSettingMutationV1(declaration, settings, invalid)).toBeNull();
         }
     });
+
     it('removes only the exact external auto-link source through its declared owner', () => {
         const declaration = readBuiltInSettingDeclarationV1('externalSessions.autoLinkSources');
         expect(declaration).not.toBeNull();
@@ -61,6 +62,43 @@ describe('portable coupled Account setting mutations', () => {
         expect(owner.parse({ ...identity, sourcePolicyId: 'not-a-policy' }).success).toBe(false);
         expect(owner.parse({ ...identity, enabled: true }).success).toBe(false);
     });
+
+    it('admits a custom notification quiet-hours schedule through the existing Account setting authority', () => {
+        const owner = binding('accountNotificationStorageBinding', 'quietHours');
+        const before = accountSettingsParse({ attentionDeliveryPolicyV1: { quietHours: { enabled: true, timezone: 'UTC',
+            windows: [{ startLocalTime: '12:00', endLocalTime: '13:00' }] }, foregroundBehavior: 'off' } });
+        const value = { enabled: true, timezone: 'Europe/Amsterdam', windows: [
+            { startLocalTime: '21:30', endLocalTime: '06:45', days: ['mon', 'fri'] },
+            { startLocalTime: '12:00', endLocalTime: '13:00', days: ['sun'] },
+        ] };
+        const parsed = owner.parse(value);
+        expect(parsed.success).toBe(true);
+        if (!parsed.success) throw new Error('Custom quiet hours must be admitted');
+        expect(owner.mutate(before, parsed.value)?.attentionDeliveryPolicyV1).toEqual({
+            ...before.attentionDeliveryPolicyV1, quietHours: value,
+        });
+        for (const bad of [
+            { ...value, timezone: '' },
+            { ...value, windows: [{ startLocalTime: '24:00', endLocalTime: '07:00' }] },
+            { ...value, windows: [{ startLocalTime: '22:00', endLocalTime: '07:00', days: ['funday'] }] },
+            { ...value, unexpected: true },
+        ]) expect(owner.parse(bad).success).toBe(false);
+        expect(owner.parse('nightly').success).toBe(true);
+        expect(owner.parse('off').success).toBe(true);
+    });
+
+    it('rejects an unevaluable quiet-hours timezone at the declarative Account write boundary without changing historical reads', () => {
+        const value = { enabled: true, timezone: 'Not/A_Timezone', windows: [
+            { startLocalTime: '22:00', endLocalTime: '07:00', days: ['mon'] },
+        ] };
+        const historical = accountSettingsParse({ attentionDeliveryPolicyV1: { quietHours: value } });
+        expect(historical.attentionDeliveryPolicyV1.quietHours).toEqual(value);
+        const declaration = readBuiltInSettingDeclarationV1('notifications.quietHoursAccount');
+        expect(declaration).toBeDefined();
+        if (!declaration) throw new Error('The canonical quiet-hours declaration must be present');
+        expect(buildBuiltInAccountSettingMutationV1(declaration, historical, value)).toBeNull();
+    });
+
     it('writes one scalar layout and rejects the retired third layout', () => {
         const settings = accountSettingsParse({ sessionListLayoutV1: 'projects' });
         const declaration = readBuiltInSettingDeclarationV1('session.list.layout');
@@ -253,7 +291,7 @@ describe('portable coupled Account setting mutations', () => {
         } });
         const retention = binding('categoryBinding', 'local');
         expect(retention.mutate(settings, null)?.machineRetentionDefaultsV1).toEqual({ v: 1, unknown: settings.machineRetentionDefaultsV1.unknown });
-        expect(retention.parse({ retention: { kind: 'deadline', at: 100, effect: 'stop', interrupts: true }, wakeOnAcceptedMessage: false }).success).toBe(false);
+        expect(retention.parse({ retention: { kind: 'deadline', at: 100, effect: 'stop' }, wakeOnAcceptedMessage: false }).success).toBe(false);
     });
     it('retains shared-state choices when editing config and never bypasses consent', () => {
         const initial = accountSettingsParse({});

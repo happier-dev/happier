@@ -98,14 +98,17 @@ describe('B page projection', () => {
     expect(openProviderAccountUsagePageProjectionV1({ recordId: projection.recordId, accountMode, material, content: admitted!.content })).toEqual(projection);
     expect(ProviderAccountUsagePageProjectionWriteV1Schema.safeParse(stored).success).toBe(false);
   });
-  it('distinguishes an authenticated superseded body from wrong-mode, corrupt and wrongly addressed content', () => {
+  it('rejects unpacked development bodies through the current schema and retains mode and corruption failures', () => {
     const projection = buildProviderAccountUsagePageProjectionV1({ recordId: history.entries[0]!.snapshot.recordId, range, history });
     const content = { t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({ kind: 'provider_account_usage_page_projection',
       material, randomBytes: length => new Uint8Array(length).fill(9), payload: { ...projection } }) };
     expect(() => openProviderAccountUsagePageProjectionV1({ recordId: projection.recordId, accountMode: 'e2ee', material, content }))
-      .toThrowError(expect.objectContaining({ code: 'provider_account_usage_page_projection_superseded' }));
+      .toThrowError(expect.objectContaining({ name: '$ZodError' }));
     expect(() => openProviderAccountUsagePageProjectionV1({ recordId: 'other', accountMode: 'e2ee', material, content }))
-      .toThrow('provider_account_usage_identity_mismatch');
+      .toThrowError(expect.objectContaining({ name: '$ZodError' }));
+    expect(ProviderAccountUsagePageProjectionMetadataV1Schema.safeParse({ recordId: projection.recordId,
+      demand: { range, resolution: projection.resolution }, frontier: null, observationCount: 0,
+      content: { t: 'plain', v: { v: 1, recordId: projection.recordId } } }).success).toBe(false);
     expect(() => openProviderAccountUsagePageProjectionV1({ recordId: projection.recordId, accountMode: 'plain', material, content }))
       .toThrow('provider_account_usage_content_mode_mismatch');
     expect(() => openProviderAccountUsagePageProjectionV1({ recordId: projection.recordId, accountMode: 'e2ee', material: { ...material, secret: new Uint8Array(32).fill(8) }, content }))

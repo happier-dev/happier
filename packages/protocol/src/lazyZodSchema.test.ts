@@ -4,6 +4,18 @@ import * as mini from 'zod/mini';
 import { lazyDefinition, lazyZodSchema } from './lazyZodSchema.js';
 
 describe('lazyZodSchema', () => {
+  it('keeps cyclic schema dependencies cold when React Fast Refresh registers exports', async () => {
+    const { createRequire } = await import('node:module');
+    const refresh: { register(value: unknown, id: string): void } = createRequire(import.meta.url)('react-refresh/runtime');
+    let dependency: z.ZodMiniString | undefined;
+    const schema = lazyZodSchema(() => z.strictObject({ accountId: dependency! }));
+    // Metro registers exports before a module's cyclic importer has finished.
+    refresh.register(schema, 'cold-question-handler');
+    dependency = z.string();
+    expect(z.toJSONSchema(schema)).toMatchObject({ properties: { accountId: { type: 'string' } } });
+    expect(schema.parse({ accountId: 'account' })).toEqual({ accountId: 'account' });
+  });
+
   it('preserves native parsing when a deferred definition returns another cold definition', () => {
     const inner = lazyDefinition(() => z.strictObject({ id: z.string().check(z.minLength(1)) }));
     const outer = lazyDefinition(() => inner);

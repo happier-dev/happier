@@ -46,7 +46,7 @@ function createMachineResourcesActionSpecs() {
     id: 'machines.resources.policy.set', approvalPolicy: { agentDefault: 'authority', requiredSurfaces: ['mcp', 'plugin'] }, approval: {result: 'required'}, title: 'Change resource settings',
     toolExposure: { agent: 'discoverable_only' },
     prompting: { agentGuidance: 'Read machines.resources.policy.get first, then submit one minimal patch with its expectedRevision. Change only the policy the person asked to change; approval follows this Action’s own user setting.' },
-    description: 'Changes a machine’s alerts, guard and cleanup settings. If they changed meanwhile, you see the current ones first.',
+    description: 'Changes a machine’s alerts, guard, monitoring and cleanup settings. Monitoring’s read interval applies only while someone watches Live or Overview; otherwise the machine reads once a minute. If they changed meanwhile, you see the current ones first.',
     safety: 'safe', sideEffectClass: 'write', executionPlacement: 'machine', placements: [], surfaces: { ...surfaces, voice: false, rpc: true },
     bindings: { mcpToolName: 'machines_resources_policy_set', rpcMethod: RPC_METHODS.MACHINES_RESOURCES_POLICY_SET },
     inputSchema: MachineResourcesPolicySetInputV1Schema, outputSchema: MachineResourcesPolicyMutationResultV1Schema,

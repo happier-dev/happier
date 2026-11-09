@@ -1,14 +1,13 @@
-import { SESSION_AGENT_TRANSITION_ACTION_INPUT_SCHEMAS } from '../../sessionAgentTransitionActionFamily.js';
 import { SessionAgentTransitionRequestV1Schema } from '../../../sessions/agentTransition.js';
 import { resolveSessionIdFromInput, resolveServerIdForSession } from '../sessionScope.js';
 import { completeActionResult } from '../resultProjection.js';
-import { PluginSessionInputAttachmentsV1Schema, PluginSessionInputSourceV1Schema, PluginSessionUserTextAuthoredFieldSchemasV1, derivePluginSessionInputLocalIdV1 } from '../../../sessions/messages/sessionInputAdmission.js';
+import { PluginSessionInputAttachmentsV1Schema, PluginSessionInputSourceV1Schema, PluginSessionUserTextAuthoredFieldSchemasV1, SessionInputAdmissionRejectionCodeV1Schema, derivePluginSessionInputLocalIdV1 } from '../../../sessions/messages/sessionInputAdmission.js';
 import { resolveSubagentLaunchStructuredSend } from '../../../messages/structured/subagentLaunchV1.js';
 import { resolveSubagentCommandStructuredSend } from '../../../messages/structured/subagentCommandV1.js';
 import { PendingRequestedActionV1Schema } from '../../../sessions/pending/pendingRequestedActionV1.js';
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, RawIngressStructuredInputV1Schema } from '../../../runtime/input/structuredInputV1.js';
 import { SCM_WALKTHROUGH_QUESTION_META_KEY_V1, SESSION_TOOL_ANSWER_DELIVERY_KIND } from '../../../sessions/messages/sessionMessageMeta.js';
-import { SessionSendMessageInputSchema } from '../../actionSpecs.js';
+import { SessionSendMessageInputSchema, type AdmittedActionInputById } from '../../actionSpecs.js';
 import { ParticipantRecipientRoutingIdentityV1Schema } from '../../../messages/structured/participantMessageV1.js';
 import { ProviderConnectionIdSchema } from '../../../providers/ids.js';
 import { SessionMessageExplicitReplyV1Schema } from '../../../sessions/messages/sessionMessageReplyV1.js';
@@ -40,7 +39,7 @@ export async function dispatchSessionMessages(inv: Pick<CoreInvocation, 'actionI
   const { actionId, deps, parsed, ctx, sessionMessageSendAdmission, data, dispatchFacts } = inv;
         if (actionId === 'session.agent.transition') {
           if (!deps.sessionAgentTransition) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-          const input = SESSION_AGENT_TRANSITION_ACTION_INPUT_SCHEMAS[actionId].parse(parsed.data);
+          const input = parsed.data as AdmittedActionInputById['session.agent.transition'];
           const request = SessionAgentTransitionRequestV1Schema.parse({ v: 1, ...input });
           const serverId = resolveServerIdForSession(deps, ctx, request.sessionId);
           return completeActionResult(await deps.sessionAgentTransition({ request, context: ctx,
@@ -200,7 +199,15 @@ export async function dispatchSessionMessages(inv: Pick<CoreInvocation, 'actionI
             });
           }
           const res = await deps.sessionSendMessage(sendMessageArgs);
-          return completeActionResult(res);
+          const result = completeActionResult(res);
+          if (!result.ok) {
+            // A returned input refusal is definitive. Preserve the owner's
+            // code as a domain result so plugin bridges do not throw it into
+            // a caller's ambiguous transport-failure recovery.
+            const rejection = SessionInputAdmissionRejectionCodeV1Schema.safeParse(result.errorCode);
+            if (rejection.success) return { ok: true, result: { status: 'rejected', code: rejection.data } };
+          }
+          return result;
         }
 
         if (actionId === 'session.message.reply') {

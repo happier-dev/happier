@@ -15,6 +15,7 @@ import { PendingLocalIdSchema } from '../../sessions/pending/pendingLocalId.js';
 import type { JsonValue } from '../../json/strictJsonValue.js';
 import type { PluginJsonValueV2 } from './publicTypes.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
+import { SessionInputForgeEvidenceV1Schema } from '../../sessions/messages/sessionInputForgeEvidenceV1.js';
 
 const ComposerAttachmentMessageV1Schema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(512)));
 function rejectDuplicateAttachmentInstanceIds(
@@ -69,6 +70,7 @@ const ComposerAttachmentPrepareReadyOutcomeV1Schema = lazyZodSchema(() => z.stri
   value: ComposerAttachmentValueV1Schema,
   content: z.optional(ComposerStagedMediaContentV1Schema),
   presentation: z.optional(ComposerAttachmentAuthorPresentationV1Schema),
+  forgeEvidence: z.optional(asProtocolZod(SessionInputForgeEvidenceV1Schema)),
 }));
 const ComposerAttachmentPrepareBlockedOutcomeV1Schema = lazyZodSchema(() => z.strictObject({
   instanceId: ComposerAttachmentInstanceIdV1Schema,
@@ -156,6 +158,7 @@ const ComposerAttachmentResolveReadyOutcomeV1Schema = lazyZodSchema(() => z.stri
   status: z.literal('ready'),
   context: z.optional(z.string().check(z.minLength(1))),
   data: z.optional(ComposerAttachmentValueV1Schema),
+  forgeEvidence: z.optional(asProtocolZod(SessionInputForgeEvidenceV1Schema)),
 }));
 const ComposerAttachmentResolveBlockedOutcomeV1Schema = lazyZodSchema(() => z.strictObject({
   instanceId: ComposerAttachmentInstanceIdV1Schema,

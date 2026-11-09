@@ -1,17 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildSessionSystemRecordChangeV1, isSessionSystemRecordUnchangedHintV1, readSessionSystemRecordChangeV1, SessionSurfacesChangeHintV1Schema } from './changeHint.js';
-
-describe('Session surface change hint', () => {
-  it('admits only the versioned content-free invalidation signal', () => {
-    expect(SessionSurfacesChangeHintV1Schema.parse({ v: 1, sessionSurfaces: true }))
-      .toEqual({ v: 1, sessionSurfaces: true });
-    for (const hint of [
-      { v: 1, sessionSurfaces: false },
-      { v: 2, sessionSurfaces: true },
-      { v: 1, sessionSurfaces: true, content: 'private content' },
-    ]) expect(SessionSurfacesChangeHintV1Schema.safeParse(hint).success).toBe(false);
-  });
-});
+import { readSessionUpdatedMessageChangeHintV1 } from '../../changes/index.js';
+import { buildSessionSystemRecordChangeV1, isSessionSystemRecordUnchangedHintV1, readSessionSystemRecordChangeV1 } from './changeHint.js';
 
 describe('Session record change routing', () => {
   it('keeps the physical record entity separate and admits only its strict content-free address', () => {
@@ -50,6 +39,18 @@ describe('Session record change routing', () => {
     for (const hint of [{ pendingExecutionRunIds: [] }, { lastMessageSeq: 2, pendingExecutionRunIds: [7] },
       { lastMessageSeq: 2, pendingExecutionRunIds: [], futureAccessFact: true }]) {
       expect(isSessionSystemRecordUnchangedHintV1(hint)).toBe(false);
+    }
+  });
+  it('carries a durable row revision as a known row fact and reads it only when well-formed', () => {
+    const hint = { updatedMessageSeq: 15, updatedMessageId: 'm15', updatedMessageUpdatedAt: 1_700_000_000_123 };
+    expect(isSessionSystemRecordUnchangedHintV1(hint)).toBe(true);
+    expect(isSessionSystemRecordUnchangedHintV1({ ...hint, pendingExecutionRunIds: [] })).toBe(true);
+    expect(readSessionUpdatedMessageChangeHintV1({ kind: 'session', hint }))
+      .toEqual({ seq: 15, messageId: 'm15', updatedAt: 1_700_000_000_123 });
+    // Hints without (or with a malformed) revision keep the conservative read.
+    for (const updatedMessageUpdatedAt of [undefined, -1, 1.5, '1700000000123']) {
+      expect(readSessionUpdatedMessageChangeHintV1({ kind: 'session', hint: { ...hint, updatedMessageUpdatedAt } }))
+        .toEqual({ seq: 15, messageId: 'm15' });
     }
   });
 });

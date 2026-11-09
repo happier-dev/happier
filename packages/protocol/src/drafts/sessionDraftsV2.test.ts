@@ -670,3 +670,21 @@ describe('human discussion draft document', () => {
     }).success).toBe(false);
   });
 });
+
+describe('private payload admission cost', () => {
+  it.each(['stored', 'canonical'] as const)('traverses a current newSession document once (%s reader)', (reader) => {
+    const document = { v: 2, composer: { text: field('hello'), mentions: field([]), attachments: field([]) },
+      target: { kind: 'newSession', authoring: {} }, extensions: {} };
+    let composerReads = 0;
+    const counted = new Proxy(document, { get(target, key, receiver) {
+      if (key === 'composer') composerReads += 1;
+      return Reflect.get(target, key, receiver);
+    } });
+    const payload = { v: 2, address: { kind: 'newSession', draftId: '00000000-0000-4000-8000-00000000000a' }, document: counted };
+    const schema = reader === 'stored' ? createStoredReadSchema(SessionDraftPrivatePayloadV2Schema) : SessionDraftPrivatePayloadV2Schema;
+    expect(schema.safeParse(payload).success).toBe(true);
+    // V1 payload and V1/Discussion/Open documents are versioned or target-tagged; a failed
+    // sibling attempt must not walk the whole document before the matching option does.
+    expect(composerReads).toBe(1);
+  });
+});

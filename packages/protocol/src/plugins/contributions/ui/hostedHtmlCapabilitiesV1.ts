@@ -131,6 +131,16 @@ export type UiSurfaceNetworkPolicyV1 = Readonly<{
   networkOrigins: readonly UiSurfaceNetworkOriginV1[];
 }>;
 
+/** Compare declared or normalized guest egress without re-parsing admitted data. */
+export function uiSurfaceNetworkAccessWidensV1(
+  next: UiSurfaceNetworkRequestV1 | UiSurfaceNetworkPolicyV1,
+  previous: UiSurfaceNetworkRequestV1 | UiSurfaceNetworkPolicyV1,
+): boolean {
+  if (next.network === 'none' || next.network !== 'open' && !next.networkOrigins?.length) return false;
+  return previous.network !== 'open' && (next.network === 'open'
+    || next.networkOrigins?.some(origin => !previous.networkOrigins?.includes(origin)) === true);
+}
+
 /** Installed renderers and instance overrides can only narrow an admitted ceiling. */
 export function intersectUiSurfaceNetworkPoliciesV1(
   request: UiSurfaceNetworkPolicyV1,
@@ -264,13 +274,4 @@ export function admitCallerAuthoredUiSurfaceCapabilitiesV1(
       ).filter((method) => admitted.has(method)),
     ),
   } as const);
-}
-
-export function uiSurfaceNetworkAccessWidensV1(
-  next: UiSurfaceNetworkRequestV1 | UiSurfaceNetworkPolicyV1,
-  previous: UiSurfaceNetworkRequestV1 | UiSurfaceNetworkPolicyV1,
-): boolean {
-  if (next.network === 'none' || next.network !== 'open' && !next.networkOrigins?.length) return false;
-  return previous.network !== 'open' && (next.network === 'open'
-    || next.networkOrigins?.some(origin => !previous.networkOrigins?.includes(origin)) === true);
 }

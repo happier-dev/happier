@@ -215,11 +215,19 @@ export function sealQualifiedConnectedAccountContentEnvelope(
 export function openQualifiedConnectedAccountContentEnvelope(
   params: OpenParams,
 ): unknown | null {
+  const result = openQualifiedConnectedAccountContentEnvelopeResult(params);
+  return result.status === 'opened' ? result.value ?? null : null;
+}
+
+/** Distinguishes a successfully decoded null draft from unavailable ciphertext. */
+export function openQualifiedConnectedAccountContentEnvelopeResult(
+  params: OpenParams,
+): Readonly<{ status: 'opened'; value: unknown }> | Readonly<{ status: 'unavailable' }> {
   const envelope = StoredJsonContentEnvelopeSchema.parse(params.envelope);
   if (params.accountMode === 'plain') {
-    return envelope.t === 'plain' ? envelope.v : null;
+    return envelope.t === 'plain' ? { status: 'opened', value: envelope.v } : { status: 'unavailable' };
   }
-  if (envelope.t !== 'encrypted') return null;
+  if (envelope.t !== 'encrypted') return { status: 'unavailable' };
   const opened = params.kind === 'credential'
     ? openConnectedServiceCredentialCiphertext({
         material: params.material,
@@ -230,5 +238,5 @@ export function openQualifiedConnectedAccountContentEnvelope(
         material: params.material,
         ciphertext: envelope.c,
       });
-  return opened?.value ?? null;
+  return opened ? { status: 'opened', value: opened.value } : { status: 'unavailable' };
 }

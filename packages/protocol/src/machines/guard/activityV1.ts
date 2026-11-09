@@ -26,7 +26,7 @@ export const MachineGuardActivityEntryV1Schema = lazyZodSchema(() => z.strictObj
   v: z.literal(1), id: id(), at: bytes(), kind: z.enum(MACHINE_GUARD_ACTIVITY_KINDS_V1),
   rule: z.enum(MACHINE_GUARD_ACTIVITY_RULES_V1),
   subject: z.optional(z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('session'), sessionId: id(), title: z.string() }),
+    z.strictObject({ kind: z.literal('session'), sessionId: id(), title: z.nullable(z.string()) }),
     z.strictObject({ kind: z.literal('browser') }),
     z.strictObject({ kind: z.literal('service'), label: z.string(), port: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(65535))) }),
     z.strictObject({ kind: z.literal('processes'), count: count() }),

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   SESSION_PENDING_QUEUE_HOLD_MAX_TTL_MS,
   SessionMetadataSchema,
+  readSessionPendingQueueHoldV1FromMetadata,
   isSessionPendingQueueHoldBlockingPendingDrain,
   removeSessionPendingQueueHoldV1FromMetadata,
   writeSessionPendingQueueHoldV1ToMetadata,
@@ -23,7 +24,7 @@ describe('session pending queue hold metadata', () => {
     }).holdsById['hold-opaque']?.localId).toBe(' pending-1 ');
   });
 
-  it('blocks pending drain while a pending-message edit hold is unexpired', () => {
+  it('blocks only while the admitted edit is present, independently of the old metadata expiry', () => {
     const metadata = writeSessionPendingQueueHoldV1ToMetadata({}, {
       holdId: 'hold-1',
       localId: 'pending-1',
@@ -32,8 +33,11 @@ describe('session pending queue hold metadata', () => {
     });
 
     expect(SessionMetadataSchema.safeParse(metadata).success).toBe(true);
-    expect(isSessionPendingQueueHoldBlockingPendingDrain(metadata, 60_000)).toBe(true);
-    expect(isSessionPendingQueueHoldBlockingPendingDrain(metadata, 61_000)).toBe(false);
+    expect(isSessionPendingQueueHoldBlockingPendingDrain(metadata, ['hold-1'])).toBe(true);
+    expect(isSessionPendingQueueHoldBlockingPendingDrain(metadata, [])).toBe(false);
+    expect(isSessionPendingQueueHoldBlockingPendingDrain({}, ['another-device'])).toBe(true);
+    expect(isSessionPendingQueueHoldBlockingPendingDrain(metadata, null)).toBe(true);
+    expect(isSessionPendingQueueHoldBlockingPendingDrain({}, null)).toBe(false);
   });
 
   it('removes the hold key when the final pending queue hold is cleared', () => {
@@ -46,7 +50,8 @@ describe('session pending queue hold metadata', () => {
 
     const nextMetadata = removeSessionPendingQueueHoldV1FromMetadata(metadata, 'hold-1');
 
-    expect(isSessionPendingQueueHoldBlockingPendingDrain(nextMetadata, 60_000)).toBe(false);
+    expect(isSessionPendingQueueHoldBlockingPendingDrain(nextMetadata, ['hold-1'])).toBe(true);
+    expect(isSessionPendingQueueHoldBlockingPendingDrain(nextMetadata, [])).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(nextMetadata, 'sessionPendingQueueHoldV1')).toBe(false);
   });
 
@@ -58,34 +63,11 @@ describe('session pending queue hold metadata', () => {
       expiresAtMs: 1_000 + SESSION_PENDING_QUEUE_HOLD_MAX_TTL_MS + 1,
     });
 
-    const hold = (metadata.sessionPendingQueueHoldV1 as any)?.holdsById?.['hold-1'];
-    expect(hold.expiresAtMs).toBe(1_000 + SESSION_PENDING_QUEUE_HOLD_MAX_TTL_MS);
-    expect(isSessionPendingQueueHoldBlockingPendingDrain(metadata, 1_000 + SESSION_PENDING_QUEUE_HOLD_MAX_TTL_MS - 1)).toBe(true);
-    expect(isSessionPendingQueueHoldBlockingPendingDrain(metadata, 1_000 + SESSION_PENDING_QUEUE_HOLD_MAX_TTL_MS)).toBe(false);
+    const hold = readSessionPendingQueueHoldV1FromMetadata(metadata)?.holdsById['hold-1'];
+    expect(hold?.expiresAtMs).toBe(1_000 + SESSION_PENDING_QUEUE_HOLD_MAX_TTL_MS);
   });
 
-  it('ignores unreasonably far-future pending queue holds when checking drain blocking', () => {
-    const metadata = {
-      sessionPendingQueueHoldV1: {
-        v: 1,
-        holdsById: {
-          'hold-1': {
-            v: 1,
-            holdId: 'hold-1',
-            kind: 'pending_message_edit',
-            localId: 'pending-1',
-            updatedAtMs: 1_000,
-            expiresAtMs: 1_000 + SESSION_PENDING_QUEUE_HOLD_MAX_TTL_MS + 1,
-          },
-        },
-      },
-    };
-
-    expect(SessionMetadataSchema.safeParse(metadata).success).toBe(true);
-    expect(isSessionPendingQueueHoldBlockingPendingDrain(metadata, 1_001)).toBe(false);
-  });
-
-  it('prunes expired pending queue holds when writing another hold', () => {
+  it('does not erase another device edit when its old metadata expiry has passed', () => {
     const metadata = {
       sessionPendingQueueHoldV1: {
         v: 1,
@@ -117,7 +99,10 @@ describe('session pending queue hold metadata', () => {
       expiresAtMs: 4_000,
     });
 
-    const holdsById = (nextMetadata.sessionPendingQueueHoldV1 as any)?.holdsById;
-    expect(Object.keys(holdsById)).toEqual(['active', 'next']);
+    const holdsById = readSessionPendingQueueHoldV1FromMetadata(nextMetadata)!.holdsById;
+    expect(Object.keys(holdsById)).toEqual(['expired', 'active', 'next']);
+    expect(isSessionPendingQueueHoldBlockingPendingDrain(nextMetadata, ['expired'])).toBe(true);
+    const released = removeSessionPendingQueueHoldV1FromMetadata(nextMetadata, 'next');
+    expect(isSessionPendingQueueHoldBlockingPendingDrain(released, ['expired'])).toBe(true);
   });
 });

@@ -46,6 +46,7 @@ export const REVIEW_SCM_SCOPE_INPUT_KEY = 'scmReviewScope';
 export const ReviewStartInputSchema = lazyZodSchema(() => z.looseObject({
     roleId: z.optional(z.string().check(z.trim(), z.minLength(1))),
     launchProfileId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+    approvalProfileId: ExecutionRunStartRequestBaseSchema.shape.approvalProfileId,
     sessionId: z.optional(z.string().check(z.minLength(1))),
     target: z.optional(z.strictObject({ kind: z.literal('detached') })),
     childSelection: ExecutionRunStartRequestBaseSchema.shape.childSelection,

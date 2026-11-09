@@ -1,6 +1,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { LaunchProfileIdV2Schema } from './v2/profileId.js';
+import { LaunchProfilePlacementPreferenceV1Schema, LaunchProfileCheckoutPreferenceV1Schema } from './launchPreferencesV1.js';
 import { LaunchProfileV2Schema } from './v2/schema.js';
 import { EnvVarRequirementSchema } from './environmentVariables.js';
 import { ProfileRecordIdV1Schema, ProfileRecordV1Schema, ProfileReferenceGuardRevisionV1Schema, ProfileRowRevisionV1Schema,
@@ -132,7 +133,8 @@ export const PROFILE_ACTION_INPUT_SCHEMAS_V1 = {
   'launch_profiles.create': CreateInput,
   'launch_profiles.edit': EditorInput,
   'launch_profiles.save': SaveInput,
-  'launch_profiles.duplicate': lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(EditAddress, {
+  'launch_profiles.duplicate': lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(CapturedRowAddress, {
+    placement: z.optional(LaunchProfilePlacementPreferenceV1Schema), checkout: z.optional(LaunchProfileCheckoutPreferenceV1Schema),
     newProfileId: LaunchProfileIdV2Schema, name: LaunchProfileV2Schema.shape.name,
     now: z.number().check(z.nonnegative()),
   }))),

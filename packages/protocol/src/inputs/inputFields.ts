@@ -4,6 +4,9 @@ import { InputTypeReferenceV1Schema, type InputTypeReferenceV1 } from './inputTy
 import { StrictJsonValueSchema, type JsonValue } from '../json/strictJsonValue.js';
 import { pluginJsonValuesEqual } from '../plugins/contributions/jsonSchemaValues.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
+import { PluginUiIconTokenV1Schema, type PluginUiIconTokenV1 } from '../plugins/contributions/ui/tokens.js';
+import { PluginProjectionBrandAssetV2Schema, PluginProjectionSourceV2Schema,
+  type PluginProjectionBrandAssetV2, type PluginProjectionSourceV2 } from '../daemon/pluginCatalogPresentation.js';
 
 import {
   QualifiedConnectedAccountRefSchema,
@@ -83,6 +86,8 @@ const InputHintCoreFieldSchema = lazyZodSchema(() => z.strictObject({
   contextMode: z.optional(z.enum(['follow', 'own'])),
   required: z.optional(z.boolean()),
   requireExplicitSelection: z.optional(z.boolean()),
+  /** A string select may offer suggestions while accepting a new typed value. */
+  allowCustomValue: z.optional(z.boolean()),
   listSeparator: z.optional(z.enum(['comma', 'newline'])),
   maxSelections: z.optional(z.number().check(z.int(), z.positive())),
   defaultValue: z.optional(StrictJsonValueSchema),
@@ -119,6 +124,11 @@ export type InputHintOptionDescriptor<TText, TValue = InputOptionValue> = Readon
   labelKey?: string;
   description?: TText;
   disabled?: boolean;
+  icon?: PluginUiIconTokenV1;
+  brand?: PluginProjectionBrandAssetV2;
+  source?: PluginProjectionSourceV2;
+  /** Version of the declaring plugin, never an installed native package. */
+  version?: string;
 }>;
 
 export type InputFieldHintDescriptor<TText, TValue = InputOptionValue> = Readonly<{
@@ -134,13 +144,15 @@ export type InputFieldHintDescriptor<TText, TValue = InputOptionValue> = Readonl
   contextMode?: 'follow' | 'own';
   required?: boolean;
   requireExplicitSelection?: boolean;
+  /** Select suggestions do not constrain string values; the input type's schema and choices still apply. */
+  allowCustomValue?: boolean;
   listSeparator?: 'comma' | 'newline';
   maxSelections?: number;
   /** Initial form value only; explicit draft values and later edits take precedence. */
   defaultValue?: JsonValue;
   /** An integer declared as `bytes` is entered in GiB; the stored and submitted value stays bytes. */
   unit?: 'bytes';
-  /** Choices restrict the type's admitted values; they cannot widen its schema. */
+  /** Choices restrict admitted values unless allowCustomValue is true; they never widen a type schema. */
   options?: readonly InputHintOptionDescriptor<TText, TValue>[];
   optionsSourceId?: string;
   connectedAccountOptions?: true;
@@ -190,6 +202,10 @@ function validateInputHintField(
     || value.inputType !== undefined;
   const hasConnectedAccountOptions = value.connectedAccountOptions === true;
   const hasResolvedEmptyConnectedAccountOptions = value.resolvedEmptyConnectedAccountOptions === true;
+
+  if (value.allowCustomValue !== undefined && widget !== 'select') {
+    context.addIssue({ code: 'custom', path: ['allowCustomValue'], message: 'allowCustomValue is only valid for select fields.' });
+  }
 
   const hasAllowedConnectedAccountOptions = validationOptions.allowConnectedAccountOptions && hasConnectedAccountOptions;
   if ((widget === 'select' || widget === 'multiselect') && !hasOptions && !hasOptionsSource && !hasAllowedConnectedAccountOptions && !hasResolvedEmptyConnectedAccountOptions) {
@@ -384,6 +400,10 @@ function createInputHintsSchemasForSharedField<
     labelKey: z.optional(z.string().check(z.trim(), z.minLength(1))),
     description: z.optional(textSchema),
     disabled: z.optional(z.boolean()),
+    icon: z.optional(PluginUiIconTokenV1Schema),
+    brand: z.optional(PluginProjectionBrandAssetV2Schema),
+    source: z.optional(PluginProjectionSourceV2Schema),
+    version: z.optional(z.string().check(z.trim(), z.minLength(1))),
   });
   const fieldSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(InputHintCoreFieldSchema, {
     ...sourceShape,
@@ -488,6 +508,7 @@ export function normalizeInputHintsText<TText>(
       ...(field.contextMode === undefined ? {} : { contextMode: field.contextMode }),
       ...(field.required === undefined ? {} : { required: field.required }),
       ...(field.requireExplicitSelection === undefined ? {} : { requireExplicitSelection: field.requireExplicitSelection }),
+      ...(field.allowCustomValue === undefined ? {} : { allowCustomValue: field.allowCustomValue }),
       ...(field.listSeparator === undefined ? {} : { listSeparator: field.listSeparator }),
       ...(field.maxSelections === undefined ? {} : { maxSelections: field.maxSelections }),
       ...(field.defaultValue === undefined ? {} : { defaultValue: field.defaultValue }),
@@ -499,6 +520,10 @@ export function normalizeInputHintsText<TText>(
           ...(option.labelKey === undefined ? {} : { labelKey: option.labelKey }),
           ...(option.description === undefined ? {} : { description: resolveText(option.description) }),
           ...(option.disabled === undefined ? {} : { disabled: option.disabled }),
+          ...(option.icon === undefined ? {} : { icon: option.icon }),
+          ...(option.brand === undefined ? {} : { brand: option.brand }),
+          ...(option.source === undefined ? {} : { source: option.source }),
+          ...(option.version === undefined ? {} : { version: option.version }),
         })),
       }),
       ...(field.optionsSourceId === undefined

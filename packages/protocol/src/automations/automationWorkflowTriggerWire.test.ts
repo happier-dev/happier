@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionListRequestSchema, AutomationV3WorkerClaimedRunSchema } from './automationApiV3.js';
 import { AutomationRunCauseSchema } from './automationRunCause.js';
+import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '../artifacts/artifactListSelectionV1.js';
 
 describe('workflow trigger wire contract', () => {
+  it('admits one complete Artifact page of workflow selectors and refuses conflicting or oversized demand', () => {
+    const ids = Array.from({ length: ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 }, (_, index) => `plugin:com.external.workflows/page-${index}`);
+    expect(AutomationDefinitionListRequestSchema.safeParse({ workflowDefinitionIds: ids }).success).toBe(true);
+    expect(AutomationDefinitionListRequestSchema.safeParse({ workflowDefinitionIds: [...ids, 'builtin:extra'] }).success).toBe(false);
+    expect(AutomationDefinitionListRequestSchema.safeParse({ workflowDefinitionIds: [], workflowDefinitionId: 'builtin:review' }).success).toBe(false);
+    expect(AutomationDefinitionListRequestSchema.safeParse({ workflowDefinitionIds: [], scope: 'account_inline' }).success).toBe(false);
+    expect(AutomationDefinitionListRequestSchema.parse({ workflowDefinitionIds: [] }).workflowDefinitionIds).toEqual([]);
+  });
   it('carries the reference outside the sealed context and scopes definition reads', () => {
     expect(AutomationDefinitionCreateRequestSchema.safeParse({
       automationId: 'fbd3d978-0c53-47f9-a708-86bf36fe27b4', name: 'Review', enabled: true,

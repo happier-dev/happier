@@ -6,15 +6,15 @@ import { isManagedDevcontainerChildProjectionCurrentV1,
 import type { ManagedMachineV1 } from '../machines/managed/managedMachineV1.js';
 import { RpcError } from '../rpc/errors.js';
 
-/** Current reads of the existing managed row and ordinary Machine projection, never stored mapping state. */
+/** Native mapping from its current owner row or Home's authenticated relationship admission. */
 export type WorkspaceSyncChildMachineFacts = Readonly<{
   serverId: string;
   machineId: string;
   installationId: string;
   projection: DevcontainerChildProjectionV1;
-  managedMachine: ManagedMachineV1;
   controller: Readonly<{ machineId: string; installationId: string; available: boolean }>;
-}>;
+}> & (Readonly<{ managedMachine: ManagedMachineV1; admittedRelationshipId?: never }>
+  | Readonly<{ managedMachine?: undefined; admittedRelationshipId: string }>);
 
 export type WorkspaceSyncChildMachineProjection = Pick<WorkspaceSyncChildMachineFacts, 'serverId' | 'machineId' | 'projection'>;
 
@@ -64,12 +64,13 @@ function readCurrentWorkspaceSyncChild(input: Readonly<{
   const normalizeRoot = input.context?.normalizeRootPath ?? ((path: string) => normalizeWorkspaceRootPathV1(path));
   const actualRoot = normalizeRoot(workspace.rootPath, input.workspace);
   const nativeRoot = normalizeRoot(observation.workspaceFolder);
-  if (!fact.installationId || !isManagedDevcontainerChildProjectionCurrentV1({ homeId: workspace.serverId,
-      machineId: workspace.machineId, managedMachine: row, projection: fact.projection })
+  if (!fact.installationId || (row ? !isManagedDevcontainerChildProjectionCurrentV1({ homeId: workspace.serverId,
+      machineId: workspace.machineId, managedMachine: row, projection: fact.projection }) : !fact.admittedRelationshipId)
     || !actualRoot || !nativeRoot || !(input.context?.rootsEqual
       ? input.context.rootsEqual(actualRoot, nativeRoot) : actualRoot === nativeRoot)) return unavailable;
-  if (observation.storage.kind === 'bind' && (fact.controller.machineId !== row.controller?.machineId
-    || fact.controller.installationId !== row.controller?.installationId)) return unavailable;
+  if (observation.storage.kind === 'bind' && (fact.controller.machineId !== fact.projection.relation.parentMachineId
+    || row && (fact.controller.machineId !== row.controller?.machineId
+      || fact.controller.installationId !== row.controller?.installationId))) return unavailable;
   return { ok: true, fact };
 }
 
@@ -106,7 +107,6 @@ export function resolveWorkspaceSyncEndpoint(input: WorkspaceSyncEndpointContext
   const fact = current.fact;
   if (!fact) return unchanged;
   const { observation } = fact.projection;
-  const row = fact.managedMachine;
   if (observation.storage.kind === 'child') return unchanged;
   if (input.purpose !== 'admitted_mapping' && !fact.controller.available) return unavailable;
   const parent = resolveWorkspaceRefV1(input.workspaceRefs, { serverId: workspace.serverId,

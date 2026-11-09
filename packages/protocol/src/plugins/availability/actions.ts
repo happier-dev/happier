@@ -23,6 +23,7 @@ import {
   PluginReleaseFactsV1Schema,
   PluginReleaseRefV1Schema,
   PluginUiReleaseSlotV1Schema,
+  type PluginAccountAvailabilityReleaseReadResponseV1,
 } from './v1.js';
 
 const ArtifactIdSchema = lazyZodSchema(() => z.string().check(z.uuid()));
@@ -107,6 +108,8 @@ export type PluginAvailabilityIntentReadActionOutputV1 = z.infer<typeof PluginAv
 export const PluginAvailabilityIntentsListActionInputV1Schema = lazyZodSchema(() => z.strictObject({
   knownPluginIds: z.optional(z.readonly(z.array(asProtocolZod(PluginIdSchema)))),
   cursor: mini.optional(asProtocolZod(PluginIdSchema)),
+  /** The caller reads intent and release facts only: no declaration body or digest is projected or sent. */
+  omitDeclarations: z.optional(z.literal(true)),
 }));
 export type PluginAvailabilityIntentsListActionInputV1 = z.infer<typeof PluginAvailabilityIntentsListActionInputV1Schema>;
 
@@ -198,10 +201,9 @@ export const PluginAvailabilityReleaseReadActionInputV1Schema = lazyZodSchema(()
 export type PluginAvailabilityReleaseReadActionInputV1 =
   z.infer<typeof PluginAvailabilityReleaseReadActionInputV1Schema>;
 
-export const PluginAvailabilityReleaseReadActionOutputV1Schema: typeof PluginAccountAvailabilityReleaseReadResponseV1Schema =
+export type PluginAvailabilityReleaseReadActionOutputV1 = PluginAccountAvailabilityReleaseReadResponseV1;
+export const PluginAvailabilityReleaseReadActionOutputV1Schema: z.ZodMiniType<PluginAvailabilityReleaseReadActionOutputV1> =
   PluginAccountAvailabilityReleaseReadResponseV1Schema;
-export type PluginAvailabilityReleaseReadActionOutputV1 =
-  z.infer<typeof PluginAvailabilityReleaseReadActionOutputV1Schema>;
 
 export const PluginAvailabilityMaterializationsReportActionInputV1Schema = lazyZodSchema(() => z.strictObject({
   expectedRevision: z.nullable(z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER))),
@@ -216,6 +218,8 @@ export const PluginAvailabilityMaterializationsReportActionOutputV1Schema = lazy
 export type PluginAvailabilityMaterializationsReportActionOutputV1 = z.infer<typeof PluginAvailabilityMaterializationsReportActionOutputV1Schema>;
 
 export const PluginAvailabilityMaterializationsReadActionInputV1Schema = lazyZodSchema(() => z.strictObject({
+  /** A reader that needs only these plugins (e.g. a Session's selected plugin skills) names them; omitted reads every materialization. */
+  pluginIds: z.optional(z.readonly(z.array(asProtocolZod(PluginIdSchema)))),
 }));
 export type PluginAvailabilityMaterializationsReadActionInputV1 = z.infer<typeof PluginAvailabilityMaterializationsReadActionInputV1Schema>;
 

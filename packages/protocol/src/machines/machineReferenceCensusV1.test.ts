@@ -6,6 +6,35 @@ import type { MachinePoolListOutputV1 } from './pools/v1.js';
 import { readMachineReferenceCensusV1, type MachineReferenceCensusPortsV1 } from './machineReferenceCensusV1.js';
 
 describe('readMachineReferenceCensusV1', () => {
+  it('pages exact qualified deployment references and keeps unavailable deployment coverage partial', async () => {
+    const selections: unknown[] = [];
+    const ports: MachineReferenceCensusPortsV1 = {
+      artifacts: { list: async () => ({ coverage: 'complete', items: [] }), read: async () => null, readMany: async () => [] },
+      readSettings: async () => ({}),
+      readProfileCatalog: async () => ({ status: 'ready', source: 'destination', records: [], diagnostics: [],
+        referenceGuardRevision: 'absent', authority: 'active', control: null, controlRevision: 'absent' }),
+      readPools: async () => ({ pools: [] }), readAssignments: async () => ({ automations: [], nextCursor: null }),
+      readDeployments: async selection => {
+        selections.push(selection);
+        return { homeId: 'home', machineId: 'machine', coverage: 'complete',
+          references: [{ kind: 'deployment_environment', id: selection.cursor ? 'retained' : 'current', name: '',
+            deploymentRoles: selection.cursor ? ['retiring', 'detached'] : ['runtime', 'data', 'controller', 'build', 'edge'] }],
+          nextCursor: selection.cursor ? null : 'current' };
+      },
+    };
+    const result = await readMachineReferenceCensusV1({ homeId: 'home', machineId: 'machine' }, ports);
+    expect(result).toMatchObject({ coverage: 'complete', unavailable: [], references: [
+      { kind: 'deployment_environment', id: 'current', deploymentRoles: ['runtime', 'data', 'controller', 'build', 'edge'] },
+      { kind: 'deployment_environment', id: 'retained', deploymentRoles: ['retiring', 'detached'] },
+    ] });
+    expect(selections).toEqual([{ homeId: 'home', machineId: 'machine' }, { homeId: 'home', machineId: 'machine', cursor: 'current' }]);
+    await expect(readMachineReferenceCensusV1({ homeId: 'home', machineId: 'machine' }, { ...ports,
+      readDeployments: async () => { throw new Error('old_server_or_unavailable'); },
+    })).resolves.toMatchObject({ coverage: 'partial', unavailable: ['deployments'] });
+    await expect(readMachineReferenceCensusV1({ homeId: 'home', machineId: 'machine' }, { ...ports,
+      readDeployments: async () => ({ homeId: 'other-home', machineId: 'machine', coverage: 'complete', references: [], nextCursor: null }),
+    })).resolves.toMatchObject({ coverage: 'partial', unavailable: ['deployments'] });
+  });
   it.each(['malformed-source', 'missing-shared-body'] as const)('keeps Profile coverage partial for %s', async failure => {
     const result = await readMachineReferenceCensusV1({ homeId: 'home', machineId: 'machine' }, {
       artifacts: {
@@ -19,6 +48,7 @@ describe('readMachineReferenceCensusV1', () => {
         records: [], diagnostics: [], referenceGuardRevision: 'absent', authority: 'active', control: null, controlRevision: 'absent' }),
       readPools: async () => ({ pools: [] }),
       readAssignments: async () => ({ automations: [], nextCursor: null }),
+      readDeployments: async input => ({ ...input, coverage: 'complete', references: [], nextCursor: null }),
     });
     expect(result).toMatchObject({ coverage: 'partial', unavailable: ['profiles'] });
   });
@@ -35,6 +65,7 @@ describe('readMachineReferenceCensusV1', () => {
       readSettings: async () => { started.push('profiles'); throw new Error('settings_unavailable'); },
       readPools: async () => { started.push('pools'); return { pools: [] }; },
       readAssignments: async () => { started.push('assignments'); return { automations: [], nextCursor: null }; },
+      readDeployments: async input => ({ ...input, coverage: 'complete', references: [], nextCursor: null }),
     });
     try { expect(started).toEqual(['boards', 'profiles', 'pools', 'assignments']); }
     finally { release(); await result; }
@@ -113,6 +144,7 @@ describe('readMachineReferenceCensusV1', () => {
           return artifactIds.map(artifactId => artifacts.get(artifactId) ?? null);
         },
       },
+      readDeployments: async input => ({ ...input, coverage: 'complete', references: [], nextCursor: null }),
       readSettings: async () => ({}),
       readProfileCatalog: async () => ({
         status: 'ready', records: [{ record: { v: 1, id: 'profile-one',
@@ -181,6 +213,7 @@ describe('readMachineReferenceCensusV1', () => {
       } as ProfileCatalogSnapshotV1),
       readPools: async () => ({ pools: [] }),
       readAssignments: async () => ({ automations: [], nextCursor: null }),
+      readDeployments: async input => ({ ...input, coverage: 'complete', references: [], nextCursor: null }),
     });
 
     expect(result).toEqual({

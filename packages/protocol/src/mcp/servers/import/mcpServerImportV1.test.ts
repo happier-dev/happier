@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { McpServerCatalogEntryV1Schema } from '../settingsV1.js';
-import { parseMcpServerImportV1 } from './parseMcpServerImportV1.js';
+import { encodeMcpServerInstallLinkV1, parseMcpServerImportV1 } from './parseMcpServerImportV1.js';
 import { materializeMcpServerImportV1, prepareMcpServerImportV1, prepareDetectedMcpServerImportV1,
     McpImportPreviewV1Schema, McpImportCommitV1Schema, McpImportValueChoiceV1Schema } from './mcpServerImportV1.js';
 
@@ -15,6 +15,24 @@ describe('MCP import preparation', () => {
         expect(McpImportValueChoiceV1Schema.parse(save)).toEqual(save);
         expect(McpImportValueChoiceV1Schema.safeParse({ ...save, value: 'unexpected' }).success).toBe(false);
         expect(McpImportValueChoiceV1Schema.safeParse({ ...create, unexpected: true }).success).toBe(false);
+    });
+    it.each([true, false])('preserves the exported HTTP auth intent through preview, materialization and reimport (OAuth=%s)', async oauth => {
+        const server = McpServerCatalogEntryV1Schema.parse({ id: 'source', name: 'one', transport: 'http',
+            remote: { url: 'https://mcp.example.test/mcp', headers: {}, ...(oauth ? { auth: { kind: 'oauth' } } : {}) },
+            env: {}, createdAt: 0, updatedAt: 0 });
+        const link = encodeMcpServerInstallLinkV1(server, 'https://web.example.test');
+        const imported = parseMcpServerImportV1(link);
+        expect(imported.errors).toEqual([]);
+        const preview = McpImportPreviewV1Schema.parse(prepareMcpServerImportV1({ ...base, parsed: imported }));
+        expect(preview.servers).toEqual([{ name: 'one', transport: 'http', envNames: [], headerNames: [],
+            ...(oauth ? { auth: { kind: 'oauth' } } : {}) }]);
+        const result = await materializeMcpServerImportV1({ ...base, parsed: imported });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        const saved = McpServerCatalogEntryV1Schema.parse(result.entries[0]);
+        expect(saved.remote).toEqual(server.remote);
+        const reimported = parseMcpServerImportV1(encodeMcpServerInstallLinkV1(saved, 'https://web.example.test'));
+        expect(reimported.servers[0]?.remote).toEqual(server.remote);
     });
     it('exposes the inferred transport in the strict preview and commits a revised explicit choice', async () => {
         const config = { mcpServers: { one: { url: 'https://mcp.example.test/sse' } } };

@@ -1,21 +1,17 @@
 import type { ActionExecuteResult } from '../actions/actionExecutionResult.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from '../actions/executor/types.js';
 import { parseSessionBoardActionPortResultV1 } from '../sessions/board/actions.js';
-import { admitWidgetActionSurfaceV1 } from './widgetActionScopeV1.js';
 import { buildWidgetSnapshotBoardUpsertV1, WidgetSnapshotPostInputV1Schema } from './widgetSnapshotV1.js';
 
-/** Invoked only after the existing configurable Action approval owner admits publication. */
+/** Invoked after Action preparation admits scope and configurable publication approval. */
 export async function executeWidgetSnapshotPostV1(
   deps: ActionExecutorDeps, input: unknown, context: ActionExecutorContext,
 ): Promise<ActionExecuteResult> {
   const args = WidgetSnapshotPostInputV1Schema.parse(input);
-  const refusal = await admitWidgetActionSurfaceV1(deps, args.surface, context);
-  if (refusal) return refusal;
+  if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
   if (!deps.sessionBoardAction) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
   const boardInput = buildWidgetSnapshotBoardUpsertV1(args);
   // The Board port rechecks Session editor/audience/mode rights before its one sealed mutation.
-  const lastRefusal = await admitWidgetActionSurfaceV1(deps, args.surface, context);
-  if (lastRefusal) return lastRefusal;
   const result = await deps.sessionBoardAction({ actionId: 'session.board.item.upsert', input: boardInput, context,
     ...(context.signal ? { signal: context.signal } : {}) });
   const validated = parseSessionBoardActionPortResultV1('session.board.item.upsert', boardInput, result, {

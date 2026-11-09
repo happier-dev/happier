@@ -6,6 +6,22 @@ import { resolveAttentionDeliveryPolicyDecision } from './attentionDeliveryPolic
 import * as remote from './accountRemoteAlertPolicy.js';
 
 describe('remote alert policy projection', () => {
+  it('reads only policy inputs while a genuine consent change reaches the currentness consumer', () => {
+    let unrelatedReads = 0;
+    const settings = new Proxy({ sessionRemoteAlertsEnabled: true,
+      ...Object.fromEntries(Array.from({ length: 1000 }, (_, index) => [`unrelated${index}`, { retained: index }])),
+    }, {
+      get(target, key, receiver) {
+        if (typeof key === 'string' && key.startsWith('unrelated')) unrelatedReads++;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const policy = remote.deriveAccountRemoteAlertPolicyV1(settings);
+    expect(remote.resolveAccountRemoteAlertPolicyCurrentness({ settingsVersion: 3, policy }, 3))
+      .toMatchObject({ status: 'current', policy: { events: { ready: { enabled: true } } } });
+    expect(unrelatedReads).toBe(0);
+  });
+
   it('preserves Follow quiet delivery in the remote Account/device adapter', () => {
     const accountPolicy = remote.deriveAccountRemoteAlertPolicyV1({ sessionRemoteAlertsEnabled: true });
     const params = { accountPolicy, devicePolicy: { v: 1, enabled: true, nativeConsumer: 'ios_service_extension_v1',

@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { getActionSpec, listActionSpecsForSurface } from './actionSpecs.js';
-import { canRequestPresentUserApprovalForActionInputV1, DECISION_ACTION_IDS, requiresPresentUserDecisionForActionInputV1,
+import { canRequestPresentUserApprovalForActionInputV1, DECISION_ACTION_IDS,
   resolveCredentialActionAdmissionV1, TOKEN_CONVERSATIONAL_INPUT_ACTION_IDS } from './decisionAuthority.js';
 import { renderPluginActionReferenceMarkdown } from './pluginActionReference.js';
 
@@ -55,8 +55,7 @@ describe('plugin Action reference generator', () => {
       const decision = (DECISION_ACTION_IDS as readonly string[]).includes(spec.id);
       const conversational = (TOKEN_CONVERSATIONAL_INPUT_ACTION_IDS as readonly string[]).includes(spec.id);
       const effectAuthority = decision ? 'approval_decision' : conversational ? 'conversational_input'
-        : spec.requiredAuthority === 'present_user' ? 'present_user'
-        : requiresPresentUserDecisionForActionInputV1(spec) ? 'human_decision' : 'account_automation';
+        : spec.requiredAuthority === 'present_user' ? 'present_user' : 'account_automation';
       expect(body).toContain(`- Decision/effect authority: \`${effectAuthority}\``);
       const mayRequestApproval = canRequestPresentUserApprovalForActionInputV1(spec);
       const pluginAdmission = resolveCredentialActionAdmissionV1({

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isPublishedTranscriptSessionBoardItemReferenceCorrespondingV1, resolveTranscriptSessionBoardItemReferenceV1 } from './transcriptReference.js';
+import { isPublishedTranscriptSessionBoardItemReferenceCorrespondingV1, isTranscriptSessionBoardItemReplyCallV1, resolveTranscriptSessionBoardItemReferenceV1 } from './transcriptReference.js';
 
 const sourceAddress = { serverId: 'source-home', sessionId: 'parent' };
 const acknowledgedReference = {
@@ -10,6 +10,30 @@ const publishedReference = {
     v: 1 as const, itemId: 'child-copy', itemRevision: 'child-revision', sourceAddress,
     sourceItemId: 'first', sourceItemRevision: 'original-revision',
 };
+
+describe('Ask visual reply grouping', () => {
+    it.each(['direct tool', 'action_execute'] as const)('uses validated creation destination for %s without defaulting updates', transport => {
+        const create = { itemId: 'note', expectedItemRevision: null,
+            item: { v: 1, title: 'Note', frame: 'frameless', height: { mode: 'auto', fallback: 'regular' },
+                source: { kind: 'declarative', document: { version: 1, root: { kind: 'markdown', text: 'Note' } } } } };
+        const receipt = { kind: 'approval_request_created', artifactId: 'approval', actionId: 'session.board.item.upsert' };
+        const isReply = (input: unknown) => isTranscriptSessionBoardItemReplyCallV1({
+            toolName: transport === 'direct tool' ? 'session_board_item_upsert' : 'mcp__happier__action_execute', state: 'completed',
+            input: transport === 'direct tool' ? input : { actionId: 'session.board.item.upsert', input: JSON.stringify(input) },
+            result: transport === 'direct tool' ? { ok: true, result: receipt } : receipt,
+        });
+
+        expect(isReply(create)).toBe(true);
+        expect(isReply({ ...create, destination: 'transcript' })).toBe(true);
+        expect(isReply({ ...create, destination: 'both', placement: {} })).toBe(true);
+        expect(isReply({ ...create, destination: 'board', placement: {} })).toBe(false);
+        expect(isReply({ ...create, placement: {} })).toBe(false);
+        const update = { ...create, expectedItemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ' };
+        expect(isReply(update)).toBe(false);
+        expect(isReply({ ...update, destination: 'transcript' })).toBe(true);
+        expect(isReply({ ...create, destination: 'transcript', item: null })).toBe(false);
+    });
+});
 
 describe('cross-device transcript visual Home binding', () => {
     it('admits two profile identifiers only with the same canonical Home proof and retains the viewer address', () => {

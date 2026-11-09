@@ -1,6 +1,6 @@
-import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 
 const ENVIRONMENT_VARIABLE_NAME_REGEX = /^[A-Z_][A-Z0-9_]*$/;
 
@@ -27,5 +27,5 @@ export const EnvVarRequirementSchema = lazyZodSchema(() => z.strictObject({
 }));
 
 export type EnvVarRequirement = z.infer<typeof EnvVarRequirementSchema>;
-
+/** The same defaulting, value-free requirement parser, composable by feature protocols. */
 export const EnvVarRequirementV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(EnvVarRequirementSchema));

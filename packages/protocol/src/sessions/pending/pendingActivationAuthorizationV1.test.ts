@@ -9,7 +9,7 @@ import {
 
 describe('PendingActivationAuthorizationV1', () => {
   it('accepts closed diagnostic query facts without admitting private failure prose', () => {
-    const failureDetails = { reason: 'spawn-rejected', spawnErrorCode: 'SPAWN_VALIDATION_FAILED' };
+    const failureDetails = { reason: 'spawn-rejected', spawnErrorCode: 'SPAWN_VALIDATION_FAILED', runtimeReason: 'no_eligible_member' };
     expect(PendingActivationFailureQueryV1Schema.parse({ failureDetails: JSON.stringify(failureDetails) })).toEqual({ failureDetails });
     expect(PendingActivationFailureQueryV1Schema.safeParse({ failureDetails: JSON.stringify({ ...failureDetails, message: 'private' }) }).success).toBe(false);
     expect(PendingActivationFailureQueryV1Schema.safeParse({ failureDetails: JSON.stringify({ reason: 'private' }) }).success).toBe(false);

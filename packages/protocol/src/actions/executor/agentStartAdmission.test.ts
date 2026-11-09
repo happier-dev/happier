@@ -1,15 +1,153 @@
 import { describe, expect, it } from 'vitest';
-import { admitActionAgentStartV1, resolveActionAgentStartContextV1, resolveActionAgentStartRequestsV1, resolveRunStartModelAndConfig, stampAgentStartSelectionV1 } from './agentStartAdmission.js';
+import { actionStartTargetUnavailableV1, admitActionAgentStartV1, resolveActionAgentStartContextV1, resolveActionAgentStartRequestsV1, resolveRunStartModelAndConfig, stampAgentStartSelectionV1 } from './agentStartAdmission.js';
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
 import { ExecutionRunStartRequestSchema } from '../../execution/runs/startRequest.js';
 import type { AgentStartContextV1 } from '../../account/settings/admitAgentStartV1.js';
 import { markSessionListQueryResultV1 } from '../../sessions/awareness/action.js';
+import { readActionCallerLedSubtreeSessionIds } from './sessionLedSubtree.js';
+import { WorkflowActionFailureV1Schema } from '../../workflows/workflowProgressV1.js';
+import { V2SessionRecordSchema } from '../../sessions/control/contract.js';
+import type { ActionExecutorDeps } from './types.js';
+import { createSessionMembershipReadFixture } from '../../sessions/read/sessionReadBatchV1.testkit.js';
+import { resolveActionCurrentSessionScopeFailure } from './sessionListAccess.js';
+import { createActionExecutor } from '../actionExecutor.js';
 
 const nativeTarget = { kind: 'agent' as const, identity: { pluginId: 'native.agent', localId: 'agent' } };
 const roleTarget = { kind: 'agent' as const, identity: { pluginId: 'role.agent', localId: 'agent' } };
 
 describe('canonical Action agent-start adapter', () => {
+  it('admits an unstamped Workflow Action Session birth through the ordinary Agent-start owner', async () => {
+    let births = 0;
+    const executor = createActionExecutor({ sessionSpawnNew: async () => { births++; return { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' }; } });
+    expect(await executor.execute('session.spawn_new', {
+      creationKey: 'ordinary-workflow-action', executionTarget: { serverId: 'home', machineId: 'machine' },
+      directory: { kind: 'path', path: '/repo' }, organizationPlacement: { sectionId: null, tagIds: [] }, agentTarget: nativeTarget,
+    }, { surface: 'agent', authority: 'account_automation', callerPermissionMode: 'default',
+      serverId: 'home', executionRunWorkflowRunId: 'workflow',
+      actionCaller: { kind: 'workflowRun', runId: 'workflow', authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } },
+    })).toMatchObject({ ok: false, errorCode: 'target_unavailable', details: { reason: 'agent_start_context_unavailable' } });
+    expect(births).toBe(0);
+  });
+  it.each(['lead', 'another-manager'])('retains the direct-manager Resume boundary for %s', async managerSessionId => {
+    const response = createSessionMembershipReadFixture(['child']);
+    const detail = response.results[0]?.detail;
+    if (!detail || detail.status !== 200) throw new Error('Expected the owned Session fixture');
+    const session = V2SessionRecordSchema.parse({ ...detail.body.session, manager: { sessionId: managerSessionId } });
+    const failure = await resolveActionCurrentSessionScopeFailure('session.open', { sessionId: 'child', intent: 'resume' },
+      { surface: 'agent', defaultSessionId: 'lead', sessionListAccess: 'led_subtree', agentStartContext: {
+        caller: { kind: 'session', sessionId: 'lead', starterDepth: 0, turnDepth: 0 },
+        baseline: { machineId: 'machine', directory: '/repo' }, roles: {}, callerPermissionCeiling: 'default',
+        ledSubtreeSessionIds: [], workDepthLimit: 4,
+      } }, { sessionId: 'current_session' }, { sessionList: async () => { throw new Error('Unexpected inventory read'); },
+        sessionRead: async () => ({ results: [{ sessionId: 'child', detail: { status: 200, body: { session } } }] }) });
+    expect(failure).toEqual(managerSessionId === 'lead' ? null : expect.objectContaining({ ok: false,
+      details: { cause: 'action_scope_restricted' } }));
+  });
+  it.each(['missing', 'duplicate', 'mismatched', 'cancelled'] as const)('fails exact membership closed for %s evidence', async scenario => {
+    const controller = new AbortController();
+    const response = createSessionMembershipReadFixture(['child']);
+    const row = response.results[0]!;
+    const read = async () => {
+      if (scenario === 'cancelled') controller.abort();
+      return { results: scenario === 'missing' ? [] : scenario === 'duplicate' ? [row, row]
+        : scenario === 'mismatched' ? [{ ...row, sessionId: 'other' }] : [row] };
+    };
+    expect(await readActionCallerLedSubtreeSessionIds({ sessionRead: read },
+      { defaultSessionId: 'lead', signal: controller.signal }, undefined, ['child'])).toBeNull();
+    expect(await readActionCallerLedSubtreeSessionIds({ sessionRead: async () => response },
+      { defaultSessionId: 'lead' }, undefined, ['child'])).toEqual(new Set(['child']));
+  });
+  it('WF44 proves an exact target without paging unrelated active or archived led Sessions', async () => {
+    const agentStartContext: AgentStartContextV1 = {
+      caller: { kind: 'session', sessionId: 'lead', starterDepth: 0, turnDepth: 0 },
+      baseline: { machineId: 'machine', directory: '/repo' }, roles: {}, callerPermissionCeiling: 'default',
+      ledSubtreeSessionIds: ['removed'], workDepthLimit: 4,
+    };
+    const context = { agentStartContext, defaultSessionId: 'lead', sessionListAccess: 'led_subtree' as const };
+    const ids = Array.from({ length: 1_000 }, (_, i) => `child-${i}`);
+    const records = new Map(ids.map((id, i) => [id, V2SessionRecordSchema.parse({ id, seq: 0, createdAt: 1, updatedAt: 1,
+      active: false, activeAt: 1, metadata: '{}', metadataVersion: 0, encryptionMode: 'plain', dataEncryptionKey: null,
+      agentState: null, agentStateVersion: 0, archivedAt: i >= 600 ? 1 : null })]));
+    const members = new Set(ids);
+    let pages = 0;
+    const exactReads: string[][] = [];
+    let unavailable = false;
+    const deps = {
+      sessionList: async ({ query }) => {
+        pages++;
+        const partition = ids.slice(query?.storage === 'archived' ? 600 : 0, query?.storage === 'archived' ? 1_000 : 600)
+          .filter(id => members.has(id));
+        const start = Number(query?.cursor ?? 0);
+        const end = start + (query?.limit ?? 200);
+        return markSessionListQueryResultV1({ sessions: partition.slice(start, end).map(id => ({ id, active: false, presence: 'offline', updatedAt: 1 })),
+          hasNext: end < partition.length, nextCursor: end < partition.length ? String(end) : null,
+          attentionNextCursor: null, attentionHasNext: false });
+      },
+      sessionRead: async ({ sessionIds, underSessionId }) => {
+        // The HTTP boundary supplies the Home's exact managed-subtree result.
+        exactReads.push([...sessionIds]);
+        expect(underSessionId).toBe('lead');
+        return { results: sessionIds.map(sessionId => ({ sessionId, detail: unavailable
+          ? { status: 503, body: { error: 'session_read_unavailable' } }
+          : !members.has(sessionId) ? { status: 404, body: { error: 'not_found' } }
+          : { status: 200, body: { session: records.get(sessionId) } } })) };
+      },
+    } satisfies Pick<ActionExecutorDeps, 'sessionList' | 'sessionRead'>;
+    const admit = async (targetSessionId: string) => admitActionAgentStartV1(context,
+      { kind: 'session_target', targetSessionId }, await resolveActionAgentStartContextV1(deps, context, targetSessionId));
+    expect(await admit(ids[0]!)).toMatchObject({ ok: true });
+    expect({ pages, exactReads }).toEqual({ pages: 0, exactReads: [[ids[0]]] });
+    expect(await admit(ids[999]!)).toMatchObject({ ok: true });
+    members.delete(ids[0]!);
+    expect(await admit(ids[0]!)).toMatchObject({ ok: false, refusal: { code: 'subtree_denied' } });
+    members.add(ids[0]!);
+    expect(await admit(ids[0]!)).toMatchObject({ ok: true });
+    unavailable = true;
+    expect(await admit(ids[0]!)).toMatchObject({ ok: false, refusal: { code: 'subtree_denied' } });
+    expect(await admit('lead')).toMatchObject({ ok: true });
+    expect(pages).toBe(0);
+    expect(exactReads).toHaveLength(5);
+    unavailable = false;
+    const both = await resolveActionAgentStartContextV1(deps, context, [ids[0]!, ids[999]!]);
+    expect(both).toMatchObject({ ledSubtreeSessionIds: [ids[0], ids[999]] });
+    expect(exactReads.at(-1)).toEqual([ids[0], ids[999]]);
+  });
+  it.each(['missing_context', 'invalid_policy'] as const)('emits a public-readable refusal for %s', scenario => {
+    const ready: AgentStartContextV1 = {
+      caller: { kind: 'session', sessionId: 'lead', starterDepth: 0, turnDepth: 0 },
+      baseline: { machineId: 'machine', directory: '/repo' }, roles: {},
+      callerPermissionCeiling: 'default', ledSubtreeSessionIds: [], workDepthLimit: 4,
+    };
+    const admitted = admitActionAgentStartV1(scenario === 'invalid_policy'
+      ? { sessionAgentSpawnPolicyV1: { v: 999 } } : {},
+      { kind: 'session_target', targetSessionId: 'lead' }, scenario === 'missing_context' ? null : ready);
+    if (admitted.ok) throw new Error('Expected refusal');
+    expect(WorkflowActionFailureV1Schema.safeParse(admitted.error).success).toBe(true);
+    expect(admitted.error.details).toEqual({ code: 'target_unavailable',
+      reason: scenario === 'missing_context' ? 'agent_start_context_unavailable' : 'spawn_policy_invalid' });
+  });
+
+  it('preserves a context refusal before caller validation and start admission', async () => {
+    const refusal = actionStartTargetUnavailableV1(undefined, 'agent_start_context', 'role_source_incomplete');
+    const context = { actionCaller: { kind: 'session' as const, sessionId: 'lead', starterDepth: 0, turnDepth: 0 } };
+    const resolved = await resolveActionAgentStartContextV1({ resolveAgentStartContext: async () => refusal }, context);
+    expect(resolved).toEqual(refusal);
+    expect(admitActionAgentStartV1(context, { kind: 'session_target', targetSessionId: 'lead' }, resolved))
+      .toMatchObject({ ok: false, error: refusal });
+  });
+
+  it('does not mistake a scope-only context refusal for a caller witness', async () => {
+    let listReads = 0;
+    const refusal = actionStartTargetUnavailableV1(undefined, 'agent_start_context', 'caller_depth_unavailable');
+    const ids = await readActionCallerLedSubtreeSessionIds({
+      resolveAgentStartContext: async () => refusal,
+      sessionList: async () => { listReads += 1; throw new Error('unexpected scope read'); },
+    }, { defaultSessionId: 'lead', sessionListAccess: 'current_session' });
+    expect(ids).toBeNull();
+    expect(listReads).toBe(0);
+  });
+
   it.each([false, true])('inherits Session credentials and Launch Profile with only a model ref: role=%s', role => {
     const connectedServices = { v: 2 as const, bindingsByServiceId: {
       'acme.auth/subscription': { source: 'connected' as const, selection: 'profile' as const, profileId: 'parent-account' },
@@ -79,7 +217,11 @@ describe('canonical Action agent-start adapter', () => {
       baseline: { machineId: 'machine', directory: '/repo' }, roles: {}, callerPermissionCeiling: 'default',
       ledSubtreeSessionIds: ['child'], workDepthLimit: 4,
     };
-    const deps = { sessionList: async () => markSessionListQueryResultV1({
+    const child = V2SessionRecordSchema.parse({ id: 'child', seq: 0, createdAt: 1, updatedAt: 1,
+      active: false, activeAt: 1, metadata: '{}', metadataVersion: 0, encryptionMode: 'plain', dataEncryptionKey: null,
+      agentState: null, agentStateVersion: 0 });
+    const deps = { sessionRead: async () => ({ results: [{ sessionId: 'child', detail: { status: 200, body: { session: child } } }] }),
+      sessionList: async () => markSessionListQueryResultV1({
       sessions: [{ id: 'child', active: false, presence: 'offline', updatedAt: 1 }],
       nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
     }) };

@@ -1,5 +1,7 @@
 import { ActionIdSchema, type ActionId } from './actionIds.js';
-import { isActionEnabledByActionsSettings, type ActionsSettingsV1 } from './actionSettings.js';
+import { isActionEnabledByActionsSettings, normalizeActionSettingsActionId, type ActionSettingsActionId, type ActionsSettingsV1 } from './actionSettings.js';
+import type { ActionCallerSurfaceV1 } from './actionSettings.js';
+import type { ActionUiPlacement } from './actionUiPlacements.js';
 import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { isMemoryWriteActionV1 } from '../prompts/library/memoryActionsV1.js';
 import {
@@ -12,32 +14,6 @@ import {
 
 export const ACTION_TOOL_EXPOSURE_SURFACES = ['agent', 'mcp', 'cli'] as const satisfies readonly ActionToolExposureSurface[];
 
-export const AGENT_DIRECT_ACTION_TOOL_ALLOW_LIST = [
-  'action.spec.search',
-  'action.spec.get',
-  'action.options.resolve',
-  'execution.run.list',
-  'execution.run.get',
-  'execution.run.wait',
-  'plugins.reload',
-  // The current-viewer presentation command is a first-class Agent tool: its
-  // exact Session target, principal, binding, currentness, acknowledgement and
-  // idempotency are all host-stamped below the generic Action boundary.
-  'session.presentation.apply',
-  // Board authoring is a first-class Session Agent vertical. The exact Home
-  // feature decision and Session authority are enforced by the host/executor;
-  // this catalog row only makes the already-admitted Actions directly usable.
-  'session.board.get',
-  'session.board.item.upsert',
-  'session.board.item.remove',
-  'session.board.layout.update',
-  'workflow.run.start',
-  'workflow.run.get',
-  'workflow.run.wait',
-  'workflow.run.cancel',
-] as const satisfies readonly ActionId[];
-
-const AGENT_DIRECT_ACTION_TOOL_ALLOW_SET = new Set<ActionId>(AGENT_DIRECT_ACTION_TOOL_ALLOW_LIST);
 const ACTION_TOOL_EXPOSURE_SURFACE_SET = new Set<string>(ACTION_TOOL_EXPOSURE_SURFACES);
 
 export type ActionSurfacePolicy = Readonly<{
@@ -80,11 +56,22 @@ export type ActionSurfaceAvailability = Readonly<{
 }>;
 
 export type ActionSurfaceAvailabilityContext = Readonly<{
+  callerSurface?: ActionCallerSurfaceV1;
   settings?: ActionsSettingsV1 | null;
   isActionEnabled?: ((id: ActionId) => boolean) | null;
   /** Undefined means an Account host without a bound Session. */
   sessionMemoryEnabled?: boolean;
   requireToolBinding?: boolean | null;
+  /** Admitted contributed declarations use the same policy as built-in specs. */
+  definition?: Readonly<{
+    id: string;
+    surfaces: ActionSurfaces;
+    toolExposure?: ActionSpec['toolExposure'];
+    bindings?: ActionSpec['bindings'] | null;
+  }>;
+  /** Host-selected children retain settings policy without external exposure. */
+  hostInternal?: boolean;
+  placement?: ActionUiPlacement | null;
 }>;
 
 export function isActionEnabledWithSessionMemory(actionId: string, sessionMemoryEnabled?: boolean): boolean {
@@ -114,7 +101,7 @@ export function getDefaultActionToolExposureMode(
   const explicit = spec.toolExposure?.[surface];
   if (explicit) return explicit;
   if (surface === 'agent' || surface === 'mcp') {
-    return AGENT_DIRECT_ACTION_TOOL_ALLOW_SET.has(spec.id as ActionId) ? 'direct' : 'discoverable_only';
+    return 'discoverable_only';
   }
   return 'direct';
 }
@@ -135,23 +122,25 @@ export function resolveActionToolExposureModeForSurface(
   return getSettingsOverride(spec, surface, settings) ?? getDefaultActionToolExposureMode(spec, surface);
 }
 
-function getAvailableSurfaces(spec: ActionSpec): readonly (keyof ActionSurfaces)[] {
+function getAvailableSurfaces(spec: Readonly<{ surfaces: ActionSurfaces }>): readonly (keyof ActionSurfaces)[] {
   return Object.entries(spec.surfaces)
     .filter((entry): entry is [keyof ActionSurfaces, true] => entry[1] === true)
     .map(([surface]) => surface);
 }
 
 function getSettingsState(
-  actionId: ActionId,
+  actionId: ActionSettingsActionId,
   surface: keyof ActionSurfaces,
   settings?: ActionsSettingsV1 | null,
+  callerSurface?: ActionCallerSurfaceV1,
 ): ActionSurfaceSettingsState {
-  if (!settings) return 'unknown';
-  const override = settings.actions[actionId];
-  if (override?.enabled === false || override?.disabledSurfaces.some((disabledSurface) => disabledSurface === surface)) {
+  if (!settings && !callerSurface) return 'unknown';
+  const effectiveSettings: ActionsSettingsV1 = settings ?? { v: 1, actions: {} };
+  const context = { surface, callerSurface };
+  if (!isActionEnabledByActionsSettings(actionId, effectiveSettings, context)) {
     return 'disabled';
   }
-  if (isApprovalRequiredByActionsSettings(actionId, settings, { surface })) {
+  if (isApprovalRequiredByActionsSettings(actionId, effectiveSettings, context)) {
     return 'approval_required';
   }
   return 'enabled';
@@ -176,14 +165,16 @@ export function resolveActionSurfaceAvailability(params: Readonly<{
 }> & ActionSurfaceAvailabilityContext): ActionSurfaceAvailability {
   const actionId = String(params.actionId);
   const parsedActionId = ActionIdSchema.safeParse(actionId);
-  if (!parsedActionId.success) return unknownAvailability(actionId, params.surface);
+  const settingsActionId = parsedActionId.success ? parsedActionId.data : normalizeActionSettingsActionId(actionId);
+  if (!settingsActionId) return unknownAvailability(actionId, params.surface);
 
-  let spec: ActionSpec;
+  let spec = params.definition;
   try {
-    spec = getActionSpec(parsedActionId.data);
+    spec ??= parsedActionId.success ? getActionSpec(parsedActionId.data) : undefined;
   } catch {
     return unknownAvailability(actionId, params.surface);
   }
+  if (!spec || spec.id !== actionId) return unknownAvailability(actionId, params.surface);
 
   const availableSurfaces = getAvailableSurfaces(spec);
   const toolExposure = isActionToolExposureSurface(params.surface)
@@ -193,7 +184,7 @@ export function resolveActionSurfaceAvailability(params: Readonly<{
       }
     : {};
 
-  if (spec.surfaces[params.surface] !== true) {
+  if (!params.hostInternal && spec.surfaces[params.surface] !== true) {
     return {
       available: false,
       reason: 'unsupported_surface',
@@ -204,10 +195,12 @@ export function resolveActionSurfaceAvailability(params: Readonly<{
     };
   }
 
-  const settingsState = getSettingsState(parsedActionId.data, params.surface, params.settings);
+  const settingsState = getSettingsState(settingsActionId, params.surface, params.settings, params.callerSurface);
   if (
-    params.settings
-    && !isActionEnabledByActionsSettings(parsedActionId.data, params.settings, { surface: params.surface })
+    (params.settings || params.callerSurface)
+    && !isActionEnabledByActionsSettings(settingsActionId, params.settings ?? { v: 1, actions: {} }, {
+      surface: params.surface, placement: params.placement, callerSurface: params.callerSurface,
+    })
   ) {
     return {
       available: false,
@@ -222,7 +215,7 @@ export function resolveActionSurfaceAvailability(params: Readonly<{
 
   if (
     !isActionEnabledWithSessionMemory(actionId, params.sessionMemoryEnabled)
-    || (params.isActionEnabled && !params.isActionEnabled(parsedActionId.data))
+    || (params.isActionEnabled && parsedActionId.success && !params.isActionEnabled(parsedActionId.data))
   ) {
     return {
       available: false,

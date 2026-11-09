@@ -107,7 +107,6 @@ describe('ActionIdSchema', () => {
       'account.encryption.historicalKey.forget',
       'account.encryption.automationTemplates.recover',
       'account.security.get',
-      'account.security.terminalPresentUser.set',
       'account.password.enroll',
       'account.password.change',
       'account.password.remove',

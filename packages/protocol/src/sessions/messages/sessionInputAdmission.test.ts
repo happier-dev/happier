@@ -720,6 +720,11 @@ describe('session input admission metadata', () => {
         remoteApprovalMaxScope: 'request',
         requestedPermissionCeiling: 'read-only',
       },
+      forgeEvidence: { v: 1, items: [{
+        source: { kind: 'pullRequest', label: 'PR #42', url: 'https://github.com/example/repo/pull/42' },
+        author: { kind: 'bot', label: 'Review bot' },
+        text: 'The integration check failed.',
+      }] },
       attachments: [{
         attachmentLocalId: 'entry',
         value: {
@@ -746,6 +751,7 @@ describe('session input admission metadata', () => {
       { ...shared, recipient: { ...shared.recipient, label: 'display-only' } },
       { ...shared, source: { ...shared.source, sourceRevisionOrEpoch: undefined } },
       { ...shared, attachments: [] },
+      { ...shared, forgeEvidence: { ...shared.forgeEvidence, authority: 'present_user' } },
     ]) {
       expect(protocol.PluginSessionInputRequestV1Schema.safeParse({
         kind: 'userText',
@@ -758,6 +764,12 @@ describe('session input admission metadata', () => {
         ...malformed,
       }).success).toBe(false);
     }
+
+    // The actual executor also re-admits the same input with the canonical
+    // Action schema, not just its plugin-facing surface projection.
+    expect(getActionSpec('session.message.send').inputSchema.parse({
+      sessionId: 'session-a', message: 'Review this', ...shared,
+    })).toMatchObject({ forgeEvidence: shared.forgeEvidence });
 
     expect(protocol.PluginSessionInputRequestV1Schema.safeParse({
       kind: 'userText',
@@ -927,6 +939,32 @@ describe('session input admission metadata', () => {
         sessionRelationship,
       },
     })).toEqual({ v: 1, kind: 'happierApp', actor: { kind: actorKind } });
+  });
+
+  it('retains the protected UI requester as a person through Machine settlement without claiming ownership', () => {
+    const admission = protocol.buildTrustedHostSessionInputAdmissionV1('ui');
+    const cause = { requestRef: 'refine-input', requester: { serverId: 'home', accountId: 'person' },
+      persona: { serverId: 'home', sessionId: 'saved-session' }, origin: null };
+    const settle = (requester: typeof cause.requester | null) => protocol.settleSessionMessageProvenanceV1({
+      request: { ...admission.request, actionRequestAttributionV1: { ...cause, requester } },
+      requestedProvenance: admission.provenance, inputAdmissionReceipt: { v: 1, issuer: 'authenticatedMachine' },
+    });
+    expect(settle(cause.requester)).toEqual({ v: 1, kind: 'happierApp', actor: { kind: 'person', accountId: 'person' } });
+    // Unattributed host prompts and old Machine inputs cannot invent a person.
+    expect(settle(null)).toEqual(admission.provenance);
+    expect(protocol.settleSessionMessageProvenanceV1({
+      request: { ...admission.request, actionRequestAttributionV1: cause,
+        returnedAnswer: { requestSessionId: 'worker', requestLocalId: 'question', outcome: 'answer', delivery: 'wake' } },
+      requestedProvenance: admission.provenance, inputAdmissionReceipt: { v: 1, issuer: 'authenticatedMachine' },
+    })).toEqual(admission.provenance);
+    expect(protocol.settleSessionMessageProvenanceV1({ request: admission.request,
+      requestedProvenance: { v: 1, kind: 'happierApp', actor: { kind: 'person', accountId: 'forged' } },
+      inputAdmissionReceipt: { v: 1, issuer: 'authenticatedMachine' } })).toEqual(admission.provenance);
+    // Descriptive requester retention never relaxes the protected Machine route.
+    expect(() => protocol.settleSessionMessageProvenanceV1({
+      request: { ...admission.request, actionRequestAttributionV1: cause }, requestedProvenance: admission.provenance,
+      inputAdmissionReceipt: { v: 1, issuer: 'authenticatedAccount', actorAccountId: 'person', sessionRelationship: 'sharedEditor' },
+    })).toThrow();
   });
 
   it('builds transcript-only provenance only for live transcript producers', () => {

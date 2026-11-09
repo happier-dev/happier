@@ -13,6 +13,9 @@ import {
 import { FEATURE_CATALOG } from './features/catalog.js';
 import { FEATURE_IDS } from './features/featureIds.js';
 import { resolveServerEnabledBitPath } from './features/serverEnabledBit.js';
+import { PluginDataCollectionsCapabilitiesSchema } from './features/payload/capabilities/pluginDataCollectionsCapabilities.js';
+import { PluginUiArtifactHostingCapabilityV1Schema } from './plugins/availability/v1.js';
+import { SessionStateCapabilitiesV1Schema } from './sessions/state/capabilitySchema.js';
 
 function readRequiredPath(root: unknown, path: ReadonlyArray<string>): unknown {
   let current: unknown = root;
@@ -37,6 +40,62 @@ function readOptionalPath(root: unknown, path: ReadonlyArray<string>): unknown {
 }
 
 describe('FeaturesResponseSchema', () => {
+  it('strips unknown nested capability fields from older and newer servers', () => {
+    const defaults = FeaturesResponseSchema.parse({ features: {}, capabilities: {} }).capabilities;
+    const parsed = FeaturesResponseSchema.parse({
+      features: { voice: { enabled: true } },
+      capabilities: {
+        browser: { recording: { enabled: true, maxDurationMs: 60_000, maxBytes: 1024, cursorOverlaySupported: true } },
+        localServices: { launcher: { scriptDiscovery: { enabled: true, futureDiagnostic: true } } },
+        plugins: { uiArtifactHosting: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048, futureDiagnostic: true } },
+        session: { state: { intent: { model: { supported: true, futureDiagnostic: true } } } },
+        pluginDataCollections: {
+          maxRowEncodedBytes: 1024, maxBatchBytes: 2048, maxBatchRows: 2,
+          maxAccountRows: 4, maxAccountBytes: 4096, futureDiagnostic: true,
+        },
+        liveActivities: { remoteUpdates: { ...defaults.liveActivities.remoteUpdates, futureDiagnostic: true } },
+        server: { usageAnalytics: {
+          version: 1, eventsIngest: { path: '/events', futureDiagnostic: true },
+          query: { path: '/query' }, legacy: { usageReportsPath: '/reports', usageQueryPath: '/usage' },
+        } },
+        machines: { liveStream: { serverRouted: { caps: { maxBitrateBps: 64_000, futureDiagnostic: true }, futureDiagnostic: true } } },
+      },
+    });
+
+    expect(parsed.features.voice.enabled).toBe(true);
+    expect(parsed.capabilities.browser.recording.enabled).toBe(true);
+    expect(parsed.capabilities.browser.recording).not.toHaveProperty('maxDurationMs');
+    expect(parsed.capabilities.browser.recording).not.toHaveProperty('maxBytes');
+    expect(parsed.capabilities.browser.recording).toHaveProperty('cursorOverlaySupported', true);
+    expect(parsed.capabilities.localServices.launcher.scriptDiscovery).not.toHaveProperty('futureDiagnostic');
+    expect(parsed.capabilities.localServices.launcher.scriptDiscovery.enabled).toBe(true);
+    expect(parsed.capabilities.plugins.uiArtifactHosting).toEqual({ enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 });
+    expect(parsed.capabilities.session.state.intent?.model).toMatchObject({ supported: true });
+    expect(parsed.capabilities.session.state.intent?.model).not.toHaveProperty('futureDiagnostic');
+    expect(parsed.capabilities.pluginDataCollections).not.toHaveProperty('futureDiagnostic');
+    expect(parsed.capabilities.liveActivities.remoteUpdates).toEqual(defaults.liveActivities.remoteUpdates);
+    expect(parsed.capabilities.server.usageAnalytics?.eventsIngest).toEqual({ path: '/events' });
+    expect(parsed.capabilities.machines.liveStream.serverRouted.caps).toEqual({ maxBitrateBps: 64_000 });
+    expect(parsed.capabilities.machines.liveStream.serverRouted).not.toHaveProperty('futureDiagnostic');
+    expect(SessionStateCapabilitiesV1Schema.safeParse({
+      intent: { model: { supported: true, futureDiagnostic: true } },
+    }).success).toBe(false);
+    expect(PluginUiArtifactHostingCapabilityV1Schema.safeParse({ enabled: false, futureDiagnostic: true }).success).toBe(false);
+    expect(PluginDataCollectionsCapabilitiesSchema.safeParse({
+      ...parsed.capabilities.pluginDataCollections, futureDiagnostic: true,
+    }).success).toBe(false);
+    expect(FeaturesResponseSchema.safeParse({
+      features: {}, capabilities: { browser: { recording: { enabled: 'invalid' } } },
+    }).success).toBe(false);
+    expect(FeaturesResponseSchema.safeParse({
+      features: {}, capabilities: { pluginDataCollections: { ...parsed.capabilities.pluginDataCollections, maxBatchBytes: 512 } },
+    }).success).toBe(false);
+  });
+
+  it('accepts selected Session/provider logs and explicit attachments in the default bug report capability policy', () => {
+    expect(DEFAULT_BUG_REPORTS_CAPABILITIES.acceptedArtifactKinds).toEqual(expect.arrayContaining(['session-log', 'provider-transcript', 'attachment']));
+  });
+
   it('degrades malformed optional live-stream relay diagnostics without losing Home identity', () => {
     const parsed = FeaturesResponseSchema.parse({
       features: { voice: { enabled: true } },
@@ -77,7 +136,7 @@ describe('FeaturesResponseSchema', () => {
       features: {}, capabilities: {}, homeHostFact: { kind: 'known', machineName: 'Studio', platform: 'linux' },
     }).homeHostFact).toBeUndefined();
   });
-  it('accepts an optional strict Home search capability and keeps old-server omission safe', () => {
+  it('accepts an optional additive Home search capability and keeps old-server omission safe', () => {
     const oldServer = FeaturesResponseSchema.parse({ features: {}, capabilities: {} });
     expect(oldServer.capabilities.homeSearch).toBeUndefined();
 
@@ -88,12 +147,12 @@ describe('FeaturesResponseSchema', () => {
       },
     });
     expect(current.capabilities.homeSearch).toEqual({ enabled: false, reason: 'indexing' });
-    expect(FeaturesResponseSchema.safeParse({
+    expect(FeaturesResponseSchema.parse({
       features: {},
       capabilities: {
         homeSearch: { enabled: true, provider: 'home' },
       },
-    }).success).toBe(false);
+    }).capabilities.homeSearch).toEqual({ enabled: true });
   });
 
   it('applies safe defaults for missing subtrees', () => {

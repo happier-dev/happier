@@ -6,6 +6,7 @@ import { ConnectedConfigurationCatalogV1Schema, type ConnectedAccountCatalogReco
 import { normalizeStrictJsonValue, sameStrictJsonValue, type JsonValue } from '../json/strictJsonValue.js';
 import { compilePluginJsonSchema } from '../plugins/actions/jsonSchemaValidation.js';
 import { isValidPluginJsonSchemaValue } from '../plugins/actions/protocolComposableSchema.js';
+import type { SharedSavedSecretReferenceSelectionV1 } from '../account/settings/savedSecretReferenceV1.js';
 
 function invalid(message: string): Error & { code: string } {
   return Object.assign(new Error(message), { code: 'connected_account_configuration_invalid' });
@@ -34,11 +35,11 @@ function cloneRecord<T>(value: Readonly<Record<string, unknown>>, clone: (entry:
 
 /** The same descriptor schema validates inline credentials and transient SavedSecret replacements. */
 export function normalizeConnectedAccountConfigurationSecretValuesV1(mode: PluginConnectedAccountAuthenticationModeV2,
-  values: Readonly<Record<string, unknown>>): Readonly<Record<string, string>> {
+  values: Readonly<Record<string, unknown>>, selectedSecrets: Readonly<Record<string, SharedSavedSecretReferenceSelectionV1 | null>> = {}): Readonly<Record<string, string>> {
   const fields = new Map(('configuration' in mode ? mode.configuration?.fields ?? [] : []).map(field => [field.id, field]));
   return cloneRecord(values, (value, key) => {
     const field = fields.get(key);
-    if (!field?.secret || typeof value !== 'string' || !value.length || value.length > 64 * 1024
+    if (Object.hasOwn(selectedSecrets, key) || !field?.secret || typeof value !== 'string' || !value.length || value.length > 64 * 1024
       || !isValidPluginJsonSchemaValue(compilePluginJsonSchema(field.schema), value)) throw invalid(`Configuration secret '${key}' is invalid`);
     return value;
   });
@@ -51,6 +52,7 @@ export async function normalizeConnectedAccountConfigurationV1(input: Readonly<{
   record: Readonly<{ revision: string; values: Readonly<Record<string, JsonValue>>;
     secretRefs: Readonly<Record<string, string>>; secretValues?: Readonly<Record<string, string>> }> | null;
   replacement?: Readonly<{ values: Readonly<Record<string, unknown>>; secretRefs: Readonly<Record<string, unknown>>;
+    selectedSecrets?: Readonly<Record<string, SharedSavedSecretReferenceSelectionV1 | null>>;
     secretValues?: Readonly<Record<string, unknown>> }>;
   hasSecret(reference: string): Promise<boolean>;
 }>) {
@@ -78,7 +80,14 @@ export async function normalizeConnectedAccountConfigurationV1(input: Readonly<{
     return entry;
   });
   // Existing control/configuration envelopes own these field budgets.
-  const secretRefs = secrets(input.replacement?.secretRefs ?? input.record?.secretRefs ?? {}, 512);
+  const referenceFields = { ...(input.replacement?.secretRefs ?? input.record?.secretRefs ?? {}) };
+  for (const [fieldId, selection] of Object.entries(input.replacement?.selectedSecrets ?? {})) {
+    if (input.target.kind !== 'service' || byId.get(fieldId)?.secret !== true
+      || Object.hasOwn(input.replacement?.secretValues ?? {}, fieldId)) throw invalid(`Configuration secret '${fieldId}' is invalid`);
+    if (selection === null) delete referenceFields[fieldId];
+    else referenceFields[fieldId] = selection.ref;
+  }
+  const secretRefs = secrets(referenceFields, 512);
   const secretValues = normalizeConnectedAccountConfigurationSecretValuesV1(input.mode,
     input.replacement?.secretValues ?? input.record?.secretValues ?? {});
   if (Object.keys(secretRefs).some(key => Object.hasOwn(secretValues, key))) throw invalid('A configuration secret field cannot have both inline bytes and a SavedSecret reference');
@@ -112,6 +121,8 @@ export type ConnectedServiceConfigurationCatalogWriteV1 = Readonly<{
   record: Extract<ConnectedAccountCatalogRecordV1, { key: 'configurations' }>;
   /** Transient bytes are committed with their references by the existing SavedSecret transaction. */
   newSecrets: readonly Readonly<{ id: string; fieldId: string; value: string }>[];
+  /** Reviewed, value-free selections retain their exact resource revision at the row CAS. */
+  selectedSecrets?: Readonly<Record<string, SharedSavedSecretReferenceSelectionV1>>;
 }>;
 export type ConnectedServiceConfigurationCatalogHostV1 = Readonly<{
   read(): Promise<ConnectedAccountCatalogSnapshotV1>;

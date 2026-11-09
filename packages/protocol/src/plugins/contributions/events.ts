@@ -74,3 +74,23 @@ export const PluginEventContributionV1Schema = lazyZodSchema(() => z.discriminat
 ]));
 export type PluginEventContributionV1 = z.input<typeof PluginEventContributionV1Schema>;
 export type ParsedPluginEventContributionV1 = z.output<typeof PluginEventContributionV1Schema>;
+
+type DeclaredEventV1 = Extract<ParsedPluginEventContributionV1, { kind: 'event' }>;
+export type AutomationEligibleEventContributionV1 = Readonly<Omit<DeclaredEventV1, 'automation'> & {
+  automation: NonNullable<DeclaredEventV1['automation']>;
+}>;
+
+/** The admitted declaration owns Event identity, Automation eligibility and source-contract version. */
+export function readAutomationEligibleEventContributionV1(params: Readonly<{
+  events: readonly ParsedPluginEventContributionV1[];
+  eventLocalId: string;
+  sourceContractVersion?: number;
+}>): AutomationEligibleEventContributionV1 | null {
+  const event = params.events.find((candidate): candidate is DeclaredEventV1 =>
+    candidate.kind === 'event' && candidate.id === params.eventLocalId);
+  const automation = event?.automation;
+  if (!event || !automation || automation.eligible !== true
+    || (params.sourceContractVersion !== undefined
+      && automation.source.sourceContractVersion !== params.sourceContractVersion)) return null;
+  return { ...event, automation };
+}

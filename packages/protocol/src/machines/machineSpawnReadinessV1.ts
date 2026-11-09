@@ -9,13 +9,12 @@ export const MachineSpawnReadinessV1Schema = lazyZodSchema(() => z.discriminated
   z.strictObject({ status: z.literal('revoked'), machineId }),
   z.strictObject({ status: z.literal('offline'), machineId }),
   z.strictObject({ status: z.literal('unknown'), machineId }),
-  z.strictObject({ status: z.literal('probing'), machineId }),
   z.strictObject({ status: z.literal('rpcUnavailable'), machineId }),
   z.strictObject({ status: z.literal('keyUnavailable'), machineId }),
   z.strictObject({ status: z.literal('replaced'), machineId, replacedByMachineId: machineId }),
 ]));
 export type MachineSpawnReadinessV1 = z.infer<typeof MachineSpawnReadinessV1Schema>;
-export type MachineReadinessProbeStateV1 = boolean | 'unknown' | 'probing' | null | undefined;
+export type MachineReadinessProbeStateV1 = boolean | 'unknown' | null | undefined;
 
 /** Reachability is supplied by the qualified transport owner, never inferred from setup. */
 export function resolveMachineSpawnReadinessV1(input: Readonly<{
@@ -35,7 +34,6 @@ export function resolveMachineSpawnReadinessV1(input: Readonly<{
   if (!input.machineReachable) return { status: 'offline', machineId: id };
   if (machine.availability?.kind === 'locked') return { status: 'keyUnavailable', machineId: id };
   if (input.requireExactSpawnReadiness && (input.keyAvailable === undefined || input.rpcAvailable === undefined)) return { status: 'unknown', machineId: id };
-  if (input.keyAvailable === 'probing' || input.rpcAvailable === 'probing') return { status: 'probing', machineId: id };
   if (input.keyAvailable === 'unknown' || input.rpcAvailable === 'unknown' || input.keyAvailable === null || input.rpcAvailable === null) return { status: 'unknown', machineId: id };
   if (input.keyAvailable === false) return { status: 'keyUnavailable', machineId: id };
   if (input.rpcAvailable === false) return { status: 'rpcUnavailable', machineId: id };

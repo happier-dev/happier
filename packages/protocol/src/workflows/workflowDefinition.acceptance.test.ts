@@ -16,6 +16,26 @@ const AGENT_TARGET = {
 };
 
 describe('workflow definition acceptance contract', () => {
+  it('retains exact approved operation inputs only in private accepted snapshots', () => {
+    const definition = createDeepWorkflowDefinition();
+    const sources = [{ kind: 'direct', setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } }];
+    const approvedOperation = {
+      parent: { actionId: 'machines.setup.apply', input: { homeId: 'home', machineId: 'host', sources } },
+      approvedBy: { accountId: 'owner' },
+      steps: [{ actionId: 'machines.setup.apply', input: { homeId: 'home', machineId: 'target', sources } }],
+    };
+    const snapshot = {
+      startedBy: 'user', authoredDefinition: definition, materializedLeaves: [], frozenChildren: {}, workDepth: 0,
+      metadata: null, definition, inputs: {}, machineId: 'host', executionTarget: { kind: 'session' },
+      workspaceTarget: { project: { machineId: 'host', directory: '/repo', checkoutRootPath: '/repo' } },
+      source: { kind: 'inline' }, origin: { kind: 'direct' },
+      authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } }, approvedOperation,
+    };
+    expect(WorkflowAcceptedSnapshotV1Schema.parse(JSON.parse(JSON.stringify(snapshot)))).toHaveProperty('approvedOperation', approvedOperation);
+    expect(WorkflowAcceptedSnapshotV1Schema.safeParse({ ...snapshot,
+      approvedOperation: { ...approvedOperation, bypassApprovals: true } }).success).toBe(false);
+    expect(WorkflowDefinitionArtifactBodyV1Schema.safeParse({ kind: 'workflow-definition.v1', definition, approvedOperation }).success).toBe(false);
+  });
   it('rejects revision actors in the public Workflow header', () => {
     const header = { kind: 'workflow-definition.v1', definitionId: 'workflow-1',
       revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Review' } };

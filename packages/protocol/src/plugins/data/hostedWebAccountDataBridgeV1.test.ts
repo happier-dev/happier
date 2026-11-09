@@ -79,6 +79,13 @@ describe('hosted-web Collection UI-query bridge contract', () => {
 
   it('admits only same-surface logical Account-data operations and outer-sequence cancellation', () => {
     const request = requireSchema('PluginHostedWebAccountDataBridgeRequestV1Schema');
+    const setQuery = { kind: 'request', operation: { kind: 'data', operation: 'collection.query',
+      definition: tasksDeclaration, arguments: [{ index: 'by-id', prefixes: [['first'], ['second']], order: 'asc' }],
+    } };
+    expect(request.safeParse(setQuery).success).toBe(true);
+    expect(request.safeParse({ ...setQuery, operation: { ...setQuery.operation,
+      arguments: [{ ...setQuery.operation.arguments[0], prefix: ['competing'] }],
+    } }).success).toBe(false);
 
     expect(request.safeParse({
       kind: 'request',

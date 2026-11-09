@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../../connect/connectedServiceUxDiagnostics.js';
 import { SessionMetadataOwnerPatchV1Schema } from '../../sessions/metadata/sessionMetadataSchemasV1.js';
 import { SessionMetadataInactiveModelIntentExpectationV1Schema } from '../../sessions/metadata/sessionMetadataSchemasV1.js';
 import {
@@ -22,7 +23,7 @@ export type SessionTeamCredentialBindingMutationOperationV1 = z.infer<
  * witness-only operation.
  */
 export const SessionTeamCredentialBindingMetadataPatchV1Schema =
-  lazyZodSchema(() => z.extend(z.omit(SessionMetadataOwnerPatchV1Schema, { projectKey: true, publisherPrecondition: true, activitySummaryV1: true, sharedActionConfirmationSummaryV1: true }), {
+  lazyZodSchema(() => z.extend(z.omit(SessionMetadataOwnerPatchV1Schema, { projectKey: true, activitySummaryV1: true, sharedActionConfirmationSummaryV1: true }), {
     mode: z.literal('owner_team_credential_binding'),
     operation: SessionTeamCredentialBindingMutationOperationV1Schema,
     teamCredentialBindings: SessionTeamCredentialBindingIntentsV1Schema.check(z.minLength(1)),
@@ -30,6 +31,10 @@ export const SessionTeamCredentialBindingMetadataPatchV1Schema =
     teamVisibilityGrantConsent: z.optional(z.strictObject({ teamId: z.string().check(z.minLength(1)) })),
     sessionExpectation: z.optional(SessionMetadataInactiveModelIntentExpectationV1Schema),
   }).check(z.superRefine((value, context) => {
+    if (value.publisherPrecondition && value.sessionExpectation) {
+      context.addIssue({ code: 'custom', path: ['publisherPrecondition'],
+        message: 'Current publisher and inactive Session conditions are mutually exclusive.' });
+    }
     const expectedOperation = value.teamCredentialBindings[0]?.slot.kind === 'provider_model'
       ? 'session.model.set'
       : 'session.connected_service.switch';
@@ -64,6 +69,7 @@ export type SessionTeamCredentialBindingMetadataPatchV1 = z.infer<
 >;
 
 export const SessionTeamCredentialBindingRejectionV1Schema = lazyZodSchema(() => z.enum([
+  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired,
   'invalid_input',
   'feature_disabled',
   'session_missing',

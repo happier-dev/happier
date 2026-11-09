@@ -1,4 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { isPersonalSavedSecretReadActionIdV1 } from '../../account/settings/personalSavedSecretActionIdsV1.js';
 import { z } from 'zod/mini';
 import { SavedSecretExternalSourceV1Schema } from '../../account/settings/savedSecretResourceContentSchemaV1.js';
 import { readRecord } from '../../inputs/inputRecords.js';
@@ -8,7 +9,7 @@ import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 function secretSpec<TId extends PersonalSavedSecretActionIdV1>(id: TId, title: string): PreNormalizedActionSpec & Readonly<{
   id: TId; inputSchema: typeof inputs[TId]; outputSchema: typeof outputs[TId];
 }> {
-  const read = id === 'secrets.list';
+  const read = isPersonalSavedSecretReadActionIdV1(id);
   const observe = (raw: unknown) => { const value = readRecord(raw); return {
     ...(typeof value.secretId === 'string' ? { secretId: value.secretId } : {}),
     ...(typeof value.name === 'string' ? { name: value.name } : {}),
@@ -45,6 +46,10 @@ const secretCli = z.strictObject({ secretId: z.string().check(z.minLength(1)), r
 function createPersonalSavedSecretActionSpecsV1() {
   return [
   secretSpec('secrets.list', 'List Saved Secrets'),
+  { ...secretSpec('secrets.usedBy', 'Read Saved Secret Used-by'),
+    description: 'List value-free references to a managed Saved Secret in the caller Account. Null means census coverage is unavailable.',
+    inputHints: { fields: [{ path: 'ref', title: 'Saved Secret reference', widget: 'text' }] },
+    cli: { acceptsServerId: true, commands: [{ path: ['secrets', 'used-by'], visibility: 'canonical' as const }] } },
   { ...secretSpec('secrets.create', 'Create private Saved Secret'), cli: { acceptsServerId: true,
     inputSchema: z.strictObject({ name: inputs['secrets.create'].shape.name, kind: inputs['secrets.create'].shape.kind,
       source: z.optional(SavedSecretExternalSourceV1Schema), storeIn: z.optional(SavedSecretVaultTargetV1Schema), passkeyFormat: z.optional(z.enum(['chromium-cdp'])) }),

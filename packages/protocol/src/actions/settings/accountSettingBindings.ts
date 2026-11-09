@@ -13,6 +13,7 @@ import { buildKeyboardShortcutResetDelta, buildKeyboardShortcutSetDelta, buildKe
 import { prepareDefaultProviderStateSharingChangeV1, prepareAgentProviderStateSharingChangeV1, AgentProviderStateSharingChangeV1Schema, type ProviderStateSharingMutationServicesV1 } from './providerStateSharingMutations.js';
 import { BackendTargetKeyV2InputSchema } from '../../backends/targets/backendTargetRefV2.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
+import { SessionReminderPresetIntentSchema, applySessionReminderPresetIntent } from '../../account/settings/sessionReminderPresetsV1.js';
 import { buildScmGitRepoBackendPreferenceSettingsDelta, getFirstPartyScmBackendQualifiedId, getFirstPartyScmBackendLegacyLocalId, resolveScmGitRepoPreferredBackendId } from '../../scm/backendIdentity.js';
 import { ScmDiffAreaSchema } from '../../scm/workingSnapshot.js';
 import { ExternalSessionsAutoLinkSourcePolicyIdentityV1Schema, ExternalSessionsAutoLinkSourcePolicyV1Schema, readExternalSessionsSettingsV1,
@@ -36,9 +37,10 @@ type CoupledSettings = Pick<AccountSettings, 'codingPromptBehaviorV1' | 'usageLi
     | 'sessionTerminalHost' | 'sessionUseTmux' | 'sessionTmuxByMachineId' | 'sessionTerminalHostByMachineId'
     | 'sessionTmuxSessionName' | 'sessionTmuxIsolated' | 'sessionTmuxTmpDir' | 'actionsSettingsV1'
     | 'sessionDefaultPermissionModeByTargetKey' | 'backendEnabledByTargetKey' | 'backendCliSourcePreferenceByTargetKey'
+    | 'sessionIdleCompactionEnabledByTargetKey' | 'sessionIdleCompactionMinContextTokensByTargetKey' | 'sessionIdleCompactionCacheWindowOverrideMsByTargetKey'
     | 'scmGitRepoPreferredBackend' | 'scmGitRepoPreferredBackendQualifiedId' | 'scmDefaultDiffModeByBackend'
-    | 'toolViewDetailLevelByToolName' | 'toolViewExpandedDetailLevelByToolName'
-    | 'sessionIdleCompactionEnabledByTargetKey' | 'sessionIdleCompactionMinContextTokensByTargetKey' | 'sessionIdleCompactionCacheWindowOverrideMsByTargetKey' | 'externalSessionsSettingsV1'>;
+    | 'toolViewDetailLevelByToolName' | 'toolViewExpandedDetailLevelByToolName' | 'sessionReminderPresetsV1'
+    | 'externalSessionsSettingsV1'>;
 
 export type PortableAccountSettingBindingV1 = Readonly<{
     scope: 'account'; kind: 'owner'; access: 'read_write' | 'read_only' | 'sensitive';
@@ -75,6 +77,17 @@ export const externalSessionsAutoLinkSourceStorage: PortableAccountSettingBindin
         return { externalSessionsSettingsV1: 'enabledAtMs' in parsed.data
             ? upsertExternalSessionsAutoLinkSourcePolicyV1(settings.externalSessionsSettingsV1, parsed.data)
             : removeExternalSessionsAutoLinkSourcePolicyV1(settings.externalSessionsSettingsV1, parsed.data) };
+    },
+};
+export const sessionReminderPresetStorage: PortableAccountSettingBindingV1 = { ...owner,
+    read: settings => settings.sessionReminderPresetsV1,
+    parse: value => {
+        const parsed = SessionReminderPresetIntentSchema.safeParse(value);
+        return parsed.success ? { success: true, value: parsed.data } : { success: false };
+    },
+    mutate: (settings, value) => {
+        const parsed = SessionReminderPresetIntentSchema.safeParse(value);
+        return parsed.success ? { sessionReminderPresetsV1: applySessionReminderPresetIntent(settings.sessionReminderPresetsV1, parsed.data) } : null;
     },
 };
 export const scmGitRoutingStorage: PortableAccountSettingBindingV1 = { ...owner,
@@ -472,6 +485,7 @@ export function readPortableAccountSettingBindingV1(declaration: Readonly<{
     const args: readonly unknown[] = Array.isArray(storage?.options) ? storage.options : [];
     switch (storage?.owner) {
         case 'externalSessionsAutoLinkSourceStorage': return externalSessionsAutoLinkSourceStorage;
+        case 'sessionReminderPresetStorage': return sessionReminderPresetStorage;
         case 'instructionsAgentEditsStorage': return instructionsAgentEditsStorage;
         case 'account.directConnections': return directConnectionsStorage;
         case 'profiles.defaultEnvironment.showFirst': return defaultEnvironmentShowFirstStorage;

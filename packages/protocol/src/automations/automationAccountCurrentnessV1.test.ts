@@ -5,7 +5,6 @@ import {
   projectAutomationAccountCurrentnessWitnessV1,
   resolveValidatedAutomationAccountEncryptionV1,
   sameAutomationAccountContentIdentityV1,
-  sameAutomationAccountCurrentnessWitnessV1,
 } from './automationAccountCurrentnessV1.js';
 
 const E2EE_FINGERPRINT = 'aemk1_content_key_fingerprint';
@@ -60,7 +59,7 @@ describe('automations/automationAccountCurrentnessV1', () => {
     })).toBeNull();
   });
 
-  it('separates exact witness equality from Account content identity', () => {
+  it('ignores unrelated Account sequence changes but refuses changed mode or content key', () => {
     const atAdoption = {
       mode: 'e2ee',
       version: 7,
@@ -69,8 +68,7 @@ describe('automations/automationAccountCurrentnessV1', () => {
     const afterUnrelatedAccountChange = { ...atAdoption, version: 8 };
     const afterRekey = { ...atAdoption, contentKeyFingerprint: 'aemk1_other' };
 
-    expect(sameAutomationAccountCurrentnessWitnessV1(atAdoption, atAdoption)).toBe(true);
-    expect(sameAutomationAccountCurrentnessWitnessV1(atAdoption, afterUnrelatedAccountChange)).toBe(false);
+    expect(sameAutomationAccountContentIdentityV1(atAdoption, atAdoption)).toBe(true);
     expect(sameAutomationAccountContentIdentityV1(atAdoption, afterUnrelatedAccountChange)).toBe(true);
     expect(sameAutomationAccountContentIdentityV1(atAdoption, afterRekey)).toBe(false);
     expect(sameAutomationAccountContentIdentityV1(atAdoption, {

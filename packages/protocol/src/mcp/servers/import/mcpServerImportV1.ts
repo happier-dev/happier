@@ -25,6 +25,7 @@ export const McpImportMovedSecretV1Schema = lazyZodSchema(() => z.strictObject({
 export type McpImportMovedSecretV1 = z.infer<typeof McpImportMovedSecretV1Schema>;
 export const McpImportPreviewV1Schema = lazyZodSchema(() => z.strictObject({
     servers: z.array(z.strictObject({ name: z.string(), title: z.optional(z.string()), transport: z.enum(['stdio', 'http', 'sse']),
+        auth: McpServerCatalogEntryV1Schema.shape.remote._zod.def.innerType.shape.auth,
         envNames: z.array(z.string()), headerNames: z.array(z.string()) })),
     inputs: z.array((<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(importInputMetadata, { suggestedValue: z.optional(z.string()), literalSecret: z.optional(z.literal(true)) }))),
     missingValues: z.array(importInputMetadata), duplicates: z.array(duplicate),
@@ -87,6 +88,7 @@ export function prepareMcpServerImportV1(params: Readonly<{ parsed: ParseMcpServ
     const missingValues = inputs.filter(input => !Object.hasOwn(params.values ?? {}, input.inputId)
         || !admissibleChoice(params.values![input.inputId], input)).map(withoutValue);
     return { servers: drafts.map(draft => ({ name: draft.name, ...(draft.title ? { title: draft.title } : {}), transport: draft.transport,
+        ...(draft.remote?.auth ? { auth: draft.remote.auth } : {}),
         envNames: Object.keys(draft.env), headerNames: Object.keys(draft.remote?.headers ?? {}) })),
         inputs: inputs.map(input => input.secret ? { ...withoutValue(input), ...(input.suggestedValue !== undefined ? { literalSecret: true as const } : {}) } : input),
         missingValues, duplicates, movedSecrets: inputs.filter(input => input.secret && input.suggestedValue !== undefined).map(input => ({ inputId: input.inputId })),
@@ -140,7 +142,8 @@ export async function materializeMcpServerImportV1(params: Readonly<{
         names.add(name);
         return { id: params.newId(), name, ...(draft.title ? { title: draft.title } : name !== draft.name ? { title: draft.name } : {}),
             ...(draft.description ? { description: draft.description } : {}), transport: draft.transport,
-            ...(draft.stdio ? { stdio: draft.stdio } : {}), ...(draft.remote ? { remote: { url: draft.remote.url, headers: {} } } : {}),
+            ...(draft.stdio ? { stdio: draft.stdio } : {}), ...(draft.remote ? { remote: { url: draft.remote.url, headers: {},
+                ...(draft.remote.auth ? { auth: draft.remote.auth } : {}) } } : {}),
             env: {}, ...(draft.origin ? { origin: draft.origin } : {}), createdAt: params.nowMs, updatedAt: params.nowMs } satisfies McpServerCatalogEntryV1;
     });
     // Validate commands, URLs, keys and template choices before persistent secret creation.

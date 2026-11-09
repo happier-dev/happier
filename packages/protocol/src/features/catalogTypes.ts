@@ -7,4 +7,6 @@ export type FeatureCatalogDefinitionEntry = Readonly<{
   defaultFailMode: FeatureFailMode;
   dependencies: readonly string[];
   representation: FeatureRepresentation;
+  /** Released spelling of another feature, never an independent decision. */
+  aliasFor?: string;
 }>;

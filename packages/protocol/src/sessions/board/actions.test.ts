@@ -31,7 +31,6 @@ import {
   parseSessionBoardActionPortResultV1,
   projectSessionBoardAdapterFailureV1,
   projectSessionBoardGetResultV1,
-  SessionSystemRecordCreatorV1Schema,
 } from './actions.js';
 import { SessionBoardMutationV1Schema } from './mutations.js';
 import {
@@ -74,6 +73,11 @@ describe('Session Board Action contracts', () => {
     const input = { sessionId: 'session', itemId: 'note', expectedItemRevision: revision, item };
     expect(validate(input)).toBe(true);
     expect(SessionBoardItemUpsertInputV1Schema.safeParse(input).success).toBe(true);
+    const workspaceInput = { ...input, item: { ...item, source: { kind: 'hostedHtml',
+      publicationSource: { path: 'site', entrypoint: 'index.html' }, requestedCapabilities: { network: 'none' },
+    } } };
+    expect(validate(workspaceInput)).toBe(true);
+    expect(SessionBoardItemUpsertInputV1Schema.safeParse(workspaceInput).success).toBe(true);
     for (const [hostAction, accepted] of [['session.message.send', true], ['session.handoff.prepare_target', false]] as const) {
       const actionInput = { ...input, item: { ...item, source: { kind: 'declarative', document: {
         version: 1, root: { kind: 'action', hostAction, label: 'Send' },
@@ -111,24 +115,12 @@ describe('Session Board Action contracts', () => {
       expect(bound).toMatchObject({ copySource: copy.copySource });
       expect(bound).not.toHaveProperty('item');
     }
-    expect(SessionBoardItemUpsertInputV1Schema.safeParse({ ...copy, item }).success).toBe(false);
+    // The host retains both materialized bytes and source scope for exact replay;
+    // the executor refuses a caller trying to supply that host-only combination.
+    expect(SessionBoardItemUpsertInputV1Schema.safeParse({ ...copy, item }).success).toBe(true);
     expect(SessionBoardItemUpsertInputV1Schema.safeParse({ ...copy, expectedItemRevision: revision }).success).toBe(false);
     expect(SessionBoardItemUpsertInputV1Schema.safeParse({ ...copy, copySource: { ...copy.copySource, sessionId: 'destination-session' } }).success).toBe(false);
     expect(SessionBoardItemUpsertInputV1Schema.safeParse({ ...copy, copySource: { ...copy.copySource, url: 'https://example.com/visual' } }).success).toBe(false);
-  });
-  it('projects server-proved creator identity separately from item content and treats historical records as unknown', () => {
-    const projection = projectSessionBoardGetResultV1({ serverId: 'home', sessionId: 'session',
-      capabilities: { readTranscript: true, editSessionRecords: true }, layout: null, requestedItemIds: ['known', 'old'],
-      entries: [
-        { status: 'ready', itemId: 'known', revision, item, creator: { kind: 'session', sessionId: 'session' } },
-        { status: 'ready', itemId: 'old', revision, item },
-      ], incomplete: false, page: { cursor: null, hasNext: false },
-    });
-    expect(projection.items).toMatchObject([
-      { itemId: 'known', creator: { kind: 'session', sessionId: 'session' } },
-      { itemId: 'old', creator: { kind: 'unknown' } },
-    ]);
-    expect(SessionSystemRecordCreatorV1Schema.safeParse({ kind: 'session', sessionId: ' padded ' }).success).toBe(false);
   });
   it('defaults visual creation to transcript and requires placement only for explicit Board destinations', () => {
     const create = { itemId: 'note', expectedItemRevision: null, item };
@@ -195,16 +187,30 @@ describe('Session Board Action contracts', () => {
     expect(projectSessionBoardAdapterFailureV1({ code: 'plugin_session_record_forbidden' }))
       .toEqual({ ok: false, errorCode: 'forbidden', error: 'forbidden' });
     // The feature refusal reuses the existing gate projection, which carries its operation.
-    expect(projectSessionBoardAdapterFailureV1(
-      { code: 'plugin_session_record_feature_disabled' },
-      'invalid_response',
-      'session.board.get',
-    )).toEqual({
-      ok: false,
-      errorCode: 'feature_disabled',
-      error: 'feature_disabled',
-      details: { operation: 'session.board.get' },
-    });
+    for (const code of ['plugin_session_record_feature_disabled', 'feature_disabled']) {
+      expect(projectSessionBoardAdapterFailureV1(
+        { code },
+        'invalid_response',
+        'session.board.get',
+      )).toEqual({
+        ok: false,
+        errorCode: 'feature_disabled',
+        error: 'feature_disabled',
+        details: { operation: 'session.board.get' },
+      });
+    }
+  });
+  it('preserves recognized adapter causes through unrecognized wrappers without exposing payloads', () => {
+    for (const [error, errorCode] of [
+      [{ code: 'ERR_BAD_REQUEST', cause: { code: 'plugin_session_record_forbidden', message: 'private' } }, 'forbidden'],
+      [{ errorCode: 'unknown-wrapper', code: 'plugin_session_not_found', details: { private: true } }, 'not_found'],
+      [{ code: 'account-encryption-currentness-unavailable', message: 'private' }, 'encryption_material_unavailable'],
+      [{ code: 'session_board_storage_mode_mismatch', details: { private: true } }, 'session_board_storage_mode_mismatch'],
+    ] as const) {
+      const failure = projectSessionBoardAdapterFailureV1(error);
+      expect(failure).toEqual({ ok: false, errorCode, error: errorCode });
+      expect(SessionBoardActionFailureV1Schema.safeParse(failure).success).toBe(true);
+    }
   });
   it('projects readable Board conflict revisions through generic Action failure details', () => {
     expect(projectSessionBoardActionFailureV1({
@@ -826,12 +832,8 @@ describe('Session Board Action contracts', () => {
       expectedServerId: 'other-home', expectedSessionId: 'session-1',
     }).success).toBe(false);
 
-    const reviewedVisual = {
-      networkSetting: null, recordRevision: null, creator: { kind: 'unknown' },
-      previousCapabilitiesDigest: null, previousExecutableFingerprint: null,
-    } as const;
     const reviewedFailure = createSessionBoardOutcomeUnknownFailureV1({
-      ...failure.details.recovery, intent: { ...intent, reviewedVisual },
+      ...failure.details.recovery, intent,
     });
     const binding = { expectedServerId: 'home-1', expectedSessionId: 'session-1' };
     const parsedReviewed = parseSessionBoardActionExecuteOutcomeV1('session.board.item.upsert', intent, reviewedFailure, binding);
@@ -845,12 +847,11 @@ describe('Session Board Action contracts', () => {
       { ...intent, sessionId: 'other-session' },
       { ...intent, expectedItemRevision: revision },
       { ...intent, expectedLayoutRevision: revision },
-      { ...intent, reviewedVisual: { ...reviewedVisual, recordRevision: revision } },
     ]) {
       expect(parseSessionBoardActionExecuteOutcomeV1('session.board.item.upsert', changedInput, reviewedFailure, binding).success).toBe(false);
     }
     const copySource = { serverId: 'home-1', sessionId: 'source-session', itemId: 'source', expectedItemRevision: revision };
-    const copiedIntent = { ...intent, reviewedVisual: { ...reviewedVisual, copySource } };
+    const copiedIntent = { ...intent, copySource };
     const copiedFailure = createSessionBoardOutcomeUnknownFailureV1({ ...failure.details.recovery, intent: copiedIntent });
     expect(parseSessionBoardActionExecuteOutcomeV1('session.board.item.upsert', copiedIntent, copiedFailure, binding))
       .toEqual({ success: true, kind: 'failure', data: copiedFailure });
@@ -860,7 +861,7 @@ describe('Session Board Action contracts', () => {
       { ...copySource, itemId: 'other-source' }, { ...copySource, expectedItemRevision: 'ssr1.AAAACHN5c3JlY18yAAAAAg' },
     ]) {
       expect(parseSessionBoardActionExecuteOutcomeV1('session.board.item.upsert', {
-        ...copiedIntent, reviewedVisual: { ...reviewedVisual, copySource: changedSource },
+        ...copiedIntent, copySource: changedSource,
       }, copiedFailure, binding).success).toBe(false);
     }
     for (const changedRecovery of [
@@ -947,6 +948,17 @@ describe('Session Board Action contracts', () => {
       kind: 'failure',
       result: { ok: false, errorCode: 'session_board_forbidden', error: 'session_board_forbidden' },
     });
+    for (const [status, body, errorCode] of [
+      [401, { message: 'private authentication diagnostics' }, 'not_authenticated'],
+      [403, { message: 'private authorization diagnostics' }, 'forbidden'],
+      [404, { error: 'Not found', code: 'plugin_session_not_found' }, 'not_found'],
+      [503, { error: 'Unavailable', code: 'plugin_session_records_unavailable' }, 'protocol_unavailable'],
+      [400, { error: 'Invalid request', code: 'plugin_session_record_invalid_request' }, 'malformed'],
+      [400, { error: 'Unrecognized', code: 'private-unknown-code', details: { private: true } }, 'invalid_response'],
+    ] as const) {
+      expect(classifySessionBoardMutationTransportResultV1({ ...common, status, body }))
+        .toEqual({ kind: 'failure', result: { ok: false, errorCode, error: errorCode } });
+    }
     for (const status of [500, 503]) {
       expect(classifySessionBoardMutationTransportResultV1({ ...common, status,
         body: { error: 'Internal Server Error', message: 'private database details' },

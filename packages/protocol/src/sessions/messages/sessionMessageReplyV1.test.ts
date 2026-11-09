@@ -1,5 +1,27 @@
 import { expect, it } from 'vitest';
-import { SessionMessageReplyOperationV1Schema, SessionMessageReplyOutcomeV1Schema, SessionMessageReplyResolvedOutcomeV1Schema } from './sessionMessageReplyV1.js';
+import { SessionMessageReplyOperationV1Schema, SessionMessageReplyOutcomeV1Schema, SessionMessageReplyResolvedOutcomeV1Schema,
+  SessionMessageReplyAccountMutationV1Schema } from './sessionMessageReplyV1.js';
+
+it.each([
+  { code: 'action_disabled', retryable: false }, { code: 'discussions_unavailable', retryable: true },
+  { code: 'discussion_answer_policy_denied', retryable: false },
+])('admits only the owning retryability of publication $code', ({ code, retryable }) => {
+  const mutation = { kind: 'discussion_publication', discussionId: 'discussion', messageId: 'question', acceptedTurnId: 'turn',
+    publication: { kind: 'failed', failure: { code, phase: 'action_admission', retryable } } };
+  expect(SessionMessageReplyAccountMutationV1Schema.safeParse(mutation).success).toBe(true);
+  expect(SessionMessageReplyAccountMutationV1Schema.safeParse({ ...mutation, approvalArtifactId: 'approval' }).success).toBe(true);
+  expect(SessionMessageReplyAccountMutationV1Schema.safeParse({ ...mutation, publication: { ...mutation.publication,
+    failure: { ...mutation.publication.failure, retryable: !retryable } } }).success).toBe(false);
+});
+
+it('binds an ordinary confirmation refusal to its exact private approval', () => {
+  const mutation = { kind: 'discussion_publication', discussionId: 'discussion', messageId: 'question',
+    publication: { kind: 'failed', failure: { code: 'approval_rejected', phase: 'action_admission', retryable: false } } };
+  expect(SessionMessageReplyAccountMutationV1Schema.safeParse(mutation).success).toBe(false);
+  expect(SessionMessageReplyAccountMutationV1Schema.safeParse({ ...mutation, approvalArtifactId: 'approval' }).success).toBe(true);
+  expect(SessionMessageReplyAccountMutationV1Schema.safeParse({ ...mutation, approvalArtifactId: 'approval',
+    publication: { kind: 'approval_pending', artifactId: 'approval' } }).success).toBe(false);
+});
 
 it('admits a closed native committed-result binding on the existing fulfillment operation', () => {
   const operation = { kind: 'fulfill', turnId: 'turn', outcome: { kind: 'cancelled', result: { sessionId: 'session', messageId: 'committed' } },

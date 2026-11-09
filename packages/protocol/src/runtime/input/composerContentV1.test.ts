@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { ComposerContentHandleV1Schema, ComposerContentClaimRequestV1Schema, ComposerContentClaimResponseV1Schema } from './composerContentV1.js';
 
 describe('composer content V1', () => {
+  it.each(['webm', 'mp4'])('admits %s video handles while refusing image/video MIME mismatches', (format) => {
+    const handle = { v: 1, id: 'video-stage', executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+      owner: { pluginId: 'acme.media', localId: 'video' }, mediaKind: 'video', mimeType: `video/${format}`,
+      name: `recording.${format}`, sizeBytes: 24, sha256: 'a'.repeat(64) };
+    expect(ComposerContentHandleV1Schema.safeParse(handle).success).toBe(true);
+    expect(ComposerContentHandleV1Schema.safeParse({ ...handle, mediaKind: 'image' }).success).toBe(false);
+  });
   it('loads and validates a target-bound staged-content handle at its leaf boundary', () => {
     const handle = {
       v: 1,

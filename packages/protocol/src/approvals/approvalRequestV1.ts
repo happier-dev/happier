@@ -371,6 +371,7 @@ export const ApprovalExecutionOriginV1Schema = lazyZodSchema(() => z.strictObjec
               || value.surface === 'plugin' && value.caller.kind === 'plugin')
             && value.callerPermissionMode === binding.sessionActionOrigin.callerPermissionMode
             && sameStrictJsonValue(value.causalPermissionAuthority ?? null, binding.sessionActionOrigin.causalPermissionAuthority ?? null)
+            && sameStrictJsonValue(value.actionRequestAttributionV1 ?? null, binding.sessionActionOrigin.actionRequestAttributionV1 ?? null)
             && value.sessionInputSource?.sourceSessionId === binding.sessionActionOrigin.caller.sessionId
             && value.sessionInputSource.sourceTurnId === binding.sessionActionOrigin.sourceTurnId
             && value.sessionInputSource.via === 'action'

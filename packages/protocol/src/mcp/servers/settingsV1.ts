@@ -110,7 +110,9 @@ export const McpServerCatalogEntryV1Schema = lazyZodSchema(() => z.strictObject(
     origin: z.optional(z.discriminatedUnion('kind', [
       z.strictObject({ kind: z.literal('registry'), provenance: RegistryProvenanceV1Schema,
         upstream: zMini.optional(RegistryUpstreamV1Schema),
-        upstreamObservedAt: z.optional(z.number().check(z.int(), z.gte(0))) }),
+        upstreamObservedAt: z.optional(z.number().check(z.int(), z.gte(0))),
+        iconUrl: z.optional(z.string().check(z.minLength(1))),
+        iconDarkUrl: z.optional(z.string().check(z.minLength(1))) }),
       z.strictObject({ kind: z.literal('machine'), machineId: z.string().check(z.minLength(1)), agentId: z.string().check(z.minLength(1)) }),
     ])),
     createdAt: z.number(),

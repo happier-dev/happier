@@ -9,7 +9,7 @@ describe('Workflow storage operation authority', () => {
     for (const operation of ['get', 'read_state.set', 'wait', 'list', 'invocations.list', 'invocations.get', 'invocations.current', 'invocations.publish_draft', 'invocations.complete_review', 'pause', 'resume', 'cancel', 'delete', 'run-key.census', 'run-key.commit']) {
       expect(classifier(operation)).toBe(false);
     }
-    for (const operation of ['admit', 'initialize', 'accepted-snapshot.resolve', 'invocations.admit', 'invocations.fact', 'invocations.recover', 'transition', 'recovery.list', 'result-delivery.settle', 'future-operation', undefined]) {
+    for (const operation of ['admit', 'initialize', 'accepted-snapshot.resolve', 'invocations.admit', 'invocations.fact', 'invocations.recover', 'transition', 'recovery.list', 'result-delivery.settle', 'managed-birth.lookup', 'future-operation', undefined]) {
       expect(classifier(operation)).toBe(true);
     }
   });

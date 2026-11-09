@@ -14,12 +14,13 @@ describe('feature catalog', () => {
     expect(isFeatureId('mcp.servers')).toBe(false);
     expect(FEATURE_IDS).not.toContain('mcp.servers');
   });
-  it('owns Workflow activation as a fail-closed server feature behind Automations', () => {
+  it('owns one fail-closed Workflows feature with the released Automations alias', () => {
     expect(FEATURE_CATALOG.workflows).toMatchObject({
       representation: 'server',
       defaultFailMode: 'fail_closed',
-      dependencies: ['automations'],
+      dependencies: [],
     });
+    expect(FEATURE_CATALOG.automations.aliasFor).toBe('workflows');
   });
   it('keeps external Team credential API access fail-closed behind credential resources', () => {
     expect(FEATURE_CATALOG['teams.credentialResources.externalApi']).toMatchObject({

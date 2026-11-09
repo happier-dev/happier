@@ -34,8 +34,7 @@ export {
 
 const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
 const NonNegativeIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
-export const BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS = 60_000;
-const PositiveTimeoutMsSchema = lazyZodSchema(() => z.number().check(z.int(), z.positive(), z.maximum(BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS)));
+const PositiveTimeoutMsSchema = lazyZodSchema(() => z.number().check(z.int(), z.positive()));
 
 /** Exact observed browser field; never the generic automation payload/value bag. */
 export const BrowserAutomationSecretFillRequestV1Schema = lazyZodSchema(() => z.extend(SecretFillScopeV1Schema, {
@@ -208,8 +207,11 @@ export const BrowserAutomationActionRequestV1Schema = lazyZodSchema(() => z.stri
     actionKind: BrowserAutomationActionKindV1Schema,
     payload: z._default(z.optional(z.record(z.string(), z.unknown())), {}),
     dialogResponse: z.optional(BrowserAutomationJavaScriptDialogResponseV1Schema),
-    timeoutMs: PositiveTimeoutMsSchema,
+    timeoutMs: z.optional(PositiveTimeoutMsSchema),
   }).check(z.superRefine((request, context) => {
+    if (request.timeoutMs === undefined && request.requestedBy !== 'user') {
+      context.addIssue({ code: 'custom', path: ['timeoutMs'], message: 'Automation requires a caller deadline.' });
+    }
     const payloadSchema = browserAutomationInteractionPayloadSchema(request.actionKind, request.payload);
     if (payloadSchema) {
       const parsed = payloadSchema.safeParse(request.payload);
@@ -395,10 +397,11 @@ export const BrowserAutomationTimelineV1Schema = lazyZodSchema(() => z.strictObj
     v: z.literal(1),
     browserSessionId: IdSchema,
     viewId: IdSchema,
-    maxEntries: z._default(z.optional(z.number().check(z.int(), z.positive(), z.maximum(500))), 500),
-    entries: z.array(BrowserAutomationTimelineEntryV1Schema).check(z.maxLength(500)),
+    // When present, retention is reported by the producer, not chosen on the wire.
+    maxEntries: z.optional(z.number().check(z.int(), z.positive())),
+    entries: z.array(BrowserAutomationTimelineEntryV1Schema),
   }).check(z.superRefine((timeline, context) => {
-    if (timeline.entries.length > timeline.maxEntries) {
+    if (timeline.maxEntries !== undefined && timeline.entries.length > timeline.maxEntries) {
       context.addIssue({
         code: "custom",
         path: ['entries'],

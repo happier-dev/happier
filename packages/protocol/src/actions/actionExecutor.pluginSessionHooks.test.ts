@@ -68,7 +68,7 @@ describe('createActionExecutor (plugin session hooks)', () => {
       .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
     expect(transport).toHaveBeenCalledTimes(writes);
   });
-  it.each(['agent', 'mcp'] as const)('PARITY2 reads hook inventory on %s without approval or plugin identity binding', async (surface) => {
+  it.each(['agent', 'mcp', 'cli'] as const)('PARITY2 reads hook inventory on %s without approval or plugin identity binding', async (surface) => {
     const deps = createDeps();
     const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);
     const input = { intent: 'install_preview', agent: { pluginId: 'author.example', localId: 'codex' } } as const;

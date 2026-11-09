@@ -2,12 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { openSessionFollowRuleContentV1, sealSessionFollowRuleContentV1 } from './sessionFollowRuleContentCodecV1.js';
 import { SessionFollowRuleDefinitionV1Schema,
   buildSessionFollowRulePhysicalKeyV1, parseSessionFollowRulePhysicalKeyV1 } from './sessionFollowRuleV1.js';
-import { SessionFollowRuleStoredRowV1Schema, SessionFollowRuleV1Schema } from './sessionFollowRuleV1.js';
+import { SessionFollowPersonalProgressRequestV1Schema, SessionFollowRuleStoredRowV1Schema, SessionFollowRuleV1Schema } from './sessionFollowRuleV1.js';
 import { OpenedSessionFollowRuleV1Schema } from './actions.js';
 import { SESSION_FOLLOW_ZERO_FRONTIER_V1 } from './sessionFollowFrontierV1.js';
 import { matchSessionListFilterV1 } from '../listFilter/sessionListFilterV1.js';
 import { sealAccountScopedBlobCiphertext } from '../../crypto/accountScopedCipher.js';
 import { SESSION_FOLLOW_RULE_CIPHER_KIND_V1 } from './sessionFollowRuleV1.js';
+import { SessionFollowObserveSourceRoutesRequestV1Schema } from './sessionFollowTransportV1.js';
 
 const definition = SessionFollowRuleDefinitionV1Schema.parse({ v: 1, enabled: true, policy: { preset: 'important' },
   filter: { show: 'both', startedBy: ['you'], scope: 'all_accessible', attention: 'any', homeServerIds: ['home'], audiences: [], tagIds: [], source: 'all' } });
@@ -15,6 +16,18 @@ const receiver = { kind: 'session', sessionId: 'coordinator' } as const;
 const material = { type: 'dataKey', machineKey: new Uint8Array(32).fill(23) } as const;
 
 describe('private Follow rule content', () => {
+  it('admits only closed receiver-person original identities without publisher authority', () => {
+    const occurrence = { evaluation: 'receiver', production: 'source', sourceSessionId: 'source',
+      rules: [{ ruleId: 'rule', ruleVersion: 0 }], sourceMessage: { localId: 'message', seq: 1 } };
+    expect(SessionFollowPersonalProgressRequestV1Schema.safeParse(occurrence).success).toBe(true);
+    const observation = { v: 1, receiver: { kind: 'account' }, production: 'source', sourceMessage: occurrence.sourceMessage };
+    expect(SessionFollowObserveSourceRoutesRequestV1Schema.safeParse(observation).success).toBe(true);
+    expect(SessionFollowObserveSourceRoutesRequestV1Schema.safeParse({ ...observation, destinationSessionId: 'destination' }).success).toBe(false);
+    for (const extra of [{ accountId: 'foreign' }, { machineId: 'machine' }, { expectedSourcePublisherGeneration: '1' },
+      { rules: [] }, { production: 'unknown' }, { sourceMessage: { ...occurrence.sourceMessage, event: 'finished' } }]) {
+      expect(SessionFollowPersonalProgressRequestV1Schema.safeParse({ ...occurrence, ...extra }).success).toBe(false);
+    }
+  });
   it.each([{ futureCore: { value: 'narrow' } }, { extensions: { 'acme.future': { kind: 'future', value: true } } }])('opens future narrowing without authorizing a rule or a current write (%j)', narrowing => {
     const future = { ...definition, filter: { ...definition.filter, ...narrowing } };
     const content = { t: 'plain', v: future };

@@ -9,6 +9,7 @@ import { splitReviewCommentV1, sealReviewCommentSensitiveEnvelopeV1, openStoredR
 import { executeReviewCommentTransportV1 } from '../reviews/comments/transport.js';
 import { ReviewCommentPrepareMutationRequestV1Schema, ReviewCommentCommitMutationRequestV1Schema, type ReviewCommentPreparedRecordV1 } from '../reviews/comments/mutation.js';
 import { ReviewCommentActionInputSchemasV1, ReviewCommentClaimPublicationDispatchResponseV1Schema } from '../reviews/comments/actions.js';
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 
 function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutorDeps {
   return {
@@ -45,6 +46,118 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
 }
 
 describe('createActionExecutor (review comments)', () => {
+  it('applies current accepted findings through review scope and the canonical message Action', async () => {
+    const finding = { id: 'finding-1', title: 'Unsafe read', summary: 'Check the read', severity: 'high', category: 'correctness' };
+    const comment = ReviewCommentV1Schema.parse({
+      v: 1, id: 'comment-1', accountId: 'account', workspace: { machineId: 'machine', path: '/repo' },
+      sessionId: 'origin', runId: 'review-1', findingId: finding.id, findingIdentity: 'a'.repeat(64),
+      body: finding.summary, bodyVersion: 1, edits: [], flags: {}, dispositions: {}, threadId: 'comment-1', transitions: [],
+      anchor: { kind: 'file', filePath: 'reader.ts' }, snapshot: { kind: 'none', capturedAt: 1 },
+      author: { kind: 'agent', agentId: 'codex', sessionId: 'origin' },
+      state: 'open', reviewTriageStatus: 'accept', serverRevision: 7,
+      createdAt: 1, updatedAt: 1,
+    });
+    let current = comment;
+    let sibling: typeof comment | null = null;
+    const sent: string[] = [];
+    const executor = createActionExecutor(createDeps({
+      isActionApprovalRequired: () => false,
+      resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique', address: { serverId: 'home', sessionId: sessionId! } }),
+      reviewCommentAction: async ({ input }) => {
+        const request = ReviewCommentActionInputSchemasV1['reviews.comments.list'].parse(input);
+        return { items: [current, ...(sibling ? [sibling] : [])].filter(item => item.runId === request.runId), cursor: null };
+      },
+      sessionSendMessage: async ({ message }) => { sent.push(message); return { status: 'accepted', localId: 'apply-1' }; },
+    }));
+    const input = { sessionId: 'origin', reviews: [{ runId: 'review-1', findings: [finding] }] };
+    const context = { surface: 'ui' as const, serverId: 'home' };
+    const applied = await executor.execute('review.apply', { ...input, sessionId: { selector: 'self' } },
+      { ...context, defaultSessionId: 'origin' });
+    expect(applied, JSON.stringify(applied)).toMatchObject({ ok: true });
+    expect(sent[0]).toContain('"expectedServerRevision": 7');
+    expect(sent[0]).toContain('Verify every finding against the current code');
+    const disabled = await executor.execute('review.apply', input, { ...context,
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.message.send': { enabled: false } } }),
+    });
+    expect(disabled).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    expect(sent).toHaveLength(1);
+    sibling = ReviewCommentV1Schema.parse({ ...comment, id: 'comment-2', threadId: 'comment-2', runId: 'review-2', findingId: 'finding-2', reviewTriageStatus: 'reject' });
+    const merged = { ...input, reviews: [...input.reviews, { runId: 'review-2', findings: [{ ...finding, id: 'finding-2' }] }] };
+    const undecided = await executor.execute('review.apply', merged, context);
+    expect(undecided, JSON.stringify(undecided)).toMatchObject({
+      ok: true, result: { status: 'unchanged' },
+    });
+    expect(sent).toHaveLength(1);
+    sibling = { ...sibling, reviewTriageStatus: 'accept', serverRevision: 9 };
+    expect(await executor.execute('review.apply', merged, context)).toMatchObject({ ok: true });
+    expect(sent[1]).toContain('comment-1');
+    expect(sent[1]).toContain('comment-2');
+    expect(sent[1]).toContain('"expectedServerRevision": 9');
+    // Another surface changed acceptance after the card's initial read.
+    current = { ...comment, reviewTriageStatus: 'reject', state: 'dismissed', serverRevision: 8 };
+    await expect(executor.execute('review.apply', input, context)).resolves.toMatchObject({
+      ok: true, result: { status: 'unchanged', commentIds: [] },
+    });
+    expect(sent).toHaveLength(2);
+    current = { ...comment, sessionId: 'another-session' };
+    await expect(executor.execute('review.apply', input, context)).resolves.toMatchObject({
+      ok: false, errorCode: 'review_comment_permission_denied',
+    });
+    expect(sent).toHaveLength(2);
+  });
+
+  it('preserves typed review read refusals and never sends a partial verification request', async () => {
+    const refusal = { ok: false as const, errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' };
+    const sent: string[] = [];
+    const executor = createActionExecutor(createDeps({
+      isActionApprovalRequired: () => false,
+      reviewCommentAction: async () => refusal,
+      sessionSendMessage: async ({ message }) => { sent.push(message); return {}; },
+    }));
+    await expect(executor.execute('review.apply', { sessionId: 'origin', reviews: [{ runId: 'review-1', findings: [] }] },
+      { surface: 'ui', serverId: 'home' })).resolves.toEqual(refusal);
+    expect(sent).toEqual([]);
+  });
+
+  it('re-reads acceptance when the semantic Apply request is approved', async () => {
+    const finding = { id: 'finding', title: 'Unsafe read', summary: 'Check the read', severity: 'high', category: 'correctness' };
+    let comment = ReviewCommentV1Schema.parse({
+      v: 1, id: 'comment', accountId: 'account', workspace: { machineId: 'machine', path: '/repo' },
+      sessionId: 'origin', runId: 'review', findingId: finding.id,
+      body: finding.summary, bodyVersion: 1, edits: [], flags: {}, dispositions: {}, threadId: 'comment', transitions: [],
+      anchor: { kind: 'file', filePath: 'reader.ts' }, snapshot: { kind: 'none', capturedAt: 1 },
+      author: { kind: 'agent', agentId: 'codex', sessionId: 'origin' },
+      state: 'open', reviewTriageStatus: 'accept', serverRevision: 1, createdAt: 1, updatedAt: 1,
+    });
+    let approval: ApprovalRequest | null = null;
+    const sent: string[] = [];
+    let reads = 0;
+    const executor = createActionExecutor(createDeps({
+      // Artifact persistence and the authenticated Home/message transports are boundaries.
+      isActionApprovalRequired: actionId => actionId === 'review.apply',
+      resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique', address: { serverId: 'home', sessionId: sessionId! } }),
+      approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'apply-approval' }; },
+      approvalsGet: async () => approval,
+      approvalsUpdate: async ({ request }) => { approval = request; return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async () => true,
+      reviewCommentAction: async () => { reads++; return { items: [comment], cursor: null }; },
+      sessionSendMessage: async ({ message }) => { sent.push(message); return { status: 'accepted', localId: 'apply' }; },
+    }));
+    const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home', serverIdentityId: 'srv_home',
+      defaultSessionId: 'origin', defaultSessionMachineId: 'machine',
+      runtimeAccountId: 'account', actionRequestId: 'apply-request', actionCaller: { kind: 'host' as const } };
+    expect(await executor.execute('review.apply', { sessionId: 'origin', reviews: [{ runId: 'review', findings: [finding] }] }, context))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(approval).toMatchObject({ actionId: 'review.apply' });
+    expect(reads).toBe(0);
+    comment = { ...comment, reviewTriageStatus: 'reject', serverRevision: 2 };
+    const decided = await executor.execute('approval.request.decide', { artifactId: 'apply-approval', decision: 'approve' }, context);
+    expect(decided, JSON.stringify(decided))
+      .toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true, result: { status: 'unchanged' } } } });
+    expect(reads).toBe(1);
+    expect(sent).toEqual([]);
+  });
+
   it('returns claimed correlations to the awaiting plugin after human approval', async () => {
     const coordinator = createBlockingApprovalCoordinator();
     const stored: { request: ApprovalRequest | null } = { request: null };

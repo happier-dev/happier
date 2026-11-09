@@ -6,7 +6,9 @@ import { PluginAccountStorageLogicalKeyV1Schema } from '../plugins/data/accountK
 import {
   PluginCollectionContractDigestV1Schema,
   PluginCollectionRowIdV1Schema,
+  PLUGIN_COLLECTION_INDEX_SORT_KEY_MAX_BYTES_V1,
 } from '../plugins/data/collectionsV1.js';
+import { PluginCollectionMemberNameV1Schema } from '../plugins/data/collectionContributionV1.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
@@ -34,6 +36,16 @@ export const PluginDomainDataKvChangeHintSchema = lazyZodSchema(() => z.union([
 ]));
 export type PluginDomainDataKvChangeHint = z.infer<typeof PluginDomainDataKvChangeHintSchema>;
 
+/** One batch: at most 200 changed rows, eight indexes, and old/new keys. */
+const PluginCollectionIndexChangesSchema = lazyZodSchema(() => z.strictObject({
+  previousCursor: AccountChangeCursorSchema,
+  keys: z.array(z.strictObject({
+    indexId: PluginCollectionMemberNameV1Schema,
+    key: z.string().check(z.maxLength(PLUGIN_COLLECTION_INDEX_SORT_KEY_MAX_BYTES_V1 * 2), z.regex(/^(?:[0-9a-f]{2})+$/)),
+  })).check(z.maxLength(200 * 8 * 2)),
+}));
+export type PluginCollectionIndexChanges = z.infer<typeof PluginCollectionIndexChangesSchema>;
+
 const PluginDomainDataCollectionRowIdsChangeHintSchema = lazyZodSchema(() => z.strictObject({
   pluginDomain: z.literal('dataCollection'),
   pluginId: asProtocolZod(PluginIdSchema),
@@ -41,6 +53,7 @@ const PluginDomainDataCollectionRowIdsChangeHintSchema = lazyZodSchema(() => z.s
   contractDigest: PluginCollectionContractDigestV1Schema,
   revision: AccountChangeRevisionSchema,
   rowIds: z.array(PluginCollectionRowIdV1Schema).check(z.minLength(1), z.maxLength(200), z.refine(uniqueArray, 'Collection invalidation row IDs must be unique.')),
+  indexChanges: z.optional(PluginCollectionIndexChangesSchema),
 }));
 const PluginDomainDataCollectionFullChangeHintSchema = lazyZodSchema(() => z.strictObject({
   pluginDomain: z.literal('dataCollection'),

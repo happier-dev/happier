@@ -27,7 +27,7 @@ export type SecretSatisfactionResult = Readonly<{
 
 export type SecretSatisfactionParams = Readonly<{
   profile: AIBackendProfile | null;
-  secrets: SavedSecret[];
+  secrets: readonly SavedSecret[];
   /**
    * Per-profile default bindings from settings: envVarName -> savedSecretId.
    */
@@ -57,7 +57,7 @@ function normalizeId(id: string | null | undefined): string | null {
   return trimmed;
 }
 
-function hasSavedSecret(secrets: SavedSecret[], id: string | null): boolean {
+function hasSavedSecret(secrets: readonly SavedSecret[], id: string | null): boolean {
   if (!id) return false;
   return secrets.some((k) => k.id === id);
 }

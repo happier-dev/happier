@@ -2,7 +2,7 @@
 // hstack-exec -- node --experimental-transform-types --expose-gc
 //   packages/protocol/scripts/profile-schema-memory.mjs protocol --native
 // Add --eager for the process-local construction control, --census for live
-// native Classic instance counts (Mini/Core and unresolved facades are not
+// native Classic/Mini instance counts (Core and unresolved facades are not
 // instrumented; census memory is not comparable to the plain probe).
 // --allocation-profile includes the Inspector allocation tree for attribution.
 // --all-owners disables the top-owner preview for exact absence assertions.
@@ -56,7 +56,7 @@ if (native) {
         const source = typeof result.source === 'string' ? result.source : new TextDecoder().decode(result.source);
         return { ...result, source: source.replace('return z.lazy(() => {', '{').replace(/\n  \}\);\n\}\s*$/u, '\n  }\n}') };
       }
-      if (census && /\/zod\/v4\/classic\/schemas\.js$/u.test(url)) {
+      if (census && /\/zod\/v4\/(?:classic|mini)\/schemas\.js$/u.test(url)) {
         const source = typeof result.source === 'string' ? result.source : new TextDecoder().decode(result.source);
         return { ...result, source: source.replace(
           'core.$ZodType.init(inst, def);',

@@ -3,7 +3,6 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import {
-  PluginCollectionOpaqueCursorV1Schema,
   PluginCollectionRowIdV1Schema,
   PluginCollectionUiQueryErrorV1Schema,
   PluginCollectionUiQueryRequestV1Schema,
@@ -11,7 +10,6 @@ import {
 } from './collectionUiQueryWireV1.js';
 import {
   PluginAccountCollectionContributionV1Schema,
-  PluginCollectionFiniteNumberV1Schema,
   PluginCollectionMemberNameV1Schema,
 } from './collectionContributionV1.js';
 import {
@@ -19,8 +17,7 @@ import {
   PluginAccountStorageLogicalKeyV1Schema,
 } from './accountKvValueV1.js';
 import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';
-import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
-
+import { isPluginCollectionQuerySelectionV1, pluginCollectionQueryShapeV1 } from './collectionQueryWireV1.js';
 import { PluginCollectionSharingSetGrantRequestV1Schema, PluginCollectionSharingRevokeGrantRequestV1Schema,
   PluginCollectionSharingAddressV1Schema, PluginCollectionSharingListRequestV1Schema } from './collectionSharingV1.js';
 export { PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1 } from './hostedWebAccountDataBridgeKindV1.js';
@@ -37,23 +34,11 @@ const AccountDataCollectionValueV1Schema = lazyZodSchema(() => z.record(
 ).check(z.superRefine((value, context) => {
   if (Object.keys(value).length === 0) context.addIssue({ code: 'custom', message: 'Collection values must contain at least one field.' });
 })));
-const AccountDataCollectionScalarV1Schema = lazyZodSchema(() => z.union([
-  z.null(),
-  z.boolean(),
-  z.string(),
-  PluginCollectionFiniteNumberV1Schema,
-]));
 const AccountDataCollectionQueryV1Schema = lazyZodSchema(() => z.strictObject({
   index: PluginCollectionMemberNameV1Schema,
-  prefix: z._default(z.array(AccountDataCollectionScalarV1Schema).check(z.maxLength(4)), []),
-  range: z.optional(z.strictObject({
-    lower: z.optional(AccountDataCollectionScalarV1Schema),
-    upper: z.optional(AccountDataCollectionScalarV1Schema),
-  })),
-  order: z.enum(['asc', 'desc']),
-  cursor: zMini.optional(asProtocolZod(PluginCollectionOpaqueCursorV1Schema)),
-  limit: z._default(z.number().check(z.int(), z.minimum(1), z.maximum(200)), 50),
-}));
+  ...pluginCollectionQueryShapeV1(),
+}).check(z.refine(isPluginCollectionQuerySelectionV1,
+  'A collection query supplies either prefix or prefixes.')));
 const AccountDataCollectionMutationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('put'),

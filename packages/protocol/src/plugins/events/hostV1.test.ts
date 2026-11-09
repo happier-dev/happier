@@ -9,7 +9,6 @@ import {
   AutomationRunStateChangedHostEventV1Schema,
   HOST_EVENT_CATALOG_V1,
   HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
-  HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1,
   isAuthoritativeAutomationRunCancellationCauseV1,
   type HostEventEnvelopeV1,
   type HostEventPayloadByIdV1,
@@ -19,6 +18,27 @@ import {
 } from './hostV1.js';
 
 describe('Host Events V1 catalog', () => {
+  it('admits content-free Account entity identities for retained-fact observers', () => {
+    const eventId = '@happier/account/entities-invalidated';
+    expect(HostEventTargetV1Schema.safeParse({ eventId, scope: { kind: 'account' } }).success).toBe(true);
+    expect(parseHostEventPayloadV1(eventId as Parameters<typeof parseHostEventPayloadV1>[0], { entityIds: ['managed'] }))
+      .toEqual({ entityIds: ['managed'] });
+    expect(() => parseHostEventPayloadV1(eventId as Parameters<typeof parseHostEventPayloadV1>[0], { entityIds: ['managed'], content: 'private' })).toThrow();
+  });
+  it('carries only receipt identity in an Account deployment invalidation', () => {
+    const eventId = '@happier/deployment/receipt-invalidated';
+    const payload = { environmentId: 'environment', deploymentId: 'receipt' };
+    expect(HostEventTargetV1Schema.safeParse({ eventId, scope: { kind: 'account' } }).success).toBe(true);
+    expect(parseHostEventPayloadV1(eventId as Parameters<typeof parseHostEventPayloadV1>[0], payload)).toEqual(payload);
+    expect(() => parseHostEventPayloadV1(eventId as Parameters<typeof parseHostEventPayloadV1>[0], { ...payload, logs: 'private' })).toThrow();
+  });
+  it('carries an exact content-free heartbeat receipt only on the Account scope of its host', () => {
+    const eventId = '@happier/health-check/heartbeat-received';
+    const receipt = { sourceInstanceId: 'source', checkId: 'check', webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA', lastAcceptedAt: 1 };
+    expect(HostEventTargetV1Schema.safeParse({ eventId, scope: { kind: 'account' } }).success).toBe(true);
+    expect(parseHostEventPayloadV1(eventId, receipt)).toEqual(receipt);
+    expect(() => parseHostEventPayloadV1(eventId, { ...receipt, publicUrl: 'https://secret.example' })).toThrow();
+  });
   it('admits only an Account-scoped content-free Discussion invalidation', () => {
     const eventId = '@happier/session/discussion-invalidated';
     expect(HostEventTargetV1Schema.safeParse({ eventId, scope: { kind: 'account' } }).success).toBe(true);
@@ -27,13 +47,16 @@ describe('Host Events V1 catalog', () => {
     expect(() => parseHostEventPayloadV1(eventId, { discussionId: 'discussion-a', content: 'private' })).toThrow();
     expect(() => parseHostEventPayloadV1(eventId, { discussionId: 'discussion-a', revision: -1 })).toThrow();
   });
-  it('admits content-free Account entity identities for retained-fact observers', () => {
-    const eventId = '@happier/account/entities-invalidated';
-    expect(HostEventTargetV1Schema.safeParse({ eventId, scope: { kind: 'account' } }).success).toBe(true);
-    expect(parseHostEventPayloadV1(eventId as Parameters<typeof parseHostEventPayloadV1>[0], { entityIds: ['managed'] }))
-      .toEqual({ entityIds: ['managed'] });
-    expect(() => parseHostEventPayloadV1(eventId as Parameters<typeof parseHostEventPayloadV1>[0], { entityIds: ['managed'], content: 'private' })).toThrow();
+  it('carries the host-correlated start input through the strict existing turn-start event', () => {
+    const base = { kind: 'turn-start', sequence: 1, emittedAtMs: 10,
+      sessionId: 'session-1', turnId: 'turn-1', startedBy: 'host' };
+    const payload = { ...base, startingInputId: 'queue-local-id' };
+    expect(parseHostEventPayloadV1('@happier/runtime/turn-start', base)).toEqual(base);
+    expect(parseHostEventPayloadV1('@happier/runtime/turn-start', payload)).toEqual(payload);
+    expect(() => parseHostEventPayloadV1('@happier/runtime/turn-start', { ...payload, startingInputId: '' })).toThrow();
+    expect(() => parseHostEventPayloadV1('@happier/runtime/turn-start', { ...payload, unknown: true })).toThrow();
   });
+
   it('admits only an Account-scoped content-free Automation source invalidation', () => {
     const eventId = '@happier/automation/event-sources-invalidated';
     expect(HostEventTargetV1Schema.safeParse({ eventId, scope: { kind: 'account' } }).success).toBe(true);
@@ -54,11 +77,12 @@ describe('Host Events V1 catalog', () => {
       HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
       '@happier/automation/event-sources-invalidated',
       '@happier/session/discussion-invalidated',
-      HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1,
+      '@happier/health-check/heartbeat-received',
+      '@happier/deployment/receipt-invalidated',
       '@happier/account/entities-invalidated',
     ]);
-    expect(new Set(HOST_EVENT_CATALOG_V1.map((entry) => entry.id)).size).toBe(expected.length + 5);
-    expect(HOST_EVENT_CATALOG_V1).toHaveLength(AGENT_SESSION_RUNTIME_EVENT_KINDS_V1.length + 5);
+    expect(new Set(HOST_EVENT_CATALOG_V1.map((entry) => entry.id)).size).toBe(expected.length + 6);
+    expect(HOST_EVENT_CATALOG_V1).toHaveLength(AGENT_SESSION_RUNTIME_EVENT_KINDS_V1.length + 6);
     const runtimeEntries = HOST_EVENT_CATALOG_V1.filter((entry) => entry.id.startsWith('@happier/runtime/'));
     expect(runtimeEntries.every((entry) => (
       entry.canonicalProducer === 'centralized-host-session-runtime'

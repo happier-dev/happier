@@ -3,6 +3,11 @@ import { BrowserInputEventV1Schema, BrowserInteractionStateV1Schema } from './v1
 import { MachineLiveStreamControlSidebandV1Schema, machineLiveStreamControlRequiresInputLeaseV1 } from '../../machines/peer/mediation/stream/controlV1.js';
 
 describe('human browser input', () => {
+  it('accepts page input beyond the former key and text ceilings', () => {
+    for (const event of [{ kind: 'key', key: 'k'.repeat(65) }, { kind: 'text', text: 't'.repeat(16 * 1024 + 1) }]) {
+      expect(BrowserInputEventV1Schema.safeParse({ ...event, target: 'page', sequence: 1 }).success).toBe(true);
+    }
+  });
   it('reports optional capability setup failure without accepting unknown reasons', () => {
     const state = { dialog: null, fileChooser: null, downloads: [], unavailable: { download: 'runtime_unavailable' } };
     expect(BrowserInteractionStateV1Schema.safeParse(state).success).toBe(true);

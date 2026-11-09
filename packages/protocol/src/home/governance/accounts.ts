@@ -209,6 +209,11 @@ export const HOME_ACCOUNT_DETAIL_RECENT_EVENTS_LIMIT_V1 = 10;
  * no device list (D-8).
  */
 export const HomeAccountDetailV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(HomeAccountRowV1Schema, {
+  /** Absent on Homes predating the operator presentation; absence grants no management authority. */
+  publicProfile: z.optional(z.strictObject({
+    managementCapability: HomeAccountMutationCapabilityV1Schema,
+    restricted: z.boolean(),
+  })),
   authentication: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(HomeAccountAuthenticationV1Schema, {
     linkedProviderIds: z.array(z.string().check(z.minLength(1))),
   })),

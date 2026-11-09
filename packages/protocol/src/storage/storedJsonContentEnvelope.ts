@@ -14,10 +14,21 @@ export const StoredJsonContentEnvelopeSchema = lazyZodSchema(() => z.discriminat
   z.object({
     t: z.literal('encrypted'),
     c: z.string().check(z.minLength(1)),
+    // A resource key purpose must never disappear into Account ciphertext.
+    k: z.optional(z.never()),
   }),
 ]));
 
 export type StoredJsonContentEnvelope = z.infer<typeof StoredJsonContentEnvelopeSchema>;
+
+/** Task ciphertext is sealed with its own resource key, never the Account key. */
+export const TaskResourceStoredJsonContentEnvelopeSchema = lazyZodSchema(() => z.strictObject({
+  t: z.literal('encrypted'),
+  k: z.literal('task'),
+  c: z.string().check(z.minLength(1)),
+}));
+
+export type TaskResourceStoredJsonContentEnvelope = z.infer<typeof TaskResourceStoredJsonContentEnvelopeSchema>;
 
 /**
  * The single Account-mode/envelope agreement rule. Persisted `Account.encryptionMode`
@@ -33,9 +44,3 @@ export function isStoredJsonContentEnvelopeModeCompatible(
     ? envelope.t === 'plain'
     : envelope.t === 'encrypted';
 }
-
-export const TaskResourceStoredJsonContentEnvelopeSchema = lazyZodSchema(() => z.strictObject({
-  t: z.literal('encrypted'),
-  k: z.literal('task'),
-  c: z.string().check(z.minLength(1)),
-}));

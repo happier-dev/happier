@@ -34,6 +34,7 @@ import {
   LocalServicePreviewServiceTargetV1Schema,
 } from '../../local/services/preview/v1.js';
 import {
+  DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema,
   DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema,
   DaemonLocalServicePublicPreviewCreateResponseV1Schema,
   DaemonLocalServicePublicPreviewCreateRequestV1Schema,
@@ -67,11 +68,10 @@ const RuntimeLocalServicePreviewActionInputSchema = lazyZodSchema(() => (<T exte
   targetId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
 })));
 
-const RuntimeLocalServicePublicPreviewActionInputSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.unknown() }) as z.ZodMiniObject<T['shape'], z.core.$loose>)(z.extend(RuntimeLocalServicePreviewActionInputSchema, {
-  exposureId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
-  mode: z.optional(z.enum(['authenticated', 'secret_link', 'public'])),
-  ttlMs: z.optional(z.number().check(z.int(), z.positive())),
-})));
+const RuntimeLocalServiceBoundPreviewActionInputSchema = lazyZodSchema(() => z.looseObject({
+  ...RuntimeLocalServicePreviewActionInputSchema.shape,
+  serviceTarget: DaemonLocalServicePreviewOpenOrCreateRequestV1Schema.shape.serviceTarget,
+}));
 
 type LocalServicesRuntimeActionId = Extract<RuntimeActionIdV1, `localServices.${string}` | 'projects.service.relocate'>;
 
@@ -209,7 +209,7 @@ export const LOCAL_SERVICES_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<Runti
 });
 
 export const LOCAL_SERVICES_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
-  'projects.service.relocate': 'Stop the exact current service, prepare current files, then start on the reviewed destination. A failed start leaves the service stopped; sharing must be reviewed again.',
+  'projects.service.relocate': 'Stop the exact current service, prepare current files, then start on the reviewed destination. Supply sourceMachineId from the reviewed source checkout, independently of currentTarget and selectedTarget. A failed start leaves the service stopped; sharing must be reviewed again.',
   'localServices.inventory.list': 'List the local services detected on a machine.',
   'localServices.inventory.refresh': 'Refresh the detected local services inventory.',
   'localServices.launcher.snapshot': 'Read the current local service launcher state.',
@@ -220,7 +220,7 @@ export const LOCAL_SERVICES_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record
   'localServices.preview.openOrCreate': 'Open an existing or create a new private local service preview.',
   'localServices.preview.status': 'Read the status of a local service preview.',
   'localServices.preview.revoke': 'Revoke a local service preview.',
-  'localServices.publicPreview.create': 'Create a public exposure for a local service preview (asks first by default; the user can change approval policy).',
+  'localServices.publicPreview.create': 'Share a local service preview: mode people with an audience of Accounts, Teams or Groups (no Machine sharing), or a secret link (asks first by default; the user can change approval policy).',
   'localServices.publicPreview.status': 'Read the status of a local service public exposure.',
   'localServices.publicPreview.revoke': 'Revoke a local service public exposure.',
   'localServices.publicPreview.copyUrl': 'Copy the public URL of a local service exposure.',
@@ -250,13 +250,13 @@ export const LOCAL_SERVICES_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
   'localServices.launcher.openPreview': RuntimeLocalServiceLauncherActionInputSchema,
   'localServices.launcher.registerPreview': RuntimeLocalServiceLauncherActionInputSchema,
   'localServices.launcher.history.clear': RuntimeLocalServiceLauncherActionInputSchema,
-  'localServices.preview.openOrCreate': RuntimeLocalServicePreviewActionInputSchema,
+  'localServices.preview.openOrCreate': RuntimeLocalServiceBoundPreviewActionInputSchema,
   'localServices.preview.status': RuntimeLocalServicePreviewActionInputSchema,
-  'localServices.preview.revoke': RuntimeLocalServicePreviewActionInputSchema,
-  'localServices.publicPreview.create': RuntimeLocalServicePublicPreviewActionInputSchema,
-  'localServices.publicPreview.status': RuntimeLocalServicePublicPreviewActionInputSchema,
-  'localServices.publicPreview.revoke': RuntimeLocalServicePublicPreviewActionInputSchema,
-  'localServices.publicPreview.copyUrl': RuntimeLocalServicePublicPreviewActionInputSchema,
+  'localServices.preview.revoke': RuntimeLocalServiceBoundPreviewActionInputSchema,
+  'localServices.publicPreview.create': DaemonLocalServicePublicPreviewCreateRequestV1Schema,
+  'localServices.publicPreview.status': DaemonLocalServicePublicPreviewStatusRequestV1Schema,
+  'localServices.publicPreview.revoke': DaemonLocalServicePublicPreviewRevokeRequestV1Schema,
+  'localServices.publicPreview.copyUrl': DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema,
   'localServices.actions.copyUrl': localServiceActionRequestSchema('localServices.actions.copyUrl'),
   'localServices.actions.openPreview': localServiceActionRequestSchema('localServices.actions.openPreview'),
   'localServices.actions.forget': localServiceActionRequestSchema('localServices.actions.forget'),
@@ -321,6 +321,9 @@ function describeLocalServiceControlApprovalSummary(verb: 'Stop' | 'Restart') {
 }
 
 export const LOCAL_SERVICES_RUNTIME_ACTION_SPEC_FAMILY = Object.freeze({
+  originalExecution: {
+    'localServices.actions.stopManaged': { requesterCredentials: 'none' },
+  },
   confirmationFacts: {
     'localServices.publicPreview.revoke': { irreversible: true },
     'localServices.actions.terminateDetected': { irreversible: true },

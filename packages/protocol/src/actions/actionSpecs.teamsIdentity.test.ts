@@ -33,7 +33,7 @@ describe('Team identity Action contracts', () => {
       const spec = getActionSpec(id);
       expect(spec.requiredAuthority).toBe(automation.has(id) ? 'account_automation' : 'present_user');
       expect(spec.surfaces.agent, id).toBe(true);
-      expect(spec.surfaces.mcp, id).toBe(!automation.has(id));
+      expect(spec.surfaces.mcp, id).toBe(true);
       expect(spec.surfaces.api, id).toBe(automation.has(id));
     }
   });

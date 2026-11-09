@@ -5,7 +5,7 @@ import { LaunchProfileV2Schema } from './v2/schema.js';
 import type { ProfileRecordV1 } from './profileRecordV1.js';
 import { ProfileRecordV1Schema } from './profileRecordSchemaV1.js';
 import { getBuiltInBackendProfile } from './builtInBackendProfiles.js';
-import { readAiLaunchProfileRecords } from './read.js';
+import { readAiLaunchProfileRecords, isLegacyProfileSourcePreservingCloneV1 } from './read.js';
 import type { ArtifactSharingResourceV1 } from '../artifacts/artifactSharingV1.js';
 import { SAVED_SECRET_REF_MAX_LENGTH_V1, SHARED_SAVED_SECRET_REF_V1_PREFIX, formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { readSkillLibraryCatalog } from '../prompts/library/skills/readSkillLibraryCatalog.js';
@@ -14,6 +14,52 @@ const activeAuthority = { source: 'destination' as const, authority: 'active' as
   record: { v: 1 as const, phase: 'active' as const, sourceSettingsVersion: 0, migratedLogicalRevision: 0, inventory: [] } } };
 
 describe('Profile Action host demand', () => {
+  it('duplicates granted bodies without membership and overrides only launch preferences on captured legacy copies', async () => {
+    const legacy = ProfileRecordV1Schema.parse({ v: 1, id: 'login-source', enabled: true, promptStack: [],
+      secretBindings: { TOKEN: null }, definition: { kind: 'legacy', profile: { id: 'login-source', name: 'Login source',
+        authMode: 'machineLogin', requiresMachineLogin: 'codex', requiresMachineLoginTargetKey: 'agent:codex',
+        environmentVariables: [{ name: 'KEEP', value: 'kept' }], createdAt: 1, updatedAt: 1 } } });
+    const body = LaunchProfileV2Schema.parse({ v: 2, id: 'granted-copy-source', name: 'Grant', createdAt: 1, updatedAt: 1 });
+    if (legacy.definition.kind !== 'legacy') throw new Error('Expected legacy source');
+    const artifact: ArtifactSharingResourceV1 = { artifactId: 'copy-grant', access: 'view',
+      header: { kind: 'launch-profile.v1', profileId: body.id, name: body.name },
+      body: JSON.stringify({ kind: 'launch-profile.v1', profile: body, secretBindings: {} }),
+      revision: { headerVersion: 1, bodyVersion: 2 } };
+    const writes: ProfileRecordV1[] = [];
+    const builtin = getBuiltInBackendProfile('azure-openai');
+    if (!builtin) throw new Error('Expected current builtin');
+    const operations = createProfileOperations({
+      readCatalog: () => ({ ...activeAuthority, status: 'ready', records: [{ record: legacy, revision: 4 }],
+        diagnostics: [], referenceGuardRevision: 1 }),
+      artifactsById: () => new Map([[artifact.artifactId, artifact]]),
+      readVisibleProfiles: () => [builtin],
+      writeRecord: async ({ record }) => { writes.push(record); return { status: 'updated', id: record.id, revision: 1 }; },
+      deleteRecord: async () => { throw new Error('Unexpected deletion'); },
+    });
+    const execute = createProfileActionExecuteV1({ operations });
+    for (const [id, expectedRevision, newProfileId] of [[body.id, 'absent', 'grant-copy'], [legacy.id, 4, 'login-copy']] as const) {
+      expect(await execute(parseProfileActionRequestV1('launch_profiles.duplicate', { id, expectedRevision, newProfileId,
+        name: newProfileId, now: 2, placement: 'ask', checkout: 'create_worktree' }), {}))
+        .toMatchObject({ ok: true, result: { status: 'updated', id: newProfileId } });
+    }
+    expect(writes[0]).toMatchObject({ definition: { kind: 'inline', profile: { placement: 'ask', checkout: 'create_worktree' } } });
+    const clone = writes[1]!;
+    expect(clone).toMatchObject({ secretBindings: { TOKEN: null }, definition: { kind: 'legacy', profile: {
+      authMode: 'machineLogin', requiresMachineLogin: 'codex', requiresMachineLoginTargetKey: legacy.definition.profile.requiresMachineLoginTargetKey,
+      environmentVariables: [{ name: 'KEEP', value: 'kept' }], placement: 'ask', checkout: 'create_worktree' } } });
+    expect(isLegacyProfileSourcePreservingCloneV1({ source: legacy, record: clone })).toBe(true);
+    if (clone.definition.kind !== 'legacy') throw new Error('Expected legacy copy');
+    expect(isLegacyProfileSourcePreservingCloneV1({ source: legacy, record: { ...clone, definition: { kind: 'legacy',
+      profile: { ...clone.definition.profile, environmentVariables: [{ name: 'KEEP', value: 'changed' }] } } } })).toBe(false);
+    expect(isLegacyProfileSourcePreservingCloneV1({ source: legacy,
+      record: { ...clone, secretBindings: { TOKEN: 'replacement' } } })).toBe(false);
+    expect(isLegacyProfileSourcePreservingCloneV1({ source: legacy, record: { ...clone, definition: { kind: 'legacy',
+      profile: { ...clone.definition.profile, requiresMachineLoginTargetKey: 'agent:claude' } } } })).toBe(false);
+    expect(await execute(parseProfileActionRequestV1('launch_profiles.duplicate', { id: builtin.id, expectedRevision: 'absent',
+      newProfileId: 'unprepared-copy', name: 'Unprepared copy', now: 2, placement: 'ask', checkout: 'ask' }), {}))
+      .toMatchObject({ ok: true, result: { status: 'invalid', reason: 'legacy-creation-unsupported' } });
+    expect(writes.map(record => record.id)).toEqual(['grant-copy', 'login-copy']);
+  });
   it('admits only current placements on newly supplied stacks while preserving captured duplicates and existing rows', async () => {
     const profile = LaunchProfileV2Schema.parse({ v: 2, id: 'stack-source', name: 'Stack source', createdAt: 1, updatedAt: 1 });
     const source = ProfileRecordV1Schema.parse({ v: 1, id: profile.id, definition: { kind: 'inline', profile },

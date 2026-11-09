@@ -59,6 +59,8 @@ export const PLUGIN_DEVELOPMENT_INPUT_FIELDS = {
   'plugins.doctor': [locator],
   'plugins.pack': [locator, { path: 'outPath', title: 'Archive output path', widget: 'text' }, registry],
   'plugins.reload': [plugin],
-  'plugins.list': [],
+  'plugins.list': [{ path: 'projection', title: 'Projection', widget: 'select', options: [
+    { value: 'summary', label: 'Summary, without contribution detail' },
+  ] }],
   'plugins.change.status': [{ path: 'pendingChangeId', title: 'Pending change id', widget: 'text', required: true }],
 } satisfies Record<PluginDevLoopActionIdV1, ActionInputFieldHint[]>;

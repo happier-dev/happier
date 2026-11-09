@@ -5,12 +5,10 @@ import { ProviderCatalogProbeV1Schema } from '../catalog/descriptorV1.js';
 import { ProviderLocalIdSchema } from '../ids.js';
 
 function isLiteralCommandToken(value: string): boolean {
-  return !/[\u0000-\u001f\u007f]/u.test(value)
-    && !/[;&|`$<>]/u.test(value)
-    && !/^[A-Za-z_][A-Za-z0-9_]*=/u.test(value);
+  return !/[\u0000-\u001f\u007f]/u.test(value);
 }
 
-const BoundedTokenSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256), z.refine(isLiteralCommandToken, 'Command token must be literal and control/operator free')));
+const BoundedTokenSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256), z.refine(isLiteralCommandToken, 'Command token must be control free')));
 const ExecutableLookupNameSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256), z.refine((value) => value !== '.' && value !== '..' && !value.includes('/') && !value.includes('\\')
     && isLiteralCommandToken(value), 'Executable lookup names must be PATH/application basenames, not paths')));
 const LookupNamesSchema = lazyZodSchema(() => z.array(ExecutableLookupNameSchema).check(z.minLength(1), z.maxLength(16)));

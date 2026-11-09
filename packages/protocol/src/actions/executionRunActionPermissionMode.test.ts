@@ -14,6 +14,7 @@ describe('ExecutionRunActionPermissionModeSchema', () => {
   });
 
   it('preserves retained wire tokens, accepts compatibility aliases, and rejects unsupported plan mode', () => {
+    expect(ExecutionRunActionPermissionModeSchema.parse('no_tools')).toBe('no_tools');
     expect(ExecutionRunActionPermissionModeSchema.parse('read-only')).toBe('read_only');
     expect(ExecutionRunActionPermissionModeSchema.parse('workspace_write')).toBe('workspace_write');
     expect(ExecutionRunActionPermissionModeSchema.parse('safe-yolo')).toBe('workspace_write');

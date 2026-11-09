@@ -44,7 +44,7 @@ describe('managed identity-provider Action contracts', () => {
     ] as const) {
       const spec = getActionSpec(id);
       expect(spec.requiredAuthority).toBe('account_automation');
-      expect(spec.surfaces).toMatchObject({ ui: true, cli: true, agent: true, mcp: false });
+      expect(spec.surfaces).toMatchObject({ ui: true, cli: true, agent: true, mcp: true });
     }
   });
 

@@ -5,7 +5,6 @@ import { PeerRouteNonceProofV1Schema } from '../directRouteGrantNonceV1.js';
 import { SignedDirectRouteGrantV1Schema } from '../directRouteGrantV1.js';
 import { DirectPeerRouteKindV1Schema } from '../routeKind.js';
 import { PEER_MEDIATION_RECEIPTS } from '../receipts.js';
-import { PeerMachineRpcCommandReceiptRequestV1Schema, PeerMachineRpcCommandReceiptSuccessV1Schema } from './commandReceiptV1.js';
 
 export const PEER_MACHINE_RPC_DIRECT_PATH_V1 = '/peer-mediation/v1/rpc' as const;
 
@@ -19,19 +18,15 @@ export const PeerMachineRpcDirectFallbackReasonCodeV1Schema = lazyZodSchema(() =
   'grant_not_yet_valid',
   'grant_revoked',
   'grant_scope_mismatch',
-  'grant_idle_expired',
   'grant_bad_signature',
   'grant_unknown_key',
   'endpoint_mismatch',
   'topology_unavailable',
   'method_unclassified',
   'method_not_allowed_by_grant',
-  'command_receipt_required',
-  'command_receipt_rejected',
   'nonce_invalid',
   'nonce_binding_mismatch',
   'nonce_bad_signature',
-  'quarantined',
   'direct_call_limit_exceeded',
   'handler_unavailable',
 ]));
@@ -46,7 +41,6 @@ export const PeerMachineRpcDirectRequestV1Schema = lazyZodSchema(() => z.looseOb
     routeKind: DirectPeerRouteKindV1Schema,
     flowKind: z.literal('machine_rpc'),
     endpointFingerprint: z.string().check(z.minLength(1)),
-    commandReceipt: z.optional(PeerMachineRpcCommandReceiptRequestV1Schema),
   }));
 
 export const PeerMachineRpcDirectResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
@@ -58,7 +52,6 @@ export const PeerMachineRpcDirectResponseV1Schema = lazyZodSchema(() => z.discri
       method: z.string().check(z.minLength(1)),
       routeKind: DirectPeerRouteKindV1Schema,
       result: z.unknown(),
-      commandReceipt: z.optional(PeerMachineRpcCommandReceiptSuccessV1Schema),
     }),
   z.looseObject({
       v: z.literal(1),

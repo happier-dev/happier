@@ -14,16 +14,21 @@ import { WidgetInstanceActionOutputSchemasV1 } from '../widgets/actionsV1.js';
 import { createHomeHubArtifactPortV1 } from '../home/homeHubArtifactV1.js';
 import { ApprovalRequestSchema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { createPluginWidgetAreaHostPortV1 } from '../plugins/ui/widgetAreaHost.js';
+import { UiSurfaceNetworkRequestV1Schema } from '../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
+import { createWidgetDefinitionArtifactPortV1 } from '../widgets/widgetDefinitionArtifactV1.js';
+import { WidgetDefinitionV1Schema } from '../widgets/widgetDefinitionV1.js';
 
 const account = { serverId: 'home', accountId: 'account' };
 
 async function fixture(owner: WidgetSurfaceRefV1['owner'], shared: boolean | ((artifactId: string) => boolean), policyHook = true,
   presentUserActionConfirmation?: () => Promise<boolean>, readActionsSettings?: () => ReturnType<typeof normalizeActionsSettingsV1>) {
   const boundary = createWorkBoardArtifactBoundary();
+  const artifactReads: string[] = [];
   const transport = boundary.forAccount(account.accountId);
   // Artifact transport is the system boundary; domain ports and approval logic remain real.
   const admittedTransport = { ...transport, delete: boundary.transport.delete,
     read: async (...args: Parameters<typeof transport.read>) => {
+      artifactReads.push(args[0]);
       const row = await transport.read(...args);
       return row ? { ...row, shared: typeof shared === 'function' ? shared(row.artifactId) : shared } : null;
     },
@@ -45,14 +50,16 @@ async function fixture(owner: WidgetSurfaceRefV1['owner'], shared: boolean | ((a
   await artifact.apply({ kind: 'group_create', groupId: 'group', instanceIds: ['two'] });
   const port = createWidgetAreaActionPortV1(artifactFor);
   const homeHubArtifacts = createHomeHubArtifactPortV1(admittedTransport, { accountId: account.accountId });
-  const executor = createActionExecutor({ homeHubArtifacts, widgetAccountScope: () => account, presentUserActionConfirmation,
+  const definitions = createWidgetDefinitionArtifactPortV1(admittedTransport, { accountId: account.accountId });
+  const executor = createActionExecutor({ homeHubArtifacts, widgetDefinitionArtifacts: definitions, widgetAccountScope: () => account, presentUserActionConfirmation,
     ...(policyHook ? { isActionApprovalRequired: (actionId: ActionId, context: ActionExecutorContext, input: unknown, defaultUiConfirmation?: boolean) => isApprovalRequiredByActionsSettings(actionId,
       readActionsSettings?.() ?? context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 }), context, undefined, undefined, input, defaultUiConfirmation) } : {}),
     widgetSurfaceActions: { project: port, corePage: port, pluginArea: port },
     widgetInputs: createWidgetActionInputResolverV1({
       readDescriptor: async ({ instance }) => readBuiltinWidgetDescriptorV1(instance.definition),
       readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
-      validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
+      validateValue: async () => ({ status: 'valid' }),
+      resolveOptions: async (_field, _input, _request, values) => values.map(value => ({ value })),
     }),
     widgetAreaLayouts: {
       reset: (input, _context, signal) => artifactFor(input.surface).resetPreset(input.expectedRevision, signal),
@@ -64,7 +71,7 @@ async function fixture(owner: WidgetSurfaceRefV1['owner'], shared: boolean | ((a
       delete: (input, _context, signal) => layoutsFor(input.surface).delete(input, signal),
     },
   });
-  return { surface, artifact, artifactFor, homeHubArtifacts, layouts: layoutsFor(surface), executor };
+  return { surface, artifact, artifactFor, homeHubArtifacts, definitions, artifactReads, layouts: layoutsFor(surface), executor };
 }
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
@@ -103,7 +110,8 @@ const owners = [
 
 const automationEdits: readonly { action: ActionId; input: (state: Fixture) => unknown }[] = [
   { action: 'widgets.item.remove', input: ({ surface }) => ({ ref: { surface, instanceId: 'one' } }) },
-  { action: 'widgets.item.add', input: ({ surface }) => ({ surface, instance: { v: 1, id: 'added', definition: { kind: 'builtin', id: 'session_summary' }, bindings: {} } }) },
+  { action: 'widgets.item.add', input: ({ surface }) => ({ surface, instance: { v: 1, id: 'added', definition: { kind: 'builtin', id: 'session_summary' },
+    bindings: { session: { kind: 'value', value: { serverId: account.serverId, sessionId: 'session-1' } } } } }) },
   { action: 'widgets.item.inputs.set', input: ({ surface }) => ({ ref: { surface, instanceId: 'one' }, bindings: {} }) },
   { action: 'widgets.item.inputs.reset', input: ({ surface }) => ({ ref: { surface, instanceId: 'one' } }) },
   { action: 'widgets.group.create', input: ({ surface }) => ({ surface, groupId: 'another-group', instanceIds: ['one'] }) },
@@ -141,11 +149,15 @@ describe('contextual widget approval at the Action executor', () => {
     } });
     expect((await artifact.read()).items).toHaveLength(1);
   });
-  it.each(['execute', 'prepare'] as const)('retains followed page input only in the live blocking %s invocation', async entry => {
+  it.each([
+    { entry: 'execute', policy: 'direct' },
+    { entry: 'prepare', policy: 'direct' },
+    { entry: 'execute', policy: 'unattended' },
+  ] as const)('uses $policy policy for followed page input through $entry without persisting context', async ({ entry, policy }) => {
     const boundary = createWorkBoardArtifactBoundary();
     const surface: WidgetSurfaceRefV1 = { ...account, owner: { kind: 'pluginArea', pluginId: 'external.widgets', pageId: 'overview', area: 'pinned' } };
     const artifact = createWidgetSurfaceArtifactPortV1(boundary.forAccount(account.accountId), { surface, isCurrent: () => true });
-    let stored: ApprovalRequest | null = null;
+    const requests: ApprovalRequest[] = [];
     const executor = createActionExecutor({
       widgetAccountScope: () => account,
       widgetSurfaceActions: { pluginArea: createWidgetAreaActionPortV1(() => artifact) },
@@ -156,14 +168,8 @@ describe('contextual widget approval at the Action executor', () => {
         // Session readability is the external host boundary; the resolver and binder remain real.
         validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
       }),
-      // Approval persistence and human decision are the external boundaries.
-      approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'approval' }; },
-      approvalsGet: async () => stored,
-      approvalsUpdate: async ({ request }) => { stored = request; return { ok: true }; },
-      approvalsWaitForDecision: async ({ request }) => ({ decision: 'approve', request: {
-        ...request, status: 'approved', decision: { kind: 'approve', decidedAtMs: 2 },
-      } }),
-      isApprovalExecutionOriginCurrent: async () => true,
+      // Approval persistence is the external boundary; policy and dispatch remain real.
+      approvalsCreate: async ({ request }) => { requests.push(ApprovalRequestSchema.parse(request)); return { artifactId: 'approval' }; },
     });
     const host = createPluginWidgetAreaHostPortV1({ scope: account, pluginId: 'external.widgets', pageId: 'overview',
       declarations: [{ name: 'pinned', contextSchema: { type: 'object', properties: { session: { type: 'object' } }, required: ['session'], additionalProperties: false } }],
@@ -171,6 +177,9 @@ describe('contextual widget approval at the Action executor', () => {
       execute: async (id, input, context) => {
         const invocation = { ...context, surface: 'plugin' as const, authority: 'account_automation' as const,
           defaultSessionMachineId: 'machine', runtimeAccountId: account.accountId,
+          // A person's saved Direct choice does not lend the plugin present-user authority.
+          actionsSettings: normalizeActionsSettingsV1({ v: 1, ...(policy === 'direct'
+            ? { approvalWaivedSurfaces: { 'widgets.item.add': ['plugin'] } } : {}) }),
           actionCaller: { kind: 'plugin' as const, pluginId: 'external.widgets', contributionLocalId: 'overview',
             sourceCustody: { kind: 'development' as const, registeredRootId: 'external-root' } } };
         if (entry === 'execute') return executor.execute(id, input, invocation);
@@ -181,10 +190,18 @@ describe('contextual widget approval at the Action executor', () => {
       bindings: { session: { kind: 'context' as const, slot: 'session' } } };
     const result = await host.execute({ area: 'pinned', context: { session: { serverId: account.serverId, sessionId: 'private-session' } },
       operation: { actionId: 'widgets.item.add', instance: copy } }, undefined, 'page-add-request');
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { instance: copy } });
-    expect((await artifact.read()).items).toContainEqual(expect.objectContaining({ instance: copy }));
-    expect(stored).toMatchObject({ status: 'executed' });
-    expect(JSON.stringify(stored)).not.toContain('private-session');
+    const items = (await artifact.read()).items;
+    if (policy === 'direct') {
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { instance: copy } });
+      expect(items).toEqual([expect.objectContaining({ instance: copy })]);
+      expect(requests).toHaveLength(0);
+    } else {
+      expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval' } });
+      expect(items).toHaveLength(0);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({ status: 'open' });
+      expect(JSON.stringify(requests)).not.toContain('private-session');
+    }
   });
   it.each(['waived', 'ask'] as const)('uses live hook-only %s policy for an audience-widening move', async policy => {
     const actionId = 'widgets.item.move';
@@ -411,15 +428,92 @@ describe('contextual widget approval at the Action executor', () => {
     expect(await state.layouts.list()).toContainEqual(expect.objectContaining({ artifactId: created.artifactId }));
   });
 
-  it.each(['widgets.item.remove', 'widgets.item.network.set'] as const)('retains private present-user danger for %s', async action => {
+  it('retains private present-user danger for deleting a group', async () => {
+    const action = 'widgets.item.remove';
     const state = await fixture({ kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'main' }, false);
     const before = (await state.artifact.read()).items;
     expect(await state.executor.execute(action, {
-      ref: { surface: state.surface, instanceId: action === 'widgets.item.remove' ? 'group' : 'one' },
-      ...(action === 'widgets.item.network.set' ? { network: { network: 'none' } } : {}),
+      ref: { surface: state.surface, instanceId: 'group' },
     }, { surface: 'ui', authority: 'present_user' }))
       .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
     expect((await state.artifact.read()).items).toEqual(before);
+  });
+
+  it.each([
+    { name: 'open to none', before: { network: 'open' }, after: { network: 'none' }, asks: false },
+    { name: 'open to origins', before: { network: 'open' }, after: { networkOrigins: ['https://one.example.com'] }, asks: false },
+    { name: 'origins subset', before: { networkOrigins: ['https://one.example.com', 'https://two.example.com'] }, after: { networkOrigins: ['https://one.example.com'] }, asks: false },
+    { name: 'unchanged origins', before: { networkOrigins: ['https://one.example.com'] }, after: { networkOrigins: ['https://one.example.com'] }, asks: false },
+    { name: 'unset to none', before: undefined, after: { network: 'none' }, asks: false },
+    { name: 'inherited to origins', before: undefined, after: { networkOrigins: ['https://one.example.com'] }, asks: false },
+    { name: 'none to open', before: { network: 'none' }, after: { network: 'open' }, asks: true },
+    { name: 'origins replacement', before: { networkOrigins: ['https://one.example.com'] }, after: { networkOrigins: ['https://two.example.com'] }, asks: true },
+    { name: 'explicit Ask on narrowing', before: { network: 'open' }, after: { network: 'none' }, asks: true, preference: 'ask' },
+    { name: 'explicit Allow on widening', before: { network: 'none' }, after: { network: 'open' }, asks: false, preference: 'allow' },
+  ] as const)('classifies widget network $name once and preserves the saved preference', async row => {
+    const state = await fixture({ kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'main' }, false);
+    if (row.before) await state.artifact.apply({ kind: 'network', instanceId: 'one', network: UiSurfaceNetworkRequestV1Schema.parse(row.before) });
+    const before = (await state.artifact.read()).items;
+    const preference = 'preference' in row ? row.preference : undefined;
+    const actionsSettings = normalizeActionsSettingsV1({ v: 1,
+      ...(preference === 'ask' ? { actions: { 'widgets.item.network.set': { approvalRequiredSurfaces: ['ui'] } } } : {}),
+      ...(preference === 'allow' ? { approvalWaivedSurfaces: { 'widgets.item.network.set': ['ui'] } } : {}),
+    });
+    const result = await state.executor.execute('widgets.item.network.set', {
+      ref: { surface: state.surface, instanceId: 'one' }, network: row.after,
+    }, { surface: 'ui', authority: 'present_user', actionsSettings });
+    expect(result).toMatchObject(row.asks ? { ok: false, errorCode: 'approvals_not_supported' } : { ok: true });
+    const items = (await state.artifact.read()).items;
+    if (row.asks) expect(items).toEqual(before);
+    else expect(items[0]).toMatchObject({ instance: { id: 'one', networkOverride: row.after } });
+  });
+
+  it.each(['agent', 'mcp', 'cli'] as const)('uses the same network classification on %s', async surface => {
+    const state = await fixture({ kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'main' }, false);
+    await state.artifact.apply({ kind: 'network', instanceId: 'one', network: { network: 'open' } });
+    const ref = { surface: state.surface, instanceId: 'one' };
+    const context = { surface, authority: 'account_automation' } as const;
+    expect(await state.executor.execute('widgets.item.network.set', { ref, network: { network: 'none' } }, context)).toMatchObject({ ok: true });
+    expect(await state.executor.execute('widgets.item.network.set', { ref, network: { network: 'open' } }, context))
+      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    expect((await state.artifact.read()).items[0]).toMatchObject({ instance: { networkOverride: { network: 'none' } } });
+  });
+
+  it('classifies Home network changes from the same admitted layout read', async () => {
+    const state = await fixture({ kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'main' }, false);
+    const instance = { v: 1, id: 'home-network', definition: { kind: 'builtin', id: 'your_home' }, bindings: {}, networkOverride: { network: 'open' } } as const;
+    await state.homeHubArtifacts.apply({ kind: 'widget_add', instance });
+    const ref = { surface: { ...account, owner: { kind: 'home' } }, instanceId: instance.id } as const;
+    const context = { surface: 'ui', authority: 'present_user' } as const;
+    expect(await state.executor.execute('widgets.item.network.set', { ref, network: { network: 'none' } }, context)).toMatchObject({ ok: true });
+    expect(await state.executor.execute('widgets.item.network.set', { ref, network: { network: 'open' } }, context))
+      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    expect((await state.homeHubArtifacts.read()).items).toContainEqual(expect.objectContaining({ instance: { ...instance, networkOverride: { network: 'none' } } }));
+  });
+
+  it('compares inherited network access with the current saved definition before classifying a widening', async () => {
+    const state = await fixture({ kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'main' }, false);
+    await state.definitions.create(WidgetDefinitionV1Schema.parse({ v: 1, id: 'network-definition', name: 'Network',
+      inputs: { fields: [] }, inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      sizeDeclaration: { sizes: ['small'], defaultSize: 'small' },
+      body: { kind: 'installed', surface: { pluginId: 'example.widgets', localId: 'frame' } },
+      provenance: { source: { kind: 'authored' } } }));
+    const instance = { v: 1, id: 'inherited', definition: { kind: 'artifact', artifactId: 'network-definition' }, bindings: {} } as const;
+    await state.artifact.apply({ kind: 'add', instance, size: 'small' });
+    // A library edit changes the inherited policy of an existing placement.
+    await state.definitions.update('network-definition', { networkOverride: { network: 'none' } });
+    const ref = { surface: state.surface, instanceId: instance.id };
+    const context = { surface: 'ui', authority: 'present_user' } as const;
+    const countDefinitionReads = () => state.artifactReads.filter(id => id === 'network-definition').length;
+    const readsBeforeWidening = countDefinitionReads();
+    expect(await state.executor.execute('widgets.item.network.set', { ref, network: { network: 'open' } }, context))
+      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    expect(countDefinitionReads() - readsBeforeWidening).toBe(1);
+    await state.definitions.update('network-definition', { networkOverride: { network: 'open' } });
+    const readsBeforeNarrowing = countDefinitionReads();
+    expect(await state.executor.execute('widgets.item.network.set', { ref, network: { networkOrigins: ['https://one.example.com'] } }, context))
+      .toMatchObject({ ok: true });
+    expect(countDefinitionReads() - readsBeforeNarrowing).toBe(1);
   });
 
   it.each(owners.flatMap(owner => automationEdits.map(edit => ({ ...owner, ...edit }))))('retains automation approval for $action on $name', async row => {

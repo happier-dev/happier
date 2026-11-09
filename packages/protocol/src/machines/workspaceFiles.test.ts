@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DaemonWorkspaceFileListRequestSchema,
   DaemonWorkspaceFileListResponseSchema,
   DaemonWorkspaceFileReplaceApplyResponseSchema,
   DaemonWorkspaceFileReplacePreviewResponseSchema,
@@ -24,6 +25,12 @@ describe('workspace file response budgets', () => {
     expect(DaemonWorkspaceFileListResponseSchema.safeParse(response).success).toBe(true);
     response.paths[0] += 'a';
     expect(DaemonWorkspaceFileListResponseSchema.safeParse(response).success).toBe(false);
+  });
+
+  it('admits a file corpus beyond 5000 rows and the unrelated tunnel frame budget', () => {
+    const paths = Array.from({ length: 6000 }, (_, index) => `src/${index}-${'component'.repeat(8)}.ts`);
+    expect(DaemonWorkspaceFileListRequestSchema.safeParse({ rootPath: '/repo', limit: paths.length }).success).toBe(true);
+    expect(DaemonWorkspaceFileListResponseSchema.safeParse({ ok: true, paths, truncated: false }).success).toBe(true);
   });
 
   it('admits substantial Unicode search and replace previews', () => {

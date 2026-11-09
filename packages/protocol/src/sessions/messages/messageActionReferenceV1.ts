@@ -94,6 +94,7 @@ export function projectMessageActionProvenanceCategoryV1(
         case 'sessionAction':
         case 'happierMcp':
         case 'agentRuntimeFirstInput':
+        case 'hostOnboarding':
           return 'unknown';
       }
     case 'happierSession':

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { RpcError } from '../../rpc/errors.js';
 import { readActionFailureEnvelope, readMachineActionRpcResult } from './actionFailureEnvelope.js';
+import { normalizeActionExecutorThrownError } from './resultProjection.js';
 
 describe('Machine RPC refusal admission before Action output validation', () => {
   it.each([
@@ -10,15 +11,19 @@ describe('Machine RPC refusal admission before Action output validation', () => 
     // an ordinary Error as { error } without a code. Current daemons still can.
     [{ error: 'Unknown error' }, 'action_failed'],
     [{ error: 'Requester admission unavailable', errorCode: 'agent_isolation_unavailable', effectAttempted: false }, 'agent_isolation_unavailable'],
+    [{ error: 'Native effect failed', errorCode: 'native_failed', effectAttempted: true }, 'native_failed'],
   ])('retains the serialized refusal %j', (reply, code) => {
     expect(() => readMachineActionRpcResult(reply)).toThrowError(expect.objectContaining({
       name: 'RpcError', message: reply.error, rpcErrorCode: code,
-      ...('effectAttempted' in reply ? { effectAttempted: false } : {}),
+      ...('effectAttempted' in reply ? { effectAttempted: reply.effectAttempted } : {}),
     }));
     try { readMachineActionRpcResult(reply); } catch (error) {
       expect(error).toBeInstanceOf(RpcError);
       expect(error).toMatchObject({ rpcErrorCode: code });
-      if ('effectAttempted' in reply) expect(error).toMatchObject({ effectAttempted: false });
+      if ('effectAttempted' in reply) {
+        expect(error).toMatchObject({ effectAttempted: reply.effectAttempted });
+        expect(normalizeActionExecutorThrownError(error)).toMatchObject({ effectAttempted: reply.effectAttempted });
+      }
     }
   });
 

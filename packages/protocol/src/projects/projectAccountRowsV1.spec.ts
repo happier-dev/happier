@@ -15,6 +15,21 @@ const key = { kind: 'workspace-ref', serverId: 'home/a', id: 'ref/a' } as const;
 const value = { id: key.id, serverId: key.serverId, machineId: 'machine-a', rootPath: '/repo/a', label: 'a', createdAtMs: 1 };
 
 describe('Project Account row persistence admission', () => {
+    it('round-trips optional reference-only Project bindings through the stored row reader', () => {
+        const organizationKey = { kind: 'project-organization', serverId: 'home', projectKey: 'project' } as const;
+        const environmentBindings = { v: 1, bindings: {
+            API_KEY: { ref: 'personal-secret' }, SHARED_KEY: { ref: 'happier:shared-secret:v1:resource', revision: 2 },
+        } };
+        const payload = { key: organizationKey, value: { label: 'Project', environmentBindings } };
+        expect(StoredProjectAccountRowPayloadV1Schema.parse(ProjectAccountRowPayloadV1Schema.parse(payload))).toEqual(payload);
+        expect(StoredProjectAccountRowPayloadV1Schema.parse({ key: organizationKey, value: { label: 'Earlier Project' } }))
+            .toEqual({ key: organizationKey, value: { label: 'Earlier Project' } });
+        for (const invalid of [
+            { v: 1, bindings: {} },
+            { v: 1, bindings: { API_KEY: { ref: 'personal-secret', value: 'secret' } } },
+            { v: 1, bindings: { SHARED_KEY: { ref: 'happier:shared-secret:v1:resource' } } },
+        ]) expect(ProjectAccountRowPayloadV1Schema.safeParse({ ...payload, value: { environmentBindings: invalid } }).success).toBe(false);
+    });
     it('admits optional id-only authoring provenance without widening private content', () => {
         const authoringSession = { serverId: 'session-home', sessionId: 'session-a' };
         expect(ProjectAccountRowReadRequestV1Schema.safeParse({ key, includeAuthoringSession: true }).success).toBe(true);

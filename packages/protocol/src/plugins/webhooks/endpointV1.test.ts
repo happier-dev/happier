@@ -7,9 +7,12 @@ import {
   PluginWebhookEndpointIdV1JsonSchema,
   PluginWebhookDeliveryMovePendingInputV1Schema,
   PluginWebhookEndpointCheckCorrespondenceInputV1Schema,
+  PluginWebhookEndpointCheckCorrespondenceResultV1Schema,
   PluginWebhookEndpointEnsureInputV1Schema,
   PluginWebhookEndpointEnsureResultV1Schema,
   PluginWebhookEndpointIdV1Schema,
+  PluginWebhookHeartbeatReadInputV1Schema,
+  PluginWebhookHeartbeatReceiptHintV1Schema,
   PluginWebhookEndpointReadResultV1Schema,
   PluginWebhookEndpointRetargetInputV1Schema,
   PluginWebhookEndpointRevokeInputV1Schema,
@@ -87,6 +90,16 @@ const targetMaterialization = {
 } as const;
 
 describe('plugin webhook endpoint lifecycle wire contracts', () => {
+  it('preserves the saved health check identity through enrollment, receipt reads and hints', () => {
+    const checkId = `心拍:${'x'.repeat(1500)}`;
+    const setup = { kind: 'capabilityUrlV1', checkId };
+    expect(PluginWebhookEndpointEnsureInputV1Schema.parse({ webhookContribution, targetMaterialization,
+      sourceInstanceId: 'health:subject', setup, idempotencyKey: 'health-enrollment-0001' }).setup).toEqual(setup);
+    const selector = { webhookEndpointId: endpointId, sourceInstanceId: 'health:subject', checkId };
+    expect(PluginWebhookHeartbeatReadInputV1Schema.parse(selector)).toEqual(selector);
+    expect(PluginWebhookHeartbeatReceiptHintV1Schema.parse({ ...selector, lastAcceptedAt: 123 }).checkId).toBe(checkId);
+  });
+
   it('admits HTTPS public endpoints and only the explicit HTTP loopback development exception', () => {
     expect(Protocol.PluginWebhookPublicUrlV1Schema).toBe(PluginWebhookPublicUrlV1Schema);
     for (const value of [
@@ -206,6 +219,23 @@ describe('plugin webhook endpoint lifecycle wire contracts', () => {
       targetMaterialization,
       idempotencyKey: '1234567890abcdef',
     }).success).toBe(true);
+  });
+
+  it('accepts optional verified readiness without turning attachment into provider confirmation', () => {
+    const attached = { kind: 'ready', webhookEndpointId: endpointId, revision: 1 } as const;
+    expect(PluginWebhookEndpointCheckCorrespondenceResultV1Schema.parse(attached)).toEqual(attached);
+    for (const readiness of ['ready', 'providerConfirmationRequired'] as const) {
+      expect(PluginWebhookEndpointCheckCorrespondenceResultV1Schema.parse({ ...attached, readiness }))
+        .toEqual({ ...attached, readiness });
+    }
+    // Nonsecret binding observations let the monitor keep its exact identity
+    // checks while using the plugin-safe correspondence principal.
+    const binding = { contribution: webhookContribution, targetMaterialization,
+      sourceInstanceId: 'channel:github:primary', readiness: 'ready' } as const;
+    expect(PluginWebhookEndpointCheckCorrespondenceResultV1Schema.parse({ ...attached, ...binding }))
+      .toEqual({ ...attached, ...binding });
+    expect(PluginWebhookEndpointCheckCorrespondenceResultV1Schema.safeParse({ ...attached, readiness: 'guessed' }).success).toBe(false);
+    expect(PluginWebhookEndpointCheckCorrespondenceResultV1Schema.safeParse({ ...attached, oneTimeGeneratedSecret: 'secret' }).success).toBe(false);
   });
 
   it('keeps correspondence input exact and authority-free', () => {

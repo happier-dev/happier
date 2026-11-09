@@ -21,6 +21,28 @@ const owner = (pluginId: string, invocationId: string) => ({
 });
 
 describe('current-session presentation wire contract', () => {
+  it('addresses an exact mounted Chat occurrence through the public Action and transported intent', () => {
+    const intent = { kind: 'chat.item.show', widgetId: 'visual-1', occurrenceId: ':reply-2:' };
+    expect(CurrentSessionPresentationActionInputV1Schema.parse({ intent })).toEqual({ intent });
+    expect(CurrentSessionPresentationIntentV1Schema.parse(intent)).toEqual(intent);
+    expect(CurrentSessionPresentationActionInputV1Schema.safeParse({ intent: { ...intent, occurrenceId: '' } }).success).toBe(false);
+  });
+  it('admits closed Work controls for public authors without granting target or state custody', () => {
+    for (const intent of [
+      { kind: 'work.view.select', view: 'list' },
+      { kind: 'work.view.select', view: 'map' },
+      { kind: 'work.recent.show_more' },
+      { kind: 'work.map.expand' },
+    ]) {
+      for (const schema of [CurrentSessionPresentationIntentV1Schema, CurrentSessionPresentationAuthorIntentV1Schema]) {
+        expect(schema.safeParse(intent).success).toBe(true);
+        expect(schema.safeParse({ ...intent, sessionId: 'other' }).success).toBe(false);
+        expect(schema.safeParse({ ...intent, persist: true }).success).toBe(false);
+      }
+      expect(CurrentSessionPresentationActionInputV1Schema.safeParse({ intent }).success).toBe(true);
+    }
+    expect(CurrentSessionPresentationAuthorIntentV1Schema.safeParse({ kind: 'work.view.select', view: 'board' }).success).toBe(false);
+  });
   it('admits only semantic Computer/Browser viewer operations through both transported unions', () => {
     const intents = [
       { kind: 'viewer.open', source: 'computer' },

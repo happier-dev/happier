@@ -66,16 +66,33 @@ const VersionedStringSchema = lazyZodSchema(() => z.looseObject({
   version: z.number().check(z.int()),
 }));
 
+const DurableMessageUpdateMessageSchema = lazyZodSchema(() => z.extend(SessionMessageV1Schema, {
+  localId: z.nullable(z.string()), createdAt: TimestampMsSchema, updatedAt: TimestampMsSchema,
+}));
 const durableMessageUpdate = <T extends 'new-message' | 'message-updated'>(event: T) => z.discriminatedUnion('delivery', [
-  z.strictObject({ t: z.literal(event), sid: z.string(), id: z.optional(z.string()), delivery: z.literal('full'), message: z.extend(SessionMessageV1Schema, {
-    localId: z.nullable(z.string()), createdAt: TimestampMsSchema, updatedAt: TimestampMsSchema,
-  }) }),
+  z.strictObject({ t: z.literal(event), sid: z.string(), id: z.optional(z.string()), delivery: z.literal('full'), message: DurableMessageUpdateMessageSchema }),
   z.strictObject({ t: z.literal(event), sid: z.string(), id: z.optional(z.string()), delivery: z.literal('hint'), message: SessionMessageObservationFactsV1Schema }),
 ]);
 
+/**
+ * A durable message revision sent to a live consumer as only what changed: `message` carries the
+ * new revision's facts (`updatedAt` is the new revision) and a `content` record holding only the
+ * text appended since `base`. The receiver applies it only when it holds exactly `base` (row
+ * `updatedAt` and text length); otherwise it reads the full message.
+ */
+export const DurableMessageAppendBaseSchema = lazyZodSchema(() => z.strictObject({
+  updatedAt: TimestampMsSchema,
+  length: z.number().check(z.int(), z.minimum(0)),
+}));
+const MessageUpdatedBodySchema = lazyZodSchema(() => z.discriminatedUnion('delivery', [
+  ...durableMessageUpdate('message-updated').def.options,
+  z.strictObject({ t: z.literal('message-updated'), sid: z.string(), id: z.optional(z.string()), delivery: z.literal('delta'),
+    message: DurableMessageUpdateMessageSchema, base: DurableMessageAppendBaseSchema }),
+]));
+
 export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   durableMessageUpdate('new-message'),
-  durableMessageUpdate('message-updated'),
+  MessageUpdatedBodySchema,
   z.looseObject({
     t: z.literal('new-session'),
     id: z.string(),

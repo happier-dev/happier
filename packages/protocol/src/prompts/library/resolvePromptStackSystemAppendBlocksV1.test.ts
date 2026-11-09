@@ -6,6 +6,7 @@ import { resolvePromptStackSystemAppendBlocksV1 } from './resolvePromptStackSyst
 import predecessorPickerStack from '../../../fixtures/0.2-picker-skill-instructions-stack.json';
 import { PromptStackEntryV1StoredSchema } from './promptStacksV1.js';
 import { decodeBase64 } from '../../crypto/base64.js';
+import { MemoryDocBodyV1Schema } from './memoryDocV1.js';
 
 describe('resolvePromptStackSystemAppendBlocksV1', () => {
   it.each(['coding', 'voice'] as const)('skips skill-schema bundles on %s while retaining predecessor generic text and budgets', async surface => {
@@ -131,8 +132,8 @@ describe('resolvePromptStackSystemAppendBlocksV1', () => {
       memoryEnabled, promptStack: [entry('session.memory', 'selected')],
     } }, buildSessionInstructionsContextIntentV1({ kind: 'doc', artifactId: 'selected' }));
     const memory = { id: 'selected', header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' },
-      body: JSON.stringify({ v: 1, facts: [{ id: 'fact', text: 'Remembered preference', createdAtMs: 1,
-        sourceSessionRef: null }], archive: [] }), revision: { headerVersion: 3, bodyVersion: 7 } };
+      body: JSON.stringify(MemoryDocBodyV1Schema.parse({ v: 1, index: [{ id: 'fact', text: 'Remembered preference', createdAtMs: 1,
+        sourceSessionRef: null }], topics: [] })), revision: { headerVersion: 3, bodyVersion: 7 } };
     await expect(resolvePromptStackSystemAppendBlocksV1({
       surface: 'coding', scope, sessionEntries: metadata.work.promptStack, memoryEnabled,
       readArtifactHeader: async () => ({ header: memory.header }),
@@ -184,8 +185,8 @@ describe('resolvePromptStackSystemAppendBlocksV1', () => {
         if (ref.artifactId === 'instructions') return artifact('instructions', 'Ordinary instructions');
         return { id: ref.artifactId,
           header: { v: 1, kind: 'memory_doc.v1', title: ref.serverId ? 'Shared project memory' : 'Personal memory' },
-          body: JSON.stringify({ v: 1, facts: [{ id: 'fact', text: 'Remembered preference', createdAtMs: 1,
-            sourceSessionRef: null }], archive: [] }),
+          body: JSON.stringify(MemoryDocBodyV1Schema.parse({ v: 1, index: [{ id: 'fact', text: 'Remembered preference', createdAtMs: 1,
+            sourceSessionRef: null }], topics: [] })),
           revision: { headerVersion: 3, bodyVersion: 7 } };
       },
     });

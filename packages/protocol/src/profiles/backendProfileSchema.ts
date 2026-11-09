@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { LaunchProfilePlacementPreferenceV1Schema, LaunchProfileCheckoutPreferenceV1Schema } from './launchPreferencesV1.js';
 
 import { BackendTargetKeyV2InputSchema } from '../backends/targets/backendTargetRefV2.js';
 import { SecretStringV1Schema } from '../crypto/settingsSecretStringSchemasV1.js';
@@ -30,6 +31,8 @@ export const AIBackendProfileSchema = lazyZodSchema(() => z.object({
   id: z.string().check(z.minLength(1)),
   name: z.string().check(z.minLength(1), z.maxLength(100)),
   description: z.optional(z.string().check(z.maxLength(500))),
+  placement: z.optional(LaunchProfilePlacementPreferenceV1Schema),
+  checkout: z.optional(LaunchProfileCheckoutPreferenceV1Schema),
 
   // Environment variables (validated).
   environmentVariables: z._default(z.array(EnvironmentVariableSchema), []),

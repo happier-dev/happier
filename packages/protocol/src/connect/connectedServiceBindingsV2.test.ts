@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ConnectedServiceBindingsV2IngressSchema,
   ConnectedServiceBindingsV2Schema,
+  TeamResourceBrokeredConnectedServiceSelectionV2Schema,
   resolveConnectedServiceBindingsForChild,
 } from './connectedServiceBindings.js';
 import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from './sessionConnectedServiceAuthSwitch.js';
@@ -10,6 +11,26 @@ import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from './sessionConne
 const serviceKey = 'plugin.acme/service';
 
 describe('ConnectedServiceBindingsV2', () => {
+  it('retains explicit applied-account evidence while child inheritance keeps only the Pool selection', () => {
+    const binding = { source: 'connected', selection: 'group', groupId: 'pool', profileId: 'fallback', appliedProfileId: 'observed' };
+    const input = { v: 2, bindingsByServiceId: { [serviceKey]: binding } };
+    expect(ConnectedServiceBindingsV2Schema.parse(input)).toEqual(input);
+    expect(resolveConnectedServiceBindingsForChild({ explicitSelection: undefined, resolvedTargetKey: 'agent',
+      originTargetKey: 'agent', originBindings: ConnectedServiceBindingsV2Schema.parse(input) }))
+      .toEqual({ v: 2, bindingsByServiceId: { [serviceKey]: { source: 'connected', selection: 'group', groupId: 'pool' } } });
+    expect(ConnectedServiceBindingsV2Schema.safeParse({ ...input, bindingsByServiceId: {
+      [serviceKey]: { ...binding, appliedProfileId: 42 },
+    } }).success).toBe(false);
+  });
+
+  it('keeps brokered selections strict JSON without an undefined disclosed member', () => {
+    const selection = { source: 'team_resource', resourceId: 'resource-1', deliveryMode: 'brokered' };
+    expect(TeamResourceBrokeredConnectedServiceSelectionV2Schema.parse(selection)).toEqual(selection);
+    expect(TeamResourceBrokeredConnectedServiceSelectionV2Schema.safeParse({
+      ...selection, disclosedMember: undefined,
+    }).success).toBe(false);
+  });
+
   it('inherits only an omitted same-Agent choice and reuses Pool identity without its active member', () => {
     const originBindings = ConnectedServiceBindingsV2Schema.parse({ v: 2, bindingsByServiceId: {
       [serviceKey]: { source: 'connected', selection: 'group', groupId: 'origin-pool', profileId: 'active-member' },

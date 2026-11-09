@@ -79,6 +79,42 @@ describe('mounted area operations through the canonical Action/Artifact/binder o
         expect(await port.execute({ area: 'pinned', context: { count: 1 }, operation: { actionId: 'widgets.group.ungroup', instanceId: 'g' } })).toMatchObject({ ok: true });
         expect((await store.read()).items).toMatchObject([{ kind: 'widget', instance: { id: 'follow' } }]);
     });
+    it('writes guest-network choices through the declared area and retains the committed acknowledgement on retirement', async () => {
+        const boundary = createWorkBoardArtifactBoundary();
+        let current = true;
+        let retireAfterWrite = false;
+        const owned = boundary.forAccount(scope.accountId);
+        const transport = { ...owned, update: async (input: Parameters<typeof owned.update>[0]) => {
+            const result = await owned.update(input);
+            if (retireAfterWrite) current = false;
+            return result;
+        } };
+        const surface = { ...scope, owner: { kind: 'pluginArea' as const, pluginId: 'example', pageId: 'overview', area: 'pinned' } };
+        const store = createWidgetSurfaceArtifactPortV1(transport, { surface, isCurrent: () => true });
+        await store.apply({ kind: 'add', instance, size: 'small' });
+        const executor = createActionExecutor({ widgetAccountScope: () => scope,
+            widgetSurfaceActions: { pluginArea: createWidgetAreaActionPortV1(ref => createWidgetSurfaceArtifactPortV1(transport, { surface: ref, isCurrent: () => current })) } });
+        const port = createPluginWidgetAreaHostPortV1({ scope, pluginId: 'example', pageId: 'overview', declarations, isCurrent: () => current,
+            execute: (id, input, context) => executor.execute(id, input, { ...context, surface: 'ui', bypassApprovals: true }) });
+        const request = { area: 'pinned', context: { count: 1 }, operation: {
+            actionId: 'widgets.item.network.set', instanceId: instance.id, network: { networkOrigins: ['https://cdn.example.com'] },
+        } };
+        expect(await port.execute(request)).toMatchObject({ ok: true, result: { instance: {
+            ...instance, networkOverride: request.operation.network,
+        } } });
+        expect(flattenWidgetLayoutWidgetsV1((await store.read()).items)[0]?.instance).toEqual({ ...instance, networkOverride: request.operation.network });
+        for (const operation of [
+            { ...request.operation, ref: { surface, instanceId: instance.id } },
+            { ...request.operation, surface: { ...surface, accountId: 'someone-else' } },
+            { ...request.operation, network: { network: 'open', actions: ['session.send'] } },
+        ]) expect(await port.execute({ ...request, operation })).toMatchObject({ ok: false, errorCode: 'invalid_widget_area_request' });
+        expect(flattenWidgetLayoutWidgetsV1((await store.read()).items)[0]?.instance).toEqual({ ...instance, networkOverride: request.operation.network });
+        retireAfterWrite = true;
+        expect(await port.execute({ ...request, operation: { ...request.operation, network: { network: 'none' } } }))
+            .toMatchObject({ ok: true, result: { instance: { ...instance, networkOverride: { network: 'none' } } } });
+        expect(flattenWidgetLayoutWidgetsV1((await store.read()).items)[0]?.instance).toEqual({ ...instance, networkOverride: { network: 'none' } });
+        expect(await port.execute(request)).toMatchObject({ ok: false, errorCode: 'widget_area_scope_retired' });
+    });
     it('undo restores its captured named layout even when another layout is currently requested', async () => {
         const b = createWorkBoardArtifactBoundary();
         const transport = { ...b.forAccount(scope.accountId), list: b.transport.list!, delete: b.transport.delete! };

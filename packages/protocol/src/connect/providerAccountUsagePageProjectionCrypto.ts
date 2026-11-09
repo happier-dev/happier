@@ -2,8 +2,8 @@ import type { z } from 'zod/mini';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
 import {
   PackedProviderAccountUsagePageProjectionV1Schema, ProviderAccountUsagePageProjectionContentV1Schema,
-  ProviderAccountUsagePageProjectionReadV1Schema, ProviderAccountUsagePageProjectionSupersededError,
-  isSupersededProjectionBody, packProviderAccountUsagePageProjectionV1, unpackAdmittedProjection,
+  ProviderAccountUsagePageProjectionReadV1Schema,
+  packProviderAccountUsagePageProjectionV1, unpackAdmittedProjection,
   type ProviderAccountUsagePageProjectionV1,
 } from './providerAccountUsagePageProjection.js';
 
@@ -29,12 +29,7 @@ export function openProviderAccountUsagePageProjectionReadV1(input: Readonly<{ r
   } {
   const read = ProviderAccountUsagePageProjectionReadV1Schema.parse(input.value);
   if (!read.projection) return read;
-  try { return { ...read, opened: openAdmittedProjectionContent({ ...input, content: read.projection.content }) }; }
-  catch (error) {
-    if (!(error instanceof ProviderAccountUsagePageProjectionSupersededError)) throw error;
-    if (read.projection.encoding) throw new Error('provider_account_usage_identity_mismatch');
-    return { projection: null, complete: false };
-  }
+  return { ...read, opened: openAdmittedProjectionContent({ ...input, content: read.projection.content }) };
 }
 
 function openAdmittedProjectionContent(input: Readonly<{ recordId: string; accountMode: 'plain' | 'e2ee';
@@ -44,10 +39,6 @@ function openAdmittedProjectionContent(input: Readonly<{ recordId: string; accou
   const value = content.t === 'plain' ? content.v : input.material ? openAccountScopedBlobCiphertext({
     kind: 'provider_account_usage_page_projection', material: input.material, ciphertext: content.c })?.value : null;
   if (!value) throw new Error('provider_account_usage_content_unavailable');
-  if (isSupersededProjectionBody(value)) {
-    if (value.recordId !== input.recordId) throw new Error('provider_account_usage_identity_mismatch');
-    throw new ProviderAccountUsagePageProjectionSupersededError();
-  }
   // The plain envelope already admitted its packed body. An authenticated
   // encrypted payload still needs that same admission before reconstruction.
   const packed = content.t === 'plain' ? content.v : PackedProviderAccountUsagePageProjectionV1Schema.parse(value);

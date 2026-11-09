@@ -1,22 +1,21 @@
-import { PluginBotTemplateContributionV1Schema } from '../plugins/contributions/botTemplates.js';
-import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import semver from 'semver';
 
 import { PluginDiagnosticTextV1Schema } from '../daemon/pluginContributionIntrospection.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import type { PluginCompatibilityProjectionV1 } from '../plugins/availability/v1.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
+import { PluginBotTemplateContributionV1Schema } from '../plugins/contributions/botTemplates.js';
 import { parseQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
 import { PluginEnginesV2Schema } from '../plugins/manifest/engines.js';
 import { NpmRegistryOriginV1Schema } from '../rpc/npmRegistryProfiles.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { PluginUpdatePolicyV1Schema } from './pluginUpdatePolicyV1.js';
 import { REGISTRY_FORMAT_KINDS_V1, RegistryFormatV1Schema, RegistryKindV1Schema } from '../registries/registrySourcesV1.js';
-import { RegistryBrowserExtensionCatalogEntryV1Schema } from '../registries/registryBrowserExtensionV1.js';
-
 import { RegistryItemPointerV1Schema } from '../registries/registryItemsV1.js';
+import { RegistryBrowserExtensionCatalogEntryV1Schema } from '../registries/registryBrowserExtensionV1.js';
 import { ProviderContributionKeySchema } from '../providers/ids.js';
 import { BackendTargetKeyV2Schema } from '../backends/targets/backendTargetRefV2.js';
 import { ScmHostingProviderKindSchema } from '../scm/pullRequests.js';
@@ -110,6 +109,14 @@ export const MarketplaceNpmDiscoveryProjectionV1Schema = lazyZodSchema(() => z.s
   summary: z.strictObject(ListingSummaryShapeV1),
 }));
 export type MarketplaceNpmDiscoveryProjectionV1 = z.infer<typeof MarketplaceNpmDiscoveryProjectionV1Schema>;
+
+/** npm search is an index hint; admitted package metadata remains the listing authority. */
+export function marketplaceNpmContributionKeywordV1(family: string): string {
+  return `happier-plugin-contribution-${family.toLowerCase()}`;
+}
+export function deriveMarketplaceNpmDiscoveryKeywordsV1(projection: MarketplaceNpmDiscoveryProjectionV1): readonly string[] {
+  return ['happier-plugin', ...projection.summary.contributions.map(marketplaceNpmContributionKeywordV1)];
+}
 
 /**
  * Reader-side admission for a published `happier.marketplaceDiscovery` fact.
@@ -233,7 +240,7 @@ export function deriveMarketplaceNpmCompatibilityPlatformsV1(
 }
 
 export const HappierPickV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.enum(['skill', 'mcpServer', 'agent']), format: RegistryFormatV1Schema,
+  kind: z.enum(['skill', 'mcpServer', 'agent', 'app']), format: RegistryFormatV1Schema,
   sourceUrl: HttpsUrl, itemId: z.string(), path: z.optional(z.string()),
   display: z.optional(z.strictObject({ title: NonEmptyText, description: z.optional(z.string()) })),
 }).check(z.superRefine((pick, context) => {
@@ -538,11 +545,3 @@ export const MarketplaceIndexQueryResultV1Schema = lazyZodSchema(() => z.strictO
   diagnostics: z.array(MarketplaceDiagnosticV1Schema),
 }));
 export type MarketplaceIndexQueryResultV1 = z.infer<typeof MarketplaceIndexQueryResultV1Schema>;
-
-export function marketplaceNpmContributionKeywordV1(family: string): string {
-  return `happier-plugin-contribution-${family.toLowerCase()}`;
-}
-
-export function deriveMarketplaceNpmDiscoveryKeywordsV1(projection: MarketplaceNpmDiscoveryProjectionV1): readonly string[] {
-  return ['happier-plugin', ...projection.summary.contributions.map(marketplaceNpmContributionKeywordV1)];
-}

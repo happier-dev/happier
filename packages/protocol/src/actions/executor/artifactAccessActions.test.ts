@@ -6,6 +6,32 @@ import { createWorkBoardV1 } from '../../boards/workBoardV1.js';
 import { buildWorkBoardArtifactHeaderV1 } from '../../boards/workBoardArtifactV1.js';
 import { buildWidgetSurfaceArtifactIdV1, buildWidgetSurfaceArtifactHeaderV1, WidgetAreaLayoutV1Schema } from '../../widgets/widgetSurfaceArtifactV1.js';
 
+it('lists the authenticated grant roster without reading private Artifact content', async () => {
+  let bodyReads = 0;
+  let available = true;
+  const listed = { artifactId: 'workflow', ownerAccountId: 'owner', access: 'owner' as const, grants: [] };
+  const owner = createArtifactAccessActionsV1({
+    read: async () => {
+      bodyReads++;
+      throw Object.assign(new Error('artifact_read_unavailable'), { code: 'artifact_read_unavailable' });
+    },
+    transport: {
+      list: async () => {
+        if (!available) throw Object.assign(new Error('artifact_access_forbidden'), { code: 'artifact_access_forbidden' });
+        return listed;
+      },
+      set: async () => { throw new Error('unexpected mutation'); },
+      remove: async () => { throw new Error('unexpected mutation'); },
+    },
+  });
+  await expect(owner({ actionId: 'artifact.access.grants.list', input: { artifactId: listed.artifactId } }))
+    .resolves.toEqual(listed);
+  available = false;
+  await expect(owner({ actionId: 'artifact.access.grants.list', input: { artifactId: listed.artifactId } }))
+    .rejects.toMatchObject({ code: 'artifact_access_forbidden' });
+  expect(bodyReads).toBe(0);
+});
+
 const input = { artifactId: 'workflow', principal: { kind: 'team' as const, teamId: 'team' }, accessLevel: 'edit' as const };
 const resource = { artifactId: 'workflow', access: 'owner' as const,
   header: { kind: 'workflow-definition.v1', definitionId: 'workflow', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Workflow' } },

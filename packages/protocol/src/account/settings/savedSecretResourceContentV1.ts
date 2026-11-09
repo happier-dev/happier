@@ -1,5 +1,3 @@
-import type { SavedSecretResourceEnvelopeCensusRecipientV1 } from './savedSecretCatalogV1.js';
-import { sealEncryptedDataKeyEnvelopeV1 } from '../../crypto/encryptedDataKeyEnvelopeV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import tweetnacl from 'tweetnacl';
 import { z } from 'zod/mini';
@@ -8,6 +6,8 @@ export { parseSavedSecretPasskeyImportV1, type SavedSecretPasskeyImportResultV1 
 export { SavedSecretPasskeySourceV1Schema, type SavedSecretPasskeySourceV1 } from './savedSecretPasskeySourceV1.js';
 
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
+import { sealEncryptedDataKeyEnvelopeV1 } from '../../crypto/encryptedDataKeyEnvelopeV1.js';
+import type { SavedSecretResourceEnvelopeCensusRecipientV1 } from './savedSecretCatalogV1.js';
 import {
   formatSharedSavedSecretRefV1,
 } from './savedSecretReferenceV1.js';
@@ -46,6 +46,21 @@ export type {
 export { canShareSavedSecretResourceContentV1 } from './savedSecretResourceContentSchemaV1.js';
 export { describeSavedSecretResourceContentV1, SavedSecretStorageDescriptorV1Schema,
   type SavedSecretStorageDescriptorV1 } from './savedSecretResourceContentSchemaV1.js';
+
+/** The resource census owns recipient authority/readiness; only owed ready envelopes are sealed. */
+export function prepareSavedSecretResourceRecipientEnvelopesV1(params: Readonly<{
+  recipients: readonly SavedSecretResourceEnvelopeCensusRecipientV1[];
+  resourceDataKey: Uint8Array;
+  randomBytes: (length: number) => Uint8Array;
+}>): readonly Readonly<{ recipientAccountId: string; encryptedDataKey: string; recipientContentPublicKeyFingerprint: string }>[] {
+  return params.recipients.flatMap(recipient => recipient.readiness.status !== 'available'
+    || recipient.envelopeStatus === 'prepared' ? [] : [{
+      recipientAccountId: recipient.account.accountId,
+      encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: params.resourceDataKey,
+        recipientPublicKey: decodeBase64(recipient.readiness.contentPublicKey, 'base64'), randomBytes: params.randomBytes }), 'base64'),
+      recipientContentPublicKeyFingerprint: recipient.readiness.contentPublicKeyFingerprint,
+    }]);
+}
 
 const EncryptedSavedSecretResourcePayloadV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
@@ -156,21 +171,6 @@ export function openSavedSecretResourceStoredContentV1(
   }
 }
 
-export function prepareSavedSecretResourceRecipientEnvelopesV1(params: Readonly<{
-  recipients: readonly SavedSecretResourceEnvelopeCensusRecipientV1[];
-  resourceDataKey: Uint8Array;
-  randomBytes: (length: number) => Uint8Array;
-}>): readonly Readonly<{ recipientAccountId: string; encryptedDataKey: string; recipientContentPublicKeyFingerprint: string }>[] {
-  return params.recipients.flatMap(recipient => recipient.readiness.status !== 'available'
-    || recipient.envelopeStatus === 'prepared' ? [] : [{
-      recipientAccountId: recipient.account.accountId,
-      encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: params.resourceDataKey,
-        recipientPublicKey: decodeBase64(recipient.readiness.contentPublicKey, 'base64'), randomBytes: params.randomBytes }), 'base64'),
-      recipientContentPublicKeyFingerprint: recipient.readiness.contentPublicKeyFingerprint,
-    }]);
-}
-
-
 /** A resource opens in its persisted mode; Account policy decides only the next write.
  * An explicit owner directive (including keeping Home-managed Plain content) is retained.
  * Hosts keep their existing key-envelope and mutation custody around this preparation.
@@ -201,9 +201,11 @@ export function prepareSavedSecretResourceUpdateContentV1(params: Readonly<{
     && (params.nextSource !== undefined || params.nextValue !== undefined)) return null;
   if (params.nextValue !== undefined && params.nextSource !== undefined) return null;
   const updated = params.nextSource !== undefined
-    ? { v: 2 as const, name: current.name, kind: current.kind, source: params.nextSource }
+    ? { v: 2 as const, name: current.name, kind: current.kind, source: params.nextSource,
+        ...('createdByPlugin' in current && current.createdByPlugin ? { createdByPlugin: current.createdByPlugin } : {}) }
     : params.nextValue !== undefined
-      ? { v: 1 as const, name: current.name, kind: current.kind, value: params.nextValue }
+      ? { v: 1 as const, name: current.name, kind: current.kind, value: params.nextValue,
+          ...('createdByPlugin' in current && current.createdByPlugin ? { createdByPlugin: current.createdByPlugin } : {}) }
       : current;
   const content = SavedSecretResourceContentV1Schema.safeParse({ ...updated,
     ...(params.nextName === undefined ? {} : { name: params.nextName }),

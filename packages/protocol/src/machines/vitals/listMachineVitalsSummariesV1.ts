@@ -1,4 +1,5 @@
 import { MachineVitalsSnapshotV1Schema } from './machineVitalsRpcV1.js';
+import { MachineVitalsHostFactsV1Schema, type MachineVitalsHostFactsV1 } from './machineVitalsSampleV1.js';
 import { isRpcMethodNotFoundError, isRpcMethodNotFoundResult } from '../../rpc/errors.js';
 import { MachineResourceAttentionV1Schema, projectMachineResourceSummaryV1, type MachineResourceAttentionV1, type MachineResourceSummaryV1 } from '../resources/machineResourceSummaryV1.js';
 
@@ -7,7 +8,7 @@ export type MachineVitalsSummaryTargetV1 = Readonly<{
   machineId: string;
   name: string;
   online: boolean;
-  resources?: Readonly<{ vitals: Readonly<{ state: 'reporting' | 'unavailable' }>; attention?: MachineResourceAttentionV1 }> | null;
+  resources?: Readonly<{ vitals: Readonly<{ state: 'reporting' | 'unavailable' }>; attention?: MachineResourceAttentionV1; host?: MachineVitalsHostFactsV1 }> | null;
   unavailable?: boolean;
 }>;
 
@@ -29,7 +30,8 @@ export function readMachineVitalsResourcesProjectionV1(daemonState: unknown): Ma
   const state: unknown = vitals && typeof vitals === 'object' ? Reflect.get(vitals, 'state') : undefined;
   if (state !== 'reporting' && state !== 'unavailable') return undefined;
   const attention = MachineResourceAttentionV1Schema.safeParse(Reflect.get(resources, 'attention'));
-  return { vitals: { state }, ...(attention.success ? { attention: attention.data } : {}) };
+  const host = MachineVitalsHostFactsV1Schema.safeParse(Reflect.get(resources, 'host'));
+  return { vitals: { state }, ...(attention.success ? { attention: attention.data } : {}), ...(host.success ? { host: host.data } : {}) };
 }
 
 /** Each reporting online Machine is its own sample authority; synced attention is never recomputed here. */
@@ -51,7 +53,7 @@ export async function listMachineVitalsSummariesV1(input: Readonly<{
       if (isRpcMethodNotFoundResult(raw)) return { ...base, state: 'not_reporting' };
       const parsed = MachineVitalsSnapshotV1Schema.safeParse(raw);
       if (!parsed.success) return { ...base, state: 'unavailable' };
-      const summary = projectMachineResourceSummaryV1({ ...parsed.data, attention: machine.resources.attention });
+      const summary = projectMachineResourceSummaryV1({ ...parsed.data, attention: machine.resources.attention }, machine.resources.host);
       return { ...base, state: parsed.data.state, ...(summary ? { summary } : {}) };
     } catch (error) {
       input.signal?.throwIfAborted();

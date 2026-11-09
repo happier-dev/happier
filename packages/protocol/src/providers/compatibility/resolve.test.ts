@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   projectProviderBindingCompatibilityForConnectionV1,
   resolveProviderBindingCompatibilityWithFingerprintV1,
-  selectProviderRuntimeCredentialTransportV1, resolveProviderBindingCompatibilityFromSourceFactsV1, ProviderModelBindingSourceV1Schema,
+  selectProviderRuntimeCredentialTransportV1,
+  resolveProviderBindingCompatibilityFromSourceFactsV1,
+  ProviderModelBindingSourceV1Schema,
 } from './resolve.js';
-import { AgentProviderRequirementsV1Schema } from './v1.js';
+
 const baseEndpoint = {
   id: 'responses',
   protocol: 'openai-responses',
@@ -43,6 +45,23 @@ const evidence = {
 const resolve = (input: Parameters<typeof resolveProviderBindingCompatibilityWithFingerprintV1>[0]) =>
   resolveProviderBindingCompatibilityWithFingerprintV1(input).result;
 
+describe('declaration-owned wire model spelling', () => {
+  it('filters model families before protocol preference and preserves spelling in recipient matching', () => {
+    const native = { ...baseEndpoint, modelIdPattern: '^(?!claude-)[^/\\s]+$' };
+    const chat = { ...baseEndpoint, id: 'chat', protocol: 'openai-chat' as const, modelIdPattern: '^[^/\\s]+/[^\\s]+$' };
+    const agent = { ...baseRequirements, acceptsProtocols: ['openai-responses', 'openai-chat'] as const, required: {} };
+    const input = { agentTargetKey: 'agent', endpoints: [native, chat], credential: undefined, agent, adapterVersion: 1,
+      model: { id: 'openai/gpt-5', name: 'Hosted model' } };
+    expect(resolve(input)).toMatchObject({ selectedProtocol: 'openai-chat' });
+    const sourceFacts = input.endpoints.map(({ id, protocol, capabilities, modelIdPattern }) =>
+      ProviderModelBindingSourceV1Schema.parse({ endpoint: { id, protocol, capabilities, modelIdPattern } }));
+    expect(resolveProviderBindingCompatibilityFromSourceFactsV1({ ...input, endpoints: sourceFacts.map(source => source.endpoint) }).result)
+      .toMatchObject({ selectedProtocol: 'openai-chat' });
+    expect(resolve({ ...input, model: { id: 'gpt-5', name: 'Native' } })).toMatchObject({ selectedProtocol: 'openai-responses' });
+    expect(resolve({ ...input, model: { id: 'claude-native', name: 'Wrong family' } })).toMatchObject({ status: 'incompatible' });
+  });
+});
+
 describe('selectProviderRuntimeCredentialTransportV1', () => {
   const transport = (overrides: Record<string, unknown> = {}) => ({
     id: 'runtime-bearer',
@@ -70,6 +89,39 @@ describe('selectProviderRuntimeCredentialTransportV1', () => {
     expect(select([transport({ protocols: ['openai-chat'] })])).toBeNull();
     expect(() => select([transport(), transport({ id: 'second' })]))
       .toThrowError(/Multiple runtime credential transports/u);
+  });
+
+  it('requires explicit companion consumption and support for every independent destination', () => {
+    const candidate = { ...transport(), additionalCredentials: [{ slotId: 'upstreamKey',
+      destination: { kind: 'httpHeader' as const, name: 'x-upstream-key', format: 'raw' as const } }] };
+    const selectWith = (credentialSupport: Parameters<typeof selectProviderRuntimeCredentialTransportV1>[0]['agent']['credentialSupport']) => selectProviderRuntimeCredentialTransportV1({
+      transports: [candidate], protocol: 'openai-responses', agent: { ...baseRequirements, credentialSupport },
+    });
+    const allNames = [{ protocol: 'openai-responses', destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] } }] as const;
+    expect(selectWith({ supportsNoAuth: false, apiKeyTransports: allNames })).toBeNull();
+    expect(selectWith({ ...baseRequirements.credentialSupport, supportsAdditionalCredentials: true })).toBeNull();
+    expect(selectWith({ supportsNoAuth: false, apiKeyTransports: allNames, supportsAdditionalCredentials: true })).toEqual(candidate);
+  });
+
+  it('refuses a custom-only credential when native startup requires a declared auth destination', () => {
+    const agent = { ...baseRequirements, credentialSupport: { supportsNoAuth: true,
+      apiKeyTransports: [{ protocol: 'openai-responses' as const, destination: { kind: 'httpHeader' as const, names: 'anyValidated' as const, formats: ['raw', 'bearer'] as const } }],
+      requiredApiKeyTransports: baseRequirements.credentialSupport.apiKeyTransports,
+    } };
+    expect(selectProviderRuntimeCredentialTransportV1({ protocol: 'openai-responses', agent,
+      transports: [{ ...transport(), destination: { kind: 'httpHeader', name: 'x-private-gateway', format: 'bearer' } }],
+    })).toBeNull();
+    const custom = { ...transport(), destination: { kind: 'httpHeader' as const, name: 'x-private-gateway', format: 'bearer' as const } };
+    const companion = { ...custom, additionalCredentials: [{ slotId: 'upstreamKey', destination: transport().destination }] };
+    expect(selectProviderRuntimeCredentialTransportV1({ protocol: 'openai-responses',
+      agent: { ...agent, credentialSupport: { ...agent.credentialSupport, supportsAdditionalCredentials: true } },
+      transports: [companion],
+    })).toEqual(companion);
+    expect(selectProviderRuntimeCredentialTransportV1({ protocol: 'openai-responses',
+      agent: { ...agent, credentialSupport: { ...agent.credentialSupport,
+        requiredApiKeyTransports: [{ ...baseRequirements.credentialSupport.apiKeyTransports[0]!, protocol: 'anthropic' }] } },
+      transports: [custom],
+    })).toEqual(custom);
   });
 
   it('accepts any validated destination name when the Agent declares anyValidated', () => {
@@ -651,22 +703,5 @@ describe('resolveProviderBindingCompatibilityWithFingerprintV1', () => {
     });
     expect(destinationChanged.result.status).toBe('verified');
     expect(destinationChanged.compatibilityFingerprint).not.toBe(baseline.compatibilityFingerprint);
-  });
-});
-
-describe('declaration-owned wire model spelling', () => {
-  it('filters model families before protocol preference and preserves spelling in recipient matching', () => {
-    const native = { ...baseEndpoint, modelIdPattern: '^(?!claude-)[^/\\s]+$' };
-    const chat = { ...baseEndpoint, id: 'chat', protocol: 'openai-chat' as const, modelIdPattern: '^[^/\\s]+/[^\\s]+$' };
-    const agent = AgentProviderRequirementsV1Schema.parse({ ...baseRequirements, acceptsProtocols: ['openai-responses', 'openai-chat'], required: {} });
-    const input = { agentTargetKey: 'agent', endpoints: [native, chat], credential: undefined, agent, adapterVersion: 1,
-      model: { id: 'openai/gpt-5', name: 'Hosted model' } };
-    expect(resolve(input)).toMatchObject({ selectedProtocol: 'openai-chat' });
-    const sourceFacts = input.endpoints.map(({ id, protocol, capabilities, modelIdPattern }) =>
-      ProviderModelBindingSourceV1Schema.parse({ endpoint: { id, protocol, capabilities, modelIdPattern } }));
-    expect(resolveProviderBindingCompatibilityFromSourceFactsV1({ ...input, endpoints: sourceFacts.map(source => source.endpoint) }).result)
-      .toMatchObject({ selectedProtocol: 'openai-chat' });
-    expect(resolve({ ...input, model: { id: 'gpt-5', name: 'Native' } })).toMatchObject({ selectedProtocol: 'openai-responses' });
-    expect(resolve({ ...input, model: { id: 'claude-native', name: 'Wrong family' } })).toMatchObject({ status: 'incompatible' });
   });
 });

@@ -43,6 +43,17 @@ const leaf = (facts: AgentStartFactsV1 = {}): MaterializedWorkflowLeafV1 => ({ b
 const spawn = (facts: AgentStartFactsV1 = {}): AgentStartRequestV1 => ({ kind: 'spawn_new', facts });
 
 describe('admitAgentStartV1', () => {
+  it('refuses definition and trigger permission ceilings even without Agent-start leaves', () => {
+    for (const kind of ['definition_write', 'trigger_write'] as const) {
+      const request = kind === 'definition_write'
+        ? { kind, leaves: [], permissionCeiling: 'yolo' as const }
+        : { kind, scope: 'workflow' as const, leaves: [], permissionCeiling: 'yolo' as const };
+      expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, request, baseline))
+        .toMatchObject({ ok: false, refusal: { code: 'definition_exceeds_authority', cause: { code: 'permission_exceeds_ceiling' } } });
+      expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, { ...request, permissionCeiling: 'default' }, baseline))
+        .toMatchObject({ ok: true });
+    }
+  });
   it('admits a Workflow Run without an Agent leaf while enforcing its real placement, ceiling and depth', () => {
     const context = { ...baseline, baseline: { machineId: 'machine', directory: '/workspace' } };
     const request = { kind: 'workflow_run', facts: { machineId: 'machine', directory: '/workspace', permissionMode: 'default' } } as const;
@@ -120,7 +131,7 @@ describe('admitAgentStartV1', () => {
     });
     for (const kind of ['definition_write', 'trigger_write'] as const) {
       const request: AgentStartRequestV1 = kind === 'definition_write'
-        ? { kind, leaves: [leaf(facts)] } : { kind, scope: 'workflow', leaves: [leaf(facts)] };
+        ? { kind, permissionCeiling: 'default', leaves: [leaf(facts)] } : { kind, permissionCeiling: 'default', scope: 'workflow', leaves: [leaf(facts)] };
       expect(admitAgentStartV1(policy, request, baseline)).toMatchObject({
         ok: false, refusal: { code: 'definition_exceeds_authority', blockId: 'block',
           cause: { code: 'policy_denied_field', field: 'environmentVariables' } },
@@ -256,7 +267,7 @@ describe('admitAgentStartV1', () => {
     expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, request, originless(4))).toMatchObject({ ok: false, refusal: { code: 'work_depth_exceeded' } });
     for (const kind of ['definition_write', 'trigger_write'] as const) {
       const authored: AgentStartRequestV1 = kind === 'definition_write'
-        ? { kind, leaves: [leaf()] } : { kind, scope: 'workflow', leaves: [leaf()] };
+        ? { kind, permissionCeiling: 'default', leaves: [leaf()] } : { kind, permissionCeiling: 'default', scope: 'workflow', leaves: [leaf()] };
       expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, authored, session(3))).toMatchObject({ ok: true, stamped: { workDepth: 4 } });
     }
   });
@@ -277,7 +288,7 @@ describe('admitAgentStartV1', () => {
     // Ordinary unresolved starts and authored definitions still fail closed.
     expect(admitAgentStartV1(policy, { kind: 'workflow_run_leaf', leaf: request.leaf }, context))
       .toMatchObject({ ok: false, refusal: { code: 'policy_denied_field', field: 'agentTarget' } });
-    expect(admitAgentStartV1(policy, { kind: 'definition_write', leaves: [request.leaf] }, context))
+    expect(admitAgentStartV1(policy, { kind: 'definition_write', permissionCeiling: 'default', leaves: [request.leaf] }, context))
       .toMatchObject({ ok: false, refusal: { code: 'definition_exceeds_authority' } });
     expect(admitAgentStartV1(policy, { ...request, leaf: { ...request.leaf, facts: {
       ...request.leaf.facts, agentTarget: otherTarget,
@@ -381,14 +392,14 @@ describe('admitAgentStartV1', () => {
   it.each(restrictions)('checks authoring %s facts and unresolved selections per leaf', (flag, field, changed, unresolved) => {
     for (const kind of ['definition_write', 'trigger_write'] as const) {
       for (const facts of [changed, unresolved]) {
-        const request: AgentStartRequestV1 = kind === 'definition_write' ? { kind, leaves: [leaf(), leaf(facts)] } : { kind, scope: 'workflow', leaves: [leaf(), leaf(facts)] };
+        const request: AgentStartRequestV1 = kind === 'definition_write' ? { kind, permissionCeiling: 'default', leaves: [leaf(), leaf(facts)] } : { kind, permissionCeiling: 'default', scope: 'workflow', leaves: [leaf(), leaf(facts)] };
         expect(admitAgentStartV1({ ...DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, [flag]: false }, request, baseline)).toMatchObject({ ok: false, refusal: { code: 'definition_exceeds_authority', blockId: 'block', cause: { code: 'policy_denied_field', field } } });
       }
     }
   });
 
   it('checks authoring role, engine allow-list and permission ceiling per leaf', () => {
-    const request = (value: MaterializedWorkflowLeafV1): AgentStartRequestV1 => ({ kind: 'definition_write', leaves: [leaf(), value] });
+    const request = (value: MaterializedWorkflowLeafV1): AgentStartRequestV1 => ({ kind: 'definition_write', permissionCeiling: 'default', leaves: [leaf(), value] });
     expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, request({ ...leaf(), roleId: 'missing' }), baseline)).toMatchObject({ ok: false, refusal: { code: 'definition_exceeds_authority', cause: { code: 'role_target_unavailable' } } });
     const restricted = accountSettingsParse({ sessionAgentStartAllowListsV1: { allowedAgentTargetKeys: [engine.agentTargetKey] } });
     expect(admitAgentStartV1(restricted.sessionAgentSpawnPolicyV1, request({ ...leaf({ agentTarget: otherTarget }), engine: { agentTargetKey: buildBackendTargetKeyV2(otherTarget) } }), { ...baseline, allowLists: restricted.sessionAgentStartAllowListsV1 })).toMatchObject({ ok: false, refusal: { code: 'definition_exceeds_authority', cause: { code: 'policy_denied_field', field: 'agentTarget' } } });
@@ -408,8 +419,8 @@ describe('admitAgentStartV1', () => {
 
   it('applies depth to workflow leaves and trigger writes but exempts definition writes', () => {
     const context: AgentStartContextV1 = { ...baseline, caller: { kind: 'originless', runId: 'run', runDepth: 4 } };
-    for (const request of [{ kind: 'workflow_run_leaf', leaf: leaf() }, { kind: 'trigger_write', scope: 'workflow', leaves: [] }] satisfies AgentStartRequestV1[]) expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, request, context)).toMatchObject({ ok: false, refusal: { code: 'work_depth_exceeded' } });
-    expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, { kind: 'definition_write', leaves: [leaf()] }, context)).toMatchObject({ ok: true });
+    for (const request of [{ kind: 'workflow_run_leaf', leaf: leaf() }, { kind: 'trigger_write', permissionCeiling: 'default', scope: 'workflow', leaves: [] }] satisfies AgentStartRequestV1[]) expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, request, context)).toMatchObject({ ok: false, refusal: { code: 'work_depth_exceeded' } });
+    expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, { kind: 'definition_write', permissionCeiling: 'default', leaves: [leaf()] }, context)).toMatchObject({ ok: true });
   });
 
   it.each(['execution_run', 'review', 'subagents_plan', 'subagents_delegate', 'voice_agent'] as const)('admits the %s request through the same ceiling and depth owner', (source) => {

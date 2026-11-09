@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 import {
     ConnectedServiceIdSchema,
@@ -42,6 +43,13 @@ import {
 import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from './sessionConnectedServiceAuthSwitch.js';
 
 describe('connectedServiceSchemas', () => {
+    it('keeps Claude native waiting optional and accepts an explicit pool preference', () => {
+        expect(ConnectedServiceAuthGroupPolicyV1Schema.parse({})).not.toHaveProperty('claudeCodeAutoContinueAtUsageLimit');
+        expect(ConnectedServiceAuthGroupPolicyV1Schema.parse({ claudeCodeAutoContinueAtUsageLimit: true }))
+            .toMatchObject({ claudeCodeAutoContinueAtUsageLimit: true });
+        expect(ConnectedServiceAuthGroupPolicyPatchV1Schema.parse({ claudeCodeAutoContinueAtUsageLimit: false }))
+            .toEqual({ claudeCodeAutoContinueAtUsageLimit: false });
+    });
     it('defaults legacy monetary meters to USD while preserving explicit currency and non-monetary quotas', () => {
         const meter = { meterId: 'balance', label: 'Balance', used: null, remaining: -0.0123,
             limit: null, unit: 'unknown', utilizationPct: null, resetsAt: null, status: 'ok' };
@@ -784,8 +792,6 @@ describe('connectedServiceSchemas', () => {
             cooldownMs: 30_000,
             honorProviderResetsAt: true,
             autoRestorePrimaryWhenReset: false,
-            maxSwitchesPerTurn: 1,
-            maxSwitchesPerSessionHour: 3,
             softSwitchRemainingPercent: 15,
             probeIfSnapshotOlderThanMs: 300_000,
             preTurnProbeMode: 'when_stale',
@@ -797,6 +803,19 @@ describe('connectedServiceSchemas', () => {
         // Existing pools that persisted an explicit `priority` strategy must NOT be silently migrated.
         expect(ConnectedServiceAuthGroupPolicyV1Schema.parse({ v: 1, strategy: 'priority' }).strategy).toBe('priority');
         expect(ConnectedServiceAuthGroupPolicyV1Schema.parse({ v: 1, strategy: 'least_limited' }).strategy).toBe('least_limited');
+    });
+
+    it('reads released 0.2 switch cap fields without publishing or enforcing them', () => {
+        // cli-v0.2.17 at a2c45c86804b24e60ac0b76146a3ef36dfcaa15b and
+        // predecessor 7a01417876753a916563b8df70cf25a6c563e2d8 write these V1 fields.
+        const retired = { maxSwitchesPerTurn: 1, maxSwitchesPerSessionHour: 3 };
+        const policy = createStoredReadSchema(ConnectedServiceAuthGroupPolicyV1Schema).parse({ v: 1, ...retired });
+        expect(policy).toEqual(ConnectedServiceAuthGroupPolicyV1Schema.parse({ v: 1 }));
+        expect(policy).not.toHaveProperty('maxSwitchesPerTurn');
+        expect(policy).not.toHaveProperty('maxSwitchesPerSessionHour');
+        expect(ConnectedServiceAuthGroupPolicyPatchV1Schema.parse({ autoSwitch: true })).toEqual({ autoSwitch: true });
+        expect(ConnectedServiceAuthGroupPolicyV1Schema.safeParse({ v: 1, inventedCap: 1 }).success).toBe(false);
+        expect(ConnectedServiceAuthGroupPolicyPatchV1Schema.safeParse({ inventedCap: 1 }).success).toBe(false);
     });
 
     it('rejects removed legacy no-op policy keys as unknown current-contract input', () => {
@@ -845,6 +864,12 @@ describe('connectedServiceSchemas', () => {
     });
 
     it('parses persisted member runtime state by limit category', () => {
+        expect(ConnectedServiceAuthGroupMemberStateV1Schema.parse({
+            lastFailureProviderLimitId: ' weekly ',
+        })).toMatchObject({ lastFailureProviderLimitId: 'weekly' });
+        expect(ConnectedServiceAuthGroupMemberStateV1Schema.safeParse({
+            lastFailureProviderLimitId: '',
+        }).success).toBe(false);
         const parsed = ConnectedServiceAuthGroupMemberStateV1Schema.parse({
             quotaExhaustedUntilMs: 10,
             rateLimitedUntilMs: 20,

@@ -3,6 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { redactPublicShareCapabilityUrl } from './publicShareCapabilityUrl.js';
 
 describe('redactPublicShareCapabilityUrl', () => {
+  it('removes signed-in Artifact lookup and local fragment material', () => {
+    expect(redactPublicShareCapabilityUrl('https://home.example/share/artifact/lookup#k=LOCAL_SECRET'))
+      .toBe('https://home.example/share/artifact/:lookup');
+    expect(redactPublicShareCapabilityUrl('/v1/artifact-signed-in-links/lookup/join'))
+      .toBe('/v1/artifact-signed-in-links/:lookup/join');
+  });
   it('removes private HTML document capabilities including query-prefixed fragments', () => {
     for (const url of ['https://isolated.example/a/artifact#d=PRIVATE_HTML_SENTINEL', 'https://isolated.example/a/artifact?ref=agent#d=PRIVATE_HTML_SENTINEL']) {
       expect(redactPublicShareCapabilityUrl(url)).toBe('https://isolated.example/a/:artifact');

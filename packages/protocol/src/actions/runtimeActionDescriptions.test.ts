@@ -14,11 +14,8 @@ describe('runtime action descriptions (UX-3)', () => {
         (id) => getActionSpec(id).surfaces.ui === true,
     );
 
-    it('exercises a non-trivial set of enabled runtime actions', () => {
-        expect(enabledRuntimeActionIds.length).toBeGreaterThan(10);
-    });
-
     it('no enabled runtime action surfaces the internal projection-contract description', () => {
+        expect(enabledRuntimeActionIds).toContain('browser.navigate');
         const leaking = enabledRuntimeActionIds.filter((id) => {
             const spec = getActionSpec(id);
             return spec.description.includes(PROJECTION_CONTRACT_FRAGMENT)

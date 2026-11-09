@@ -19,10 +19,7 @@ export type ProviderEndpointSafetyErrorCode =
   | 'fragment_forbidden'
   | 'secret_in_url'
   | 'control_character'
-  | 'url_too_long'
   | 'host_too_long'
-  | 'path_too_long'
-  | 'query_too_long'
   | 'query_forbidden'
   | 'odd_ip_encoding'
   | 'dns_resolution_required'
@@ -165,9 +162,6 @@ export function normalizeProviderOriginRelativePathSyntax(
   rawPath: string,
   options: Readonly<{ allowQuery?: boolean }> = {},
 ): string {
-  if (rawPath.length > PROVIDER_ENDPOINT_SAFETY_LIMITS.maxUrlChars) {
-    fail('url_too_long', 'Provider endpoint path and query are too long.');
-  }
   if (rawPath.trim() !== rawPath || CONTROL_CHARACTER_PATTERN.test(rawPath)) {
     fail('control_character', 'Provider endpoint path contains whitespace or control characters.');
   }
@@ -196,12 +190,6 @@ export function normalizeProviderOriginRelativePathSyntax(
   if (parsed.hash) fail('fragment_forbidden', 'Provider executable paths must not contain fragments.');
   if (options.allowQuery !== true && parsed.search.length > 0) {
     fail('query_forbidden', 'Provider executable path queries are not allowed in this context.');
-  }
-  if (parsed.pathname.length > PROVIDER_ENDPOINT_SAFETY_LIMITS.maxPathChars) {
-    fail('path_too_long', 'Provider endpoint path is too long.');
-  }
-  if (parsed.search.length > PROVIDER_ENDPOINT_SAFETY_LIMITS.maxQueryChars) {
-    fail('query_too_long', 'Provider endpoint query is too long.');
   }
   validateAndDecodeProviderPathname(parsed.pathname);
   validateProviderRawSearchSyntax(parsed.search, 'executable path');
@@ -237,9 +225,6 @@ export function normalizeProviderEndpointUrlSyntax(
   rawUrl: string,
   options: Readonly<{ allowQuery?: boolean }> = {},
 ): NormalizedProviderEndpointUrlSyntax {
-  if (rawUrl.length > PROVIDER_ENDPOINT_SAFETY_LIMITS.maxUrlChars) {
-    fail('url_too_long', 'Provider endpoint URL is too long.');
-  }
   if (rawUrl.trim() !== rawUrl || CONTROL_CHARACTER_PATTERN.test(rawUrl)) {
     fail('control_character', 'Provider endpoint URL contains whitespace or control characters.');
   }
@@ -271,12 +256,6 @@ export function normalizeProviderEndpointUrlSyntax(
   const literalAddress = parseProviderIpAddress(hostname);
   if (!literalAddress && hostname.split('.').some((label) => label.length === 0 || label.length > 63)) {
     fail('host_too_long', 'Provider endpoint hostname contains an invalid label.');
-  }
-  if (parsed.pathname.length > PROVIDER_ENDPOINT_SAFETY_LIMITS.maxPathChars) {
-    fail('path_too_long', 'Provider endpoint path is too long.');
-  }
-  if (parsed.search.length > PROVIDER_ENDPOINT_SAFETY_LIMITS.maxQueryChars) {
-    fail('query_too_long', 'Provider endpoint query is too long.');
   }
   validateAndDecodeProviderPathname(parsed.pathname);
   if (literalAddress?.version === 4) {

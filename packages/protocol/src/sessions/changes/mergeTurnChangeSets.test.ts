@@ -148,31 +148,6 @@ describe('sessionChanges content and attribution axes', () => {
     });
   });
 
-  it('maps raw workspace touched-file facts to the bounded fallback attribution', () => {
-    const result = combineChangedFilesAttribution({
-      sessionId: 'session-1',
-      workspaceTouchedFiles: [{
-        filePath: 'src/shared.ts',
-        changeKind: 'modified',
-        binary: false,
-      }],
-    });
-
-    expect(result.files[0]).toMatchObject({
-      filePath: 'src/shared.ts',
-      source: 'inferred',
-      confidence: 'best_effort',
-      provider: 'workspace',
-      attribution: { confidence: 'session_possible', reason: 'workspace_touched_path' },
-      checkpointOverlap: 'unknown',
-    });
-    expect(result.confidenceSummary).toMatchObject({
-      source: 'inferred',
-      confidence: 'best_effort',
-      attribution: { confidence: 'session_possible', reason: 'workspace_touched_path' },
-    });
-  });
-
   it('keeps exact checkpoint content while limiting attribution when overlap was observed', () => {
     const result = mergeTurnChangeSets({
       sessionId: 'session-1',
@@ -570,16 +545,13 @@ describe('chronological content provenance', () => {
     expect(result.turns).toHaveLength(2);
   });
 
-  it('normalizes aggregate-only and workspace fallback paths at the same root owner', () => {
+  it('normalizes aggregate-only paths at the root owner', () => {
     const aggregate = mergeTurnChangeSets({ sessionId: 'session-1', turns: [makeTurn([
       { ...CHECKPOINT_FILE, filePath: '/repo/src/shared.ts' },
     ])] });
     const legacy = combineChangedFilesAttribution({ sessionId: 'session-1', repoRootPath: '/repo',
       canonicalChangeSet: { ...aggregate, turns: [] } });
-    const workspace = combineChangedFilesAttribution({ sessionId: 'session-1', repoRootPath: '/repo',
-      workspaceTouchedFiles: [{ filePath: '/repo/src/shared.ts', changeKind: 'modified' }] });
     expect(legacy.files[0]?.filePath).toBe('src/shared.ts');
-    expect(workspace.files[0]?.filePath).toBe('src/shared.ts');
   });
 
   it('does not present a last-turn patch or statistics as the net Session change', () => {

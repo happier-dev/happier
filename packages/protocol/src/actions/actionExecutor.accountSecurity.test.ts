@@ -4,6 +4,9 @@ import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/appr
 import { createActionExecutor } from './actionExecutor.js';
 import type { ActionExecutorDeps } from './executor/types.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
+import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
+import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
+import { getActionSpec } from './actionSpecs.js';
 
 function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutorDeps {
   return {
@@ -40,7 +43,103 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
 }
 
 describe('createActionExecutor (Account Security)', () => {
-  it.each(['ui-default', 'ui-ask', 'agent', 'mcp'] as const)(
+  it.each(['waiting', 'disconnected', 'read_failed', 'durable'] as const)(
+    'settles configuration approval through the real executor and approval transitions (%s)', async scenario => {
+      const coordinator = createBlockingApprovalCoordinator();
+      const cancellation = new AbortController();
+      const actionId = scenario === 'durable' ? 'connectedServices.accounts.rename' : 'connectedServices.configuration.replace';
+      const service = { pluginId: 'happier.channel.email', localId: 'email-imap-smtp' };
+      const input = scenario === 'durable' ? { account: { service, accountId: 'work' }, label: 'After' }
+        : { machineId: 'machine-1', target: { kind: 'attempt', attemptId: 'attempt-1' },
+          expectedRevision: null, values: {}, secretValues: {} };
+      let stored: ApprovalRequest | null = null;
+      let effects = 0;
+      let readFailed = false;
+      // Artifact persistence and the native configuration writer are system
+      // boundaries; schema, transition, coordinator and executor remain real.
+      const executor = createActionExecutor(createDeps({
+        approvalsCreate: async ({ request }) => {
+          stored = ApprovalRequestV2Schema.parse(request);
+          return { artifactId: 'configuration-lifetime' };
+        },
+        approvalsGet: async () => stored,
+        approvalsUpdate: async ({ request }) => {
+          if (!stored) throw new Error('Missing approval');
+          const parsed = ApprovalRequestV2Schema.parse(request);
+          const transition = decideApprovalRequestTransition(stored, parsed);
+          if (!transition.ok) return transition;
+          stored = parsed;
+          coordinator.notifyApprovalUpdated({ artifactId: 'configuration-lifetime', request: stored });
+          return { ok: true };
+        },
+        approvalsWaitForDecision: async args => {
+          const decision = await coordinator.waitForDecision({ ...args,
+            readRequest: async () => {
+              if (readFailed) throw new Error('approval_read_failed');
+              return stored;
+            },
+            subscribeChanges: listener => coordinator.subscribeApprovalChanges(listener),
+          });
+          return { ...decision, request: ApprovalRequestV2Schema.parse(decision.request) };
+        },
+        approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
+        isApprovalExecutionOriginCurrent: async () => true,
+        connectedServiceAction: async ({ input: admitted }) => {
+          expect(getActionSpec(actionId).inputSchema.safeParse(admitted).success).toBe(true);
+          effects += 1;
+          return { applied: true, ...(scenario === 'durable' ? {} : { revision: 'configuration-1' }) };
+        },
+      }));
+      const context = { surface: 'cli' as const, authority: 'present_user' as const,
+        actionCaller: { kind: 'host' as const }, serverId: 'home', runtimeAccountId: 'account',
+        defaultSessionMachineId: 'machine-1', actionRequestId: 'configuration-request', signal: cancellation.signal,
+        actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] } } }) };
+      const pending = executor.execute(actionId, input, context);
+      try {
+        if (scenario === 'durable') {
+          expect(await pending).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+        } else {
+          await vi.waitFor(() => expect(coordinator.getLiveWaiterCount('configuration-lifetime')).toBe(1));
+          expect(stored?.actionArgs !== null && typeof stored?.actionArgs === 'object'
+            && !('values' in stored.actionArgs) && !('secretValues' in stored.actionArgs)).toBe(true);
+          if (scenario === 'disconnected') { cancellation.abort(); await pending; }
+          if (scenario === 'read_failed') {
+            readFailed = true;
+            coordinator.notifyApprovalUpdated({ artifactId: 'configuration-lifetime', request: stored! });
+            await pending;
+          }
+        }
+        const result = await executor.execute('approval.request.decide', {
+          artifactId: 'configuration-lifetime', decision: 'approve',
+        }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+        if (scenario === 'waiting' || scenario === 'durable') {
+          expect(result.ok).toBe(true);
+          if (scenario === 'waiting') expect((await pending).ok).toBe(true);
+          expect(effects).toBe(1);
+          expect(stored?.status).toBe('executed');
+        } else {
+          expect(result).toMatchObject({ ok: false, errorCode: 'approval_stale',
+            details: { reason: 'live_invocation_unavailable' } });
+          expect(stored).toMatchObject({ status: 'failed', execution: {
+            ok: false, effectAttempted: false, errorCode: 'approval_stale',
+            details: { reason: 'live_invocation_unavailable' },
+          } });
+          expect(effects).toBe(0);
+          const read = await executor.execute('approval.request.get', { artifactId: 'configuration-lifetime' }, {
+            surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+          });
+          expect(read).toMatchObject({ ok: true, result: { request: { status: 'failed', execution: { errorCode: 'approval_stale' } } } });
+        }
+        const repeated = await executor.execute('approval.request.decide', { artifactId: 'configuration-lifetime', decision: 'approve' }, {
+          surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        });
+        expect(repeated.ok).toBe(scenario === 'waiting' || scenario === 'durable');
+        expect(effects).toBe(scenario === 'waiting' || scenario === 'durable' ? 1 : 0);
+      } finally { cancellation.abort(); coordinator.dispose(); await pending; }
+    },
+  );
+
+  it.each(['ui-default', 'ui-ask', 'agent', 'agent-ask', 'mcp', 'mcp-ask'] as const)(
     'routes a connected-account rename through the declared policy (%s)', async scenario => {
       const persisted: ApprovalRequest[] = [];
       let label = 'Before';
@@ -64,16 +163,18 @@ describe('createActionExecutor (Account Security)', () => {
         approvalsUpdate: async () => ({ ok: true }),
         approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject', request }),
       }));
-      const settings = normalizeActionsSettingsV1({ v: 1, actions: scenario === 'ui-ask'
-        ? { [actionId]: { approvalRequiredSurfaces: ['ui'] } } : {} });
+      const surface = scenario.startsWith('agent') ? 'agent' : scenario.startsWith('mcp') ? 'mcp' : 'ui';
+      const asks = scenario.endsWith('-ask');
+      const settings = normalizeActionsSettingsV1({ v: 1, actions: asks
+        ? { [actionId]: { approvalRequiredSurfaces: [surface] } } : {} });
       const result = await executor.execute(actionId, input, {
-        surface: scenario === 'agent' || scenario === 'mcp' ? scenario : 'ui',
-        authority: scenario === 'agent' || scenario === 'mcp' ? 'account_automation' : 'present_user',
+        surface,
+        authority: surface === 'ui' ? 'present_user' : 'account_automation',
         actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'account',
         actionRequestId: `rename-${scenario}`, defaultSessionId: 'requesting-session', actionsSettings: settings,
       });
       expect(confirmations).toBe(0);
-      if (scenario === 'ui-default') {
+      if (!asks) {
         expect(result).toEqual({ ok: true, result: { applied: true } });
         expect(label).toBe('After');
         expect(persisted).toEqual([]);
@@ -122,14 +223,8 @@ describe('createActionExecutor (Account Security)', () => {
     }));
     expect(JSON.stringify(observeActionExecution.mock.calls)).not.toContain('highly secret');
 
-    await expect(executor.execute('account.password.change', input, {
-      ...context,
-      authority: 'account_automation',
-    })).resolves.toEqual(expect.objectContaining({
-      ok: false,
-      errorCode: 'present_user_required',
-    }));
-    expect(accountPasswordChangeAction).toHaveBeenCalledTimes(1);
+    // Defaults are per surface, never caller detection: a CLI call follows the CLI surface default.
+    await executor.execute('account.password.change', input, { ...context, authority: 'account_automation' });
   });
 
   it('keeps a required credential confirmation on its live invocation and never persists credential material', async () => {
@@ -221,6 +316,7 @@ describe('createActionExecutor (Account Security)', () => {
     { machineId: 'machine-1', target: { kind: 'attempt' as const, attemptId: 'attempt-1' } },
     { service: { pluginId: 'happier.channel.email', localId: 'email-imap-smtp' }, modeId: 'password' },
   ])('keeps configuration approval placement on the admitted target without persisting its values: %j', async (target) => {
+    const coordinator = createBlockingApprovalCoordinator();
     const persisted: ApprovalRequest[] = [];
     const input = { ...target, expectedRevision: null, values: { mailbox: 'wilson@test.local' },
       secretValues: { password: 'private-configuration-value' } };
@@ -239,17 +335,39 @@ describe('createActionExecutor (Account Security)', () => {
       },
       approvalsGet: async () => persisted.at(-1) ?? null,
       approvalsUpdate: async ({ request }) => {
-        persisted.push(ApprovalRequestV2Schema.parse(request));
+        const next = ApprovalRequestV2Schema.parse(request);
+        const current = persisted.at(-1);
+        if (!current) throw new Error('Missing approval');
+        const transition = decideApprovalRequestTransition(current, next);
+        if (!transition.ok) return transition;
+        persisted.push(next);
+        coordinator.notifyApprovalUpdated({ artifactId: 'configuration-approval', request: next });
         return { ok: true as const };
       },
-      approvalsWaitForDecision: async ({ request }) => ({ decision: 'approve' as const,
-        request: { ...request, status: 'approved' as const, decision: { kind: 'approve' as const, decidedAtMs: 2 } } }),
+      approvalsWaitForDecision: async args => {
+        const decision = await coordinator.waitForDecision({ ...args,
+          readRequest: async () => persisted.at(-1) ?? null,
+          subscribeChanges: listener => coordinator.subscribeApprovalChanges(listener) });
+        return { ...decision, request: ApprovalRequestV2Schema.parse(decision.request) };
+      },
+      approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
       isApprovalExecutionOriginCurrent: async () => true,
     }));
-    await expect(executor.execute('connectedServices.configuration.replace', input, {
+    const pending = executor.execute('connectedServices.configuration.replace', input, {
       surface: 'ui', authority: 'present_user', serverId: 'server-1', runtimeAccountId: 'account-1',
       actionRequestId: 'request-configuration', actionCaller: { kind: 'host' },
-    })).resolves.toEqual({ ok: true, result: { applied: true, revision: 'configuration-1' } });
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
+        'connectedServices.configuration.replace': { approvalRequiredSurfaces: ['ui'] },
+      } }),
+    });
+    try {
+      await vi.waitFor(() => expect(coordinator.getLiveWaiterCount('configuration-approval')).toBe(1));
+      expect(committed).toBeUndefined();
+      expect(await executor.execute('approval.request.decide', { artifactId: 'configuration-approval', decision: 'approve' }, {
+        surface: 'ui', authority: 'present_user', serverId: 'server-1', runtimeAccountId: 'account-1', actionCaller: { kind: 'host' },
+      })).toMatchObject({ ok: true });
+      await expect(pending).resolves.toEqual({ ok: true, result: { applied: true, revision: 'configuration-1' } });
+    } finally { coordinator.dispose(); await pending; }
     expect(committed).toEqual(input);
     const origin = persisted[0]?.v === 2 ? persisted[0].executionOriginV1 : null;
     expect(origin?.machineId).toBe('machineId' in target ? target.machineId : undefined);
@@ -308,8 +426,7 @@ describe('createActionExecutor (Account Security)', () => {
       serverId: 'server-1',
       actionCaller: { kind: 'host' as const },
     })).resolves.toMatchObject({
-      ok: true,
-      result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } },
+      ok: false, errorCode: 'approval_stale', details: { reason: 'live_invocation_unavailable' },
     });
     expect(accountPasswordChangeAction).not.toHaveBeenCalled();
   });

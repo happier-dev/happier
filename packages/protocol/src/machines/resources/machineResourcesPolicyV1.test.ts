@@ -4,6 +4,34 @@ import { MACHINE_RESOURCES_ACTION_SPECS } from '../../actions/specs/machineResou
 import type { MachineMetadataFieldPortV1 } from '../machineMetadataFieldV1.js';
 
 describe('machine resources policy', () => {
+  it('persists deliberate monitoring mode and interval through the sole per-Machine policy writer', async () => {
+    expect(readMachineResourcesPolicyV1({})).toMatchObject({ status: 'ready', policy: {
+      monitoring: { mode: 'always', intervalMs: 2_000 },
+    } });
+    const [, setSpec] = MACHINE_RESOURCES_ACTION_SPECS;
+    for (const mode of ['off', 'while_viewing', 'always']) {
+      let metadata: Record<string, unknown> = { host: 'preserved', resourcesPolicyV1: {
+        v: 1, guard: { keepAwake: 'off' }, monitoring: { mode: 'always', intervalMs: 2_000 },
+      } };
+      const input = { machineId: 'machine', expectedRevision: 3, patch: { monitoring: { mode, intervalMs: 91_234 } } };
+      expect(setSpec.inputSchema.safeParse(input).success).toBe(true);
+      const { machineId: _machineId, ...mutation } = input;
+      const result = await mutateMachineResourcesPolicyV1(mutation, {
+        read: async () => ({ status: 'ready', metadata, metadataVersion: 3 }),
+        compareAndSwap: async request => {
+          metadata = request.metadata;
+          return { status: 'applied', metadata, metadataVersion: 4 };
+        },
+      });
+      expect(result).toMatchObject({ status: 'applied', policy: {
+        monitoring: { mode, intervalMs: 91_234 }, guard: { keepAwake: 'off' },
+      } });
+      expect(metadata.host).toBe('preserved');
+      expect(readMachineResourcesPolicyV1(metadata)).toMatchObject({ status: 'ready', policy: {
+        monitoring: { mode, intervalMs: 91_234 },
+      } });
+    }
+  });
   it('persists the browser admission override through the existing policy Action input and writer', async () => {
     const { MachineResourcesPolicySetInputV1Schema } = await import('../../actions/specs/machineResources.js');
     for (const browserMaxConcurrent of [null, 1, 4, 7, Number.MAX_SAFE_INTEGER]) {

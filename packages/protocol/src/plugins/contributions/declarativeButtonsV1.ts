@@ -1,12 +1,12 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { AccountNoticePageV1Schema } from '../../activity/accountNoticePageV1.js';
+import { PluginNoticePageV1Schema } from '../../activity/accountNoticePageV1.js';
 import { PluginActionInvocationBindingV1Schema } from '../actions/invocationBindingV1.js';
 import { PluginLocalizedStringV2Schema } from './publicTypes.js';
 
 /** A declaration of intent; the host owns navigation and Action admission. */
 export const PluginDeclarativeButtonEffectV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('open'), page: z.optional(AccountNoticePageV1Schema) }),
+  z.strictObject({ kind: z.literal('open'), page: z.optional(PluginNoticePageV1Schema) }),
   z.strictObject({ kind: z.literal('action'), invocation: PluginActionInvocationBindingV1Schema }),
 ]));
 export type PluginDeclarativeButtonEffectV1 = z.infer<typeof PluginDeclarativeButtonEffectV1Schema>;

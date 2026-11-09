@@ -99,7 +99,8 @@ export const PluginAgentCliManagedInstallSchema = lazyZodSchema(() => z.discrimi
     kind: z.literal('managed_package'),
     packageName: NonEmptyStringSchema,
     binaryName: NonEmptyStringSchema,
-    packageBinarySetup: z.optional(z.nullable(z.strictObject({ kind: z.literal('opencode_platform_binary') }))),
+    /** Approve this package's vendor build during managed installation. */
+    allowBuild: z.optional(z.boolean()),
   }),
 ]));
 export type PluginAgentCliManagedInstall = z.infer<typeof PluginAgentCliManagedInstallSchema>;

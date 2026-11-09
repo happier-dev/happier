@@ -4,6 +4,7 @@ import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginSettingFieldV2Schema } from './settings.js';
+import { PluginDeclarativeButtonsV1Schema } from './declarativeButtonsV1.js';
 import {
   PluginAvailabilityDescriptorV2Schema,
   PluginContributionReferenceV2Schema,
@@ -42,6 +43,7 @@ export const PluginNotificationCategoryContributionV2Schema = lazyZodSchema(() =
   eventIds: z.array(asProtocolZod(PluginContributionReferenceV2Schema)),
   defaultChannels: z.optional(z.array(asProtocolZod(PluginContributionReferenceV2Schema))),
   availability: z.optional(PluginAvailabilityDescriptorV2Schema),
+  buttons: z.optional(PluginDeclarativeButtonsV1Schema),
 })));
 export type PluginNotificationCategoryContributionV2 = z.infer<typeof PluginNotificationCategoryContributionV2Schema>;
 

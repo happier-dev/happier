@@ -24,6 +24,13 @@ const discussionLocations = z.pipe(z.array(SessionHumanPresenceLocationV1Schema)
   return [...byKey.values()].sort((left, right) => left.discussionId.localeCompare(right.discussionId));
 }));
 
+export const SessionHumanPresencePendingMessageEditV1Schema = z.strictObject({
+  sessionId: normalizedSessionId,
+  holdId: z.string().check(z.trim(), z.minLength(1)),
+});
+export type SessionHumanPresencePendingMessageEditV1 = z.infer<typeof SessionHumanPresencePendingMessageEditV1Schema>;
+const pendingMessageEdits = z.array(SessionHumanPresencePendingMessageEditV1Schema);
+
 export const SessionHumanPresenceVisibleReplaceV1Schema = z.strictObject({
   v: z.literal(1),
   // This is the complete finite rendered set. A count or byte limit here would
@@ -33,6 +40,9 @@ export const SessionHumanPresenceVisibleReplaceV1Schema = z.strictObject({
   // An older strict server rejects this routing field instead of silently
   // treating discussion visibility as Session visibility.
   locations: z.optional(discussionLocations),
+  // Complete desired edit set, independent of visibility. Edits never outlive
+  // the socket; only the server's admitted subset becomes live.
+  pendingMessageEdits: z.optional(pendingMessageEdits),
 });
 export type SessionHumanPresenceVisibleReplaceV1 = z.infer<typeof SessionHumanPresenceVisibleReplaceV1Schema>;
 
@@ -42,6 +52,7 @@ export const SessionHumanPresenceVisibleReplaceResultV1Schema = z.discriminatedU
     ok: z.literal(true),
     admittedSessionIds: sessionIds,
     admittedLocations: z.optional(discussionLocations),
+    admittedPendingMessageEdits: z.optional(pendingMessageEdits),
   }),
   z.strictObject({
     v: z.literal(1), ok: z.literal(false),
@@ -77,6 +88,8 @@ export const SessionHumanPresenceSnapshotV1Schema = z.union([
   z.strictObject({
     ...snapshotFields, sessionId: asProtocolZod(SessionIdSchema),
     discussionId: z.optional(z.never()),
+    // Only Session queue observers consume this projection; human viewers do not.
+    pendingMessageEditHoldIds: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
   }),
   z.strictObject({
     ...snapshotFields, discussionId: DiscussionIdSchema,

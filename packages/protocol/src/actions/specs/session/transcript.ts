@@ -51,7 +51,11 @@ export const exactTranscriptSelectionMessage = 'messageId cannot be combined wit
 export const SessionTranscriptGetPublicInputSchema = lazyZodSchema(() => z.omit(z.strictObject(SessionTranscriptGetInputShape),
   { projection: true }).check(z.refine(isSessionTranscriptSelectionValid, { message: exactTranscriptSelectionMessage })));
 
-/** Exact public input for the closed external-shareable transcript projection. */
+/**
+ * Exact public input for the closed external-shareable transcript projection.
+ * `cursor: 'tail'` acquires a no-history continuation at the committed Session
+ * sequence, with no items. Subsequent reads use the returned opaque cursor.
+ */
 export const SessionTranscriptGetExternalShareableInputV1Schema = lazyZodSchema(() => z.strictObject({
   sessionId: SessionTranscriptGetInputShape.sessionId,
   projection: SessionTranscriptGetExternalShareableProjectionSchema,

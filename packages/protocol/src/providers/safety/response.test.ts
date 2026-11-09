@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  assertProviderDecodedBodyWithinLimit,
   validateProviderProbeResponseMetadata,
 } from './index.js';
 
@@ -42,9 +41,4 @@ describe('provider probe response safety', () => {
     })).toThrow();
   });
 
-  it('enforces the decoded body cap after decompression', () => {
-    expect(() => assertProviderDecodedBodyWithinLimit(5 * 1024 * 1024)).not.toThrow();
-    expect(() => assertProviderDecodedBodyWithinLimit(5 * 1024 * 1024 + 1)).toThrow();
-    expect(() => assertProviderDecodedBodyWithinLimit(-1)).toThrow();
-  });
 });

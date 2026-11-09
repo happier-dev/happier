@@ -152,7 +152,6 @@ describe('Session Follow source-key preparation V1', () => {
       routeClass: 'server_required',
       serverRequiredReason: 'sharing',
       rpcClassification: 'internal_only',
-      commandReceiptRequired: false,
       scope: { accountRequired: true, machineRequired: true, serverRequired: true },
     });
   });

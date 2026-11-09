@@ -5,7 +5,7 @@ import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, composeProviderSettingsV1, spl
 } from './connectionRowsV1.js';
 import { loadProviderConnectionsCatalogV1, listProviderConnectionsCatalogSavedSecretRefsV1,
   readRetainedProviderConnectionsCatalogV1, rewriteProviderConnectionsCatalogSavedSecretRefsV1,
-  prepareProviderConnectionImportV1 } from './providerConnectionsCatalogV1.js';
+  prepareProviderConnectionImportV1, providerConnectionsSourceNeedsCleanupV1 } from './providerConnectionsCatalogV1.js';
 import { sealAccountScopedBlobCiphertext } from '../../crypto/accountScopedCipher.js';
 import { ProviderSettingsV1Schema, parseProviderSettingsV1Narrow } from '../settings/v1.js';
 import { accountSettingsParse } from '../../account/settings/accountSettings.js';
@@ -69,6 +69,13 @@ describe('Provider connection catalog row owner', () => {
     expect(sourceReads).toBe(state === 'absent' ? 1 : 0);
     expect(historyReads).toBe(state === 'absent' ? 1 : 0);
     expect(publications).toBe(1);
+  });
+
+  it('proves the source pass finished only from an admitted document without the retained root', () => {
+    expect(providerConnectionsSourceNeedsCleanupV1({ rawSettings: { unrelated: true }, cleanupPending: false })).toBe(false);
+    expect(providerConnectionsSourceNeedsCleanupV1({ rawSettings: undefined, cleanupPending: false })).toBe(true);
+    expect(providerConnectionsSourceNeedsCleanupV1({ rawSettings: { providerSettingsV1: {} }, cleanupPending: false })).toBe(true);
+    expect(providerConnectionsSourceNeedsCleanupV1({ rawSettings: {}, cleanupPending: true })).toBe(true);
   });
 
   it('projects retired fields from retained default selections without losing selected intent', () => {

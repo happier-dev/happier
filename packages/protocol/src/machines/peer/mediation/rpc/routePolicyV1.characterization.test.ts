@@ -17,7 +17,6 @@ it('preserves every declared method and complete effective policy through declar
     rationale: 'No deployed PMS-5 route policy row exists for this method; deny direct by default.',
     ownerPacket: 'PMS-5',
     rpcClassification: 'advisory_unclassified',
-    commandReceiptRequired: false,
     sharedMachineAccess: 'custodian_only',
     scope: { accountRequired: true, machineRequired: true, serverRequired: true },
     serverRequiredReason: 'unclassified',

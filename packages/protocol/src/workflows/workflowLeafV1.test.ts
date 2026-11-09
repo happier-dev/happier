@@ -11,6 +11,15 @@ const workflow = { kind: 'workflow', id: 'child', workflowRef: 'builtin:review-a
 const wait = { kind: 'wait', id: 'review', document: { text: 'Choose a value', references: [], attachments: [] }, result: { kind: 'text' } };
 
 describe('workflow leaf seam', () => {
+  it('reads Run summaries as an Action while keeping Workflow composition on its own leaf', () => {
+    const read = { kind: 'action', id: 'history', actionId: 'workflow.run.summaries',
+      input: { automationIds: { kind: 'literal', value: [] } } };
+    const definition = { version: 1, defaults: {}, inputs: [], blocks: [read] };
+    expect(WorkflowDefinitionV1Schema.safeParse(definition).success).toBe(true);
+    expect(validateWorkflowDefinition(definition).valid).toBe(true);
+    expect(WorkflowDefinitionV1Schema.safeParse({ ...definition, blocks: [{ ...read, actionId: 'workflow.run.start' }] }).success).toBe(false);
+  });
+
   it('reports missing and invalid literal Action inputs through canonical validity', () => {
     const check = (input: unknown) => validateWorkflowDefinition({ blocks: [{
       kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input,

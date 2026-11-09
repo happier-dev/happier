@@ -1,5 +1,4 @@
 import { PLUGIN_DEVELOPMENT_INPUT_FIELDS } from './pluginDevelopmentInputHints.js';
-import { EmptyObjectSchema } from './common.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginUpdatePolicyV1Schema } from '../../marketplace/pluginUpdatePolicyV1.js';
@@ -134,7 +133,13 @@ export const PluginPackActionInputSchema = lazyZodSchema(() => z.strictObject({
   sdkRegistryOrigin: z.optional(z.string().check(z.trim(), z.minLength(1))),
 }));
 
-export const PluginListActionInputSchema = EmptyObjectSchema;
+/**
+ * `projection: 'summary'` answers each installed plugin without its per-contribution introspection
+ * (`contributions`), for surfaces that list plugins. Omitting it keeps the full entry.
+ */
+export const PluginListActionInputSchema = lazyZodSchema(() => z.strictObject({
+  projection: z.optional(z.enum(['summary'])),
+}));
 
 export const PluginChangeStatusActionInputSchema = lazyZodSchema(() => z.strictObject({
   pendingChangeId: z.string().check(z.trim(), z.minLength(1)),
@@ -306,7 +311,7 @@ export const PLUGIN_DEV_LOOP_ACTION_DESCRIPTIONS: Readonly<Record<PluginDevLoopA
   'plugins.doctor': 'Evaluate and diagnose an external plugin-author source.',
   'plugins.pack': 'Validate and package a local plugin into an installable archive.',
   'plugins.reload': 'Load a plugin you are developing again, so your latest changes take effect.',
-  'plugins.list': 'List installed plugins plus daemon-owned pending changes with the issued ids needed to rejoin them.',
+  'plugins.list': 'List installed plugins plus daemon-owned pending changes with the issued ids needed to rejoin them. Pass projection "summary" to omit each plugin\'s per-contribution detail.',
   'plugins.change.status': 'Read one daemon-issued pending plugin change without creating or deciding it.',
 });
 
@@ -370,6 +375,8 @@ export function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionIdV1)
         ? PluginDisableActionInputSchema.parse(input) : PluginEnableActionInputSchema.parse(input)).scope === 'account'
         ? 'account' as const : 'machine' as const,
     } : {}),
+    originalExecution: { daemonIngressSurfaces: ['cli', 'ui'] },
+    ...(actionId === 'plugins.reload' ? { toolExposure: { agent: 'direct' as const, mcp: 'direct' as const } } : {}),
     approval: isRead
       ? { result: 'required' }
       : { result: 'optional', flow: 'deferred' },

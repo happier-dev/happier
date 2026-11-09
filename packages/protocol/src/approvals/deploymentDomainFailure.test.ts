@@ -3,6 +3,41 @@ import { ApprovalRequestV2Schema, StoredApprovalRequestSchema } from './approval
 import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from './approvalExecutionFailure.js';
 import { projectApprovalRequestForPublicRead } from '../actions/actionApprovalPresentation.js';
 import { ActionExecuteFailureSchema } from '../actions/actionExecutionResult.js';
+import { projectDeploymentFailureRecoveryV1 } from '../deployments/deploymentFailureRecoveryV1.js';
+
+it('retains content-free recovery for a deferred platform rebuild promotion without exposing opaque details', () => {
+  const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'deployments.promote', summary: 'Promote',
+    actionArgs: { serverId: 'home', environmentId: 'production', sourceEnvironmentId: 'preview',
+      sourceDeploymentId: 'deployment', artifact: 'rebuild', requestKey: 'promote' },
+    executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+      serverId: 'home', accountId: 'account', machineId: 'machine', actionId: 'deployments.promote', requestId: 'request' } });
+  const details = projectDeploymentFailureRecoveryV1({});
+  const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'unsupported_action',
+    error: 'unsupported_action', details });
+  const execution = projectApprovalExecutionFailureV2({ request, failure, executedAtMs: 3 });
+  expect(execution).toMatchObject({ details });
+  const stored = StoredApprovalRequestSchema.parse({ ...request, status: 'failed',
+    decision: { kind: 'approve', decidedAtMs: 2 }, execution });
+  expect(projectApprovalRequestForPublicRead(stored)).toMatchObject({ execution: { details } });
+  const opaque = projectApprovalExecutionFailureV2({ request, failure: { ...failure,
+    details: { ...details, providerPayload: 'private-sentinel' } }, executedAtMs: 3 });
+  expect(JSON.stringify(opaque)).not.toContain('private-sentinel');
+});
+
+it('retains the generic deployment recovery when a native Domain step supplies its scope', () => {
+  const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'deployments.domains.remove', summary: 'Remove Domain',
+    actionArgs: { serverId: 'home', environmentId: 'environment', domainId: 'domain', expectedRevision: 1, expectedDomainRevision: 1, requestKey: 'request' },
+    executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+      serverId: 'home', accountId: 'account', machineId: 'machine', actionId: 'deployments.domains.remove', requestId: 'request' } });
+  const details = { environmentId: 'environment', domainId: 'domain', step: 'native_execution',
+    ...projectDeploymentFailureRecoveryV1({}) };
+  const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'unclassified_provider_refusal',
+    error: 'unclassified_provider_refusal', details });
+  const execution = projectApprovalExecutionFailureV2({ request, failure, executedAtMs: 3 });
+  expect(execution).toMatchObject({ details });
+});
 
 it.each([
   { kind: 'native_observation_unavailable', reason: 'port_in_use', requiredFact: 'caddyPublishedBindings',
@@ -36,7 +71,8 @@ it.each([
     details: { ...details, failure: unsafe } }, executedAtMs: 3 })).not.toHaveProperty('details');
 });
 
-it('retains the missing Network posture and recovery guidance through Domain approval/public reads', () => {
+it.each(['reachabilityPosture', 'activeDomainMembers', 'nativeExecutionResult', 'networkExposure'] as const)(
+  'retains the missing %s fact through Domain approval/public reads without unrelated details', requiredFact => {
   const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
     createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'deployments.domains.add', summary: 'Add Domain',
     actionArgs: { serverId: 'home', environmentId: 'environment', domainId: 'domain', expectedRevision: 1,
@@ -45,9 +81,10 @@ it('retains the missing Network posture and recovery guidance through Domain app
     executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
       serverId: 'home', accountId: 'account', machineId: 'machine', actionId: 'deployments.domains.add', requestId: 'request' } });
   const details = { environmentId: 'environment', domainId: 'domain', step: 'native_execution' as const,
-    requiredFact: 'reachabilityPosture', remedy: 'Reconcile native firewall state, then review and apply Network posture.' };
-  const failure = { ok: false as const, errorCode: 'machine_network_review_required',
-    error: 'machine_network_review_required', effectAttempted: true, details };
+    requiredFact, ...(requiredFact === 'reachabilityPosture'
+      ? { remedy: 'Reconcile native firewall state, then review and apply Network posture.' } : {}) };
+  const errorCode = requiredFact === 'reachabilityPosture' ? 'machine_network_review_required' : 'required_fact_unavailable';
+  const failure = { ok: false as const, errorCode, error: errorCode, effectAttempted: true, details };
   const execution = projectApprovalExecutionFailureV2({ request, failure, executedAtMs: 3 });
   expect(execution).toMatchObject({ details });
   const stored = StoredApprovalRequestSchema.parse({ ...request, status: 'failed', updatedAtMs: 3,

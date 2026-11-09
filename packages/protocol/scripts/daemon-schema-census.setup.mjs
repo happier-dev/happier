@@ -17,12 +17,16 @@ globalThis.__daemonSchemaSample = (schema) => {
   const owner = frame?.match(/(?:packages|apps|node_modules)\/[^:)\n]+/u)?.[0] ?? 'unattributed';
   if (!frame && unattributedStacks.length < 3) unattributedStacks.push(stack);
   samples.push({ ref: new WeakRef(schema), owner,
+    flavor: schema._zod.traits.has('ZodMiniType') ? 'mini' : 'classic', type: schema._zod.def.type,
     derived: /(?:clone|extend|merge|pick|omit|partial|optional|nullable|strict|check)\s*\(/u.test(stack) });
+};
+globalThis.__daemonSchemaCensus = {
+  read: () => samples.map(({ owner, flavor, type }) => ({ owner, flavor, type })),
 };
 const hook = registerHooks({
   load(url, context, nextLoad) {
     const result = nextLoad(url, context);
-    if (!/\/zod\/v4\/classic\/schemas\.js$/u.test(url)) return result;
+    if (!/\/zod\/v4\/(?:classic|mini)\/schemas\.js$/u.test(url)) return result;
     const source = typeof result.source === 'string' ? result.source : new TextDecoder().decode(result.source);
     return { ...result, source: source.replace('core.$ZodType.init(inst, def);',
       'core.$ZodType.init(inst, def); globalThis.__daemonSchemaSample(inst);') };
@@ -51,4 +55,5 @@ afterAll(async () => {
   hook.deregister();
   Error.stackTraceLimit = previousStackLimit;
   delete globalThis.__daemonSchemaSample;
+  delete globalThis.__daemonSchemaCensus;
 });

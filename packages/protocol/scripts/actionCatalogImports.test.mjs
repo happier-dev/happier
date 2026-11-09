@@ -47,3 +47,15 @@ const nativeImportResult = spawnSync(process.execPath, ['--import', 'tsx', '--in
 test('initializes the Action vocabulary before loading its payload catalog in native ESM', () => {
   assert.equal(nativeImportResult.status, 0, nativeImportResult.stderr);
 });
+
+// These factory calls used to force another module's lazy schema before its
+// bindings were initialized; static imported-binding reads alone cannot see it.
+for (const entry of ['widgets/widgetPublicProfileAdmissionV1', 'sessions/follow/sessionFollowRuleOccurrenceV1']) {
+  const result = spawnSync(process.execPath, ['--experimental-transform-types',
+    fileURLToPath(new URL('./profile-schema-memory.mjs', import.meta.url)),
+    `packages/protocol/src/${entry}.ts`, '--native'],
+  { cwd: fileURLToPath(new URL('../../../', import.meta.url)), encoding: 'utf8' });
+  test(`initializes ${entry} before its transitive schema graph`, () => {
+    assert.equal(result.status, 0, result.error?.stack ?? result.stderr);
+  });
+}

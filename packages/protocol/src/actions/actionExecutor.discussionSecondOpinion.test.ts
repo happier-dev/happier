@@ -4,18 +4,20 @@ import { ActionIdSchema } from './actionIds.js';
 import { getActionSpec, type SessionTranscriptGetItem } from './actionSpecs.js';
 import type { ActionExecutorDeps } from './executor/types.js';
 import { DiscussionCreateResultV1Schema, DiscussionOpenedMessageV1Schema, DiscussionInviteInputV1Schema } from '../discussions/actions.js';
-import { DiscussionSecondOpinionPreviewV1Schema } from '../discussions/secondOpinion.js';
+import { DiscussionSecondOpinionPreviewV1Schema, resolveDiscussionSecondOpinionSourceGrantsV1 } from '../discussions/secondOpinion.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import type { DiscussionSecondOpinionReviewerV1 } from '../discussions/secondOpinion.js';
 import { readDiscussionSecondOpinionModelChildV1 } from '../discussions/secondOpinionActions.js';
 import { ArtifactDocumentV1Schema } from '../artifacts/artifactActionsV1.js';
-import { ApprovalRequestV2Schema, requiresExactDaemonApprovalReplay, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
+import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
+import { resolveApprovalExecutor } from '../approvals/resolveApprovalExecutor.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
 import { createWorkflowAccountRunActionOwner } from './executor/workflowRunActions.js';
 import { WorkflowRunSummaryV1Schema } from '../workflows/workflowProgressV1.js';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from './actionCatalog.js';
 import { readCommittedDiscussionMessage } from './executor/docCollaborationActions.js';
 import { areServerProfileIdentifiersEquivalent } from '../features/payload/capabilities/serverIdentityCapabilities.js';
+import { projectSessionSpawnNewActionResultV1 } from '../sessions/creation/sessionSpawnNewResultV1.js';
 
 const request = {
   intent: 'preview', title: 'Review this answer', question: 'What would you change?',
@@ -27,6 +29,7 @@ const request = {
 function fixture(options: { needsGrant?: boolean; quoteOnly?: boolean; sourceReady?: boolean; lostCreate?: boolean; lostPost?: boolean;
   reviewer?: DiscussionSecondOpinionReviewerV1; sourcePages?: 'paged' | 'truncated'; lostGrant?: boolean;
   publisherSessionId?: string; publisherDisclosure?: boolean; noReviewers?: boolean;
+  discussionSourceGap?: boolean; canGrantSource?: boolean; grantLeavesGap?: boolean; createRefused?: boolean;
   reviewers?: readonly DiscussionSecondOpinionReviewerV1[];
   sourceText?: () => string;
   sourceReadable?: () => boolean;
@@ -46,13 +49,16 @@ function fixture(options: { needsGrant?: boolean; quoteOnly?: boolean; sourceRea
   let grantReady = !options.needsGrant, createLost = false, postLost = false, grantLost = false;
   const preview = () => DiscussionSecondOpinionPreviewV1Schema.parse({
     source: request.source, sourceContentReady: options.sourceReady ?? true, sourceAudienceAccountIds: grantReady ? ['alice', 'bob'] : ['alice'],
-    discussionAudienceAccountIds: ['alice'], missingDiscussionSourceAccountIds: [], discussionDisclosure: { ok: true }, canGrantSource: true,
+    discussionAudienceAccountIds: options.discussionSourceGap ? ['alice', 'bob'] : ['alice'],
+    missingDiscussionSourceAccountIds: options.discussionSourceGap && !grantReady ? ['bob'] : [],
+    discussionDisclosure: options.discussionSourceGap && !grantReady ? { ok: false, reason: 'destination_audience_broader' } : { ok: true },
+    canGrantSource: options.canGrantSource ?? true,
     ...(options.publisherSessionId ? { publisher: { sessionId: options.publisherSessionId, answerPolicy: 'when_addressed',
       audienceAccountIds: ['alice'], disclosure: options.publisherDisclosure === false
         ? { ok: false, reason: 'destination_audience_broader' } : { ok: true } } } : {}),
     reviewers: options.noReviewers ? [] : reviewers.map(reviewer => ({ ...reviewer, sourceAccess: options.quoteOnly ? 'quote_only' : 'read',
       runtimeAccountId: 'alice', audienceAccountIds: ['alice', 'bob'], missingSourceAccountIds: grantReady ? [] : ['bob'],
-      canGrantSource: true, disclosure: grantReady ? { ok: true } : { ok: false, reason: 'destination_audience_broader' } })),
+      canGrantSource: options.canGrantSource ?? true, disclosure: grantReady ? { ok: true } : { ok: false, reason: 'destination_audience_broader' } })),
   });
   const message = (id: string, seq: number) => DiscussionOpenedMessageV1Schema.parse({
     id, discussionId: 'opinion', localId: id === 'quote' ? request.retry.quoteLocalId : request.retry.questionLocalId, seq,
@@ -90,6 +96,7 @@ function fixture(options: { needsGrant?: boolean; quoteOnly?: boolean; sourceRea
       events.push(args.actionId);
       if (args.actionId === 'discussion.second_opinion.start') return { ok: true, value: preview() };
       if (args.actionId === 'discussion.create') {
+        if (options.createRefused) return { ok: false, errorCode: 'discussion_access_forbidden', error: 'discussion_access_forbidden' };
         creates.push(args.input);
         if (options.lostCreate && !createLost) { createLost = true; return { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' }; }
         return created();
@@ -113,7 +120,7 @@ function fixture(options: { needsGrant?: boolean; quoteOnly?: boolean; sourceRea
     },
     sessionAccessAction: async args => {
       events.push(args.actionId);
-      grantReady = true;
+      grantReady = !options.grantLeavesGap;
       if (options.lostGrant && !grantLost) { grantLost = true; return { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' }; }
       return { changed: true, grant: { subject: { kind: 'account', accountId: 'bob' }, accessLevel: 'view', canApprovePermissions: false } };
     },
@@ -176,6 +183,7 @@ function fixture(options: { needsGrant?: boolean; quoteOnly?: boolean; sourceRea
       if (operation.operation !== 'admit') throw new Error(`Unexpected storage ${operation.operation}`);
       workflowAdmissions.push(operation);
       return { kind: 'created', run: WorkflowRunSummaryV1Schema.parse({ id: operation.runId, sourceArtifactId: null, ownerAccountId: 'alice', visibleTeamId: null,
+        attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
         origin: { kind: 'direct' }, state: 'queued', revision: 0, machineId: 'machine', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
         availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
         createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }) };
@@ -198,16 +206,22 @@ function fixture(options: { needsGrant?: boolean; quoteOnly?: boolean; sourceRea
 
 describe('Second opinion canonical Action composition', () => {
   it('selects one source for preview and rereads one for fresh Ask among 210 committed messages', async () => {
-    let sourceText = 'Exact source answer';
+    const longPath = `/work/${'nested-review-source/'.repeat(96)}answer.ts`;
+    let sourceText = Array.from({ length: 2048 }, (_, index) => `Source line ${index}: ${longPath}`).join('\n');
     const f = fixture({ sourceMessageCount: 210, sourceText: () => sourceText });
     expect(await f.executor.execute('discussion.second_opinion.start', request, f.context)).toMatchObject({ ok: true,
-      result: { status: 'preview', sourceText: 'Exact source answer' } });
-    sourceText = 'Freshly read source answer';
+      result: { status: 'preview', sourceText } });
+    expect(f.creates).toHaveLength(0);
+    expect(f.births).toHaveLength(0);
+    sourceText += '\nFreshly read source answer';
     expect(await f.executor.execute('discussion.second_opinion.start', { ...request, intent: 'ask',
       confirmedPreview: f.preview() }, f.context)).toMatchObject({ ok: true, result: { status: 'asked' } });
     expect(f.creates).toHaveLength(1);
     expect(f.creates[0]).toMatchObject({ firstMessage: { content: { parts: [{ t: 'text', text: sourceText }] } } });
     expect(f.sourceCost).toEqual({ reads: 2, rows: 2 });
+    expect(f.births).toHaveLength(0);
+    expect(f.invites).toHaveLength(1);
+    expect(f.posts).toHaveLength(1);
   });
   it('does not use a preview quote after source admission is revoked before Ask', async () => {
     let readable = true;
@@ -233,8 +247,7 @@ describe('Second opinion canonical Action composition', () => {
     for (const surface of ['cli', 'agent', 'voice'] as const) {
       const automation = await f.executor.execute('discussion.second_opinion.start', request,
         { ...context, surface, authority: 'account_automation' });
-      if (surface === 'cli') expect(automation).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-      else expect(automation).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(automation).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     }
     expect(f.events).toEqual(['discussion.second_opinion.start', 'read-source']);
     const ask = await f.executor.execute('discussion.second_opinion.start', { ...request, intent: 'ask', confirmedPreview: f.preview() }, context);
@@ -255,7 +268,7 @@ describe('Second opinion canonical Action composition', () => {
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'preview', sourceText: 'Exact source answer' } });
     expect(f.creates).toEqual([]);
   });
-  it('lets Voice propose ordinary human approval, never turn a waiver into disclosure authority', async () => {
+  it('lets Voice propose ordinary human approval by default, and the user waiver runs it', async () => {
     const approvals: ApprovalRequestV2[] = [];
     const effects: string[] = [];
     const executor = createActionExecutor({
@@ -274,8 +287,8 @@ describe('Second opinion canonical Action composition', () => {
     expect(effects).toEqual([]);
     expect(await executor.execute('discussion.second_opinion.start', request, { ...context,
       actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'discussion.second_opinion.start': ['voice'] } }) }))
-      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    expect(effects).toEqual([]);
+      .not.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(effects.length).toBeGreaterThan(0);
   });
   it('retains Voice source privacy attribution when the actual person approves its preview', async () => {
     let stored: ApprovalRequestV2 | null = null;
@@ -332,7 +345,7 @@ describe('Second opinion canonical Action composition', () => {
       actionsSettings: normalizeActionsSettingsV1({ v: 1 }) })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     const approval = readStored();
     if (!approval) throw new Error('No retained approval');
-    expect(requiresExactDaemonApprovalReplay(approval)).toBe(true);
+    expect(resolveApprovalExecutor(approval)).toEqual({ kind: 'daemon', machineId: 'machine', sessionId: 'source' });
     const result = await executor.execute('approval.request.decide', { artifactId: 'agent-preview', decision: 'approve' },
       { serverId: 'home', runtimeAccountId: 'alice', surface: 'ui', authority: 'present_user' });
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'failed',
@@ -348,12 +361,56 @@ describe('Second opinion canonical Action composition', () => {
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'asked', mode: 'ask',
       discussion: { serverId: 'home', discussionId: 'opinion' }, messageRef: { messageId: 'question' }, grantedAccountIds: ['bob'] } });
     expect(f.events.slice(2)).toEqual(['discussion.second_opinion.start', 'read-source', 'session.access.grant.set',
-      'discussion.second_opinion.start', 'discussion.create', 'discussion.invite', 'discussion.post']);
+      'discussion.create', 'discussion.invite', 'discussion.post']);
     expect(f.creates[0]).toMatchObject({ creationLocalId: request.retry.creationLocalId,
       anchor: { kind: 'session', sessionId: 'source', messageId: 'answer' },
       firstMessage: { localId: request.retry.quoteLocalId, content: { parts: [{ t: 'text', text: 'Exact source answer' }] } } });
     expect(f.posts[0]).toMatchObject({ localId: request.retry.questionLocalId, replyTarget: { kind: 'message', messageId: 'quote' },
       content: { parts: [{ t: 'mention', participant: { kind: 'session', sessionId: 'reviewer' } }, { t: 'text', text: ` ${request.question}` }] } });
+  });
+
+  it('honors the previewed source grant for a prospective person', async () => {
+    const f = fixture({ needsGrant: true, discussionSourceGap: true });
+    const input = { ...request, participants: [{ kind: 'account', accountId: 'bob' }] };
+    const shown = await f.executor.execute('discussion.second_opinion.start', input, f.context);
+    expect(shown).toMatchObject({ ok: true, result: { status: 'preview', preview: {
+      canGrantSource: true, missingDiscussionSourceAccountIds: ['bob'],
+    } } });
+    expect(f.events).not.toContain('session.access.grant.set');
+    expect(resolveDiscussionSecondOpinionSourceGrantsV1(f.preview())).toEqual({ ok: true, accountIds: ['bob'] });
+    const asked = await f.executor.execute('discussion.second_opinion.start', {
+      ...input, intent: 'ask', confirmedPreview: f.preview(),
+    }, f.context);
+    expect(asked, JSON.stringify(asked)).toMatchObject({ ok: true, result: { status: 'asked', grantedAccountIds: ['bob'] } });
+    expect(f.preview()).toMatchObject({ missingDiscussionSourceAccountIds: [], discussionDisclosure: { ok: true } });
+    expect(f.events.filter(event => event === 'session.access.grant.set')).toHaveLength(1);
+    expect(f.creates[0]).toMatchObject({ participants: [{ kind: 'account', accountId: 'bob' }] });
+  });
+
+  it('refuses an ungrantable prospective audience before any mutation', async () => {
+    const f = fixture({ needsGrant: true, discussionSourceGap: true, canGrantSource: false });
+    expect(f.preview()).toMatchObject({ canGrantSource: false, missingDiscussionSourceAccountIds: ['bob'] });
+    expect(resolveDiscussionSecondOpinionSourceGrantsV1(f.preview())).toEqual({ ok: false, errorCode: 'discussion_access_forbidden' });
+    expect(await f.executor.execute('discussion.second_opinion.start', {
+      ...request, intent: 'ask', participants: [{ kind: 'account', accountId: 'bob' }], confirmedPreview: f.preview(),
+    }, f.context)).toMatchObject({ ok: false, errorCode: 'discussion_access_forbidden' });
+    expect(f.events).not.toContain('session.access.grant.set');
+    expect(f.creates).toEqual([]);
+  });
+
+  it('does not offer an automatic source grant through people-only Discuss creation', () => {
+    const f = fixture({ needsGrant: true, discussionSourceGap: true, noReviewers: true });
+    expect(resolveDiscussionSecondOpinionSourceGrantsV1(f.preview())).toEqual({ ok: false, errorCode: 'discussion_access_forbidden' });
+  });
+
+  it('admits Ask once and lets the create boundary refuse a grant that did not repair its audience', async () => {
+    const f = fixture({ needsGrant: true, discussionSourceGap: true, grantLeavesGap: true, createRefused: true });
+    expect(await f.executor.execute('discussion.second_opinion.start', { ...request, intent: 'ask', confirmedPreview: f.preview() }, f.context))
+      .toMatchObject({ ok: true, result: { status: 'pending', stage: 'create', errorCode: 'discussion_access_forbidden' } });
+    expect(f.events.filter(event => event === 'session.access.grant.set')).toHaveLength(1);
+    expect(f.events.filter(event => event === 'discussion.second_opinion.start')).toHaveLength(1);
+    expect(f.creates).toEqual([]);
+    expect(f.posts).toEqual([]);
   });
 
   it.each(['create', 'post'] as const)('rejoins the same resource and question after a lost %s response', async stage => {
@@ -376,17 +433,18 @@ describe('Second opinion canonical Action composition', () => {
     expect(quote.events).not.toContain('session.access.grant.set');
   });
 
-  it('requires renewed confirmation when the actual destination audience expands', async () => {
-    const f = fixture();
+  it.each(['reviewer audience', 'Discussion source gap'])('requires renewed confirmation when the %s expands', async gap => {
+    const f = fixture({ ...(gap === 'Discussion source gap' ? { needsGrant: true, discussionSourceGap: true } : {}) });
     const confirmed = f.preview();
-    confirmed.reviewers[0]!.audienceAccountIds = ['alice'];
+    if (gap === 'Discussion source gap') confirmed.missingDiscussionSourceAccountIds = [];
+    else confirmed.reviewers[0]!.audienceAccountIds = ['alice'];
     expect(await f.executor.execute('discussion.second_opinion.start', { ...request, intent: 'ask', confirmedPreview: confirmed }, f.context))
       .toMatchObject({ ok: true, result: { status: 'preview_changed' } });
     expect(f.creates).toEqual([]);
   });
   it('rejoins a committed source grant after its response is lost without inventing another recipient', async () => {
-    const f = fixture({ needsGrant: true, lostGrant: true });
-    const ask = { ...request, intent: 'ask', confirmedPreview: f.preview() };
+    const f = fixture({ needsGrant: true, discussionSourceGap: true, lostGrant: true });
+    const ask = { ...request, intent: 'ask', participants: [{ kind: 'account', accountId: 'bob' }], confirmedPreview: f.preview() };
     expect(await f.executor.execute('discussion.second_opinion.start', ask, f.context)).toMatchObject({ ok: true,
       result: { status: 'pending', stage: 'grant', errorCode: 'outcome_unknown' } });
     expect(await f.executor.execute('discussion.second_opinion.start', ask, f.context)).toMatchObject({ ok: true,
@@ -517,7 +575,7 @@ describe('Second opinion canonical Action composition', () => {
       actionArgs: { ...request, intent: 'ask', reviewers, confirmedPreview: f.preview(),
         project: { machineId: 'machine', directory: '/repo' } },
     }, context)).toMatchObject({ ok: true, result: { artifactId: 'opinion-approval-1' } });
-    expect(requiresExactDaemonApprovalReplay(f.approvals[0]!)).toBe(false);
+    expect(resolveApprovalExecutor(f.approvals[0]!)).toEqual({ kind: 'app', placement: 'account' });
     const result = await f.executor.execute('approval.request.decide', {
       artifactId: 'opinion-approval-1', decision: 'approve',
     }, context);
@@ -579,9 +637,10 @@ describe('Second opinion canonical Action composition', () => {
     const routeHostChildAction: ActionExecutorDeps['routeHostChildAction'] = async ({ actionId, input, context }) => {
       if (actionId !== 'session.spawn_new') return null;
       routed.push({ requestId: context.actionRequestId, input });
-      return { ok: true, result: { type: 'success', disposition: 'rejoined', sessionId: `allocated-reviewer-${routed.length % reviewers.length}`,
+      // Host child routing returns the public Action projection, unlike the native spawn transport above.
+      return { ok: true, result: projectSessionSpawnNewActionResultV1({ type: 'success', disposition: 'rejoined', sessionId: `allocated-reviewer-${routed.length % reviewers.length}`,
         executionTarget: { serverId: 'home', machineId: 'machine' }, organizationPlacement: { folderId: null, tagIds: [] },
-        initialInput: { status: 'notRequested' } } };
+        initialInput: { status: 'notRequested' } }) };
     };
     const f = fixture({ reviewers, needsGrant: true, ...(placement === 'routed' ? { routeHostChildAction } : {}) });
     const context = { ...f.context, actionRequestId: 'two-model-reviewers' };

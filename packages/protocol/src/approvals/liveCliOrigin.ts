@@ -14,13 +14,13 @@ export function liveCliApprovalOriginScope(requestId: string): string {
   return `${prefix}${computeCanonicalDomainSeparatedDigest('happier.approval.live-cli-origin.v1', [identity])}`;
 }
 
-/** Address published by the standalone terminal, never by a signed daemon invocation. */
+/** Address published by the original CLI/MCP host, never by a signed daemon invocation. */
 export function readLiveCliApprovalOriginScope(request: ApprovalRequest | TargetActionApprovalRequestV1): string | null {
   if (!isTargetApproval(request) && request.v !== 2) return null;
   const executor = resolveApprovalExecutor(request);
   if (executor.kind !== 'live_invocation' || executor.daemonMachineId) return null;
   const origin = request.executionOriginV1;
-  return origin?.surface === 'cli' && origin.caller.kind === 'host'
+  return (origin?.surface === 'cli' || origin?.surface === 'mcp') && origin.caller.kind === 'host'
     ? liveCliApprovalOriginScope(origin.requestId) : null;
 }
 

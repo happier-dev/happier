@@ -27,6 +27,8 @@ export const ScmHostingProviderContributionSchema = lazyZodSchema(() => z.strict
   kind: z.string().check(z.trim(), z.minLength(1)),
   capabilities: PluginScmOperationsV2Schema,
   authService: zMini.optional(asProtocolZod(PluginContributionReferenceV2Schema)),
+  /** Read-only Action resolving an exact repository ref to immutable commit provenance. */
+  resolveRefAction: zMini.optional(asProtocolZod(PluginContributionLocalIdSchema)),
   metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),
 }));
 export type ScmHostingProviderContribution = z.infer<typeof ScmHostingProviderContributionSchema>;

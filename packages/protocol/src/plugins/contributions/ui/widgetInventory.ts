@@ -4,7 +4,7 @@ import { PLUGIN_UI_INLINE_SURFACE_SLOTS_V1, type PluginUiInlineSurfaceBindingV1,
 /** Read already-admitted projection rows; physical hosts are never an inventory filter. */
 export function selectPluginUiWidgetEntriesV1<T extends Readonly<{ id: string; binding?: PluginUiSurfaceBindingV1 }>>(
   entries: readonly T[],
-  options?: Readonly<{ surface?: PluginContributionIdentityV1; targetKind?: 'session' | 'app' }>,
+  options?: Readonly<{ surface?: PluginContributionIdentityV1; targetKind?: 'session' | 'app' | 'project' }>,
 ): readonly (T & Readonly<{ binding: PluginUiInlineSurfaceBindingV1 }>)[] {
   return Object.freeze(entries.filter((entry): entry is T & Readonly<{ binding: PluginUiInlineSurfaceBindingV1 }> => {
     const binding = entry.binding;

@@ -94,20 +94,7 @@ export const StoredProviderAccountUsagePageProjectionV1Schema = lazyZodSchema(()
     context.addIssue({ code: 'custom', path: ['content'], message: 'Projection coverage must identify its protected observations' });
   }
 })));
-/** @internal Shared by metadata admission and the authorized encrypted-body opener. */
-export function isSupersededProjectionBody(value: unknown): value is Readonly<{ v: 1; recordId: string }> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) && 'v' in value && value.v === 1
-    && 'recordId' in value && typeof value.recordId === 'string' && !('encoding' in value);
-}
-
-/** Plain bodies can be retired here; only the authorized opener can classify opaque bodies. */
-export const ProviderAccountUsagePageProjectionMetadataV1Schema = lazyZodSchema(() => z.pipe(z.transform(value =>
-  value && typeof value === 'object' && !Array.isArray(value) && 'recordId' in value && 'demand' in value
-    && !('encoding' in value)
-    && 'content' in value && value.content && typeof value.content === 'object' && 't' in value.content
-    && value.content.t === 'plain' && 'v' in value.content && isSupersededProjectionBody(value.content.v)
-    && value.content.v.recordId === value.recordId ? undefined : value,
-), z.optional(StoredProviderAccountUsagePageProjectionV1Schema)));
+export const ProviderAccountUsagePageProjectionMetadataV1Schema = lazyZodSchema(() => z.optional(StoredProviderAccountUsagePageProjectionV1Schema));
 export const ProviderAccountUsagePageProjectionWriteV1Schema = lazyZodSchema(() => z.intersection(
   StoredProviderAccountUsagePageProjectionV1Schema, z.object({ encoding: z.literal(PROVIDER_ACCOUNT_USAGE_PAGE_ENCODING) }),
 ));
@@ -128,12 +115,6 @@ export function buildProviderAccountUsagePageProjectionV1(input: Readonly<{
     throw new Error('provider_account_usage_identity_mismatch');
   }
   return projection;
-}
-
-/** A recognized development body needs rebuilding, never legacy decoding. */
-export class ProviderAccountUsagePageProjectionSupersededError extends Error {
-  readonly code = 'provider_account_usage_page_projection_superseded';
-  constructor() { super('provider_account_usage_page_projection_superseded'); }
 }
 
 export function packProviderAccountUsagePageProjectionV1(input: ProviderAccountUsagePageProjectionV1): z.infer<typeof PackedProviderAccountUsagePageProjectionV1Schema> {

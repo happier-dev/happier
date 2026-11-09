@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import * as scmContractModule from './index.js';
+import { buildReviewUnits } from './comparisonOccurrences.js';
 import {
     SCM_WORKTREES_ENRICHMENT_MAX_PATHS,
     SCM_COMMIT_PATCH_MAX_COUNT,
@@ -35,6 +36,19 @@ function readScmSchema<TValue = unknown>(name: string): ZodLikeSchema<TValue> {
 }
 
 describe('scm protocol contracts', () => {
+    it('retains optional live diff review units and rejects unknown unit fields', () => {
+        const diff = '@@ -1 +1 @@\n-before\n+after\n';
+        const reviewUnits = buildReviewUnits('file.ts', 'combined', diff).map(({ key, hunkIndex, runIndex, hunk }) => ({
+            key, hunkIndex, runIndex,
+            oldStart: hunk.oldStart, oldLines: hunk.oldLines,
+            newStart: hunk.newStart, newLines: hunk.newLines,
+        }));
+        const schema = scmContractModule.ScmDiffFileResponseSchema;
+        expect(schema.parse({ success: true, diff, reviewUnits })).toEqual({ success: true, diff, reviewUnits });
+        expect(schema.parse({ success: true, diff })).toEqual({ success: true, diff });
+        expect(schema.safeParse({ success: true, diff, reviewUnits: [{ ...reviewUnits[0], authority: 'discard' }] }).success).toBe(false);
+    });
+
     it('validates closed blame requests and complete indexed range results', () => {
         const request = readScmSchema('ScmBlameFileRequestSchema');
         const response = readScmSchema('ScmBlameFileResponseSchema');

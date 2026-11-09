@@ -583,6 +583,8 @@ export const ConnectedServiceAuthGroupPolicyV1Schema = lazyZodSchema(() => z.str
         v: z._default(z.literal(1), 1),
         strategy: z._default(ConnectedServiceAuthGroupStrategyV1Schema, 'expiry_first'),
         autoSwitch: z._default(z.boolean(), false),
+        // Absence lets Happier manage recovery; true opts this pool into Claude native waiting.
+        claudeCodeAutoContinueAtUsageLimit: z.optional(z.boolean()),
         // Absence remains false, preserving predecessor persisted policies.
         autoUseQuotaResetsWhenExhausted: z.optional(z.boolean()),
         // Absence remains false. V4 projects this field only when the server feature is enabled.
@@ -602,8 +604,6 @@ export const ConnectedServiceAuthGroupPolicyV1Schema = lazyZodSchema(() => z.str
         cooldownMs: z._default(z.number().check(z.int(), z.minimum(0)), 30_000),
         honorProviderResetsAt: z._default(z.boolean(), true),
         autoRestorePrimaryWhenReset: z._default(z.boolean(), false),
-        maxSwitchesPerTurn: z._default(z.number().check(z.int(), z.minimum(0)), 1),
-        maxSwitchesPerSessionHour: z._default(z.number().check(z.int(), z.minimum(0)), 3),
         softSwitchRemainingPercent: z._default(z.number().check(z.minimum(0), z.maximum(100)), 15),
         probeIfSnapshotOlderThanMs: z._default(z.number().check(z.int(), z.minimum(1)), 300_000),
         preTurnProbeMode: z._default(z.enum(['never', 'when_stale', 'always_for_group']), 'when_stale'),
@@ -620,6 +620,7 @@ export const ConnectedServiceAuthGroupPolicyPatchV1Schema = lazyZodSchema(() => 
         v: z.optional(z.literal(1)),
         strategy: z.optional(ConnectedServiceAuthGroupStrategyV1Schema),
         autoSwitch: z.optional(z.boolean()),
+        claudeCodeAutoContinueAtUsageLimit: z.optional(z.boolean()),
         autoUseQuotaResetsWhenExhausted: z.optional(z.boolean()),
         autoDisablePlanInvalidAccounts: z.optional(z.boolean()),
         quotaLimitSelection: z.optional(ConnectedServiceQuotaLimitSelectionV1Schema),
@@ -632,8 +633,6 @@ export const ConnectedServiceAuthGroupPolicyPatchV1Schema = lazyZodSchema(() => 
         cooldownMs: z.optional(z.number().check(z.int(), z.minimum(0))),
         honorProviderResetsAt: z.optional(z.boolean()),
         autoRestorePrimaryWhenReset: z.optional(z.boolean()),
-        maxSwitchesPerTurn: z.optional(z.number().check(z.int(), z.minimum(0))),
-        maxSwitchesPerSessionHour: z.optional(z.number().check(z.int(), z.minimum(0))),
         softSwitchRemainingPercent: z.optional(z.number().check(z.minimum(0), z.maximum(100))),
         probeIfSnapshotOlderThanMs: z.optional(z.number().check(z.int(), z.minimum(1))),
         preTurnProbeMode: z.optional(z.enum(['never', 'when_stale', 'always_for_group'])),
@@ -656,6 +655,7 @@ export const ConnectedServiceAuthGroupMemberStateV1Schema = lazyZodSchema(() => 
         autoDisabledReason: z.optional(z.nullable(z.enum(['model_not_entitled']))),
         validationBlockedUntilMs: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
         lastFailureKind: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1)))),
+        lastFailureProviderLimitId: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1)))),
         lastFailureCode: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1)))),
         lastObservedPlanType: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1)))),
         lastObservedAtMs: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
@@ -705,7 +705,8 @@ export const ConnectedServiceAuthGroupV1Schema = lazyZodSchema(() => z.strictObj
         serviceId: ConnectedServiceIdSchema,
         groupId: ConnectedServiceAuthGroupIdSchema,
         displayName: z.nullable(z.string().check(z.trim(), z.minLength(1))),
-        policy: ConnectedServiceAuthGroupPolicyV1Schema,
+        // Stored snapshots can retain retired policy fields; mutation inputs stay strict.
+        policy: createStoredReadSchema(ConnectedServiceAuthGroupPolicyV1Schema),
         activeProfileId: z.nullable(ConnectedServiceProfileIdSchema),
         generation: z.number().check(z.int(), z.nonnegative()),
         runtimeStateRevision: ConnectedServiceAuthGroupRuntimeStateRevisionV1Schema,

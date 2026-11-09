@@ -9,8 +9,9 @@ import { createProfileDuplicateDraftV1 } from '../../profiles/profileOperations.
 import { readAiLaunchProfileRecords } from '../../profiles/read.js';
 import { LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1 } from '../../profiles/v2/schema.js';
 import { DEFAULT_PROVIDER_SETTINGS_V1 } from '../settings/v1.js';
+import { ProviderConnectionV1Schema } from '../connections/v1.js';
 import { deleteProviderConnectionV1 } from '../settings/operationsV1.js';
-import { migrateProviderAccountSettingsV1 } from './accountSettingsV1.js';
+import { migrateProviderAccountSettingsV1, type ProviderAccountSettingsMigrationCandidateV1 } from './accountSettingsV1.js';
 
 import {
   confirmLegacyAiLaunchProfileMigrationV1,
@@ -26,7 +27,7 @@ function connectionCandidate(sourceProfileId: string, connectionId: string, secr
   return {
     kind: 'connection' as const,
     sourceProfileId,
-    connection: {
+    connection: ProviderConnectionV1Schema.parse({
       v: 1 as const,
       id: connectionId,
       source: { kind: 'contribution' as const, contributionKey: 'happier.provider.deepseek/deepseek' },
@@ -36,13 +37,13 @@ function connectionCandidate(sourceProfileId: string, connectionId: string, secr
       revision: 0,
       createdAt: 10,
       updatedAt: 10,
-    },
+    }),
     secretBindings: { account: { apiKey: secretId } },
     manualModels: [{ id: 'deepseek-reasoner', addedAt: 10 }],
     selectedModel: { agentTargetKey: 'agent:claude', modelId: 'deepseek-reasoner' },
     movedSecretBindingEnvironmentVariableNames: ['DEEPSEEK_AUTH_TOKEN'],
     removedEnvironmentVariableNames: ['DEEPSEEK_AUTH_TOKEN'],
-  };
+  } satisfies Extract<ProviderAccountSettingsMigrationCandidateV1, { kind: 'connection' }>;
 }
 
 it.each(['azure-openai', 'gemini-api-key', 'gemini-vertex'])('duplicates the actual %s preset only after the incumbent Provider translator produces current selection', id => {

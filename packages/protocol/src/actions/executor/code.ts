@@ -1,8 +1,7 @@
-import * as z from 'zod/mini';
-import { CODE_INTELLIGENCE_QUERY_KIND_BY_ACTION_ID, CodeIntelligenceActionInputSchema, CodeIntelligenceFileActionInputSchema, CodeIntelligenceRestartActionInputSchema, CodeIntelligenceRenamePreviewInputSchema, CodeIntelligenceFileRenamePreviewInputSchema, CodeIntelligenceEditApplyInputSchema, CodeIntelligenceCodeActionApplyInputSchema, CodeIntelligenceDiagnosticsInputSchema, CodeIntelligenceWorkspaceSymbolsInputSchema, CodeIntelligenceCallHierarchyInputSchema, CodeIntelligenceFormatInputSchema, CodeIntelligenceOrganizeImportsInputSchema } from '../codeIntelligenceActionFamily.js';
+import { CODE_INTELLIGENCE_QUERY_KIND_BY_ACTION_ID, CodeIntelligenceActionInputSchema, CodeIntelligenceFileActionInputSchema, CodeIntelligenceRenamePreviewInputSchema } from '../codeIntelligenceActionFamily.js';
 import { DaemonLspQueryResponseSchema, DaemonLspRestartResponseSchema, DaemonLspApplyResponseSchema, type DaemonLspApplyRequest, type DaemonLspQueryRequest } from '../../machines/languageIntelligence.js';
 import { completeActionResult } from './resultProjection.js';
-import { getActionSpec } from '../actionSpecs.js';
+import { getActionSpec, type AdmittedActionInputById } from '../actionSpecs.js';
 import { ActionApprovalRequestCreatedResultSchema } from '../actionExecutionResult.js';
 import { queryCodeIntelligenceFallback } from '../../machines/codeIntelligenceFallback.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from './coreInvocation.js';
@@ -14,8 +13,7 @@ export async function dispatchCode(inv: Pick<CoreInvocation, 'actionId' | 'parse
   const { actionId, parsed, deps, ctx, data } = inv;
 
         if (actionId === 'code.format.apply' || actionId === 'code.imports.organize') {
-          const input: z.infer<typeof CodeIntelligenceFormatInputSchema> = actionId === 'code.format.apply' ? CodeIntelligenceFormatInputSchema.parse(parsed.data)
-            : CodeIntelligenceOrganizeImportsInputSchema.parse(parsed.data);
+          const input = parsed.data as AdmittedActionInputById[typeof actionId];
           const { machineId, operation, ...target } = input;
           if (operation.kind === 'preview') {
             if (!deps.languageIntelligenceQuery) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
@@ -40,10 +38,10 @@ export async function dispatchCode(inv: Pick<CoreInvocation, 'actionId' | 'parse
           if (!deps.languageIntelligenceApply) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
           let machineId: string, request: DaemonLspApplyRequest;
           if (actionId === 'code.codeAction.apply') {
-            const input = CodeIntelligenceCodeActionApplyInputSchema.parse(parsed.data);
+            const input = parsed.data as AdmittedActionInputById[typeof actionId];
             ({ machineId, ...request } = input);
           } else {
-            const { machineId: machine, files, ...target } = CodeIntelligenceEditApplyInputSchema.parse(parsed.data);
+            const { machineId: machine, files, ...target } = parsed.data as AdmittedActionInputById[typeof actionId];
             machineId = machine;
             request = { ...target, operation: { kind: actionId === 'code.rename.apply' ? 'rename' : 'fileRename', files } };
           }
@@ -57,11 +55,13 @@ export async function dispatchCode(inv: Pick<CoreInvocation, 'actionId' | 'parse
           if (!deps.languageIntelligenceQuery) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
           let machineId: string, request: DaemonLspQueryRequest;
           if (actionId === 'code.file.rename.preview') {
-            const { machineId: machine, ...target } = CodeIntelligenceFileRenamePreviewInputSchema.parse(parsed.data);
+            const { machineId: machine, ...target } = parsed.data as AdmittedActionInputById[typeof actionId];
             machineId = machine;
             request = { ...target, kind: 'willRenameFiles', text: 'disk' };
           } else {
-            const input = CodeIntelligenceRenamePreviewInputSchema.parse(parsed.data);
+            const input = actionId === 'code.rename.preview'
+              ? parsed.data as AdmittedActionInputById[typeof actionId]
+              : CodeIntelligenceRenamePreviewInputSchema.parse(parsed.data);
             if ((input.symbol === undefined) === (input.character === undefined) || input.occurrence !== undefined && input.symbol === undefined)
               return completeActionResult({ status: 'error', errorCode: 'invalid_position' });
             const { rootPath, path, languageId, newName } = input;
@@ -78,7 +78,7 @@ export async function dispatchCode(inv: Pick<CoreInvocation, 'actionId' | 'parse
         }
         if (actionId === 'code.restart') {
           if (!deps.languageIntelligenceRestart) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-          const { machineId, ...request } = CodeIntelligenceRestartActionInputSchema.parse(parsed.data);
+          const { machineId, ...request } = parsed.data as AdmittedActionInputById[typeof actionId];
           const response = await deps.languageIntelligenceRestart({ machineId, request }, ctx);
           if ('ok' in response && response.ok === false) return completeActionResult(response);
           return completeActionResult(DaemonLspRestartResponseSchema.parse(response));
@@ -86,7 +86,7 @@ export async function dispatchCode(inv: Pick<CoreInvocation, 'actionId' | 'parse
         if (actionId in CODE_INTELLIGENCE_QUERY_KIND_BY_ACTION_ID) {
           if (!deps.languageIntelligenceQuery) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
           const kind = CODE_INTELLIGENCE_QUERY_KIND_BY_ACTION_ID[actionId as keyof typeof CODE_INTELLIGENCE_QUERY_KIND_BY_ACTION_ID];
-          const hierarchy = actionId === 'code.callHierarchy.get' ? CodeIntelligenceCallHierarchyInputSchema.parse(parsed.data) : undefined;
+          const hierarchy = actionId === 'code.callHierarchy.get' ? parsed.data as AdmittedActionInputById[typeof actionId] : undefined;
           if (hierarchy?.hierarchy.itemId && !hierarchy.serverId)
             return completeActionResult({ status: 'error', errorCode: 'invalid_request' });
           const positional = kind !== 'documentSymbols' && kind !== 'diagnostics' && kind !== 'workspaceSymbol'
@@ -111,8 +111,8 @@ export async function dispatchCode(inv: Pick<CoreInvocation, 'actionId' | 'parse
           }
           const rawResponse = await deps.languageIntelligenceQuery({ machineId, request: { rootPath, path, kind,
             text: 'disk', ...(position ? { position } : {}), ...(languageId ? { languageId } : {}),
-            ...(actionId === 'code.diagnostics.list' ? { scope: CodeIntelligenceDiagnosticsInputSchema.parse(parsed.data).scope } : {}),
-            ...(actionId === 'code.symbols.workspace' ? { query: CodeIntelligenceWorkspaceSymbolsInputSchema.parse(parsed.data).query } : {}),
+            ...(actionId === 'code.diagnostics.list' ? { scope: (parsed.data as AdmittedActionInputById[typeof actionId]).scope } : {}),
+            ...(actionId === 'code.symbols.workspace' ? { query: (parsed.data as AdmittedActionInputById[typeof actionId]).query } : {}),
             ...(hierarchy ? { hierarchy: hierarchy.hierarchy, ...(hierarchy.serverId ? { serverId: hierarchy.serverId } : {}) } : {}),
           } }, ctx);
           if ('ok' in rawResponse && rawResponse.ok === false) return completeActionResult(rawResponse);

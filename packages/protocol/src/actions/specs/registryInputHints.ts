@@ -22,6 +22,7 @@ export const REGISTRY_INPUT_FIELDS = {
   'registries.sources.delete': [source],
   'registries.items.list': [{ ...kind, required: true },
     { path: 'sourceIds', title: 'Registries', widget: 'json' },
+    { path: 'contributionFamily', title: 'Plugin contribution family', widget: 'text' },
     { path: 'query', title: 'Search', widget: 'text' },
     { path: 'cursor', title: 'Next page', widget: 'text' },
     { path: 'refresh', title: 'Refresh sources', widget: 'boolean' }],

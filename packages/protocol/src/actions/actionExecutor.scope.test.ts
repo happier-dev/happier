@@ -10,7 +10,7 @@ describe('mounted client scope Actions', () => {
     'discovers %s and refuses execution without its mounted client owner', async (id) => {
       const executor = createActionExecutor({} as ActionExecutorDeps);
       const input = id === 'session.list.view.set' ? { filters: { scope: 'assigned_to_me' } }
-        : id === 'workflow.library.view.set' ? { view: 'running', searchQuery: 'release' }
+        : id === 'workflow.library.view.set' ? { filters: { view: 'running' }, searchQuery: 'release' }
         : id === 'shell.column.set' ? { visible: true } : {};
       const result = await executor.execute(id as ActionId, input, { surface: 'ui' });
       expect(result).toMatchObject({ ok: false, errorCode: 'unsupported_action' });

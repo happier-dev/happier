@@ -37,7 +37,7 @@ export async function resolveInputOptionsConsumerField(params: Readonly<{
       }
       return native.inputs?.fields.find(field => field.path === fieldPath) ?? null;
     }
-    if (consumer.definition.kind === 'installed' && deps.widgetCatalog?.readInstalledInputFields) {
+    if (consumer.definition.kind === 'installed' && deps.widgetCatalog?.readInstalledDescriptor) {
       const refused = await admitWidgetActionSurfaceV1(deps, consumer.surface, context);
       if (refused) return refused;
       if (consumer.selectedSession) {
@@ -45,11 +45,12 @@ export async function resolveInputOptionsConsumerField(params: Readonly<{
           { ...consumer.surface, serverId: consumer.selectedSession.serverId }, context);
         if (!admission.ok) return admission;
       }
-      const fields = await deps.widgetCatalog.readInstalledInputFields({ surface: consumer.surface, definition: consumer.definition,
+      const descriptor = await deps.widgetCatalog.readInstalledDescriptor({ surface: consumer.surface, definition: consumer.definition,
         context, signal: context.signal, boundSession: consumer.selectedSession });
-      if (!fields || 'ok' in fields) return fields;
-      if (!isWidgetTargetHostableV1({ inputs: { fields: [...fields] } }, consumer.surface.owner.kind)) return null;
-      return fields.find(field => field.path === fieldPath) ?? null;
+      if (!descriptor || 'ok' in descriptor) return descriptor;
+      if (descriptor.availability !== 'available') return null;
+      if (!isWidgetTargetHostableV1(descriptor, consumer.surface.owner.kind)) return null;
+      return descriptor.inputs?.fields.find(field => field.path === fieldPath) ?? null;
     }
     const { createActionExecutor } = await import('../actions/actionExecutor.js');
     const read = await createActionExecutor(deps).execute('widgets.catalog.list', { surface: consumer.surface,

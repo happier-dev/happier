@@ -1,5 +1,5 @@
 import { decodeBase64, encodeBase64 } from '../../../crypto/base64.js';
-import type { McpServerCatalogEntryTransportV1, McpServerCatalogEntryV1 } from '../settingsV1.js';
+import { McpServerCatalogEntryV1Schema, type McpServerCatalogEntryTransportV1, type McpServerCatalogEntryV1 } from '../settingsV1.js';
 import { readMcpRegistryServerV1 } from '../../../registries/formats/mcpRegistry.js';
 import { mapMcpRegistryServerV1, selectMcpRegistryServerTransportV1 } from '../registry/mapMcpRegistryServerV1.js';
 import { resolveValueRefPlaintextV1, type ValueRefV1 } from '../../../valueRefs/valueRefV1.js';
@@ -15,7 +15,8 @@ export type ImportedMcpInputDefinitionV1 = Readonly<{
 export type ImportedMcpServerDraftV1 = Readonly<{
     name: string; title?: string; description?: string; transport: McpServerCatalogEntryTransportV1;
     stdio?: { command: string; args: string[]; cwd?: NonNullable<McpServerCatalogEntryV1['stdio']>['cwd'] };
-    remote?: { url: string; headers: Record<string, ImportedMcpDraftValueV1>; urlTemplate?: Extract<ImportedMcpDraftValueV1, { t: 'template' }> };
+    remote?: { url: string; headers: Record<string, ImportedMcpDraftValueV1>; urlTemplate?: Extract<ImportedMcpDraftValueV1, { t: 'template' }>;
+        auth?: NonNullable<McpServerCatalogEntryV1['remote']>['auth'] };
     env: Record<string, ImportedMcpDraftValueV1>; enabled: boolean; warnings: string[];
     origin?: McpServerCatalogEntryV1['origin'];
 }>;
@@ -37,8 +38,11 @@ function decodeConfig(value: string): unknown {
 
 /** Share configuration and required value names; never serialize value refs or sign-in state. */
 export function encodeMcpServerInstallLinkV1(server: McpServerCatalogEntryV1, webappUrl: string): string {
+    const auth = McpServerCatalogEntryV1Schema.shape.remote._zod.def.innerType.shape.auth.parse(server.remote?.auth);
+    if (auth && server.transport !== 'http') throw new Error('invalid-install-auth');
     const payload = { name: server.name, ...(server.title ? { title: server.title } : {}), transport: server.transport,
         ...(server.transport === 'stdio' ? { command: server.stdio!.command, args: server.stdio!.args } : { url: server.remote!.url }),
+        ...(auth ? { auth } : {}),
         headerNames: Object.keys(server.remote?.headers ?? {}), envNames: Object.keys(server.env) };
     const url = new URL('/settings/mcp', webappUrl);
     url.searchParams.set('install', encodeBase64(new TextEncoder().encode(JSON.stringify(payload)), 'base64url'));
@@ -128,6 +132,8 @@ function parseValueMap(serverName: string, target: 'env' | 'header', raw: unknow
 
 function parseServer(name: string, raw: unknown, inputs: Map<string, ImportedMcpInputDefinitionV1>, urlTransport?: 'http' | 'sse'): ImportedMcpServerDraftV1 {
     if (!isObject(raw)) throw new Error('invalid-server');
+    const auth = McpServerCatalogEntryV1Schema.shape.remote._zod.def.innerType.shape.auth.parse(raw.auth);
+    if (auth && (raw.transport === 'stdio' || raw.transport === undefined && (raw.type === 'stdio' || raw.type === 'local'))) throw new Error('invalid-import-auth');
     const commandObject = isObject(raw.command) ? raw.command : null;
     const command = commandObject?.path ?? raw.command;
     const commandArray = isStrings(command) ? command : null;
@@ -147,9 +153,10 @@ function parseServer(name: string, raw: unknown, inputs: Map<string, ImportedMcp
         ...(nonempty(raw.description) ? { description: raw.description } : {}), env,
         enabled: raw.enabled !== false, warnings: Object.keys(raw).filter(key => ![
             'name', 'title', 'description', 'command', 'args', 'cwd', 'env', 'environment', 'envNames', 'headers', 'headerNames',
-            'url', 'serverUrl', 'httpUrl', 'type', 'transport', 'enabled', 'inputs',
+            'url', 'serverUrl', 'httpUrl', 'type', 'transport', 'enabled', 'inputs', 'auth',
         ].includes(key)).sort().map(key => `${name}: unsupported field "${key}"`) };
     if (nonempty(executable)) {
+        if (auth) throw new Error('invalid-import-auth');
         if (!isStrings(args)) throw new Error('invalid-args');
         const cwd = raw.cwd ?? commandObject?.cwd;
         if (cwd !== undefined && !nonempty(cwd)) throw new Error('invalid-cwd');
@@ -160,6 +167,7 @@ function parseServer(name: string, raw: unknown, inputs: Map<string, ImportedMcp
     const explicitTransport = raw.transport === 'http' || raw.transport === 'sse' ? raw.transport
         : raw.type === 'sse' ? 'sse' : raw.type === 'http' || raw.type === 'remote' ? 'http' : undefined;
     const transport = explicitTransport ?? (raw.httpUrl !== undefined || raw.serverUrl !== undefined ? 'http' : urlTransport ?? 'http');
+    if (auth && transport !== 'http') throw new Error('invalid-import-auth');
     const headers = parseValueMap(name, 'header', raw.headers, inputs);
     if (raw.headerNames !== undefined) {
         if (!isStrings(raw.headerNames)) throw new Error('invalid-header-names');
@@ -169,7 +177,7 @@ function parseServer(name: string, raw: unknown, inputs: Map<string, ImportedMcp
             headers[key] = { t: 'input', inputId };
         }
     }
-    return { ...base, transport, remote: { url, headers } };
+    return { ...base, transport, remote: { url, headers, ...(auth ? { auth } : {}) } };
 }
 
 export function parseMcpServerImportV1(raw: string): ParseMcpServerImportV1Result {
@@ -202,6 +210,8 @@ export function parseMcpServerImportV1(raw: string): ParseMcpServerImportV1Resul
 
 /** Registry transport/package/argument decisions remain in the shared mapper. */
 function parseRegistryServer(raw: unknown): ParseMcpServerImportV1Result {
+    // Registry server.json does not declare this install-payload extension.
+    if (isObject(raw) && Object.hasOwn(raw, 'auth')) throw new Error('invalid-registry-auth');
     const server = readMcpRegistryServerV1(raw);
     const selected = selectMcpRegistryServerTransportV1(server);
     const supplied: Record<string, ValueRefV1> = {};

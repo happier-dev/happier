@@ -6,6 +6,24 @@ import { sealSessionFollowRuleContentV1 } from './sessionFollowRuleContentCodecV
 import { pageFollowListV1 } from './sessionFollowListV1.js';
 
 describe('signed Follow HTTP purposes', () => {
+  it('selects source kinds through following transport and binds them to the signed purpose', () => {
+    for (const receiver of [{ kind: 'account' }, { kind: 'session', sessionId: 'receiver' }] as const) {
+      const input = { direction: 'following' as const, receiver, sourceKinds: ['execution_run', 'workflow_run'], limit: 1 };
+      const request = resolveSessionFollowActionRequest('follow.list', input);
+      expect(resolveSessionFollowActionRequest('follow.list', { ...input,
+        sourceKinds: ['workflow_run', 'execution_run', 'execution_run'] })).toEqual(request);
+      const query = Object.fromEntries(new URL(request.path, 'https://home.test').searchParams);
+      expect(JSON.parse(query.sourceKinds!)).toEqual(['execution_run', 'workflow_run']);
+      expect(query.limit).toBe('1');
+      const wire = { ...request, routeInput: { ...query, limit: 1,
+        ...(receiver.kind === 'session' ? { destinationSessionId: receiver.sessionId } : {}) },
+        ...(receiver.kind === 'session' ? { sessionRouteSessionId: receiver.sessionId } : {}) };
+      expect(isSessionFollowActionHttpRequestV1('follow.list', wire)).toBe(true);
+      expect(isSessionFollowActionHttpRequestV1('follow.list', { ...wire,
+        routeInput: { ...wire.routeInput, sourceKinds: JSON.stringify(['discussion']) } })).toBe(false);
+      expect(() => resolveSessionFollowActionRequest('follow.list', { ...input, sourceKinds: ['rule'] })).toThrow();
+    }
+  });
   it('carries a closed source selection on following pages and binds the signed HTTP purpose', () => {
     const source = { kind: 'session' as const, sessionId: 'selected-session' };
     for (const receiver of [{ kind: 'account' }, { kind: 'session', sessionId: 'receiver' }] as const) {

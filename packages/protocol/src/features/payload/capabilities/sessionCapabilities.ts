@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
-import { SessionStateCapabilitiesV1Schema } from '../../../sessions/state/capabilitySchema.js';
+import { SessionStateCapabilitiesV1ReadSchema } from '../../../sessions/state/capabilitySchema.js';
 
 export const DEFAULT_SESSION_MESSAGES_CAPABILITIES = Object.freeze({
   role: false,
@@ -22,7 +22,7 @@ export const SessionMessagesCapabilitiesSchema = lazyZodSchema(() => z._default(
 
 export type SessionMessagesCapabilities = z.infer<typeof SessionMessagesCapabilitiesSchema>;
 
-const SessionProtocolCapabilitySchema = lazyZodSchema(() => z.strictObject({
+const SessionProtocolCapabilitySchema = lazyZodSchema(() => z.object({
   protocolVersion: z.number().check(z.int(), z.positive()),
 }));
 
@@ -30,17 +30,17 @@ export const SessionRuntimeActivityCapabilitiesSchema = SessionProtocolCapabilit
 export const SessionPendingInputCapabilitiesSchema = SessionProtocolCapabilitySchema;
 export const SessionPublisherAuthorityCapabilitiesSchema = SessionProtocolCapabilitySchema;
 
-export const SessionExternalImportCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const SessionExternalImportCapabilitiesSchema = lazyZodSchema(() => z.object({
   publicationFenceVersion: z.number().check(z.int(), z.positive()),
 }));
 
-export const SessionSystemRecordsCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const SessionSystemRecordsCapabilitiesSchema = lazyZodSchema(() => z.object({
   protocolVersions: z.tuple([z.literal(1)]),
 }));
 export type SessionSystemRecordsCapabilities = z.infer<typeof SessionSystemRecordsCapabilitiesSchema>;
 
 /** Host-rendered Follow context accepted by the destination Session runtime. */
-export const SessionFollowCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const SessionFollowCapabilitiesSchema = lazyZodSchema(() => z.object({
   contextVersion: z.literal(1),
 }));
 export type SessionFollowCapabilities = z.infer<typeof SessionFollowCapabilitiesSchema>;
@@ -50,8 +50,8 @@ export const DEFAULT_SESSION_CAPABILITIES = Object.freeze({
   messages: DEFAULT_SESSION_MESSAGES_CAPABILITIES,
 });
 
-export const SessionCapabilitiesSchema = lazyZodSchema(() => z._default(z.optional(z.strictObject({
-    state: z._default(z.optional(SessionStateCapabilitiesV1Schema), {}),
+export const SessionCapabilitiesSchema = lazyZodSchema(() => z._default(z.optional(z.object({
+    state: z._default(z.optional(SessionStateCapabilitiesV1ReadSchema), {}),
     messages: SessionMessagesCapabilitiesSchema,
     systemRecords: z.optional(SessionSystemRecordsCapabilitiesSchema),
     follow: z.optional(SessionFollowCapabilitiesSchema),

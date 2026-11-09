@@ -7,10 +7,11 @@ import { z } from 'zod/mini';
  *
  * A top-level family of its own, like `serverIdentity`, rather than fields of the strict
  * `capabilities.server` object: every released reader (0.2.11 CLI/UI, tag `cli-v0.2.11`,
- * commit 98ea8fb767) and every earlier 0.3 build parses `capabilities.server` strictly and would
+ * commit 98ea8fb767) and earlier 0.3 builds parse `capabilities.server` strictly and would
  * refuse the whole features payload, while the capabilities root drops a family it does not know.
+ * Current capability readers strip unknown diagnostic fields at every read-only object boundary.
  */
-export const ServerReleaseCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const ServerReleaseCapabilitiesSchema = lazyZodSchema(() => z.object({
   version: z.optional(z.string().check(z.trim(), z.minLength(1))),
   flavor: z.optional(z.enum(['full', 'light'])),
 }));

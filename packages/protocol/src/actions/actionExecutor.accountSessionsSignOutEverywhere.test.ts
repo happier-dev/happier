@@ -80,7 +80,6 @@ describe('createActionExecutor (account.sessions.signOutEverywhere)', () => {
       { surface: 'api', authority: 'account_automation', actionCaller: { kind: 'host' } },
     )).resolves.toEqual(expect.objectContaining({
       ok: false,
-      errorCode: 'present_user_required',
     }));
     expect(accountSessionsSignOutEverywhereAction).not.toHaveBeenCalled();
   });

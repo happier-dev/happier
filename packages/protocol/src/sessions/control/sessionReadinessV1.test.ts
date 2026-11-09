@@ -29,6 +29,13 @@ it('never certifies stale or missing sign-in and never reclassifies unsupported 
   expect(composeSessionReadinessV1({ ...facts, operation: 'credential' })).toMatchObject({ status: 'unknown', cause: 'credential' });
 });
 
+it('keeps a missing required Team route on the credential owner instead of native Agent sign-in', () => {
+  const credential = { kind: 'team' as const, teamId: 'team', resourceId: 'resource', readiness: null, recoveryAction: null };
+  expect(composeSessionReadinessV1({ ...facts,
+    agent: { ...facts.agent!, state: 'needsSignIn' }, credential }, { credentialRequiredForConversation: true }))
+    .toMatchObject({ status: 'unknown', cause: 'credential', credential });
+});
+
 it('preserves an exact entitled sign-in repair without executing it', () => {
   const repair = { actionId: 'machines.agents.signIn.start' as const, input: { machineId: 'machine-1', agentId: 'acme-agent', method: 'native' as const } };
   const result = composeSessionReadinessV1({ ...facts, agent: { ...facts.agent!, state: 'needsSignIn', repair } });

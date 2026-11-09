@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { SessionHostOnboardingPresentationV1Schema } from '../creation/hostOnboardingPresentationV1.js';
 import { z } from 'zod/mini';
 import { createClaudePredecessorMessageMetaShape } from '../../agents/claude/predecessorMessageMeta.js';
 
@@ -68,6 +69,21 @@ export const SessionMessageStreamSegmentV1Schema = lazyZodSchema(() => z.strictO
   updatedAtMs: z.catch(z.nullish(z.number()), undefined),
   interruptedReason: z.catch(z.optional(z.string()), undefined),
   sourceMessageId: z.optional(z.string().check(z.refine((value) => value.trim().length > 0))),
+  /** Bumped when the segment's text is rewritten (not appended); text of different generations never splices. */
+  textGeneration: z.catch(z.optional(z.number().check(z.int(), z.minimum(0))), undefined),
+}));
+
+/**
+ * Sealed inside a durable append's encrypted record: the message and base it extends and the
+ * resulting length. The receiver rebuilds only when all three match what it holds, so Home cannot
+ * splice or replay an authentic fragment onto another message or base.
+ */
+export const SESSION_STREAM_APPEND_BINDING_META_KEY = 'happierStreamAppendV1';
+export const SessionMessageStreamAppendBindingV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  localId: z.string().check(z.minLength(1)),
+  baseLength: z.number().check(z.int(), z.minimum(0)),
+  length: z.number().check(z.int(), z.minimum(0)),
 }));
 
 export const SESSION_USER_MESSAGE_DELIVERY_INTENT_META_KEY = 'happierDeliveryIntentV1';
@@ -122,6 +138,7 @@ export function createSessionMessageMetaSchema(zod: typeof z) {
   return zod.looseObject({
       // Source-owned facts, sealed with this original record; never delivery or Account-rule authority.
       happierFollowRuleEvidenceV1: zod.optional(SessionFollowRuleSourceEvidenceV1Schema),
+      happierHostOnboardingV1: zod.catch(zod.optional(SessionHostOnboardingPresentationV1Schema), undefined),
       ...createClaudePredecessorMessageMetaShape(zod),
       sentFrom: z.optional(createSentFromSchema(zod)),
       /**
@@ -150,6 +167,7 @@ export function createSessionMessageMetaSchema(zod: typeof z) {
       happierMedia: z.optional(sessionMediaMessageMetaV1Schema),
       [SESSION_USER_MESSAGE_DELIVERY_INTENT_META_KEY]: zod.optional(zod.unknown()),
       happierStreamSegmentV1: z.catch(z.optional(SessionMessageStreamSegmentV1Schema), undefined),
+      [SESSION_STREAM_APPEND_BINDING_META_KEY]: z.catch(z.optional(SessionMessageStreamAppendBindingV1Schema), undefined),
       happierStreamKey: zod.optional(zod.unknown()),
       happierSidechainStreamKey: zod.optional(zod.unknown()),
       happierSyntheticNoResponseV1: zod.optional(zod.unknown()),

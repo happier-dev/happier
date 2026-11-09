@@ -31,7 +31,7 @@ function fixture(sharedWith?: 'refused' | 'unselected', differentCapture = false
   }));
   let reads = 0; let writes = 0; let deletions = 0;
   let failCleanup = false; let offline = false; let cancelled = false; let cancelAfterDeletion = false;
-  let inventoryReads = 0; let inventoryUnavailable = false;
+  let inventoryReads = 0; let inventoryUnavailable = false; let lockedRevision = 2;
   const portFor = (comparison: typeof comparisons[number]) => {
     const key = buildScmReviewedMarksKey(buildScmReviewScopeId({ repositoryRootPath: comparison.repository.rootPath, source: comparison.source }));
     return createScmReviewedMarksRecordPort({ comparison, transport: {
@@ -61,7 +61,7 @@ function fixture(sharedWith?: 'refused' | 'unselected', differentCapture = false
       return { success: true, result: results.get(item.resultId)! };
     },
     delete: async item => {
-      if (item.resultId === 'refused') return { success: false, errorCode: 'revision_conflict', latestRevision: 2, error: 'A concurrent edit won' };
+      if (item.resultId === 'refused') return { success: false, errorCode: 'revision_conflict', latestRevision: lockedRevision, error: 'A concurrent edit won' };
       const result = results.get(item.resultId)!;
       results.delete(item.resultId); deletions++;
       if (cancelAfterDeletion) cancelled = true;
@@ -73,12 +73,24 @@ function fixture(sharedWith?: 'refused' | 'unselected', differentCapture = false
     },
   });
   return { execute, input, rows, results, portFor, comparisons,
+    setLockedRevision: (revision: number) => { lockedRevision = revision; },
     inventoryReads: () => inventoryReads, failInventory: () => { inventoryUnavailable = true; },
     setOffline: () => { offline = true; }, setCleanupFailure: (value: boolean) => { failCleanup = value; },
     cancelAfterDeletion: () => { cancelAfterDeletion = true; }, counts: () => ({ reads, writes, deletions }) };
 }
 
 describe('canonical saved-result Clear and personal marks', () => {
+  it('forwards the locked Machine refusal when the preliminary snapshot is already stale', async () => {
+    const f = fixture('refused');
+    f.results.get('refused')!.revision = 3;
+    f.results.get('refused')!.output.revision = 3;
+    f.setLockedRevision(5);
+    expect(await f.execute()).toMatchObject({ success: true, deleted: [{ resultId: 'deleted' }], failures: [{
+      resultId: 'refused', errorCode: 'revision_conflict', latestRevision: 5,
+    }] });
+    expect(f.counts()).toEqual({ reads: 0, writes: 0, deletions: 1 });
+  });
+
   it.each(['refused', 'unselected'] as const)('preserves comparison marks while a %s saved result survives on this Machine', async survivor => {
     const f = fixture(survivor);
     expect(await f.execute()).toMatchObject({ success: true, deleted: [{ resultId: 'deleted' }] });

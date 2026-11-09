@@ -28,6 +28,41 @@ describe('Artifact coarse selection', () => {
     expect(result).toEqual({ items: [], nextCursor: 'frontier', coverage: 'partial', kindCoverage: partial });
     expect(requests).toEqual([{ audience: 'received', kinds: ['bot_template.v1'], limit: 2 }]);
   });
+  it('requires separate body reads when asynchronous header authority must precede hydration', async () => {
+    await expect(listArtifactHeadersV1({ options: { includeBody: true, headerAdmission: async () => false }, encodeCursor,
+      readPage: async () => { throw new Error('Must not request bodies before header admission'); },
+    })).rejects.toBeInstanceOf(TypeError);
+  });
+
+  it('admits headers before body demand across physical and legacy pages, then rechecks fresh subjects', async () => {
+    const row = (artifactId: string, admitted: boolean) => ({ artifactId, createdAt: 1, updatedAt: 2,
+      header: { kind: 'approval_request.v1', approvalStatus: 'open', admitted } });
+    const denied = row('denied', false);
+    const allowed = row('allowed', true);
+    const legacyDenied = row('legacy-denied', false);
+    const legacyAllowed = row('legacy-allowed', true);
+    const hydrated: string[] = [];
+    const requests: unknown[] = [];
+    const partial = { status: 'partial', unclassifiedCount: 2, reason: 'unclassified_legacy_rows' } as const;
+    const result = await listArtifactHeadersV1({ options: { kinds: ['approval_request.v1'], limit: 2, includeBody: true,
+      headerAdmission: async header => header.admitted === true }, encodeCursor,
+      readPage: async options => {
+        requests.push(options);
+        return options?.unclassified ? { items: [legacyDenied, legacyAllowed], kindCoverage: partial }
+          : options?.cursor ? { items: [allowed], kindCoverage: partial }
+            : { items: [denied], nextCursor: denied.artifactId, kindCoverage: partial };
+      },
+      readBodies: async items => {
+        hydrated.push(...items.map(item => item.artifactId));
+        return items.map(item => item.artifactId === 'allowed' ? row('allowed', false) : item);
+      },
+    });
+    expect(hydrated.sort()).toEqual(['allowed', 'legacy-allowed']);
+    expect(result.items.map(item => item.artifactId)).toEqual(['legacy-allowed']);
+    expect(requests).toEqual([{ limit: 500, kinds: ['approval_request.v1'] },
+      { limit: 500, cursor: 'denied', kinds: ['approval_request.v1'] }, { limit: 500, unclassified: true }]);
+  });
+
   it('keeps relevant legacy approvals with unknown state partial without opening settled or unrelated bodies', async () => {
     const rows = [
       { artifactId: 'unknown', header: { kind: 'approval_request.v1', approvalStatus: 'invalid', approvalSubjectKey: 'managed-delete:subject' }, createdAt: 1, updatedAt: 3 },

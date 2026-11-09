@@ -1,5 +1,3 @@
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from './limits.js';
-
 export type ProviderProbeResponseEncoding = 'identity' | 'gzip' | 'deflate' | 'br';
 export type ProviderProbeResponseContentKind = 'json' | 'strict-json-compat';
 
@@ -38,12 +36,3 @@ export function validateProviderProbeResponseMetadata(params: Readonly<{
   };
 }
 
-export function assertProviderDecodedBodyWithinLimit(decodedBodyBytes: number): void {
-  if (
-    !Number.isSafeInteger(decodedBodyBytes)
-    || decodedBodyBytes < 0
-    || decodedBodyBytes > PROVIDER_ENDPOINT_SAFETY_LIMITS.maxDecodedBodyBytes
-  ) {
-    throw new Error('Provider probe decoded response exceeds the byte limit.');
-  }
-}

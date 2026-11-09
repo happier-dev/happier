@@ -3,13 +3,14 @@
  * invitation, native-auth, webhook, or browser Artifact bearer capability.
  */
 export function redactPublicShareCapabilityUrl(rawUrl: string): string {
-  const storedContentRedacted = rawUrl.replace(
+  const storedContentRedacted = rawUrl.replace(/(\/share\/artifact\/)([^/?#\s]+)(?:[?#][^\s]*)?/g, '$1:lookup').replace(
     /(\/s\/)([^/?#\s]+)(?:[?#][^\s]*)?/g,
     '$1:lookup',
   ).replace(/(\/a\/)([^/?#\s]+)(?:[?#][^\s]*)?/g, '$1:artifact')
-    .replace(/(\/v1\/public-shares\/)([^/?#\s]+)(\/content)(?=[/?#\s]|$)/g, '$1:lookup$3');
+    .replace(/(\/v1\/public-shares\/)([^/?#\s]+)(\/content)(?=[/?#\s]|$)/g, '$1:lookup$3')
+    .replace(/(\/v1\/artifact-signed-in-links\/)([^/?#\s]+)(\/join)(?=[/?#\s]|$)/g, '$1:lookup$3');
   const publicShareRedacted = storedContentRedacted.replace(
-    /(\/(?:v1\/public-share|v1\/plugins\/webhooks|share|join)\/)([^/?#\s]+)/g,
+    /(\/(?:v1\/public-share|v1\/plugins\/webhooks|share(?!\/artifact\/)|join)\/)([^/?#\s]+)/g,
     '$1:token',
   );
   const nativeAuthRedacted = publicShareRedacted.replace(

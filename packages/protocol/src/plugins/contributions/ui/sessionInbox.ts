@@ -17,6 +17,14 @@ export const PluginSessionInboxRowV1Schema = lazyZodSchema(() => z.strictObject(
   session: ActionSessionAddressV1Schema,
   title: z.string().check(z.minLength(1)),
   detail: z.nullable(z.string()),
+  /** Retained PR observation selected by its owner; presentation grants no mutation authority. */
+  landing: z.optional(z.strictObject({
+    number: z.number().check(z.int(), z.positive(), z.maximum(Number.MAX_SAFE_INTEGER)),
+    url: z.string().check(z.url()),
+    title: z.optional(z.nullable(z.string())),
+    state: z.enum(['open', 'merged', 'closed', 'unknown']),
+    observedAt: z.optional(z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER))),
+  })),
   detailResource: z.strictObject({
     pluginId: asProtocolZod(PluginIdSchema),
     resourceId: asProtocolZod(PluginContributionLocalIdSchema),

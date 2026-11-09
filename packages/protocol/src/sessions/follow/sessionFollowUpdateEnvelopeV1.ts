@@ -8,6 +8,9 @@ import { SessionIdSchema } from '../idsV1.js';
 import { SessionMessageProvenanceV1Schema } from '../messages/sessionInputAdmission.js';
 import { SessionTranscriptObservationAckV1Schema } from '../messages/transcriptObservationV1.js';
 import { SessionFollowFrontierV1Schema } from './sessionFollowFrontierV1.js';
+import { InteractionTransientQuestionV1Schema, MAX_INTERACTION_TRANSIENT_QUESTIONS_V1 } from '../../plugins/interactions/transientV1.js';
+import { SessionQuestionHandlerV1Schema, SessionQuestionContextV1Schema } from '../permissions/questionV1.js';
+import { SessionPermissionRequestIdV1Schema } from '../permissions/v1.js';
 
 export const SessionFollowMessageSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   messageId: SessionTranscriptObservationAckV1Schema._zod.def.options[0].shape.id,
@@ -33,6 +36,13 @@ export const SessionFollowUpdateEnvelopeV1Schema = lazyZodSchema(() => z.strictO
   observed: SessionFollowFrontierV1Schema,
   awareness: SessionAwarenessProjectionV1Schema,
   recentMessages: z.array(SessionFollowMessageSummaryV1Schema),
+  /** Ephemeral, complete forms opened from exact admitted request originals. No answer authority. */
+  questionOffers: z.optional(z.array(z.strictObject({
+    requestId: SessionPermissionRequestIdV1Schema,
+    currentHandler: SessionQuestionHandlerV1Schema,
+    questionV1: z.optional(SessionQuestionContextV1Schema),
+    questions: z.array(InteractionTransientQuestionV1Schema).check(z.minLength(1), z.maxLength(MAX_INTERACTION_TRANSIENT_QUESTIONS_V1)),
+  }))),
   truncated: z.boolean(),
 }).check(z.superRefine((update, context) => {
   if ((update.reason === 'human_changed_source') !== (update.deliveryIntent === 'wake')) {
@@ -44,12 +54,20 @@ export const SessionFollowUpdateEnvelopeV1Schema = lazyZodSchema(() => z.strictO
   if (update.awareness.sessionId !== update.edge.sourceSessionId) {
     context.addIssue({ code: 'custom', path: ['awareness', 'sessionId'], message: 'Awareness must describe the source Session' });
   }
+  for (const [index, offer] of (update.questionOffers ?? []).entries()) {
+    if (offer.currentHandler.kind !== 'session' || offer.currentHandler.sessionId !== update.edge.destinationSessionId) {
+      context.addIssue({ code: 'custom', path: ['questionOffers', index, 'currentHandler'], message: 'Question offers describe this destination handler' });
+    }
+  }
   for (const [index, message] of update.recentMessages.entries()) {
     if (message.seq > update.observed.transcriptSeq) {
       context.addIssue({ code: 'custom', path: ['recentMessages', index, 'seq'], message: 'Message exceeds the observed frontier' });
     }
   }
   if (update.reason === 'source_unavailable' || !isSessionAwarenessContentReadableV1(update.awareness.encryption)) {
+    if (update.questionOffers?.length) {
+      context.addIssue({ code: 'custom', path: ['questionOffers'], message: 'Unavailable question content must be omitted' });
+    }
     if (update.recentMessages.length > 0) {
       context.addIssue({ code: 'custom', path: ['recentMessages'], message: 'Unavailable source content must be omitted' });
     }

@@ -27,6 +27,23 @@ function connectedAccountServiceConfigurationsV1Entry(
 }
 
 describe('AccountSettingMutationV1', () => {
+  it('preserves caller-surface policy on an older Actions writer and allows an explicit current reset', () => {
+    const callerSurfacePolicies = { foreign_session_html: { 'session.message.send': 'off', 'acme.preview/resources/status': 'allowed' } };
+    const initial = { actionsSettingsV1: { v: 1, actions: {}, callerSurfacePolicies } };
+    const updated = applyAccountSettingMutationV1(initial, { operations: [{ op: 'set', key: 'actionsSettingsV1',
+      value: { v: 1, actions: { 'session.stop': { enabled: false } } },
+    }] });
+    expect(updated.status).toBe('applied');
+    if (updated.status !== 'applied') throw new Error('Expected settings update');
+    expect(accountSettingsParse(updated.raw).actionsSettingsV1).toMatchObject({ callerSurfacePolicies,
+      actions: { 'session.stop': { enabled: false } } });
+    const cleared = applyAccountSettingMutationV1(updated.raw, { operations: [{ op: 'set', key: 'actionsSettingsV1',
+      value: { v: 1, actions: {}, callerSurfacePolicies: {} },
+    }] });
+    expect(cleared.status).toBe('applied');
+    if (cleared.status !== 'applied') throw new Error('Expected explicit reset');
+    expect(accountSettingsParse(cleared.raw).actionsSettingsV1).toMatchObject({ callerSurfacePolicies: {} });
+  });
   it('stores an adjustable autonomous exchange check-in without changing delegation depth', () => {
     expect(accountSettingsParse({}).coordinationAutonomousCheckIn).toEqual({ afterTurns: 5 });
     for (const afterTurns of [null, 1, 10_000]) {

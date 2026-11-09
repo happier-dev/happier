@@ -17,6 +17,10 @@ describe('ordinary editable Session authoring Action', () => {
     expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('client');
     expect(spec.inputSchema.safeParse({ ...input, pluginId: 'caller-credit' }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ seed: { ...input.seed, send: true } }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ sourceSession: { serverId: 'home-a', sessionId: 'session-a' } }).success).toBe(true);
+    expect(spec.inputSchema.safeParse({ ...input, sourceSession: { serverId: 'home-a', sessionId: 'session-a' } }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ sourceSession: { serverId: '', sessionId: 'session-a' } }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ sourceSession: { serverId: 'home-a', sessionId: 'session-a', send: true } }).success).toBe(false);
   });
 
   it.each(['ui', 'cli', 'agent', 'voice', 'mcp'] as const)('returns typed client absence on %s without spawning a Session', async surface => {
@@ -42,9 +46,10 @@ describe('ordinary editable Session authoring Action', () => {
     const spec = getActionSpec(ActionIdSchema.parse('session.authoring.open'));
     const summary = serializeActionSpec(spec);
     const definition = actionSpecToActionDefinitionV1(spec);
-    expect(definition.inputSchema).toMatchObject({
-      type: 'object', required: ['seed'], additionalProperties: false,
-    });
+    expect(definition.inputSchema).toMatchObject({ anyOf: [
+      { type: 'object', required: ['seed'], additionalProperties: false },
+      { type: 'object', required: ['sourceSession'], additionalProperties: false },
+    ] });
     expect(summary.outputSchema).toEqual(definition.outputSchema);
     // Public catalogs must retain these domain members, including the recursive
     // author attachment value, rather than falling back to an empty JSON shape.

@@ -12,7 +12,41 @@ describe('CapabilitiesSchema (server capabilities)', () => {
     expect(Reflect.get(parsed.machines, 'connectedAccountAuthentication')).toBeUndefined();
     expect(parsed.machines.transfer.serverRouted.maxBytes).toBe(42);
   });
-  it('keeps Collection deployment limits in one optional closed top-level capability family', () => {
+  it('reads Home spawn epoch support independently and withdraws only an unknown leaf', () => {
+    const machines = { sessionSpawn: { protocolVersions: [1, 2, 3, 4] }, transfer: { serverRouted: { maxBytes: 42 } } };
+    expect(CapabilitiesSchema.parse({ machines }).machines).toMatchObject(machines);
+    expect(Reflect.get(CapabilitiesSchema.parse({}).machines, 'sessionSpawn')).toBeUndefined();
+    for (const malformed of [{ protocolVersions: [3] }, { protocolVersions: [1, 2, 3, 4, 5] }, true]) {
+      const parsed = CapabilitiesSchema.parse({ machines: { ...machines, sessionSpawn: malformed } });
+      expect(Reflect.get(parsed.machines, 'sessionSpawn')).toBeUndefined();
+      expect(parsed.machines.transfer.serverRouted.maxBytes).toBe(42);
+    }
+  });
+  it('reads exact Home requester-isolation support without poisoning unrelated capabilities', () => {
+    const machines = { requesterExecutionIsolation: { protocolVersions: [1] }, transfer: { serverRouted: { maxBytes: 42 } } };
+    expect(CapabilitiesSchema.parse({ machines }).machines).toMatchObject(machines);
+    for (const malformed of [{ protocolVersions: [2] }, { protocolVersions: [1], effective: true }, true]) {
+      const parsed = CapabilitiesSchema.parse({ machines: { ...machines, requesterExecutionIsolation: malformed } });
+      expect(Reflect.get(parsed.machines, 'requesterExecutionIsolation')).toBeUndefined();
+      expect(parsed.machines.transfer.serverRouted.maxBytes).toBe(42);
+    }
+    expect(Reflect.get(CapabilitiesSchema.parse({}).machines, 'requesterExecutionIsolation')).toBeUndefined();
+
+    // Exact relevant decoder from cli-v0.2.17 / cli-v0.2.17-preview.1,
+    // a2c45c86804b24e60ac0b76146a3ef36dfcaa15b, capabilitiesSchema.ts:
+    // ui-web-v0.2.19 / ui-web-v0.2.19-preview.25 at 63829e3cd6a8f1f48b10891af0c8b2313e51ac7e
+    // have the same decoder. Outer and machines are z.object, not strict; the moving ../0.2
+    // 285ee7c5acb3bea1489896a254e4445f2483a213 retains this same decoder.
+    const predecessorMachines = z.object({
+      transfer: z.object({ serverRouted: z.object({ maxBytes: z.number() }) }),
+    });
+    const predecessorCapabilities = z.object({ machines: predecessorMachines });
+    expect(predecessorCapabilities.parse({ machines })).toEqual({
+      machines: { transfer: { serverRouted: { maxBytes: 42 } } },
+    });
+  });
+
+  it('reads Collection deployment limits in one optional additive top-level capability family', () => {
     const limits = {
       maxRowEncodedBytes: 262_144,
       maxBatchBytes: 1_048_576,
@@ -24,9 +58,9 @@ describe('CapabilitiesSchema (server capabilities)', () => {
     expect(CapabilitiesSchema.parse({}).pluginDataCollections).toBeUndefined();
     expect(CapabilitiesSchema.parse({ pluginDataCollections: limits }).pluginDataCollections)
       .toEqual(limits);
-    expect(CapabilitiesSchema.safeParse({
+    expect(CapabilitiesSchema.parse({
       pluginDataCollections: { ...limits, unexpected: true },
-    }).success).toBe(false);
+    }).pluginDataCollections).toEqual(limits);
 
     // The prospective predecessor has a root-open reader. It must discard the
     // new family rather than treating it as a strict child-field extension.
@@ -39,7 +73,7 @@ describe('CapabilitiesSchema (server capabilities)', () => {
     expect(OldCapabilitiesSchema.parse({ pluginDataCollections: limits })).toEqual({ server: {} });
   });
 
-  it('publishes the running release beside, not inside, the strict server object released readers parse', () => {
+  it('publishes the running release beside the server object released strict readers parse', () => {
     const payload = {
       server: { canonicalServerUrl: 'https://stack.example.test' },
       serverRelease: { version: '0.3.1', flavor: 'light' },
@@ -47,8 +81,8 @@ describe('CapabilitiesSchema (server capabilities)', () => {
     expect(CapabilitiesSchema.parse(payload).serverRelease).toEqual({ version: '0.3.1', flavor: 'light' });
     expect(CapabilitiesSchema.parse({}).serverRelease).toBeUndefined();
     expect(CapabilitiesSchema.safeParse({ serverRelease: { flavor: 'heavy' } }).success).toBe(false);
-    // The server object stays closed: the release never travels inside it.
-    expect(CapabilitiesSchema.safeParse({ server: { version: '0.3.1' } }).success).toBe(false);
+    // Current reads strip unknown diagnostic fields; release stays its own family.
+    expect(CapabilitiesSchema.parse({ server: { version: '0.3.1' } }).server).toEqual({});
 
     // Released reader, pinned from tag `cli-v0.2.11` (commit 98ea8fb767, also `ui-web-v0.2.11-preview.186`):
     // `packages/protocol/src/features/payload/capabilities/serverCapabilities.ts` is a strict object of
@@ -83,16 +117,16 @@ describe('CapabilitiesSchema (server capabilities)', () => {
     expect(parsed.serverIdentity.serverIdentityId).toBe('srv_identity_123');
   });
 
-  it('parses the host Follow context capability as a strict versioned session child', () => {
+  it('parses the host Follow context capability as an additive versioned session child', () => {
     expect(CapabilitiesSchema.parse({
       session: { follow: { contextVersion: 1 } },
     }).session.follow).toEqual({ contextVersion: 1 });
     expect(CapabilitiesSchema.safeParse({
       session: { follow: { contextVersion: 2 } },
     }).success).toBe(false);
-    expect(CapabilitiesSchema.safeParse({
+    expect(CapabilitiesSchema.parse({
       session: { follow: { contextVersion: 1, extra: true } },
-    }).success).toBe(false);
+    }).session.follow).toEqual({ contextVersion: 1 });
   });
 
   it('defaults missing server identity capabilities for older servers', () => {
@@ -282,7 +316,7 @@ describe('CapabilitiesSchema (server capabilities)', () => {
   it('defaults pet companion ids and conservative custom-pet sync policy', () => {
     const parsed = CapabilitiesSchema.parse({});
 
-    expect(parsed.pets.companion.builtInPetIds).toEqual(['blink']);
+    expect(parsed.pets.companion.builtInPetIds).toEqual(['blink', 'fury', 'milo', 'oli', 'titi']);
     expect(parsed.pets.sync.supportedMediaTypes).toEqual(['image/webp', 'image/png']);
     expect(parsed.pets.sync.encryptedCustomPetSyncPolicy).toBe('disabled');
     expect(parsed.pets.sync.maxCanonicalPackageBytes).toBe(parsed.pets.limits.maxCanonicalPackageBytes);

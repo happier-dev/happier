@@ -124,18 +124,13 @@ describe('createActionExecutor (runtime-unification actions)', () => {
   });
   it('binds native capture approval to the explicitly selected machine before any capture effect', async () => {
     // This fixture represents the machine IPC boundary, not the computer owner's logic.
-    const runtimeActionExecute = vi.fn(async () => ({ consentGranted: false,
+    const runtimeActionExecute = vi.fn<NonNullable<ActionExecutorDeps['runtimeActionExecute']>>(async () => ({ consentGranted: false,
       approvalDisplay: { machineDisplayName: 'Workstation', requiresTargetSelection: true } }));
     const approvalsCreate = vi.fn(async (_args: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]) => ({ artifactId: 'native-capture-approval' }));
     const settings = ActionsSettingsV1Schema.parse({ v: 1 });
     const executor = createActionExecutor(createDeps({
       runtimeActionExecute,
       approvalsCreate,
-      approvalsWaitForDecision: async ({ request }) => ({
-        decision: 'reject',
-        request: { ...request, status: 'rejected', decision: { kind: 'reject', decidedAtMs: 2 } },
-      }),
-      approvalsUpdate: async () => ({ ok: true }),
       isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
     }));
     const result = await executor.execute('computer.capture', { machineId: 'native-machine' }, {
@@ -144,13 +139,14 @@ describe('createActionExecutor (runtime-unification actions)', () => {
       actionRequestId: 'native-capture-request',
     });
 
-    expect(result).toEqual({ ok: false, errorCode: 'approval_rejected', error: 'approval_rejected' });
+    expect(result).toEqual({ ok: true, result: { kind: 'approval_request_created',
+      actionId: 'computer.capture', artifactId: 'native-capture-approval' } });
     expect(ApprovalRequestV2Schema.parse(approvalsCreate.mock.calls[0]?.[0].request)).toMatchObject({
       actionArgs: { machineId: 'native-machine' },
       preview: { computerApprovalDisplay: { machineDisplayName: 'Workstation', requiresTargetSelection: true } },
       executionOriginV1: { machineId: 'native-machine', sessionId: 'agent-session' },
     });
-    expect(runtimeActionExecute.mock.calls).toHaveLength(1);
+    expect(runtimeActionExecute.mock.calls.map(([call]) => call.actionId)).toEqual(['computer.target.get']);
   });
 
   it('dispatches native input and policy-admitted interruption without substituting human authority', async () => {

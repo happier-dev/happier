@@ -7,6 +7,10 @@ import { PromptArtifactRefV1Schema } from '../../prompts/library/promptArtifactR
 import { PromptStackEntryV1Schema, PromptStackEntryAuthoringV1Schema, PromptStackSetEnabledIntentV1Schema } from '../../prompts/library/promptStacksV1.js';
 import { readScmHostingRepositoryIdentity } from '../../scm/hostingRepositoryIdentity.js';
 import { ActionOperationIdentifierV1Schema } from '../../actions/operations/identifierV1.js';
+import { SharedSavedSecretReferenceSelectionV1Schema } from '../../account/settings/savedSecretReferenceV1.js';
+import { DeploymentArtifactContentReferenceV1Schema } from '../../deployments/deploymentArtifactContentReferenceV1.js';
+import { ArtifactAccessGrantMutationResponseV1Schema } from '../../artifacts/artifactAccessV1.js';
+import { MachineAccessGrantV1Schema, MachineAccessReadinessV1Schema } from '../../machines/machineAccessV1.js';
 
 export const PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'projects:sources' as const;
 
@@ -77,17 +81,35 @@ export type ProjectSourcesFailureV1 = z.infer<typeof ProjectSourcesFailureV1Sche
 export const ProjectSourcesReadOutputV1Schema = lazyZodSchema(() => z.union([z.strictObject({ ok: z.literal(true), source: ProjectSourceV1Schema, canManage: z.boolean() }), ProjectSourcesFailureV1Schema]));
 export const ProjectSourcesCreateOutputV1Schema = ProjectSourcesReadOutputV1Schema;
 export const ProjectSourcesUpdateOutputV1Schema = ProjectSourcesReadOutputV1Schema;
-export const ProjectSourcesDeleteOutputV1Schema = lazyZodSchema(() => z.union([z.strictObject({ ok: z.literal(true), sourceId: id, revision }), ProjectSourcesFailureV1Schema]));
+export const ProjectSourcesDeleteOutputV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ok: z.literal(true), sourceId: id, revision }),
+  ProjectSourcesFailureV1Schema,
+]));
 export const ProjectSourcesListOutputV1Schema = lazyZodSchema(() => z.union([z.strictObject({ ok: z.literal(true), sources: z.array(ProjectSourceV1Schema), coverage: z.strictObject({ complete: z.boolean(), nextCursor: z.nullable(id) }) }), ProjectSourcesFailureV1Schema]));
 // Existing Action-operation addresses are observations, never transfer custody.
 const ProjectSourceMoveChildOperationV1Schema = lazyZodSchema(() => z.strictObject({
   serverId: id, machineId: id, operationId: ActionOperationIdentifierV1Schema,
 }));
+/** Known owner acknowledgements for visible recovery, never transfer or replay authority. */
+export const ProjectSourceMoveResourceEffectsV1Schema = lazyZodSchema(() => z.strictObject({
+  machineGrants: z.array(z.extend(MachineAccessGrantV1Schema, { readiness: MachineAccessReadinessV1Schema })),
+  secretCopies: z.array(z.extend(SharedSavedSecretReferenceSelectionV1Schema, {
+    sourceRef: SharedSavedSecretReferenceSelectionV1Schema.shape.ref,
+    sourceRevision: SharedSavedSecretReferenceSelectionV1Schema.shape.resourceRevision,
+  })),
+  artifacts: z.array(z.strictObject({ artifactId: ArtifactAccessGrantMutationResponseV1Schema.shape.artifactId,
+    preparation: ArtifactAccessGrantMutationResponseV1Schema.shape.preparation })),
+  bindingArtifacts: z.array(z.strictObject({ environmentId: id, ...DeploymentArtifactContentReferenceV1Schema.shape })),
+  bindings: z.array(z.strictObject({ environmentId: id, revision })),
+  renewedTokenIds: z.array(id),
+  renewedTriggers: z.array(z.strictObject({ automationId: id, triggerId: id, revision })),
+}));
+export type ProjectSourceMoveResourceEffectsV1 = z.infer<typeof ProjectSourceMoveResourceEffectsV1Schema>;
 export const ProjectSourcesMoveToTeamOutputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ kind: z.literal('completed'), source: z.extend(ProjectSourceV1Schema, { owner: TeamPrincipalRefV1Schema }),
-    childOperations: z.array(ProjectSourceMoveChildOperationV1Schema) }),
+    childOperations: z.array(ProjectSourceMoveChildOperationV1Schema), resourceEffects: z.optional(ProjectSourceMoveResourceEffectsV1Schema) }),
   z.strictObject({ kind: z.enum(['held', 'partial', 'outcome_unknown']), source: z.optional(ProjectSourceV1Schema),
-    childOperations: z.array(ProjectSourceMoveChildOperationV1Schema) }),
+    childOperations: z.array(ProjectSourceMoveChildOperationV1Schema), resourceEffects: z.optional(ProjectSourceMoveResourceEffectsV1Schema) }),
   ProjectSourcesFailureV1Schema,
 ]));
 export type ProjectSourcesListInputV1 = z.infer<typeof ProjectSourcesListInputV1Schema>;

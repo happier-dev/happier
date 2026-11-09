@@ -28,7 +28,24 @@ function encodeStoredJsonContentEnvelope(value: unknown): string {
 
 export const ARTIFACT_PLAIN_DATA_KEY_MARKER = encodeStoredJsonContentEnvelope(null);
 
+const LEADING_BASE64_QUANTUM = /^[A-Za-z0-9+/]{4}/;
+
+/**
+ * Only text whose first significant character is `{` can become an envelope.
+ * Sealed data keys are binary, so readers that ask "is this a plain marker?"
+ * per Artifact would otherwise decode, UTF-8 decode and throw out of
+ * JSON.parse for every encrypted key. The first full base64 quantum is
+ * unaffected by the decoder's permissive normalization, so rejecting on its
+ * first byte is exact; whitespace and a UTF-8 BOM keep the full reader.
+ */
+function cannotBeStoredJsonObject(value: string): boolean {
+  if (!LEADING_BASE64_QUANTUM.test(value)) return false;
+  const first = decodeBase64(value.slice(0, 4), 'base64')[0];
+  return first !== 0x7b && first !== 0x20 && first !== 0x09 && first !== 0x0a && first !== 0x0d && first !== 0xef;
+}
+
 function decodeStoredJsonContentEnvelope(value: string): ArtifactStoredJsonContentEnvelope | null {
+  if (cannotBeStoredJsonObject(value)) return null;
   try {
     const parsed = createStoredReadSchema(ArtifactStoredJsonContentEnvelopeSchema).safeParse(
       JSON.parse(new TextDecoder().decode(decodeBase64(value, 'base64'))),

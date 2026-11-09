@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import { isUnsafeTelemetryDataKey } from '../../../common/sensitiveKeys.js';
+import { PrincipalRefV1Schema } from '../../../teams/principal.js';
 import { LocalServicePreviewDiagnosticV1Schema } from '../preview/diagnostics/v1.js';
 import { LocalServicePreviewServiceTargetV1Schema, refineLocalServicePreviewServiceBindingV1,
   type LocalServicePreviewServiceTargetV1 } from '../preview/v1.js';
@@ -48,8 +49,30 @@ function rejectUnsafeLocalServicePublicPolicyDiagnosticKeys(
   }
 }
 
-export const LocalServicePublicExposureModeV1Schema = lazyZodSchema(() => z.enum(['authenticated', 'secret_link', 'public']));
+/**
+ * `people`: signed-in Happier Accounts in the exposure's audience (resource-grant principals),
+ * admitted once when their browser exchanges a one-use admission URL. No Machine admission.
+ * `secret_link`: anyone holding the link. `public`: anyone.
+ */
+export const LocalServicePublicExposureModeV1Schema = lazyZodSchema(() => z.enum(['people', 'secret_link', 'public']));
 export type LocalServicePublicExposureModeV1 = z.infer<typeof LocalServicePublicExposureModeV1Schema>;
+
+/** The exposure's audience: the same Account/Team/Group principals every resource grant names. */
+export const LocalServicePublicExposureAudienceV1Schema = lazyZodSchema(() => z.array(PrincipalRefV1Schema));
+export type LocalServicePublicExposureAudienceV1 = z.infer<typeof LocalServicePublicExposureAudienceV1Schema>;
+
+/** A `people` exposure names its audience; the other modes carry none. */
+function refineExposureAudience(
+  value: Readonly<{ mode: LocalServicePublicExposureModeV1; audience?: LocalServicePublicExposureAudienceV1 }>,
+  context: z.core.$RefinementCtx,
+): void {
+  if (value.mode === 'people' && (!value.audience || value.audience.length === 0)) {
+    context.addIssue({ code: 'custom', path: ['audience'], message: 'A people share names at least one person, Team or Group.' });
+  }
+  if (value.mode !== 'people' && value.audience !== undefined) {
+    context.addIssue({ code: 'custom', path: ['audience'], message: 'Only a people share carries an audience.' });
+  }
+}
 
 export const LocalServicePublicExposureStateV1Schema = lazyZodSchema(() => z.enum(['pending', 'active', 'revoked', 'expired', 'rate_limited']));
 export type LocalServicePublicExposureStateV1 = z.infer<typeof LocalServicePublicExposureStateV1Schema>;
@@ -71,6 +94,7 @@ export const LocalServicePublicPreviewCreateFailureReasonV1Schema = lazyZodSchem
   'dns_tls_unavailable', 'rate_limit_profile_not_allowed', 'too_many_public_exposures', 'invalid_policy',
   'invalid_public_base_url', 'public_origin_unavailable', 'public_token_secret_missing',
   'audit_sink_unavailable', 'rate_limit_checker_unavailable', 'confirmation_required', 'preview_binding_mismatch',
+  'audience_not_eligible',
 ]));
 export type LocalServicePublicPreviewCreateFailureReasonV1 = z.infer<typeof LocalServicePublicPreviewCreateFailureReasonV1Schema>;
 
@@ -112,6 +136,7 @@ export const LocalServicePublicExposureV1Schema = lazyZodSchema(() => z.strictOb
     serviceTarget: z.optional(LocalServicePreviewServiceTargetV1Schema),
     machineId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
     mode: LocalServicePublicExposureModeV1Schema,
+    audience: z.optional(LocalServicePublicExposureAudienceV1Schema),
     state: LocalServicePublicExposureStateV1Schema,
     publicUrl: LocalServicePublicUrlV1Schema,
     issuedAt: z.number().check(z.int(), z.nonnegative()),
@@ -122,6 +147,7 @@ export const LocalServicePublicExposureV1Schema = lazyZodSchema(() => z.strictOb
     policyDiagnostics: z.optional(LocalServicePublicPolicyDiagnosticsV1Schema),
   }).check(z.superRefine((exposure, context) => {
     refinePublicServiceBinding(exposure, context);
+    refineExposureAudience(exposure, context);
     if (exposure.expiresAt <= exposure.issuedAt) {
       context.addIssue({
         code: "custom",
@@ -254,12 +280,16 @@ export const DaemonLocalServicePublicPreviewCreateRequestV1Schema = lazyZodSchem
     serviceTarget: z.optional(LocalServicePreviewServiceTargetV1Schema),
     previewId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
     mode: LocalServicePublicExposureModeV1Schema,
+    audience: z.optional(LocalServicePublicExposureAudienceV1Schema),
     ttlMs: z.number().check(z.int(), z.positive()),
     rateLimitProfileId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
     // Optional on the wire (additive, back-compatible) but REQUIRED by the daemon create
     // chokepoint — see `isLocalServicePublicPreviewCreateConfirmed`.
     confirmation: z.optional(LocalServicePublicPreviewCreateConfirmationV1Schema),
-  }).check(z.superRefine(refinePublicServiceBinding)));
+  }).check(z.superRefine((request, context) => {
+    refinePublicServiceBinding(request, context);
+    refineExposureAudience(request, context);
+  })));
 export type DaemonLocalServicePublicPreviewCreateRequestV1 = z.infer<
   typeof DaemonLocalServicePublicPreviewCreateRequestV1Schema
 >;
@@ -389,3 +419,27 @@ export const LocalServicePublicPreviewExchangeResponseV1Schema = lazyZodSchema((
 export type LocalServicePublicPreviewExchangeResponseV1 = z.infer<
   typeof LocalServicePublicPreviewExchangeResponseV1Schema
 >;
+
+/** Why a signed-in viewer was not admitted to a `people` exposure. */
+export const LocalServicePublicPreviewAdmissionFailureReasonV1Schema = lazyZodSchema(() => z.enum([
+  'exposure_not_found', 'expired', 'revoked', 'not_people_share', 'not_in_audience', 'service_unavailable', 'audit_sink_unavailable',
+]));
+export type LocalServicePublicPreviewAdmissionFailureReasonV1 = z.infer<typeof LocalServicePublicPreviewAdmissionFailureReasonV1Schema>;
+
+/** A one-use URL on the exposure's isolated origin; opening it sets the viewer-bound cookie. */
+export const LocalServicePublicPreviewAdmissionResponseV1Schema = lazyZodSchema(() => z.strictObject({
+  protocolVersion: z.literal(1),
+  admissionUrl: LocalServicePublicUrlV1Schema,
+  expiresAt: z.number().check(z.int(), z.nonnegative()),
+}));
+export type LocalServicePublicPreviewAdmissionResponseV1 = z.infer<typeof LocalServicePublicPreviewAdmissionResponseV1Schema>;
+
+export const LocalServicePublicPreviewAdmissionFailureV1Schema = lazyZodSchema(() => z.strictObject({
+  error: z.literal('public_preview_admission_denied'),
+  reasonCode: LocalServicePublicPreviewAdmissionFailureReasonV1Schema,
+}));
+
+/** The app landing a `people` share's link points at. */
+export function formatLocalServicePublicPreviewLandingPathV1(exposureId: string): string {
+  return `/preview-link/${encodeURIComponent(exposureId)}`;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveRegistrySourceIdV1, HAPPIER_PICKS_SOURCE_ID, listRegistrySourcesV1, normalizeRegistrySourceUrlV1, readRegistrySourcesRecordV1,
+import { deriveRegistrySourceIdV1, HAPPIER_PICKS_SOURCE_ID, listRegistrySourcesV1, normalizeRegistrySourceUrlV1, readRegistrySourcesRecordV1, readRegistrySourcesInventoryV1,
   RegistrySourceDescriptorV1Schema, RegistrySourcesRecordV1Schema, RegistrySourceV1Schema } from './registrySourcesV1.js';
 import { openPromptLibraryContentV1, PromptLibraryRecordV1Schema } from '../prompts/library/promptLibraryRowsV1.js';
 import { REGISTRY_ACTION_INPUT_SCHEMAS_V1 } from './registryActionsV1.js';
@@ -7,6 +7,18 @@ import { REGISTRY_ACTION_INPUT_SCHEMAS_V1 } from './registryActionsV1.js';
 const configuredSource = RegistrySourceV1Schema.parse({
   id: 'marketplace:private', title: 'Private catalog', format: 'happier-catalog', kinds: ['plugin'],
   url: 'https://catalog.example/index.json', enabled: true, addedAt: 1,
+});
+
+describe('registry source listing', () => {
+  it('lists a plugin catalog of apps before the imported template catalogs, so its ready-made apps lead the Store', () => {
+    const plugin = RegistrySourceDescriptorV1Schema.parse({ id: 'plugin:data-services', title: 'Data services', format: 'happier-catalog', kinds: ['app'],
+      packageContent: { path: 'resources/registry/apps.json' }, enabled: true, addedAt: 0,
+      origin: { kind: 'plugin', pluginId: 'plugin', localId: 'data-services', suppliers: ['machine'] }, removable: false });
+    const ids = listRegistrySourcesV1({ record: { v: 2, sources: [], disabledSourceIds: [] }, pluginSources: [plugin] }).map(source => source.id);
+    expect(ids.indexOf('plugin:data-services')).toBeLessThan(ids.indexOf('builtin:compose-catalog'));
+    expect(ids.indexOf('plugin:data-services')).toBeLessThan(ids.indexOf('builtin:dokploy-templates'));
+    expect(ids.indexOf('plugin:data-services')).toBeGreaterThan(ids.indexOf('builtin:acp-registry'));
+  });
 });
 
 describe('registry source write contracts', () => {
@@ -90,12 +102,18 @@ describe('Account registry sources', () => {
     config: { repositoryUrl: 'git@github.com:team/skills.git', subdirectory: 'skills' } }, { id: 'bad' }] };
   it('reads predecessor sources individually, preserves identity, and writes the strict current row', () => {
     const record = readRegistrySourcesRecordV1(predecessor);
+    expect(readRegistrySourcesInventoryV1(predecessor)).toEqual({ status: 'partial', record,
+      diagnostics: [{ index: 1, reason: 'invalid-source' }] });
     expect(PromptLibraryRecordV1Schema.safeParse({key:'registry-sources',value:predecessor}).success).toBe(false);
     expect(record).toEqual({ v: 2, disabledSourceIds: [], sources: [{ id: 'team', title: 'Team', enabled: true,
       format: 'git', kinds: ['skill'], url: 'git@github.com:team/skills.git', path: 'skills', addedAt: 0 }] });
     expect(PromptLibraryRecordV1Schema.parse({ key: 'registry-sources', value: record }).value).toEqual(record);
     expect(openPromptLibraryContentV1({ key: 'registry-sources', mode: 'plain', material: null,
-      content: { t: 'plain', v: { key: 'registry-sources', value: predecessor } } })).toMatchObject({ status: 'opened', record: { value: record } });
+      content: { t: 'plain', v: { key: 'registry-sources', value: predecessor } } }))
+      .toEqual({ status: 'unavailable', reason: 'invalid-stored-content' });
+    expect(openPromptLibraryContentV1({ key: 'registry-sources', mode: 'plain', material: null,
+      content: { t: 'plain', v: { key: 'registry-sources', value: { ...predecessor, sources: predecessor.sources.slice(0, 1) } } } }))
+      .toMatchObject({ status: 'opened', record: { value: record } });
     expect(openPromptLibraryContentV1({key:'registry-sources',mode:'plain',material:null,content:{t:'plain',v:{key:'registry-sources',value:{...record,future:'drop',sources:record.sources.map(source=>({...source,future:'drop'}))}}}})).toEqual({status:'opened',record:{key:'registry-sources',value:record}});
   });
   it('normalizes repository identity and applies disabled state to non-user sources', () => {

@@ -62,12 +62,19 @@ export function mergeSessionWorkStateV1(params: Readonly<{
 }>): SessionWorkStateWriteSnapshotV1 {
   const nextOwned = SessionWorkStateV1Schema.parse(params.nextOwned);
   const existing = readExistingSnapshot(params.existing);
+  const preferItemIds = nextOwned.primaryItemId
+    ? [nextOwned.primaryItemId]
+    : nextOwned.items.map((item) => item.id);
   if (!existing) {
     // Even the first publish must not force a source-local primary; resolve it
     // canonically so a goal-only vs task-only snapshot agree with the merged rule.
     return {
       ...nextOwned,
-      primaryItemId: resolveSessionWorkStatePrimaryItemId(nextOwned.items, readPrimaryItemId(nextOwned.primaryItemId)),
+      primaryItemId: resolveSessionWorkStatePrimaryItemId(
+        nextOwned.items,
+        readPrimaryItemId(nextOwned.primaryItemId),
+        { preferItemIds },
+      ),
     };
   }
 
@@ -100,7 +107,7 @@ export function mergeSessionWorkStateV1(params: Readonly<{
     primaryItemId: resolveSessionWorkStatePrimaryItemId(
       mergedItems,
       readPrimaryItemId(existing.primaryItemId),
-      { preferItemIds: nextOwned.items.map((item) => item.id) },
+      { preferItemIds },
     ),
   };
 }

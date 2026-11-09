@@ -110,7 +110,13 @@ export type ParsedPluginSettingSecretDeclaration =
 export const PluginDirectSecretDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
   id: PluginSettingFieldIdV2Schema,
   custody: z._default(PluginSecretCustodyV1Schema, 'account'),
-}));
+  /** Allows the admitted parent Action to save a shared resource for this id. */
+  saveShared: z.optional(z.literal(true)),
+}).check(z.superRefine((declaration, context) => {
+  if (declaration.saveShared && declaration.custody !== 'account') {
+    context.addIssue({ code: 'custom', path: ['saveShared'], message: 'Shared save requires Account custody' });
+  }
+})));
 export type PluginDirectSecretDeclarationV1 =
   z.input<typeof PluginDirectSecretDeclarationV1Schema>;
 export type ParsedPluginDirectSecretDeclarationV1 =

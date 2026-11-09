@@ -3,13 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { serializeModelVisibilityRefV1 } from '../selection/v1.js';
 import {
   DEFAULT_PROVIDER_SETTINGS_V1,
-  PROVIDER_SETTINGS_LIMITS_V1,
-  ProviderSettingsLimitError,
   ProviderSettingsV1Schema,
+  hasProviderExperimentalConfirmation,
 } from './v1.js';
 import {
   addOrUpdateProviderManualModelV1,
   addOrUpdateProviderManualModelsV1,
+  bindProviderConnectionSecretV1,
   deleteProviderConnectionV1,
   ensureDefaultProviderConnectionV1,
   hasProviderMachineStateV1,
@@ -65,6 +65,20 @@ function baseSettings() {
   });
 }
 
+describe('personal experimental confirmation', () => {
+  it('requires the exact personal compatibility fingerprint', () => {
+    const providerSettings = baseSettings();
+    const personal = { providerSettings, connectionId: 'pc_a', agentTargetKey: 'agent:codex', modelId: 'model-a',
+      compatibilityFingerprint: 'compatibility:v1:a', confirmationScope: { kind: 'model' as const, modelId: 'model-a' } };
+    expect(hasProviderExperimentalConfirmation(personal)).toBe(true);
+    expect(hasProviderExperimentalConfirmation({ ...personal, compatibilityFingerprint: 'compatibility:v1:changed' })).toBe(false);
+    const settings = setProviderExperimentalConfirmationV1(providerSettings, { connectionId: 'pc_a', agentTargetKey: 'agent:codex',
+      modelId: 'model-a', compatibilityFingerprint: 'compatibility:v1:changed', confirmedAt: 2 });
+    expect(hasProviderExperimentalConfirmation({ ...personal, providerSettings: settings, compatibilityFingerprint: 'compatibility:v1:changed' })).toBe(true);
+    expect(hasProviderExperimentalConfirmation({ ...personal, providerSettings: settings })).toBe(false);
+  });
+});
+
 describe('provider settings operations', () => {
   it('changes only source presentation policy, resets sparsely, and deletes the connection override', () => {
     const original = baseSettings();
@@ -77,25 +91,23 @@ describe('provider settings operations', () => {
     expect(deleteProviderConnectionV1(hidden, 'pc_a', 2).modelPickerVisibilityByConnectionId).toEqual({});
     expect(() => setProviderModelPickerVisibilityV1(original, { connectionId: 'pc_missing', shown: true })).toThrow();
   });
-  it('adds a manual-model batch atomically when the final settings would exceed the connection limit', () => {
+  it('adds a manual-model batch beyond the retired connection count without mutating its input', () => {
     const original = ProviderSettingsV1Schema.parse({
       ...baseSettings(),
       manualModelsByConnectionId: {
-        pc_a: Array.from({ length: PROVIDER_SETTINGS_LIMITS_V1.manualModelsPerConnection - 1 }, (_, index) => ({
+        pc_a: Array.from({ length: 499 }, (_, index) => ({
           id: `existing-${index}`,
           addedAt: 1,
         })),
       },
     });
 
-    expect(() => addOrUpdateProviderManualModelsV1(original, {
+    expect(addOrUpdateProviderManualModelsV1(original, {
       connectionId: 'pc_a',
       models: [{ id: 'new-a' }, { id: 'new-b' }],
       addedAt: 10,
-    })).toThrowError(ProviderSettingsLimitError);
-    expect(original.manualModelsByConnectionId.pc_a).toHaveLength(
-      PROVIDER_SETTINGS_LIMITS_V1.manualModelsPerConnection - 1,
-    );
+    }).manualModelsByConnectionId.pc_a).toHaveLength(501);
+    expect(original.manualModelsByConnectionId.pc_a).toHaveLength(499);
     expect(original.manualModelsByConnectionId.pc_a?.some((model) => model.id.startsWith('new-'))).toBe(false);
   });
 
@@ -244,7 +256,8 @@ describe('provider settings operations', () => {
   });
 
   it('deletes executable state but retains selected intent, a minimal tombstone, and migration provenance', () => {
-    const next = deleteProviderConnectionV1(baseSettings(), 'pc_a', 5);
+    const withBilling = bindProviderConnectionSecretV1({ settings: baseSettings(), connectionId: 'pc_a', slotId: 'managementKey', savedSecretId: 'billing-secret' });
+    const next = deleteProviderConnectionV1(withBilling, 'pc_a', 5);
     expect(next.connections).toEqual([]);
     expect(next.accountGrants).toEqual([]);
     expect(next.machineGrants).toEqual([]);
@@ -260,8 +273,8 @@ describe('provider settings operations', () => {
     ]);
   });
 
-  it('deletes atomically at the tombstone cap and deterministically prunes the oldest tombstone', () => {
-    const tombstones = Array.from({ length: PROVIDER_SETTINGS_LIMITS_V1.connectionTombstones }, (_, index) => ({
+  it('retains earlier deletion facts beyond the retired tombstone count', () => {
+    const tombstones = Array.from({ length: 256 }, (_, index) => ({
       v: 1 as const,
       id: `pc_deleted_${String(index).padStart(3, '0')}`,
       contributionKey: null,
@@ -276,9 +289,9 @@ describe('provider settings operations', () => {
     expect(next.accountGrants).toEqual([]);
     expect(next.machineGrants).toEqual([]);
     expect(next.secretBindingsByConnectionId).toEqual({});
-    expect(next.connectionTombstones).toHaveLength(PROVIDER_SETTINGS_LIMITS_V1.connectionTombstones);
+    expect(next.connectionTombstones).toHaveLength(257);
     expect(next.connectionTombstones.some((entry) => entry.id === 'pc_a')).toBe(true);
-    expect(next.connectionTombstones.some((entry) => entry.id === 'pc_deleted_000')).toBe(false);
+    expect(next.connectionTombstones.some((entry) => entry.id === 'pc_deleted_000')).toBe(true);
     expect(next.connectionTombstones.some((entry) => entry.id === 'pc_deleted_001')).toBe(true);
   });
 
@@ -307,7 +320,7 @@ describe('provider settings operations', () => {
     expect(result.connection.id).toBe('pc_overflow');
   });
 
-  it('uses the canonical decoded-size owner for additive connection mutations', () => {
+  it('adds connections without borrowing the retired Account Settings subtree budget', () => {
     const connections = Array.from({ length: 10 }, (_, index) => ({
       v: 1 as const,
       id: `pc_large_${index}`,
@@ -332,6 +345,6 @@ describe('provider settings operations', () => {
 
     expect(() => ensureDefaultProviderConnectionV1(schemaValidButOversized, {
       contributionKey: 'plugin/new', allocatedConnectionId: 'pc_new', providerName: 'New', now: 2,
-    })).toThrowError(ProviderSettingsLimitError);
+    })).not.toThrow();
   });
 });

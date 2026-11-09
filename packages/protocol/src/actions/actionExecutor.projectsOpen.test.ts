@@ -4,7 +4,7 @@ import { ActionIdSchema } from './actionIds.js';
 import { getActionSpec } from './actionSpecs.js';
 import { listActionSpecsForCatalogSurface } from './actionCatalog.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
-import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { completeActionResult, createActionExecutor, settleActionOutput, type ActionExecutorDeps } from './actionExecutor.js';
 import { RPC_ERROR_CODES, RpcError } from '../rpc/errors.js';
 
 describe('agent-free Project Open Action', () => {
@@ -51,9 +51,11 @@ describe('agent-free Project Open Action', () => {
     const lost = createActionExecutor({ projectsOpen: async () => { throw new Error('acknowledgement lost'); } } as unknown as ActionExecutorDeps);
     await expect(lost.execute(id, input, { surface: 'ui', authority: 'present_user', presentUserConfirmation: { actionId: id } }))
       .resolves.toEqual({ ok: true, result: { kind: 'outcomeUnknown' } });
-    const unsupported = createActionExecutor({ projectsOpen: async () => { throw new RpcError('unsupported', RPC_ERROR_CODES.METHOD_NOT_FOUND); } } as unknown as ActionExecutorDeps);
+    const cause = { phase: 'project_open.rpc', errorClass: 'Error' as const,
+      errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND, httpStatus: null };
+    const unsupported = createActionExecutor({ projectsOpen: async () => { throw new RpcError('unsupported', RPC_ERROR_CODES.METHOD_NOT_FOUND, cause); } } as unknown as ActionExecutorDeps);
     await expect(unsupported.execute(id, input, { surface: 'ui', authority: 'present_user', presentUserConfirmation: { actionId: id } }))
-      .resolves.toEqual({ ok: true, result: { kind: 'refused', code: RPC_ERROR_CODES.METHOD_NOT_FOUND } });
+      .resolves.toEqual({ ok: true, result: { kind: 'refused', code: RPC_ERROR_CODES.METHOD_NOT_FOUND, failureCause: cause } });
     const aborted = new AbortController();
     aborted.abort();
     await expect(lost.execute(id, input, { surface: 'ui', signal: aborted.signal, authority: 'present_user', presentUserConfirmation: { actionId: id } }))
@@ -61,11 +63,25 @@ describe('agent-free Project Open Action', () => {
   });
 
   it.each(['outcome_unknown', 'invalid_action_output', 'result_too_large'])('retains unknown Open settlement from a %s failure envelope', async errorCode => {
-    const executor = createActionExecutor({ projectsOpen: async () => ({ ok: false, errorCode, error: errorCode,
-      details: { operationId: 'original-open', executionCompleted: true } }) } as unknown as ActionExecutorDeps);
+    const receipt = { ok: false, errorCode, error: errorCode,
+      details: { operationId: 'original-open', executionCompleted: true } };
+    const executor = createActionExecutor({ projectsOpen: async () => receipt } as unknown as ActionExecutorDeps);
+    expect(settleActionOutput('projects.open', completeActionResult(receipt)))
+      .toEqual({ ok: true, result: { kind: 'outcomeUnknown', operationId: 'original-open' } });
     await expect(executor.execute('projects.open', { serverId: 'home', machineId: 'machine',
       source: { kind: 'folder', path: '/repo' }, materialization: { kind: 'attach' } },
     { surface: 'ui', authority: 'present_user', presentUserConfirmation: { actionId: 'projects.open' } }))
       .resolves.toEqual({ ok: true, result: { kind: 'outcomeUnknown', operationId: 'original-open' } });
+  });
+
+  it('keeps malformed native Open receipts unknown without retaining invalid check identities or private details', () => {
+    expect(settleActionOutput('projects.open', completeActionResult({ ok: false,
+      errorCode: 'outcome_unknown', error: 'outcome_unknown', details: { operationId: 42, privateTransport: 'not public' } })))
+      .toEqual({ ok: true, result: { kind: 'outcomeUnknown' } });
+    expect(settleActionOutput('projects.open', completeActionResult({ kind: 'opened', directory: '/guessed', setup: 'prepared' })))
+      .toEqual({ ok: true, result: { kind: 'outcomeUnknown' } });
+    expect(settleActionOutput('projects.open', completeActionResult({ ok: false,
+      errorCode: 'admission_unavailable', error: 'admission_unavailable' })))
+      .toEqual({ ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' });
   });
 });

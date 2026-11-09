@@ -164,6 +164,7 @@ export async function createWorkflowDiscussionRoundFixture(conditionalShape?: Co
   }
   const run = WorkflowRunSummaryV1Schema.parse({ id: runId, sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
     origin: { kind: 'direct' }, state: 'running', revision: 0, machineId: 'machine-a', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
+    attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
     availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
     createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' });
   const snapshot = { run, acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
@@ -174,6 +175,14 @@ export async function createWorkflowDiscussionRoundFixture(conditionalShape?: Co
   let miswire = false;
   let miswireChildren = false;
   const owner = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => 'account-1',
+    // This fixture creates settled records without launching native inputs.
+    // Supply that execution-boundary fact explicitly; absent correspondence
+    // alone is not evidence of inactivity in the production recovery owner.
+    observeRecovery: async ({ index }) => ({
+      activity: index.lifecycle === 'failed' || index.lifecycle === 'cancelled' || index.lifecycle === 'completed'
+        ? 'not_active' : 'unknown',
+      canReattach: false, canContinueConversation: false,
+    }),
     resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
     randomBytes: () => { throw new Error('plain_account_does_not_need_keys'); },
     definitions: { get: async () => { throw new Error('No mutable definition read'); } },

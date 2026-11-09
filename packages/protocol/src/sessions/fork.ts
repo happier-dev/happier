@@ -4,6 +4,7 @@ import { z } from 'zod/mini';
 import { LlmTaskRunnerConfigV1Schema } from '../llm/tasks/llmTaskRunnerConfigV1.js';
 import { SessionForkPointSchema, type SessionForkPoint } from './forkPoint.js';
 import { HappierReplayWireMaxSeedCharsSchema } from './replaySeedBudget.js';
+import { ApprovalProfileIdV1Schema } from '../actions/approvalProfiles.js';
 
 /**
  * The cutoff is owned by the zero-dependency `./forkPoint.js` module, but this
@@ -46,6 +47,7 @@ export const SessionForkRpcParamsSchema = lazyZodSchema(() => z.strictObject({
     strategy: z.optional(SessionForkStrategySchema),
     replaySummaryRunner: z.optional(LlmTaskRunnerConfigV1Schema),
     replayMaxSeedChars: z.optional(HappierReplayWireMaxSeedCharsSchema),
+    approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
     /**
      * Stable idempotency key for the fork request. Retries of the SAME user
      * action (e.g. transport-timeout retries inside the machine RPC layer)

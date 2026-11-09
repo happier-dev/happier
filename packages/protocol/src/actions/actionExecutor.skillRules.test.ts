@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import type { ArtifactSavedByV1 } from '../artifacts/artifactBinaryV1.js';
 import type { ArtifactFolderActionPortV1 } from '../prompts/library/promptFolderActionsV1.js';
 import type { SkillRuleV1 } from '../reach/reachRuleV1.js';
 import { readSkillLibraryCatalog } from '../prompts/library/skills/readSkillLibraryCatalog.js';
@@ -9,10 +10,14 @@ const original: SkillRuleV1 = { id: 'existing', skillId: 'lint-id', target: { t:
 const { skillId: _skillId, ...previous } = original;
 const request = { items: [{ name: 'lint' }, { skillId: 'review-id' }],
   change: { kind: 'write', write: { place: { t: 'allMachines' }, state: 'on' } } };
-const presentUser = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+const presentUser = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'account' } as const;
+const approvedAgent = { ...presentUser, approvedActionReplay: { artifactId: 'approval', origin: {
+  surface: 'agent', accountId: 'account', caller: { kind: 'session', sessionId: 'creator-session', starterDepth: 0, turnDepth: 0 },
+} } } as const;
 function fixture(options: { unavailable?: boolean; conflict?: boolean; inactive?: boolean; sourceCurrentness?: boolean;
-  readFailure?: boolean; writeFailure?: boolean; unrelatedUnreadable?: boolean } = {}) {
-  let rules = [original];
+  readFailure?: boolean; writeFailure?: boolean; unrelatedUnreadable?: boolean; creator?: ArtifactSavedByV1;
+  initialRules?: SkillRuleV1[] } = {}) {
+  let rules = options.initialRules ?? [original];
   const writes: Array<Parameters<ArtifactFolderActionPortV1['writeRecord']>[0]> = [];
   const port = {
     serverId: 'home', assertCurrent: () => {},
@@ -35,6 +40,7 @@ function fixture(options: { unavailable?: boolean; conflict?: boolean; inactive?
     listSkills: (signal?: AbortSignal, skillIds?: readonly string[]) => {
       const items = [['lint-id', 'lint'], ['review-id', 'review']].map(([artifactId, name]) => ({ artifactId: artifactId!,
         header: { v: 1, kind: 'prompt_bundle.v2', title: 'Display title', bundleSchemaId: 'skills.skill_md_v1' },
+        ...(options.creator ? { provenance: { savedBy: { kind: 'person' as const, accountId: 'later-editor' }, skillCreator: options.creator } } : {}),
         body: JSON.stringify({ v: 1, createdAtMs: 1, updatedAtMs: 1, entries: [{ path: 'SKILL.md', contentKind: 'utf8',
           contentBase64: Buffer.from(`---\nname: ${name}\n---\nUse it.`).toString('base64') }] }),
       }));
@@ -48,6 +54,39 @@ function fixture(options: { unavailable?: boolean; conflict?: boolean; inactive?
   return { executor: createActionExecutor(deps), port, writes, rules: () => rules };
 }
 describe('skill rules Action through prompt-library CAS', () => {
+  // OWNER-RULINGS 2026-11-05 Bot templates (5), X2: ordinary approval authorizes widening.
+  it('widens an agent-created skill after ordinary approval', async () => {
+    const f = fixture({ creator: { kind: 'agent', accountId: 'account', sessionId: 'creator-session' }, unrelatedUnreadable: true });
+    // Use the addressed read: unrelated unreadable content must not change admission.
+    const input = { ...request, items: [{ skillId: 'lint-id' }] };
+    const result = await f.executor.execute('skills.rules.set', input, approvedAgent);
+    expect(result, result.ok ? undefined : result.errorCode)
+      .toMatchObject({ ok: true, result: { ok: true, items: [{ skillId: 'lint-id', rules: [{ enabled: true }] }] } });
+    expect(f.rules()).toMatchObject([{ skillId: 'lint-id', enabled: true }]);
+    expect(f.writes).toHaveLength(1);
+  });
+  it('preserves approval policy for legacy, person and non-Session creators', async () => {
+    for (const creator of [undefined, { kind: 'person', accountId: 'account' }, { kind: 'agent', accountId: 'account' }] as const) {
+      const f = fixture({ creator });
+      expect(await f.executor.execute('skills.rules.set', request, approvedAgent)).toMatchObject({ ok: true, result: { ok: true } });
+    }
+  });
+  it('permits approved removal of a disabled exception alongside unchanged or narrower reach', async () => {
+    const creator = { kind: 'agent', accountId: 'account', sessionId: 'creator-session' } as const;
+    const enabled: SkillRuleV1 = { ...original, enabled: true };
+    const exception: SkillRuleV1 = { ...original, id: 'exception', target: { t: 'machine', machineId: 'machine' } };
+    const f = fixture({ creator, initialRules: [enabled, exception] });
+    const items = [{ skillId: 'lint-id' }];
+    expect(await f.executor.execute('skills.rules.set', { items, change: { kind: 'write', write: { place: { t: 'allMachines' }, state: 'on' } } }, approvedAgent))
+      .toMatchObject({ ok: true, result: { ok: true } });
+    expect(await f.executor.execute('skills.rules.set', { items, change: { kind: 'write', write: { place: exception.target, state: 'inherit' } } }, approvedAgent))
+      .toMatchObject({ ok: true, result: { ok: true } });
+    expect(f.rules()).toEqual([enabled]);
+    expect(await f.executor.execute('skills.rules.set', { items, change: { kind: 'write', write: { place: { t: 'allMachines' }, state: 'off' } } }, approvedAgent))
+      .toMatchObject({ ok: true, result: { ok: true } });
+    expect(await f.executor.execute('skills.rules.set', { items, change: { kind: 'replace', rules: [] } }, approvedAgent))
+      .toMatchObject({ ok: true, result: { ok: true } });
+  });
   it('changes an addressed skill without opening unrelated library content and still refuses an absent id', async () => {
     const f = fixture({ unrelatedUnreadable: true });
     const change = { kind: 'write', write: { place: { t: 'allMachines' }, state: 'on' } };

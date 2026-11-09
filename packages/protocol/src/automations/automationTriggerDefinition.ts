@@ -1,5 +1,8 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { AutomationPullRequestTriggerSchema } from './pullRequestTrigger.js';
+export { AutomationPullRequestTriggerSchema } from './pullRequestTrigger.js';
+export type { AutomationPullRequestTrigger } from './pullRequestTrigger.js';
 
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginMachineMaterializationRefV1Schema } from '../plugins/availability/materializationRefV1.js';
@@ -130,16 +133,6 @@ export const AutomationEncryptedTriggerDefinitionEnvelopeV1Schema =
 export type AutomationEncryptedTriggerDefinitionEnvelopeV1 = z.infer<
   typeof AutomationEncryptedTriggerDefinitionEnvelopeV1Schema
 >;
-
-/** The private PR selector shared by comment and failed-check triggers. */
-export const AutomationPullRequestTriggerSchema = lazyZodSchema(() => z.strictObject({
-  kind: z.enum(['prComment', 'ciFailed']),
-  pullRequest: z.strictObject({
-    repository: z.string().check(z.minLength(1)),
-    number: z.number().check(z.int(), z.positive(), z.int()),
-  }),
-}));
-export type AutomationPullRequestTrigger = z.infer<typeof AutomationPullRequestTriggerSchema>;
 
 export const AutomationPullRequestEncryptedTriggerSchema = lazyZodSchema(() => z.strictObject({
   kind: z.enum(['prComment', 'ciFailed']),

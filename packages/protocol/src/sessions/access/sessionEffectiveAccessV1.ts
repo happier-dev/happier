@@ -84,7 +84,10 @@ export const SESSION_CAPABILITY_RULES = {
     assignResponsibility: { level: "admin", delegation: false },
     stopSession: { level: "owner", delegation: false },
     deleteSession: { level: "owner", delegation: false },
-} as const;
+} as const satisfies Record<SessionCapabilityV1, Readonly<{
+  level: EffectiveSessionAccessLevelV1;
+  delegation: boolean;
+}>>;
 export const SESSION_ACCESS_LEVEL_ORDER: readonly EffectiveSessionAccessLevelV1[] = ["view", "edit", "admin", "owner"];
 
 export type SessionAccessGrantCapabilityValueV1 = Readonly<{

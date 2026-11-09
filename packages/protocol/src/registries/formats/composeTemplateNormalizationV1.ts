@@ -1,5 +1,6 @@
 import { parseDocument, stringify } from 'yaml';
 import { DeploymentTemplateV1Schema, type DeploymentTemplateV1 } from '../../plugins/contributions/deploymentTemplates.js';
+import { WorkspaceManifestRelativePathSchema } from '../../workspaces/manifestSchema.js';
 
 export type TemplateDiagnosticV1 = Readonly<{ field: string; reason: string }>;
 export type NormalizedComposeTemplateV1 = Readonly<{ diagnostics: TemplateDiagnosticV1[]; ignored: boolean }> & (
@@ -92,6 +93,7 @@ function composeHttpHealthCheck(service: Record<string, unknown>, serviceName: s
 /** Only data translation happens here. The registry owner acquires bytes and
  * Plan 41 admits the resulting standard Compose document. */
 export function normalizeComposeTemplateV1(input: Readonly<{ document: string; title: string; description?: string; category?: string; documentationUrl?: string;
+  publicFiles?: DeploymentTemplateV1['compose']['publicFiles'];
   declaredDomains?: readonly Readonly<{ key: string; service: string; containerPort: number; path?: string }>[];
   domainHealthChecks?: Readonly<Record<string, DeploymentTemplateV1['domains'][number]['healthCheck']>> }>): NormalizedComposeTemplateV1 {
   const diagnostics: TemplateDiagnosticV1[] = [];
@@ -243,7 +245,7 @@ export function normalizeComposeTemplateV1(input: Readonly<{ document: string; t
       const target = object?.target ?? (typeof mount === 'string' ? mount.split(':')[1] : undefined);
       const named = typeof source === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(source) && object?.type !== 'bind';
       if (typeof source === 'string' && !named && !source.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(source) && !source.startsWith('~')) {
-        issue(`services.${serviceName}.volumes.${index}.source`, 'sidecar_file_requires_review');
+        if (!WorkspaceManifestRelativePathSchema.safeParse(source.replace(/^\.\//, '')).success) issue(`services.${serviceName}.volumes.${index}.source`, 'unsafe_mount_path');
       }
       if (named && typeof target === 'string') {
         const definitions = templateRecordV1(document.volumes) ?? {};
@@ -276,6 +278,7 @@ export function normalizeComposeTemplateV1(input: Readonly<{ document: string; t
     ...((header.category ?? input.category) ? { category: header.category ?? input.category } : {}),
     ...(documentationUrl?.startsWith('https://') ? { documentationUrl } : {}),
     compose: { document: Object.keys(services).length ? stringify(document) : input.document, profiles: [], services: Object.keys(services),
+      ...(input.publicFiles?.length ? { publicFiles: input.publicFiles } : {}),
       ...(Object.keys(services).length === 1 ? { primaryService: Object.keys(services)[0] } : {}) },
     variables: [...variables.values()], generatedSecrets: [...generatedSecrets.values()], domains: [...domains.values()], volumes,
     ...(health.length ? { health } : {}), ...(architectures.size ? { minimumResources: { architectures: [...architectures] } } : {}),

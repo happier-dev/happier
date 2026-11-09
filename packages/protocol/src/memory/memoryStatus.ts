@@ -58,6 +58,8 @@ export const MemoryWorkerStatusV1Schema = lazyZodSchema(() => z.looseObject({
     lastInventoryAtMs: z._default(z.nullable(z.number().check(z.int(), z.nonnegative())), null),
     currentSessionId: z._default(z.nullable(z.string().check(z.minLength(1))), null),
     currentPhase: z._default(z.nullable(z.string().check(z.minLength(1))), null),
+    /** Volatile child-owned grace; absent on older daemons, null outside grace. */
+    idleGraceUntilMs: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
     /** Optional read diagnostics, projected from the incumbent operation set and cursors. */
     activeOperations: z.optional(z.array(z.strictObject({
       kind: z.enum(['transcript', 'documents']),

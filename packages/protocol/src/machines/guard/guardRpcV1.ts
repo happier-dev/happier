@@ -12,7 +12,7 @@ export const MachineGuardViewV1Schema = lazyZodSchema(() => z.strictObject({
   policy: MachineGuardPolicyV1Schema, policyRevision: count(), state: MachineGuardStateV1Schema,
   ladder: MachineGuardLadderV1Schema,
   othersWorkCount: count(),
-  idle: z.array(z.strictObject({ sessionRef: z.string().check(z.minLength(1)), title: z.string(), agentId: z.string(),
+  idle: z.array(z.strictObject({ sessionRef: z.string().check(z.minLength(1)), title: z.nullable(z.string()), agentId: z.string(),
     status: z.enum(['stops_at', 'kept', 'not_yet']), stopAt: z.optional(bytes()), reason: z.optional(GuardKeepReasonV1Schema), idleMs: bytes(),
   })),
   idleTerminals: z.optional(z.array(z.strictObject({ terminalId: z.string().check(z.minLength(1)), terminalKey: z.string().check(z.minLength(1)), label: z.string(),

@@ -16,6 +16,7 @@ import {
   PluginUiViewV2Schema,
 } from './v2.js';
 import * as uiContracts from './v2.js';
+import * as publicUiContracts from '../../ui/index.js';
 import { PluginUiIconTokenV1Schema } from './tokens.js';
 import {
   MAX_PLUGIN_DECLARATIVE_DOCUMENT_DEPTH_V1,
@@ -23,9 +24,162 @@ import {
   PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
 } from './declarativeDocument.js';
 import { QualifiedConnectedAccountRefSchema } from '../../../connect/qualifiedConnectedAccountPersistence.js';
-import { projectPluginPortableUiDeclarationsV1 } from './declarationProjection.js';
+import { projectPluginPortableUiDeclarationsV1, projectPluginUiRendererAvailability } from './declarationProjection.js';
+import { createPluginContributionIdentity } from '../../contributionIdentity.js';
 import { InputHintsSchema } from '../../../inputs/inputFields.js';
 import { PluginJsonSchemaV2Schema } from '../publicTypes.js';
+import { computePluginUiArtifactFileSetSha256DigestV1, computePluginUiArtifactSha256DigestV1 } from '../../ui/artifactIntegrity.js';
+import { PluginUiArtifactsManifestEntryV2Schema } from '../../ui/uiArtifactsManifest.js';
+
+function portableHostedDeclarationFixture() {
+  const entry = 'hosted-web/panel/index.html';
+  const bytes = new TextEncoder().encode('<!doctype html><main>Account page</main>');
+  const artifact = PluginUiArtifactsManifestEntryV2Schema.parse({
+    artifactId: 'panel', tier: 'hostedWeb', entry,
+    files: [{ relativePath: entry, digest: computePluginUiArtifactSha256DigestV1(bytes), byteSize: bytes.byteLength }],
+    digest: computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: entry, bytes }]),
+    builtWith: { staging: 'staticDirectory' }, hostUiApiRange: '^1.0.0',
+  });
+  const manifest = PluginManifestV2Schema.parse({
+    schemaVersion: 2, id: 'acme.portable-hosted', version: '1.0.0', displayName: 'Account page',
+    runtime: { apiVersion: 1 }, contributes: { ui: {
+      renderers: [{ id: 'panel-renderer', kind: 'hostedWeb', source: { kind: 'artifact', artifact: 'panel' },
+        requiredHostMethods: ['context', 'readResource'] }],
+      views: [{ id: 'panel-page', container: 'appPage', target: { kind: 'app' }, renderer: 'panel-renderer', title: 'Account page' }],
+    } },
+  });
+  return { artifact, manifest };
+}
+
+it('projects portable search providers with the same qualified Action identity as runtime declarations', () => {
+  const manifest = PluginManifestV2Schema.parse({ schemaVersion: 2, id: 'acme.search', version: '1.0.0',
+    displayName: 'Search', runtime: { apiVersion: 1 }, contributes: {
+      actions: [{ id: 'query', title: 'Search', scopes: ['global'], surfaces: ['ui'], placementBindings: [],
+        dangerLevel: 'safe', execution: { target: 'account', account: { artifactId: 'query', exportName: 'activate' } } }],
+      searchProviders: [{ id: 'entries', action: 'query' }],
+    } });
+  expect(projectPluginPortableUiDeclarationsV1(manifest)['searchProvider:acme.search:entries']).toMatchObject({
+    contributionKind: 'searchProvider', pluginId: 'acme.search', descriptorId: 'entries',
+    identity: { pluginId: 'acme.search', localId: 'entries' }, action: { pluginId: 'acme.search', localId: 'query' },
+  });
+});
+
+it.each([
+  { container: 'appPage', target: { kind: 'app' } },
+  { container: 'detailsTab', target: { kind: 'session' } },
+] as const)('projects resource recognition on the real $container destination without an SCM contribution', binding => {
+  const resourceLinks = [{ kind: 'ciRun', urlPattern: '^https://forge.example/runs/[0-9]+$', destination: 'run' }];
+  const view = { id: 'run', renderer: 'native', ...binding, resourceLinks };
+  const validate = new Ajv2020({ strict: false, validateFormats: false }).compile(z.toJSONSchema(PluginUiViewV2Schema, {
+    io: 'input', target: 'draft-2020-12', unrepresentable: 'any',
+  }));
+  expect(validate(view)).toBe(true);
+  const manifest = PluginManifestV2Schema.parse({ schemaVersion: 2, id: 'acme.runs', version: '1.0.0',
+    displayName: 'Runs', runtime: { apiVersion: 1 }, contributes: { ui: {
+      views: [view], renderers: [{ id: 'native', kind: 'declarative', root: { kind: 'text', text: 'Run' } }],
+    } } });
+  expect(projectPluginPortableUiDeclarationsV1(manifest)['surfacePlacement:acme.runs:run']).toMatchObject({
+    binding: { kind: 'destination', container: binding.container, targetKind: binding.target.kind }, resourceLinks,
+  });
+});
+
+it('admits Agent settings as inline Account content through the public parser and projection', () => {
+  const view = { id: 'agent-options', container: 'agentSettings', target: { kind: 'app' }, renderer: 'native' };
+  const parsed = PluginUiViewV2Schema.safeParse(view);
+  expect(parsed.success, parsed.success ? undefined : JSON.stringify(parsed.error.issues)).toBe(true);
+  const manifest = PluginManifestV2Schema.parse({ schemaVersion: 2, id: 'acme.agent-options', version: '1.0.0',
+    displayName: 'Agent options', runtime: { apiVersion: 1 }, contributes: { ui: { views: [view],
+      renderers: [{ id: 'native', kind: 'declarative', root: { kind: 'text', text: 'Options' } }] } } });
+  expect(projectPluginPortableUiDeclarationsV1(manifest)['surfacePlacement:acme.agent-options:agent-options'])
+    .toMatchObject({ binding: { kind: 'inline', role: 'agentSettings', targetKind: 'app', surfaceContextPlacement: 'appSurface' } });
+  expect(PluginUiViewV2Schema.safeParse({ ...view, target: { kind: 'session' } }).success).toBe(false);
+});
+
+describe('portable hosted-web artifact declarations', () => {
+  it('admits a retained artifact whose declared range pins the supported 1.0 generation', () => {
+    const { manifest, artifact } = portableHostedDeclarationFixture();
+    const projected = projectPluginPortableUiDeclarationsV1(manifest, [{ ...artifact, hostUiApiRange: '=1.0.0' }]);
+    expect(projected['hostedWeb:acme.portable-hosted:panel-renderer']).toMatchObject({
+      runtime: { artifactReadIdentity: { artifactDigest: artifact.digest } },
+    });
+    expect(projected['surfacePlacement:acme.portable-hosted:panel-page']).toMatchObject({
+      availability: { state: 'available' },
+    });
+  });
+
+  it('retains the exact portable artifact and fixed frame policy without claiming a physical frame', () => {
+    const { manifest, artifact } = portableHostedDeclarationFixture();
+    const projected = projectPluginPortableUiDeclarationsV1(manifest, [artifact]);
+    expect(projected['hostedWeb:acme.portable-hosted:panel-renderer']).toMatchObject({
+      pluginId: manifest.id, pluginVersion: manifest.version, contributionKind: 'hostedWeb',
+      contributionId: 'panel-renderer', generatedV2: true,
+      source: { kind: 'artifact', artifact: 'panel' }, artifactGraph: artifact,
+      requiredHostMethods: ['context', 'readResource'],
+      service: { kind: 'staticAssets', assetRootId: 'hosted-web/panel' },
+      entry: { routeMode: 'pathFallback', path: '/' },
+      bridge: { allowedMessages: ['ready', 'hostApi'] },
+      sandbox: { scripts: true, sameOrigin: false, popups: false, topNavigation: false, mixedContent: false },
+      runtime: {
+        state: 'fallback', artifactReadIdentity: { artifactDigest: artifact.digest },
+        decision: { state: 'fallback', reason: 'hosted_web_frame_adapter_unknown' },
+      },
+    });
+    expect(projected['hostedWeb:acme.portable-hosted:panel-renderer']).not.toHaveProperty('executionOrigin');
+    expect(projected['hostedWeb:acme.portable-hosted:panel-renderer']).not.toHaveProperty('artifactSelectionOwner');
+    expect(projected['surfacePlacement:acme.portable-hosted:panel-page']).toMatchObject({
+      renderer: { kind: 'hostedWeb', contributionId: 'panel-renderer' },
+      availability: { state: 'available', reason: 'available' },
+    });
+  });
+
+  it('does not grant artifact read identity to an incompatible Host UI API graph', () => {
+    const { manifest, artifact } = portableHostedDeclarationFixture();
+    const projected = projectPluginPortableUiDeclarationsV1(manifest, [{ ...artifact, hostUiApiRange: '^999.0.0' }]);
+    const hosted = projected['hostedWeb:acme.portable-hosted:panel-renderer'];
+    expect(hosted).toMatchObject({
+      runtime: { state: 'fallback', decision: { state: 'fallback', reason: 'hosted_web_static_artifact_missing' } },
+    });
+    expect(hosted).not.toHaveProperty('runtime.artifactReadIdentity');
+    expect(projected['surfacePlacement:acme.portable-hosted:panel-page']).toMatchObject({
+      availability: { state: 'fallback', reason: 'hosted_web_static_artifact_missing' },
+    });
+  });
+
+  it.each(['adapter_unavailable', 'missing_identity', 'mismatched_identity', 'feature_disabled', 'blocked', 'legacy', 'react_native'] as const)(
+    'preserves %s refusal instead of treating every frame fallback as navigation availability', kind => {
+      const { manifest, artifact } = portableHostedDeclarationFixture();
+      const projected = projectPluginPortableUiDeclarationsV1(manifest, [artifact]);
+      const entry = projected['hostedWeb:acme.portable-hosted:panel-renderer'];
+      if (!entry || entry.contributionKind !== 'hostedWeb' || !entry.runtime) throw new Error('Expected a hosted descriptor runtime');
+      const definition = manifest.contributes.ui.renderers[0]!;
+      const { artifactReadIdentity: _identity, ...withoutIdentity } = entry.runtime;
+      const runtime = kind === 'adapter_unavailable'
+        ? { ...entry.runtime, decision: { state: 'fallback', reason: 'hosted_web_frame_adapter_unavailable', diagnostics: ['hosted_web_frame_adapter_unavailable'] } }
+        : kind === 'missing_identity' ? withoutIdentity
+        : kind === 'mismatched_identity' ? { ...entry.runtime, artifactReadIdentity: { artifactDigest: computePluginUiArtifactSha256DigestV1(new TextEncoder().encode('another artifact')) } }
+        : kind === 'feature_disabled' ? { ...entry.runtime, decision: { state: 'fallback', reason: 'feature_disabled', diagnostics: ['feature_disabled'] } }
+        : kind === 'blocked' ? { ...entry.runtime, decision: { state: 'blocked', reason: 'blocked', diagnostics: ['blocked'] } }
+        : entry.runtime;
+      const availability = projectPluginUiRendererAvailability({
+        pluginId: manifest.id,
+        renderer: { pluginId: manifest.id, definition, identity: createPluginContributionIdentity({ pluginId: manifest.id, localId: definition.id }) },
+        declarativeModel: undefined,
+        registryRendererRef: { kind: kind === 'react_native' ? 'reactNative' : 'hostedWeb', contributionId: definition.id },
+        entriesById: { [definition.id]: { ...entry, generatedV2: kind !== 'legacy', runtime } },
+      });
+      expect(availability).toMatchObject({ state: kind === 'blocked' ? 'blocked' : 'fallback' });
+    },
+  );
+
+  it.each(['missing', 'ambiguous'] as const)('does not select a %s portable artifact graph', kind => {
+    const { manifest, artifact } = portableHostedDeclarationFixture();
+    const projected = projectPluginPortableUiDeclarationsV1(manifest, kind === 'missing' ? [] : [artifact, artifact]);
+    expect(projected['hostedWeb:acme.portable-hosted:panel-renderer']).toBeUndefined();
+    expect(projected['surfacePlacement:acme.portable-hosted:panel-page']).toMatchObject({
+      availability: { state: 'fallback', reason: 'renderer_unavailable' },
+    });
+  });
+});
 
 /**
  * The declarative vocabulary is a bounded host-rendered document language
@@ -34,6 +188,119 @@ import { PluginJsonSchemaV2Schema } from '../publicTypes.js';
  * from drifting into a general data-binding surface.
  */
 describe('declarative node vocabulary v2', () => {
+  it('projects public Machine pages from the generated author grammar for portable and bundled plugins', () => {
+    const page = { id: 'machine-tools', container: 'appPage', target: { kind: 'machine' }, renderer: 'native', title: 'Tools' };
+    const validate = new Ajv2020({ strict: false, validateFormats: false }).compile(z.toJSONSchema(PluginUiViewV2Schema, { io: 'input', target: 'draft-2020-12', unrepresentable: 'any' }));
+    expect(validate(page)).toBe(true);
+    const manifest = PluginManifestV2Schema.parse({ schemaVersion: 2, id: 'acme.machine-pages', version: '1.0.0',
+      displayName: 'Machine tools', runtime: { apiVersion: 1 }, contributes: { ui: { views: [page],
+        renderers: [{ id: 'native', kind: 'declarative', root: { kind: 'text', text: 'Tools' } }] } } });
+    for (const bundledArtifacts of [undefined, []]) {
+      const projected = projectPluginPortableUiDeclarationsV1(manifest, bundledArtifacts);
+      expect(projected['surfacePlacement:acme.machine-pages:machine-tools']).toMatchObject({
+        binding: { container: 'appPage', target: page.target, targetKind: 'machine', surfaceContextPlacement: 'machineSurface' },
+      });
+    }
+    for (const candidate of [
+      { ...page, target: { kind: 'services' } },
+      { ...page, container: 'servicesPanel' },
+      { ...page, target: { ...page.target, sessionIdPath: '/sessionId' } },
+    ]) {
+      expect(validate(candidate)).toBe(false);
+      expect(PluginUiViewV2Schema.safeParse(candidate).success).toBe(false);
+    }
+  });
+
+  it('admits sized Project widgets through the canonical parser and portable projection', () => {
+    const view = { id: 'project-status', renderer: 'native', container: 'widget', target: { kind: 'project' },
+      sizeDeclaration: { sizes: ['medium', 'wide'], defaultSize: 'wide' },
+      availability: { when: { fact: 'project.repository.kind', operator: 'equals', value: 'github' } } };
+    const parsed = PluginUiViewV2Schema.safeParse(view);
+    expect(parsed.success, parsed.success ? undefined : JSON.stringify(parsed.error.issues)).toBe(true);
+    const manifest = PluginManifestV2Schema.parse({ schemaVersion: 2, id: 'acme.project-widget', version: '1.0.0',
+      displayName: 'Project status', runtime: { apiVersion: 1 }, contributes: { ui: { views: [view],
+        renderers: [{ id: 'native', kind: 'declarative', root: { kind: 'text', text: 'Status' } }] } } });
+    expect(projectPluginPortableUiDeclarationsV1(manifest)['surfacePlacement:acme.project-widget:project-status'])
+      .toMatchObject({ binding: { kind: 'inline', role: 'widget', targetKind: 'project', surfaceContextPlacement: 'projectSurface' },
+        sizeDeclaration: view.sizeDeclaration, availability: { when: view.availability.when } });
+    expect(projectPluginPortableUiDeclarationsV1(manifest, [])['surfacePlacement:acme.project-widget:project-status'])
+      .toMatchObject({ binding: { kind: 'inline', role: 'widget', targetKind: 'project' },
+        sizeDeclaration: view.sizeDeclaration, availability: { when: view.availability.when } });
+    expect(PluginUiViewV2Schema.safeParse({ ...view, sizeDeclaration: undefined }).success).toBe(false);
+  });
+
+  it('admits one labelled count Resource on sidebar and Project pages through the public parser and projection', () => {
+    const counts = { resourceId: 'branch-counts', items: [
+      { field: 'running', label: { key: 'counts.running', fallback: 'Running' } },
+      { field: 'failed', label: 'Failed' },
+    ] };
+    const validate = new Ajv2020({ strict: false, validateFormats: false }).compile(z.toJSONSchema(PluginUiViewV2Schema, { io: 'input', target: 'draft-2020-12', unrepresentable: 'any' }));
+    for (const [container, kind] of [['rightSidebarTab', 'session'], ['rightSidebarTab', 'project'], ['rightSidebarTab', 'app'], ['appPage', 'project']]) {
+      const view = { id: 'builds', renderer: 'native', container, target: { kind }, counts };
+      expect(PluginUiViewV2Schema.safeParse(view).success).toBe(true);
+      expect(validate(view)).toBe(true);
+      const projected = projectPluginPortableUiDeclarationsV1(PluginManifestV2Schema.parse({
+        schemaVersion: 2, id: 'acme.labelled-counts', version: '1.0.0', displayName: 'Builds', runtime: { apiVersion: 1 },
+        contributes: { ui: { views: [view], renderers: [{ id: 'native', kind: 'declarative', root: { kind: 'text', text: 'Builds' } }] } },
+      }));
+      expect(projected['surfacePlacement:acme.labelled-counts:builds']).toHaveProperty('display.counts', counts);
+      expect(PluginUiViewV2Schema.safeParse({ ...view, countResourceId: 'legacy-count' }).success).toBe(false);
+      expect(validate({ ...view, countResourceId: 'legacy-count' })).toBe(false);
+    }
+    const page = { id: 'builds', renderer: 'native', container: 'appPage', target: { kind: 'project' }, counts };
+    expect(publicUiContracts.PluginUiCountsBindingV1Schema.parse(counts)).toEqual(counts);
+    const valueSchema = publicUiContracts.createPluginUiCountsValueV1Schema(counts);
+    for (const value of [{ running: 2, failed: 1 }, { running: 0, failed: 0 }, { running: null, failed: 1 }]) {
+      expect(valueSchema.safeParse(value).success).toBe(true);
+    }
+    for (const value of [{ running: 4 }, { running: 4, failed: -1 }, { running: 4, failed: 0.5 },
+      { running: 4, failed: Number.MAX_SAFE_INTEGER + 1 }, { running: 4, failed: '0' },
+      { running: 4, failed: 0, label: 'Injected' }]) {
+      expect(valueSchema.safeParse(value).success).toBe(false);
+    }
+    for (const invalid of [{ ...counts, items: [] }, { ...counts, items: [...counts.items, counts.items[0]] },
+      { ...counts, items: [{ field: 'running', label: 'Running', severity: 'danger' }] }]) {
+      expect(PluginUiViewV2Schema.safeParse({ ...page, counts: invalid }).success).toBe(false);
+    }
+    for (const unsupported of [{ container: 'appPage', target: { kind: 'app' } }, { container: 'rightPane', target: { kind: 'project' } }]) {
+      expect(PluginUiViewV2Schema.safeParse({ ...page, ...unsupported }).success).toBe(false);
+      expect(validate({ ...page, ...unsupported })).toBe(false);
+    }
+  });
+  it('admits portable Project pages with page metadata while keeping app shell capabilities app-only', () => {
+    const page = { id: 'builds', container: 'appPage', target: { kind: 'project' }, renderer: 'native',
+      title: 'Builds', description: { key: 'builds.purpose', fallback: 'Follow this repository.' },
+      headerStyle: 'toolbar', headerActions: [{ id: 'open-builds', title: 'Open builds', command: { kind: 'openSurface', destination: 'builds' } }],
+      availability: { when: { fact: 'project.repository.kind', operator: 'equals', value: 'github' } } };
+    const validate = new Ajv2020({ strict: false, validateFormats: false }).compile(z.toJSONSchema(PluginUiViewV2Schema, { io: 'input', target: 'draft-2020-12', unrepresentable: 'any' }));
+    expect(PluginUiViewV2Schema.safeParse(page).success).toBe(true);
+    expect(validate(page)).toBe(true);
+    const manifest = PluginManifestV2Schema.parse({ schemaVersion: 2, id: 'acme.project-pages', version: '1.0.0',
+      displayName: 'Project pages', runtime: { apiVersion: 1 }, contributes: { ui: { views: [page],
+        renderers: [{ id: 'native', kind: 'declarative', root: { kind: 'text', text: 'Builds' } }] } } });
+    for (const bundledArtifacts of [undefined, []]) {
+      const projected = projectPluginPortableUiDeclarationsV1(manifest, bundledArtifacts);
+      expect(projected['surfacePlacement:acme.project-pages:builds']).toMatchObject({
+        binding: { container: 'appPage', target: { kind: 'project' }, surfaceContextPlacement: 'projectSurface', instancePolicy: 'singleton',
+          platforms: expect.arrayContaining(['web', 'desktop', 'ios', 'android']) },
+        display: { title: 'Builds', description: page.description, headerStyle: 'toolbar' },
+        availability: { state: 'available', when: page.availability.when },
+        headerActions: [{ id: 'open-builds', command: { kind: 'openSurface', destination: { pluginId: 'acme.project-pages', localId: 'builds' } } }],
+      });
+    }
+    for (const appOnly of [{ placement: { kind: 'rail' } }, { column: { renderer: 'native' } }, { widgetAreas: [] }]) {
+      expect(PluginUiViewV2Schema.safeParse({ ...page, target: { kind: 'app' }, ...appOnly }).success).toBe(true);
+      expect(validate({ ...page, target: { kind: 'app' }, ...appOnly })).toBe(true);
+      expect(PluginUiViewV2Schema.safeParse({ ...page, ...appOnly }).success).toBe(false);
+      expect(validate({ ...page, ...appOnly })).toBe(false);
+    }
+    for (const unsupported of [
+      { target: { kind: 'session' } }, { target: { kind: 'browser' } }, { extraAuthority: true }]) {
+      const candidate = { ...page, ...unsupported };
+      expect(PluginUiViewV2Schema.safeParse(candidate).success).toBe(false);
+      expect(validate(candidate)).toBe(false);
+    }
+  });
   it('validates the closed sidebar count payload without treating unknown as empty', () => {
     expect(uiContracts).toHaveProperty('PluginRightSidebarCountV1Schema');
     const schema = Reflect.get(uiContracts, 'PluginRightSidebarCountV1Schema') as { safeParse(value: unknown): {success: boolean} };
@@ -62,6 +329,26 @@ describe('declarative node vocabulary v2', () => {
       { container: 'rightSidebarTab', target: { kind: 'session' }, defaultPlacement: 'hidden' },
     ]) {
       const candidate = { id: 'issues', renderer: 'native', ...view };
+      expect(PluginUiViewV2Schema.safeParse(candidate).success).toBe(false);
+      expect(validate(candidate)).toBe(false);
+    }
+  });
+  it('admits a page-items-only App companion through parser, author schema and display projection, and nowhere else', () => {
+    const validate = new Ajv2020({ strict: false, validateFormats: false }).compile(z.toJSONSchema(PluginUiViewV2Schema, { io: 'input', target: 'draft-2020-12', unrepresentable: 'any' }));
+    const view = { id: 'entry-session', renderer: 'native', container: 'rightSidebarTab', target: { kind: 'app' }, reach: 'pageItems' };
+    expect(PluginUiViewV2Schema.safeParse(view).success).toBe(true);
+    expect(validate(view)).toBe(true);
+    const projected = projectPluginPortableUiDeclarationsV1(PluginManifestV2Schema.parse({
+      schemaVersion: 2, id: 'acme.page-companion', version: '1.0.0', displayName: 'Page companion', runtime: { apiVersion: 1 },
+      contributes: { ui: { views: [view], renderers: [{ id: 'native', kind: 'declarative', root: { kind: 'text', text: 'Session' } }] } },
+    }));
+    expect(projected['surfacePlacement:acme.page-companion:entry-session']).toHaveProperty('display.reach', 'pageItems');
+    for (const candidate of [
+      { ...view, target: { kind: 'session' } },
+      { ...view, target: { kind: 'project' } },
+      { ...view, container: 'appPage' },
+      { ...view, reach: 'everywhere' },
+    ]) {
       expect(PluginUiViewV2Schema.safeParse(candidate).success).toBe(false);
       expect(validate(candidate)).toBe(false);
     }
@@ -386,6 +673,7 @@ describe('declarative node vocabulary v2', () => {
       kind: 'item', title: 'Row', icon: './assets/logo.png',
     }).success).toBe(false);
     expect(PluginUiIconTokenV1Schema.safeParse('file').success).toBe(true);
+    expect(PluginUiIconTokenV1Schema.safeParse('neutral').success).toBe(true);
     expect([...PluginUiIconTokenV1Schema.options]).toEqual([
       'action',
       'browser',
@@ -430,6 +718,20 @@ describe('declarative node vocabulary v2', () => {
       'list',
       'board',
       'filter',
+      'watch',
+      'link',
+      'tag',
+      'asset',
+      'branch',
+      'commit',
+      'download',
+      'locked',
+      'run',
+      'stop',
+      'send',
+      'generate',
+      'workflow',
+      'neutral',
     ]);
 
     // Metadata is bounded, and an empty metadata block is a modeling mistake.

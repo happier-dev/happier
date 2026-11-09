@@ -15,7 +15,7 @@ const workflowStartContext: AgentStartContextV1 = {
 };
 
 describe('createActionExecutor (review.start)', () => {
-  it.each([undefined, 'agentDefault'] as const)('resolves Review omission through the Account-default child choice (%s)', async childSelection => {
+  it.each([undefined, 'agentDefault'] as const)('preserves Session Review inheritance and explicit Account-default choice (%s)', async childSelection => {
     const requests: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
     const sessionConfigOptionOverrides = buildAcpConfigOptionOverridesV1({
       updatedAt: 1,
@@ -36,7 +36,7 @@ describe('createActionExecutor (review.start)', () => {
       sessionConfigOptionOverrides,
       ...(childSelection ? { childSelection } : {}),
     }, { surface: 'ui' })).toMatchObject({ ok: true, result: { results: [{ ok: true }, { ok: true }] } });
-    expect(requests.map(request => request.childSelection)).toEqual(['agentDefault', 'agentDefault']);
+    expect(requests.map(request => request.childSelection)).toEqual([childSelection, childSelection]);
     expect(requests.map(request => request.sessionConfigOptionOverrides)).toEqual([
       sessionConfigOptionOverrides, sessionConfigOptionOverrides,
     ]);

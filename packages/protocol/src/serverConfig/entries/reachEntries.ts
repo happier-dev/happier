@@ -144,6 +144,17 @@ export const REACH_SERVER_CONFIG = defineServerConfigRegistry({
         description: 'Milliseconds to wait for `tailscale funnel status` while inferring the public address.',
         docs: 'self-hosting/env#tailscale-serve-inference-optional',
     },
+    HAPPIER_HOME_IROH_HOLDER: {
+        type: 'boolean',
+        default: false,
+        sensitivity: 'plain',
+        apply: 'restart',
+        editable: 'internal',
+        section: 'reach',
+        group: 'iroh',
+        description: 'Declares this process the sole Home Iroh holder when using Redis Streams. Set on exactly one API process; never share the marker or a live endpoint key between replicas. Does not override the Home Iroh opt-out.',
+        docs: 'self-hosting/iroh-relay#point-your-home-server-at-the-relay',
+    },
     HAPPIER_HOME_IROH_MODE: {
         type: 'enum',
         default: 'enabled',
@@ -153,7 +164,7 @@ export const REACH_SERVER_CONFIG = defineServerConfigRegistry({
         editable: 'home',
         section: 'reach',
         group: 'iroh',
-        description: 'Whether devices may connect to this Personal Home directly (Iroh). Turning it off retires the current direct-connection identity; turning it on creates a new one. Changed from Reach, which applies it at once.',
+        description: 'Whether devices may connect to this Home through Iroh. Turning it off retires the current connection identity; turning it on creates a new one. Changed from Reach, which applies it at once.',
         docs: 'self-hosting/env#iroh-connectivity-optional',
     },
     HAPPIER_IROH_RELAY_POLICY: {

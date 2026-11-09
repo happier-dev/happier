@@ -26,6 +26,7 @@ import {
   type AccountScopedCryptoMaterial,
   deriveAccountMachineKeyFromRecoverySecret,
   derivePluginCollectionIdentityTagV1,
+  deriveDeploymentEnvironmentCreateCommitmentV1,
 } from './accountScopedCipher.js';
 import {
   getAccountScopedBlobKindByte,
@@ -33,6 +34,31 @@ import {
   isAccountScopedBlobCiphertextForKind as isCanonicalAccountScopedBlobCiphertextForKind,
   readAccountScopedCiphertextKindByte as readCanonicalAccountScopedCiphertextKindByte,
 } from './accountScopedCipherEnvelope.js';
+
+describe('deployment create intent commitment', () => {
+  it('keeps keyless retries canonical while separating changed copy choices and Accounts', () => {
+    const intent = { copyFrom: { environmentId: 'source', expectedRevision: 2, choices: { values: ['include'] } }, name: 'copy' };
+    const commit = (accountId: string, value: unknown) => deriveDeploymentEnvironmentCreateCommitmentV1({
+      accountId, mode: 'plain', material: null, intent: value,
+    });
+    expect(commit('owner', intent)).toBe(commit('owner', { name: 'copy', copyFrom: intent.copyFrom }));
+    expect(commit('owner', intent)).not.toBe(commit('other', intent));
+    expect(commit('owner', intent)).not.toBe(commit('owner', { ...intent, copyFrom: { ...intent.copyFrom, choices: { values: ['omit'] } } }));
+  });
+
+  it('keys E2EE equality to genuine Account material without an unkeyed private-value digest', () => {
+    const intent = { copyFrom: { choices: { remap: 'private-value' } } };
+    const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(7) };
+    const committed = deriveDeploymentEnvironmentCreateCommitmentV1({ accountId: 'owner', mode: 'e2ee', material, intent });
+    expect(committed).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(committed).toBe(deriveDeploymentEnvironmentCreateCommitmentV1({ accountId: 'owner', mode: 'e2ee', material, intent }));
+    expect(committed).not.toBe(deriveDeploymentEnvironmentCreateCommitmentV1({ accountId: 'owner', mode: 'plain', material: null, intent }));
+    expect(committed).not.toBe(deriveDeploymentEnvironmentCreateCommitmentV1({ accountId: 'owner', mode: 'e2ee',
+      material: { ...material, machineKey: new Uint8Array(32).fill(8) }, intent }));
+    expect(() => deriveDeploymentEnvironmentCreateCommitmentV1({ accountId: 'owner', mode: 'e2ee', material: null, intent })).toThrow('client_required');
+    expect(() => deriveDeploymentEnvironmentCreateCommitmentV1({ accountId: 'owner', mode: 'plain', material, intent })).toThrow('account_mode_mismatch');
+  });
+});
 
 function deterministicRandomBytesFactory(): (length: number) => Uint8Array {
   let counter = 1;

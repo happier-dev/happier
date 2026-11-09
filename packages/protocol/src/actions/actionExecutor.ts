@@ -1955,6 +1955,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           right === origin.data.serverId ? origin.data.serverIdentityId : right,
           executionContext,
         ) : undefined;
+    // The admitted receiver owns private Account custody and its authenticated
+    // Home stamp, which the original Ask may not have captured.
+    const confidentialAccountContext = {
+      serverIdentityId: args.ctx.serverIdentityId ?? executionContext.serverIdentityId,
+      runtimeAccountId: args.ctx.runtimeAccountId,
+    };
     const executeConfidential = async (): Promise<ActionExecuteResult> => {
       const continuation = args.privateSecretContinuation;
       if (!continuation || !deps.confidentialSecretFill) {
@@ -1964,8 +1970,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const settlement = await deps.confidentialSecretFill({
           actionId: continuation.actionId, request: continuation.request, choice: continuation.choice,
           submit: continuation.submit, accountEncryptionMode: continuation.accountEncryptionMode,
-          context: { ...executionContext, authority: 'present_user',
-            runtimeAccountId: args.ctx.runtimeAccountId },
+          context: { ...executionContext, ...confidentialAccountContext, authority: 'present_user' },
           async isCurrent() {
             if (args.ctx.signal?.aborted) return false;
             if (!isActionEnabled(getActionSpec(continuation.actionId), { ...args.ctx, surface: executionContext.surface })) return false;
@@ -2038,7 +2043,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (args.privateActionInputContinuation) {
           if (!deps.confidentialActionInputs) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
           const privateResult = await deps.confidentialActionInputs({ continuation: args.privateActionInputContinuation,
-            context: { ...executionContext, runtimeAccountId: args.ctx.runtimeAccountId },
+            context: { ...executionContext, ...confidentialAccountContext },
             execute: async privateInput => {
               effectAttempted = true;
               return await executeCoreTerminal(actionId, privateInput,

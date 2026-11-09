@@ -8,7 +8,7 @@ import { projectAccountProviderCatalogCountsV1, projectAccountProviderConnection
 import { serializeModelVisibilityRefV1 } from '../selection/v1.js';
 import { DaemonProviderModelProjectionResponseV1Schema } from '../../rpc/providers.js';
 import { resolveProviderBindingCompatibilityWithFingerprintV1 } from '../compatibility/resolve.js';
-import { projectProviderModelReasoningForAgent } from './reasoningEffort.js';
+import { projectProviderModelReasoningForAgent, readProviderReasoningEffortOption } from './reasoningEffort.js';
 
 const agentTargetKey = 'agent:happier.agent.claude/claude';
 const agent: AgentProviderRequirementsV1 = {
@@ -47,6 +47,16 @@ describe('Account Provider model projection', () => {
       expect(model?.modelOptions?.find(option => option.id === 'reasoning_effort')?.options?.map(option => option.value))
         .toEqual(supportsReasoningEffort ? ['low', 'high', 'max'] : undefined);
     }
+  });
+  it('lists a manual model with the reasoning levels it declares', () => {
+    const declared = { ...catalog, manualModelsByConnectionId: { pc_deepseek: [
+      { id: 'private-model', addedAt: 2, reasoningEffortLevels: ['low', 'high'] as ['low', 'high'] },
+      { id: 'plain-model', addedAt: 3 },
+    ] } };
+    const rows = projectAccountProviderConnectionModelsV1({ catalog: declared, connection, source: definitions[0]!.definition });
+    expect(readProviderReasoningEffortOption(rows.find(row => row.id === 'private-model')!.descriptor!)?.options?.map(option => option.value))
+      .toEqual(['low', 'high']);
+    expect(rows.find(row => row.id === 'plain-model')!.descriptor).toBeUndefined();
   });
   it('summarizes the same static/manual membership and per-model visibility as Account management', () => {
     const sourceCatalog = definitions[0]!.definition.catalog;

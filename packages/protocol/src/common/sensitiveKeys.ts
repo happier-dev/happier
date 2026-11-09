@@ -87,6 +87,12 @@ function containsSegmentSequence(
  * their own boundary vocabulary (HTTP headers, process flags, SCM headers,
  * and runtime-only IDs) rather than widening this base through substrings.
  */
+export function isExactBaseCredentialKey(input: string): boolean {
+  return BASE_CREDENTIAL_SINGLE_SEGMENTS.has(normalizeTelemetryDataKey(input))
+    || BASE_CREDENTIAL_COMPACT_KEYS.has(splitSensitiveDiagnosticKeySegments(input).join(''));
+}
+
+/** Diagnostic keys also recognize credential words embedded in larger keys. */
 export function isBaseCredentialDiagnosticKey(input: string): boolean {
   const normalized = normalizeTelemetryDataKey(input);
   if (BASE_CREDENTIAL_SINGLE_SEGMENTS.has(normalized)) return true;
@@ -122,9 +128,4 @@ export function isUnsafeTelemetryDataKey(input: string): boolean {
     || normalized.endsWith('-body')
     || compact.endsWith('body')
   );
-}
-
-export function isExactBaseCredentialKey(input: string): boolean {
-  return BASE_CREDENTIAL_SINGLE_SEGMENTS.has(normalizeTelemetryDataKey(input))
-    || BASE_CREDENTIAL_COMPACT_KEYS.has(splitSensitiveDiagnosticKeySegments(input).join(''));
 }

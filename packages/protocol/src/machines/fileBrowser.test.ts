@@ -8,7 +8,6 @@ import {
 import {
   DaemonWorkspaceFileListRequestSchema,
   DaemonWorkspaceFileListResponseSchema,
-  WORKSPACE_FILE_LIST_MAX_RESULTS,
 } from './workspaceFiles.js';
 
 describe('machineFileBrowser', () => {
@@ -85,22 +84,12 @@ describe('workspace file-list protocol', () => {
     }).success).toBe(false);
   });
 
-  it('bounds results and represents truncation and process failure explicitly', () => {
+  it('represents truncation and process failure explicitly', () => {
     expect(DaemonWorkspaceFileListResponseSchema.parse({
       ok: true,
       paths: ['README.md'],
       truncated: true,
     })).toEqual({ ok: true, paths: ['README.md'], truncated: true });
-    expect(DaemonWorkspaceFileListResponseSchema.safeParse({
-      ok: true,
-      paths: Array.from({ length: WORKSPACE_FILE_LIST_MAX_RESULTS + 1 }, (_, index) => `f-${index}`),
-      truncated: true,
-    }).success).toBe(false);
-    expect(DaemonWorkspaceFileListResponseSchema.safeParse({
-      ok: true,
-      paths: Array.from({ length: 300 }, (_, index) => `${index}-${'x'.repeat(1_000)}`),
-      truncated: true,
-    }).success).toBe(false);
     expect(DaemonWorkspaceFileListResponseSchema.parse({
       ok: false,
       errorCode: 'ripgrep_failed',

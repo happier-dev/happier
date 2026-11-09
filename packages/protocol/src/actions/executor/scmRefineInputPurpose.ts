@@ -3,11 +3,17 @@ import { verifyExternalActionApprovalInputV1 } from '../externalActionExecutionA
 import { SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2, SessionPendingExecutionRunEnqueueByMachineRequestV2Schema } from '../../sessions/messages/sessionPendingExecutionRunMachineAdmissionV2.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import type { ActionExecutorContext } from './types.js';
+import { readDeploymentRoleRootInputV1 } from './deploymentRoleChild.js';
 
-const rootActionId = 'scm.diffSummary.refine' as const;
+const rootActionIds = ['scm.diffSummary.refine', 'scm.diffSummary.addOutputs', 'scm.diffSummary.discuss'] as const;
+type RootActionId = typeof rootActionIds[number];
 
-function savedSessionSigningInput(authorization: ExternalActionExecutionAuthorizationV1, sessionId: string) {
-  return { actionId: rootActionId, authorization, target: { kind: 'session' as const, sessionId },
+function readRootActionId(actionId: string): RootActionId | undefined {
+  return rootActionIds.find(id => id === actionId);
+}
+
+function savedSessionSigningInput(authorization: ExternalActionExecutionAuthorizationV1, sessionId: string, actionId: RootActionId) {
+  return { actionId, authorization, target: { kind: 'session' as const, sessionId },
     input: { purpose: 'scm.refine.saved-session.v1', machineId: authorization.binding.machineId,
       requestId: authorization.binding.requestId, requestEnvelopeDigest: authorization.binding.requestEnvelopeDigest } };
 }
@@ -19,23 +25,25 @@ export function bindScmRefineSavedSessionV1(input: Readonly<{
   sign: NonNullable<ActionExecutorContext['signExternalActionApprovalInput']>;
 }>): ExternalActionExecutionAuthorizationV1 {
   const { authorization, sessionId } = input;
-  if (authorization.binding.actionId !== rootActionId
+  const actionId = readRootActionId(authorization.binding.actionId);
+  if (!actionId
     || authorization.binding.target.kind === 'session' && authorization.binding.target.sessionId !== sessionId) {
-    throw new TypeError('Refine saved Session does not match its admitted root');
+    throw new TypeError('Saved Session input does not match its admitted SCM root');
   }
   // Preserve non-enumerable requester custody ports; never mutate the original root.
   const bound: ExternalActionExecutionAuthorizationV1 = Object.create(Object.getPrototypeOf(authorization),
     Object.getOwnPropertyDescriptors(authorization));
   Object.defineProperty(bound, 'scmRefineSession', { enumerable: true,
-    value: { sessionId, signature: input.sign(savedSessionSigningInput(authorization, sessionId)) } });
+    value: { sessionId, signature: input.sign(savedSessionSigningInput(authorization, sessionId, actionId)) } });
   return bound;
 }
 
 /** The host's original saved-scope signature is independent of later packet signatures. */
 export function verifyScmRefineSavedSessionV1(authorization: ExternalActionExecutionAuthorizationV1, publicKey: string | Uint8Array): boolean {
   const saved = authorization.scmRefineSession;
-  if (authorization.binding.actionId !== rootActionId || !saved) return false;
-  const signed = savedSessionSigningInput(authorization, saved.sessionId);
+  const actionId = readRootActionId(authorization.binding.actionId);
+  if (!actionId || !saved) return false;
+  const signed = savedSessionSigningInput(authorization, saved.sessionId, actionId);
   return verifyExternalActionApprovalInputV1({ authorizationToken: authorization.token,
     actionId: signed.actionId, target: signed.target, input: signed.input, publicKey, signature: saved.signature });
 }
@@ -52,11 +60,14 @@ export function isScmRefineInputPurposeV1(input: Readonly<{
 }>): boolean {
   const { authorization } = input;
   const saved = authorization.scmRefineSession;
-  return authorization.binding.actionId === rootActionId && input.effectActionId === 'session.message.send'
+  return readRootActionId(authorization.binding.actionId) !== undefined && input.effectActionId === 'session.message.send'
     && saved !== undefined && input.sessionId === saved.sessionId
     && input.machineId === authorization.binding.machineId
     && input.localId === authorization.binding.requestId
-    && readRecord(input.requestedAction).v === 1 && readRecord(input.requestedAction).kind === 'send_now'
+    // Refine retains its explicit send-now contract. Discuss and Add outputs
+    // retain ordinary composer scheduling; the Pending schema owns its grammar.
+    && (authorization.binding.actionId !== 'scm.diffSummary.refine'
+      || readRecord(input.requestedAction).v === 1 && readRecord(input.requestedAction).kind === 'send_now')
     && readRecord(input.recipient).kind === 'execution_run';
 }
 
@@ -72,13 +83,16 @@ export function isScmRefineInputRpcPurposeV1(execution: ExternalActionMachineRpc
 
 /** Only an actual host child can spend the parent; possessing its carrier does not authorize direct sends. */
 export function readHostRootInputCredentialActionV1(actionId: string, input: unknown,
-  context: ActionExecutorContext, hostInternal: boolean): typeof rootActionId | null {
+  context: ActionExecutorContext, hostInternal: boolean): RootActionId | NonNullable<ReturnType<typeof readDeploymentRoleRootInputV1>>['actionId'] | null {
+  const deployment = readDeploymentRoleRootInputV1(context, actionId, input, hostInternal);
+  if (deployment) return deployment.actionId;
   const authorization = context.externalActionExecutionAuthorization;
   const data = readRecord(input);
   return hostInternal && authorization && isScmRefineInputPurposeV1({ authorization, effectActionId: actionId,
     sessionId: data.sessionId, machineId: context.defaultSessionMachineId
       ?? (context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget.machineId : undefined),
-    localId: data.localId, requestedAction: data.requestedAction, recipient: data.recipient }) ? rootActionId : null;
+    localId: data.localId, requestedAction: data.requestedAction, recipient: data.recipient })
+    ? readRootActionId(authorization.binding.actionId) ?? null : null;
 }
 
 /** SCM's private callback carries only the root bound by its admitted saved-result owner. */

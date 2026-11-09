@@ -74,6 +74,14 @@ const MutationBaseSchema = lazyZodSchema(() => z.object({
   mutationId: NpmRegistryProfileMutationIdV1Schema,
 }));
 
+/** Public sign-in intent; credentials and the browser completion URL stay on the Machine. */
+export const NpmRegistryProfileLoginMethodV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ kind: z.literal('machine'), projectDir: z.optional(z.string().check(z.trim(), z.minLength(1))) }),
+  z.strictObject({ kind: z.literal('browser'), step: z.literal('start') }),
+  z.strictObject({ kind: z.literal('browser'), step: z.enum(['complete', 'cancel']), loginId: z.string().check(z.minLength(1)) }),
+]));
+export type NpmRegistryProfileLoginMethodV1 = z.infer<typeof NpmRegistryProfileLoginMethodV1Schema>;
+
 export const DaemonNpmRegistryProfileMutationRequestV1Schema = lazyZodSchema(() => z.discriminatedUnion('action', [
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(MutationBaseSchema, {
     action: z.literal('add'),
@@ -88,10 +96,9 @@ export const DaemonNpmRegistryProfileMutationRequestV1Schema = lazyZodSchema(() 
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(MutationBaseSchema, {
     action: z.literal('login'),
     profileId: NpmRegistryProfileIdV1Schema,
-    credential: z.strictObject({
-      kind: z.literal('bearer_token'),
-      secret: z.string().check(z.minLength(1)),
-    }),
+    credential: z.union([NpmRegistryProfileLoginMethodV1Schema,
+      z.strictObject({ kind: z.literal('bearer_token'), secret: z.string().check(z.minLength(1)) }),
+    ]),
   })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(MutationBaseSchema, {
     action: z.literal('logout'),
@@ -119,6 +126,7 @@ const NpmRegistryProfileRpcErrorV1Schema = lazyZodSchema(() => z.strictObject({
     'authentication_failed',
     'offline',
     'unavailable',
+    'web_login_unsupported',
   ]),
   retryable: z.boolean(),
   currentRevision: z.optional(NpmRegistryProfileRevisionV1Schema),
@@ -126,6 +134,8 @@ const NpmRegistryProfileRpcErrorV1Schema = lazyZodSchema(() => z.strictObject({
 
 export const DaemonNpmRegistryProfileMutationResponseV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ status: z.literal('success'), snapshot: DaemonNpmRegistryProfileSnapshotV1Schema }),
+  z.strictObject({ status: z.literal('browser_login_required'), loginId: z.string().check(z.minLength(1)), loginUrl: z.string().check(z.url()) }),
+  z.strictObject({ status: z.literal('cancelled') }),
   NpmRegistryProfileRpcErrorV1Schema,
 ]));
 export type DaemonNpmRegistryProfileMutationResponseV1 = z.infer<typeof DaemonNpmRegistryProfileMutationResponseV1Schema>;

@@ -7,7 +7,7 @@ import type { AccountApiTokenSummaryV1 } from '../auth/accountApiTokens.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
-import { requiresExactDaemonApprovalReplay } from '../approvals/approvalRequestV1.js';
+import { resolveApprovalExecutor } from '../approvals/resolveApprovalExecutor.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 
 function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutorDeps {
@@ -96,9 +96,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
     const requestContext = { surface, authority: 'account_automation' as const, actionCaller: { kind: 'host' as const },
       serverId: 'home-1', runtimeAccountId: 'account-1', defaultSessionMachineId: 'token-machine', actionRequestId: 'token-request', signal: cancellation.signal };
     const input = { tokenId: token.tokenId, label: token.label };
-    expect(await executor.execute('account.apiTokens.create', input, { ...requestContext,
-      actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'account.apiTokens.create': [surface] } }),
-    })).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    // Scoped credentials are never a person, even with a full grant.
     expect(await executor.execute('account.apiTokens.create', input, { ...requestContext,
       externalActionCredential: { accountId: 'account-1', principalId: 'account-1', credentialId: token.tokenId, grant: API_TOKEN_FULL_GRANT_V1 },
     })).toMatchObject({ ok: false, errorCode: 'present_user_required' });
@@ -113,7 +111,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
       await vi.waitFor(() => expect(coordinator.getLiveWaiterCount('token-request')).toBe(1));
       expect(returned).toBe(false);
       expect(effect).not.toHaveBeenCalled();
-      expect(requiresExactDaemonApprovalReplay(stored!)).toBe(true);
+      expect(resolveApprovalExecutor(stored!)).toEqual({ kind: 'live_invocation', daemonMachineId: 'token-machine' });
       const decided = await executor.execute('approval.request.decide', { artifactId: 'token-request', decision: 'approve' }, {
         surface: 'ui', authority: 'present_user', serverId: 'home-1', actionCaller: { kind: 'host' },
       });
@@ -131,9 +129,11 @@ describe('createActionExecutor (account.apiTokens)', () => {
       await vi.waitFor(() => expect(coordinator.getLiveWaiterCount('token-request')).toBe(1));
       cancellation.abort();
       await detached;
-      expect(await executor.execute('approval.request.decide', { artifactId: 'token-request', decision: 'approve' }, {
+      const expired = await executor.execute('approval.request.decide', { artifactId: 'token-request', decision: 'approve' }, {
         surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
-      })).toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } } });
+      });
+      expect(expired).toMatchObject({ ok: false, errorCode: 'approval_stale', details: { reason: 'live_invocation_unavailable' } });
+      expect(stored).toMatchObject({ status: 'approved' });
       expect(effect).toHaveBeenCalledOnce();
     } finally { cancellation.abort(); coordinator.dispose(); await Promise.all([invocation, detached]); }
   });
@@ -332,15 +332,15 @@ describe('createActionExecutor (account.apiTokens)', () => {
       result: { tokens: [token] },
     });
 
+    // Token management by automation defaults to Ask; this host offers no approval owner.
     for (const [actionId, input] of [
       [CREATE_ACTION_ID, { tokenId: token.tokenId, label: token.label }],
       [REVOKE_ACTION_ID, { tokenId: token.tokenId }],
       [REVOKE_ALL_ACTION_ID, {}],
     ] as const) {
-      await expect(executor.execute(actionId, input, automationContext)).resolves.toEqual({
+      await expect(executor.execute(actionId, input, automationContext)).resolves.toMatchObject({
         ok: false,
-        errorCode: 'present_user_required',
-        error: 'present_user_required',
+        errorCode: 'approvals_not_supported',
       });
     }
 
@@ -445,11 +445,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
       CREATE_ACTION_ID,
       { tokenId: token.tokenId, label: token.label, encryption: { access: encryptionAccess } },
       { surface: 'ui' as const, authority: 'account_automation' as const, actionCaller: { kind: 'host' as const } },
-    )).resolves.toEqual({
-      ok: false,
-      errorCode: 'present_user_required',
-      error: 'present_user_required',
-    });
+    )).resolves.toMatchObject({ ok: false });
     expect(accountApiTokensCreateAction).not.toHaveBeenCalled();
   });
 

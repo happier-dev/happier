@@ -8,6 +8,8 @@ import { TurnIdSchema } from '../idsV1.js';
 import { PendingActivationAuthorizationV1Schema } from '../pending/pendingActivationAuthorizationV1.js';
 import { PrimaryTurnStatusV1Schema, SessionRuntimeIssueV1Schema } from './runtimeIssueV1.js';
 import { SessionRuntimeActivityStateSchema, refineRuntimeActivityProjectionFields } from '../runtime/activity/sessionRuntimeActivity.js';
+import { SessionBotV1Schema, readSessionBotV1 } from '../identity/sessionBotV1.js';
+import { SessionBotFaceV1Schema, readSessionBotFaceV1 } from '../identity/sessionBotFaceV1.js';
 
 export const SessionSummarySchema = lazyZodSchema(() => z.looseObject({
   id: z.string().check(z.minLength(1)),
@@ -22,6 +24,8 @@ export const SessionSummarySchema = lazyZodSchema(() => z.looseObject({
   pendingBlockedCount: z.optional(z.number().check(z.int(), z.nonnegative())),
   tag: z.optional(z.string()),
   title: z.optional(z.string().check(z.minLength(1))),
+  bot: z.optional(SessionBotV1Schema),
+  botFace: z.optional(SessionBotFaceV1Schema),
   path: z.optional(z.string()),
   host: z.optional(z.string()),
   machineId: z.optional(z.string().check(z.trim(), z.minLength(1))),
@@ -52,6 +56,15 @@ export const SessionSummarySchema = lazyZodSchema(() => z.looseObject({
   pendingActivationAuthorization: z.optional(PendingActivationAuthorizationV1Schema),
 }).check(z.superRefine(refineRuntimeActivityProjectionFields)));
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
+
+/** Recipient-safe identity shared by full and privacy-filtered Session summaries. */
+export function projectSessionSummaryIdentityV1(
+  metadata: Readonly<{ bot?: unknown; botFace?: unknown }> | null | undefined,
+): Pick<SessionSummary, 'bot' | 'botFace'> {
+  const bot = readSessionBotV1(metadata?.bot);
+  const botFace = readSessionBotFaceV1(metadata?.botFace);
+  return { ...(bot ? { bot } : {}), ...(botFace ? { botFace } : {}) };
+}
 
 type SessionSummarySourceFieldsV1 = 'archivedAt' | 'pendingCount' | 'pendingBlockedCount' | 'effectiveAccess' | 'share'
     | 'encryptionMode' | 'latestTurnId' | 'latestTurnStatus' | 'latestTurnStatusObservedAt' | 'lastRuntimeIssue'
@@ -90,6 +103,7 @@ export function projectSessionSummaryV1(input: Readonly<{
     ...(typeof row.pendingCount === 'number' ? { pendingCount: row.pendingCount } : {}),
     ...(typeof row.pendingBlockedCount === 'number' ? { pendingBlockedCount: row.pendingBlockedCount } : {}),
     ...(tag ? { tag } : {}), ...(title ? { title } : {}), ...(path ? { path } : {}), ...(host ? { host } : {}),
+    ...projectSessionSummaryIdentityV1(metadata),
     ...(machineId ? { machineId } : {}), ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
     ...(input.systemPurpose !== undefined ? { isSystem: true, systemPurpose: input.systemPurpose } : {}),
     ...(row.effectiveAccess != null ? { effectiveAccess: row.effectiveAccess } : {}),

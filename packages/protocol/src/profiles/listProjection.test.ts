@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { projectLaunchProfileListV1 } from './listProjection.js';
 import type { AiLaunchProfile } from './read.js';
+import { AIBackendProfileSchema } from './backendProfileSchema.js';
+import { LaunchProfileV2Schema } from './v2/schema.js';
 
 const AGENT_IDS = ['claude', 'codex'] as const;
 
@@ -20,6 +22,28 @@ function profile(id: string, name: string, compatibility?: Record<string, boolea
 }
 
 describe('projectLaunchProfileListV1', () => {
+  it.each([false, true])('preserves managed directory intent and rejects competing directory values (legacy: %s)', legacy => {
+    const schema = legacy ? AIBackendProfileSchema : LaunchProfileV2Schema;
+    const base = { id: 'managed-profile', name: 'Managed', createdAt: 1, updatedAt: 1,
+      ...(legacy ? { authMode: 'machineLogin' } : { v: 2 }) };
+    const placement = { fixed: { serverId: 'server-1', machineId: 'machine-1' }, directoryIntent: { kind: 'managed' } };
+    const profile = schema.parse({ ...base, placement });
+    expect(projectLaunchProfileListV1([profile], { agentIds: AGENT_IDS }).items[0])
+      .toMatchObject({ placement });
+    expect(schema.safeParse({ ...base, placement: { ...placement, directory: '/later-folder' } }).success).toBe(false);
+  });
+
+  it('retains launch preferences on a legacy machine-login Profile inventory row', () => {
+    const legacy = AIBackendProfileSchema.parse({ id: 'retained-login', name: 'Retained login',
+      authMode: 'machineLogin', requiresMachineLoginTargetKey: 'agent:codex',
+      compatibilityByTargetKey: { 'agent:custom-acp': true }, createdAt: 1, updatedAt: 1,
+      placement: 'ask', checkout: 'create_worktree' });
+    expect(projectLaunchProfileListV1([legacy], { agentIds: AGENT_IDS }).items[0]).toMatchObject({
+      authMode: 'machineLogin', requiresMachineLoginTargetKey: legacy.requiresMachineLoginTargetKey,
+      placement: 'ask', checkout: 'create_worktree',
+    });
+  });
+
   it('answers every profile when the caller names no bound', () => {
     // The default cap this replaces sliced silently, so a caller resolving one
     // stored id could not tell a deleted profile from an unsent one. There is

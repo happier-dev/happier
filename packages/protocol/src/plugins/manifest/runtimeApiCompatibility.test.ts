@@ -16,7 +16,7 @@ function manifest(runtime: unknown): Readonly<Record<string, unknown>> {
 }
 
 describe('plugin manifest runtime API compatibility', () => {
-  it('accepts only the current required runtime API generation', () => {
+  it('defaults omitted runtime facts and rejects unsupported API generations', () => {
     expect(ingestPluginManifestV2(manifest({ apiVersion: 1 }))).toMatchObject({
       ok: true,
       manifest: {
@@ -24,15 +24,11 @@ describe('plugin manifest runtime API compatibility', () => {
       },
     });
 
-    expect(ingestPluginManifestV2(manifest(undefined))).toMatchObject({
-      ok: false,
-      diagnostics: [
-        expect.objectContaining({
-          code: 'plugin_manifest_invalid',
-          path: ['runtime'],
-        }),
-      ],
-    });
+    for (const runtime of [undefined, {}]) {
+      expect(ingestPluginManifestV2(manifest(runtime))).toMatchObject({
+        ok: true, manifest: { runtime: { apiVersion: 1 } },
+      });
+    }
 
     expect(ingestPluginManifestV2(manifest({ apiVersion: 2 }))).toMatchObject({
       ok: false,

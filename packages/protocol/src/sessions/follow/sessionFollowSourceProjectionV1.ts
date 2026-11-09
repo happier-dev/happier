@@ -15,7 +15,7 @@ export const SessionFollowSourceProjectionRequestV1Schema = lazyZodSchema(() => 
   v: z.literal(1),
   sourceSessionId: z.string().check(z.trim(), z.minLength(1)),
   localInputId: z.optional(PendingLocalIdSchema),
-  relation: z._default(z.enum(['follower', 'manager']), 'follower'),
+  relation: z._default(z.enum(['follower', 'manager', 'rule']), 'follower'),
   attachedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
   readMode: z.optional(z.literal('incremental')),
   afterTranscriptSeq: z.number().check(z.int(), z.minimum(0)),

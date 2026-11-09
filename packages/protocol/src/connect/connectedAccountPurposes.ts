@@ -27,8 +27,8 @@ export type PluginConnectedAccountMaterializationKind = z.infer<
 >;
 
 const ConnectedAccountMaterializationDestinationsSchema = lazyZodSchema(() => z.readonly(z.array(
-  canonicalBoundedRecordKeySchema(128),
-).check(z.minLength(1), z.maxLength(32), z.superRefine((destinations, context) => {
+  canonicalBoundedRecordKeySchema(),
+).check(z.minLength(1), z.superRefine((destinations, context) => {
   if (new Set(destinations).size !== destinations.length) {
     context.addIssue({
       code: 'custom',
@@ -37,10 +37,10 @@ const ConnectedAccountMaterializationDestinationsSchema = lazyZodSchema(() => z.
   }
 }))));
 
-const ConnectedAccountHttpHeaderNameSchema = lazyZodSchema(() => z.pipe(z.string().check(z.trim(), z.minLength(1), z.maxLength(128), z.regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u)), z.transform((value) => value.toLowerCase())));
+const ConnectedAccountHttpHeaderNameSchema = lazyZodSchema(() => z.pipe(z.string().check(z.trim(), z.minLength(1), z.regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u)), z.transform((value) => value.toLowerCase())));
 const ConnectedAccountHttpHeaderNamesSchema = lazyZodSchema(() => z.readonly(z.array(
   ConnectedAccountHttpHeaderNameSchema,
-).check(z.minLength(1), z.maxLength(32), z.superRefine((headerNames, context) => {
+).check(z.minLength(1), z.superRefine((headerNames, context) => {
   if (new Set(headerNames).size !== headerNames.length) {
     context.addIssue({
       code: 'custom',

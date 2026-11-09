@@ -2,11 +2,8 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import { SessionFollowErrorCodeV1Schema } from './api.js';
-
-export const VoiceTrackedSessionAddressV1Schema = lazyZodSchema(() => z.strictObject({
-  serverId: z.string().check(z.trim(), z.minLength(1)),
-  sessionId: z.string().check(z.trim(), z.minLength(1)),
-}));
+import { VoiceTrackedSessionAddressV1Schema } from './voiceTrackedSessionAddressV1.js';
+export { VoiceTrackedSessionAddressV1Schema } from './voiceTrackedSessionAddressV1.js';
 
 const VoiceTrackedSessionCandidateV1Schema = lazyZodSchema(() => z.strictObject({
   address: VoiceTrackedSessionAddressV1Schema,

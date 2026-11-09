@@ -6,9 +6,10 @@ import { ProfileRecordV1Schema } from '../../profiles/profileRecordSchemaV1.js';
 import { SessionCapabilitySelectionAuthoringV1Schema } from '../../reach/sessionCapabilitySelectionV1.js';
 
 describe('Profile seeds at new Session admission', () => {
-  it.each([false, true])('refuses an unknown explicit Profile before hydrating Agent-start facts (inherited target=%s)', async inherited => {
+  it.each([false, true])('refuses an unknown explicit Profile without Session birth or approval (inherited target=%s)', async inherited => {
     let catalogReads = 0;
-    const phases: string[] = [];
+    let births = 0;
+    let approvals = 0;
     const profileActionExecute = createProfileActionExecuteV1({ operations: createProfileOperations({
       // Account catalog persistence is the boundary; Profile read/admission stays real.
       readCatalog: () => {
@@ -19,19 +20,25 @@ describe('Profile seeds at new Session admission', () => {
       writeRecord: async () => { throw new Error('Admission must not change the Profile'); },
       deleteRecord: async () => { throw new Error('Admission must not delete the Profile'); },
     }) });
-    const executor = createActionExecutor({ profileActionExecute });
+    const executor = createActionExecutor({ profileActionExecute,
+      sessionSpawnNew: async () => { births += 1; return { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' }; },
+      approvalsCreate: async () => { approvals += 1; return { artifactId: 'must-not-create' }; },
+      isActionApprovalRequired: () => true,
+    });
     const input = { creationKey: 'missing-profile-session', executionTarget: { serverId: 'home', machineId: 'machine' },
       directory: { kind: 'path', path: '/repo' }, profileId: 'unknown-profile',
-      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } };
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } as const;
     const diagnostics: unknown[] = [];
     const context: ActionExecutorContext = { surface: 'agent', authority: 'account_automation', serverId: 'home', runtimeAccountId: 'account',
       defaultSessionId: 'parent', actionCaller: { kind: 'session', sessionId: 'parent', starterDepth: 0, turnDepth: 0 },
       callerPermissionMode: 'default',
       causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
       sessionInputSource: { sourceSessionId: 'parent', sourceTurnId: 'turn', via: 'action' },
+      agentStartContext: { caller: { kind: 'session', sessionId: 'parent', starterDepth: 0, turnDepth: 0 },
+        baseline: { machineId: 'machine', directory: '/repo', configuration: { agentTarget: input.agentTarget } },
+        roles: {}, ledSubtreeSessionIds: [], workDepthLimit: 4, callerPermissionCeiling: 'default' },
       recordActionStartDiagnostic: diagnostic => {
         diagnostics.push(diagnostic);
-        if (diagnostic.elapsedMs !== undefined) phases.push(diagnostic.phase);
       },
     };
     expect(await executor.execute('session.spawn_new', { ...input, directory: 1 }, context))
@@ -40,12 +47,14 @@ describe('Profile seeds at new Session admission', () => {
       .toMatchObject({ ok: false, errorCode: 'causal_permission_authority_invalid' });
     expect(catalogReads).toBe(0);
     const { executionTarget, agentTarget, ...withoutTarget } = input;
-    const result = await executor.execute('session.spawn_new', inherited ? withoutTarget : input, context);
-    expect({ result, profileWasRead: catalogReads > 0, hydrationPhases: phases.filter(phase => phase === 'agent_start_context').length }).toEqual({
-      result: { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
-        details: { code: 'target_unavailable', reason: 'profile_unavailable' } },
-      profileWasRead: true, hydrationPhases: 0,
-    });
+    for (const surface of ['agent', 'ui'] as const) {
+      const result = await executor.execute('session.spawn_new', surface === 'agent' && inherited ? withoutTarget : input,
+        surface === 'agent' ? context : { surface, authority: 'present_user', serverId: 'home', actionCaller: { kind: 'host' } });
+      expect(result, surface).toMatchObject({ ok: false, errorCode: 'target_unavailable',
+        details: { code: 'target_unavailable', reason: 'profile_unavailable' } });
+      expect({ births, approvals }).toEqual({ births: 0, approvals: 0 });
+    }
+    expect(catalogReads).toBeGreaterThan(0);
     expect(diagnostics).toContainEqual({ phase: 'agent_start_context', refusalReason: 'profile_unavailable' });
   });
 
@@ -53,13 +62,14 @@ describe('Profile seeds at new Session admission', () => {
     const profile = { v: 2, id: 'seed-profile', name: 'Seed Profile', createdAt: 1, updatedAt: 1 };
     let record = ProfileRecordV1Schema.parse({ v: 1, id: profile.id, definition: { kind: 'inline', profile },
       enabled: true, promptStack: [], secretBindings: {}, skillSeeds: ['lint', 'review'] });
+    let catalogReads = 0;
     const profileActionExecute = createProfileActionExecuteV1({ operations: createProfileOperations({
-      readCatalog: () => ({ status: 'ready', source: 'destination', authority: 'inactive', control: null,
-        controlRevision: 'absent', records: [{ record, revision: 1 }], diagnostics: [], referenceGuardRevision: 1 }),
+      readCatalog: () => { catalogReads += 1; return { status: 'ready', source: 'destination', authority: 'inactive', control: null,
+        controlRevision: 'absent', records: [{ record, revision: 1 }], diagnostics: [], referenceGuardRevision: 1 }; },
       writeRecord: async () => { throw new Error('Admission must not change the Profile'); },
       deleteRecord: async () => { throw new Error('Admission must not delete the Profile'); },
     }) });
-    let spawned: Parameters<ActionExecutorDeps['sessionSpawnNew']>[0] | undefined;
+    let spawned: Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0] | undefined;
     const executor = createActionExecutor({ profileActionExecute, sessionSpawnNew: async input => {
       spawned = input;
       return { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' };
@@ -96,5 +106,8 @@ describe('Profile seeds at new Session admission', () => {
     }, mcp: input.capabilitySelection.mcp } });
     if (!admitted.ok) throw new Error('Expected admission');
     expect(SessionCapabilitySelectionAuthoringV1Schema.safeParse(spawned?.capabilitySelection).success).toBe(true);
+    // One actual Account catalog read supplies the final seeds; an early probe
+    // must not add a second read to the same new-Session invocation.
+    expect(catalogReads).toBe(1);
   });
 });

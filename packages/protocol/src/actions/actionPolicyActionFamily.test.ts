@@ -1,11 +1,53 @@
 import { describe, expect, it } from 'vitest';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { ActionPolicyInputSchemas } from './actionPolicyActionFamily.js';
-import { readActionAudiencePolicy, setActionAudiencePolicy } from './actionAudiencePolicy.js';
+import { applyActionPolicyMutation, readActionAudiencePolicy, setActionAudiencePolicy } from './actionAudiencePolicy.js';
 import { getActionSpec } from './actionSpecs.js';
 import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 
 describe('exact Action audience policy', () => {
+  it('stores foreign HTML choices independently from ordinary policy and defaults Actions and Resources off', () => {
+    const initial = ActionsSettingsV1Schema.parse({ v: 1, actions: {
+      'session.message.send': { disabledSurfaces: ['mcp'], approvalRequiredSurfaces: ['cli'] },
+    } });
+    for (const actionId of ['session.message.send', 'session.stop', 'acme.preview/actions/open', 'acme.preview/resources/status']) {
+      const target = { actionId, audience: 'foreign_session_html' as const };
+      expect(readActionAudiencePolicy(initial, actionId, target.audience)).toMatchObject({ enabled: false, mode: 'default' });
+      const allowed = applyActionPolicyMutation(initial, ActionPolicyInputSchemas['actions.policy.set'].parse({ ...target, mode: 'allowed' }));
+      expect(allowed.result).toMatchObject({ enabled: true, mode: 'allowed' });
+      expect(allowed.settings.actions).toEqual(initial.actions);
+      const roundTrip = ActionsSettingsV1Schema.parse(JSON.parse(JSON.stringify(allowed.settings)));
+      expect(readActionAudiencePolicy(roundTrip, actionId, target.audience)).toMatchObject({ enabled: true });
+      const reset = applyActionPolicyMutation(roundTrip, ActionPolicyInputSchemas['actions.policy.set'].parse({ ...target, mode: 'default' }));
+      expect(reset.result).toMatchObject({ enabled: false, mode: 'default' });
+      expect(ActionPolicyInputSchemas['actions.policy.set'].safeParse({ ...target, mode: 'allowed', scope: { kind: 'environment', environmentId: 'project' } }).success).toBe(false);
+    }
+  });
+  it('admits exact scoped approval edits and explicit orphan removal without changing global enablement', () => {
+    const scope = { kind: 'environment', environmentId: 'staging' } as const;
+    const sibling = { actionId: 'future.action', scope: { kind: 'machine', machineId: 'deleted' },
+      approvalRequiredSurfaces: ['agent'], approvalWaivedSurfaces: [] };
+    const initial = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.stop': {
+      enabled: false, approvalRequiredSurfaces: ['agent'],
+    } }, scopedApprovalPreferences: [sibling] });
+    const target = { actionId: 'session.stop', audience: 'agent', scope } as const;
+    const allowed = applyActionPolicyMutation(initial, ActionPolicyInputSchemas['actions.policy.set'].parse({ ...target, mode: 'allowed' }));
+    expect(allowed.result).toMatchObject({ ...target, mode: 'allowed', actionEnabled: false, enabled: false });
+    expect(allowed.settings.actions).toEqual(initial.actions);
+    expect(allowed.settings.scopedApprovalPreferences).toEqual([sibling, { actionId: target.actionId, scope,
+      approvalRequiredSurfaces: [], approvalWaivedSurfaces: ['agent'] }]);
+    const reset = applyActionPolicyMutation(allowed.settings,
+      ActionPolicyInputSchemas['actions.policy.set'].parse({ ...target, mode: 'default' }));
+    expect(reset.settings.scopedApprovalPreferences).toEqual([sibling]);
+    const removed = applyActionPolicyMutation(reset.settings, ActionPolicyInputSchemas['actions.policy.set'].parse({
+      actionId: sibling.actionId, change: { kind: 'scoped_approval_remove', scope: sibling.scope },
+    }));
+    expect(removed.settings.scopedApprovalPreferences).toEqual([]);
+    expect(removed.settings.actions).toEqual(initial.actions);
+    expect(ActionPolicyInputSchemas['actions.policy.set'].safeParse({ ...target, mode: 'off' }).success).toBe(false);
+    expect(ActionPolicyInputSchemas['actions.policy.set'].safeParse({ ...target, mode: 'allowed',
+      scope: { ...scope, machineId: 'spoof' } }).success).toBe(false);
+  });
   it('admits the existing Settings controls as typed policy intents without raw policy operands', async () => {
     const schema = getActionSpec('actions.policy.set').inputSchema;
     for (const change of [

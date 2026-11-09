@@ -4,6 +4,24 @@ import { getActionSpec, listActionSpecs, PUBLIC_ACTION_INPUT_SCHEMAS, PUBLIC_ACT
 import { isAgentInitiatedApprovalRequiredByDefault } from './actionApprovalPolicy.js';
 
 describe('browser annotation Actions', () => {
+  it('validates a supplied picker result while preserving daemon selected-element capture', () => {
+    const input = { browserSessionId: 'browser_1', viewId: 'view_1' };
+    const schema = PUBLIC_ACTION_INPUT_SCHEMAS['browser.context.captureSelectedElement'];
+    expect(schema.safeParse(input).success).toBe(true);
+    expect(schema.safeParse({ ...input, pickerResult: { status: 'selected' } }).success).toBe(false);
+  });
+
+  it('places supplied-picker capture at the client and ordinary capture at the Machine', () => {
+    const spec = getActionSpec('browser.context.captureSelectedElement');
+    const input = { browserSessionId: 'browser_1', viewId: 'view_1' };
+    const placement = (value: unknown) => spec.executionPlacementForInput?.(value) ?? spec.executionPlacement;
+    expect(placement(input)).toBe('machine');
+    expect(placement({ ...input, pickerResult: {
+      v: 1, pickerRequestId: 'picker_1', viewId: 'view_1', navigationGeneration: 1,
+      tier: 'injectedPage', status: 'selected', audited: true, selectorPath: '#submit',
+    } })).toBe('client');
+  });
+
   it('accepts composer paragraph comments beyond the retired metadata comment cap', () => {
     const comment = 'x'.repeat(2049);
     const input = { browserSessionId: 'browser_1', viewId: 'view_1', navigationGeneration: 1, comment };

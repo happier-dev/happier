@@ -13,8 +13,8 @@ import type { FeatureId } from '../features/featureIds.js';
  *   `readOnlyReason`): read before the database opens (or by the Home settings overlay itself),
  *   per-process/replica identity, or an invariant that forbids Home editing (I1, I9). Only env
  *   can set it.
- * - `internal`: a marker the server writes itself, not a setting. Never rendered, never writable;
- *   declared so the coverage check and the docs know it.
+ * - `internal`: a runtime or build fact supplied by its producer, not an operator setting.
+ *   Never rendered or writable; declared so the coverage check and the docs know it.
  */
 export type ServerConfigValueType =
     | 'boolean'

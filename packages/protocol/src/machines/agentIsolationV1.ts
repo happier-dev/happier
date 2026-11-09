@@ -30,6 +30,15 @@ export function readMachineMemberWorkspaceRelativePathV1(path: string): string |
   return match ? (match[1] ?? '').replace(/\/+$/, '') : null;
 }
 
+/** linuxUsersV1 gives each separated member its own home at `<root>/<sha256 hex>`. Display reads it back as home. */
+export const MACHINE_MEMBER_HOMES_ROOT_V1 = '/var/lib/happier/members';
+const MEMBER_HOME_PATH_V1 = new RegExp(`^${MACHINE_MEMBER_HOMES_ROOT_V1}/[0-9a-f]{64}(?:/+(.*))?$`);
+/** The path below a member home root (`''` at the root itself), or null for any other path. */
+export function readMachineMemberHomeRelativePathV1(path: string): string | null {
+  const match = MEMBER_HOME_PATH_V1.exec(path);
+  return match ? (match[1] ?? '').replace(/\/+$/, '') : null;
+}
+
 export const MachineAgentIsolationPolicyV1StoredSchema = createStoredReadSchema(MachineAgentIsolationPolicyV1Schema);
 export const agentIsolationMetadataFieldV1 = {
   field: 'agentIsolation', storedSchema: MachineAgentIsolationPolicyV1StoredSchema,

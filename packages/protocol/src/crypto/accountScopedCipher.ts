@@ -1,4 +1,3 @@
-import { createCanonicalJsonSigningInput } from './canonicalJson.js';
 import tweetnacl from 'tweetnacl';
 import { hmac } from '@noble/hashes/hmac';
 import { sha512 } from '@noble/hashes/sha512';
@@ -13,6 +12,7 @@ import {
 } from './accountScopedCipherEnvelope.js';
 import { decodeBase64, encodeBase64 } from './base64.js';
 import { computeCanonicalDomainSeparatedDigest, encodeCanonicalLengthDelimited } from './canonicalDigest.js';
+import { createCanonicalJsonSigningInput } from './canonicalJson.js';
 import { deriveKey } from './keyDerivation.js';
 import { parseSerializedJsonValue } from './serializedJsonValue.js';
 import { computeContentPublicKeyFingerprint } from '../machines/identity/contentPublicKeyFingerprint.js';
@@ -135,10 +135,18 @@ export function createAccountScopedCryptoMaterialSnapshotV1(params: Readonly<{
   };
 }
 
+// One material object opens many blobs (each Session row in a list); its key is a pure function of
+// the secret bytes, which a holder may replace in place, so a retained key answers only for equal bytes.
+const derivedMachineKeyByMaterial = new WeakMap<AccountScopedCryptoMaterial, Readonly<{ secret: Uint8Array; machineKey: Uint8Array }>>();
+
 function resolveMachineKey(material: AccountScopedCryptoMaterial): Uint8Array {
-  return material.type === 'dataKey'
-    ? material.machineKey
-    : deriveAccountMachineKeyFromRecoverySecret(material.secret);
+  if (material.type === 'dataKey') return material.machineKey;
+  const retained = derivedMachineKeyByMaterial.get(material);
+  if (retained && retained.secret.length === material.secret.length
+    && retained.secret.every((byte, index) => byte === material.secret[index])) return retained.machineKey;
+  const machineKey = deriveAccountMachineKeyFromRecoverySecret(material.secret);
+  derivedMachineKeyByMaterial.set(material, { secret: material.secret.slice(), machineKey });
+  return machineKey;
 }
 
 function deriveAccountScopedSecretboxKey(params: { machineKey: Uint8Array; kind: AccountScopedBlobKind }): Uint8Array {
@@ -186,6 +194,24 @@ export function deriveReviewCommentMutationCommitmentV1(params: Readonly<{
     return computeCanonicalDomainSeparatedDigest(domain, parts);
   }
   if (!params.material) throw new Error('review_comment_encryption_material_unavailable');
+  return encodeBase64(hmacSha512(resolveMachineKey(params.material),
+    encodeCanonicalLengthDelimited([domain, ...parts])).slice(0, 32), 'base64url');
+}
+
+/** Host-owned create equality, not a content hash exposed by an E2EE copy. */
+export function deriveDeploymentEnvironmentCreateCommitmentV1(params: Readonly<{
+  accountId: string;
+  mode: 'plain' | 'e2ee';
+  material: AccountScopedCryptoMaterial | null;
+  intent: unknown;
+}>): string {
+  const domain = 'happier:deployment-environment-create-commitment:v1';
+  const parts = [params.accountId, createCanonicalJsonSigningInput(params.intent)];
+  if (params.mode === 'plain') {
+    if (params.material !== null) throw new Error('account_mode_mismatch');
+    return computeCanonicalDomainSeparatedDigest(domain, parts);
+  }
+  if (!params.material) throw new Error('client_required');
   return encodeBase64(hmacSha512(resolveMachineKey(params.material),
     encodeCanonicalLengthDelimited([domain, ...parts])).slice(0, 32), 'base64url');
 }
@@ -276,10 +302,10 @@ export function derivePluginCollectionIdentityTagV1(params: Readonly<{
   );
 }
 
-function tryParseJson(value: Uint8Array): unknown | null {
+function tryParseJson(value: Uint8Array): Readonly<{ value: unknown }> | null {
   try {
     const decoded = new TextDecoder().decode(value);
-    return parseSerializedJsonValue(decoded);
+    return { value: parseSerializedJsonValue(decoded) };
   } catch {
     return null;
   }
@@ -355,19 +381,49 @@ export function openAccountScopedBlobCiphertext(params: {
   material: AccountScopedCryptoMaterial;
   ciphertext: string;
 }): AccountScopedOpenResult {
-  const kindByte = getAccountScopedBlobKindByte(params.kind);
+  return createAccountScopedBlobOpener(params)(params.ciphertext);
+}
+
+/**
+ * One reader's opener for many blobs of one kind under one material. The
+ * Account machine key and per-kind secretbox key are pure functions of the
+ * material bytes and kind; deriving them per blob made a page of N blobs pay
+ * N HMAC-SHA512 (plus N SHA-512 seed derivations for legacy material). The
+ * opener derives them on its first decodable blob and holds them only for the
+ * reader's own lifetime; it reads the material once, so a caller replacing
+ * its material must create a new opener.
+ */
+export function createAccountScopedBlobOpener(params: {
+  kind: AccountScopedBlobKind;
+  material: AccountScopedCryptoMaterial;
+}): (ciphertext: string) => AccountScopedOpenResult {
+  const kind = params.kind;
+  const material = params.material;
+  let key: Uint8Array | undefined;
+  return (ciphertext) => openWithKindKey(kind, ciphertext, () => key ??= deriveAccountScopedSecretboxKey({
+    machineKey: resolveMachineKey(material),
+    kind,
+  }));
+}
+
+function openWithKindKey(
+  kind: AccountScopedBlobKind,
+  ciphertext: string,
+  readKey: () => Uint8Array,
+): AccountScopedOpenResult {
+  const kindByte = getAccountScopedBlobKindByte(kind);
   if (!Number.isFinite(kindByte)) {
     return null;
   }
 
   let bytes: Uint8Array;
   try {
-    bytes = decodeBase64(params.ciphertext, 'base64');
+    bytes = decodeBase64(ciphertext, 'base64');
   } catch {
     return null;
   }
-
-  const machineKey = resolveMachineKey(params.material);
+  // Material is admitted where it always was: after the ciphertext decodes.
+  const key = readKey();
 
   if (
     bytes.length >= (
@@ -387,11 +443,10 @@ export function openAccountScopedBlobCiphertext(params: {
     const boxed = bytes.slice(
       ACCOUNT_SCOPED_BLOB_V1_PREFIX_BYTES + ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES,
     );
-    const key = deriveAccountScopedSecretboxKey({ machineKey, kind: params.kind });
     const opened = tweetnacl.secretbox.open(boxed, nonce, key);
     const parsed = opened ? tryParseJson(new Uint8Array(opened)) : null;
     if (parsed !== null) {
-      return { format: 'account_scoped_v1', kindTag: 'canonical', value: parsed };
+      return { format: 'account_scoped_v1', kindTag: 'canonical', value: parsed.value };
     }
   }
 
@@ -401,21 +456,4 @@ export function openAccountScopedBlobCiphertext(params: {
   // cross-domain substitution. Reject them here; any future recovery mechanism
   // requires an explicit, independently authenticated owner discriminator.
   return null;
-}
-
-export function deriveDeploymentEnvironmentCreateCommitmentV1(params: Readonly<{
-  accountId: string;
-  mode: 'plain' | 'e2ee';
-  material: AccountScopedCryptoMaterial | null;
-  intent: unknown;
-}>): string {
-  const domain = 'happier:deployment-environment-create-commitment:v1';
-  const parts = [params.accountId, createCanonicalJsonSigningInput(params.intent)];
-  if (params.mode === 'plain') {
-    if (params.material !== null) throw new Error('account_mode_mismatch');
-    return computeCanonicalDomainSeparatedDigest(domain, parts);
-  }
-  if (!params.material) throw new Error('client_required');
-  return encodeBase64(hmacSha512(resolveMachineKey(params.material),
-    encodeCanonicalLengthDelimited([domain, ...parts])).slice(0, 32), 'base64url');
 }

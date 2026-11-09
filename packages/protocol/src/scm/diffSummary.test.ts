@@ -237,10 +237,6 @@ describe('SCM diff-summary protocol schemas', () => {
       risks: ['Attribution is shared with another active writer.'],
       testImpact: 'Protocol tests only.',
       suggestedPrBody: 'Adds summary schema.',
-      truncation: {
-        reason: 'fileBudget',
-        droppedFiles: 1,
-      },
     })).toMatchObject({
       success: true,
       summaryMarkdown: expect.stringContaining('Updated checkpoint projection'),

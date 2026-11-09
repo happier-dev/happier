@@ -23,6 +23,21 @@ function enabled(featureId: any): FeatureDecision {
 }
 
 describe('feature decision engine', () => {
+  it('uses one Workflows decision regardless of the released Automations alias bit', () => {
+    for (const workflows of [true, false] as const) {
+      const response = FeaturesResponseSchema.parse({
+        features: { automations: { enabled: !workflows }, workflows: { enabled: workflows } },
+        capabilities: {},
+      });
+      const decisions = evaluateServerFeatureDecisions({ serverPayload: response });
+      expect(decisions.get('workflows')?.state).toBe(workflows ? 'enabled' : 'disabled');
+      expect(decisions.get('automations')).toBe(decisions.get('workflows'));
+      applyFeatureDependencies({ serverPayload: response });
+      expect(response.features.workflows.enabled).toBe(workflows);
+      expect(response.features.automations.enabled).toBe(workflows);
+    }
+  });
+
   it('disables voice.agent when execution.runs dependency is disabled', () => {
     const base = enabled('voice.agent');
     const out = applyFeatureDependencies({
@@ -197,13 +212,10 @@ describe('feature decision engine', () => {
       buildPolicy: (featureId) => (featureId === 'localServices.inventory' ? 'deny' : 'neutral'),
     });
 
-    expect(decisions.get('automations')).toMatchObject({ state: 'disabled', blockedBy: 'server' });
+    expect(decisions.get('automations')).toBe(decisions.get('workflows'));
     expect(decisions.get('automations')?.blockingDependencyId).toBeUndefined();
     expect(decisions.get('workflows')).toMatchObject({
-      state: 'disabled',
-      blockedBy: 'dependency',
-      blockerCode: 'dependency_disabled',
-      blockingDependencyId: 'automations',
+      state: 'enabled', blockedBy: null,
     });
     expect(decisions.get('localServices.inventory')).toMatchObject({ state: 'disabled', blockedBy: 'build_policy' });
     expect(decisions.get('localServices')).toMatchObject({ state: 'enabled', blockedBy: null });
@@ -247,7 +259,7 @@ describe('feature decision engine', () => {
       serverPayload: { features: response.features },
       featureIds: ['workflows'],
       buildPolicy: (featureId) => {
-        if (featureId !== 'workflows' && featureId !== 'automations') {
+        if (featureId !== 'workflows') {
           throw new Error(`Unrelated policy evaluated: ${featureId}`);
         }
         return 'neutral';
@@ -257,7 +269,7 @@ describe('feature decision engine', () => {
     expect([...selected.keys()]).toEqual(['workflows']);
     expect(selected.get('workflows')).toEqual(all.get('workflows'));
     expect(selected.get('workflows')).toMatchObject({
-      state: 'disabled', blockingDependencyId: 'automations',
+      state: 'enabled', featureId: 'workflows',
     });
     expect(evaluateServerFeatureDecisions({
       serverPayload: { features: response.features }, featureIds: ['sessions.direct'],
@@ -265,7 +277,7 @@ describe('feature decision engine', () => {
   });
 
   it('lists the transitive dependents a parent takes with it', () => {
-    expect(listFeatureDependents('automations')).toContain('workflows');
+    expect(listFeatureDependents('automations')).toEqual(listFeatureDependents('workflows'));
     const teamsDependents = listFeatureDependents('teams');
     expect(teamsDependents).toEqual(expect.arrayContaining(['teams.credentialResources', 'teams.credentialResources.externalApi']));
     expect(teamsDependents).not.toContain('teams');

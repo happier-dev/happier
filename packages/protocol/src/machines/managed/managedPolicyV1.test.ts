@@ -1,9 +1,18 @@
 import tweetnacl from 'tweetnacl';
 import { describe, expect, it } from 'vitest';
 import { verifyMachineInstallationProof } from '../identity/installationIdentity.js';
-import { createManagedPolicyProofV1, createManagedPolicyCensusProofV1, decodeManagedPolicyProofV1, encodeManagedPolicyProofV1, managedPolicyDigestV1 } from './managedPolicyV1.js';
+import { createManagedPolicyProofV1, createManagedPolicyCensusProofV1, decodeManagedPolicyProofV1, encodeManagedPolicyProofV1, managedPolicyDigestV1,
+  ManagedMachinePolicyChangeHintV1Schema } from './managedPolicyV1.js';
 
 describe('managed host policy installation proof', () => {
+  it('admits Account policy invalidation without inventing a Machine while retaining a strict bound hint', () => {
+    const accountHint = { managedMachinePolicy: true };
+    expect(ManagedMachinePolicyChangeHintV1Schema.parse(accountHint)).toEqual(accountHint);
+    expect(ManagedMachinePolicyChangeHintV1Schema.parse({ ...accountHint, machineId: 'controller' }))
+      .toEqual({ ...accountHint, machineId: 'controller' });
+    expect(ManagedMachinePolicyChangeHintV1Schema.safeParse({ ...accountHint, machineId: '' }).success).toBe(false);
+    expect(ManagedMachinePolicyChangeHintV1Schema.safeParse({ ...accountHint, custodianAccountId: 'body-authority' }).success).toBe(false);
+  });
   it('binds the automatic census to the actual Home and controller installation', () => {
     const keys = tweetnacl.sign.keyPair();
     const payload = { version: 1 as const, machineId: 'controller', installationId: 'installation', accountId: 'custodian', managedPolicyCensus: { homeId: 'home' } };

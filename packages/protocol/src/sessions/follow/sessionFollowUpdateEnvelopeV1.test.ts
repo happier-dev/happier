@@ -22,6 +22,19 @@ const update = {
 };
 
 describe('Session Follow update envelope', () => {
+  it('keeps question offers complete, destination-bound and unavailable when source content is locked', () => {
+    const questionOffers = [{ requestId: 'question', currentHandler: { kind: 'session', sessionId: 'destination' },
+      questions: [{ id: 'q', type: 'text', prompt: 'What should I do?', required: true }] }];
+    expect(SessionFollowUpdateEnvelopeV1Schema.safeParse({ ...update, questionOffers }).success).toBe(true);
+    for (const value of [
+      { ...update, questionOffers: [{ ...questionOffers[0], currentHandler: { kind: 'session', sessionId: 'other' } }] },
+      { ...update, questionOffers: [{ ...questionOffers[0], currentHandler: { kind: 'person' } }] },
+      { ...update, questionOffers: [{ ...questionOffers[0], authority: 'owner' }] },
+      { ...update, questionOffers, reason: 'source_unavailable', recentMessages: [],
+        awareness: { ...update.awareness, title: undefined, encryption: 'locked', availability: 'locked' } },
+    ]) expect(SessionFollowUpdateEnvelopeV1Schema.safeParse(value).success).toBe(false);
+  });
+
   it('allows wake only from authoritative decrypted human provenance', () => {
     const qualifies = (provenance: typeof update.recentMessages[number]['provenance']) =>
       isAuthoritativeHumanSessionFollowMessageV1({ provenance });

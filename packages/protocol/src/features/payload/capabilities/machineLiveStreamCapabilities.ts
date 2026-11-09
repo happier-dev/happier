@@ -17,8 +17,11 @@ export const MachineLiveStreamRelayDisabledReasonSchema = lazyZodSchema(() => z.
 
 export type MachineLiveStreamRelayDisabledReason = z.infer<typeof MachineLiveStreamRelayDisabledReasonSchema>;
 
-export const MachineLiveStreamServerRoutedCapabilitiesSchema = lazyZodSchema(() => z.catch(z.looseObject({
-    caps: z._default(z.optional(z.nullable(MachineLiveStreamRelayCapsV1Schema)), null),
+// The transport owner keeps its extensible resource bag; feature reads project known diagnostics.
+const MachineLiveStreamRelayCapsReadSchema = lazyZodSchema(() => z.object(MachineLiveStreamRelayCapsV1Schema.shape));
+
+export const MachineLiveStreamServerRoutedCapabilitiesSchema = lazyZodSchema(() => z.catch(z.object({
+    caps: z._default(z.optional(z.nullable(MachineLiveStreamRelayCapsReadSchema)), null),
     disabledReason: z._default(z.optional(z.nullable(MachineLiveStreamRelayDisabledReasonSchema)), 'relay_not_enabled'),
   }), { caps: null, disabledReason: 'relay_caps_missing' }));
 

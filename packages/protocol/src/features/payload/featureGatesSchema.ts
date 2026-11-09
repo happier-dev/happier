@@ -57,9 +57,9 @@ export const FeatureGatesSchema = lazyZodSchema(() => z.object({
     .object({
       enabled: z.boolean(),
     })), { enabled: false }),
+  workflows: z.catch(z._default(z.optional(FeatureGateSchema), DEFAULT_GATE_DISABLED), DEFAULT_GATE_DISABLED),
   deployments: z.catch(z._default(z.optional(FeatureGateSchema), DEFAULT_GATE_DISABLED), DEFAULT_GATE_DISABLED),
   bots: z.catch(z._default(z.optional(FeatureGateSchema), DEFAULT_GATE_DISABLED), DEFAULT_GATE_DISABLED),
-  workflows: z.catch(z._default(z.optional(FeatureGateSchema), DEFAULT_GATE_DISABLED), DEFAULT_GATE_DISABLED),
   connectedServices: z._default(z.optional(z
     .object({
       enabled: z.boolean(),

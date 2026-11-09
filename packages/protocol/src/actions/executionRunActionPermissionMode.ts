@@ -11,6 +11,7 @@ export const EXECUTION_RUN_ACTION_PERMISSION_MODES = [
   'default',
   'workspace_write',
   'yolo',
+  'no_tools',
 ] as const;
 export type ExecutionRunActionPermissionMode = (typeof EXECUTION_RUN_ACTION_PERMISSION_MODES)[number];
 
@@ -22,6 +23,8 @@ export const EXECUTION_RUN_ACTION_PERMISSION_MODE_DESCRIPTION =
 
 function normalizeExecutionRunActionPermissionMode(value: unknown): unknown {
   if (typeof value !== 'string') return value;
+  // Runs distinguish no tools from read-only tools; Session aliases do not.
+  if (value === 'no_tools') return value;
 
   const mode = parseSessionPermissionModeAlias(value);
   switch (mode) {

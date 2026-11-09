@@ -36,6 +36,49 @@ describe('actionCatalog action-definition adapter', () => {
     ]);
   });
 
+  it('publishes the seeded Surprise me operand to agent and MCP discovery and admits it as concrete art', () => {
+    const input = { sessionId: 'bot-surprise', face: { style: 'solid', shape: { generate: 'surprise', seed: 17 } } };
+    for (const surface of ['agent', 'mcp'] as const) {
+      const definition = getActionDefinitionForCatalogSurface({ id: 'session.bot.face.set', surface })!;
+      const publishedSchema = JSON.stringify(definition.inputSchema);
+      expect(publishedSchema).toContain('8%');
+      expect(publishedSchema).toContain('quiet and needsYou');
+      expect(publishedSchema).toContain('signed distance <= 0');
+      const validate = compileProtocolJsonSchema(definition.inputSchema, 'draft-07');
+      expect(validate(input)).toBe(true);
+      expect(validate({ ...input, face: { ...input.face, shape: { generate: 'other', seed: 17 } } })).toBe(false);
+      expect(getActionSpec('session.bot.face.set').inputSchema.parse(input)).toMatchObject({
+        face: { style: 'solid', shape: { v: 1, origin: 'surprise' } },
+      });
+    }
+  });
+
+  it.each(['agent', 'mcp'] as const)('publishes revision-free draft inputs and hints to %s while retaining UI snapshot CAS', surface => {
+    const spec = getActionSpec('template.draft');
+    const input = { sourceSessionRef: { serverId: 'home', sessionId: 'bot' }, content: {
+      v: 1, identity: { name: 'Helper', description: '' }, instructions: { markdown: 'Help.' },
+      memoryRules: [], skills: [], needs: { software: [], connectedAccounts: [], mcpServers: [] },
+    } };
+    const reviewed = { ...input, expectedRevision: { headerVersion: 1, bodyVersion: 1 } };
+    const definition = getActionDefinitionForCatalogSurface({ id: 'template.draft', surface })!;
+    const validate = compileProtocolJsonSchema(definition.inputSchema, 'draft-07');
+    expect(validate(input)).toBe(true);
+    expect(validate(reviewed)).toBe(false);
+    expect(definition.inputHints?.fields.some(field => field.path === 'expectedRevision')).toBe(false);
+    const ui = actionSpecToActionDefinitionV1(spec, { surface: 'ui' });
+    expect(compileProtocolJsonSchema(ui.inputSchema, 'draft-07')(reviewed)).toBe(true);
+  });
+  it.each([
+    ['machines.setup.plan', 'sources.0.setup.items.0.selection.ref'],
+    ['machines.setup.apply', 'targets.0.sources.0.setup.items.0.selection.ref'],
+  ] as const)(
+    'publishes setup software choices without overlapping input hints for %s',
+    (actionId, path) => {
+      const definition = SerializedActionDefinitionV1Schema.parse(actionSpecToActionDefinitionV1(getActionSpec(actionId)));
+      expect(definition.inputHints?.fields.filter(field => field.optionsSourceId === 'machines.setup.software.available'))
+        .toEqual([expect.objectContaining({ path, widget: 'select' })]);
+    },
+  );
   it.each([
     ['session.open', { sessionId: `c${'a'.repeat(24)}` }],
     ['ui.voice_global.history.search', {}],
@@ -65,6 +108,8 @@ describe('actionCatalog action-definition adapter', () => {
     const definition = actionSpecToActionDefinitionV1(spec);
     expect(SerializedActionDefinitionV1Schema.parse(definition)).toMatchObject({ confirmVerb: spec.confirmVerb, irreversible: true });
     expect(projectActionDefinitionForExternalDiscovery(definition)).toMatchObject({ confirmVerb: spec.confirmVerb, irreversible: true });
+    expect(serializeActionSpec(spec)).not.toHaveProperty('hostReviewedChildren');
+    expect(definition).not.toHaveProperty('hostReviewedChildren');
   });
   it('offers the existing handoff operation through CLI and Voice with its normal policy', () => {
     for (const surface of ['cli', 'voice'] as const) {
@@ -96,6 +141,7 @@ describe('actionCatalog action-definition adapter', () => {
     ['machines.list', 'api'],
     ['session.spawn_new', 'api'],
     ['session.spawn_new', 'cli'],
+    ['session.spawn_new', 'mcp'],
   ] as const)('projects %s on %s as strict external JSON', (actionId, surface) => {
     const actionSpec = projectActionDefinitionForExternalDiscovery(
       actionSpecToActionDefinitionV1(getActionSpec(actionId), { surface }),
@@ -108,6 +154,10 @@ describe('actionCatalog action-definition adapter', () => {
     });
 
     expect(prepared.response.execution).toMatchObject({ ok: true });
+    if (actionId === 'session.spawn_new' && surface === 'mcp') {
+      expect(actionSpec.inputSchema.properties).not.toHaveProperty('observeSessionCommit');
+      expect(actionSpec).not.toHaveProperty('surfaceBindings');
+    }
   });
 
   it('omits unrepresentable optional output metadata without weakening the input contract', () => {
@@ -316,6 +366,33 @@ describe('actionCatalog action-definition adapter', () => {
     }).map((definition) => definition.id)).toEqual(
       getActionSpec('execution.run.stream.read').surfaces[surface] ? ['execution.run.stream.read'] : [],
     );
+  });
+
+  it('keeps an exact title ahead of other Actions covering the same query words', () => {
+    const exactTitle = { ...getActionSpec('settings.get'), title: 'Public profile' };
+    expect(searchSerializedActionSpecs([getActionSpec('account.public_profile.preview'), exactTitle], {
+      query: 'public profile', limit: 1,
+    }).map(definition => definition.id)).toEqual(['settings.get']);
+  });
+
+  it.each([
+    ['read public profile background', 'settings.get'],
+    ['change public profile background', 'settings.set'],
+    ['switch public profile preset', 'widgets.area.layout.select'],
+    ['list public profile layouts', 'widgets.area.layout.list'],
+    ['create public profile layout', 'widgets.area.layout.create'],
+    ['rename public profile layout', 'widgets.area.layout.rename'],
+    ['delete public profile layout', 'widgets.area.layout.delete'],
+    ['reorder public profile layouts', 'widgets.area.layout.reorder'],
+    ['reset public profile preset', 'widgets.area.layout.reset'],
+    ['undo public profile reset', 'widgets.area.layout.undo'],
+    ['preview public profile bio links', 'account.public_profile.preview'],
+    ['hide public profile tokens field', 'account.public_profile.update'],
+    ['change public profile period', 'account.public_profile.update'],
+    ['publish public profile draft', 'account.public_profile.publish'],
+  ] as const)('finds the existing public profile editing owner for "%s"', (query, actionId) => {
+    const results = searchSerializedActionSpecsForSurface({ surface: 'agent', query, limit: 5, includeOutputSchema: false });
+    expect(results.map(definition => definition.id), query).toContain(actionId);
   });
 
   it('finds the read owners for saved workflows, starter templates, eligible events and Home Boards', () => {

@@ -1,3 +1,7 @@
+import { ComputerRecordingSessionV1Schema, ComputerRecordingStartInputV1Schema, ComputerRecordingIdInputV1Schema,
+  ComputerRecordingStopInputV1Schema, ComputerRecordingAttachInputV1Schema, ComputerRecordingTargetInputV1Schema } from '../../computer/recording.js';
+import { COMPUTER_RECORDING_ACTION_IDS_V1 } from '../recordingActionIds.js';
+import { createRecordingActionSpecFamily } from './recording.js';
 import {
   ComputerActionResultV1Schema,
   ComputerCaptureResponseV1Schema,
@@ -41,7 +45,14 @@ export function projectComputerObservationInput(input: unknown): unknown {
   return observation;
 }
 
-type ComputerRuntimeActionInputSchemas = Readonly<{
+const computerRecording = createRecordingActionSpecFamily({ ids: COMPUTER_RECORDING_ACTION_IDS_V1, subject: 'computer', session: ComputerRecordingSessionV1Schema,
+  inputs: { start: ComputerRecordingStartInputV1Schema, stop: ComputerRecordingStopInputV1Schema,
+    cancel: ComputerRecordingIdInputV1Schema, status: ComputerRecordingIdInputV1Schema,
+    list: ComputerRecordingTargetInputV1Schema, discard: ComputerRecordingIdInputV1Schema,
+    cleanupExpired: ComputerRecordingTargetInputV1Schema, attachToComposer: ComputerRecordingAttachInputV1Schema },
+});
+
+type ComputerRuntimeActionInputSchemas = typeof computerRecording.inputSchemas & Readonly<{
   'computer.targets.list': typeof ComputerTargetsListRequestV1Schema;
   'computer.target.get': typeof ComputerMachineRequestV1Schema;
   'computer.target.select': typeof ComputerTargetSelectRequestV1Schema;
@@ -57,7 +68,7 @@ type ComputerRuntimeActionInputSchemas = Readonly<{
   'computer.control.handBack': typeof ComputerTargetRequestV1Schema;
   'computer.target.close': typeof ComputerTargetRequestV1Schema;
 }>;
-type ComputerRuntimeActionOutputSchemas = Readonly<{
+type ComputerRuntimeActionOutputSchemas = typeof computerRecording.outputSchemas & Readonly<{
   'computer.targets.list': typeof ComputerTargetsListResponseV1Schema;
   'computer.target.get': typeof ComputerSelectedTargetResponseV1Schema;
   'computer.target.select': typeof ComputerSelectedTargetResponseV1Schema;
@@ -75,6 +86,7 @@ type ComputerRuntimeActionOutputSchemas = Readonly<{
 }>;
 
 export const COMPUTER_RUNTIME_ACTION_INPUT_SCHEMAS: ComputerRuntimeActionInputSchemas = Object.freeze({
+  ...computerRecording.inputSchemas,
   'computer.targets.list': ComputerTargetsListRequestV1Schema,
   'computer.target.get': ComputerMachineRequestV1Schema,
   'computer.target.select': ComputerTargetSelectRequestV1Schema,
@@ -92,6 +104,7 @@ export const COMPUTER_RUNTIME_ACTION_INPUT_SCHEMAS: ComputerRuntimeActionInputSc
 });
 
 export const COMPUTER_RUNTIME_ACTION_OUTPUT_SCHEMAS: ComputerRuntimeActionOutputSchemas = Object.freeze({
+  ...computerRecording.outputSchemas,
   'computer.targets.list': ComputerTargetsListResponseV1Schema,
   'computer.target.get': ComputerSelectedTargetResponseV1Schema,
   'computer.target.select': ComputerSelectedTargetResponseV1Schema,
@@ -109,7 +122,9 @@ export const COMPUTER_RUNTIME_ACTION_OUTPUT_SCHEMAS: ComputerRuntimeActionOutput
 });
 
 export const COMPUTER_RUNTIME_ACTION_SPEC_FAMILY = Object.freeze({
+  confirmationFacts: computerRecording.confirmationFacts,
   approvalPolicies: {
+    ...computerRecording.approvalPolicies,
     'computer.clipboard.read': { agentDefault: 'egress', requiredSurfaces: ['agent', 'mcp', 'plugin', 'api'] },
     'computer.clipboard.write': { agentDefault: 'authority', requiredSurfaces: ['agent', 'mcp', 'plugin', 'api'] },
     'computer.target.close': { agentDefault: 'authority', requiredSurfaces: ['agent', 'mcp', 'plugin', 'api'] },
@@ -123,6 +138,7 @@ export const COMPUTER_RUNTIME_ACTION_SPEC_FAMILY = Object.freeze({
     'computer.control.handBack': { agentDefault: 'authority' },
   },
   titles: {
+    ...computerRecording.titles,
     'computer.targets.list': 'List computer targets',
     'computer.target.get': 'Get the Session’s selected computer target',
     'computer.target.select': 'Choose the Session’s computer target',

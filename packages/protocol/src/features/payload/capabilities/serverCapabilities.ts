@@ -5,7 +5,7 @@ import { ServerUsageAnalyticsCapabilitiesSchema, type ServerUsageAnalyticsCapabi
 
 const OptionalNonEmptyString = z.optional(z.string().check(z.trim(), z.minLength(1)));
 
-export const ServerCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const ServerCapabilitiesSchema = lazyZodSchema(() => z.object({
     canonicalServerUrl: OptionalNonEmptyString,
     webappUrl: OptionalNonEmptyString,
     retention: z.optional(ServerRetentionCapabilitiesSchema),

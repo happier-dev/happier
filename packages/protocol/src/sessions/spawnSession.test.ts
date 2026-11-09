@@ -105,6 +105,14 @@ describe('spawn-session execution authorization', () => {
 });
 
 describe('spawn-session error detail contract (D2 structured continuity)', () => {
+  it('preserves only bounded pre-create currentness failure facts', () => {
+    const detail = { kind: 'session_creation_currentness_unavailable', code: 'currentness_unavailable',
+      reason: 'timeout', retryable: true };
+    expect(SessionCreationTerminalSpawnErrorDetailSchema.safeParse(detail).success).toBe(true);
+    expect(normalizeSpawnSessionErrorDetail(detail)).toEqual(detail);
+    expect(normalizeSpawnSessionErrorDetail({ ...detail, request: { headers: {} } })).toBeUndefined();
+    expect(normalizeSpawnSessionErrorDetail({ ...detail, reason: 'offline' })).toBeUndefined();
+  });
   it('retains the bounded requester Home-unavailable cause without accepting arbitrary diagnostics', () => {
     const detail = { kind: 'requester_home_unavailable' };
     expect(normalizeSpawnSessionErrorDetail(detail)).toEqual(detail);

@@ -12,7 +12,7 @@ describe('retained pending-message edit holds', () => {
       updatedAtMs: 1000, expiresAtMs: 61000 };
     const retained = { v: 1, retired: true, holdsById: { editing: { ...hold, retired: true } } };
     const metadata = { sessionPendingQueueHoldV1: retained };
-    expect(isSessionPendingQueueHoldBlockingPendingDrain(metadata, 2000)).toBe(true);
+    expect(isSessionPendingQueueHoldBlockingPendingDrain(metadata, ['editing'])).toBe(true);
     expect(readSessionPendingQueueHoldV1FromMetadata(metadata)).toEqual({ v: 1, holdsById: { editing: hold } });
     const updated = writeSessionPendingQueueHoldV1ToMetadata(metadata, {
       holdId: 'second', localId: 'pending-2', updatedAtMs: 2000, expiresAtMs: 62000,

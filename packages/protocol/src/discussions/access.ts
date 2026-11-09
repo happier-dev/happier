@@ -6,6 +6,7 @@ import {
   ResourceAccessRecipientCensusV1Schema, ResourceRecipientKeyEnvelopeCommitInputV1Schema,
   ResourceRecipientKeyEnvelopeCommitResponseV1Schema,
 } from '../teams/resourceGrantAccessV1.js';
+import { SessionMessageAccountActorV1Schema } from '../sessions/messages/sessionMessageAccountActorV1.js';
 import { DiscussionAccountIdSchema, DiscussionIdSchema } from './content.js';
 
 /** Only the resource identity is Discussion-owned; grants and envelopes use the shared owner. */
@@ -25,6 +26,8 @@ export const DiscussionAccessGrantsListResponseV1Schema = lazyZodSchema(() => z.
   ownerAccountId: DiscussionAccountIdSchema,
   access: ResourceCallerAccessV1Schema,
   grants: z.array(ResourceAccessGrantRowV1Schema),
+  /** Explicit relationship facts for Account principals and the owner; omitted by older development Homes. */
+  accountActors: z.optional(z.array(SessionMessageAccountActorV1Schema)),
 }));
 export type DiscussionAccessGrantsListResponseV1 = z.infer<typeof DiscussionAccessGrantsListResponseV1Schema>;
 

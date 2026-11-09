@@ -1,64 +1,28 @@
+import { exactString, opaqueNonBlankString, HostIdSchema, ProviderIdSchema, SafeIntegerSchema } from './agentSessionScalarsV1.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
+import { NonBlankOpaqueIdentifierSchema } from '../strings/opaqueIdentifier.js';
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 as LIMITS } from './agentSessionLimitsV1.js';
-import {
-  AgentSessionProviderBindingV1Schema,
-  type AgentSessionProviderBindingV1,
-} from '../providers/sessions/agentSessionProviderBindingV1.js';
 import { SessionInputCausalPermissionAuthorityV1Schema } from '../sessions/messages/sessionInputAdmission.js';
-import {
-  AgentPermissionIntentV1Schema,
-  AgentSessionToolPolicyShapeV1,
-  type AgentPermissionIntentV1 as CanonicalAgentPermissionIntentV1,
-} from './permissionIntentV1.js';
+import type { AgentPermissionIntentV1 as CanonicalAgentPermissionIntentV1 } from './permissionIntentV1.js';
 import { SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX } from '../sessions/runtime/activity/sessionRuntimeActivity.js';
-import { StrictJsonValueSchema, withStrictJsonInput, type JsonValue as StrictJsonValue } from '../json/strictJsonValue.js';
+import { StrictJsonValueSchema, type JsonValue as StrictJsonValue } from '../json/strictJsonValue.js';
 import { AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 } from './eventKindsV1.js';
-import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { AgentRuntimeDiagnosticDataV1Schema } from './agentRuntimeDiagnosticV1.js';
-import { NonBlankOpaqueIdentifierSchema } from '../strings/opaqueIdentifier.js';
 import { UsagePromptCacheSchema, UsageRequestAttributionSchema } from '../usage/usageAnalyticsContracts.js';
-import { McpToolLaunchPoliciesV1Schema, type McpToolLaunchPolicyV1 } from '../mcp/servers/tools/resolveMcpToolDecisionV1.js';
 import { TranscriptPeerSenderV1Schema } from '../sessions/messages/transcriptPeerSenderV1.js';
 import { ProbedCatalogOptionSchema } from '../capabilities/probedCatalogOption.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
+import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { AgentSessionRuntimeRetryV1Schema } from './agentSessionRuntimeRetryV1.js';
 
 export { AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 } from './eventKindsV1.js';
-export { AgentRuntimeDiagnosticDataV1Schema } from './agentRuntimeDiagnosticV1.js';
+export { AgentRuntimeDiagnosticDataV1Schema, type AgentRuntimeDiagnosticDataV1 } from './agentRuntimeDiagnosticV1.js';
+export { AgentSessionRuntimeRetryV1Schema, type AgentSessionRuntimeRetryV1 } from './agentSessionRuntimeRetryV1.js';
 
-const HOST_ID_MAX = LIMITS.hostIndexedIdMaxCodeUnits;
-const PROVIDER_ID_MAX = LIMITS.providerIdMaxCodeUnits;
-const INPUT_IDS_MAX = LIMITS.inputIdsMaxItems;
-const NAME_MAX = LIMITS.toolNameMaxCodeUnits;
-const MODEL_ID_MAX = LIMITS.modelIdMaxCodeUnits;
-const SOURCE_MAX = LIMITS.usageSourceMaxCodeUnits;
-const PATH_MAX = LIMITS.filePathMaxCodeUnits;
-const DESCRIPTION_MAX = LIMITS.descriptionMaxCodeUnits;
-const INPUT_TEXT_CANDIDATE_MAX = LIMITS.p0MeasuredCandidates.inputTextMaxCodeUnits;
-const TRANSCRIPT_TEXT_CANDIDATE_MAX = LIMITS.p0MeasuredCandidates.transcriptTextMaxCodeUnits;
-const COMPACT_INSTRUCTIONS_MAX = LIMITS.compactInstructionsMaxCodeUnits;
-const EVENT_JSON_BYTES_CANDIDATE_MAX = LIMITS.p0MeasuredCandidates.eventMaxJsonBytes;
-const SEND_JSON_BYTES_CANDIDATE_MAX = LIMITS.p0MeasuredCandidates.sendRequestMaxJsonBytes;
-
-function exactString(max: number) {
-  return z.string().check(z.minLength(1), maxCodeUnits(max), z.refine((value) => value === value.trim(), 'Identifiers must not contain leading or trailing whitespace'));
-}
-
-function opaqueNonBlankString(max: number) {
-  return lazyZodSchema(() => NonBlankOpaqueIdentifierSchema.check(maxCodeUnits(max)));
-}
-
-const HostIdSchema = lazyZodSchema(() => exactString(HOST_ID_MAX));
-/**
- * Identifiers the Agent mints — session, turn, tool-call, message, edit and
- * observation ids. Happier correlates and replays them, never re-canonicalizes
- * them, so they are validated for presence and carried byte for byte.
- */
-const ProviderIdSchema = lazyZodSchema(() => opaqueNonBlankString(PROVIDER_ID_MAX));
-const InputIdSchema = lazyZodSchema(() => opaqueNonBlankString(HOST_ID_MAX));
 /** Host-resolved controls supported by a native idle-compaction runtime. */
 export const AgentSessionIdleCompactionPreferenceV1Schema = lazyZodSchema(() => z.strictObject({
   enabled: z.boolean(),
@@ -66,7 +30,16 @@ export const AgentSessionIdleCompactionPreferenceV1Schema = lazyZodSchema(() => 
 }));
 export type AgentSessionIdleCompactionPreferenceV1 = z.infer<typeof AgentSessionIdleCompactionPreferenceV1Schema>;
 
-const SafeIntegerSchema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative(), z.maximum(LIMITS.safeIntegerMax)));
+const HOST_ID_MAX = LIMITS.hostIndexedIdMaxCodeUnits;
+const INPUT_IDS_MAX = LIMITS.inputIdsMaxItems;
+const NAME_MAX = LIMITS.toolNameMaxCodeUnits;
+const MODEL_ID_MAX = LIMITS.modelIdMaxCodeUnits;
+const SOURCE_MAX = LIMITS.usageSourceMaxCodeUnits;
+const PATH_MAX = LIMITS.filePathMaxCodeUnits;
+const DESCRIPTION_MAX = LIMITS.descriptionMaxCodeUnits;
+const COMPACT_INSTRUCTIONS_MAX = LIMITS.compactInstructionsMaxCodeUnits;
+
+const InputIdSchema = lazyZodSchema(() => opaqueNonBlankString(HOST_ID_MAX));
 /**
  * The strict runtime JSON value used at admission boundaries. Aggregate byte
  * limits belong to a real transport, persistence, or external contract owner;
@@ -74,21 +47,6 @@ const SafeIntegerSchema = lazyZodSchema(() => z.number().check(z.int(), z.nonneg
  */
 export const AgentRuntimeJsonValueV1Schema: z.ZodMiniType<StrictJsonValue, unknown> = StrictJsonValueSchema;
 
-/**
- * The strict JSON value on the canonical runtime **event** union, where
- * the boundary is the event's own `eventMaxJsonBytes` ceiling and nothing else.
- *
- * The distinction remains important. `AgentSessionRuntimeEventV1Schema` is parsed
- * on read — Host Event dispatch (`plugins/events/hostV1.ts`), external-session
- * transcript replay (`apps/cli/src/session/external/terminalFollowProjection.ts`)
- * — so a tool payload that was admissible when the event was written has to
- * stay readable. Applying a smaller unrelated ceiling here would retroactively
- * refuse already-written payloads; a ~1.5 MB tool result is an ordinary size
- * for a file read or a search. The event bound is
- * the ceiling that was in force when the event was produced, so it is the only
- * one a reader may enforce.
- */
-const AgentRuntimeEventJsonValueV1Schema: z.ZodMiniType<StrictJsonValue, unknown> = StrictJsonValueSchema;
 export const AgentRuntimeJsonValueSchema = AgentRuntimeJsonValueV1Schema;
 
 export const AgentSessionProviderCheckpointMaxJsonBytesV1 = 4_096;
@@ -99,13 +57,6 @@ export const AgentSessionProviderCheckpointV1Schema = lazyZodSchema(() => AgentR
 export type AgentSessionProviderCheckpointV1 = z.infer<
   typeof AgentSessionProviderCheckpointV1Schema
 >;
-
-const TimestampedAgentValueV1Schema = <ValueSchema extends z.core.SomeType>(
-  value: ValueSchema,
-) => z.strictObject({
-  value,
-  updatedAtMs: SafeIntegerSchema,
-});
 
 const AgentLaunchEnvironmentCoreV1Schema = lazyZodSchema(() => z.strictObject({
   values: z.record(exactString(HOST_ID_MAX), z.string()),
@@ -125,53 +76,21 @@ const AgentLaunchEnvironmentCoreV1Schema = lazyZodSchema(() => z.strictObject({
 
 export const AgentLaunchEnvironmentV1Schema = lazyZodSchema(() => zMini.pipe(AgentRuntimeJsonValueV1Schema, AgentLaunchEnvironmentCoreV1Schema));
 
-const AgentConfigurationScalarV1Schema = lazyZodSchema(() => z.union([
-  z.string(),
-  z.number(),
-  z.boolean(),
-  z.null(),
-]));
 export {
   AGENT_PERMISSION_INTENTS_V1,
   AgentPermissionIntentV1Schema,
   parseAgentPermissionIntentV1Alias,
 } from './permissionIntentV1.js';
-export const AgentSessionProviderResumeV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('provider_session.v1'),
-  providerSessionId: ProviderIdSchema,
-}));
-export type AgentSessionProviderResumeV1 = z.infer<typeof AgentSessionProviderResumeV1Schema>;
-
 export { AgentSessionToolPolicyShapeV1 } from './permissionIntentV1.js';
-
-const AgentSessionConfigurationSnapshotCoreV1Schema = lazyZodSchema(() => z.strictObject({
-  ...AgentSessionToolPolicyShapeV1,
-  mode: TimestampedAgentValueV1Schema(z.nullable(exactString(MODEL_ID_MAX))),
-  model: TimestampedAgentValueV1Schema(z.nullable(exactString(MODEL_ID_MAX))),
-  permissionIntent: TimestampedAgentValueV1Schema(zMini.nullable(asProtocolZod(AgentPermissionIntentV1Schema))),
-  /** Host role restriction; independent of the permission intent used as delegation ceiling. */
-  workspaceWrites: z.optional(z.enum(['allow', 'deny'])),
-  options: z.record(
-    exactString(HOST_ID_MAX),
-    TimestampedAgentValueV1Schema(AgentConfigurationScalarV1Schema),
-  ),
-  /** Stable provider-owned continuation identity; never an opaque credential payload. */
-  providerSessionResume: z.optional(AgentSessionProviderResumeV1Schema),
-}));
-
-export const AgentSessionConfigurationSnapshotV1Schema = lazyZodSchema(() => withStrictJsonInput(AgentSessionConfigurationSnapshotCoreV1Schema));
-
-export type AgentSessionConfigurationUpdateV1 = z.infer<
-  typeof AgentSessionConfigurationSnapshotV1Schema
-> & Readonly<{
-  providerBinding?: AgentSessionProviderBindingV1;
-  mcpToolPolicy?: Readonly<Record<string, McpToolLaunchPolicyV1>>;
-}>;
-export const AgentSessionConfigurationUpdateV1Schema =
-  withStrictJsonInput(lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AgentSessionConfigurationSnapshotCoreV1Schema, {
-      providerBinding: zMini.optional(AgentSessionProviderBindingV1Schema),
-      mcpToolPolicy: zMini.optional(McpToolLaunchPoliciesV1Schema),
-    })))) as z.ZodMiniType<AgentSessionConfigurationUpdateV1, AgentSessionConfigurationUpdateV1>;
+export {
+  AgentSessionProviderResumeV1Schema,
+  AgentSessionConfigurationSnapshotV1Schema,
+  AgentSessionConfigurationUpdateV1Schema,
+  type AgentSessionProviderResumeV1,
+  type AgentSessionConfigurationSnapshotV1,
+  type AgentSessionConfigurationUpdateV1,
+  type AgentConfigurationScalarV1,
+} from './agentSessionConfigurationV1.js';
 
 const EventBaseSchema = lazyZodSchema(() => z.strictObject({
   sequence: SafeIntegerSchema,
@@ -218,6 +137,10 @@ const UsageTokensSchema = lazyZodSchema(() => z.strictObject({
   total: SafeIntegerSchema,
 }));
 
+const UsageCostBreakdownKeysSchema = lazyZodSchema(() => z.array(
+  exactString(LIMITS.usage.breakdownKeyMaxCodeUnits),
+).check(z.maxLength(LIMITS.usage.breakdownMaxEntries)));
+
 const UsageCostSchema = lazyZodSchema(() => z.strictObject({
   reportedUsd: z.number().check(z.nonnegative()),
   estimatedUsd: z.number().check(z.nonnegative()),
@@ -236,10 +159,10 @@ const UsageCostSchema = lazyZodSchema(() => z.strictObject({
     'none',
   ])),
   currency: exactString(LIMITS.usage.currencyMaxCodeUnits),
-  breakdown: z.optional(z.record(
-    exactString(LIMITS.usage.breakdownKeyMaxCodeUnits),
-    z.number().check(z.nonnegative()),
-  ).check(z.refine((value) => Object.keys(value).length <= LIMITS.usage.breakdownMaxEntries, 'Usage breakdown entry limit exceeded'))),
+  // Exact-money Symbol provenance is internal; runtime JSON contains string keys only.
+  breakdown: z.optional(z.catchall(z.object({}), z.number().check(z.nonnegative()))
+    .check(z.refine((value) => UsageCostBreakdownKeysSchema.safeParse(Object.keys(value)).success,
+      'Usage breakdown keys or entry count exceed their bounds'))),
   effectiveUsd: z.optional(z.number().check(z.nonnegative())),
 }));
 
@@ -369,7 +292,11 @@ const LifecycleSchemas = [
     startingInputId: z.optional(InputIdSchema),
     continuationId: z.optional(ProviderIdSchema),
   })),
-  lazyZodSchema(() => z.strictObject({ ...TurnEventBaseShape, kind: z.literal('turn-progress') })),
+  lazyZodSchema(() => z.strictObject({
+    ...TurnEventBaseShape,
+    kind: z.literal('turn-progress'),
+    retry: z.optional(AgentSessionRuntimeRetryV1Schema),
+  })),
   lazyZodSchema(() => z.strictObject({ ...TurnEventBaseShape, kind: z.literal('turn-agent-id-observed'), agentTurnId: ProviderIdSchema })),
   lazyZodSchema(() => z.strictObject({ ...TurnEventBaseShape, kind: z.literal('turn-complete') })),
   lazyZodSchema(() => z.strictObject({ ...TurnEventBaseShape, kind: z.literal('turn-failed'), diagnostic: AgentRuntimeDiagnosticDataV1Schema })),
@@ -423,7 +350,7 @@ const OutputSchemas = [
     kind: z.literal('tool-call'),
     toolCallId: ProviderIdSchema,
     toolName: exactString(NAME_MAX),
-    input: AgentRuntimeEventJsonValueV1Schema,
+    input: AgentRuntimeJsonValueV1Schema,
     sidechainId: z.optional(HostIdSchema),
   })),
   lazyZodSchema(() => z.strictObject({
@@ -431,7 +358,7 @@ const OutputSchemas = [
     turnId: z.optional(HostIdSchema),
     kind: z.literal('tool-progress'),
     toolCallId: ProviderIdSchema,
-    progress: AgentRuntimeEventJsonValueV1Schema,
+    progress: AgentRuntimeJsonValueV1Schema,
     sidechainId: z.optional(HostIdSchema),
   })),
   lazyZodSchema(() => z.strictObject({
@@ -439,7 +366,7 @@ const OutputSchemas = [
     turnId: z.optional(HostIdSchema),
     kind: z.literal('tool-result'),
     toolCallId: ProviderIdSchema,
-    output: AgentRuntimeEventJsonValueV1Schema,
+    output: AgentRuntimeJsonValueV1Schema,
     isError: z.optional(z.boolean()),
     sidechainId: z.optional(HostIdSchema),
   })),
@@ -447,7 +374,7 @@ const OutputSchemas = [
     kind: z.literal('transcript-message-committed'),
     messageId: ProviderIdSchema,
     role: z.enum(['user', 'assistant', 'reasoning']),
-    text: z.string().check(maxCodeUnits(TRANSCRIPT_TEXT_CANDIDATE_MAX)),
+    text: z.string(),
     turnId: z.optional(HostIdSchema),
     sidechainId: z.optional(HostIdSchema),
     /** Assistant-channel text delivered by another agent (teammate or subagent hand-back), not the Agent's reply. */
@@ -461,15 +388,11 @@ const OutputSchemas = [
     editId: ProviderIdSchema,
     path: z.string().check(maxCodeUnits(PATH_MAX)),
     description: z.optional(z.string().check(maxCodeUnits(DESCRIPTION_MAX))),
-    diff: z.optional(z.string().check(maxCodeUnits(LIMITS.p0MeasuredCandidates.fileEditMemberMaxCodeUnits))),
-    oldContent: z.optional(z.string().check(maxCodeUnits(LIMITS.p0MeasuredCandidates.fileEditMemberMaxCodeUnits))),
-    newContent: z.optional(z.string().check(maxCodeUnits(LIMITS.p0MeasuredCandidates.fileEditMemberMaxCodeUnits))),
+    diff: z.optional(z.string()),
+    oldContent: z.optional(z.string()),
+    newContent: z.optional(z.string()),
     sidechainId: z.optional(HostIdSchema),
-  }).check(z.refine((value) => jsonByteLength({
-      diff: value.diff,
-      oldContent: value.oldContent,
-      newContent: value.newContent,
-    }) <= LIMITS.p0MeasuredCandidates.fileEditContentMaxJsonBytes, 'File-edit content exceeds the CORE-A candidate byte bound'))),
+  })),
   lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(EventBaseSchema, {
     kind: z.literal('usage-observed'),
     observationId: ProviderIdSchema,
@@ -553,23 +476,17 @@ const AgentSessionRuntimeEventCoreV1Schema = lazyZodSchema(() => z.union([
   AgentSessionCompactionEventV1Schema,
 ]));
 
-function jsonByteLength(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
-}
-
 export const AgentSessionRuntimeEventV1Schema = lazyZodSchema(() => AgentSessionRuntimeEventCoreV1Schema.check(z.superRefine((value, context) => {
   if (value.kind === 'turn-start' && value.continuationId !== undefined
     && (value.startedBy !== 'provider' || value.causedByTurnId === undefined)) {
     context.addIssue({ code: 'custom', message: 'Provider continuations require their originating turn' });
   }
-  if (jsonByteLength(value) > EVENT_JSON_BYTES_CANDIDATE_MAX) {
-    context.addIssue({ code: 'custom', message: 'Agent runtime event exceeds the CORE-A candidate byte bound' });
-  }
 })));
+
 export const AgentSessionRuntimeEventSchema = AgentSessionRuntimeEventV1Schema;
 
 const AgentSessionInputV1Schema = lazyZodSchema(() => z.strictObject({
-  text: z.string().check(maxCodeUnits(INPUT_TEXT_CANDIDATE_MAX)),
+  text: z.string(),
   structuredInput: zMini.optional(AgentRuntimeJsonValueV1Schema),
 }));
 
@@ -585,11 +502,7 @@ export const AgentSessionSendRequestV1Schema = lazyZodSchema(() => z.strictObjec
   delivery: AgentSessionDeliveryV1Schema,
   /** Immutable authority for the exact admitted input; absent for legacy/host sends. */
   causalPermissionAuthority: zMini.optional(SessionInputCausalPermissionAuthorityV1Schema),
-}).check(z.superRefine((value, context) => {
-  if (jsonByteLength(value) > SEND_JSON_BYTES_CANDIDATE_MAX) {
-    context.addIssue({ code: 'custom', message: 'Agent runtime send request exceeds the CORE-A candidate byte bound' });
-  }
-})));
+}));
 
 export const AgentSessionCompactRequestV1Schema = lazyZodSchema(() => z.strictObject({
   compactionId: HostIdSchema,
@@ -643,11 +556,7 @@ export type AgentSessionRuntimeEvent = z.infer<typeof AgentSessionRuntimeEventV1
 export type AgentSessionRuntimeEventV1 = AgentSessionRuntimeEvent;
 AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 satisfies readonly AgentSessionRuntimeEventV1['kind'][];
 export type AgentLaunchEnvironmentV1 = z.infer<typeof AgentLaunchEnvironmentV1Schema>;
-export type AgentConfigurationScalarV1 = z.infer<typeof AgentConfigurationScalarV1Schema>;
 export type AgentPermissionIntentV1 = CanonicalAgentPermissionIntentV1;
-export type AgentSessionConfigurationSnapshotV1 = z.infer<
-  typeof AgentSessionConfigurationSnapshotV1Schema
->;
 export type AgentSessionSendRequest = z.infer<typeof AgentSessionSendRequestV1Schema>;
 export type AgentSessionSendRequestV1 = AgentSessionSendRequest;
 export type AgentSessionCompactRequest = z.infer<typeof AgentSessionCompactRequestV1Schema>;

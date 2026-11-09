@@ -31,6 +31,13 @@ describe('canonical vitals attention', () => {
         const observedNegative = memory('calm', { pressure: { level: 'not_reported', source: 'none' }, lowMemorySignal: false });
         expect(derive([sample(60_000, { memory: observedNegative }), sample(120_000, { memory: observedNegative })], held)).toEqual([]);
     });
+    it('counts a viewer arriving at the fast cadence as recovery coverage across the slower reading before it', () => {
+        const entry = derive([sample(0, { memory: memory('critical') })]);
+        // A slow reading at one minute, then a viewer's first readings at 2 s spacing.
+        const recent = [sample(60_000), sample(118_000, { intervalMs: 2_000 }), sample(120_000, { intervalMs: 2_000 })];
+        expect(derive(recent, entry)).toEqual([]);
+    });
+
     it('uses the policy disk threshold even with alerts off, ignores purgeable space, and treats inode exhaustion as full', () => {
         const disk: MachineVitalsSampleV1['disk'] = { reported: true, volumes: [{ id: 'data', label: 'Data', mount: '/data', totalBytes: 1000,
             availableBytes: 150, availableIncludingPurgeableBytes: 900 }] };

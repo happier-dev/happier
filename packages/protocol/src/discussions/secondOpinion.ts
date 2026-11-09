@@ -72,6 +72,36 @@ export const DiscussionSecondOpinionPreviewV1Schema = lazyZodSchema(() => z.stri
   })),
 }));
 export type DiscussionSecondOpinionPreviewV1 = z.infer<typeof DiscussionSecondOpinionPreviewV1Schema>;
+
+/** Only an explicit read grant can repair a missing source audience, never another admission refusal. */
+export function isDiscussionSecondOpinionSourceGrantRepairableV1(audience: Readonly<{
+  disclosure: Readonly<{ ok: true }> | Readonly<{ ok: false; reason: string }>;
+  sourceAccess: string;
+  missingSourceAccountIds: readonly string[];
+  canGrantSource: boolean;
+}> | null): boolean {
+  return audience !== null && audience.sourceAccess === 'read' && audience.canGrantSource
+    && audience.missingSourceAccountIds.length > 0
+    && (audience.disclosure.ok || audience.disclosure.reason === 'destination_audience_broader');
+}
+
+/** Shared by the preview's Ask gate and execution. This plans real grants; it never commits them. */
+export function resolveDiscussionSecondOpinionSourceGrantsV1(preview: DiscussionSecondOpinionPreviewV1):
+  | Readonly<{ ok: true; accountIds: string[] }>
+  | Readonly<{ ok: false; errorCode: 'encryption_material_unavailable' | 'discussion_access_forbidden' }> {
+  if (!preview.sourceContentReady) return { ok: false, errorCode: 'encryption_material_unavailable' };
+  if (preview.publisher && !preview.publisher.disclosure.ok) return { ok: false, errorCode: 'discussion_access_forbidden' };
+  const audiences = [{ disclosure: preview.discussionDisclosure, sourceAccess: 'read',
+    missingSourceAccountIds: preview.missingDiscussionSourceAccountIds, canGrantSource: preview.canGrantSource }, ...preview.reviewers];
+  for (const audience of audiences) {
+    if ((!audience.disclosure.ok || audience.missingSourceAccountIds.length > 0)
+      // People-only Discuss uses the create Action, which never commits source grants.
+      && (preview.reviewers.length === 0 || !isDiscussionSecondOpinionSourceGrantRepairableV1(audience))) {
+      return { ok: false, errorCode: 'discussion_access_forbidden' };
+    }
+  }
+  return { ok: true, accountIds: [...new Set(audiences.flatMap(audience => audience.missingSourceAccountIds))] };
+}
 export const DiscussionSecondOpinionPreviewResponseV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ok: z.literal(true), value: DiscussionSecondOpinionPreviewV1Schema }),
   z.strictObject({ ok: z.literal(false), error: DiscussionErrorCodeV1Schema }),

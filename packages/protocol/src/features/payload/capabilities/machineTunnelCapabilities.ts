@@ -8,7 +8,6 @@ import {
 } from '../../../machines/peer/mediation/tunnel/encoding.js';
 
 export const DEFAULT_MACHINE_TUNNEL_DIRECT_ALLOWED_PORTS: readonly number[] = Object.freeze([]);
-export const DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET = 8;
 export const DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES = 64 * 1024;
 export const DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_SUPPORTED_ENCODINGS: readonly PeerTcpTunnelEncoding[] = Object.freeze([
   PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
@@ -17,15 +16,23 @@ export const DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_PREFERRED_ENCODING = PEER_TCP_
 export const DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_BINARY_HEADER_BYTES = 16 * 1024;
 export const DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES = 256 * 1024;
 export const DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAMED_MESSAGE_BYTES = 512 * 1024;
-export const DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_CONCURRENT_SUBSTREAMS = 32;
-export const MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET_HARD_MAX = 128;
 export const MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES_HARD_MAX = 8 * 1024 * 1024;
 
 export function normalizeMachineTunnelPositiveInt(
   raw: unknown,
   fallback: number,
+  input?: Readonly<{ min?: number; max?: number }>,
+): number;
+export function normalizeMachineTunnelPositiveInt(
+  raw: unknown,
+  fallback: undefined,
+  input?: Readonly<{ min?: number; max?: number }>,
+): number | undefined;
+export function normalizeMachineTunnelPositiveInt(
+  raw: unknown,
+  fallback: number | undefined,
   input: Readonly<{ min?: number; max?: number }> = {},
-): number {
+): number | undefined {
   const value =
     typeof raw === 'number'
       ? raw
@@ -33,9 +40,11 @@ export function normalizeMachineTunnelPositiveInt(
         ? Number(raw)
         : Number.NaN;
   const normalized = Number.isFinite(value) ? Math.floor(value) : fallback;
+  const candidate = normalized !== undefined && normalized > 0 ? normalized : fallback;
+  if (candidate === undefined) return undefined;
   const min = input.min ?? 1;
   const max = input.max ?? Number.MAX_SAFE_INTEGER;
-  return Math.min(Math.max(normalized > 0 ? normalized : fallback, min), max);
+  return Math.min(Math.max(candidate, min), max);
 }
 
 export function normalizeMachineTunnelAllowedPorts(raw: unknown): readonly number[] {
@@ -92,22 +101,16 @@ export const DEFAULT_MACHINE_TUNNEL_DIRECT_PEER_CAPABILITIES: MachineTunnelDirec
 };
 
 export const MachineTunnelSubstreamCapabilitiesSchema = lazyZodSchema(() => z.object({
-  maxConcurrentSubstreams: z._default(z.optional((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((raw) => normalizeMachineTunnelPositiveInt(
-        raw,
-        DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_CONCURRENT_SUBSTREAMS,
-        { max: MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET_HARD_MAX },
-      )), z.number().check(z.int(), z.positive(), z.maximum(MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET_HARD_MAX)))), DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_CONCURRENT_SUBSTREAMS),
+  maxConcurrentSubstreams: z.optional((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(
+    z.transform((raw) => normalizeMachineTunnelPositiveInt(raw, undefined)), z.optional(z.number().check(z.int(), z.positive())))),
 }));
 export type MachineTunnelSubstreamCapabilities = z.infer<typeof MachineTunnelSubstreamCapabilitiesSchema>;
 
-export const DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES: MachineTunnelSubstreamCapabilities = {
-  maxConcurrentSubstreams: DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_CONCURRENT_SUBSTREAMS,
-};
+export const DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES: MachineTunnelSubstreamCapabilities = {};
 
 export const MachineTunnelServerRoutedCapabilitiesSchema = lazyZodSchema(() => z.object({
-  maxActiveTunnelsPerSocket: z._default(z.optional((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((raw) => normalizeMachineTunnelPositiveInt(raw, DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET, {
-        max: MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET_HARD_MAX,
-      })), z.number().check(z.int(), z.positive(), z.maximum(MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET_HARD_MAX)))), DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET),
+  maxActiveTunnelsPerSocket: z.optional((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(
+    z.transform((raw) => normalizeMachineTunnelPositiveInt(raw, undefined)), z.optional(z.number().check(z.int(), z.positive())))),
   maxFrameBytes: z._default(z.optional((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((raw) => normalizeMachineTunnelPositiveInt(raw, DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES, {
         max: MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES_HARD_MAX,
       })), z.number().check(z.int(), z.positive(), z.maximum(MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES_HARD_MAX)))), DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES),
@@ -128,7 +131,6 @@ export const MachineTunnelServerRoutedCapabilitiesSchema = lazyZodSchema(() => z
 export type MachineTunnelServerRoutedCapabilities = z.infer<typeof MachineTunnelServerRoutedCapabilitiesSchema>;
 
 export const DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_CAPABILITIES: MachineTunnelServerRoutedCapabilities = {
-  maxActiveTunnelsPerSocket: DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET,
   maxFrameBytes: DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES,
   supportedEncodings: [...DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_SUPPORTED_ENCODINGS],
   preferredEncoding: DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_PREFERRED_ENCODING,

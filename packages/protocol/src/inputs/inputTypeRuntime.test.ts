@@ -13,6 +13,41 @@ const type: ResolvedInputTypeV1 = { identity, occurrenceId: 'serving-1', definit
       required: ['repositoryId'], additionalProperties: false }, options: { resource: 'repositories' }, picker: 'repository-picker' }) };
 
 describe('typed inputs across consumer domains', () => {
+  it('admits a new string alongside suggested choices only when custom values are declared', () => {
+    const descriptor = { path: 'profileId', title: 'Profile', widget: 'select' as const,
+      optionsSourceId: 'browser.profiles.available', allowCustomValue: true };
+    const field = InputFieldHintSchema.parse(descriptor);
+    const normalized = normalizeInputHintsText({ fields: [field] }, text => text).fields[0]!;
+    const options = [{ value: 'work', label: 'Work' }];
+    for (const value of ['work', 'new-profile']) {
+      expect(validateInputFieldValue({ field: normalized, value, options })).toEqual({ status: 'valid', value });
+    }
+    expect(validateInputFieldValue({ field, value: 'new-profile' })).toEqual({ status: 'valid', value: 'new-profile' });
+    const staticSuggestions = InputFieldHintSchema.parse({ ...descriptor, optionsSourceId: undefined, options });
+    expect(validateInputFieldValue({ field: staticSuggestions, value: 'new-profile' }))
+      .toEqual({ status: 'valid', value: 'new-profile' });
+    expect(validateInputFieldValue({ field, value: { profileId: 'new-profile' }, options }).status).toBe('invalid');
+    const constrainedType: ResolvedInputTypeV1 = { ...type, definition: PluginInputTypeContributionV1Schema.parse({
+      id: identity.localId, title: 'Repository', semantic: 'repository', valueSchema: { type: 'string', enum: ['allowed'] },
+    }) };
+    expect(validateInputFieldValue({ field: { ...field, inputType: identity }, type: constrainedType, value: 'new-profile' }).status).toBe('invalid');
+    const resourceType: ResolvedInputTypeV1 = { ...constrainedType, definition: PluginInputTypeContributionV1Schema.parse({
+      id: identity.localId, title: 'Repository', semantic: 'repository', valueSchema: { type: 'string' },
+      options: { resource: 'repositories' },
+    }) };
+    const typedField = { ...field, inputType: identity };
+    expect(validateInputFieldValue({ field: typedField, type: resourceType, value: 'new-profile' }))
+      .toEqual({ status: 'unavailable', reasonCode: 'input_type_options_unavailable' });
+    expect(validateInputFieldValue({ field: typedField, type: resourceType, value: 'new-profile', options }))
+      .toEqual({ status: 'invalid', reasonCode: 'input_type_option_invalid' });
+    expect(validateInputFieldValue({ field: typedField, type: resourceType, value: 'work', options }))
+      .toEqual({ status: 'valid', value: 'work' });
+    const strict = InputFieldHintSchema.parse({ ...descriptor, allowCustomValue: false });
+    expect(validateInputFieldValue({ field: strict, value: 'new-profile', options }))
+      .toEqual({ status: 'invalid', reasonCode: 'input_type_option_invalid' });
+    expect(InputFieldHintSchema.safeParse({ ...descriptor, widget: 'multiselect' }).success).toBe(false);
+    expect(InputFieldHintSchema.safeParse({ ...descriptor, widget: 'text' }).success).toBe(false);
+  });
   it('normalizes a Bot to its executable Session and preserves ordered participant lists', () => {
     const session = { serverId: 'home-b', sessionId: 'bot-session' };
     const scalar = workflowInputToFieldHint(WorkflowInputDefinitionSchema.parse({

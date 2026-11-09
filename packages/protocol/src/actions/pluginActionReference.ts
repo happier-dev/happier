@@ -2,7 +2,7 @@ import {
   listActionSpecsForSurface,
   type ActionSpec,
 } from './actionSpecs.js';
-import { canRequestPresentUserApprovalForActionInputV1, DECISION_ACTION_IDS, requiresPresentUserDecisionForActionInputV1,
+import { canRequestPresentUserApprovalForActionInputV1, DECISION_ACTION_IDS,
   resolveCredentialActionAdmissionV1, TOKEN_CONVERSATIONAL_INPUT_ACTION_IDS } from './decisionAuthority.js';
 
 const GENERATED_REFERENCE_NOTE =
@@ -41,7 +41,7 @@ function renderRequestAdmission(spec: ActionSpec): string {
     return '`conversational_input` — host invocations retain normal Action admission and policy; API-token answers follow the Send grant without requiring `approve` scope';
   }
   if (canRequestPresentUserApprovalForActionInputV1(spec)) {
-    return '`human_approval` — eligible host Agent, MCP and plugin callers may request human approval; API-token callers receive `present_user_required`';
+    return '`human_approval` — host Agent, MCP and plugin callers default to Ask, which the user can waive; API-token callers receive `present_user_required`';
   }
   const admission = resolveCredentialActionAdmissionV1({
     spec, authority: 'account_automation', grant: null, surface: 'plugin',
@@ -53,16 +53,13 @@ function renderRequestAdmission(spec: ActionSpec): string {
 
 function renderDecisionEffectAuthority(spec: ActionSpec): string {
   if ((DECISION_ACTION_IDS as readonly string[]).includes(spec.id)) {
-    return '`approval_decision` — present-user credentials or API tokens with `approve` scope may decide admitted requests; approving a present-user-only target still requires present-user authority; host Agent/MCP permission responses retain their waivable approval policy';
+    return '`approval_decision` — present-user credentials or API tokens with `approve` scope may decide admitted requests; an API token never approves a present-user target; host Agent/MCP decisions follow their waivable approval policy and never decide their own request';
   }
   if ((TOKEN_CONVERSATIONAL_INPUT_ACTION_IDS as readonly string[]).includes(spec.id)) {
     return '`conversational_input` — answers are conversational input; API-token answers use the Send grant, and do not confer security approval authority';
   }
-  if (spec.requiredAuthority === 'account_automation' && requiresPresentUserDecisionForActionInputV1(spec)) {
-    return '`human_decision` — automation may request this control/recovery operation, but its decision requires present-user authority';
-  }
   return spec.requiredAuthority === 'present_user'
-    ? '`present_user` — approval and the authorized effect require host-stamped present-user authority; request admission does not authorize self-approval'
+    ? '`present_user` — API tokens never run or approve it; host automation defaults to Ask, which the user can waive'
     : '`account_automation` — subject to applicable approval and target decision authority';
 }
 
@@ -142,7 +139,7 @@ export function renderPluginActionReferenceMarkdown(): string {
     '',
     'Every row separates **Request admission** from its canonical **Decision/effect authority**. In 0.3 development source, eligible host Agent, MCP and plugin invocations may request a `present_user` Action through the existing human approval flow. The human decides, and only the human-approved execution receives the host-stamped present-user authority required for the effect; the requester cannot self-approve or waive that floor. API-token callers cannot request these security effects and receive `present_user_required`, even with `approve` scope. Decision Actions separately check the deciding credential and the target Action\'s authority. Input-dependent human requirements still apply, such as explicit missing-directory consent. Caller authority is host-stamped: Action input can never supply, widen, or narrow it.',
     '',
-    'In 0.3 development source, client-placed host Actions invoked through an admitted daemon host reach one connected app through the existing machine reverse channel. The app preserves the admitted surface and authority and uses its current mounted owners. Missing connected handlers return typed unavailable; a lost response after dispatch returns `outcome_uncertain` without automatic retry. Standalone CLI availability remains disabled. Plugin-declared client Actions retain their separate artifact and plugin-occurrence dispatch contract. See [Actions, tools and commands](/plugins/api/actions-tools-commands#host-actions-that-run-in-a-connected-app).',
+    'In 0.3 development source, client-placed host Actions invoked through an admitted daemon host reach one connected app through the existing machine reverse channel. The app preserves the admitted surface and authority and uses its current mounted owners. Missing connected handlers return typed unavailable; a lost response after dispatch returns `outcome_uncertain` without automatic retry. CLI availability follows each Action\'s declared surfaces and connected-client requirements. Plugin-declared client Actions retain their separate artifact and plugin-occurrence dispatch contract. See [Actions, tools and commands](/plugins/api/actions-tools-commands#host-actions-that-run-in-a-connected-app).',
     '',
     'Opening the OS file picker inside a standalone third-party embed frame is an explicit parity exclusion in the 0.3 development contract. Choosing local files remains a human UI interaction; agents attach files through the existing attachment Actions instead. The connected-app reverse channel does not address that frame, and no frame recipient identity or additional Composer reference is introduced for picker delivery. See [embedded attachments](/extending/embed#appearance-and-controls).',
     '',

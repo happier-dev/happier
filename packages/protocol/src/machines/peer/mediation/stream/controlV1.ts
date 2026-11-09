@@ -48,15 +48,15 @@ const BaseSidebandControlSchema = lazyZodSchema(() => z.object({
 export const MachineLiveStreamControlSidebandV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({
     ...BaseSidebandControlSchema.shape,
-    kind: z.literal('browser_input'),
-    controlEpoch: NonNegativeIntSchema,
-    event: BrowserInputEventV1Schema,
-  }),
-  z.strictObject({
-    ...BaseSidebandControlSchema.shape,
     kind: z.literal('move'),
     x: NormalizedCoordinateSchema,
     y: NormalizedCoordinateSchema,
+  }),
+  z.strictObject({
+    ...BaseSidebandControlSchema.shape,
+    kind: z.literal('browser_input'),
+    controlEpoch: NonNegativeIntSchema,
+    event: BrowserInputEventV1Schema,
   }),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BaseSidebandControlSchema, {
     kind: z.literal('tap'),

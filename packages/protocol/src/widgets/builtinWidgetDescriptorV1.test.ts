@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readBuiltinWidgetDescriptorV1, SESSION_COMPANION_BUILTIN_ITEM_IDS, BuiltinUsagePublicPresentationV1Schema } from './builtinWidgetDescriptorV1.js';
+import { readBuiltinWidgetDescriptorV1, readUsageBreakdownsInstanceTitleV1, SESSION_COMPANION_BUILTIN_ITEM_IDS, BuiltinUsagePublicPresentationV1Schema } from './builtinWidgetDescriptorV1.js';
 import { isWidgetTargetHostableV1, readWidgetInputTargetV1, resolveConfiguredWidgetInputs, resolveConfiguredWidgetTargetInputV1, validateWidgetWorkspaceInputV1, type WidgetInputDescriptorV1 } from './widgetInputAdmissionV1.js';
 import { composeWidgetGroupContextV1 } from './widgetActionInputResolverV1.js';
 import { normalizeUsageQuery } from '../inputs/usageQuery.js';
@@ -9,6 +9,35 @@ import { createUsageWidgetPresets } from './usageWidgetPresetsV1.js';
 import { resolveEffectiveInputFields } from '../inputs/inputFieldRuntime.js';
 
 describe('native widget target contracts', () => {
+    it('admits Home Services without a Session and keeps existing Session copies scoped', () => {
+        const definition = { kind: 'builtin', id: 'local_services_app' } as const;
+        const app = readBuiltinWidgetDescriptorV1(definition);
+        expect(app).toMatchObject({ target: 'app' });
+        expect(readWidgetInputTargetV1(app!)).toEqual({ kind: 'app' });
+        expect(resolveConfiguredWidgetInputs({ descriptor: app!, instance: { v: 1, id: 'services', definition, bindings: {} },
+            providedContext: {}, viewerValues: {} })).toEqual({ status: 'ready', input: {} });
+        const session = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'local_services' })!;
+        expect(readWidgetInputTargetV1(session)).toEqual({ kind: 'session', path: 'session' });
+        expect(resolveConfiguredWidgetInputs({ descriptor: session, instance: { v: 1, id: 'services',
+            definition: { kind: 'builtin', id: 'local_services' }, bindings: {} }, providedContext: {}, viewerValues: {} }).status)
+            .toBe('selection_required');
+    });
+
+    it('names configured breakdown cards consistently for localized UI and headless shared-layout writes', () => {
+        const instance = (bindings: WidgetInstanceV1['bindings']): WidgetInstanceV1 => ({ v: 1, id: 'breakdowns',
+            definition: { kind: 'builtin', id: 'usage_breakdowns' }, bindings });
+        expect(readUsageBreakdownsInstanceTitleV1(instance({ breakdown: { kind: 'value', value: ['model'] } })))
+            .toEqual({ title: 'Models', titleKey: 'usage.board.page.dimensionModel' });
+        expect(readUsageBreakdownsInstanceTitleV1(instance({ breakdown: { kind: 'value', value: ['agent'] } })))
+            .toEqual({ title: 'Agents', titleKey: 'usage.board.page.filterAgents' });
+        for (const bindings of [{}, { breakdown: { kind: 'value', value: ['model', 'agent'] } },
+            { breakdown: { kind: 'value', value: ['unknown'] } }, { breakdown: { kind: 'context', slot: 'breakdown' } }] satisfies WidgetInstanceV1['bindings'][]) {
+            expect(readUsageBreakdownsInstanceTitleV1(instance(bindings))).toBeNull();
+        }
+        expect(readUsageBreakdownsInstanceTitleV1({ ...instance({ breakdown: { kind: 'value', value: ['model'] } }),
+            definition: { kind: 'builtin', id: 'usage_daily' } })).toBeNull();
+    });
+
     it('admits selected planet encodings through the existing own-input binder and public copy schema', () => {
         const variants = [
             ...['ninetyPlanets', 'streakThread', 'weeksSkyline', 'daysOnSurface', 'ringedStreaks', 'aroundPeriod'].map(style => ({ widgetId: 'usage_rhythm', style })),

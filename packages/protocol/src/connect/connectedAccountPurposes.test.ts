@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { canonicalBoundedRecordKeySchema } from '../common/canonicalRecordKey.js';
 
 import {
   type ConnectedAccountMaterializationRequest,
@@ -44,7 +45,13 @@ describe('connected-account consumer purposes', () => {
     }
   });
 
-  it('accepts only canonical HTTPS origins and unique bounded destinations', () => {
+  it('preserves explicit key bounds while allowing unbounded canonical credential destinations', () => {
+    expect(canonicalBoundedRecordKeySchema(3).safeParse('abc').success).toBe(true);
+    expect(canonicalBoundedRecordKeySchema(3).safeParse('abcd').success).toBe(false);
+    expect(canonicalBoundedRecordKeySchema().safeParse('X'.repeat(512)).success).toBe(true);
+  });
+
+  it('accepts canonical HTTPS origins and unique destinations without local name count or length ceilings', () => {
     for (const origin of [
       'http://api.example.com',
       'https://user:secret@api.example.com',
@@ -75,19 +82,16 @@ describe('connected-account consumer purposes', () => {
       fileIds: ['service-account', 'service-account'],
     }).success).toBe(false);
 
-    const destinations = Array.from({ length: 33 }, (_, index) => `DESTINATION_${index}`);
+    const destinations = Array.from({ length: 33 }, (_, index) => `DESTINATION_${index}_${'X'.repeat(256)}`);
     for (const request of [
       { kind: 'httpHeaders', origin: 'https://api.example.com', headerNames: destinations },
       { kind: 'environment', keys: destinations },
       { kind: 'files', fileIds: destinations },
     ] satisfies readonly ConnectedAccountMaterializationRequest[]) {
-      const destinationsAtLimit = request.kind === 'httpHeaders'
-        ? { ...request, headerNames: request.headerNames.slice(0, 32) }
-        : request.kind === 'environment'
-          ? { ...request, keys: request.keys.slice(0, 32) }
-          : { ...request, fileIds: request.fileIds.slice(0, 32) };
-      expect(ConnectedAccountMaterializationRequestSchema.safeParse(destinationsAtLimit).success).toBe(true);
-      expect(ConnectedAccountMaterializationRequestSchema.safeParse(request).success).toBe(false);
+      expect(ConnectedAccountMaterializationRequestSchema.safeParse(request).success).toBe(true);
+    }
+    for (const name of ['', ' padded', 'padded ', 'bad\u0000name', 'bad\nname', '__proto__', 'prototype', 'constructor']) {
+      expect(ConnectedAccountMaterializationRequestSchema.safeParse({ kind: 'environment', keys: [name] }).success).toBe(false);
     }
   });
 

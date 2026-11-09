@@ -35,7 +35,6 @@ export type {
   SessionWorkingTreeMatchedFile,
   SessionWorkingTreeProjection,
   TurnChangeSet,
-  WorkspaceTouchedFileEvidence,
 } from './types.js';
 export { normalizeCheckpointAttributionScope } from './checkpointAttributionScope.js';
 export type {

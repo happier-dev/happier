@@ -39,6 +39,16 @@ export function forEachJsonSchemaChild(node: JsonSchemaObject, visit: (child: un
   }
 }
 
+/** @internal Whether a schema or any subschema holds a `$ref` pointer. */
+export function jsonSchemaContainsReference(node: JsonSchemaObject): boolean {
+  if (node.$ref !== undefined) return true;
+  let found = false;
+  forEachJsonSchemaChild(node, (child) => {
+    if (!found && isJsonSchemaObject(child)) found = jsonSchemaContainsReference(child);
+  });
+  return found;
+}
+
 function projectPortableSchemaKeywords(value: unknown): void {
   if (!isJsonSchemaObject(value)) return;
   const node = value as Record<string, unknown>;

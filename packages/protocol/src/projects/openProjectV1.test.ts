@@ -2,6 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { OpenProjectInputV1Schema, OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema } from './openProjectV1.js';
 
 describe('OpenProject V1 wire admission', () => {
+  it('carries only the own destination review fact without granting checkout authority', () => {
+    const destinationReview = { accountId: 'member', serverId: 'canonical-home', machineId: 'machine',
+      destinationParentPath: '/srv/happier/members/own', destinationDirectoryName: 'existing-workspace-id' };
+    const refused = { kind: 'refused', code: 'workspace_private_checkout_review_required', destinationReview };
+    expect(OpenProjectResultV1Schema.safeParse(refused).success).toBe(true);
+    expect(OpenProjectResultV1Schema.safeParse({ ...refused, destinationReview: { ...destinationReview,
+      admitted: true } }).success).toBe(false);
+    expect(OpenProjectResultV1Schema.safeParse({ ...refused, destinationReview: { ...destinationReview,
+      destinationDirectoryName: '../other-member' } }).success).toBe(false);
+    expect(OpenProjectInputV1Schema.safeParse({ serverId: 'canonical-home', machineId: 'machine',
+      source: { kind: 'folder', path: '/repo' }, materialization: { kind: 'attach' }, destinationReview }).success).toBe(false);
+  });
+
   it('admits the selected folder and existing checkout choices while rejecting caller-minted authority', () => {
     const input = {
       serverId: 'home', machineId: 'machine',

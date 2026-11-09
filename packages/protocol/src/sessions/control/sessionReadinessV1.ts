@@ -5,7 +5,7 @@ import { MachineAgentExecutionStateV1Schema } from '../../capabilities/machineAg
 import { MachinesAgentsSignInStartInputSchema } from '../../daemon/agentSignIn.js';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_INPUT_SCHEMAS } from '../../connect/authenticationActionsV1.js';
 import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connectedAccountPurposeIdentity.js';
-import { TeamCredentialResourceReadinessV1Schema } from '../../teams/credentials/readinessV1.js';
+import { TeamCredentialResourceReadinessV1Schema } from '../../teams/credentials/resourceReadinessV1.js';
 import { TeamCredentialResourceRecoveryActionV1Schema, resolveTeamResourceConnectedServiceSelectionV1 } from '../../teams/credentials/resourceV1.js';
 import { SessionEffectiveAccessV1Schema } from '../access/sessionEffectiveAccessV1.js';
 import { ConnectedServiceBindingsV2IngressSchema } from '../../connect/connectedServiceBindings.js';
@@ -149,22 +149,31 @@ export const SessionReadinessV1Schema = lazyZodSchema(() => z.strictObject({
 export type SessionReadinessV1 = z.infer<typeof SessionReadinessV1Schema>;
 
 /** Pure diagnostic composition. Actual operations always re-admit at their original owner. */
-export function composeSessionReadinessV1(facts: SessionReadinessFactsV1): SessionReadinessV1 {
+export function composeSessionReadinessV1(facts: SessionReadinessFactsV1,
+  options?: Readonly<{ credentialRequiredForConversation?: boolean }>): SessionReadinessV1 {
   const result = (status: SessionReadinessV1['status'], cause: SessionReadinessV1['cause']): SessionReadinessV1 => ({ ...facts, v: 1, status, cause });
   if (!facts.configured) return result('unavailable', 'configuration');
   if (facts.invocation?.capabilities.submitAgentInput === false) return result('unavailable', 'invocation');
   const machine = facts.machine?.status ?? 'unknown';
-  if (machine !== 'ready' && machine !== 'unknown' && machine !== 'probing') return result('unavailable', 'machine');
-  if (facts.agent?.current && ['needsSignIn', 'notInstalled', 'unsupported'].includes(facts.agent.state)) return result('unavailable', 'agent');
+  if (machine !== 'ready' && machine !== 'unknown') return result('unavailable', 'machine');
   const credential = facts.credential;
-  if (facts.operation === 'credential') {
+  const credentialRequired = facts.operation === 'credential'
+    || options?.credentialRequiredForConversation === true;
+  if (credentialRequired) {
     if (credential.kind === 'personal' && credential.usable === false) return result('unavailable', 'credential');
     if (credential.kind === 'team' && credential.readiness && credential.readiness.kind !== 'available') return result('unavailable', 'credential');
   }
   if (machine !== 'ready') return result('unknown', 'machine');
+  // A Team-backed execution route is itself the requested credential operation.
+  // If its exact resource disappeared, report that route as unread instead of
+  // falling back to the backing Agent's native sign-in state.
+  if (credentialRequired && credential.kind === 'team' && !credential.readiness) {
+    return result('unknown', 'credential');
+  }
+  if (facts.agent?.current && ['needsSignIn', 'notInstalled', 'unsupported'].includes(facts.agent.state)) return result('unavailable', 'agent');
   if (!facts.agent?.current || facts.agent.state !== 'ready') return result('unknown', 'agent');
   if (!facts.invocation) return result('unknown', 'invocation');
-  if (facts.operation === 'credential' && (credential.kind === 'not_required' || credential.kind === 'unknown'
+  if (credentialRequired && (credential.kind === 'not_required' || credential.kind === 'unknown'
     || (credential.kind === 'personal' && credential.usable === null) || (credential.kind === 'team' && !credential.readiness))) return result('unknown', 'credential');
   return result('ready', null);
 }

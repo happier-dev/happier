@@ -12,7 +12,8 @@ export const GLASS_BLUR_INTENSITY = { off: 0, light: 25, regular: 50, strong: 80
 /** Strong matches the reference's 24px frost through the existing blur control. */
 export const GLASS_BLUR_RADIUS_PX = { off: 0, light: 5, regular: 10, strong: 24 } as const;
 /** Lab coats are defaults only. Custom opacity is never clamped for legibility. */
-const PRESET_OPACITY = { light: 0.62, regular: 0.70, strong: 0.80 } as const;
+// Owner, 2026-10-25: Regular and Strong shell glass stay 70–75 % opaque, so the picture shows through the title bar.
+const PRESET_OPACITY = { light: 0.62, regular: 0.70, strong: 0.75 } as const;
 const CONTENT_OPACITY = { light: 0.78, regular: 0.84, strong: 0.90 } as const;
 
 export type GlassMaterialSettings = Readonly<{

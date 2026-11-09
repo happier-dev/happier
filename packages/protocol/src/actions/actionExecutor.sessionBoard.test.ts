@@ -95,7 +95,7 @@ describe('createActionExecutor (Session Board family)', () => {
           return projectSessionBoardGetResultV1({ serverId: 'home-1', sessionId: request.sessionId!,
             capabilities: { readTranscript: true, editSessionRecords: true }, layout: null,
             requestedItemIds: request.itemIds,
-            entries: stored ? [{ status: 'ready', ...stored, creator: { kind: 'user' } }] : [],
+            entries: stored ? [{ status: 'ready', ...stored }] : [],
             incomplete: false, page: { cursor: null, hasNext: false } });
         }
         const request = SessionBoardItemUpsertInputV1Schema.parse(input); saved.push(request);
@@ -121,8 +121,7 @@ describe('createActionExecutor (Session Board family)', () => {
     expect(saved[1]).toMatchObject({ placement: { width: 'medium' }, item: { height: { mode: 'auto', fallback: 'regular' } } });
     const custom = { ...base, expectedItemRevision: revision, item: { ...configured, height: { mode: 'fixed', size: 'tall' } }, placement: { tabId: 'overview', width: 'compact' } };
     expect(await execute(custom)).toMatchObject({ ok: true });
-    expect(saved[2]).toMatchObject({ ...custom, item: SessionSurfaceItemV1Schema.parse(custom.item),
-      reviewedVisual: { recordRevision: revision, creator: { kind: 'user' } } });
+    expect(saved[2]).toMatchObject({ ...custom, item: SessionSurfaceItemV1Schema.parse(custom.item) });
   });
   it.each(['agent', 'ui'] as const)('admits direct UI layout edits and preserves configurable approval through both %s fronts', async surface => {
     let document: SessionBoardLayoutV1 = { v: 1, tabs: [{ id: 'overview', title: 'Overview', items: [{ itemId: 'copy', width: 'wide' }] }] };
@@ -155,15 +154,15 @@ describe('createActionExecutor (Session Board family)', () => {
     if (surface === 'ui') {
       expect(await executor.execute('widgets.item.frame.set', widgetInput, context)).toMatchObject({ ok: true });
       expect(document.tabs[0]?.items[0]?.frameStyle).toBe('plain');
-      expect(await executor.execute('session.board.layout.update', { ...domainInput,
-        operation: { ...domainInput.operation, frameStyle: 'card' } }, context)).toMatchObject({ ok: true });
-      expect(document.tabs[0]?.items[0]?.frameStyle).toBe('card');
     }
+    expect(await executor.execute('session.board.layout.update', { ...domainInput,
+      operation: { ...domainInput.operation, frameStyle: 'card' } }, context)).toMatchObject({ ok: true });
+    expect(document.tabs[0]?.items[0]?.frameStyle).toBe('card');
     const beforeAsk = document;
-    const askedContext = surface === 'ui' ? { ...context, actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
-      'session.board.layout.update': { approvalRequiredSurfaces: ['ui'] },
-      'widgets.item.frame.set': { approvalRequiredSurfaces: ['ui'] },
-    } }) } : context;
+    const askedContext = { ...context, actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
+      'session.board.layout.update': { approvalRequiredSurfaces: [surface] },
+      'widgets.item.frame.set': { approvalRequiredSurfaces: [surface] },
+    } }) };
     expect(await executor.execute('widgets.item.frame.set', widgetInput, askedContext))
       .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
     expect(await executor.execute('session.board.layout.update', domainInput, askedContext))
@@ -198,10 +197,7 @@ describe('createActionExecutor (Session Board family)', () => {
 
     const call = sessionBoardAction.mock.calls[0]![0];
     expect(call.actionId).toBe('session.board.item.upsert');
-    expect(call.input).toMatchObject({ ...upsertInput, destination: 'board', reviewedVisual: {
-      networkSetting: null, recordRevision: null, creator: { kind: 'unknown' },
-      previousCapabilitiesDigest: null, previousExecutableFingerprint: null,
-    } });
+    expect(call.input).toMatchObject({ ...upsertInput, destination: 'board' });
     expect(call.context.surface).toBe('agent');
     expect(call.context.defaultSessionId).toBe('session-1');
     expect(call.signal).toBe(controller.signal);
@@ -517,11 +513,14 @@ describe('createActionExecutor (Session Board family)', () => {
     });
     expect(sessionBoardAction).not.toHaveBeenCalled();
 
-    // Shared layout changes use that same configurable approval owner.
+    // An explicit Ask for a reversible layout edit uses the same policy owner.
     await expect(executor.execute('session.board.layout.update', {
       expectedLayoutRevision: null,
       operation: { op: 'tab.create', tabId: 'overview', title: 'Overview' },
     }, { surface: 'agent', serverId: 'home-1', defaultSessionId: 'session-1',
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
+        'session.board.layout.update': { approvalRequiredSurfaces: ['agent'] },
+      } }),
       actionRequestId: 'board-layout-1', runtimeAccountId: 'account-1' })).resolves.toMatchObject({ ok: true,
       result: { kind: 'approval_request_created', actionId: 'session.board.layout.update' } });
     expect(sessionBoardAction).not.toHaveBeenCalled();

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import '../actions/actionExecutor.js';
 import { WorkflowActionInputSchemasV1 } from './actionsV1.js';
 import { projectWorkflowPluginSourceV1, WorkflowPluginSourceV1Schema } from './index.js';
-import { normalizePluginWorkflowContributionV1 } from '../plugins/contributions/workflows.js';
+import { normalizePluginWorkflowContributionV1 } from './workflowPluginSourceV1.js';
 
 describe('plugin Workflow source initialization', () => {
   it('initializes Action schemas before projecting semantically admitted plugin Workflows', () => {

@@ -18,7 +18,7 @@ export { BotTemplateSetupSelectionsV1Schema, type BotTemplateSetupSelectionsV1 }
 const key = () => z.string().check(z.minLength(1));
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
 
-/** The exact selected setup input is signed at admission and consumed unchanged at wake. */
+/** Selected software uses the ordinary Machine setup preparation and execution owners. */
 export function buildBotTemplateMachineSetupPlanInputV1(target: Readonly<{ homeId: string; machineId: string }>,
   machineSetup: MachineSetupV1): MachineSetupPlanInputV1 {
   return { ...target, mode: 'effects', sources: [{ kind: 'direct', setup: machineSetup }] };

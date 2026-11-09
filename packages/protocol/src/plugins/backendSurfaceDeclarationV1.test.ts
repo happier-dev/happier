@@ -9,6 +9,13 @@ import {
 } from './backendSurfaceDeclarationV1.js';
 
 describe('BackendSurfaceDeclarationV1Schema', () => {
+  it.each(['compatibility', 'staticMetadata'])('rejects the unread backend %s bag', (field) => {
+    expect(BackendSurfaceDeclarationV1Schema.safeParse({
+      id: 'launch', kind: 'terminalRuntime', operation: 'launch',
+      handler: { target: 'daemon' }, [field]: { arbitrary: true },
+    }).success).toBe(false);
+  });
+
   it('preserves a bounded safe explanation for unavailable surface operations', () => {
     expect(AgentSurfaceAvailabilityV1Schema.parse({
       available: false,

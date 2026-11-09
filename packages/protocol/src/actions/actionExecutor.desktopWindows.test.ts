@@ -18,6 +18,17 @@ function executor(deps: Partial<ActionExecutorDeps>) {
 }
 
 describe('desktop destination window Action', () => {
+  it('routes mounted Session effects to their presenter while navigation and native capture stay at the main client', () => {
+    for (const actionId of ['session.draft.append', 'session.work.get', 'composer.transaction.apply',
+      'composer.attachments.pick', 'ui.prompts.picker.open', 'ui.prompts.history',
+      'screenCapture.addToDraft', 'screenCapture.send', 'session.pending.edit'] as const) {
+      expect(Reflect.get(getActionSpec(actionId), 'clientPresenter')).toBe('session');
+    }
+    for (const actionId of ['session.open', 'session.draft.open', 'workspace.tabs.open',
+      'desktop.windows.open', 'screenCapture.open', 'screenCapture.copy', 'session.pending.next'] as const) {
+      expect(Reflect.get(getActionSpec(actionId), 'clientPresenter')).toBeUndefined();
+    }
+  });
   it('discovers one safe client Action and rejects incomplete or mixed routing identities', () => {
     const id = ActionIdSchema.parse('desktop.windows.open');
     const spec = getActionSpec(id);

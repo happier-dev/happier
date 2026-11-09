@@ -9,7 +9,7 @@ import { createActionExecutor } from '../actions/actionExecutor.js';
 import { ActionsSettingsV1Schema } from '../actions/actionSettings.js';
 import { isApprovalRequiredByActionsSettings } from '../actions/actionApprovalPolicy.js';
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
-import { SessionBoardItemUpsertInputV1Schema, type SessionBoardItemUpsertInputV1 } from '../sessions/board/actions.js';
+import { SessionBoardItemUpsertInputV1Schema, projectSessionBoardActionFailureV1, type SessionBoardItemUpsertInputV1 } from '../sessions/board/actions.js';
 
 describe('frozen widget Board content', () => {
   const preview = { v: 1 as const, document: { version: 1 as const, root: { kind: 'metric' as const, label: 'Checks',
@@ -55,6 +55,27 @@ describe('frozen widget Board content', () => {
     expect(published).toEqual([buildWidgetSnapshotBoardUpsertV1(input)]);
   });
 
+  it('admits a snapshot once and publishes exactly one frozen Board item', async () => {
+    let scopeReads = 0;
+    const published: SessionBoardItemUpsertInputV1[] = [];
+    const executor = createActionExecutor({
+      // The host Account-scope adapter is the admission boundary.
+      widgetAccountScope: () => { scopeReads += 1; return { serverId: 'home-a', accountId: 'viewer-a' }; },
+      // The sealed Board HTTP boundary retains destination write authorization.
+      sessionBoardAction: async ({ input: boardInput }) => {
+        const upsert = SessionBoardItemUpsertInputV1Schema.parse(boardInput);
+        published.push(upsert);
+        return { v: 1, serverId: 'home-a', sessionId: 'session-a', result: { operation: 'upsert_item', itemId: upsert.itemId,
+          outcome: 'created', itemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ', layoutRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ' },
+          destination: { tabId: 'main', width: 'full' } };
+      },
+    });
+    expect(await executor.execute('widgets.snapshot.post', input, { surface: 'ui', authority: 'present_user',
+      serverId: 'home-a', bypassApprovals: true })).toMatchObject({ ok: true, result: { result: { outcome: 'created' } } });
+    expect(published).toEqual([buildWidgetSnapshotBoardUpsertV1(input)]);
+    expect(scopeReads).toBe(1);
+  });
+
   it('publishes exactly the admitted preview and rejects hidden live or executable state', () => {
     const upsert = buildWidgetSnapshotBoardUpsertV1(input);
     expect(upsert.item.source).toEqual({ kind: 'declarative', document: preview.document });
@@ -70,15 +91,20 @@ describe('frozen widget Board content', () => {
     ]) expect(WidgetSnapshotPostInputV1Schema.safeParse({ ...input, preview: { ...preview, document: { version: 1, root } } }).success).toBe(false);
   });
 
-  it('never publishes after cancellation or Account retirement', async () => {
+  it('rejects a foreign Account before the Board port and preserves Board write denial and local cancellation', async () => {
     let writes = 0;
     const deps = { widgetAccountScope: () => ({ serverId: 'home-a', accountId: 'viewer-b' }),
-      sessionBoardAction: async () => { writes += 1; return { ok: false as const, errorCode: 'session_board_edit_denied' as const, error: 'Denied' }; } };
-    expect(await executeWidgetSnapshotPostV1(deps, input, { serverId: 'home-a' })).toMatchObject({ ok: false, errorCode: 'account_target_mismatch' });
+      sessionBoardAction: async () => { writes += 1; return projectSessionBoardActionFailureV1({ error: 'session_board_forbidden' }); } };
+    const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home-a', bypassApprovals: true };
+    expect(await createActionExecutor(deps).execute('widgets.snapshot.post', input, context))
+      .toMatchObject({ ok: false, errorCode: 'account_target_mismatch' });
     const controller = new AbortController(); controller.abort();
     expect(await executeWidgetSnapshotPostV1({ ...deps, widgetAccountScope: () => ({ serverId: 'home-a', accountId: 'viewer-a' }) }, input,
       { serverId: 'home-a', signal: controller.signal })).toMatchObject({ ok: false, errorCode: 'cancelled' });
     expect(writes).toBe(0);
+    expect(await createActionExecutor({ ...deps, widgetAccountScope: () => ({ serverId: 'home-a', accountId: 'viewer-a' }) })
+      .execute('widgets.snapshot.post', input, context)).toMatchObject({ ok: false, errorCode: 'session_board_forbidden' });
+    expect(writes).toBe(1);
   });
   it('admits a preview only within the incumbent Session document resource boundary', () => {
     expect(WidgetSnapshotPostInputV1Schema.safeParse({ ...input, preview: { ...preview, document: { version: 1,

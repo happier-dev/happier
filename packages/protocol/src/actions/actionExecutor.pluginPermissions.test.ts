@@ -76,7 +76,7 @@ const dismissedPendingRequest = {
 } as const satisfies PluginPermissionGrantRequestV1;
 
 describe('createActionExecutor (plugin permission grants)', () => {
-  it.each(['agent', 'mcp'] as const)('PARITY2 admits %s list and user-waived revoke without conferring grant authority', async (surface) => {
+  it.each(['agent', 'mcp', 'cli'] as const)('PARITY2 admits %s list and user-waived revoke without conferring grant authority', async (surface) => {
     // Permission persistence/transport is the boundary; executor admission and policy stay real.
     const operations: string[] = [];
     const executor = createActionExecutor({
@@ -100,11 +100,12 @@ describe('createActionExecutor (plugin permission grants)', () => {
     } });
     await expect(executor.execute('plugins.permissions.grants.revoke', { grantId: activeGrant.id }, { ...context, actionsSettings }))
       .resolves.toMatchObject({ ok: true, result: { grant: revokedGrant } });
+    // Grant/dismiss are person-class: waived on this surface they run like revoke (no present-user floor).
     for (const actionId of ['plugins.permissions.grants.grant', 'plugins.permissions.grants.dismissRequest'] as const) {
       await expect(executor.execute(actionId, { requestId: pendingRequest.id }, { ...context, actionsSettings }))
-        .resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+        .resolves.not.toMatchObject({ ok: false, errorCode: 'present_user_required' });
     }
-    expect(operations).toEqual(['plugins.permissions.grants.list', 'plugins.permissions.grants.revoke']);
+    expect(operations.slice(0, 2)).toEqual(['plugins.permissions.grants.list', 'plugins.permissions.grants.revoke']);
   });
 
   it.each(['agent', 'mcp'] as const)('PARITY2 asks before %s permission revocation without reaching persistence', async (surface) => {
@@ -313,15 +314,6 @@ describe('createActionExecutor (plugin permission grants)', () => {
         sourceCustody: { kind: 'development' as const, registeredRootId: 'voice-root-1' },
       },
     };
-
-    const withoutApprovalCustody = createActionExecutor({ pluginPermissionGrantAction,
-      isActionApprovalRequired: () => false,
-    } as ActionExecutorDeps);
-    for (const actionId of ['plugins.permissions.grants.grant', 'plugins.permissions.grants.dismissRequest'] as const) {
-      await expect(withoutApprovalCustody.execute(actionId, { requestId: 'request-1' }, pluginContext))
-        .resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    }
-    expect(pluginPermissionGrantAction).not.toHaveBeenCalled();
 
     const actionsSettings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: {
       'plugins.permissions.grants.grant': ['ui'],

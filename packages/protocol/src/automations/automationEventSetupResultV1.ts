@@ -31,6 +31,7 @@ export function createPluginEventAutomationSetupResultV1JsonSchema(
       displayLabel: { type: 'string', minLength: 1, maxLength: 256 },
       observationOnly: embedProtocolJsonSchema(projectZodProtocolSchema(AutomationObservationOnlyIntentV1Schema).jsonSchema,
         ['properties', 'observationOnly']),
+      webhookDelivery: { type: 'string', enum: ['automatic', 'required'] },
     },
     required: ['v', 'sourceInstanceId', 'sourceContractVersion', 'sourceConfig', 'displayLabel'],
   };
@@ -46,6 +47,7 @@ export const PluginEventAutomationSetupResultV1Schema = lazyZodSchema(() => z.st
   sourceConfig: asProtocolZod(AutomationEventSourceConfigV1Schema),
   displayLabel: AutomationEventSourceDisplayLabelV1Schema,
   observationOnly: z.optional(AutomationObservationOnlyIntentV1Schema),
+  webhookDelivery: z.optional(z.enum(['automatic', 'required'])),
 }));
 export type PluginEventAutomationSetupResultV1 = z.infer<
   typeof PluginEventAutomationSetupResultV1Schema

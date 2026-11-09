@@ -6,6 +6,7 @@ import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginIdSchema } from '../pluginId.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 import { PluginExecutionScopeV1Schema } from '../invocationScopeV1.js';
+import { PluginUiRuntimeOccurrenceIdV1Schema } from '../ui/runtimeOccurrenceV1.js';
 
 const textEncoder = new TextEncoder();
 
@@ -164,8 +165,14 @@ function issueForDuplicateIds(
 export const InteractionTransientRequesterV1Schema = lazyZodSchema(() => z.strictObject({
   pluginId: asProtocolZod(PluginIdSchema),
   contributionId: asProtocolZod(PluginContributionLocalIdSchema),
-  occurrenceId: boundedIdentifier('Interaction occurrence ids'),
-  invocationId: boundedIdentifier('Interaction invocation ids'),
+  occurrenceId: asProtocolZod(PluginUiRuntimeOccurrenceIdV1Schema).check(z.superRefine((value, context) => {
+    if (hasUnpairedSurrogate(value)) context.addIssue({ code: 'custom', message: 'Interaction occurrence ids must be well-formed Unicode.' });
+  })),
+  // Host invocation identities may include the admitted opaque occurrence.
+  // The existing whole-interaction JSON budget bounds their representation.
+  invocationId: z.string().check(z.minLength(1), z.superRefine((value, context) => {
+    if (hasUnpairedSurrogate(value)) context.addIssue({ code: 'custom', message: 'Interaction invocation ids must be well-formed Unicode.' });
+  })),
 }));
 export type InteractionTransientRequesterV1 = z.infer<typeof InteractionTransientRequesterV1Schema>;
 

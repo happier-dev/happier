@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { FilesystemEffectFailureDetailsV1Schema } from './filesystemFailure.js';
 
 export const MachineFileBrowserRootSchema = lazyZodSchema(() => z.looseObject({
   id: z.string().check(z.minLength(1)),
@@ -27,6 +28,7 @@ export const DaemonFilesystemListRootsResponseSchema = lazyZodSchema(() => z.dis
     ok: z.literal(false),
     error: z.string().check(z.minLength(1)),
     errorCode: z.optional(z.string().check(z.minLength(1))),
+    details: z.optional(FilesystemEffectFailureDetailsV1Schema),
   }),
 ]));
 export type DaemonFilesystemListRootsResponse = z.infer<typeof DaemonFilesystemListRootsResponseSchema>;
@@ -51,6 +53,7 @@ export const DaemonFilesystemListDirectoryResponseSchema = lazyZodSchema(() => z
     ok: z.literal(false),
     error: z.string().check(z.minLength(1)),
     errorCode: z.optional(z.string().check(z.minLength(1))),
+    details: z.optional(FilesystemEffectFailureDetailsV1Schema),
   }),
 ]));
 export type DaemonFilesystemListDirectoryResponse = z.infer<typeof DaemonFilesystemListDirectoryResponseSchema>;

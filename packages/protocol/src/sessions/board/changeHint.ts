@@ -10,14 +10,6 @@ export const SessionSystemRecordInvalidationV1Schema = z.strictObject({
 });
 export type SessionSystemRecordInvalidationV1 = z.infer<typeof SessionSystemRecordInvalidationV1Schema>;
 
-
-/** Content-free wake hint; ordinary Session changes also invalidate surface reads. */
-export const SessionSurfacesChangeHintV1Schema = z.strictObject({
-  v: z.literal(1),
-  sessionSurfaces: z.literal(true),
-});
-export type SessionSurfacesChangeHintV1 = z.infer<typeof SessionSurfacesChangeHintV1Schema>;
-
 export const SessionSystemRecordChangeHintV1Schema = z.strictObject({
   v: z.literal(1),
   sessionRecords: z.strictObject({ sessionId: asProtocolZod(SessionIdSchema), address: SessionSystemRecordAddressSchema }),
@@ -53,9 +45,21 @@ const rowHintFacts = {
   followReceiverAvailabilityChanged: z.optional(z.boolean()),
   followReceiverAvailabilityChangedAtCursor: z.optional(sequence),
 };
+/**
+ * A durable Message row revised at an unchanged seq. `updatedMessageUpdatedAt` is the
+ * committed row's `updatedAt` in ms, the same value its live `message-updated` frame
+ * carries, so a reader already holding that revision needs no transcript read.
+ */
+const sessionUpdatedMessageHintFacts = {
+  updatedMessageSeq: sequence,
+  updatedMessageId: z.optional(z.string()),
+  updatedMessageUpdatedAt: z.optional(sequence),
+};
+/** The keys a stored durable row-revision hint may carry, before row-fact enrichment. */
+export const SESSION_UPDATED_MESSAGE_HINT_KEYS: readonly string[] = Object.keys(sessionUpdatedMessageHintFacts);
 const SessionRowOnlyHintSchema = z.union([
   z.strictObject({ lastMessageSeq: sequence, lastMessageId: z.optional(z.string()), ...rowHintFacts }),
-  z.strictObject({ updatedMessageSeq: sequence, updatedMessageId: z.optional(z.string()), ...rowHintFacts }),
+  z.strictObject({ ...sessionUpdatedMessageHintFacts, ...rowHintFacts }),
   z.strictObject({ sharedMetadataVersion: sequence, ...rowHintFacts }),
   z.strictObject({ lastViewedSessionSeq: sequence, ...rowHintFacts }),
   z.strictObject({ metadataVersion: sequence, agentStateVersion: z.optional(sequence), ...rowHintFacts }),

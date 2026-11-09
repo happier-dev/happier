@@ -15,6 +15,8 @@ import {
 } from '../reviews/comments/content.js';
 import * as migrationContract from './encryptionMigrate.js';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } from '../providers/connections/connectionRowsV1.js';
+import { sealSavedSecretResourceStoredContentV1 } from './settings/savedSecretResourceContentV1.js';
+import { ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES } from '../crypto/encryptedDataKeyEnvelopeFormatV1.js';
 import {
   AccountEncryptionMigrateBadRequestResponseSchema,
   AccountEncryptionMigrateAutomationDirectiveSchema,
@@ -40,7 +42,6 @@ import {
   AccountEncryptionMigrateExternalAuthBindingDigestV1Schema,
   AccountEncryptionMigrateSuccessResponseSchema,
   AccountEncryptionMigrateUnsignedRequestSchema,
-  AccountEncryptionMigrateToModeSchema,
   attachAccountEncryptionMigrateProofSignatureV1,
   computeAccountEncryptionMigrateKeyFingerprintV1,
   convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
@@ -50,6 +51,32 @@ import {
 } from './encryptionMigrate.js';
 
 describe('account/encryptionMigrate', () => {
+  it('binds Coach suppression replacements and confines them to their Account KV namespace', () => {
+    const request = createPlainRequest();
+    const workspace = { action: 'migrate', items: [{ key: 'workspace:usage-coach:suppressions', expectedVersion: 7, value: 'c3RhdGU=' }] };
+    const parsed = AccountEncryptionMigrateRequestSchema.parse({ ...request, workspace });
+    expect(parsed).toHaveProperty('workspace', workspace);
+    const binding = { accountId: 'account', sourceMode: 'e2ee' as const };
+    expect(createAccountEncryptionMigrateRequestBindingDigestV1({ ...binding, request: parsed }))
+      .not.toBe(createAccountEncryptionMigrateRequestBindingDigestV1({ ...binding, request }));
+    for (const key of ['todo.index', 'usage-coach:suppressions', 'workspace:']) {
+      expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request, workspace: { action: 'migrate', items: [{ ...workspace.items[0], key }] } }).success).toBe(false);
+    }
+    expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request, todos: workspace }).success).toBe(false);
+    expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request, usageCoach: { action: 'assert_empty' } }).success).toBe(false);
+  });
+  it('carries task resource recipient envelopes through the signed Todo conversion directive', () => {
+    const item = { key: 'todo.shared', expectedVersion: 4, value: 'converted-content', recipientKeyEnvelopes: [] };
+    const result = migrationContract.AccountEncryptionMigrateTodosDirectiveSchema.safeParse({ action: 'migrate', items: [item] });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toEqual({ action: 'migrate', items: [item] });
+    expect(migrationContract.AccountEncryptionMigrateTodosDirectiveSchema.safeParse({ action: 'migrate', items: [
+      { ...item, recipientKeyEnvelopes: [{ recipientAccountId: 'other', encryptedDataKey: 'invalid' }] },
+    ] }).success).toBe(false);
+    expect(migrationContract.AccountEncryptionMigrateWorkspaceDirectiveSchema.safeParse({ action: 'migrate', items: [
+      { ...item, key: 'workspace:tabs:v1' },
+    ] }).success).toBe(false);
+  });
   it('includes private Follow rules in the complete signed Account conversion', () => {
     const item = { ruleId: 'rule-a', expectedVersion: 3, receiver: { kind: 'account' }, content: { t: 'plain', v: {
       v: 1, enabled: true, policy: { preset: 'important' }, filter: { show: 'both', startedBy: ['you'], scope: 'all_accessible',
@@ -66,6 +93,28 @@ describe('account/encryptionMigrate', () => {
     expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...candidate,
       sessionFollowRules: { items: [{ ...item, content: { t: 'encrypted', c: 'cipher' } }] } }).success).toBe(false);
     expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...candidate, sessionFollowRules: { items: [item, item] } }).success).toBe(false);
+  });
+  it('binds owned Saved Secret resource reseals and refuses a mode/content mismatch', () => {
+    const resourceId = 'resource-a';
+    const content = { v: 1 as const, name: 'Anthropic API key', kind: 'apiKey' as const, value: 'sk-private' };
+    const encrypted = sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'e2ee', resourceDataKey: new Uint8Array(32).fill(3),
+      content, randomBytes: length => new Uint8Array(length).fill(4) });
+    const ownerKeyEnvelope = { recipientAccountId: 'account', recipientContentPublicKeyFingerprint: 'owner-fingerprint',
+      encryptedDataKey: encodeBase64(new Uint8Array(ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES).fill(5)) };
+    const item = { resourceId, expectedRevision: 2, storedContent: encrypted, ownerKeyEnvelope };
+    const request = AccountEncryptionMigrateUnsignedRequestSchema.parse({ ...createUnsignedE2eeRequest(), savedSecretResources: { items: [item] } });
+    const binding = { accountId: 'account', sourceMode: 'plain' as const };
+    const digest = createAccountEncryptionMigrateRequestBindingDigestV1({ request, ...binding });
+    expect(createAccountEncryptionMigrateRequestBindingDigestV1({ request: { ...request,
+      savedSecretResources: { items: [{ ...item, expectedRevision: 3 }] } }, ...binding })).not.toBe(digest);
+    const e2ee = (items: unknown[]) => AccountEncryptionMigrateUnsignedRequestSchema.safeParse({ ...request, savedSecretResources: { items } }).success;
+    expect(e2ee([{ ...item, storedContent: { t: 'plain', v: content }, ownerKeyEnvelope: undefined }])).toBe(false);
+    expect(e2ee([{ ...item, ownerKeyEnvelope: undefined }])).toBe(false);
+    expect(e2ee([item, item])).toBe(false);
+    const plain = (items: unknown[]) => AccountEncryptionMigrateRequestSchema.safeParse({ ...createPlainRequest(), savedSecretResources: { items } }).success;
+    expect(plain([{ resourceId, expectedRevision: 2, storedContent: { t: 'plain', v: content } }])).toBe(true);
+    expect(plain([{ resourceId, expectedRevision: 2, storedContent: { t: 'plain', v: content }, ownerKeyEnvelope }])).toBe(false);
+    expect(plain([{ resourceId, expectedRevision: 2, storedContent: encrypted }])).toBe(false);
   });
   it('binds all five D9 catalog revisions and content into the signed Account conversion', () => {
     const domains = [
@@ -115,6 +164,9 @@ describe('account/encryptionMigrate', () => {
     const digest = createAccountEncryptionMigrateRequestBindingDigestV1({ request, ...binding });
     expect(createAccountEncryptionMigrateRequestBindingDigestV1({ request: { ...request,
       [field]: { ...directive, expectedRevision: 4 } }, ...binding })).not.toBe(digest);
+    const cleared = AccountEncryptionMigrateRequestSchema.parse({ ...request,
+      [field]: { ...directive, content: null } });
+    expect(createAccountEncryptionMigrateRequestBindingDigestV1({ request: cleared, ...binding })).not.toBe(digest);
     expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request,
       [field]: { ...directive, content: { t: 'encrypted', c: 'cipher' } } }).success).toBe(false);
     expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request,
@@ -569,29 +621,6 @@ describe('account/encryptionMigrate', () => {
         ),
       },
     }).success).toBe(true);
-  });
-
-  it('parses the one-shot target mode request with an explicit empty Session inventory', () => {
-    expect(AccountEncryptionMigrateToModeSchema.parse('plain')).toBe('plain');
-    expect(AccountEncryptionMigrateToModeSchema.parse('e2ee')).toBe('e2ee');
-
-    const parsed = AccountEncryptionMigrateRequestSchema.parse({
-      toMode: 'plain',
-      expectedAccountVersion: 0,
-      expectedSigningKeyFingerprint: null,
-      expectedContentKeyFingerprint: null,
-      expectedSettingsVersion: 0,
-      settingsContent: { t: 'plain', v: { schemaVersion: 2 } },
-      connectedServices: { action: 'assert_empty' },
-      automations: { action: 'assert_empty' },
-      machines: { action: 'assert_empty' },
-      todos: { action: 'assert_empty' },
-      artifacts: { action: 'assert_empty' },
-      sessions: { action: 'assert_empty' },
-      ...emptyRemainingAccountDomainDirectives,
-    });
-    expect(parsed.toMode).toBe('plain');
-    expect(parsed.sessions).toEqual({ action: 'assert_empty' });
   });
 
   it('requires exact source and target Account-mode Session owner envelopes', () => {

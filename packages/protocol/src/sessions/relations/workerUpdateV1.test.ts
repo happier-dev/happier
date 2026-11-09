@@ -90,7 +90,7 @@ describe('WorkerUpdateV1', () => {
     const referenceBytes = JSON.stringify(deliverables).length;
     expect(SessionUpdatePostInputV1Schema.safeParse({ summary: 'x'.repeat(8_000 - referenceBytes), deliverables }).success).toBe(true);
     expect(SessionUpdatePostInputV1Schema.safeParse({ summary: 'x'.repeat(8_000), deliverables }).success).toBe(false);
-    expect(WorkerUpdateV1Schema.safeParse({ ...sessionUpdate, result: 'x'.repeat(8_000), deliverables }).success).toBe(false);
+    expect(WorkerUpdateV1Schema.safeParse({ ...sessionUpdate, result: 'x'.repeat(8_000), deliverables }).success).toBe(true);
     const rendered = renderWorkerUpdatePromptBlockV1(WorkerUpdateV1Schema.parse({ ...sessionUpdate, deliverables }));
     expect(rendered).toContain('docs/result.md');
     expect(rendered).toContain('document-1');
@@ -141,13 +141,14 @@ describe('WorkerUpdateV1', () => {
     expect(WorkerUpdateV1Schema.safeParse({ ...sessionUpdate, engine: { ...engine, permissionMode: 'bypassPermissions' } }).success).toBe(false);
   });
 
-  it('accepts the released result bound exactly and refuses oversized data', () => {
+  it('preserves complete native results beyond the authored completion-summary bound', () => {
     expect(WorkerUpdateV1Schema.safeParse({ ...sessionUpdate, result: '' }).success).toBe(true);
     expect(WorkerUpdateV1Schema.safeParse({ ...sessionUpdate, result: 'x'.repeat(8_000) }).success).toBe(true);
-    expect(WorkerUpdateV1Schema.safeParse({ ...sessionUpdate, result: 'x'.repeat(8_001) }).success).toBe(false);
+    const result = 'Native final answer é😀'.repeat(1_000);
+    expect(WorkerUpdateV1Schema.parse({ ...sessionUpdate, result }).result).toBe(result);
   });
 
-  it('preserves a headline-only update when the producer suppresses duplicate result data', () => {
+  it('preserves a headline-only update when the source has no result text', () => {
     const { result: duplicateResult, ...headlineOnly } = sessionUpdate;
     expect(WorkerUpdateV1Schema.parse(headlineOnly)).toEqual(headlineOnly);
     const rendered = renderWorkerUpdatePromptBlockV1(WorkerUpdateV1Schema.parse(headlineOnly));

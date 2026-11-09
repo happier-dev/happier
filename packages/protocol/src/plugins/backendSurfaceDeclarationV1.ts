@@ -111,14 +111,12 @@ export const BackendSurfaceHandlerRefV1Schema = lazyZodSchema(() => z.looseObjec
 }));
 export type BackendSurfaceHandlerRefV1 = z.infer<typeof BackendSurfaceHandlerRefV1Schema>;
 
-const BackendSurfaceDeclarationBaseV1Schema = lazyZodSchema(() => z.looseObject({
+const BackendSurfaceDeclarationBaseV1Schema = lazyZodSchema(() => z.strictObject({
   surfaceApiVersion: z._default(z.literal(1), 1),
   id: z.string().check(z.trim(), z.minLength(1)),
   operation: z.string().check(z.trim(), z.minLength(1)),
   support: z._default(BackendSurfaceStaticSupportV1Schema, 'supported'),
   handler: BackendSurfaceHandlerRefV1Schema,
-  staticMetadata: z.optional(z.record(z.string(), z.unknown())),
-  compatibility: z.optional(z.record(z.string(), z.unknown())),
 }));
 
 const TerminalRuntimeBackendSurfaceDeclarationV1Schema = lazyZodSchema(() => z.extend(BackendSurfaceDeclarationBaseV1Schema, {

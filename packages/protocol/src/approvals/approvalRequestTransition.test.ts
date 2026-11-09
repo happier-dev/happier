@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from './approvalRequestV1.js';
-import { decideApprovalRequestTransition, settleApprovalRequestActionArgs } from './approvalRequestTransition.js';
+import { decideApprovalRequestTransition, resolveApprovalRequestExecutionInput, settleApprovalRequestActionArgs } from './approvalRequestTransition.js';
+import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { PileApplyResultV1Schema } from '../storage/storageV1.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '../actions/externalActionExecutionAuthorization.js';
 
@@ -76,6 +77,39 @@ function openRequest(): ApprovalRequestV2 {
     },
   });
 }
+
+describe('Environment binding person selection approval transition', () => {
+  it('admits only exact present-user choices without replacing the original binding patch', () => {
+    const actionId = 'deployments.bindings.set';
+    const actionArgs = { serverId: 'home', environmentId: 'environment', expectedRevision: 7,
+      set: [{ purpose: 'variable', name: 'API_TOKEN', phase: 'runtime',
+        source: { kind: 'secret', ref: 'person_selects' } }], remove: [] };
+    const source = { kind: 'secret', ref: formatSharedSavedSecretRefV1('credential'), resourceRevision: 3 };
+    const chosen = { ...actionArgs, set: [{ ...actionArgs.set[0]!, source }] };
+    const original = openRequest();
+    const existing = ApprovalRequestV2Schema.parse({ ...original, actionId, actionArgs,
+      executionOriginV1: { ...original.executionOriginV1, actionId } });
+    const approved = ApprovalRequestV2Schema.parse({ ...existing, status: 'approved', updatedAtMs: 2,
+      decision: { kind: 'approve', authority: 'present_user', decidedAtMs: 2, narrowedInput: chosen } });
+    expect(decideApprovalRequestTransition(existing, approved)).toEqual({ ok: true, changed: true });
+    expect(resolveApprovalRequestExecutionInput(approved)).toEqual({ ok: true, input: chosen });
+    expect(approved.actionArgs).toEqual(actionArgs);
+    const invalidChoices = [actionArgs, { ...chosen, environmentId: 'foreign' },
+      { ...chosen, expectedRevision: 8 }, { ...chosen, remove: [{ purpose: 'variable', name: 'OTHER', phase: 'runtime' }] },
+      { ...chosen, set: [{ ...chosen.set[0]!, name: 'OTHER' }] },
+      { ...chosen, set: [{ ...chosen.set[0]!, source: { ...source, ref: 'personal-secret' } }] },
+      { ...chosen, set: [{ ...chosen.set[0]!, source: { ...source, resourceRevision: 0 } }] }];
+    for (const narrowedInput of invalidChoices) {
+      expect(decideApprovalRequestTransition(existing, { ...approved,
+        decision: { ...approved.decision!, narrowedInput } })).toMatchObject({ ok: false, errorCode: 'subject_mismatch' });
+    }
+    expect(decideApprovalRequestTransition(existing, { ...approved,
+      decision: { ...approved.decision!, authority: undefined } })).toMatchObject({ ok: false, errorCode: 'subject_mismatch' });
+    expect(decideApprovalRequestTransition(approved, { ...approved, status: 'executing', updatedAtMs: 3,
+      decision: { ...approved.decision!, narrowedInput: { ...chosen, expectedRevision: 8 } } }))
+      .toMatchObject({ ok: false, errorCode: 'subject_mismatch' });
+  });
+});
 
 describe('computer selection approval transition', () => {
   it('does not widen see-only access while approving a target choice', () => {

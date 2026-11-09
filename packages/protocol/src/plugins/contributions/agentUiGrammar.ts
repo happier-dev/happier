@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import { SpawnConfigOptionValueSchema } from '../../actions/sessionSpawnConfigOptions.js';
+import { ConnectedServiceAuthGroupPolicyV1Schema } from '../../connect/connectedServiceSchemas.js';
 
 /**
  * The PUBLIC Agent UI authoring grammar (`contributes.agents[].ui`).
@@ -265,9 +266,24 @@ const AgentUiAskUserQuestionSchema = lazyZodSchema(() => z.strictObject({
   dialogs: z.array(AgentUiAskUserQuestionDialogSchema).check(z.minLength(1)),
 }).check(z.refine((declaration) => new Set(declaration.dialogs.map((dialog) => dialog.dialogId)).size === declaration.dialogs.length, { message: 'AskUserQuestion dialog ids must be unique.' })));
 
+/** Pool controls edit only explicitly supported host policy fields, never arbitrary plugin keys. */
+export const AgentUiConnectedServicePoolSettingV1Schema = lazyZodSchema(() => z.strictObject({
+  id: AgentUiIdSchema,
+  kind: z.literal('boolean'),
+  policyKey: z.keyof(z.pick(ConnectedServiceAuthGroupPolicyV1Schema, { claudeCodeAutoContinueAtUsageLimit: true })),
+  serviceLocalIds: AgentUiIdArraySchema.check(z.minLength(1)),
+  titleKey: AgentUiTranslationKeySchema,
+  subtitleKey: AgentUiTranslationKeySchema,
+}));
+export type AgentUiConnectedServicePoolSettingV1 = z.infer<typeof AgentUiConnectedServicePoolSettingV1Schema>;
+export const AgentUiConnectedServicesV1Schema = lazyZodSchema(() => z.strictObject({
+  poolSettings: z.array(AgentUiConnectedServicePoolSettingV1Schema),
+}));
+
 export const AgentUiBehaviorDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
   /** Author-owned identity for this declaration, surfaced in diagnostics. */
   descriptorId: z.optional(AgentUiIdSchema),
+  connectedServices: z.optional(AgentUiConnectedServicesV1Schema),
   attachedSessionTerminal: z.optional(z.strictObject({ supported: z.optional(z.boolean()) })),
   pendingDelivery: z.optional(z.strictObject({
     custodyLabelKey: z.optional(AgentUiTranslationKeySchema),

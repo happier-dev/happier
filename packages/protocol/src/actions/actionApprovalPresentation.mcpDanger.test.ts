@@ -41,6 +41,22 @@ const cases: readonly (readonly [McpServerActionIdV1, unknown, readonly string[]
 
 describe('MCP danger approval review', () => {
   it.each([
+    ['mcp.servers.tools.set', { serverId: 'mcp-a', default: 'allow_read_only', tools: { read: 'allow', write: 'off', old: 'inherit' } },
+      { default: 'allow_read_only', tools: { read: 'allow', write: 'off', old: 'inherit' } }],
+    ['mcp.servers.delete', { serverId: 'mcp-a', expectedRevision: 1, removeBindings: true }, { removeBindings: true }],
+    ['mcp.servers.delete', { serverId: 'mcp-a', expectedRevision: 1, removeBindings: false }, { removeBindings: false }],
+    ['mcp.servers.signIn.start', { serverId: 'mcp-a', stepUp: true }, { stepUp: true }],
+    ['mcp.servers.signIn.start', { serverId: 'mcp-a', stepUp: false }, { stepUp: false }],
+    ['mcp.servers.import', { source: { kind: 'paste', text: '{}' }, dryRun: true, where }, { dryRun: true, where }],
+    ['mcp.servers.import', { source: { kind: 'paste', text: '{}' }, dryRun: false, where }, { dryRun: false, where }],
+  ] as const)('%s retains non-content control operands in public observations', (actionId, raw, controls) => {
+    const spec = getActionSpec(actionId);
+    const admitted = spec.inputSchema.parse(raw);
+    expect(spec.projectObservationInput?.(admitted)).toMatchObject(controls);
+    const reviewed = spec.approvalPresentation?.projectInput?.(admitted);
+    expect(spec.projectObservationInput?.(reviewed)).toMatchObject(controls);
+  });
+  it.each([
     [undefined, undefined],
     [{ clientId: 'public-app' }, { oauthApp: 'set', clientId: 'public-app' }],
     [{ clientId: 'replacement-app', clientSecret: 'private-secret-sentinel' }, { oauthApp: 'set', clientId: 'replacement-app' }],
@@ -103,8 +119,9 @@ describe('MCP danger approval review', () => {
     // though its safe presentation remains available.
     const retired = createActionExecutor({ approvalsGet: async () => ({ ...stored!, status: 'approved',
       decision: { kind: 'approve', authority: 'present_user', decidedAtMs: 2 } }), approvalsUpdate: async () => ({ ok: true }) });
-    await expect(retired.replayApprovedApprovalRequest({ artifactId: 'import-review', callerAuthority: 'present_user' }))
-      .resolves.toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } } });
+    const replay = await retired.replayApprovedApprovalRequest({ artifactId: 'import-review', callerAuthority: 'present_user' });
+    expect(replay, JSON.stringify(replay))
+      .toMatchObject({ ok: false, errorCode: 'approval_stale', details: { reason: 'live_invocation_unavailable' } });
   });
   it.each(cases)('%s preserves the reviewed operation privately and in settled history', (actionId, raw, expected) => {
     const spec = getActionSpec(actionId);

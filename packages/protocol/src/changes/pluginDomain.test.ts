@@ -10,6 +10,18 @@ import {
 } from './index.js';
 
 describe('pluginDomain AccountChange entries', () => {
+  it('admits bounded index-key changes with their predecessor, without weakening closed hints', () => {
+    const hint = { pluginDomain: 'dataCollection', pluginId: 'example.tasks', collectionId: 'tasks',
+      contractDigest: 'a'.repeat(43), revision: 4, rowIds: ['task-1'],
+      indexChanges: { previousCursor: 3, keys: [{ indexId: 'by-kind', key: '0100ff' }] } };
+    expect(PluginDomainChangeHintSchema.parse(hint)).toEqual(hint);
+    expect(PluginDomainChangeHintSchema.safeParse({ ...hint,
+      indexChanges: { ...hint.indexChanges, privateContent: 'forbidden' } }).success).toBe(false);
+    expect(PluginDomainChangeHintSchema.safeParse({ ...hint,
+      indexChanges: { previousCursor: -1, keys: [] } }).success).toBe(false);
+    expect(PluginDomainChangeHintSchema.safeParse({ ...hint,
+      indexChanges: { previousCursor: 3, keys: [{ indexId: 'by-kind', key: 'not-hex' }] } }).success).toBe(false);
+  });
   it('admits only the closed content-free core arms with their canonical entity ids', () => {
     const hints = [
       {

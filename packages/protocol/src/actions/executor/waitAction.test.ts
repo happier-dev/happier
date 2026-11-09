@@ -115,6 +115,7 @@ describe('generic wait observation', () => {
       const { createWorkflowAccountRunActionOwner } = await import('./workflowRunActions.js');
       const runId = '11111111-1111-4111-8111-111111111111';
       const summary = WorkflowRunSummaryV1Schema.parse({ sourceArtifactId: null, ownerAccountId: 'account', visibleTeamId: null,
+        failureUnseen: false, invocationAttentionRequired: observation === 'needs_attention', attentionSeenFailureAt: null, finishedAt: null,
         id: runId, origin: { kind: 'direct' }, state: observation === 'terminal' ? 'succeeded' : observation === 'paused' ? 'paused' : 'running',
         attentionRequired: observation === 'needs_attention', revision: 0, machineId: 'machine', workflowCustodyState: 'pending',
         originDeliveryAckRevision: null, availability: { pause: true, resumeBoundary: false, restoreWorkspace: false,
@@ -149,6 +150,7 @@ describe('generic wait observation', () => {
     const { createWorkflowAccountRunActionOwner } = await import('./workflowRunActions.js');
     const runId = '11111111-1111-4111-8111-111111111111';
     const summary = WorkflowRunSummaryV1Schema.parse({ sourceArtifactId: null, ownerAccountId: 'account', visibleTeamId: null,
+      failureUnseen: false, invocationAttentionRequired: true, attentionSeenFailureAt: null, finishedAt: null,
       id: runId, origin: { kind: 'direct' }, state: 'running', attentionRequired: true,
       revision: 1, machineId: 'machine', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
       availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true,
@@ -157,7 +159,7 @@ describe('generic wait observation', () => {
     const owner = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => 'account',
       storage: { execute: async (request) => {
         expect(request).toMatchObject({ conditions: [...conditions] });
-        return kind === 'terminal' ? { run: { ...summary, state: 'succeeded', attentionRequired: false }, observation: 'terminal', matchedCondition: 'terminal' }
+        return kind === 'terminal' ? { run: { ...summary, state: 'succeeded', attentionRequired: false, invocationAttentionRequired: false }, observation: 'terminal', matchedCondition: 'terminal' }
           : { run: summary, observation: 'needs_attention', matchedCondition: 'attention' };
       } }, definitions: { get: async () => { throw new Error('wait_requires_no_definition'); } },
       resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),

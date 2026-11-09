@@ -12,7 +12,7 @@ const argument = z.extend(input, { type: z.enum(['named', 'positional']), name: 
   valueHint: z.optional(z.string()), variables: z.optional(z.record(z.string(), input)) });
 const remote = z.object({ type: z.enum(['streamable-http', 'sse']), url: z.string(), headers: z.optional(z.nullable(z.array(keyInput))), variables: z.optional(z.record(z.string(), input)) });
 const wireServer = z.object({ name: z.string().check(z.minLength(1)), description: z.string(), version: z.string().check(z.minLength(1)), title: z.optional(z.string()),
-  repository: z.optional(z.object({ url: z.optional(z.string()) })), websiteUrl: z.optional(z.string()), icons: z.optional(z.nullable(z.array(z.object({ src: z.string() })))),
+  repository: z.optional(z.object({ url: z.optional(z.string()) })), websiteUrl: z.optional(z.string()), icons: z.optional(z.nullable(z.array(z.object({ src: z.string(), theme: z.optional(z.enum(['light', 'dark'])) })))),
   remotes: z.optional(z.nullable(z.array(remote))), packages: z.optional(z.nullable(z.array(z.object({ registryType: z.string(), identifier: z.string().check(z.minLength(1)),
     version: z.optional(z.string()), transport: z.object({ type: z.enum(['stdio', 'streamable-http', 'sse']) }), fileSha256: z.optional(z.string()),
     runtimeArguments: z.optional(z.nullable(z.array(argument))), packageArguments: z.optional(z.nullable(z.array(argument))),
@@ -40,10 +40,15 @@ function inputs(items: readonly z.infer<typeof keyInput>[], target: 'env' | 'hea
 function normalize(item: z.infer<typeof record>) {
   const server = item.server;
   const meta = item._meta?.['io.modelcontextprotocol.registry/official'];
+  const defaultIcon = server.icons?.find(icon => icon.theme === undefined)?.src;
+  const lightIcon = server.icons?.find(icon => icon.theme === 'light')?.src;
+  const iconUrl = lightIcon ?? defaultIcon;
+  const iconDarkUrl = server.icons?.find(icon => icon.theme === 'dark')?.src ?? (lightIcon ? defaultIcon : undefined);
   return McpRegistryServerV1Schema.parse({ name: server.name, description: server.description, version: server.version,
     ...(server.title ? { title: server.title } : {}), status: meta?.status === 'deprecated' ? 'deprecated' : 'active',
     ...(meta?.publishedAt && Number.isFinite(Date.parse(meta.publishedAt)) ? { publishedAt: Date.parse(meta.publishedAt) } : {}),
-    ...(server.repository?.url ? { repository: server.repository.url } : {}), ...(server.websiteUrl ? { websiteUrl: server.websiteUrl } : {}), ...(server.icons?.[0] ? { iconUrl: server.icons[0].src } : {}),
+    ...(server.repository?.url ? { repository: server.repository.url } : {}), ...(server.websiteUrl ? { websiteUrl: server.websiteUrl } : {}),
+    ...(iconUrl ? { iconUrl } : {}), ...(iconDarkUrl ? { iconDarkUrl } : {}),
     remotes: (server.remotes ?? []).map(remote => ({ transport: remote.type, url: remote.url,
       inputs: [...inputs(remote.headers ?? [], 'header'), ...Object.entries(remote.variables ?? {}).map(([name, item]) => ({ ...variable(item), name, target: 'url-variable' as const }))] })),
     packages: (server.packages ?? []).flatMap(pkg => ['npm', 'pypi', 'oci', 'mcpb', 'nuget', 'cargo'].includes(pkg.registryType) ? [{
@@ -57,10 +62,10 @@ function normalize(item: z.infer<typeof record>) {
 }
 /** Standalone server.json import uses the same wire decoder as registry reads. */
 export function readMcpRegistryServerV1(raw: unknown) { return normalize(record.parse({ server: raw })); }
-function summary(source: RegistrySourceV1, item: z.infer<typeof record>): RegistryItemSummaryV1 {
-  const server = normalize(item); const meta = item._meta?.['io.modelcontextprotocol.registry/official'];
+function summary(source: RegistrySourceV1, item: z.infer<typeof record>, server = normalize(item)): RegistryItemSummaryV1 {
+  const meta = item._meta?.['io.modelcontextprotocol.registry/official'];
   return { sourceId: source.id, kind: 'mcpServer', itemId: server.name, title: server.title ?? server.name, description: server.description, version: server.version,
-    ...(server.iconUrl ? { iconUrl: server.iconUrl } : {}), publisher: { name: server.name.split('/')[0]!,
+    ...(server.iconUrl ? { iconUrl: server.iconUrl } : {}), ...(server.iconDarkUrl ? { iconDarkUrl: server.iconDarkUrl } : {}), publisher: { name: server.name.split('/')[0]!,
       ...(new URL(source.url).origin === 'https://registry.modelcontextprotocol.io' && meta ? { verification: 'registry-checked' as const } : {}) },
     ...(server.repository || server.websiteUrl ? { links: { ...(server.repository ? { repository: server.repository } : {}), ...(server.websiteUrl ? { website: server.websiteUrl } : {}) } } : {}),
     ...(meta?.updatedAt && Number.isFinite(Date.parse(meta.updatedAt)) ? { updatedAt: Date.parse(meta.updatedAt) } : {}), ...(server.status === 'deprecated' ? { flags: { deprecated: true } } : {}),
@@ -95,7 +100,8 @@ export const mcpRegistryAdapterV1: RegistryFormatAdapterV1 = {
     const response = await json(ctx, req.source, url); const parsed = record.safeParse(response.value);
     if (!parsed.success || parsed.data._meta?.['io.modelcontextprotocol.registry/official']?.status === 'deleted'
       || parsed.data.server.name !== req.itemId || req.version && parsed.data.server.version !== req.version) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
-    return RegistryItemV1Schema.parse({ summary: summary(req.source, parsed.data), payload: { kind: 'mcpServer', server: normalize(parsed.data) }, fetchedAt: response.fetchedAt });
+    const server = normalize(parsed.data);
+    return RegistryItemV1Schema.parse({ summary: summary(req.source, parsed.data, server), payload: { kind: 'mcpServer', server }, fetchedAt: response.fetchedAt });
   },
   async latest(ctx, items, options) {
     const result = new Map<string, import('../registryItemsV1.js').RegistryContentRefV1 | 'removed'>();

@@ -1,7 +1,8 @@
+import { isWorkspaceSyncRelationshipWriteActionId } from '../actions/actionIds.js';
 import { ActionIdSchema } from '../actions/actionIds.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../json/strictJsonValue.js';
-import { ApprovalRequestV2Schema, type ApprovalRequest } from './approvalRequestV1.js';
+import { ApprovalRequestV2Schema, isHistoricalPublishApprovalRequestV2, type ApprovalRequest, type CurrentApprovalRequest } from './approvalRequestV1.js';
 export { createApprovalRequestArtifact, deriveApprovalRequestArtifactId, assertApprovalRequestCreationBinding, ApprovalRequestConflict } from './creation.js';
 
 /**
@@ -75,7 +76,10 @@ export function settleApprovalRequestDecision(request: ApprovalRequest): Approva
 }
 
 /** Raw replay operands share one lifetime, including the original finite invocation envelope. */
+export function settleApprovalRequestReplayInputs(request: CurrentApprovalRequest): CurrentApprovalRequest;
+export function settleApprovalRequestReplayInputs(request: ApprovalRequest): ApprovalRequest;
 export function settleApprovalRequestReplayInputs(request: ApprovalRequest): ApprovalRequest {
+  if (isHistoricalPublishApprovalRequestV2(request)) return request;
   const actionArgs = settleApprovalRequestActionArgs(request);
   const decision = settleApprovalRequestDecision(request);
   if (request.v !== 2) return { ...request, actionArgs, decision };
@@ -143,7 +147,9 @@ const INVALID_TRANSITION = {
 export function decideApprovalRequestTransition(
   existing: ApprovalRequest,
   next: ApprovalRequest,
+  options?: Readonly<{ expectedStatus?: ApprovalRequest['status'] }>,
 ): ApprovalRequestTransitionDecision {
+  if (options?.expectedStatus !== undefined && existing.status !== options.expectedStatus) return INVALID_TRANSITION;
   const settling = !isSettled(existing.status) && isSettled(next.status);
   const expected = settling ? settleApprovalRequestReplayInputs(existing) : existing;
   if (!durablyEqual(immutableSubject(expected, expected.actionArgs), immutableSubject(next, next.actionArgs))) {
@@ -206,9 +212,10 @@ export function decideApprovalRequestTransition(
   // Read-back may settle the original admitted worker link, but can never
   // grant another effect claim or rewrite its subject, decision or start time.
   const isWorkspaceLinkReadBack = existing.v === 2 && next.v === 2
-    && existing.actionId === 'workspace.sync.relationship.create'
-    && existing.status === 'outcome_unknown' && existing.execution?.effectAttempted === true
-    && next.execution?.effectAttempted === true
+    && isWorkspaceSyncRelationshipWriteActionId(existing.actionId)
+    && existing.status === 'outcome_unknown' && existing.execution !== undefined && next.execution !== undefined
+    && existing.execution.effectAttempted !== false
+    && next.execution.effectAttempted === existing.execution.effectAttempted
     && next.execution.executedAtMs === existing.execution.executedAtMs
     && (next.status === 'executed' && next.execution.ok === true
       || next.status === 'failed' && next.execution.ok === false);

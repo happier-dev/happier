@@ -6,7 +6,31 @@ import { flattenWidgetLayoutWidgetsV1 } from './widgetLayoutItemV1.js';
 import { createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1 } from './widgetSurfaceArtifactV1.js';
 import { createWidgetActionInputResolverV1 } from './widgetActionInputResolverV1.js';
 import { readBuiltinWidgetDescriptorV1 } from './builtinWidgetDescriptorV1.js';
-import { WidgetSurfaceReadV1Schema } from './actionsV1.js';
+import { WidgetSurfaceReadV1Schema, WidgetInstanceActionOutputSchemasV1 } from './actionsV1.js';
+
+it('lists Project widgets only for Project owners without exposing internal target metadata', async () => {
+  const boundary = createWorkBoardArtifactBoundary();
+  const scope = { serverId: 'home', accountId: 'owner' };
+  const project = { ...scope, owner: { kind: 'project', projectId: 'project-a' } } as const;
+  const home = { ...scope, owner: { kind: 'home' } } as const;
+  const projectPort = createWidgetAreaActionPortV1(surface => createWidgetSurfaceArtifactPortV1(boundary.forAccount('owner'), {
+    surface, isCurrent: () => true,
+  }));
+  const entry = { definition: { kind: 'installed' as const, surface: { pluginId: 'acme.project-status', localId: 'status' } },
+    title: 'Project status', target: 'project' as const, fields: [], availability: 'available' as const, instanceCount: 0,
+    sizeDeclaration: { sizes: ['medium' as const, 'wide' as const], defaultSize: 'medium' as const } };
+  const executor = createActionExecutor({ widgetAccountScope: () => scope,
+    homeHubArtifacts: createHomeHubArtifactPortV1(boundary.forAccount('owner'), { accountId: 'owner' }),
+    widgetSurfaceActions: { project: projectPort }, widgetCatalog: { list: async () => [entry] } });
+  expect(await executor.execute('widgets.catalog.list', { surface: home }, { surface: 'mcp' }))
+    .toMatchObject({ ok: true, result: { entries: [] } });
+  const result = await executor.execute('widgets.catalog.list', { surface: project }, { surface: 'mcp' });
+  expect(result).toMatchObject({ ok: true, result: { entries: [{ definition: entry.definition, title: entry.title,
+    sizeDeclaration: entry.sizeDeclaration }] } });
+  if (!result.ok) throw new Error(result.error);
+  const catalog = WidgetInstanceActionOutputSchemasV1['widgets.catalog.list'].parse(result.result);
+  expect(catalog.entries[0]).not.toHaveProperty('target');
+});
 
 it('persists selected planet Styles through the existing public-profile input Action and rejects private scope', async () => {
   const boundary = createWorkBoardArtifactBoundary();

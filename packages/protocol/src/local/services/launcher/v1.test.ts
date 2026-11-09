@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MachineServiceIdentityV1Schema, machineServiceIdentityTupleV1 } from '../serviceIdentityV1.js';
 
 import {
   DaemonLocalServiceLauncherSnapshotRequestV1Schema,
@@ -9,6 +10,49 @@ import {
 } from './v1.js';
 
 describe('LocalServiceLauncherSnapshotV1Schema', () => {
+  it('admits the exact adopted watch identity without inventing infrastructure authority', () => {
+    const raw = { kind: 'adopted', machineId: 'machine-a', serviceId: 'watch-a', watchId: 'watch-a', watchRevision: 'watch-revision-a' };
+    const identity = MachineServiceIdentityV1Schema.parse(raw);
+    expect(identity).toEqual(raw);
+    expect(machineServiceIdentityTupleV1(identity)).toEqual(['adopted', 'machine-a', 'watch-a', 'watch-a']);
+    expect(machineServiceIdentityTupleV1(MachineServiceIdentityV1Schema.parse({ ...raw, watchRevision: 'watch-revision-b' })))
+      .toEqual(machineServiceIdentityTupleV1(identity));
+    for (const changed of [{ serviceId: 'other-service' }, { watchId: 'other-watch' }]) {
+      expect(machineServiceIdentityTupleV1(MachineServiceIdentityV1Schema.parse({ ...raw, ...changed })))
+        .not.toEqual(machineServiceIdentityTupleV1(identity));
+    }
+    for (const invalid of [
+      { ...raw, kind: 'infrastructure' }, { ...raw, kind: 'future-service' },
+      { ...raw, watchRevision: '' }, { ...raw, watchId: '' },
+      { ...raw, environmentId: 'foreign-environment' }, { ...raw, composeService: 'web' },
+      { ...raw, lifecyclePurpose: 'infrastructure' }, { ...raw, nativeResourceId: 'private-native-selector' },
+    ]) expect(MachineServiceIdentityV1Schema.safeParse(invalid).success).toBe(false);
+    const deployment = { kind: 'deployment', machineId: 'machine-a', environmentId: 'environment-a',
+      environmentInstanceId: 'instance-a', composeService: 'db', serviceId: 'instance-a/db' };
+    expect(machineServiceIdentityTupleV1(MachineServiceIdentityV1Schema.parse(deployment)))
+      .toEqual(['deployment', 'machine-a', 'environment-a', 'instance-a', 'db', 'instance-a/db']);
+    expect(MachineServiceIdentityV1Schema.safeParse({ ...deployment, serviceId: 'instance-a/web' }).success).toBe(false);
+  });
+  it('preserves the exact Environment service identity and rejects workspace authority on that service', () => {
+    const target = { id: 'instance-a/db', source: 'managed_service', machineId: 'machine-a',
+      sourceClass: { kind: 'managed_service', managedServiceId: 'native-generation-a' },
+      environment: { environmentId: 'environment-a', environmentInstanceId: 'instance-a', deploymentId: 'deployment-a', composeService: 'db' },
+      lifecyclePurpose: 'deployment', title: 'DB', confidence: 'high', state: 'available',
+      serviceState: 'unhealthy', readiness: 'not_ready', endpointKind: 'native', actions: ['manage'] };
+    expect(LocalServiceLaunchTargetV1Schema.parse(target)).toEqual(target);
+    const identity = MachineServiceIdentityV1Schema.parse({ kind: 'deployment', machineId: target.machineId,
+      environmentId: target.environment.environmentId, environmentInstanceId: target.environment.environmentInstanceId,
+      composeService: target.environment.composeService, serviceId: target.id });
+    expect(machineServiceIdentityTupleV1(identity)).toEqual(['deployment', 'machine-a', 'environment-a', 'instance-a', 'db', 'instance-a/db']);
+    expect(MachineServiceIdentityV1Schema.safeParse({ ...identity, deploymentId: 'another-release' }).success).toBe(false);
+    for (const changed of [
+      { id: 'instance-a/web' }, { lifecyclePurpose: 'development' }, { cwd: '/repo' },
+      { workspaceId: 'workspace-a' }, { sessionId: 'session-a' }, { startedByAccountId: 'actor-a' },
+      { declaration: { workspaceRefId: 'workspace-a', selection: { kind: 'manifest', name: 'db' } } },
+      { environment: { ...target.environment, arbitrary: true } },
+    ]) expect(LocalServiceLaunchTargetV1Schema.safeParse({ ...target, ...changed }).success).toBe(false);
+  });
+
   const acceptedCwd = `/repo/${'nested/'.repeat(320)}checkout `;
   it.each(['managed_service', 'package_script'] as const)(
     'preserves the accepted exact cwd in a qualified %s feed target', (source) => {

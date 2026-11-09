@@ -31,6 +31,16 @@ const stagedMediaContent = {
 } as const;
 
 describe('composer attachment content V1', () => {
+  it('retains an admitted immutable message source for historical navigation without exposing the attachment value', () => {
+    const source = { kind: 'session', session: { serverId: 'home-a', sessionId: 'session-a' }, messageId: 'committed-a' } as const;
+    const input = { ...attachment, presentation: { ...attachment.presentation, source } };
+    expect(ComposerAttachmentInputV1Schema.parse(input).presentation).toMatchObject({ source });
+    expect(ComposerAttachmentDraftV1Schema.parse(input).presentation).toMatchObject({ source });
+    expect(ComposerAttachmentInputV1Schema.safeParse({
+      ...input, presentation: { ...input.presentation, source: { ...source, offset: 4 } },
+    }).success).toBe(false);
+  });
+
   it('admits only opaque staged media in drafts and durable SessionMedia references after admission', () => {
     expect(ComposerAttachmentDraftV1Schema.safeParse({
       ...attachment,

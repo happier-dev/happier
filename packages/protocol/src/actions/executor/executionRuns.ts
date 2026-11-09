@@ -52,18 +52,20 @@ export function buildExecutionRunCallOptions(
   workflowObservationSink?: unknown,
   actionContext?: Pick<ActionExecutorContext, 'actionCaller' | 'actionRequestId' | 'requesterWorkAttributionV1' | 'onTransportIssued'
     | 'surface' | 'runtimeAccountId' | 'callerInputConstraints' | 'callerPermissionMode' | 'workspaceWrites'
-    | 'externalActionCredential' | 'externalActionExecutionAuthorization' | 'externalActionTarget'>,
+    | 'externalActionCredential' | 'externalActionExecutionAuthorization' | 'externalActionTarget' | 'admittedMachineTarget' | 'approvalProfileId'>,
 ): ExecutionRunCallOptions | undefined {
   const origin = normalizeId(originSessionId);
-  const target = normalizeId(targetMachineId);
+  const target = normalizeId(actionContext?.admittedMachineTarget?.machineId ?? targetMachineId);
+  const targetServerId = actionContext?.admittedMachineTarget?.serverId ?? serverId;
   const actionRequestId = normalizeId(actionContext?.actionRequestId);
   const actionCaller = actionContext?.actionCaller;
   const requesterWorkAttributionV1 = actionContext?.requesterWorkAttributionV1;
-  if (!serverId && !signal && !origin && !target
+  if (!targetServerId && !signal && !origin && !target
     && permissionRequestStore === undefined && workflowObservationSink === undefined
-    && !actionRequestId && !actionCaller && !authority && !requesterWorkAttributionV1 && !actionContext?.onTransportIssued) return undefined;
+    && !actionRequestId && !actionCaller && !authority && !requesterWorkAttributionV1 && !actionContext?.onTransportIssued
+    && actionContext?.approvalProfileId === undefined) return undefined;
   return {
-    ...(serverId ? { serverId } : {}),
+    ...(targetServerId ? { serverId: targetServerId } : {}),
     ...(origin ? { originSessionId: origin } : {}),
     ...(target ? { targetMachineId: target } : {}),
     ...(signal ? { signal } : {}),
@@ -79,6 +81,7 @@ export function buildExecutionRunCallOptions(
     ...(actionContext?.callerInputConstraints ? { callerInputConstraints: actionContext.callerInputConstraints } : {}),
     ...(typeof actionContext?.callerPermissionMode === 'string' ? { effectiveCallerPermissionMode: actionContext.callerPermissionMode } : {}),
     ...(actionContext?.workspaceWrites ? { workspaceWrites: actionContext.workspaceWrites } : {}),
+    ...(actionContext?.approvalProfileId !== undefined ? { approvalProfileId: actionContext.approvalProfileId } : {}),
     ...(actionContext?.externalActionCredential ? { externalActionCredential: actionContext.externalActionCredential } : {}),
     ...(actionContext?.externalActionExecutionAuthorization ? { externalActionExecutionAuthorization: actionContext.externalActionExecutionAuthorization } : {}),
     ...(actionContext?.externalActionTarget ? { externalActionTarget: actionContext.externalActionTarget } : {}),

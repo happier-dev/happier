@@ -289,6 +289,55 @@ describe('Prompt library destination authority', () => {
     expect(readRetainedPromptLibraryInventoryV1({ contextSelectionsV1: { v: 8, selectionsByKey: {} } })).toMatchObject({ status: 'partial' });
   });
 
+  // cli-v0.2.17 (a2c45c86804b24e60ac0b76146a3ef36dfcaa15b) and ui-web-v0.2.19
+  // (63829e3cd6a8f1f48b10891af0c8b2313e51ac7e): promptLibrary/promptRegistriesV1.ts
+  // permits arbitrary adapter ids and config dictionaries.
+  it.each(['custom-adapter', 'unrepresented-config', 'duplicate', 'malformed'] as const)(
+    'keeps an incomplete registry source and its history unactivated: %s', async variant => {
+      const valid = { id: 'team', adapterId: 'git', title: 'Team', enabled: true,
+        config: { repositoryUrl: 'https://github.com/team/skills', subdirectory: 'skills', ref: 'main' } };
+      const unresolved = variant === 'custom-adapter'
+        ? { id: 'private', adapterId: 'custom-adapter', title: 'Private', enabled: true, config: { endpoint: 'https://private.example' } }
+        : variant === 'unrepresented-config' ? { ...valid, id: 'private', config: { ...valid.config, customOption: 'retain' } }
+        : variant === 'duplicate' ? { ...valid, title: 'Other definition' } : { id: 'broken' };
+      const original = { v: 1, sources: [valid, unresolved] };
+      let raw: Readonly<Record<string, unknown>> = { promptRegistrySourcesV1: original,
+        promptFoldersV1: { v: 1, folders: [{ id: 'folder', name: 'Folder' }] } };
+      const rows: Extract<ReturnType<typeof PromptLibraryRowsListResponseV1Schema.parse>, { status: 'listed' }>['rows'] = [];
+      const normalizedRoots: string[] = [];
+      const load = () => loadPromptLibraryCatalogV1({ mode: 'plain', material: null,
+        readRows: async () => ({ status: 'listed', rows }), transfer: {
+          readSourceSnapshot: async () => ({ raw, version: 7 }),
+          initializeRecord: async ({ record }) => {
+            rows.push({ key: record.key, revision: 1, content: sealPromptLibraryContentV1({ record, mode: 'plain', material: null }) });
+            return { status: 'updated', revision: 1, cursor: 1 };
+          },
+          replaceSource: async input => { raw = input.raw; return { status: 'applied', settingsVersion: 8 }; },
+          normalizeHistory: async input => { normalizedRoots.push(...input.activeTransferredRoots); return { status: 'complete' }; },
+        } });
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const catalog = await load();
+        expect(catalog).toMatchObject({ status: 'partial', diagnostics: expect.arrayContaining([
+          { key: 'registry-sources', revision: 'absent', reason: 'invalid-stored-content' },
+        ]), cleanup: { status: 'cleanup-pending' } });
+        expect(rows.some(row => row.key === 'registry-sources')).toBe(false);
+        expect(raw.promptRegistrySourcesV1).toEqual(original);
+        expect(normalizedRoots).not.toContain('promptRegistrySourcesV1');
+        expect(readPromptLibraryCatalogRecordV1({ catalog, key: 'folders' })).toMatchObject({ status: 'ready', authority: 'active' });
+      }
+      // Repairing the unresolved source through its owner permits the ordinary transfer and cleanup.
+      raw = { ...raw, promptRegistrySourcesV1: { v: 1, sources: [valid] } };
+      const repaired = await load();
+      expect(repaired).toMatchObject({ status: 'ready', cleanup: { status: 'complete' } });
+      expect(readPromptLibraryCatalogRecordV1({ catalog: repaired, key: 'registry-sources' })).toMatchObject({
+        status: 'ready', authority: 'active', record: { value: { sources: [
+          { id: 'team', format: 'git', url: valid.config.repositoryUrl, path: 'skills', ref: 'main' },
+        ] } },
+      });
+      expect(raw).not.toHaveProperty('promptRegistrySourcesV1');
+      expect(normalizedRoots).toContain('promptRegistrySourcesV1');
+    });
+
   it('destination rows and tombstones win over retained Settings while absent domains read only their compatibility owner', async () => {
     const raw = { promptFoldersV1: { v: 1, folders: [{ id: 'old', name: 'Old' }] } };
     const catalog = await loadPromptLibraryCatalogV1({ mode: 'plain', material: null,

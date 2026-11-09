@@ -1,17 +1,14 @@
-import { MachineServiceExecInputV1Schema } from '../specs/machine/services.js';
 import type { ActionId } from '../actionIds.js';
-import type { ActionEnvironmentApprovalScopeAdmissionV1 } from '../actionApprovalPolicy.js';
 import type { ActionApprovalScopeV1 } from '../actionSettings.js';
 import type { ActionSpec } from '../actionSpecs.js';
 import { MachineServiceLogsReadInputV1Schema, MachineServiceControlInputV1Schema } from '../specs/machine/services.js';
+import { MachineServiceExecInputV1Schema } from '../specs/machine/services.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import type { ActionHomeEquivalence } from './coreInvocation.js';
 import type { ActionExecuteFailure, ActionExecutorContext, ActionExecutorDeps } from './types.js';
 
 type ApprovalScopeAdmission = Readonly<{
   approvalScope?: ActionApprovalScopeV1;
-  previewTemplateEnvironmentId?: string;
-  mandatoryApprovalRequired?: true;
 }>;
 
 /** Scope comes from the admitted owner, never caller context or a policy snapshot. */
@@ -43,7 +40,7 @@ export async function readActionApprovalScopeAdmissionV1(args: Readonly<{
     if (!deps.resolveEnvironmentApprovalScope) return unavailable();
     const admission = await deps.resolveEnvironmentApprovalScope({ actionId, input, context, phase: args.phase });
     if ('ok' in admission) return admission;
-    return projectEnvironmentAdmission(admission);
+    return admission.scope ? { approvalScope: admission.scope } : {};
   }
   if (actionId === 'machines.services.logs.read' || actionId === 'machines.services.control') {
     const target = actionId === 'machines.services.control' ? MachineServiceControlInputV1Schema.parse(input) : MachineServiceLogsReadInputV1Schema.parse(input);
@@ -59,16 +56,6 @@ export async function readActionApprovalScopeAdmissionV1(args: Readonly<{
     }
   }
   return {};
-}
-
-function projectEnvironmentAdmission(admission: ActionEnvironmentApprovalScopeAdmissionV1): ApprovalScopeAdmission | ActionExecuteFailure {
-  if (admission.previewTemplateEnvironmentId && (!admission.scope
-    || admission.scope.environmentId === admission.previewTemplateEnvironmentId)) return unavailable();
-  return {
-    ...(admission.scope ? { approvalScope: admission.scope } : {}),
-    ...(admission.previewTemplateEnvironmentId ? { previewTemplateEnvironmentId: admission.previewTemplateEnvironmentId } : {}),
-    ...(admission.mandatoryApprovalRequired ? { mandatoryApprovalRequired: true } : {}),
-  };
 }
 
 function unavailable(): ActionExecuteFailure {

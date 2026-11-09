@@ -2,7 +2,8 @@ import type { BuiltInRoleIdV1 } from '../../prompts/roles/builtInRolesV1.js';
 import { SECOND_OPINION_RESULT_SCHEMA_V1 } from '../../prompts/roles/builtInRolesV1.js';
 import type { JsonValue } from '../../json/strictJsonValue.js';
 import type { WorkflowAuthoredResultReference, WorkflowReferenceScope, WorkflowValueReference } from '../workflowReferenceV1.js';
-import { WorkflowResultContractSchema, type WorkflowStep } from '../workflowV1.js';
+import type { WorkflowStep } from '../workflowV1.js';
+import { PluginJsonSchemaV2Schema } from '../../plugins/contributions/jsonSchema.js';
 
 export const literal = (value: JsonValue): WorkflowValueReference => ({ kind: 'literal', value });
 export const input = (name: string): WorkflowValueReference => ({ kind: 'input', name });
@@ -20,7 +21,9 @@ export function agent(id: string, name: string, role: BuiltInRoleIdV1, text: str
   };
 }
 
-export const SECOND_OPINION_RESULT_V1 = WorkflowResultContractSchema.parse({
+// Normalize the readonly authored schema through its independent structural
+// owner; evaluating the enclosing Workflow schema here creates a catalog cycle.
+export const SECOND_OPINION_RESULT_V1 = {
   kind: 'json',
-  schema: SECOND_OPINION_RESULT_SCHEMA_V1,
-});
+  schema: PluginJsonSchemaV2Schema.parse(SECOND_OPINION_RESULT_SCHEMA_V1),
+} satisfies WorkflowStep['result'];

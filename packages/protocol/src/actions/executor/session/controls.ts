@@ -3,17 +3,15 @@ import { resolveSessionIdFromInput, resolveServerIdForSession } from '../session
 import { completeActionResult } from '../resultProjection.js';
 import { normalizeId, readNullableString } from '../inputReading.js';
 import { readNonBlankOpaqueIdentifier } from '../../../strings/opaqueIdentifier.js';
-import type { PublicActionInputById, AdmittedActionInputById } from '../../actionSpecs.js';
+import type { AdmittedActionInputById } from '../../actionSpecs.js';
 import { createPermissionPolicyResult, assertAgentPermission } from '../callerContext.js';
 import { SESSION_PERMISSION_MODES } from '../../../sessions/metadata/sessionPermissionModes.js';
 import { isPermissionModeGrantedV1 } from '../../../auth/apiTokenGrant.js';
-import { resolveSessionAttentionStandingRequest, SessionAttentionSetInputV1Schema, SessionAttentionSetResultV1Schema } from '../../../sessions/organization/attentionAction.js';
+import { resolveSessionAttentionStandingRequest, SessionAttentionSetResultV1Schema } from '../../../sessions/organization/attentionAction.js';
 import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
-import { SessionModelSetInputSchema } from '../../actionSpecs.js';
 import { readRecord, hasOwn } from '../../../inputs/inputRecords.js';
 import { SessionPermissionRespondActionDecisionV1Schema, SessionPermissionRespondRpcParamsV1Schema } from '../../../sessions/permissions/respondRpcParamsV1.js';
 import { StructuredQuestionAnswersV1Schema } from '../../../tools/structuredQuestionAnswersV1.js';
-import { SessionNeedsYouRaiseInputV1Schema } from '../../../sessions/permissions/questionV1.js';
 import { normalizeResolvedOptions } from '../../../inputs/inputOptions.js';
 import { resolveRequestedSessionModeId } from '../../sessionModeIds.js';
 import type { SessionConnectedServiceAuthSwitchRpcParams } from '../../../connect/sessionConnectedServiceAuthSwitch.js';
@@ -44,7 +42,7 @@ export async function dispatchSessionControls1(inv: Pick<CoreInvocation, 'action
           const serverId = 'serverId' in data && typeof data.serverId === 'string'
             ? data.serverId : resolveServerIdForSession(deps, ctx, sessionId);
           const res = await deps.sessionStateFieldSet({ context: ctx, actionId, sessionId,
-            ...resolveSessionStateFieldActionWrite(actionId, parsed.data), ...(serverId ? { serverId } : {}) });
+            ...resolveSessionStateFieldActionWrite(actionId, parsed.data as AdmittedActionInputById[typeof actionId]), ...(serverId ? { serverId } : {}) });
           return completeActionResult(res);
         }
 
@@ -80,7 +78,7 @@ export async function dispatchSessionControls1(inv: Pick<CoreInvocation, 'action
         }
 
         if (actionId === 'session.stop') {
-          const input = parsed.data as PublicActionInputById['session.stop'];
+          const input = parsed.data as AdmittedActionInputById['session.stop'];
           if (input.serverId && ctx.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) {
             return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
           }
@@ -169,9 +167,9 @@ export async function dispatchSessionControls1(inv: Pick<CoreInvocation, 'action
         }
 
         if (actionId === 'session.attention.set') {
-          const parsedInput = SessionAttentionSetInputV1Schema.safeParse(data);
-          const request = parsedInput.success ? resolveSessionAttentionStandingRequest(parsedInput.data) : null;
-          const sessionId = parsedInput.success ? normalizeId(parsedInput.data.sessionId) : null;
+          const input = parsed.data as AdmittedActionInputById['session.attention.set'];
+          const request = resolveSessionAttentionStandingRequest(input);
+          const sessionId = normalizeId(input.sessionId);
           if (!request || !sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           if (!deps.sessionAttentionSet) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.attention.set' };
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
@@ -194,7 +192,7 @@ export async function dispatchSessionControls1(inv: Pick<CoreInvocation, 'action
         }
 
         if (actionId === 'session.model.set') {
-          const input = SessionModelSetInputSchema.parse(data);
+          const input = parsed.data as AdmittedActionInputById['session.model.set'];
           const sessionId = normalizeId(input.sessionId);
           if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           if (!deps.sessionModelSet) {
@@ -271,7 +269,7 @@ export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'action
           if (!deps.sessionNeedsYouRaise) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.needs_you.raise' };
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           return completeActionResult(await deps.sessionNeedsYouRaise({ sessionId,
-            input: SessionNeedsYouRaiseInputV1Schema.parse(parsed.data), context: ctx,
+            input: parsed.data as AdmittedActionInputById['session.needs_you.raise'], context: ctx,
             ...(serverId ? { serverId } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) }));
         }
 
@@ -345,7 +343,7 @@ export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'action
           const res = await deps.sessionConfigOptionSet({
             sessionId,
             configId: String(data.configId),
-            valueId: String(data.valueId),
+            valueId: data.valueId === null ? null : String(data.valueId),
           });
           return completeActionResult(res);
         }
@@ -358,7 +356,7 @@ export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'action
             machineId: string;
             serverId?: string | null;
           }>;
-          return completeActionResult(await deps.sessionConnectedServicesAuthSet(input));
+          return completeActionResult(await deps.sessionConnectedServicesAuthSet(input, ctx));
         }
 
         if (actionId === 'session.target.primary.set') {

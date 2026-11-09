@@ -33,6 +33,8 @@ const EXTERNAL_ACTION_HTTP_PLACEMENT_ERROR_CODES = [
   'target_not_local',
   'target_unavailable',
   'session_input_target_update_required',
+  // The owner's typed cap refusal: the requester was admitted to ask, and the answer is about their own Preset.
+  'preset_limit_reached',
 ] as const;
 const EXTERNAL_ACTION_HTTP_AUTHENTICATION_ERROR_CODES = [
   'invalid_token',
@@ -186,6 +188,7 @@ function externalActionHttpErrorStatus(code: ExternalActionHttpErrorCode): 400 |
     || code === 'target_not_local'
     || code === 'target_unavailable'
     || code === 'session_input_target_update_required'
+    || code === 'preset_limit_reached'
   ) return 409;
   return 400;
 }

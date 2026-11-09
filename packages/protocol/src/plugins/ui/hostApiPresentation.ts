@@ -8,6 +8,7 @@ function isObject(value: PluginUiJsonValueV1 | undefined): value is { [key: stri
 /**
  * The installed API 1.0 reader has a closed theme and predates statusTint
  * (acme.composer.issue-dogfood generation gen-1793077265101-21aacbc2-c69c-4e95-8f7d-bb0700078817).
+ * It also predates the optional destination instanceKey disclosure added in 1.1, and a companion's `openedFrom`.
  * Project only these later disclosures, preserving existing identity/authority.
  * Call only for a context result or a registered watchContext event; arbitrary
  * Resource JSON may deliberately have an identical shape and stays untouched.
@@ -21,10 +22,24 @@ export function projectPluginUiRenderContextForHostApiVersionV1(
   const surface = value.surface;
   if (!isObject(surface)) return value;
   let projectedSurface = surface;
+  const page = surface.page;
+  if (isObject(page) && Object.hasOwn(page, 'navigation')) {
+    const { navigation: _navigation, ...legacyPage } = page;
+    projectedSurface = { ...projectedSurface, page: legacyPage };
+  }
+  if (Object.hasOwn(projectedSurface, 'openedFrom')) {
+    const { openedFrom: _openedFrom, ...legacySurface } = projectedSurface;
+    projectedSurface = legacySurface;
+  }
   const theme = surface.theme;
   if (isObject(theme) && Object.hasOwn(theme, 'statusTint')) {
     const { statusTint: _statusTint, ...legacyTheme } = theme;
     projectedSurface = { ...projectedSurface, theme: legacyTheme };
+  }
+  const mount = surface.mount;
+  if (isObject(mount) && mount.kind === 'destination' && Object.hasOwn(mount, 'instanceKey')) {
+    const { instanceKey: _instanceKey, ...legacyMount } = mount;
+    projectedSurface = { ...projectedSurface, mount: legacyMount };
   }
   return projectedSurface === surface ? value : { ...value, surface: projectedSurface };
 }

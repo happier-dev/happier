@@ -9,7 +9,7 @@ import {
   TeamCredentialResourceAdministrationCapabilitiesV1Schema,
   TeamCredentialResourceRecoveryActionV1Schema,
 } from './resourceV1.js';
-import { TeamCredentialResourceReadinessV1Schema } from './readinessV1.js';
+import { TeamCredentialResourceReadinessV1Schema } from './resourceReadinessV1.js';
 import {
   QualifiedConnectedAccountPurposeBindingAccountTargetV1Schema,
   QualifiedConnectedAccountPurposeBindingGroupTargetV1Schema,

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
+import { ProviderSettingsMigrationStateV1Schema } from '../settings/v1.js';
 import { normalizeLegacyAiLaunchProfileReferenceV1 } from './legacyProfileReferencesV1.js';
 
 describe('normalizeLegacyAiLaunchProfileReferenceV1', () => {
-  const migration = {
+  const migration = ProviderSettingsMigrationStateV1Schema.parse({
     v: 1 as const,
     completedSources: [
       { sourceProfileId: 'anthropic', kind: 'default_environment' as const },
@@ -16,7 +17,7 @@ describe('normalizeLegacyAiLaunchProfileReferenceV1', () => {
       { sourceProfileId: 'disabled', kind: 'skipped_disabled' as const },
     ],
     pendingCustomProfileIds: ['company'],
-  };
+  });
 
   it('keeps an edited retained preference while leaving another Agent model in migration history', () => {
     const before = structuredClone(migration);
@@ -24,9 +25,11 @@ describe('normalizeLegacyAiLaunchProfileReferenceV1', () => {
       retainedSlimProfileIds: [], retainedProfileTargetKey: 'agent:codex' }))
       .toEqual({ status: 'retained', legacyAiLaunchProfileId: 'deepseek', modelRef: null });
     expect(migration).toEqual(before);
+    const completedSource = migration.completedSources[1];
+    if (completedSource.kind !== 'connection') throw new Error('Expected connection migration fixture');
     expect(normalizeLegacyAiLaunchProfileReferenceV1({ legacyAiLaunchProfileId: 'deepseek', migration,
       retainedSlimProfileIds: [], retainedProfileTargetKey: 'agent:claude' }).modelRef)
-      .toEqual(migration.completedSources[1].modelSelection);
+      .toEqual(completedSource.modelSelection);
   });
 
   it('normalizes placeholders and migrated refs without changing retained/pending/unknown ids', () => {

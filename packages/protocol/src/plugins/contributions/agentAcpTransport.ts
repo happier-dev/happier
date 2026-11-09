@@ -42,7 +42,6 @@ const PluginAgentAcpTimeoutMsSchema = lazyZodSchema(() => z.number().check(z.int
 export const PluginAgentAcpTimeoutsSchema = lazyZodSchema(() => z.strictObject({
   initializeMs: z.optional(PluginAgentAcpTimeoutMsSchema),
   idleMs: z.optional(PluginAgentAcpTimeoutMsSchema),
-  toolCallMs: z.optional(PluginAgentAcpTimeoutMsSchema),
 }));
 export type PluginAgentAcpTimeouts = DeepReadonly<z.infer<typeof PluginAgentAcpTimeoutsSchema>>;
 

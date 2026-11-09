@@ -45,6 +45,7 @@ export {
   PLUGIN_CONTRIBUTION_CATALOG_V2,
   derivePluginDaemonContributionRegistrationRights,
   readContributedProviderCatalogParserIds,
+  readContributedProviderUsageParserIds,
   type PluginContributionCatalogEntryV2,
 } from '../contributions/catalog.js';
 export {

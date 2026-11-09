@@ -3,7 +3,7 @@ import { createWidgetActionInputResolverV1 } from './widgetActionInputResolverV1
 import type { WidgetInstanceRefV1, WidgetInstanceV1 } from './widgetInstanceV1.js';
 import { AccountProfileSchema } from '../account/profile.js';
 import { resolveWidgetViewerPurposeValuesV1 } from './widgetViewerPurposeV1.js';
-import type { WidgetInputDescriptorV1 } from './widgetInputAdmissionV1.js';
+import { isWidgetTargetHostableV1, type WidgetInputDescriptorV1 } from './widgetInputAdmissionV1.js';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from '../connect/connectedAccountPurposeBindings.js';
 import { readBuiltinWidgetDescriptorV1 } from './builtinWidgetDescriptorV1.js';
 import { normalizeUsageQuery, readUsageGroupByOptions } from '../inputs/usageQuery.js';
@@ -48,6 +48,32 @@ function createUnconnectedViewerWidgetResolver() {
 }
 
 describe('current Widget field options admission', () => {
+    it('admits host-context Project widgets only on Project surfaces without persisting a target input', async () => {
+        const descriptor = { target: 'project' as const, inputs: { fields: [] } };
+        const resolver = createWidgetActionInputResolverV1({
+            readDescriptor: async () => descriptor,
+            readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
+            validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
+        });
+        const instance: WidgetInstanceV1 = { v: 1, id: 'project-status',
+            definition: { kind: 'installed', surface: { pluginId: 'acme.project-status', localId: 'status' } }, bindings: {} };
+        const project: WidgetInstanceRefV1 = { surface: { serverId: 'home', accountId: 'viewer',
+            owner: { kind: 'project', projectId: 'project-a' } }, instanceId: instance.id };
+        expect(isWidgetTargetHostableV1(descriptor, project.surface.owner.kind)).toBe(true);
+        expect(await resolver.resolve({ ref: project, instance, admission: 'configuration', context: {} }))
+            .toEqual({ status: 'ready', input: {} });
+        const otherOwners: WidgetInstanceRefV1['surface']['owner'][] = [{ kind: 'home' },
+            { kind: 'sessionBoard', sessionId: 'session-a' }, { kind: 'companion', sessionId: 'session-a' },
+            { kind: 'workBoard', boardId: 'board-a' }, { kind: 'pluginArea', pluginId: 'acme.page', pageId: 'page', area: 'main' },
+            { kind: 'corePage', pageId: 'overview', area: 'main' }];
+        for (const owner of otherOwners) {
+            expect(isWidgetTargetHostableV1(descriptor, owner.kind), owner.kind).toBe(false);
+            expect(await resolver.resolve({ ref: { ...project, surface: { ...project.surface, owner } },
+                instance, admission: 'configuration', context: {} })).toMatchObject({ status: 'denied',
+                fields: [{ reasonCode: 'widget_target_surface_unsupported' }] });
+            expect(isWidgetTargetHostableV1({ inputs: { fields: [] } }, owner.kind)).toBe(true);
+        }
+    });
     it('admits only snapshot presentation inputs on a public-profile area without private Usage reads', async () => {
         const descriptor = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'usage_rhythm' })!;
         const resolver = createWidgetActionInputResolverV1({

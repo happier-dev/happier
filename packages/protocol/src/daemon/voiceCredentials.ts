@@ -174,6 +174,11 @@ export const DaemonVoiceClientRawCredentialAuthorizationV1Schema = lazyZodSchema
    * know which installation's approval it is looking at.
    */
   authoritySource: PluginPermissionGrantAuthoritySourceV1Schema,
+  /**
+   * `linked`: the person's own selected Saved Secret; the link is the grant and
+   * no review is asked. An older daemon omits this and keeps asking.
+   */
+  grantRequirement: z._default(z.optional(z.enum(['linked', 'approval_required'])), 'approval_required'),
   disclosures: z.array(DaemonVoiceClientRawCredentialDisclosureV1Schema),
 }));
 export type DaemonVoiceClientRawCredentialAuthorizationV1 = z.infer<

@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
-import { SessionListFilterV1Schema } from '../sessions/listFilter/sessionListFilterV1.js';
+import { SessionListFilterDaemonRuleV1Schema } from '../sessions/listFilter/sessionListFilterV1.js';
 import { ActionExecuteFailureSchema } from './actionExecutionResult.js';
 import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ActionSessionAddressV1Schema } from './sessionAddressV1.js';
@@ -17,7 +17,7 @@ export const SessionTargetSelectorV1Schema = lazyZodSchema(() => z.discriminated
   z.strictObject({ selector: z.literal('followers'), of: z.optional(ExactSessionReferenceV1Schema) }),
   z.strictObject({ selector: z.literal('following'), of: z.optional(ExactSessionReferenceV1Schema) }),
   z.strictObject({ selector: z.literal('discussion'), discussionId: ExactSessionReferenceV1Schema, of: z.optional(ExactSessionReferenceV1Schema) }),
-  z.strictObject({ selector: z.literal('matching'), filter: SessionListFilterV1Schema, of: z.optional(ExactSessionReferenceV1Schema) }),
+  z.strictObject({ selector: z.literal('matching'), filter: SessionListFilterDaemonRuleV1Schema, of: z.optional(ExactSessionReferenceV1Schema) }),
 ]));
 export type SessionTargetSelectorV1 = z.infer<typeof SessionTargetSelectorV1Schema>;
 
@@ -28,7 +28,6 @@ export type SessionTargetV1 = string | SessionTargetSelectorV1;
 export const SessionTargetV1Schema: z.ZodMiniType<SessionTargetV1, SessionTargetV1> = lazyZodSchema(
   () => z.union([ExactSessionReferenceV1Schema, SessionTargetSelectorV1Schema]),
 );
-
 export const SessionTargetV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(SessionTargetV1Schema));
 
 /** The sole shorthand adapter; clients send its input unchanged to the Actions front door. */

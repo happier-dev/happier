@@ -36,12 +36,16 @@ function deriveWrappingKey(context: ApiTokenEncryptionAccessContextV1, wrappingS
 
 function validateContentPrivateKey(contentPrivateKey: Uint8Array, contentPublicKey: string): Uint8Array {
   // Account material admission remains the sole private/public pair validator.
-  createAccountScopedCryptoMaterialSnapshotV1({
+  const validated = createAccountScopedCryptoMaterialSnapshotV1({
     accountEncryptionMode: 'e2ee',
     material: { type: 'dataKey', machineKey: contentPrivateKey },
     dataKeyPublicKey: decodeBase64(contentPublicKey, 'base64'),
   });
-  return new Uint8Array(contentPrivateKey);
+  try { return new Uint8Array(contentPrivateKey); }
+  finally {
+    if (validated.material.type === 'dataKey') validated.material.machineKey.fill(0);
+    else validated.material.secret.fill(0);
+  }
 }
 
 /** Wraps only Account content material. The caller owns E2EE mode/currentness admission. */
@@ -76,6 +80,8 @@ export function openApiTokenEncryptionAccessV1(params: Readonly<{
   wrappingSecret: Uint8Array;
   encryptionAccess: unknown;
 }>): Uint8Array | null {
+  let key: Uint8Array | undefined;
+  let opened: Uint8Array | null = null;
   try {
     const record = AccountApiTokenEncryptionAccessV1Schema.safeParse(params.encryptionAccess);
     if (!record.success) return null;
@@ -84,13 +90,13 @@ export function openApiTokenEncryptionAccessV1(params: Readonly<{
       record.data.serverIdentityId !== context.serverIdentityId
       || record.data.contentPublicKey !== context.contentPublicKey
     ) return null;
-    const key = deriveWrappingKey(context, params.wrappingSecret);
+    key = deriveWrappingKey(context, params.wrappingSecret);
     const bytes = decodeBase64(record.data.wrappedContentPrivateKey, 'base64url');
     const nonce = bytes.subarray(0, tweetnacl.secretbox.nonceLength);
-    const opened = tweetnacl.secretbox.open(bytes.subarray(nonce.length), nonce, key);
+    opened = tweetnacl.secretbox.open(bytes.subarray(nonce.length), nonce, key);
     if (!opened || opened.length !== 32) return null;
     return validateContentPrivateKey(opened, context.contentPublicKey);
   } catch {
     return null;
-  }
+  } finally { key?.fill(0); opened?.fill(0); }
 }

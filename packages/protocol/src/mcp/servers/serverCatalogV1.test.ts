@@ -279,6 +279,54 @@ describe('MCP catalog row authority', () => {
     expect(raw).toEqual({ unrelated: 7, mcpServersStrictMode: true });
   });
 
+  it('transfers a released 0.2 MCP settings blob without losing any field it wrote', async () => {
+    // Provenance: ../0.2 9351d350fe packages/protocol/src/mcpServers/settingsV1.ts (released in
+    // cli-v0.2.17-dev.5+): this exact value is McpServersSettingsV1Schema.parse output, i.e. what
+    // 0.2 writes. 0.2 strips unknown keys on write, so no other legacy-root fields exist.
+    const released = { v: 1, strictMode: true, servers: [
+      { id: 'srv-gh', name: 'github', title: 'GitHub', description: 'Issues and PRs', transport: 'stdio',
+        stdio: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'] },
+        env: { GITHUB_TOKEN: { t: 'savedSecret', secretId: 'secret-gh' }, LOG_LEVEL: { t: 'literal', v: 'info' } },
+        createdAt: 1761400000000, updatedAt: 1761400100000 },
+      { id: 'srv-docs', name: 'docs', transport: 'http',
+        remote: { url: 'https://mcp.example.test/mcp', headers: { Authorization: { t: 'savedSecret', secretId: 'secret-docs' } } },
+        env: {}, createdAt: 1761400000000, updatedAt: 1761400000000 },
+    ], bindings: [
+      { id: 'b-all', serverId: 'srv-gh', enabled: true, target: { t: 'allMachines' }, createdAt: 1761400000000, updatedAt: 1761400000000 },
+      { id: 'b-ws', serverId: 'srv-docs', enabled: false, target: { t: 'workspace', machineId: 'm1', workspaceRoot: 'C:\\Users\\alice\\repo' },
+        overrides: { remote: { headersPatch: { Authorization: null } }, envPatch: { REGION: { t: 'literal', v: 'eu' } } },
+        createdAt: 1761400000000, updatedAt: 1761400200000 },
+    ] };
+    let raw: Record<string, unknown> = { mcpServersSettingsV1: released, unrelated: 7 };
+    let version = 1;
+    let row: { status: 'absent' } | { status: 'present'; revision: number; content: ReturnType<typeof sealMcpServerCatalogContentV1> } = { status: 'absent' };
+    const loaded = await loadMcpServerCatalogV1({ mode: 'plain', material: null, readRow: async () => row, transfer: {
+      readSourceSnapshot: async () => ({ raw, version }),
+      replaceSource: async input => {
+        // The source root is retired only once the destination row exists.
+        if (!Object.hasOwn(input.raw, 'mcpServersSettingsV1')) expect(row.status).toBe('present');
+        raw = { ...input.raw }; version += 1;
+        return { status: 'applied', settingsVersion: version };
+      },
+      initializeCatalog: async input => {
+        row = { status: 'present', revision: 0, content: sealMcpServerCatalogContentV1({ mode: 'plain', material: null, catalog: input.catalog }) };
+        return { status: 'updated', revision: 0, cursor: 1 };
+      },
+      normalizeHistory: async () => ({ status: 'complete' }),
+    } });
+    expect(loaded).toMatchObject({ status: 'ready', authority: 'active', cleanup: { status: 'complete' } });
+    if (loaded.status !== 'ready') throw new Error('Expected the released blob to transfer');
+    expect(raw).toEqual({ unrelated: 7, mcpServersStrictMode: true });
+    const [github, docs] = loaded.catalog.servers;
+    expect(github).toMatchObject(released.servers[0]!);
+    expect(docs).toMatchObject({ ...released.servers[1], configOverrides: [{ target: released.bindings[1]!.target,
+      remote: { headersPatch: { Authorization: null } }, envPatch: { REGION: { t: 'literal', v: 'eu' } } }] });
+    expect(loaded.catalog.bindings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'b-all', serverId: 'srv-gh', enabled: true, target: { t: 'allMachines' } }),
+      expect.objectContaining({ id: 'b-ws', serverId: 'srv-docs', enabled: false, target: released.bindings[1]!.target }),
+    ]));
+  });
+
   it('never reseeds a deleted destination from a retained source', async () => {
     const loaded = await loadMcpServerCatalogV1({ mode: 'plain', material: null, readRow: async () => ({ status: 'deleted', revision: 4 }),
       transfer: {

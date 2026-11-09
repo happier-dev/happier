@@ -122,6 +122,8 @@ export const TerminalStreamReadRequestSchema = lazyZodSchema(() => z.strictObjec
     maxFrames: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(TERMINAL_STREAM_MAX_FRAMES))),
     rendererId: z.optional(z.string().check(z.minLength(1), z.maxLength(200))),
     surfaceEpoch: z.optional(z.number().check(z.int(), z.minimum(0), z.maximum(Number.MAX_SAFE_INTEGER))),
+    /** An idle viewer's read stays one pending RPC until output, exit or access loss. */
+    holdForOutput: z.optional(z.boolean()),
   }).check(z.superRefine((request, ctx) => {
     if (request.ackedByteOffset !== undefined && request.ackedByteOffset > request.byteOffset) {
       ctx.addIssue({
@@ -141,6 +143,8 @@ export const TerminalStreamReadOkResponseSchema = lazyZodSchema(() => z.strictOb
     availableByteOffset: ByteOffsetSchema,
     droppedBeforeByteOffset: ByteOffsetSchema,
     nextControlCursor: z.optional(ByteOffsetSchema),
+    /** Echoed only for an opted-in reader whose daemon supports held reads. */
+    holdForOutput: z.optional(z.literal(true)),
     done: z.boolean(),
   }).check(z.superRefine((response, ctx) => {
     if (response.droppedBeforeByteOffset > response.nextByteOffset) {

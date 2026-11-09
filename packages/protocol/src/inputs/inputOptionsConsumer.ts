@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { WorkflowDefinitionRefV1StringSchema } from '../workflows/workflowDefinitionRefV1.js';
 import { WidgetDefinitionRefV1Schema, WidgetSurfaceRefV1Schema } from '../widgets/widgetInstanceV1.js';
-import { VoiceTrackedSessionAddressV1Schema } from '../sessions/follow/voiceTrackedTargetsCompatibilityV1.js';
+import { VoiceTrackedSessionAddressV1Schema } from '../sessions/follow/voiceTrackedSessionAddressV1.js';
 
 /** References to real consuming descriptors, never caller-authored field/schema bags. */
 export const InputOptionsConsumerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [

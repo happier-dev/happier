@@ -1,4 +1,4 @@
-import type { ActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
+import { ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
 
 /**
  * The canonical serialized PluginError payload. Recognition only needs the
@@ -30,6 +30,34 @@ type PluginErrorCandidate = Error & Readonly<{
   data?: unknown;
 }>;
 
+type PluginErrorIdentityData = Pick<PluginErrorContractData, 'name' | 'code' | 'message' | 'retryable'>;
+
+/** The serialized public identity, shared by thrown-error proof and RPC restoration. */
+export function isPluginErrorData(value: unknown): value is PluginErrorIdentityData {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const data = value as Readonly<Record<string, unknown>>;
+  return data.name === 'PluginError' && typeof data.code === 'string'
+    && (data.message === undefined || typeof data.message === 'string')
+    && (data.retryable === undefined || typeof data.retryable === 'boolean');
+}
+
+/** Restore only the public RPC projection, without importing an SDK class or author details. */
+export function restorePluginErrorFromWire(data: PluginErrorIdentityData): PluginErrorContract & Readonly<{
+  failureCause?: ActionFailureCauseV1;
+}> {
+  const failureCause = ActionFailureCauseV1Schema.safeParse('failureCause' in data ? data.failureCause : undefined);
+  const projected: PluginErrorContractData = {
+    name: 'PluginError', code: data.code,
+    ...(data.message === undefined ? {} : { message: data.message }),
+    ...(data.retryable === undefined ? {} : { retryable: data.retryable }),
+    ...(failureCause.success ? { failureCause: failureCause.data } : {}),
+  };
+  return Object.assign(new Error(data.message ?? data.code), {
+    name: 'PluginError', code: data.code, retryable: data.retryable ?? false, data: projected,
+    ...(failureCause.success ? { failureCause: failureCause.data } : {}),
+  });
+}
+
 /**
  * The one recognizer for the canonical public PluginError contract. It lives
  * in Protocol because both the plugin SDK (which publishes it to authors) and
@@ -46,11 +74,9 @@ export function isPluginError(value: unknown): value is PluginErrorContract {
   const candidate = value as PluginErrorCandidate;
   if (candidate.name !== 'PluginError') return false;
   if (typeof candidate.code !== 'string' || typeof candidate.retryable !== 'boolean') return false;
-  if (candidate.data === null || typeof candidate.data !== 'object' || Array.isArray(candidate.data)) return false;
-  const data = candidate.data as Readonly<Record<string, unknown>>;
-  if (data.name !== 'PluginError' || data.code !== candidate.code) return false;
-  if (data.message !== undefined && typeof data.message !== 'string') return false;
-  if (data.retryable !== undefined && typeof data.retryable !== 'boolean') return false;
+  if (!isPluginErrorData(candidate.data)) return false;
+  const data = candidate.data;
+  if (data.code !== candidate.code) return false;
   return candidate.message === (data.message ?? candidate.code)
     && candidate.retryable === (data.retryable ?? false);
 }

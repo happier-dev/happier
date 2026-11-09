@@ -7,6 +7,8 @@ import { WorkspaceSyncRelationshipV1Schema } from '../sessions/control/handoff/w
 import { PromptStackEntryV1Schema } from '../prompts/library/promptStacksV1.js';
 import { SecretReferenceOverlayV1Schema } from '../profiles/secretReferenceOverlayV1.js';
 import { ProjectAtmosphereSchema } from '../account/settings/homeAtmosphere.js';
+import { ProjectAccountWorkspaceRefKeyV1Schema } from './workspaceRefKeyV1.js';
+export { ProjectAccountWorkspaceRefKeyV1Schema } from './workspaceRefKeyV1.js';
 
 export const PROJECT_ACCOUNT_ROWS_ROUTE_V1 = '/v1/account/project-rows' as const;
 export const PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1 = '@happier/account/project-rows/v1/' as const;
@@ -14,7 +16,6 @@ export const PROJECT_ACCOUNT_ROW_BLOB_KIND_V1 = 'project_account_row' as const;
 const IdSchema = lazyDefinition(() => z.string().check(z.minLength(1), z.refine(value => value === value.trim())));
 const RevisionSchema = lazyDefinition(() => z.int().check(z.minimum(0), z.maximum(Number.MAX_SAFE_INTEGER)));
 export const ProjectAccountRowExpectedRevisionV1Schema = lazyDefinition(() => z.union([RevisionSchema, z.literal('absent')]));
-export const ProjectAccountWorkspaceRefKeyV1Schema = lazyDefinition(() => z.strictObject({ kind: z.literal('workspace-ref'), serverId: IdSchema, id: IdSchema }));
 export const ProjectAccountRelationshipGraphKeyV1Schema = lazyDefinition(() => z.strictObject({ kind: z.literal('relationship-graph') }));
 export const ProjectAccountOrganizationKeyV1Schema = lazyDefinition(() => z.strictObject({ kind: z.literal('project-organization'), serverId: IdSchema, projectKey: IdSchema }));
 export const ProjectAccountRowKeyV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [

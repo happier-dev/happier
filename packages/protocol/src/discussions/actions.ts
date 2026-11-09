@@ -42,6 +42,7 @@ import {
   DiscussionParticipantRouteParamsV1Schema,
   DiscussionRemoveParticipantRequestV1Schema,
   DiscussionParticipantPolicySetRequestV1Schema,
+  DiscussionModelParticipantRefV1Schema,
   DiscussionParticipantsListResponseV1Schema,
   DiscussionInviteResponseV1Schema,
   DiscussionOwnedSessionV1Schema,
@@ -202,8 +203,10 @@ export const DiscussionParticipantRemoveInputV1Schema = lazyZodSchema(() => z.sa
 ));
 export type DiscussionParticipantRemoveInputV1 = z.infer<typeof DiscussionParticipantRemoveInputV1Schema>;
 
-export const DiscussionParticipantPolicySetInputV1Schema = lazyZodSchema(() => z.safeExtend(
-  DiscussionParticipantPolicySetRequestV1Schema, DiscussionGetInputV1Schema.shape,
+export const DiscussionParticipantPolicySetInputV1Schema = lazyZodSchema(() => z.extend(
+  DiscussionParticipantPolicySetRequestV1Schema, { ...DiscussionGetInputV1Schema.shape,
+    participant: z.union([DiscussionSessionParticipantTargetV1Schema, DiscussionModelParticipantRefV1Schema]),
+  },
 ));
 export type DiscussionParticipantPolicySetInputV1 = z.infer<typeof DiscussionParticipantPolicySetInputV1Schema>;
 

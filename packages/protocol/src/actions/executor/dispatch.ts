@@ -1,4 +1,5 @@
 import type { RuntimeActionIdV1 } from '../actionIds.js';
+export { isRuntimeActionExecutorReal } from '../surfaces.js';
 import { executeComputerRuntimeAction, isComputerRuntimeActionId } from './computer.js';
 import {
   executeBrowserRuntimeAction,

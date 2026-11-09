@@ -3,8 +3,10 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import { getActionSpec } from './actionSpecs.js';
 import type { ActionSpec } from './actionSpecs.js';
 import { ActionInputOptionSchema } from './actionInputHints.js';
-import { normalizeActionInputByFieldHints, readActionSecretInputPaths, readActionSecretInputAdmission, resolveEffectiveActionInputFields } from './actionInputHintsRuntime.js';
+import { normalizeActionInputByFieldHints, readActionSecretInputAdmission, readActionSecretInputPaths, resolveEffectiveActionInputFields } from './actionInputHintsRuntime.js';
 import { InputHintsSchema, normalizeInputByFieldHints, resolveEffectiveInputFields } from '../inputs/index.js';
+import { readInputPath, writeInputPath } from '../inputs/index.js';
+import { projectInputOptionsDependencies } from '../inputs/inputOptionsDependencies.js';
 
 describe('resolveEffectiveActionInputFields', () => {
   it('requests only required missing secrets while retaining optional and hidden supplied secrets for private custody', () => {
@@ -22,6 +24,75 @@ describe('resolveEffectiveActionInputFields', () => {
     expect(readActionSecretInputPaths(spec, {}, { includeInactive: true })).toEqual(['required', 'optional', 'hidden']);
   });
 
+  it('retains contributed Action partial inputs without a host-owned provider key shortlist', () => {
+    const draft = { credentialPrincipal: { kind: 'account', accountId: 'owner' },
+      credentialRef: { opaque: 'saved-ref' }, providerIdentity: { providerAccountId: 'team' }, product: 'pages',
+      arbitraryProviderChoice: { region: 'eu' } };
+    expect(projectInputOptionsDependencies(draft, undefined, 'com.acme.deploy/actions/inspect')).toEqual(draft);
+  });
+  it('keeps Software option dependencies on the first reviewed target identity only', () => {
+    const target = { homeId: 'target-home', machineId: 'first', setup: { scripts: [{ body: 'private script' }] } };
+    const draft = { homeId: 'host-home', machineId: 'host', targets: [target, { ...target, machineId: 'second' }] };
+    const expected = { homeId: draft.homeId, machineId: draft.machineId,
+      targets: [{ homeId: target.homeId, machineId: target.machineId }] };
+    expect(projectInputOptionsDependencies(draft)).toEqual(expected);
+    expect(projectInputOptionsDependencies({ ...draft, targets: [{ ...target, setup: {} },
+      { ...target, machineId: 'unrelated' }] })).toEqual(expected);
+    expect(projectInputOptionsDependencies({ ...draft, targets: [{ ...target, machineId: 'changed' }] }))
+      .toEqual({ ...expected, targets: [{ homeId: target.homeId, machineId: 'changed' }] });
+  });
+  it.each(['machines.setup.plan', 'machines.setup.apply'] as const)(
+    'offers Software only for a prepared software slot in %s', actionId => {
+      const spec = getActionSpec(actionId);
+      for (const setup of [{}, { items: [{ kind: 'app' }] }, { items: [{ kind: 'setupRecipe' }] }]) {
+        const sources = [{ kind: 'direct', setup }];
+        const target = { homeId: 'home', machineId: 'target', sources };
+        for (const input of [{}, actionId === 'machines.setup.plan' ? target : { targets: [target] }]) {
+          expect(resolveEffectiveActionInputFields(spec, input)
+            .some(field => field.optionsSourceId === 'machines.setup.software.available')).toBe(false);
+        }
+      }
+    },
+  );
+  it.each(['machines.setup.plan', 'machines.setup.apply'] as const)(
+    'preserves prepared setup arrays when choosing Software for %s', actionId => {
+      const ref = { pluginId: 'fixture.software', recipeId: 'fonts', revision: '1' };
+      const replacement = { ...ref, recipeId: 'ffmpeg' };
+      const item = { kind: 'softwareRecipe', selection: { ref, inputs: {} } };
+      const sources = [{ kind: 'direct', setup: { items: [item, item] } },
+        { kind: 'accountPreset', presetId: 'retained', presetRevision: 1, setup: {} }];
+      const first = { homeId: 'home', machineId: 'first', desiredRevision: 0, recipePlans: [], sources };
+      const second = { ...first, machineId: 'second' };
+      const input = actionId === 'machines.setup.plan' ? { homeId: 'home', machineId: 'first', sources }
+        : { homeId: 'home', machineId: 'host', targets: [first, second] };
+      const spec = getActionSpec(actionId);
+      const field = resolveEffectiveActionInputFields(spec, input)
+        .find(candidate => candidate.optionsSourceId === 'machines.setup.software.available');
+      if (!field) throw new Error('Expected the Software choice');
+      const changed = writeInputPath(input, field.path, replacement);
+      expect(spec.inputSchema.safeParse(changed).success).toBe(true);
+      expect(readInputPath(changed, field.path)).toEqual(replacement);
+      expect(readInputPath(input, actionId === 'machines.setup.plan'
+        ? 'sources.0.setup.items.0.selection.ref' : 'targets.0.sources.0.setup.items.0.selection.ref')).toBe(ref);
+      const changedSources = readInputPath(changed, actionId === 'machines.setup.plan' ? 'sources' : 'targets.0.sources');
+      expect(Array.isArray(changedSources)).toBe(true);
+      if (!Array.isArray(changedSources)) throw new Error('Expected source copies');
+      expect(changedSources[1]).toBe(sources[1]);
+      expect(readInputPath(changedSources, '0.setup.items.1')).toBe(item);
+      if (actionId === 'machines.setup.apply') expect(readInputPath(changed, 'targets.1')).toBe(second);
+      const other = writeInputPath({ targets: [first, second] }, 'targets.1.sources.0.setup.items.1.selection.ref', replacement);
+      expect(readInputPath(other, 'targets.0')).toBe(first);
+      expect(readInputPath(other, 'targets.1.sources.0.setup.items.0')).toBe(item);
+      expect(readInputPath(other, 'targets.1.sources.0.setup.items.1.selection.ref')).toEqual(replacement);
+      expect(Array.isArray(readInputPath(other, 'targets.1.sources.0.setup.items'))).toBe(true);
+      const targets = [first, second];
+      for (const index of ['-1', '01', '1e0', '[]', '4294967295']) {
+        const unchanged = writeInputPath({ targets }, `targets.${index}.machineId`, 'invalid-index');
+        expect(unchanged).toEqual({ targets });
+        expect(unchanged.targets).toBe(targets);
+      }
+    },
+  );
   it('lets every workflow-trigger list union arm be authored through the shared Action fields', () => {
     const spec = getActionSpec('workflow.trigger.list');
     const cases = [

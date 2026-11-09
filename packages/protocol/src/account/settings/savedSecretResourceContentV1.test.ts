@@ -86,7 +86,10 @@ describe('savedSecretResourceContentV1', () => {
   it('round trips an external descriptor without a copied value in both Account modes', () => {
     const external = { v: 2 as const, name: 'Vault token', kind: 'token' as const,
       source: { kind: 'external' as const, contribution: { pluginId: 'acme.vault', localId: 'vault' },
-        account: 'my-account', reference: 'op://vault/item/token' } };
+        account: 'my-account', reference: 'op://vault/item/token', metadata: {
+          vault: { id: 'vault', name: 'Work' }, item: { id: 'item', title: 'Cloud' },
+          field: { id: 'token', title: 'Token', kind: 'CONCEALED' },
+        } } };
     const parsed = SavedSecretResourceContentV1Schema.parse(external);
     for (const mode of ['plain', 'e2ee'] as const) {
       const resourceDataKey = new Uint8Array(32).fill(9);
@@ -112,6 +115,18 @@ describe('savedSecretResourceContentV1', () => {
       content: { ...content, value: 'rotated-key' }, mode: 'plain', toMode: 'plain',
     });
     expect(prepareSavedSecretResourceUpdateContentV1({ ...input, resourceMode: 'e2ee' })).toBeNull();
+  });
+  it('persists plugin creation provenance through plain and E2EE content updates', () => {
+    const createdByPlugin = { pluginId: 'acme.database', secretId: 'connection' };
+    const original = SavedSecretResourceContentV1Schema.parse({ ...content, createdByPlugin });
+    for (const mode of ['plain', 'e2ee'] as const) {
+      const resourceDataKey = new Uint8Array(32).fill(9);
+      const storedContent = sealSavedSecretResourceStoredContentV1({ resourceId: 'plugin-created', mode,
+        content: { ...original, name: 'Renamed connection', value: 'rotated-value' }, resourceDataKey,
+        randomBytes: deterministicRandomBytes });
+      expect(openSavedSecretResourceStoredContentV1({ resourceId: 'plugin-created', mode, storedContent, resourceDataKey }))
+        .toMatchObject({ createdByPlugin, name: 'Renamed connection', value: 'rotated-value' });
+    }
   });
   it('opens retained plain and encrypted Secret content while keeping declared bindings and writes strict', () => {
     const resourceDataKey = new Uint8Array(32).fill(7);

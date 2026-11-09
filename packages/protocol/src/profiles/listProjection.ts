@@ -74,8 +74,8 @@ export function mapAiLaunchProfileToListItemV1(
     ...(slim && profile.preferredAgentTargetKey !== undefined
       ? { preferredAgentTargetKey: profile.preferredAgentTargetKey }
       : {}),
-    ...(slim && profile.placement !== undefined ? { placement: profile.placement } : {}),
-    ...(slim && profile.checkout !== undefined ? { checkout: profile.checkout } : {}),
+    ...(profile.placement !== undefined ? { placement: profile.placement } : {}),
+    ...(profile.checkout !== undefined ? { checkout: profile.checkout } : {}),
   };
 }
 

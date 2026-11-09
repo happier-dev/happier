@@ -9,7 +9,7 @@ const BackedSimulatorSidebandKindsV1Schema = lazyZodSchema(() => z.pipe(z._defau
 
 const VisibleSimulatorDeviceResourceV1Schema = lazyZodSchema(() => z.pipe(SimulatorDeviceResourceV1Schema, z.transform((resource) => normalizeSimulatorDeviceResourceVisibleCapabilitiesV1(resource))));
 
-export const DeviceSimulatorPreviewCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const DeviceSimulatorPreviewCapabilitiesSchema = lazyZodSchema(() => z.object({
     enabled: z._default(z.optional(z.boolean()), false),
     available: z._default(z.optional(z.boolean()), false),
     supportedPlatforms: z._default(z.optional(z.array(SimulatorPlatformV1Schema)), []),
@@ -33,7 +33,7 @@ export const DEFAULT_DEVICE_SIMULATOR_PREVIEW_CAPABILITIES: DeviceSimulatorPrevi
   disabledReasons: [],
 };
 
-export const DeviceCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const DeviceCapabilitiesSchema = lazyZodSchema(() => z.object({
     simulatorPreview: z._default(z.optional(DeviceSimulatorPreviewCapabilitiesSchema), DEFAULT_DEVICE_SIMULATOR_PREVIEW_CAPABILITIES),
   }));
 

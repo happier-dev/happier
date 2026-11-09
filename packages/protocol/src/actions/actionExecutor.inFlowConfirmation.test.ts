@@ -49,6 +49,54 @@ describe('one in-flow confirmation for the requested operation', () => {
     expect(admitPresentUserConfirmationV1(actionId, input, confirmed)).toBeNull();
   });
 
+  it('never turns Plugin Account wrapper consent into a present-user host review', () => {
+    const confirmed = signedVoiceContext();
+    const wrapper = { action: { pluginId: 'acme.picker', localId: 'assign' }, input: { assignee: 'alice' } };
+    const actionId = 'action.invoke';
+    const plugin: ActionExecutorContext = { ...confirmed, surface: 'ui', authority: 'account_automation',
+      actionCaller: { kind: 'plugin', pluginId: 'acme.picker', contributionLocalId: 'assignee' },
+      externalActionExecutionAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({
+        ...confirmed.externalActionExecutionAuthorization!, binding: {
+          ...confirmed.externalActionExecutionAuthorization!.binding, actionId,
+        },
+      }),
+      presentUserConfirmation: { ...confirmed.presentUserConfirmation!, actionId,
+        inputDigest: computeActionInputApprovalDigestV1(actionId, wrapper) },
+    };
+    expect(admitPresentUserConfirmationV1(actionId, wrapper, plugin)).toBeNull();
+  });
+
+  function signedTerminalCliContext(): ActionExecutorContext {
+    const confirmed = signedVoiceContext();
+    const authorization = confirmed.externalActionExecutionAuthorization!;
+    return { ...confirmed, surface: 'cli', externalActionExecutionAuthorization:
+      ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization, binding: { ...authorization.binding,
+        custodianAccountId: 'host', authentication: { kind: 'terminal', tokenEpoch: 1 },
+      } }) };
+  }
+
+  it('admits the deciding human CLI confirmation under its exact paired-terminal root once', () => {
+    const confirmed = signedTerminalCliContext();
+    expect(admitPresentUserConfirmationV1(actionId, input, confirmed)).toMatchObject({ actionId,
+      decidingAccountId: 'owner', requestSurface: 'cli' });
+    expect(admitPresentUserConfirmationV1(actionId, input, confirmed)).toBeNull();
+  });
+
+  it.each(['account', 'home', 'target', 'input', 'mcp', 'automation'] as const)(
+    'does not admit a paired-terminal CLI confirmation for changed %s', variant => {
+      const confirmed = signedTerminalCliContext();
+      const changed: ActionExecutorContext = { ...confirmed,
+        ...(variant === 'account' ? { runtimeAccountId: 'other' } : {}),
+        ...(variant === 'home' ? { serverId: 'other' } : {}),
+        ...(variant === 'target' ? { externalActionTarget: { kind: 'machine', machineId: 'other' } } : {}),
+        ...(variant === 'mcp' ? { surface: 'mcp' } : {}),
+        ...(variant === 'automation' ? { authority: 'account_automation' } : {}),
+      };
+      expect(admitPresentUserConfirmationV1(actionId,
+        variant === 'input' ? { ...input, machineId: 'other' } : input, changed)).toBeNull();
+    },
+  );
+
   it.each(['account', 'request', 'action', 'target', 'authentication', 'input'] as const)(
     'refuses an Account-bound Voice confirmation with a mismatched %s', variant => {
       const confirmed = signedVoiceContext();

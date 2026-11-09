@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { Session } from 'node:inspector/promises';
 import { z } from 'zod/mini';
+import { Ajv } from 'ajv';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
 import * as ProtocolPublic from '../../index.js';
@@ -15,7 +16,7 @@ import { WorkflowActionOutputSchemasV1 } from '../../workflows/actionsV1.js';
 import { PluginContributionIdentityV1Schema } from '../contributionIdentity.js';
 import { PluginTargetedContributionSelectionV1Schema } from '../ui/targetedContributions.js';
 import * as protocolComposableKernel from './jsonSchemaValidation.js';
-import { createProtocolComposableSchema, createProtocolStoredReadSchema } from './protocolComposableSchema.js';
+import { createProtocolComposableSchema, createProtocolStoredReadSchema, ProtocolValidationError } from './protocolComposableSchema.js';
 import { LaunchProfileIdV2ProtocolSchema } from '../../profiles/v2/profileId.js';
 import { compileProtocolJsonSchema } from './jsonSchemaCompiler.js';
 import { PluginJsonSchemaV2Schema } from '../contributions/publicTypes.js';
@@ -266,6 +267,38 @@ describe('plugin JSON Schema validation policy', () => {
     expect(stored.safeParse({ profileId: 7 }).success).toBe(false);
     expect(rehydrateCanonicalProtocolComposableSchema(schema.jsonSchema)?.safeParse({ profileId: null }).success).toBe(true);
   });
+  it('runs the incumbent parser once per stored read when the stored projection has no object fields to drop', () => {
+    let parses = 0;
+    const schema = createProtocolComposableSchema<string, string>({ type: 'string', minLength: 1 }, (value) => {
+      parses += 1;
+      return typeof value === 'string' && value.length > 0
+        ? { success: true, data: value.trim() }
+        : { success: false, error: new ProtocolValidationError([{ path: [], code: 'custom', message: 'expected text' }]) };
+    });
+    const stored = createProtocolStoredReadSchema(schema);
+    expect(stored.parse(' first ')).toBe('first');
+    expect(stored.parse(' second ')).toBe('second');
+    expect(stored.safeParse('').success).toBe(false);
+    expect(parses).toBe(3);
+  });
+  it('walks each nested value once per stored read of a composed object', () => {
+    let leafParses = 0;
+    const leaf = createProtocolComposableSchema<string, string>({ type: 'string' }, (value) => {
+      leafParses += 1;
+      return typeof value === 'string'
+        ? { success: true, data: value.trim() }
+        : { success: false, error: new ProtocolValidationError([{ path: [], code: 'custom', message: 'expected text' }]) };
+    });
+    const inner = defineProtocolObject({ name: leaf }, { policy: 'additive-open/drop' });
+    const middle = defineProtocolObject({ inner }, { policy: 'closed' });
+    const outer = defineProtocolObject({ middle }, { policy: 'additive-open/drop' });
+    const stored = createProtocolStoredReadSchema(outer);
+    expect(stored.parse({ middle: { inner: { name: ' kept ', retired: 1 }, retired: 2 }, retired: 3 }))
+      .toEqual({ middle: { inner: { name: 'kept' } } });
+    expect(leafParses).toBe(1);
+    expect(stored.safeParse({ middle: { inner: { name: 7 } } }).success).toBe(false);
+    expect(stored.safeParse({ middle: {} }).success).toBe(false);
+  });
   it('admits primitive and array native roots while projecting only stored object extras', () => {
     const scalar = protocolComposableKernel.createPluginJsonSchemaZodValueAdapter({ type: 'string', enum: ['linux', 'darwin'] });
     expect(scalar.parse('linux')).toBe('linux');
@@ -318,6 +351,57 @@ describe('plugin JSON Schema validation policy', () => {
     expect(validate({ value: 'root', children: [{ value: 'child', children: [] }] })).toBe(true);
     expect(validate({ value: 'root', children: [{ value: 1, children: [] }] })).toBe(false);
     expect(validate({ value: 'root', children: [], extra: true })).toBe(false);
+  });
+
+  it('keeps document-local references rooted in the admitted schema during stored union selection', () => {
+    // Like Channels' embedded configured-Fix arm: a union member refers to a
+    // sibling's schema by its document pointer, outside definitions/$defs.
+    const schema = protocolComposableKernel.createPluginJsonSchemaZodValueAdapter({
+      type: 'object', properties: { kind: { type: 'string' }, payload: {} },
+      required: ['kind', 'payload'], additionalProperties: false,
+      oneOf: [
+        { properties: { kind: { const: 'original' }, payload: {
+          type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false,
+        } } },
+        { properties: { kind: { const: 'referenced' }, payload: { $ref: '#/oneOf/0/properties/payload' } } },
+      ],
+    });
+    const stored = createStoredReadSchema(schema);
+    for (const kind of ['original', 'referenced']) {
+      const value = { kind, payload: { text: 'retained' } };
+      expect(schema.safeParse(value).success).toBe(true);
+      expect(stored.parse(value)).toEqual(value);
+      expect(stored.parse({ ...value, payload: { ...value.payload, retired: true }, retired: true })).toEqual(value);
+      expect(stored.safeParse({ kind, payload: { text: 7 }, retired: true }).success).toBe(false);
+    }
+  });
+
+  it('compiles self-contained stored union arms without the whole root document', () => {
+    // Channels' channel-state contract is a 545 KB document read through
+    // hundreds of union arms; each trial must not re-process the full root.
+    const filler = Object.fromEntries(Array.from({ length: 64 }, (_unused, index) => [
+      `storedRootFiller${index}`, { type: 'string', description: 'root-only filler' },
+    ]));
+    const arms = ['alpha', 'beta', 'gamma'].map(kind => ({
+      type: 'object' as const, properties: { kind: { const: kind }, [kind]: { anyOf: [{ const: 'kept' }, { const: 'other' }] } },
+      required: ['kind', kind], additionalProperties: false as const,
+    }));
+    const adapter = protocolComposableKernel.createPluginJsonSchemaZodValueAdapter({
+      type: 'object', properties: { record: { oneOf: arms }, ...filler }, required: ['record'], additionalProperties: false,
+    });
+    const stored = createStoredReadSchema(adapter);
+    // Ajv is the third-party compiler boundary; the spy calls through.
+    const compile = vi.spyOn(Ajv.prototype, 'compile');
+    try {
+      expect(stored.parse({ record: { kind: 'gamma', gamma: 'kept', retired: true } }))
+        .toEqual({ record: { kind: 'gamma', gamma: 'kept' } });
+      expect(stored.safeParse({ record: { kind: 'gamma', gamma: 'missing', retired: true } }).success).toBe(false);
+      const trials = compile.mock.calls.map(([schema]) => JSON.stringify(schema));
+      expect(trials.length).toBeGreaterThan(0);
+      expect(trials.filter(schema => schema.includes('storedRootFiller')).length).toBe(0);
+    } finally {
+      compile.mockRestore();
+    }
   });
 
   it('validates root recursion without dereferencing the schema into a cyclic JSON value', () => {
@@ -622,6 +706,28 @@ describe('plugin JSON Schema Zod object adapter', () => {
 });
 
 describe('protocol composable schema kernel', () => {
+  it('composes admitted child documents without repeating schema admission', () => {
+    const child = defineProtocolObject({ kind: defineProtocolLiteral('entry') }, { policy: 'closed' });
+    // Call-through instrumentation: the real schema validator and all internal
+    // parsing stay active. Count declaration admissions, never elapsed time.
+    const admissions = vi.spyOn(PluginJsonSchemaV2Schema, 'safeParse');
+    try {
+      const schemas = Array.from({ length: 100 }, () => defineProtocolObject({
+        entry: child.optional().nullable(),
+        entries: defineProtocolUniqueArray(child),
+      }, { policy: 'closed' }));
+      const constructionAdmissions = admissions.mock.calls.length;
+      expect(schemas[0]!.parse({ entry: null, entries: [{ kind: 'entry' }] }))
+        .toEqual({ entry: null, entries: [{ kind: 'entry' }] });
+      expect(schemas[0]!.safeParse({ entries: [{ kind: 'entry', extra: true }] }).success).toBe(false);
+      expect(schemas[0]!.safeParse({ entries: [{ kind: 'entry' }], extra: true }).success).toBe(false);
+      console.info('protocol-composition-admissions', { definitions: schemas.length, constructionAdmissions,
+        afterFirstUseAdmissions: admissions.mock.calls.length });
+      expect(constructionAdmissions).toBe(0);
+      expect(admissions.mock.calls.length).toBe(0);
+    } finally { admissions.mockRestore(); }
+  });
+
   it('keeps the public Protocol barrel importable without treating composables as Zod schemas', () => {
     expect(ProtocolPublic.PluginIdSchema.safeParse('happier.test').success).toBe(true);
     expect(Reflect.ownKeys(ProtocolPublic.PluginIdSchema).sort()).toEqual([
@@ -689,6 +795,11 @@ describe('protocol composable schema kernel', () => {
   });
 
   it('composes a mutable structural schema across copies without an identity gate', () => {
+    // Caller-authored documents still cross full vocabulary/semantic admission,
+    // including unused descendants, before an executable parser is published.
+    expect(() => createProtocolComposableSchema({
+      type: 'string', definitions: { unused: { anyOf: [] } },
+    }, value => ({ success: true, data: value }))).toThrow();
     const copy = <TInput, TOutput>(
       source: ProtocolComposableSchema<TInput, TOutput>,
     ): ProtocolComposableSchema<TInput, TOutput> => ({

@@ -6,7 +6,6 @@ import {
 import { serializeModelVisibilityRefV1 } from '../selection/v1.js';
 import { readRetainedProviderConnectionsCatalogV1 } from '../connections/connectionRowsV1.js';
 import {
-  ProviderSettingsLimitError,
   ProviderSettingsV1Schema,
   assertProviderSettingsV1WithinLimits,
 } from './v1.js';
@@ -99,7 +98,7 @@ describe('provider account settings integration', () => {
     expect(provider.catalog.manualModelsByConnectionId.pc_1).toHaveLength(300);
   });
 
-  it('refuses a Provider subtree larger than the Account-owned persistence ceiling instead of silently dropping it', () => {
+  it('preserves a valid catalog larger than the retired Account Settings subtree allowance', () => {
     const oversized = {
       v: 1,
       connections: [connection],
@@ -118,8 +117,6 @@ describe('provider account settings integration', () => {
     const bytes = new TextEncoder().encode(JSON.stringify(oversized)).byteLength;
     expect(bytes).toBeGreaterThan(ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES);
 
-    // The Provider owner must advertise the same ceiling the Account document can persist,
-    // so an oversized write is refused by Provider validation rather than acknowledged and lost.
-    expect(() => assertProviderSettingsV1WithinLimits(oversized)).toThrow(ProviderSettingsLimitError);
+    expect(assertProviderSettingsV1WithinLimits(oversized).manualModelsByConnectionId.pc_1).toHaveLength(500);
   });
 });

@@ -5,7 +5,6 @@ import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
 
 const id = z.string().check(z.trim(), z.minLength(1));
 const shellLaunch = {
-  initialCommand: z.optional(z.string().check(z.maxLength(100_000))),
   launch: z.optional(DaemonTerminalLaunchIntentSchema),
 };
 export const SessionTerminalTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
@@ -14,9 +13,10 @@ export const SessionTerminalTargetV1Schema = lazyZodSchema(() => z.discriminated
   z.strictObject({ kind: z.literal('machine_shell'), machineId: id, cwd: id, ...shellLaunch }),
   z.strictObject({ kind: z.literal('terminal_view'), machineId: id, terminalId: id, terminalKey: id, cwd: id,
     workspace: z.optional(WorkspaceAddressV1Schema), sessionId: z.optional(id) }),
-]).check(z.refine((target) => !('initialCommand' in target && target.initialCommand !== undefined && target.launch !== undefined)
-  && !('launch' in target && target.launch?.kind === 'session_attach'), {
-  message: 'Shell command and launch are exclusive; agent attachments use the dedicated target',
+]).check(z.refine((target) => !('launch' in target && target.launch?.kind === 'session_attach'), {
+  message: 'Agent attachments use the dedicated target',
+}), z.refine(target => !('launch' in target && target.launch?.kind === 'service_shell'), {
+  message: 'Service shells use the Machine terminal owner',
 }), z.refine(target => target.kind !== 'terminal_view' || !target.workspace || target.workspace.machineId === target.machineId, {
   message: 'Borrowed output and its checkout must address the same Machine',
 })));

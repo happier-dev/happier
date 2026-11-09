@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PUBLIC_PROFILE_POLICY_V1, PublicProfileSnapshotV1Schema, PublicProfileSnapshotV1StoredSchema,
   PublicProfilePolicyV1StoredSchema, type PublicProfileSnapshotV1 } from './publicProfile.js';
-import { projectPublicProfile, projectPublicProfilePreview, projectPublicProfileSnapshot } from './projectPublicProfile.js';
+import { createPublicProfileProjector, projectPublicProfile, projectPublicProfileIdentity, projectPublicProfilePreview, projectPublicProfileSnapshot } from './projectPublicProfile.js';
 import { PublicProfileLayoutV1Schema, PublicProfileLayoutV1StoredSchema, WidgetPublicSnapshotDocumentV1Schema } from '../widgets/widgetPublicSnapshotV1.js';
 import { PublicProfileContextV1Schema, PublicProfileViewV1Schema } from './publicProfilePublication.js';
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
@@ -22,6 +22,81 @@ const snapshot: PublicProfileSnapshotV1 = PublicProfileSnapshotV1Schema.parse({ 
   lenses: [{ execution: 'outside', facts }],
 });
 describe('public-profile disclosure projection', () => {
+  it('carries the chosen relative period to strict public and local views without inferring it from the date range', () => {
+    const context = { handle: 'person', identity: {}, service: { displayName: 'Service', publicBaseUrl: 'https://example.com' },
+      urls: { page: 'https://example.com/@person', json: 'https://example.com/v1/public/profiles/person',
+        badgeBase: 'https://example.com/@person/badge', card: 'https://example.com/@person/card.svg',
+        og: 'https://example.com/@person/og.png', report: 'mailto:operator@example.com' } };
+    const input = { context, metadata: {}, snapshot, layout: { v: 1 as const, items: [] },
+      policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1, appearance: { theme: 'auto' as const, atmosphere: { source: 'none' as const } } };
+    for (const relativePeriod of ['30days', '90days', 'year'] as const) {
+      const selected = { ...input, relativePeriod };
+      expect(projectPublicProfile(selected)).toMatchObject({ relativePeriod, snapshot: { period: snapshot.period } });
+      expect(projectPublicProfilePreview(selected)).toMatchObject({ relativePeriod, snapshot: { period: snapshot.period } });
+    }
+    expect(projectPublicProfile(input)).not.toHaveProperty('relativePeriod');
+    expect(PublicProfileViewV1Schema.safeParse(projectPublicProfile(input)).success).toBe(true);
+  });
+  it('omits unattributed Agent rows from every public collection and source lens, retaining named shares and totals', () => {
+    const rows = ['codex', 'unknown', 'legacy', 'custom-acp'].map(agentId => ({ agentId, share: .25, tokens: 10, coverage }));
+    const supplied = { tokens: 40, agentMix: rows,
+      agentActiveDays: rows.map(({ agentId }) => ({ agentId, days: 1, coverage })),
+      weeklyAgentMix: [{ startMs: 1, endMs: 7, mix: rows.map(({ tokens: _tokens, ...row }) => row) }],
+      sessionDurations: rows.map(({ agentId }) => ({ agentId, durationMs: 100 })) };
+    const input = PublicProfileSnapshotV1Schema.parse({ ...snapshot, facts: supplied,
+      lenses: [{ execution: 'outside', facts: supplied }] });
+    const policy = { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields,
+      agentMix: true, agentActiveDays: true, weeklyAgentMix: true, sessionDurations: true, sourceSplit: true } };
+    const projected = projectPublicProfileSnapshot(input, policy);
+    for (const facts of [projected.facts, ...projected.lenses!.map(lens => lens.facts)]) {
+      expect(facts.tokens).toBe(40);
+      expect(facts.agentMix).toEqual(rows.filter(row => row.agentId === 'codex' || row.agentId === 'custom-acp'));
+      expect(facts.agentActiveDays?.map(row => row.agentId)).toEqual(['codex', 'custom-acp']);
+      expect(facts.weeklyAgentMix?.[0]?.mix.map(row => row.agentId)).toEqual(['codex', 'custom-acp']);
+      expect(facts.sessionDurations?.map(row => row.agentId)).toEqual(['codex', 'custom-acp']);
+    }
+    expect(input.facts.agentMix).toHaveLength(4);
+  });
+  it('carries the producer-set avatar fallback through strict identity reads and removes it with avatar consent', () => {
+    const identity = { name: 'Ada', avatar: { kind: 'planet', reason: 'account_image_unavailable' } };
+    const context = PublicProfileContextV1Schema.parse({ handle: 'ada', identity, service: null, urls: null });
+    expect(projectPublicProfileIdentity(context.identity, DEFAULT_PUBLIC_PROFILE_POLICY_V1)).toEqual(identity);
+    expect(projectPublicProfileIdentity(context.identity, { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1,
+      fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields, avatar: false } })).toEqual({ name: 'Ada' });
+    const layout = PublicProfileLayoutV1Schema.parse({ v: 1, items: [{ kind: 'widget', id: 'identity', size: 'medium', frameStyle: 'plain',
+      presentation: { kind: 'declarative', document: { version: 1, root: { kind: 'metric', label: 'Avatar',
+        data: { kind: 'value', value: { kind: 'public_profile' } }, value: { path: ['identity', 'avatar', 'kind'], type: 'string' } } } } }] });
+    const preview = (avatar: boolean) => projectPublicProfilePreview({ context, metadata: {}, snapshot, layout,
+      appearance: { theme: 'auto', atmosphere: { source: 'none' } },
+      policy: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields, name: false, avatar } } });
+    expect(preview(true)?.layout.items).toHaveLength(1);
+    expect(preview(false)?.layout.items).toEqual([]);
+    // Existing contexts without the optional presentation result remain valid.
+    expect(PublicProfileContextV1Schema.parse({ ...context, identity: { name: 'Ada' } }).identity).toEqual({ name: 'Ada' });
+  });
+  it('admits one snapshot for many placements and policy edits while retaining strict ingress and revocation', () => {
+    let visits = 0;
+    const input = { ...snapshot, facts: { activeDays: 3, tokens: 123, sessionDurations: Array.from({ length: 1000 }, () => ({
+      agentId: 'codex', get durationMs() { visits++; return 100; },
+    })) } };
+    const projector = createPublicProfileProjector(input);
+    expect(visits).toBe(1000);
+    const context = { handle: 'ada', identity: {}, service: null, urls: null };
+    const projection = projector.project({ context, metadata: {}, policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1 })!;
+    const layout = PublicProfileLayoutV1Schema.parse({ v: 1, items: [{ kind: 'widget', id: 'summary', size: 'medium', frameStyle: 'plain',
+      presentation: { kind: 'usage', widgetId: 'usage_period_summary', inputs: {} } }] });
+    for (let i = 0; i < 20; i++) expect(projection.projectLayout(layout).items).toHaveLength(1);
+    const narrowed = projector.project({ context, metadata: {}, policy: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1,
+      fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields, tokens: false, activeDays: false } } })!;
+    expect(narrowed.view.snapshot.facts).not.toHaveProperty('tokens');
+    expect(narrowed.view.snapshot.facts).not.toHaveProperty('activeDays');
+    expect(projection.view.snapshot.facts.tokens).toBe(123);
+    expect(visits).toBe(1000);
+    const invalid = { ...input, facts: { ...input.facts, privateCost: 42 } };
+    expect(() => createPublicProfileProjector(invalid)).toThrow();
+    const invalidLayout = { ...layout, privateQuery: true };
+    expect(() => projection.projectLayout(invalidLayout)).toThrow();
+  });
   it('enforces the selected builtin size declaration at direct public-layout admission', () => {
     const widget = (widgetId: string, size: string) => ({ kind: 'widget', id: widgetId, size, frameStyle: 'plain',
       presentation: { kind: 'usage', widgetId, inputs: {} } });

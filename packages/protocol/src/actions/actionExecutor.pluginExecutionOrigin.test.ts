@@ -47,6 +47,22 @@ describe('plugin execution origin Action front door', () => {
     }
   });
 
+  it('preserves the answering app unavailable reason through the CLI relay result parser', async () => {
+    const result = { status: 'unavailable', reason: { code: 'current_ui_context_unavailable', phase: 'selection', retryable: false } };
+    const executor = createActionExecutor({ clientActionExecute: async () => ({ ok: true, result }), isActionApprovalRequired: () => false });
+    expect(await executor.execute('plugins.execution_origin.list', { pluginId: 'acme.plugin', contextual: true },
+      { surface: 'cli', authority: 'account_automation' })).toEqual({ ok: true, result });
+  });
+
+  it('requires a diagnostic for an unavailable list while retaining mutation outcomes', async () => {
+    const executor = createActionExecutor({ clientActionExecute: async () => ({ ok: true, result: { status: 'unavailable' } }),
+      isActionApprovalRequired: () => false });
+    expect(await executor.execute('plugins.execution_origin.list', { pluginId: 'acme.plugin' },
+      { surface: 'cli', authority: 'account_automation' })).toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
+    expect(await executor.execute('plugins.execution_origin.clear', { pluginId: 'acme.plugin' },
+      { surface: 'cli', authority: 'account_automation' })).toEqual({ ok: true, result: { status: 'unavailable' } });
+  });
+
   it('rejects cross-plugin origins and keeps mutations under shared confirmation policy', () => {
     const settings = ActionsSettingsV1Schema.parse({ v: 1 });
     const id = ActionIdSchema.parse('plugins.execution_origin.set');

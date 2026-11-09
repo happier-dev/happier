@@ -50,6 +50,9 @@ const MANAGEMENT_ACTION_IDS = [
 ] as const;
 
 describe('Home Discussion Action catalog rows', () => {
+  it('admits a mounted Discussion host read through the canonical plugin caller policy', () => {
+    expect(getActionSpec('discussion.get').pluginCallerPolicy).toEqual({ kind: 'caller' });
+  });
   it('publishes resource settings through the same family with strict override and inherited reset semantics', () => {
     const get = getActionSpec(ActionIdSchema.parse('discussion.settings.get'));
     const set = getActionSpec(ActionIdSchema.parse('discussion.settings.set'));

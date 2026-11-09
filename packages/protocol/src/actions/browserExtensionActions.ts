@@ -3,6 +3,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { BrowserExtensionIdV1Schema, BrowserExtensionSourceV1Schema, BrowserExtensionPermissionReviewV1Schema,
   BrowserExtensionRecordV1Schema } from '../browser/profile/extensionsV1.js';
 import { BrowserCommandDispatchResultV1Schema, BrowserOpenViewCommandV1Schema } from '../browser/control/v1.js';
+import { BrowserProfileV1Schema } from '../browser/profile/v1.js';
 import { RegistryProvenanceV1Schema } from '../registries/registryItemsV1.js';
 import type { BrowserExtensionActionIdV1 } from './actionIds.js';
 
@@ -45,7 +46,10 @@ export const BrowserExtensionUnavailableV1Schema = lazyZodSchema(() => z.strictO
   message: z.optional(Id),
 }));
 export const BrowserExtensionsListResultV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ status: z.literal('ready'), entries: z.array(BrowserProfileExtensionV1Schema) }),
+  z.strictObject({ status: z.literal('ready'), entries: z.array(BrowserProfileExtensionV1Schema),
+    profiles: z.optional(z.array(z.strictObject({ profileId: BrowserProfileV1Schema.shape.profileId,
+      displayName: BrowserProfileV1Schema.shape.displayName }))),
+  }),
   BrowserExtensionUnavailableV1Schema,
 ]));
 export type BrowserExtensionsListResultV1 = z.infer<typeof BrowserExtensionsListResultV1Schema>;

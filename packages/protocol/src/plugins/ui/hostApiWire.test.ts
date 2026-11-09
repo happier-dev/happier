@@ -15,6 +15,19 @@ import {
 
 const identity = { instanceId: 'mount-1', mountNonce: 'nonce-1' };
 
+describe('host Action refusal evidence', () => {
+  it('accepts the exact canonical pre-dispatch marker on host errors', () => {
+    expect(PluginUiHostApiWireEnvelopeV1Schema.safeParse({
+      wireVersion: 1,
+      kind: 'error',
+      identity,
+      requestId: 'action-refusal-1',
+      method: 'executeAction',
+      error: { name: 'PluginError', code: 'permission_denied', actionHandlerInvocation: 'notStarted' },
+    }).success).toBe(true);
+  });
+});
+
 const targetedOperation = {
   point: { pointId: 'connection', protocol: { id: 'connection', version: 1 } },
   contributor: {

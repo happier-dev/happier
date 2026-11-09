@@ -89,7 +89,10 @@ export const AcpCatalogRowMutationResponseV1Schema = lazyZodSchema(() => z.union
 ]));
 
 export type AcpCatalogDiagnosticV1 = Readonly<{ path: string; reason: 'unclassified_reference' | 'invalid_definition' }>;
-export type AcpCatalogSnapshotV1 = Readonly<{ status: 'loading' }> | Readonly<{ status: 'unavailable'; reason: string }>
+export type AcpCatalogSnapshotV1 = Readonly<{ status: 'loading' }>
+  | Readonly<{ status: 'unavailable'; reason: string;
+      /** Observing a row revision does not require opening its content or grant write authority. */
+      revision?: number }>
   | Readonly<{ status: 'partial'; reason: 'incomplete-inventory'; record: AcpCatalogRecordV1; diagnostics: readonly AcpCatalogDiagnosticV1[];
       /** Destination row evidence; predecessor-only partial inventories have no numeric row revision. */
       revision?: number | 'absent' }>

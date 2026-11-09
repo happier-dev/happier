@@ -13,7 +13,6 @@ export type McpServerCatalogWriteContextV1 = ReachRulesWriteContextV1 & Readonly
 export { listMcpServerCatalogSavedSecretRefsV1, rewriteMcpServerCatalogSavedSecretRefsV1,
   remapMcpServerCatalogSavedSecretReferencesV1 } from './serverRowsV1.js';
 
-
 /** Catalog-authored imports and copies share one collision-free name vocabulary. */
 export function uniqueMcpServerNameV1(baseName: string, servers: readonly Readonly<{ name: string }>[]): string {
   const names = new Set(servers.map(server => server.name));

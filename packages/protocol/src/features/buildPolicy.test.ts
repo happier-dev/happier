@@ -9,7 +9,7 @@ describe('feature build policy', () => {
       denyRaw: 'voice,bugReports',
     });
 
-    expect(parsed.allow).toEqual(['automations', 'voice']);
+    expect(parsed.allow).toEqual(['workflows', 'voice']);
     expect(parsed.deny).toEqual(['voice', 'bugReports']);
   });
 
@@ -20,8 +20,17 @@ describe('feature build policy', () => {
     });
 
     expect(evaluateFeatureBuildPolicy(parsed, 'automations')).toBe('allow');
+    expect(evaluateFeatureBuildPolicy(parsed, 'workflows')).toBe('allow');
     expect(evaluateFeatureBuildPolicy(parsed, 'voice')).toBe('deny');
     expect(evaluateFeatureBuildPolicy(parsed, 'bugReports')).toBe('deny');
+  });
+
+  it('treats released allow/deny IDs as aliases of the same Workflows policy', () => {
+    const parsed = parseFeatureBuildPolicy({ allowRaw: 'workflows,automations', denyRaw: 'automations' });
+    expect(parsed.allow).toEqual(['workflows']);
+    expect(parsed.deny).toEqual(['workflows']);
+    expect(evaluateFeatureBuildPolicy(parsed, 'workflows')).toBe('deny');
+    expect(evaluateFeatureBuildPolicy(parsed, 'automations')).toBe('deny');
   });
 
   it('treats missing allow entries as neutral when allowlist is empty', () => {

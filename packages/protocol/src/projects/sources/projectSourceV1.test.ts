@@ -8,6 +8,56 @@ const repository = {
   protocol: 'https',
 };
 describe('Source metadata admission', () => {
+  it('creates and reads a Source without a repository and preserves explicit repository removal', () => {
+    const input = { serverId: 'home', requestKey: 'stored-app', name: 'App', owner: { kind: 'account', accountId: 'owner' } };
+    expect(ProjectSourcesCreateInputV1Schema.parse(input)).toEqual(input);
+    const source = { id: 'source', revision: 1, name: 'App', owner: input.owner, audience: [], createdByAccountId: 'owner' };
+    expect(ProjectSourceV1Schema.parse(source)).toEqual(source);
+    expect(ProjectSourceV1StoredSchema.parse(source)).toEqual(source);
+    const update = { serverId: 'home', sourceId: 'source', expectedRevision: 1, patch: { repository: null } };
+    expect(ProjectSourcesUpdateInputV1Schema.parse(update)).toEqual(update);
+    expect(ProjectSourcesUpdateInputV1Schema.parse({ ...update, patch: { name: 'Renamed' } }).patch)
+      .toEqual({ name: 'Renamed' });
+  });
+  it('keeps exactly one explicit Account or Team owner separate from plural audience', () => {
+    const audience = ['view-team-a', 'view-team-b'].map(teamId => ({ principal: { kind: 'team', teamId }, level: 'view' }));
+    const input = { serverId: 'home', requestKey: 'save-intent', name: 'Repo', repository, audience };
+    const row = { id: 'source', revision: 1, name: 'Repo', repository, audience, createdByAccountId: 'creator' };
+    for (const owner of [{ kind: 'account', accountId: 'creator' }, { kind: 'team', teamId: 'actual-owner' }]) {
+      expect(ProjectSourcesCreateInputV1Schema.parse({ ...input, owner }).owner).toEqual(owner);
+      expect(ProjectSourceV1StoredSchema.parse({ ...row, owner }).owner).toEqual(owner);
+      expect(ProjectSourcesUpdateInputV1Schema.parse({ serverId: 'home', sourceId: 'source', expectedRevision: 1, patch: { owner } }).patch.owner)
+        .toEqual(owner);
+    }
+    // Owner-less personal producers remain accepted during the additive S0 transition.
+    // Audience order never chooses an owner; persistence admits and projects it.
+    expect(ProjectSourcesCreateInputV1Schema.parse(input)).not.toHaveProperty('owner');
+    expect(ProjectSourceV1StoredSchema.parse(row)).not.toHaveProperty('owner');
+    for (const owner of [null, [], { kind: 'group', teamId: 'team', groupId: 'group' },
+      { kind: 'account', accountId: 'creator', teamId: 'team' }, { kind: 'team', teamId: 'team', accountId: 'creator' },
+      { kind: 'team', teamId: '' }]) {
+      expect(ProjectSourcesCreateInputV1Schema.safeParse({ ...input, owner }).success).toBe(false);
+      expect(ProjectSourceV1Schema.safeParse({ ...row, owner }).success).toBe(false);
+      expect(ProjectSourceV1StoredSchema.safeParse({ ...row, owner }).success).toBe(false);
+      expect(ProjectSourcesUpdateInputV1Schema.safeParse({ serverId: 'home', sourceId: 'source', expectedRevision: 1, patch: { owner } }).success)
+        .toBe(false);
+    }
+  });
+  it('returns needs_repository only after current Source read admission without inventing a selector', async () => {
+    const source = { id: 'source', revision: 1, name: 'App', audience: [], createdByAccountId: 'owner' };
+    for (const captured of [{}, { selector: ProjectSourcesCreateInputV1Schema.parse({
+      serverId: 'home', requestKey: 'intent', name: 'Repo', repository }).repository }]) {
+      expect(await admitProjectSourceSelectionV1({ serverId: 'home', sourceId: 'source', captured,
+        readSource: async () => ({ ok: true, source, canManage: true }) }))
+        .toEqual({ kind: 'refused', code: 'needs_repository' });
+      expect(await admitProjectSourceSelectionV1({ serverId: 'home', sourceId: 'source', captured,
+        readSource: async () => ({ ok: false, error: 'source_access_denied' }) }))
+        .toEqual({ kind: 'refused', code: 'source_access_denied' });
+    }
+    expect(await admitProjectSourceSelectionV1({ serverId: 'home', sourceId: 'source', captured: {},
+      readSource: async () => ({ ok: true, source: ProjectSourceV1Schema.parse({ ...source, repository }), canManage: true }) }))
+      .toEqual({ kind: 'refused', code: 'source_selection_changed' });
+  });
   it('canonicalizes accepted provider aliases on create, update and stored read before clone admission', () => {
     const legacyRepository = { ...repository, provider: { ...repository.provider, id: 'github' } };
     const created = ProjectSourcesCreateInputV1Schema.parse({ serverId: 'home', requestKey: 'save-intent', name: 'Repo', repository: legacyRepository });
@@ -42,8 +92,8 @@ describe('Source metadata admission', () => {
   it('normalizes execution identity while metadata and overridden defaults change', async () => {
     const captured = ProjectSourceV1Schema.parse({ id: 'source', revision: 1, name: 'Repo', repository, audience: [], createdByAccountId: 'owner', defaultRef: 'main', subdir: 'packages/app' });
     const current: ProjectSourceV1 = { ...captured, revision: 5, name: 'New name', defaultRef: 'changed', subdir: 'changed',
-      repository: { ...captured.repository, provider: { ...captured.repository.provider, displayName: 'New label', baseUrl: 'https://GITHUB.com:443/' },
-        repository: { ...captured.repository.repository, nameWithOwner: '/ACME/repo/', visibility: 'public', defaultBranch: 'changed' } } };
+      repository: { ...captured.repository!, provider: { ...captured.repository!.provider, displayName: 'New label', baseUrl: 'https://GITHUB.com:443/' },
+        repository: { ...captured.repository!.repository, nameWithOwner: '/ACME/repo/', visibility: 'public', defaultBranch: 'changed' } } };
     expect(await admitProjectSourceSelectionV1({ serverId: 'home', sourceId: captured.id,
       captured: { selector: captured.repository, defaultRef: captured.defaultRef, subdir: captured.subdir },
       ref: 'main', subdir: 'packages\\.\\app/', readSource: async () => ({ ok: true, source: current, canManage: true }) }))
@@ -53,10 +103,10 @@ describe('Source metadata admission', () => {
     const source = ProjectSourceV1Schema.parse({ id: 'source', revision: 1, name: 'Repo', repository, audience: [], createdByAccountId: 'owner', defaultRef: 'main', subdir: 'packages/app' });
     const current: ProjectSourceV1 = { ...source,
       ...(change === 'ref' ? { defaultRef: 'other' } : change === 'subdir' ? { subdir: 'other' } : {}),
-      repository: { ...source.repository,
-        ...(change === 'hosting' ? { provider: { ...source.repository.provider, id: 'another-provider' } } : {}),
+      repository: { ...source.repository!,
+        ...(change === 'hosting' ? { provider: { ...source.repository!.provider, id: 'another-provider' } } : {}),
         ...(change === 'protocol' ? { protocol: 'auto' } : {}),
-        ...(change === 'locator' ? { repository: { ...source.repository.repository, cloneUrl: 'https://github.com/acme/other.git' } } : {}) } };
+        ...(change === 'locator' ? { repository: { ...source.repository!.repository, cloneUrl: 'https://github.com/acme/other.git' } } : {}) } };
     expect(await admitProjectSourceSelectionV1({ serverId: 'home', sourceId: source.id,
       captured: { selector: source.repository, defaultRef: source.defaultRef, subdir: source.subdir },
       readSource: async () => ({ ok: true, source: current, canManage: true }) }))

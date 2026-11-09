@@ -507,13 +507,16 @@ describe('createActionExecutor execution interception', () => {
     expect(observeActionExecution.mock.calls.filter(([event]) => event.actionId === 'session.title.set'))
       .toEqual([[expect.objectContaining({
         input: { sessionId: 'session-1', title: 'deferred' },
-        caller: {
-          kind: 'plugin',
-          pluginId: 'caller.plugin',
-          contributionLocalId: 'title-hook',
-          sourceCustody: { kind: 'development', registeredRootId: 'root-1' },
-          startedBy: 'trigger',
-        },
+        caller: { kind: 'host' },
+        context: expect.objectContaining({ approvedActionReplay: expect.objectContaining({
+          origin: expect.objectContaining({ caller: {
+            kind: 'plugin',
+            pluginId: 'caller.plugin',
+            contributionLocalId: 'title-hook',
+            sourceCustody: { kind: 'development', registeredRootId: 'root-1' },
+            startedBy: 'trigger',
+          } }),
+        }) }),
         result: expect.objectContaining({ ok: true }),
       })]]);
   });

@@ -9,18 +9,18 @@ import {
 import { ConnectedAccountServiceIdentityV1Schema } from './qualifiedConnectedAccountPersistence.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 
-const machine = { machineId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)) };
+const machine = { machineId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))) };
 export const CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_INPUT_SCHEMAS = {
   'connectedServices.authentication.beginConnect': z.extend(z.omit(commands.beginConnect, { operation: true }), machine),
   'connectedServices.authentication.beginReconnect': z.extend(z.omit(commands.beginReconnect, { operation: true }), machine),
-  'connectedServices.authentication.continueConnect': z.extend(z.omit(commands.continueConnect, { operation: true }), machine),
-  'connectedServices.authentication.submitManual': z.extend(z.omit(commands.submitManual, { operation: true }), machine),
-  'connectedServices.authentication.completeOAuth': z.extend(z.omit(commands.completeOAuth, { operation: true }), machine),
-  'connectedServices.authentication.pollDevice': z.extend(z.omit(commands.pollDevice, { operation: true }), machine),
-  'connectedServices.authentication.resumeDevice': z.extend(z.omit(commands.resumeDevice, { operation: true }), machine),
-  'connectedServices.authentication.reconcile': z.extend(z.omit(commands.reconcile, { operation: true }), machine),
-  'connectedServices.authentication.cancel': z.extend(z.omit(commands.cancel, { operation: true }), machine),
-  'connectedServices.authentication.read': z.extend(z.omit(commands.read, { operation: true }), machine),
+  'connectedServices.authentication.continueConnect': z.omit(commands.continueConnect, { operation: true }),
+  'connectedServices.authentication.submitManual': z.omit(commands.submitManual, { operation: true }),
+  'connectedServices.authentication.completeOAuth': z.omit(commands.completeOAuth, { operation: true }),
+  'connectedServices.authentication.pollDevice': z.omit(commands.pollDevice, { operation: true }),
+  'connectedServices.authentication.resumeDevice': z.omit(commands.resumeDevice, { operation: true }),
+  'connectedServices.authentication.reconcile': z.omit(commands.reconcile, { operation: true }),
+  'connectedServices.authentication.cancel': z.omit(commands.cancel, { operation: true }),
+  'connectedServices.authentication.read': z.omit(commands.read, { operation: true }),
   'connectedServices.authentication.pending.list': z.strictObject({ ...machine, service: asProtocolZod(ConnectedAccountServiceIdentityV1Schema) }),
 } as const;
 const pendingResponse = lazyZodSchema(() => z.union([

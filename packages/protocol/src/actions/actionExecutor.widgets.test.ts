@@ -14,7 +14,7 @@ import { createWidgetDefinitionArtifactPortV1 } from '../widgets/widgetDefinitio
 import { resolveWidgetBindingsV1, WidgetSurfaceRefV1Schema, type WidgetInstanceV1 } from '../widgets/widgetInstanceV1.js';
 import { ApiTokenGrantV1Schema } from '../auth/apiTokenGrant.js';
 import { createWidgetActionInputResolverV1 } from '../widgets/widgetActionInputResolverV1.js';
-import { createWidgetAreaActionPortV1, createWidgetAreaLayoutArtifactPortV1, createWidgetSurfaceArtifactPortV1 } from '../widgets/widgetSurfaceArtifactV1.js';
+import { buildWidgetSurfaceArtifactIdV1, buildWidgetSurfaceArtifactHeaderV1, createWidgetAreaActionPortV1, createWidgetAreaLayoutArtifactPortV1, createWidgetSurfaceArtifactPortV1 } from '../widgets/widgetSurfaceArtifactV1.js';
 import { WIDGET_INSTANCE_ACTION_IDS_V1 } from '../widgets/actionIdsV1.js';
 import { flattenWidgetLayoutWidgetsV1 } from '../widgets/widgetLayoutItemV1.js';
 import { WidgetInstanceActionOutputSchemasV1 } from '../widgets/actionsV1.js';
@@ -22,6 +22,75 @@ import { WidgetInstanceActionOutputSchemasV1 } from '../widgets/actionsV1.js';
 const surface = { serverId: 'home', accountId: 'account', owner: { kind: 'home' } } as const;
 
 describe('configured widget Actions', () => {
+  it.each([
+    { operation: 'add', fault: 'none' }, { operation: 'move', fault: 'none' },
+    { operation: 'add', fault: 'explicit-name' }, { operation: 'move', fault: 'lost-source-ack' },
+    { operation: 'move', fault: 'source-refusal' }, { operation: 'move', fault: 'renamed-destination' },
+  ] as const)('acknowledges $operation when the shared layout writer materializes a title ($fault)', async ({ operation, fault }) => {
+    const boundary = createWorkBoardArtifactBoundary();
+    const baseTransport = boundary.forAccount(surface.accountId);
+    const source = { ...surface, owner: { kind: 'project', projectId: 'project', layoutId: 'source' } } as const;
+    const destination = { ...surface, owner: { kind: 'project', projectId: 'project', layoutId: 'destination' } } as const;
+    let armed = false;
+    // Lost responses, denial and concurrent writes occur at the real Artifact persistence boundary.
+    const transport: typeof baseTransport = { ...baseTransport, update: async request => {
+      if (!armed || request.artifactId !== buildWidgetSurfaceArtifactIdV1(source)) return baseTransport.update(request);
+      if (fault === 'source-refusal') return { ok: false as const, errorCode: 'artifact_access_forbidden', error: 'artifact_access_forbidden' };
+      const result = await baseTransport.update(request);
+      if (fault === 'renamed-destination') await store(destination).apply({ kind: 'rename', instanceId: instance.id, displayName: 'Concurrent name' });
+      if (fault === 'lost-source-ack' || fault === 'renamed-destination') throw new Error('Lost source response');
+      return result;
+    } };
+    const definition = { v: 1 as const, id: 'definition', name: 'Release health',
+      body: { kind: 'declarative' as const, document: { version: 1 as const, root: { kind: 'text' as const, text: 'Health' } } },
+      inputs: { fields: [] }, inputSchema: { type: 'object' as const, additionalProperties: false },
+      sizeDeclaration: { sizes: ['medium' as const], defaultSize: 'medium' as const }, provenance: { source: { kind: 'authored' as const } } };
+    const instance: WidgetInstanceV1 = { v: 1, id: 'move', definition: { kind: 'inline', definition }, bindings: {},
+      ...(fault === 'explicit-name' ? { displayName: 'My name' } : {}) };
+    const store = (target: typeof source | typeof destination) => createWidgetSurfaceArtifactPortV1(transport, { surface: target,
+      isCurrent: () => true, readTitles: async instances => new Map(instances.flatMap(instance =>
+        instance.definition.kind === 'inline' ? [[instance.id, instance.definition.definition.name] as const] : [])) });
+    const sourceLayout = { v: 1 as const, surface: source, items: [] };
+    await transport.create({ artifactId: buildWidgetSurfaceArtifactIdV1(source),
+      header: buildWidgetSurfaceArtifactHeaderV1(sourceLayout), body: JSON.stringify(sourceLayout) });
+    await store(source).apply({ kind: 'add', instance });
+    const empty = { v: 1 as const, surface: destination, items: [] };
+    await transport.create({ artifactId: buildWidgetSurfaceArtifactIdV1(destination),
+      header: buildWidgetSurfaceArtifactHeaderV1(empty), body: JSON.stringify(empty) });
+    const destinationId = buildWidgetSurfaceArtifactIdV1(destination);
+    boundary.rows.set(destinationId, { ...boundary.rows.get(destinationId)!, shared: true });
+    const executor = createActionExecutor({ widgetAccountScope: () => surface,
+      widgetSurfaceActions: { project: createWidgetAreaActionPortV1(target => store(target.owner.kind === 'project'
+        && target.owner.layoutId === source.owner.layoutId ? source : destination)) },
+      widgetInputs: createWidgetActionInputResolverV1({ readDescriptor: async () => definition,
+        readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
+        validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [] }) });
+    const context = { surface: 'ui', authority: 'present_user', bypassApprovals: true } as const;
+    armed = true;
+    const result = operation === 'add'
+      ? await executor.execute('widgets.item.add', { surface: destination, instance }, context)
+      : await executor.execute('widgets.item.move', { ref: { surface: source, instanceId: instance.id },
+        to: { surface: destination, index: 0 } }, context);
+    const sourceInstances = flattenWidgetLayoutWidgetsV1((await store(source).read()).items);
+    const destinationInstances = flattenWidgetLayoutWidgetsV1((await store(destination).read()).items);
+    if (fault === 'source-refusal') {
+      expect(result).toMatchObject({ ok: false, errorCode: 'widget_transfer_refused', details: { source: 'present', destination: 'absent' } });
+      expect(sourceInstances.map(entry => entry.instance)).toEqual([instance]);
+      expect(destinationInstances).toHaveLength(0);
+      return;
+    }
+    if (fault === 'renamed-destination') {
+      expect(result).toMatchObject({ ok: false, errorCode: 'widget_transfer_unknown', details: { source: 'absent', destination: 'present' } });
+      expect(sourceInstances).toHaveLength(0);
+      expect(destinationInstances.map(entry => entry.instance.displayName)).toEqual(['Concurrent name']);
+      return;
+    }
+    expect(result).toMatchObject({ ok: true, result: { instance: { ...instance, displayName: instance.displayName ?? definition.name },
+      ...(operation === 'move' ? { status: 'moved' } : {}) } });
+    expect(sourceInstances).toHaveLength(operation === 'move' ? 0 : 1);
+    expect(destinationInstances.map(entry => entry.instance.displayName)).toEqual([instance.displayName ?? definition.name]);
+  });
+
   it('returns the admitted Project observation without awaiting a duplicate read and observes later edits afresh', async () => {
     const boundary = createWorkBoardArtifactBoundary();
     const target = { ...surface, owner: { kind: 'project', projectId: 'project' } } as const;
@@ -328,7 +397,7 @@ describe('configured widget Actions', () => {
       widgetSurfaceActions: { project: createWidgetAreaActionPortV1(target => createWidgetSurfaceArtifactPortV1(boundary.forAccount(surface.accountId), { surface: target, isCurrent: () => true })) } });
     expect(await executor.execute('widgets.area.layout.delete' as ActionId, {
       surface: project, expectedRevision: { headerVersion: 1, bodyVersion: 1 },
-    }, { surface: 'mcp', bypassApprovals: true })).toMatchObject({ ok: false, errorCode: 'widget_area_layout_default_protected' });
+    }, { surface: 'mcp', bypassApprovals: true })).toMatchObject({ ok: false, errorCode: 'widget_layouts_unavailable' });
   });
   it('resizes projected default Home widgets through native and universal Actions before materialization', async () => {
     for (const native of [true, false]) {
@@ -458,6 +527,26 @@ describe('configured widget Actions', () => {
     }
   });
 
+  it('delivers safe personal additions to the answering client while shared additions still need approval', async () => {
+    const companion = { ...surface, owner: { kind: 'companion', sessionId: 'session' } } as const;
+    // Only the connected-client transport is replaced; parsed inputs, policy and placement stay real.
+    const executor = createActionExecutor({
+      widgetAccountScope: () => ({ serverId: surface.serverId, accountId: surface.accountId }),
+      clientActionExecute: async () => ({ ok: false, errorCode: 'answering_client', error: 'Reached the personal placement owner' }),
+    });
+    const instance = { v: 1, id: 'summary', definition: { kind: 'builtin', id: 'session_summary' }, bindings: {} };
+    const context = { surface: 'agent', authority: 'account_automation', serverId: surface.serverId, defaultSessionId: 'session' } as const;
+    expect(await executor.execute('widgets.item.add', { surface: companion, instance }, context))
+      .toMatchObject({ ok: false, errorCode: 'answering_client' });
+    expect(await executor.execute('widgets.item.add', {
+      surface: { ...surface, owner: { kind: 'sessionBoard', sessionId: 'session' } }, instance,
+    }, context)).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    expect(await executor.execute('widgets.item.add', { surface: companion, instance }, {
+      ...context, actionsSettings: normalizeActionsSettingsV1({ v: 1,
+        actions: { 'widgets.item.add': { approvalRequiredSurfaces: ['agent'] } } }),
+    })).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+  });
+
   it('delivers Companion reads and transfers through the answering client while Home stays Account-owned', async () => {
     const companion = { ...surface, owner: { kind: 'companion', sessionId: 'session' } } as const;
     const readSpec = getActionSpec('widgets.item.inputs.get');
@@ -483,10 +572,12 @@ describe('configured widget Actions', () => {
       .toMatchObject({ ok: false, errorCode: 'unsupported_widget_surface' });
   });
 
-  it('requires configurable approval for the shared Board content writer used by snapshots', () => {
+  it('defaults reversible Board content edits to direct with configurable approval', () => {
     const context = { surface: 'agent' as const, authority: 'account_automation' as const };
     const id = 'session.board.item.upsert';
-    expect(isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1({ v: 1 }), context)).toBe(true);
+    expect(isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1({ v: 1 }), context)).toBe(false);
+    expect(isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1({ v: 1,
+      actions: { [id]: { approvalRequiredSurfaces: ['agent'] } } }), context)).toBe(true);
     expect(isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1({ v: 1,
       approvalWaivedSurfaces: { [id]: ['agent'] } }), context)).toBe(false);
   });
@@ -556,7 +647,7 @@ describe('configured widget Actions', () => {
       .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
     expect(await executor.execute('widgets.definition.saveFromSession', {
       account: { serverId: 'home', accountId: 'account' }, session: { serverId: 'home', sessionId: 'shared' },
-      itemId: 'source', artifactId: 'copy',
+      itemId: 'source', artifactId: '790957d3-606b-40fa-9526-9fc2d18265bd',
     }, credentialContext)).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
     // Account-level definition reads cannot borrow a restricted default Session grant.
     expect(await executor.execute('widgets.definition.list', { account: { serverId: 'home', accountId: 'account' } }, credentialContext))

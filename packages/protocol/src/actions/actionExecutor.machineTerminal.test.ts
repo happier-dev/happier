@@ -22,6 +22,18 @@ const cases = [
 ] as const;
 
 describe('Machine terminal canonical Action family', () => {
+  it('runs Agent interactive observation and control when the user policy waives its Ask', async () => {
+    let transported = false;
+    for (const [id, input, output] of cases.filter(([id]) => id !== 'machines.terminal.open' && id !== 'machines.terminal.restart')) {
+      const executor = createActionExecutor({
+        machineTerminalAction: async () => { transported = true; return output; },
+        isActionApprovalRequired: () => false,
+      } as unknown as ActionExecutorDeps);
+      expect(await executor.execute(id, input, { surface: 'agent', serverId: 'home', authority: 'account_automation' }))
+        .not.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    }
+    expect(transported).toBe(true);
+  });
   it('keeps the original Agent authority at the mounted intent port instead of borrowing a UI waiver', async () => {
     const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
       'machines.terminal.restart': ['ui'],
@@ -55,13 +67,13 @@ describe('Machine terminal canonical Action family', () => {
     expect(approvalRequest).toMatchObject({ createdBy: { surface: 'agent' }, approval: { flow: 'deferred', result: 'required' } });
     expect(waitedForHuman).toBe(false);
     expect(spawned).toBe(false);
-    // This lifecycle choice belongs only to open/restart. Other Agent Actions
-    // retain their incumbent blocking decision/result contract.
+    // Interactive control additionally requires person effect authority. The
+    // shared decision owner may retain a request for a person's explicit choice.
     expect(await executor.execute('machines.terminal.write', cases[3][1], {
       surface: 'agent', authority: 'account_automation', serverId: 'home', runtimeAccountId: 'bob',
       actionRequestId: 'agent-write', actionCaller: { kind: 'host' },
-    })).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
-    expect(waitedForHuman).toBe(true);
+    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'agent-approval', actionId: 'machines.terminal.write' } });
+    expect(waitedForHuman).toBe(false);
   });
   it('keeps pane creation an intent while an explicit Ask setting requires approval before any PTY effect', async () => {
     const settings = ActionsSettingsV1Schema.parse({ v: 1,
@@ -109,7 +121,7 @@ describe('Machine terminal canonical Action family', () => {
     for (const [rawId, input] of cases) {
       const id = ActionIdSchema.parse(rawId);
       expect(getActionSpec(id).inputSchema.safeParse({ ...input, requesterAccountId: 'forged' }).success).toBe(false);
-      expect(await executor.execute(id, { ...input, serverId: 'foreign' }, { surface: 'cli', serverId: 'home' }))
+      expect(await executor.execute(id, { ...input, serverId: 'foreign' }, { surface: 'cli', serverId: 'home', authority: 'present_user' }))
         .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
     }
     expect(reached).toBe(false);

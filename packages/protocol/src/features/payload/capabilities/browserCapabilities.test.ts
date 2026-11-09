@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import * as browserCapabilitiesModule from './browserCapabilities.js';
 
 type BrowserCapabilitiesModule = typeof import('./browserCapabilities.js');
 
 async function loadBrowserCapabilitiesModule(): Promise<BrowserCapabilitiesModule> {
-  return import('./browserCapabilities.js');
+  return browserCapabilitiesModule;
 }
 
 describe('browser capabilities payload', () => {
@@ -29,6 +30,10 @@ describe('browser capabilities payload', () => {
       expect(result.data.recording.enabled).toBe(false);
       expect(result.data.recording.supportedCaptureKinds).toEqual([]);
       expect(result.data.recording.attachmentsEnabled).toBe(false);
+      expect(result.data.recording).not.toHaveProperty('maxDurationMs');
+      expect(result.data.recording).not.toHaveProperty('maxBytes');
+      expect(result.data.recording).toHaveProperty('cursorOverlaySupported', false);
+      expect(result.data.recording.maxFps).toBe(12);
     }
   });
 
@@ -167,8 +172,6 @@ describe('browser capabilities payload', () => {
         supportedCaptureKinds: ['cdpScreencast', 'streamFrameCapture'],
         supportedMimeTypes: ['video/webm', 'video/mp4'],
         supportedAdapterKinds: ['chromiumSidecar', 'streamedBrowserSurface'],
-        maxDurationMs: 30_000,
-        maxBytes: 16_000_000,
         maxFps: 12,
         audioSupported: false,
         cursorOverlaySupported: true,
@@ -181,7 +184,7 @@ describe('browser capabilities payload', () => {
     expect(result?.success).toBe(true);
     if (result?.success) {
       expect(result.data.recording.supportedCaptureKinds).toEqual(['cdpScreencast', 'streamFrameCapture']);
-      expect(result.data.recording.maxBytes).toBe(16_000_000);
+      expect(result.data.recording).not.toHaveProperty('maxBytes');
       expect(JSON.stringify(result.data.recording)).not.toContain('base64');
     }
   });

@@ -37,6 +37,30 @@ describe('registry link operation',()=>{
     expect(reads).toEqual(['first', 'first', 'rotated', 'rotated']);
   });
 
+  it('reuses one admitted source inside an operation and reads authority again for the next operation', async () => {
+    const packaged: RegistrySourceDescriptorV1 = {
+      id: 'plugin/apps', title: 'Apps', format: 'happier-catalog', kinds: ['app'],
+      packageContent: { pluginId: 'plugin', pluginVersion: '1.0.0', occurrenceId: 'installed', path: 'apps.json' },
+      enabled: true, addedAt: 0, removable: false,
+      origin: { kind: 'plugin', pluginId: 'plugin', localId: 'apps', suppliers: ['machine'] },
+    };
+    let sources = [packaged];
+    let reads = 0;
+    const forbidden = async (): Promise<never> => { throw new Error('Package catalog must not use HTTP'); };
+    const host = createRegistryHostV1({ host: 'node', readSources: async () => { reads++; return sources; },
+      http: { getJson: forbidden, getText: forbidden, getBytes: forbidden },
+      packageContent: { read: async () => ({ fetchedAt: 1, text: '{"schemaVersion":1,"apps":[]}' }) },
+    });
+    await host.withSource(packaged.id, async (admitted, fetch) => {
+      expect(admitted.id).toBe(packaged.id);
+      sources = [];
+      expect(await fetch({ op: 'list', kind: 'app' })).toMatchObject({ op: 'list', page: { items: [] } });
+      expect(await fetch({ op: 'list', kind: 'app' })).toMatchObject({ op: 'list', page: { items: [] } });
+    });
+    expect(reads).toBe(1);
+    await expect(host.withSource(packaged.id, async () => undefined)).rejects.toMatchObject({ status: { state: 'invalid_source' } });
+    expect(reads).toBe(2);
+  });
   it('retains app source detection without probing app catalogs for a selected skill link', async () => {
     const requests: string[] = [];
     const url = 'https://github.com/owner/catalog';
@@ -57,6 +81,26 @@ describe('registry link operation',()=>{
     expect(await host.fetchRequest({ op: 'link', url })).toEqual({ op: 'link', items: [] });
     expect(requests.length).toBeGreaterThan(0);
     expect(requests).not.toContain(indexUrl);
+  });
+  it('rejects skill files from an app package catalog before reading package content', async () => {
+    const packaged: RegistrySourceDescriptorV1 = {
+      id: 'plugin/apps', title: 'Apps', format: 'happier-catalog', kinds: ['app'],
+      packageContent: { pluginId: 'plugin', pluginVersion: '1.0.0', occurrenceId: 'installed', path: 'apps.json' },
+      enabled: true, addedAt: 0, removable: false,
+      origin: { kind: 'plugin', pluginId: 'plugin', localId: 'apps', suppliers: ['machine'] },
+    };
+    let packageReads = 0;
+    const forbidden = async (): Promise<never> => { throw new Error('Package catalog must not use HTTP'); };
+    const host = createRegistryHostV1({ host: 'node', readSources: async () => [packaged],
+      http: { getJson: forbidden, getText: forbidden, getBytes: forbidden },
+      packageContent: { read: async () => { packageReads++; return { fetchedAt: 1, text: '{"schemaVersion":1,"apps":[]}' }; } },
+    });
+    expect(await host.fetchRequest({ op: 'files', kind: 'skill', sourceId: packaged.id, itemId: 'app', version: '1.0.0' }))
+      .toEqual({ op: 'error', status: { state: 'invalid_source' } });
+    expect(packageReads).toBe(0);
+    expect(await host.fetchRequest({ op: 'list', kind: 'app', sourceId: packaged.id }))
+      .toMatchObject({ op: 'list', page: { status: { state: 'ok' }, items: [] } });
+    expect(packageReads).toBe(1);
   });
   it.each([
     ['tree/main/skills/pdf', 'skills/pdf', 'main'],
@@ -105,6 +149,8 @@ describe('registry link operation',()=>{
     const fail=async(url:string)=>{requests.push(url);return {ok:false as const,status:{state}};};
     const host=createRegistryHostV1({host:'web',readSources:async()=>[],http:{getJson:fail,getText:fail,getBytes:fail}});
     expect(await host.fetchRequest({op:'link',url:'https://github.com/owner/limited'})).toEqual({op:'error',status:{state}});
+    // Skill-link auth detection tries the marketplace, then repository;
+    // a quota refusal must stop at the first response.
     expect(requests).toHaveLength(state==='rate_limited'?1:2);
   });
   it('reuses the repository reader across marketplace listing and pinned skill reads, then refreshes the next operation',async()=>{

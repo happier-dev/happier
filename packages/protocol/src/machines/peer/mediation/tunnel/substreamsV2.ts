@@ -1,7 +1,7 @@
 import { z } from 'zod/mini';
 
 export const PeerTcpTunnelSubstreamCapsV2Schema = z.object({
-  maxConcurrentSubstreams: z.number().check(z.int(), z.positive()),
+  maxConcurrentSubstreams: z.optional(z.number().check(z.int(), z.positive())),
   maxTotalSubstreams: z.optional(z.number().check(z.int(), z.positive())),
   maxBytesPerSubstream: z.optional(z.number().check(z.int(), z.positive())),
   maxAggregateBytes: z.optional(z.number().check(z.int(), z.positive())),

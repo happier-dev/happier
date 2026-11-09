@@ -59,6 +59,10 @@ export function evaluatePendingResetStartReadinessV1(input: Readonly<{
   }
   if (current.observedAtMs < window.resetAtMs) return wait('reset_not_observed');
   if (input.nowMs >= next.resetAtMs) return wait('window_expired');
-  if (next.windowStartAtMs !== window.resetAtMs || next.windowDurationMs !== window.windowDurationMs) return wait('window_changed');
+  // A device may miss the originally witnessed reset. The same admitted hold
+  // can release in a later fresh comparable window, never before that window
+  // has actually been observed or with a changed window duration.
+  if (next.windowStartAtMs < window.resetAtMs || current.observedAtMs < next.windowStartAtMs
+    || next.windowDurationMs !== window.windowDurationMs) return wait('window_changed');
   return { status: 'ready' };
 }

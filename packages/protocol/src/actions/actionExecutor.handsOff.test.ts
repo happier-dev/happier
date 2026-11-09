@@ -62,8 +62,8 @@ describe('hands-off Action admission', () => {
     const executor = createExecutor({ roleActionExecute,
       sessionList: async () => ({ ...listedReport, sessions: accessible ? listedReport.sessions : [] }),
     });
-    const context = { surface: 'agent' as const, defaultSessionId: 'self', workspaceWrites: 'allow' as const,
-      agentStartContext: { caller: { kind: 'session' as const, sessionId: 'self', starterDepth: 0, turnDepth: 0 },
+    const context = { surface: 'agent' as const, defaultSessionId: 'session-self', workspaceWrites: 'allow' as const,
+      agentStartContext: { caller: { kind: 'session' as const, sessionId: 'session-self', starterDepth: 0, turnDepth: 0 },
         baseline: { machineId: 'machine-1', directory: '/repo' }, ledSubtreeSessionIds: ['report'],
         workDepthLimit: 4, roles: {}, callerPermissionCeiling: 'default' as const } };
     await expect(executor.execute('session.notes.set', { sessionId: 'unrelated', notes: 'task' }, context))
@@ -78,21 +78,21 @@ describe('hands-off Action admission', () => {
     roleActionExecute.mockClear();
     await expect(prepared.invocation.run()).resolves.toMatchObject({ ok: false, errorCode: 'subtree_denied' });
     expect(roleActionExecute).not.toHaveBeenCalled();
-    await expect(executor.execute('session.notes.set', { sessionId: 'self', notes: 'own task' }, context))
+    await expect(executor.execute('session.notes.set', { sessionId: 'session-self', notes: 'own task' }, context))
       .resolves.toMatchObject({ ok: true });
   });
 
   it('admits an originless Run only on its proven origin without applying start depth to a target write', async () => {
     const executor = createExecutor({ roleActionExecute: async () => ({ updated: true }) });
     const runContext = { surface: 'agent' as const, workspaceWrites: 'allow' as const,
-      agentStartContext: { caller: { kind: 'originless' as const, runId: 'workflow-run', runDepth: 4, runOriginSessionId: 'self' },
+      agentStartContext: { caller: { kind: 'originless' as const, runId: 'workflow-run', runDepth: 4, runOriginSessionId: 'session-self' },
         baseline: { machineId: 'machine-1', directory: '/repo' }, ledSubtreeSessionIds: [],
         workDepthLimit: 4, roles: {}, callerPermissionCeiling: 'default' as const } };
-    await expect(executor.execute('session.notes.set', { sessionId: 'self', notes: 'origin task' }, runContext))
+    await expect(executor.execute('session.notes.set', { sessionId: 'session-self', notes: 'origin task' }, runContext))
       .resolves.toMatchObject({ ok: true });
     await expect(executor.execute('session.notes.set', { sessionId: 'report', notes: 'detached task' }, runContext))
       .resolves.toMatchObject({ ok: false, errorCode: 'subtree_denied' });
-    await expect(executor.execute('session.notes.set', { sessionId: 'self', notes: 'unproved task' }, {
+    await expect(executor.execute('session.notes.set', { sessionId: 'session-self', notes: 'unproved task' }, {
       ...runContext, agentStartContext: { ...runContext.agentStartContext,
         caller: { kind: 'originless', runId: 'workflow-run', runDepth: 4 } },
     })).resolves.toMatchObject({ ok: false, errorCode: 'subtree_denied' });
@@ -123,9 +123,9 @@ describe('hands-off Action admission', () => {
   it('an agent cannot relax hands-off on its own session, even with approval bypass', async () => {
     const executor = createExecutor();
     await expect(executor.execute(ActionIdSchema.parse('session.roles.override.set'), {
-      sessionId: 'self', roleId: 'orchestrator', workspaceWrites: 'allow',
+      sessionId: 'session-self', roleId: 'orchestrator', workspaceWrites: 'allow',
     }, {
-      surface: 'agent', defaultSessionId: 'self', workspaceWrites: 'deny', bypassApprovals: true,
+      surface: 'agent', defaultSessionId: 'session-self', workspaceWrites: 'deny', bypassApprovals: true,
     })).resolves.toMatchObject({ ok: false, errorCode: 'workspace_write_escalation_denied' });
   });
 
@@ -133,17 +133,17 @@ describe('hands-off Action admission', () => {
     const roleActionExecute = vi.fn(async () => ({ updated: true }));
     const executor = createExecutor({ roleActionExecute });
     await expect(executor.execute('session.roles.override.set', {
-      sessionId: 'self', roleId: 'builder', workspaceWrites: 'deny',
+      sessionId: 'session-self', roleId: 'builder', workspaceWrites: 'deny',
     }, {
-      surface: 'agent', defaultSessionId: 'self', workspaceWrites: 'allow',
-      agentStartContext: { caller: { kind: 'session', sessionId: 'self', starterDepth: 0, turnDepth: 0 },
+      surface: 'agent', defaultSessionId: 'session-self', workspaceWrites: 'allow',
+      agentStartContext: { caller: { kind: 'session', sessionId: 'session-self', starterDepth: 0, turnDepth: 0 },
         baseline: { machineId: 'machine-1', directory: '/repo' }, ledSubtreeSessionIds: [],
         workDepthLimit: 4, roles: {}, callerPermissionCeiling: 'default' },
     })).resolves.toMatchObject({ ok: true, result: { updated: true } });
     await expect(executor.execute('session.roles.override.set', {
-      sessionId: 'self', roleId: 'builder', workspaceWrites: 'allow',
+      sessionId: 'session-self', roleId: 'builder', workspaceWrites: 'allow',
     }, {
-      surface: 'ui', defaultSessionId: 'self', workspaceWrites: 'deny',
+      surface: 'ui', defaultSessionId: 'session-self', workspaceWrites: 'deny',
     })).resolves.toMatchObject({ ok: true, result: { updated: true } });
   });
 

@@ -6,7 +6,6 @@ import { resolveActionSurfaceAvailability } from './actionSurfaceAvailability.js
 
 const operations = [
   ['account.security.get', 'GET', '/v1/account/security'],
-  ['account.security.terminalPresentUser.set', 'POST', '/v1/account/security/terminal-present-user'],
   ['account.password.enroll', 'POST', '/v1/account/password/enroll'],
   ['account.password.change', 'POST', '/v1/account/password/change'],
   ['account.password.remove', 'POST', '/v1/account/password/remove'],

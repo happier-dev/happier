@@ -128,6 +128,17 @@ describe('Team credential Action contracts', () => {
       path: '/v1/teams/credential-resources/list',
       body: { teamId: 'team/one', filter: 'all', limit: 50 },
     });
+    expect(bindHomeDomainActionHttpRequestV1('teams.credentials.list', { scope: 'custodian', filter: 'direct' })).toEqual({
+      method: 'POST', path: '/v1/teams/credential-resources/list',
+      body: { scope: 'custodian', filter: 'direct', limit: 50 },
+    });
+    expect(bindHomeDomainActionHttpRequestV1('teams.credentials.entitled.list', { teamId: 'team/one', resourceId: 'selected' })).toEqual({
+      method: 'POST', path: '/v1/teams/credential-resources/entitled/list',
+      body: { teamId: 'team/one', resourceId: 'selected', limit: 50 },
+    });
+    expect(TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1['teams.credentials.list'].safeParse({
+      scope: 'custodian', filter: 'direct', custodianAccountId: 'someone-else',
+    }).success).toBe(false);
     expect(bindHomeDomainActionHttpRequestV1('teams.credentials.delete', {
       resourceId: 'resource-1',
       expectedRevision: 2,

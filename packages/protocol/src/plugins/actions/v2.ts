@@ -1,6 +1,6 @@
-import { ActionToolExposureSchema } from '../../actions/metadata.js';
 import { maxCodeUnits } from '../../strings/maxCodeUnits.js';
 import { deriveActionInputHints } from '../../actions/schemaInputHints.js';
+export { PluginActionInvocationBindingV1Schema, type PluginActionInvocationBindingV1 } from './invocationBindingV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { InputOptionValueSchema } from '../../inputs/inputFields.js';
@@ -13,13 +13,12 @@ import {
   type PluginActionSurfaceV2,
 } from './vocabulary.js';
 import type { ActionDefinitionSlashV1 } from '../../actions/actionDefinitionV1.js';
-import { ActionSafetySchema } from '../../actions/safetyVocabulary.js';
 import { ActionContextualDefaultsSchema } from '../../actions/contextualDefaults.js';
+import { ActionToolExposureSchema } from '../../actions/metadata.js';
 import { InputPredicateSchema } from '../../inputs/inputPredicates.js';
 import { ActionOperationDeclarationV1Schema } from '../../actions/operations/v1.js';
 import { ActionSessionTargetDeclarationV1Schema } from '../../actions/sessionTargetV1.js';
 import {
-  createActionInputHintsSchemasWithStaticOptionsOnly,
   createActionInputHintsSchemasWithoutOptionsSource,
   normalizeActionInputHintsText,
   ActionInputPathSchema,
@@ -28,12 +27,13 @@ import {
 } from '../../actions/actionInputHints.js';
 import { PluginActionConnectedAccountPurposeBindingV2Schema, type PluginActionConnectedAccountPurposeBindingV2 } from './connectedAccountPurposeBindingV2.js';
 export { PluginActionConnectedAccountPurposeBindingV2Schema, type PluginActionConnectedAccountPurposeBindingV2 } from './connectedAccountPurposeBindingV2.js';
-import { PluginOptionalStringSchema } from '../_shared.js';
+import { PluginHostAccessRequestIdV2Schema, PluginOptionalStringSchema } from '../_shared.js';
 import {
   PluginAvailabilityDescriptorV2Schema,
   PluginJsonSchemaV2Schema,
   PluginJsonValueV2Schema,
   PluginLocalizedStringV2Schema,
+  resolvePluginLocalizedStringV2Text,
   type PluginJsonSchemaV2,
   type PluginLocalizedStringV2,
 } from '../contributions/publicTypes.js';
@@ -80,13 +80,6 @@ export const PluginActionScopeV2Schema = lazyZodSchema(() => z.enum([
   'machine',
 ]));
 export type PluginActionScopeV2 = z.infer<typeof PluginActionScopeV2Schema>;
-
-/**
- * Tool invocation is intentionally a smaller, independent surface grammar.
- * Adding an Action-only surface must never silently make it available to Tools.
- */
-export const PluginToolSurfaceV2Schema = lazyZodSchema(() => z.enum(['cli', 'mcp', 'agent']));
-export type PluginToolSurfaceV2 = z.infer<typeof PluginToolSurfaceV2Schema>;
 
 /**
  * One contributed Action has one explicit execution realm. The client tuple
@@ -252,11 +245,6 @@ const PluginActionInputHintsSchemasV2 = createActionInputHintsSchemasWithoutOpti
   PluginActionStaticOptionValueV2Schema,
 );
 
-const PluginToolInputHintsSchemasV2 = createActionInputHintsSchemasWithStaticOptionsOnly(
-  PluginLocalizedStringV2Schema,
-  z.string().check(z.trim(), z.minLength(1)),
-);
-
 /** Plugin authors have no arbitrary option-source selector. */
 export const PluginActionInputHintsV2Schema = PluginActionInputHintsSchemasV2.hintsSchema;
 export type PluginActionInputHintsV2 = z.infer<typeof PluginActionInputHintsV2Schema>;
@@ -266,10 +254,6 @@ export type PluginActionInputHintsV2 = z.infer<typeof PluginActionInputHintsV2Sc
  * purpose. Host adapters consume this mapping; field names and request order
  * are never authorization inputs.
  */
-/** Tools cannot request host-resolved Action-form options. */
-export const PluginToolInputHintsV2Schema = PluginToolInputHintsSchemasV2.hintsSchema;
-export type PluginToolInputHintsV2 = z.infer<typeof PluginToolInputHintsV2Schema>;
-
 /** One declaration is traversable when every representable input arm is an object. */
 function declaresTraversableObjectInput(
   inputSchema: PluginJsonSchemaV2 | undefined,
@@ -445,7 +429,8 @@ function widgetMatchesInputLeaf(
   inputLeaf: PluginJsonSchemaV2,
 ): boolean {
   if (field.connectedAccountOptions === true) {
-    return field.widget === 'select' && isExactQualifiedConnectedAccountRefInputLeaf(inputLeaf);
+    // A nullable exact reference lets an optional setup field mean "no Account".
+    return field.widget === 'select' && isExactOrNullableQualifiedConnectedAccountRefInputLeaf(inputLeaf);
   }
   // Typed choices carry schema-admitted JSON, not only the incumbent string dialect.
   // The target's pre-dispatch input admission also enforces the resolved type schema.
@@ -487,7 +472,7 @@ function widgetMatchesInputLeaf(
 }
 
 function resolvePluginLocalizedActionInputText(value: PluginLocalizedStringV2): string {
-  return typeof value === 'string' ? value : value.fallback;
+  return resolvePluginLocalizedStringV2Text(value);
 }
 
 /**
@@ -530,8 +515,6 @@ const PluginActionCliV2Schema = lazyZodSchema(() => z.strictObject({
 }));
 
 export const PluginActionContributionV2Schema = lazyZodSchema(() => z.strictObject({
-readOnly: z.optional(z.union([z.boolean(), InputPredicateSchema])),
-
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   confirmVerb: z.optional(PluginLocalizedStringV2Schema),
@@ -558,7 +541,7 @@ readOnly: z.optional(z.union([z.boolean(), InputPredicateSchema])),
   ).check(z.maxLength(8))),
   resultSchema: z.optional(PluginJsonSchemaV2Schema),
   availability: z.optional(PluginActionAvailabilityV2Schema),
-  hostAccess: z.optional(z.array(z.string().check(z.regex(/^[a-z0-9]+(?:[-/][a-z0-9]+)*$/))).check(z.minLength(1), z.superRefine((values, ctx) => {
+  hostAccess: z.optional(z.array(PluginHostAccessRequestIdV2Schema).check(z.minLength(1), z.superRefine((values, ctx) => {
     const seen = new Set<string>();
     values.forEach((value, index) => {
       if (seen.has(value)) ctx.addIssue({ code: 'custom', path: [index], message: 'Duplicate hostAccess request id.' });
@@ -567,9 +550,9 @@ readOnly: z.optional(z.union([z.boolean(), InputPredicateSchema])),
   }))),
   priority: z.optional(z.number().check(z.int())),
   dangerLevel: PluginActionDangerLevelV2Schema,
+  readOnly: z.optional(z.union([z.boolean(), InputPredicateSchema])),
   confirmation: z.optional(PluginActionConfirmationV2Schema),
   confirmationWhen: z.optional(PluginActionConfirmationWhenV2Schema),
-  metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),
 }).check(z.superRefine((value, ctx) => {
   if (value.operation && value.execution.target !== 'daemon') {
     ctx.addIssue({
@@ -658,6 +641,13 @@ readOnly: z.optional(z.union([z.boolean(), InputPredicateSchema])),
     bindingPurposes.add(binding.purpose);
   });
   const traversableInputSchema = declaresTraversableObjectInput(inputSchema) ? inputSchema : undefined;
+  value.confirmation?.inputFields?.forEach((field, index) => {
+    if (traversableInputSchema && resolveDeclaredInputLeaves(traversableInputSchema, field.path, 'review-field')) return;
+    ctx.addIssue({
+      code: 'custom', path: ['confirmation', 'inputFields', index, 'path'],
+      message: 'Confirmation input fields must resolve to a declared inputSchema leaf.',
+    });
+  });
   if (purposeBindings.length > 0 && !traversableInputSchema) {
     ctx.addIssue({
       code: "custom",
@@ -688,8 +678,11 @@ readOnly: z.optional(z.union([z.boolean(), InputPredicateSchema])),
     return;
   }
   inputHints.fields.forEach((field, index) => {
+    const nativeBinding = field.connectedAccountOptions === true
+      ? purposeBindings.find(binding => binding.path === field.path && binding.nativeServicePath)
+      : undefined;
     const inputLeaves = resolveDeclaredInputLeaves(traversableInputSchema, field.path,
-      field.visibleWhen !== undefined && field.connectedAccountOptions !== true ? 'conditional-field' : 'every-arm');
+      nativeBinding || field.visibleWhen !== undefined && field.connectedAccountOptions !== true ? 'conditional-field' : 'every-arm');
     if (!inputLeaves) {
       ctx.addIssue({
         code: "custom",
@@ -707,28 +700,3 @@ readOnly: z.optional(z.union([z.boolean(), InputPredicateSchema])),
   });
 })));
 export type PluginActionContributionV2 = z.infer<typeof PluginActionContributionV2Schema>;
-
-const PluginToolJsonObjectSchemaV2Schema = lazyZodSchema(() => PluginJsonSchemaV2Schema.check(z.refine((schema) => schema.type === 'object', 'Tool schemas must declare type "object" at the root')));
-
-export const PluginToolContributionV2Schema = lazyZodSchema(() => z.strictObject({
-  id: asProtocolZod(PluginContributionLocalIdSchema),
-  name: z.string().check(z.trim(), z.minLength(1)),
-  title: PluginLocalizedStringV2Schema,
-  description: z.optional(PluginLocalizedStringV2Schema),
-  safety: z._default(ActionSafetySchema, 'safe'),
-  surfaces: z._default(z.array(PluginToolSurfaceV2Schema), []),
-  inputSchema: z.optional(PluginToolJsonObjectSchemaV2Schema),
-  outputSchema: z.optional(PluginToolJsonObjectSchemaV2Schema),
-  inputHints: z.optional(PluginToolInputHintsV2Schema),
-  compatibility: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),
-  examples: z.optional(PluginActionDefinitionExamplesV1Schema),
-  promptSnippet: PluginOptionalStringSchema,
-  promptGuidelines: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
-  action: z.union([
-    z.string().check(z.trim(), z.minLength(1)),
-    z.strictObject({ pluginId: z.string().check(z.trim(), z.minLength(1)), localId: z.string().check(z.trim(), z.minLength(1)) }),
-  ]),
-  availability: z.optional(PluginActionAvailabilityV2Schema),
-  metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),
-}));
-export type PluginToolContributionV2 = z.infer<typeof PluginToolContributionV2Schema>;

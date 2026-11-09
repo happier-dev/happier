@@ -5,7 +5,6 @@ import {
   deriveProviderConnectionSummaryHealthV1,
   normalizeProviderRuntimeStateFileForStartupV1,
   parseProviderRuntimeStateFileV1,
-  PROVIDER_RUNTIME_STATE_LIMITS_V1,
   ProviderCatalogRuntimeStateKeyV1Schema,
   ProviderCatalogRuntimeStateRecordV1Schema,
   ProviderEndpointRuntimeStateKeyV1Schema,
@@ -14,7 +13,6 @@ import {
   ProviderRuntimeStateFileV1Schema,
   serializeProviderCatalogRuntimeStateKeyV1,
   serializeProviderEndpointRuntimeStateKeyV1,
-  serializeProviderInstallationRuntimeStateKeyV1,
   serializeProviderModelLoadRuntimeStateKeyV1,
 } from './v1.js';
 
@@ -47,11 +45,6 @@ function validFile() {
       },
       lastAccessedAt: 11,
     }],
-    installationChecks: [{
-      key: { machineId: 'machine_a', contributionKey: 'plugin.a/local', checkId: 'installed' },
-      state: { status: 'present', observedAt: 10 },
-      lastAccessedAt: 11,
-    }],
     modelLoadStates: [{
       key: {
         machineId: 'machine_a', connectionId: 'pc_a',
@@ -65,6 +58,20 @@ function validFile() {
 }
 
 describe('provider endpoint runtime state', () => {
+  it('reads settled observations from files containing retired installation checks without retaining that cache', () => {
+    const parsed = parseProviderRuntimeStateFileV1({
+      ...validFile(),
+      installationChecks: [{
+        key: { machineId: 'machine_a', contributionKey: 'plugin.a/local', checkId: 'installed' },
+        state: { status: 'present', observedAt: 10 }, lastAccessedAt: 11,
+      }],
+    }, { expectedMachineId: 'machine_a' });
+    expect(parsed.ok).toBe(true);
+    expect(parsed.state.endpointHealth).toHaveLength(1);
+    expect(parsed.state.catalogs).toHaveLength(1);
+    expect(parsed.state).not.toHaveProperty('installationChecks');
+  });
+
   it('retains stored observations with retired annotations while keeping authored files strict', () => {
     const expected = validFile();
     const row = expected.endpointHealth[0];
@@ -100,10 +107,16 @@ describe('provider endpoint runtime state', () => {
     { status: 'unauthorized', activity: 'idle', errorCode: 'provider_endpoint_auth_required', observedAt: 10, retryAt: 20 },
     { status: 'invalid_response', activity: 'idle', errorCode: 'provider_probe_response_invalid', observedAt: 10, retryAt: 20 },
     { status: 'rate_limited', activity: 'idle', errorCode: 'provider_endpoint_rate_limited', observedAt: 10, retryAt: 9 },
-    { status: 'rate_limited', activity: 'idle', errorCode: 'provider_endpoint_rate_limited', observedAt: 10, retryAt: 10 + 24 * 60 * 60 * 1_000 + 1 },
     { status: 'available', activity: 'idle', observedAt: 10, staleAt: 9 },
   ])('rejects an illegal status/error/timing combination: $status', (state) => {
     expect(ProviderEndpointRuntimeStateV1Schema.safeParse(state).success).toBe(false);
+  });
+
+  it('preserves an endpoint Retry-After beyond the former local one-day policy', () => {
+    expect(ProviderEndpointRuntimeStateV1Schema.safeParse({
+      status: 'rate_limited', activity: 'idle', errorCode: 'provider_endpoint_rate_limited',
+      observedAt: 10, retryAt: 10 + 24 * 60 * 60 * 1_000 + 1,
+    }).success).toBe(true);
   });
 
   it('derives connection summaries from exact settled states while activity remains orthogonal', () => {
@@ -120,6 +133,10 @@ describe('provider endpoint runtime state', () => {
     expect(deriveProviderConnectionSummaryHealthV1([available, unreachable])).toBe('partial');
     expect(deriveProviderConnectionSummaryHealthV1([rateLimited])).toBe('needs_attention');
     expect(deriveProviderConnectionSummaryHealthV1([unreachable])).toBe('unreachable');
+    expect(deriveProviderConnectionSummaryHealthV1([parse({
+      status: 'temporarily_unavailable', activity: 'idle',
+      errorCode: 'provider_endpoint_unavailable', observedAt: 10,
+    })])).toBe('needs_attention');
   });
 
   it('makes credential rebinding and rotation produce non-current endpoint and catalog cache identities', () => {
@@ -160,16 +177,7 @@ describe('provider endpoint runtime state', () => {
   });
 
   it('validates the exact array-based file envelope and attached catalog generation', () => {
-    expect(ProviderRuntimeStateFileV1Schema.parse(validFile())).toEqual({
-      ...validFile(),
-      installationChecks: [{
-        ...validFile().installationChecks[0],
-        key: {
-          ...validFile().installationChecks[0].key,
-          contributionKey: 'plugin.a/local',
-        },
-      }],
-    });
+    expect(ProviderRuntimeStateFileV1Schema.parse(validFile())).toEqual(validFile());
     expect(ProviderEndpointRuntimeStateRecordV1Schema.safeParse(validFile().endpointHealth[0]).success).toBe(true);
     expect(ProviderCatalogRuntimeStateRecordV1Schema.safeParse(validFile().catalogs[0]).success).toBe(true);
 
@@ -211,30 +219,13 @@ describe('provider endpoint runtime state', () => {
     expect(crossMachineResult.state).toEqual(createEmptyProviderRuntimeStateFileV1('machine_a'));
   });
 
-  it('preflights raw top-level array counts before parsing any element', () => {
-    const endpointHealth = Array.from(
-      { length: PROVIDER_RUNTIME_STATE_LIMITS_V1.maxEndpointRecords + 1 },
-      () => validFile().endpointHealth[0],
-    );
-    Object.defineProperty(endpointHealth, 0, {
-      get: () => { throw new Error('element parser must not run'); },
-    });
-    const input = { ...validFile(), endpointHealth };
-    const parsed = parseProviderRuntimeStateFileV1(input, { expectedMachineId: 'machine_a' });
-    expect(parsed).toMatchObject({ ok: false, diagnostic: { reason: 'limit_exceeded' } });
-  });
-
-  it('fails future, malformed, and oversized persisted data to an empty replaceable cache', () => {
+  it('fails future and malformed persisted data to an empty replaceable cache', () => {
     expect(parseProviderRuntimeStateFileV1({ ...validFile(), v: 2 }, {
       expectedMachineId: 'machine_a',
     })).toMatchObject({ ok: false, diagnostic: { reason: 'future_version' } });
     expect(parseProviderRuntimeStateFileV1({ nope: true }, {
       expectedMachineId: 'machine_a',
     })).toMatchObject({ ok: false, diagnostic: { reason: 'malformed' } });
-    expect(parseProviderRuntimeStateFileV1(validFile(), {
-      expectedMachineId: 'machine_a',
-      encodedBytes: PROVIDER_RUNTIME_STATE_LIMITS_V1.maxEncodedBytes + 1,
-    })).toMatchObject({ ok: false, diagnostic: { reason: 'encoded_size_exceeded' } });
   });
 
   it('resets only transient checking activity during startup normalization', () => {
@@ -244,13 +235,6 @@ describe('provider endpoint runtime state', () => {
       state: { ...validFile().endpointHealth[0].state, activity: 'idle' },
     });
     expect(normalized.catalogs).toEqual(validFile().catalogs);
-    expect(normalized.installationChecks).toEqual([{
-      ...validFile().installationChecks[0],
-      key: {
-        ...validFile().installationChecks[0].key,
-        contributionKey: 'plugin.a/local',
-      },
-    }]);
     expect(normalized.modelLoadStates).toEqual(validFile().modelLoadStates);
   });
 
@@ -292,9 +276,9 @@ describe('provider endpoint runtime state', () => {
     })).toMatchObject({ ok: false, diagnostic: { reason: 'malformed' } });
   });
 
-  it('enforces the global active-plus-stale catalog identity cap', () => {
+  it('retains catalog identities and attached load observations beyond the former global caps', () => {
     const catalogs = Array.from({ length: 11 }, (_, catalogIndex) => {
-      const remaining = PROVIDER_RUNTIME_STATE_LIMITS_V1.maxCatalogModelIdentities - catalogIndex * 5_000;
+      const remaining = 50_000 - catalogIndex * 5_000;
       const modelCount = Math.min(5_000, Math.max(0, remaining + (catalogIndex === 10 ? 1 : 0)));
       return {
         key: {
@@ -315,12 +299,43 @@ describe('provider endpoint runtime state', () => {
         lastAccessedAt: 11,
       };
     });
-    const file = { ...validFile(), catalogs, modelLoadStates: [] };
+    const modelLoadStates = catalogs.flatMap((record) => record.state.snapshot.models.map((model) => ({
+      key: { machineId: record.key.machineId, connectionId: record.key.connectionId,
+        catalogObservationId: record.state.catalogObservationId, modelId: model.id },
+      loadState: 'loaded', observedAt: 10, lastAccessedAt: 11,
+    })));
+    const file = { ...validFile(), catalogs, modelLoadStates };
     expect(catalogs.reduce((total, record) => total + record.state.snapshot.models.length, 0))
-      .toBe(PROVIDER_RUNTIME_STATE_LIMITS_V1.maxCatalogModelIdentities + 1);
-    expect(parseProviderRuntimeStateFileV1(file, {
-      expectedMachineId: 'machine_a',
-    })).toMatchObject({ ok: false, diagnostic: { reason: 'limit_exceeded' } });
+      .toBe(50_001);
+    const parsed = parseProviderRuntimeStateFileV1(file, { expectedMachineId: 'machine_a' });
+    expect(parsed.ok).toBe(true);
+    expect(parsed.state.catalogs).toHaveLength(catalogs.length);
+    expect(parsed.state.modelLoadStates).toHaveLength(modelLoadStates.length);
+  });
+
+  it('retains independent catalog observations beyond the former catalog row cap', () => {
+    const catalogs = Array.from({ length: 2_049 }, (_unused, index) => ({
+      key: { ...catalogKey, connectionId: `pc_${index}` },
+      state: { snapshot: null, staleProbeModels: [] },
+      lastAccessedAt: 11,
+    }));
+    const parsed = parseProviderRuntimeStateFileV1({
+      ...validFile(), catalogs, modelLoadStates: [],
+    }, { expectedMachineId: 'machine_a' });
+    expect(parsed.ok).toBe(true);
+    expect(parsed.state.catalogs).toHaveLength(catalogs.length);
+  });
+
+  it('retains previous catalog model references beyond the former per-catalog cap', () => {
+    const file = validFile();
+    const staleProbeModels = Array.from({ length: 5_001 }, (_unused, index) => ({ id: `stale-${index}` }));
+    const parsed = parseProviderRuntimeStateFileV1({
+      ...file, modelLoadStates: [], catalogs: [{
+        ...file.catalogs[0], state: { ...file.catalogs[0].state, staleProbeModels },
+      }],
+    }, { expectedMachineId: 'machine_a' });
+    expect(parsed.ok).toBe(true);
+    expect(parsed.state.catalogs[0]?.state.staleProbeModels).toHaveLength(staleProbeModels.length);
   });
 
   it('serializes every semantic key as a collision-safe fixed tuple', () => {
@@ -334,28 +349,9 @@ describe('provider endpoint runtime state', () => {
     expect(JSON.parse(serializeProviderCatalogRuntimeStateKeyV1(catalogKey))).toEqual([
       'machine_a', 'pc_a', 'catalog:v1:a', 'observation-authorization:v1:a',
     ]);
-    expect(JSON.parse(serializeProviderInstallationRuntimeStateKeyV1(
-      validFile().installationChecks[0].key,
-    ))).toEqual(['machine_a', 'plugin.a/local', 'installed']);
     expect(JSON.parse(serializeProviderModelLoadRuntimeStateKeyV1(
       validFile().modelLoadStates[0].key,
     ))).toEqual(['machine_a', 'pc_a', 'observation_a', 'model-a']);
   });
 
-  it('treats repeated canonical Provider contribution keys as one installation identity', () => {
-    const firstKey = validFile().installationChecks[0].key;
-    const repeatedKey = { ...firstKey, contributionKey: 'plugin.a/local' };
-    expect(serializeProviderInstallationRuntimeStateKeyV1(firstKey)).toBe(
-      serializeProviderInstallationRuntimeStateKeyV1(repeatedKey),
-    );
-
-    const duplicate = structuredClone(validFile());
-    duplicate.installationChecks.push({
-      ...structuredClone(duplicate.installationChecks[0]!),
-      key: repeatedKey,
-    });
-    expect(parseProviderRuntimeStateFileV1(duplicate, {
-      expectedMachineId: 'machine_a',
-    })).toMatchObject({ ok: false, diagnostic: { reason: 'duplicate_key' } });
-  });
 });

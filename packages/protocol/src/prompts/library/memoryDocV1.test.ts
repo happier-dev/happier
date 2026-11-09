@@ -71,22 +71,29 @@ describe('memory document content', () => {
       { ...body, topics: [...body.topics, { title: 'detail', summary: 'Details', facts: [fact('new')] }] },
       { ...body, topics: [...body.topics, { title: 'archive', summary: 'Duplicate title', facts: [] }] },
       { ...body, index: [fact('new')], topics: [{ title: 'detail', summary: 'Not\none line', facts: [] }] },
-    ]) expect(MemoryDocBodyV1Schema.safeParse(invalid).success).toBe(false);
+    ]) {
+      expect(MemoryDocBodyV1Schema.safeParse(invalid).success).toBe(false);
+      expect(MemoryDocBodyV1StoredSchema.safeParse(invalid).success).toBe(false);
+    }
     expect(MemoryDocBodyV1Schema.parse({ v: 1, index: [fact('large', 'x'.repeat(100_000))], topics: [] }).index[0]?.text.length).toBe(100_000);
     expect(MemoryDocBodyV1StoredSchema.parse({ ...body, future: true, index: [{ ...body.index[0], future: true }] })).toEqual(body);
   });
 
-  it('normalizes retained flat and index-only stored documents without accepting malformed known fields', () => {
-    const legacy = { v: 1, facts: [fact('key')], archive: [fact('old')], future: true };
-    expect(MemoryDocBodyV1StoredSchema.parse(legacy)).toMatchObject({ v: 1, index: [fact('key')],
-      topics: [{ title: 'archive', facts: [fact('old')] }] });
-    expect(MemoryDocBodyV1StoredSchema.parse({ v: 1, index: [fact('key')] })).toEqual({ v: 1, index: [fact('key')], topics: [] });
-    expect(MemoryDocBodyV1StoredSchema.parse({ v: 1, facts: [fact('key')], archive: [] })).toEqual({ v: 1, index: [fact('key')], topics: [] });
+  it('requires the current topic-based stored document shape', () => {
+    for (const obsolete of [
+      { v: 1, facts: [fact('key')], archive: [fact('old')], future: true },
+      { v: 1, facts: [fact('key')], archive: [] },
+      { v: 1, index: [fact('key')] },
+    ]) expect(MemoryDocBodyV1StoredSchema.safeParse(obsolete).success).toBe(false);
+    const body = { v: 1, index: [fact('key')], topics: [] };
+    expect(MemoryDocBodyV1StoredSchema.parse({ ...body, future: true, facts: [], archive: [] })).toEqual(body);
+  });
+
+  it('rejects malformed known stored fields even beside obsolete flat fields', () => {
     expect(MemoryDocBodyV1StoredSchema.safeParse({ v: 1, index: [fact('key')], topics: 'broken' }).success).toBe(false);
-    // A legacy-looking suffix must not turn a malformed current document into an empty index.
     expect(MemoryDocBodyV1StoredSchema.safeParse({ v: 1, index: [fact('key')], topics: 'broken', facts: [], archive: [] }).success).toBe(false);
     expect(MemoryDocBodyV1StoredSchema.safeParse({ v: 1, index: 'broken', facts: [], archive: [] }).success).toBe(false);
-    expect(MemoryDocBodyV1Schema.safeParse(legacy).success).toBe(false);
+    expect(MemoryDocBodyV1Schema.safeParse({ v: 1, facts: [], archive: [] }).success).toBe(false);
   });
 
   it('budgets whole index facts and topic summaries without loading detail, archive or expired fact text', () => {

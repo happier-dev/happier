@@ -1,5 +1,3 @@
-import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
-  DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from './deploymentArtifactKindsV1.js';
 import { describe, expect, it } from 'vitest';
 import { prepareArtifactHeaderForBodyV1, prepareArtifactHeaderForRevisionV1 } from './artifactHeaderRestorationV1.js';
 import { buildWidgetSurfaceArtifactIdV1, buildWidgetSurfaceArtifactHeaderV1 } from '../widgets/widgetSurfaceArtifactV1.js';
@@ -7,9 +5,12 @@ import { buildWorkBoardArtifactHeaderV1 } from '../boards/workBoardArtifactV1.js
 import { createWorkBoardV1 } from '../boards/workBoardV1.js';
 import { WidgetInstanceV1Schema } from '../widgets/widgetInstanceV1.js';
 import { WidgetDefinitionV1Schema } from '../widgets/widgetDefinitionV1.js';
+import { MemoryDocBodyV1Schema } from '../prompts/library/memoryDocV1.js';
 import { ArtifactDocumentV1Schema, projectArtifactHeaderV1 } from './artifactActionsV1.js';
 import { ArtifactHtmlBundleV1Schema, ARTIFACT_HTML_BUNDLE_MIME_V1 } from './artifactHtmlV1.js';
 import { withArtifactExcerptV1 } from './artifactExcerptV1.js';
+import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
+  DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from './deploymentArtifactKindsV1.js';
 
 import {
   filterArtifactSharingResourcesByKindV1,
@@ -28,10 +29,18 @@ const artifact = {
   },
 };
 describe('Document sharing kind owner', () => {
-  it('keeps deployment intent and native receipts out of ordinary public and people sharing', () => {
+  it('opens a released Bot template in its recipient owner while keeping drafts private and generic', () => {
+    const header = { v: 1, kind: 'bot_template.v1', state: 'released', title: 'Garden', description: 'Garden advice', version: '1.0.0', changelog: '' };
+    expect(getArtifactUseTargetV1({ artifactId: 'template', header, body: null }))
+      .toMatchObject({ kind: 'bot_template', browserListed: false, publicLinkAllowed: false, canShare: false });
+    expect(getArtifactUseTargetV1({ artifactId: 'draft', header: { v: 1, kind: header.kind, state: 'draft', title: 'Garden', description: '' } }))
+      .toMatchObject({ kind: 'open', browserListed: false, publicLinkAllowed: false, canShare: false });
+    expect(getArtifactUseTargetV1({ artifactId: 'malformed', header: { ...header, version: 'broken' } }).kind).toBe('open');
+  });
+  it('keeps deployment content unlisted and private to authenticated grants needed by Source Move', () => {
     for (const kind of [DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1]) {
       expect(getArtifactUseTargetV1({ artifactId: 'deployment-content', header: { kind }, body: '{}' }))
-        .toMatchObject({ browserListed: false, publicLinkAllowed: false, canShare: false });
+        .toMatchObject({ browserListed: false, publicLinkAllowed: false, canShare: true });
     }
   });
   it('reports the saved HTML or definition policy and never opens egress from arbitrary header metadata', () => {
@@ -145,10 +154,10 @@ describe('Document sharing kind owner', () => {
   });
   it('admits memory documents through the document kind owner and refuses malformed facts', () => {
     const resource = { artifactId: 'memory', header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' },
-      body: JSON.stringify({ v: 1, facts: [], archive: [] }) };
+      body: JSON.stringify(MemoryDocBodyV1Schema.parse({ v: 1, index: [], topics: [] })) };
     expect(artifactKindRequiresTextBodyV1('memory_doc.v1')).toBe(true);
     expect(getArtifactUseTargetV1(resource)).toMatchObject({ kind: 'memory', canShare: true, publicLinkAllowed: true, browserListed: true });
-    expect(getArtifactUseTargetV1({ ...resource, body: JSON.stringify({ v: 1, facts: [{ text: 'no identity' }], archive: [] }) })).toMatchObject({ canShare: false, publicLinkAllowed: false });
+    expect(getArtifactUseTargetV1({ ...resource, body: JSON.stringify({ v: 1, index: [{ text: 'no identity' }], topics: [] }) })).toMatchObject({ canShare: false, publicLinkAllowed: false });
   });
   it('keeps internal layouts and approvals out of the browser and public links while ordinary documents remain shareable', () => {
     const target = (kind?: string) => getArtifactUseTargetV1({ artifactId: 'doc', header: kind ? { kind } : {} });

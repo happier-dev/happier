@@ -15,6 +15,7 @@ const SelectionReasonSchema = lazyZodSchema(() => z.enum(['selected', 'manual_st
 const ExclusionReasonSchema = lazyZodSchema(() => z.enum([
   'current_active', 'disabled', 'cooldown', 'quota_exhausted', 'capacity_limited',
   'auth_invalid', 'credential_unavailable', 'plan_unavailable', 'validation_blocked', 'policy_wait_until_reset',
+  'quota_probe_deferred', 'quota_evidence_unavailable', 'not_meaningfully_better',
 ]));
 const CandidateSchema = lazyZodSchema(() => z.strictObject({
   profileId: ProfileIdSchema,

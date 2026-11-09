@@ -1,8 +1,9 @@
 import type { FeatureId } from './featureIds.js';
 import type { FeaturesResponse } from '../features.js';
+import { getCanonicalFeatureId, getFeatureAliases } from './catalog.js';
 
 export function resolveServerEnabledBitPath(featureId: FeatureId): readonly string[] {
-  const segments = featureId.split('.').filter(Boolean);
+  const segments = getCanonicalFeatureId(featureId).split('.').filter(Boolean);
   return Object.freeze(['features', ...segments, 'enabled']);
 }
 
@@ -27,6 +28,14 @@ export function tryWriteServerEnabledBitInPlace(
   enabled: boolean,
 ): boolean {
   const path = resolveServerEnabledBitPath(featureId);
+  const written = writeEnabledBitAtPath(response, path, enabled);
+  for (const alias of getFeatureAliases(featureId)) {
+    writeEnabledBitAtPath(response, ['features', ...alias.split('.'), 'enabled'], enabled);
+  }
+  return written;
+}
+
+function writeEnabledBitAtPath(response: FeaturesResponse, path: readonly string[], enabled: boolean): boolean {
   if (path.length === 0) return false;
 
   let cursor: unknown = response as unknown;

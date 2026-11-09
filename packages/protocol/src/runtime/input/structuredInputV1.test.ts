@@ -14,6 +14,8 @@ import {
 import { MAX_COMPOSER_ATTACHMENT_INSTANCES_V1 } from './composerAttachmentV1.js';
 import { SkillMentionV1Schema } from './skillMentionV1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+import { BrowserContextItemV1Schema } from '../../browser/context/v1.js';
+import { buildBrowserContextAnnotationStructuredBlockV2 } from '../../browser/context/annotationStructuredBlock.js';
 
 const validComposerAttachment = {
   v: 1,
@@ -50,11 +52,23 @@ describe('browser context Message admission', () => {
   const payload = { contexts: [context], attachments: [attachment] };
 
   it('consumes UI browser metadata once into the canonical structured envelope', () => {
-    const admitted = sanitizeSessionStructuredInputMeta({
-      happierBrowserContext: { kind: 'browser_context.v1', payload },
+    const { url: _url, title: _title, ...base } = context;
+    const annotation = BrowserContextItemV1Schema.parse({
+      ...base, kind: 'browserAnnotation', annotationId: 'annotation-1', browserSessionId: 'browser-1',
+      imageRef: { mediaId: 'flattened', mediaKind: 'image', width: 100, height: 80, sizeBytes: 10 },
+      marks: { v: 1, image: { width: 100, height: 80, scale: 1 }, marks: [] }, elements: [],
     });
-    expect(admitted).toEqual({ happierStructuredInputV1: { v: 1, browserContext: payload } });
-    expect(sanitizeSessionStructuredInputMeta(admitted)).toEqual(admitted);
+    if (annotation.kind !== 'browserAnnotation') throw new Error('Expected annotation item');
+    const annotatedPayload = { contexts: [annotation], attachments: [{ ...attachment,
+      structuredBlock: buildBrowserContextAnnotationStructuredBlockV2(annotation),
+    }] };
+    for (const selected of [payload, annotatedPayload]) {
+      const admitted = sanitizeSessionStructuredInputMeta({
+        happierBrowserContext: { kind: 'browser_context.v1', payload: selected },
+      });
+      expect(admitted).toEqual({ happierStructuredInputV1: { v: 1, browserContext: selected } });
+      expect(sanitizeSessionStructuredInputMeta(admitted)).toEqual(admitted);
+    }
   });
 
   it('refuses stale, uncorrelated, blocked or inline-byte browser data instead of silently losing it', () => {
@@ -63,11 +77,6 @@ describe('browser context Message admission', () => {
       { ...payload, attachments: [{ ...attachment, contextId: 'another-page' }] },
       { ...payload, contexts: [{ ...context, redactionLevel: 'blocked' }] },
       { ...payload, contexts: [{ ...context, redactionLevel: 'none' }] },
-      { contexts: [{ ...context, redactionLevel: 'none' }, { ...context, contextId: 'group-member' }],
-        attachments: [{ ...attachment, structuredBlock: { v: 1, kind: 'browser.annotation.v1',
-          annotationId: 'annotation-1', sourceViewId: context.sourceViewId, contextIds: ['group-member'],
-          elements: [], regions: [], strokes: [], screenshot: { media: [{ mediaId: 'shot', mediaKind: 'image', width: 1, height: 1, sizeBytes: 1 }] },
-        } }] },
       { ...payload, contexts: [{ ...context, screenshotDataUri: 'data:image/png;base64,secret' }] },
     ]) {
       expect(() => sanitizeSessionStructuredInputMeta({

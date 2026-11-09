@@ -72,10 +72,8 @@ export const DiscussionExternalSourceV1Schema = lazyZodSchema(() => z.strictObje
 export type DiscussionExternalSourceV1 = z.infer<typeof DiscussionExternalSourceV1Schema>;
 
 /**
- * The authored human document. A message must say something: at least one
- * mention, reference, attachment or non-blank text run. Adjacent empty text parts are rejected so
- * two clients cannot produce different bytes for the same visible message and
- * then disagree about request equality.
+ * The authored human document must contain meaningful parts. Adjacent empty text
+ * runs are rejected so clients agree about visible content and retry equality.
  */
 export const DiscussionTextMessageContentV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),

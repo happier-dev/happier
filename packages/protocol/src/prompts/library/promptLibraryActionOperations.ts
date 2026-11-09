@@ -205,9 +205,13 @@ export async function readMemoryDocInLibrary(params: Readonly<{
 
 type MemoryMutationParams = Readonly<{
   store: PromptLibraryArtifactStore; request: MemoryDocMutationTargetV1; signal?: AbortSignal;
+  /** Invocation-local admitted body; deferred invocations acquire their own read. */
+  admittedRead?: MemoryDocMutationReadV1;
 }>;
+export type MemoryDocMutationReadV1 = Awaited<ReturnType<typeof readMemoryArtifact>>;
 async function readReviewedMemory(params: MemoryMutationParams) {
-  const read = await readMemoryArtifact({ store: params.store, artifactId: params.request.ref.artifactId, signal: params.signal });
+  throwIfAborted(params.signal);
+  const read = params.admittedRead ?? await readMemoryArtifact({ store: params.store, artifactId: params.request.ref.artifactId, signal: params.signal });
   const revision = params.request.expectedRevision;
   if (read.artifact.revision.headerVersion !== revision.headerVersion || read.artifact.revision.bodyVersion !== revision.bodyVersion) {
     throw memoryFailure('version_mismatch', { current: memoryVersion(read) });
@@ -222,13 +226,13 @@ function memoryVersion(read: Awaited<ReturnType<typeof readMemoryArtifact>>): Me
 /** One current full read supplies both a newly resolved write basis and its candidate review. */
 export async function readMemoryDocVersionInLibrary(params: Readonly<{
   store: Pick<PromptLibraryArtifactStore, 'read'>; artifactId: string; signal?: AbortSignal;
-}>): Promise<MemoryDocVersionV1> {
-  return memoryVersion(await readMemoryArtifact(params));
+}>): Promise<MemoryDocMutationReadV1> {
+  return readMemoryArtifact(params);
 }
 
 /** Approval and mutation share the same reviewed-version comparison and full admitted body. */
-export async function readReviewedMemoryDocInLibrary(params: MemoryMutationParams): Promise<MemoryDocVersionV1> {
-  return memoryVersion(await readReviewedMemory(params));
+export async function readReviewedMemoryDocInLibrary(params: MemoryMutationParams): Promise<MemoryDocMutationReadV1> {
+  return readReviewedMemory(params);
 }
 
 async function writeMemory(params: MemoryMutationParams, read: Awaited<ReturnType<typeof readReviewedMemory>>, body: MemoryDocBodyV1,
@@ -300,7 +304,7 @@ export async function rememberMemoryFactInLibrary(params: MemoryMutationParams &
     nowMs: (params.nowMs ?? Date.now)(), duplicateChoice: choice });
   if (review) return review;
   if (choice && choice.kind !== 'keep_both') {
-    return updateMemoryFactInLibrary({ ...params, request: { ...params.request, factId: choice.factId,
+    return updateMemoryFactInLibrary({ ...params, admittedRead: read, request: { ...params.request, factId: choice.factId,
       duplicateChoice: choice }, });
   }
   const fact = authorMemoryFact(params, params.request);
@@ -330,7 +334,7 @@ export async function updateMemoryFactInLibrary(params: MemoryMutationParams & M
       nowMs: (params.nowMs ?? Date.now)(), duplicateChoice: request.duplicateChoice });
     if (review) return review;
     if (request.duplicateChoice && request.duplicateChoice.kind !== 'keep_both') {
-      return updateMemoryFactInLibrary({ ...params,
+      return updateMemoryFactInLibrary({ ...params, admittedRead: read,
         ...(original.decision ? { decision: original.decision } : {}),
         request: { ref: request.ref, expectedRevision: request.expectedRevision, factId: request.duplicateChoice.factId,
           text: original.text, expiresAtMs: original.expiresAtMs ?? null, topic: request.restoreTopic,
@@ -568,7 +572,6 @@ export async function listPromptLibrary(params: Readonly<{
   if (folderRead.status !== 'ready') {
     return { items: [], coverage: 'unavailable' };
   }
-  const personal = folderRead.value.artifactHeadersById;
   let cursor: string | undefined;
   do {
     // The Artifact API admits pages of at most 500 rows. This is a transport
@@ -592,7 +595,7 @@ export async function listPromptLibrary(params: Readonly<{
       const header = parsed.data;
       let organization;
       try {
-        organization = resolveArtifactOrganizationHeaderV1({ artifactId: artifact.id, artifactHeadersById: personal,
+        organization = resolveArtifactOrganizationHeaderV1({ artifactId: artifact.id, organization: folderRead.value,
           header: artifact.header, owned: artifact.owned === true });
       } catch { coverage = 'partial'; continue; }
       if (query && ![header.title, ...(organization.tags ?? [])].some((value) => value.toLocaleLowerCase().includes(query))) continue;

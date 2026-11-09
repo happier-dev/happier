@@ -38,10 +38,10 @@ const mutations = [
 ] as const;
 
 describe('SCM Action parity', () => {
-  it.each(['scm.status.snapshot', 'scm.remote.pull', 'scm.pullRequest.get'] as const)('routes %s to its admitted Session without borrowing another Machine or default Session', async actionId => {
+  it.each(['scm.status.snapshot', 'scm.remote.pull', 'scm.pullRequest.get', 'scm.suggestion.apply'] as const)('routes %s to its admitted Session without borrowing another Machine or default Session', async actionId => {
     type Deps = import('./executor/types.js').ActionExecutorDeps;
     const calls: unknown[] = [];
-    const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'scm.remote.pull': ['cli'] } });
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'scm.remote.pull': ['cli'], 'scm.suggestion.apply': ['cli'] } });
     const executor = createActionExecutor({
       // Session resolution and SCM dispatch are authenticated transport boundaries.
       resolveSessionReference: async () => ({ kind: 'unique', address: { serverId: 'target-home', sessionId: 'bound-session' } }),
@@ -56,6 +56,8 @@ describe('SCM Action parity', () => {
     } as unknown as Deps);
     const input = { sessionId: { selector: 'self' as const, of: 'bound-reference' }, cwd: '/authored/path',
       ...(actionId === 'scm.remote.pull' ? { remote: 'origin', branch: 'topic' }
+        : actionId === 'scm.suggestion.apply' ? { suggestions: [{ path: 'file.ts', commitOid: 'a'.repeat(40),
+          startLine: 1, endLine: 1, originalLines: ['old'], replacement: 'new', outdated: false }] }
         : actionId === 'scm.pullRequest.get' ? { prReference: { url: 'https://github.com/acme/widgets/pull/12' } } : {}) };
     const spec = getActionSpec(actionId);
     expect(await executor.execute(actionId, input, {
@@ -67,6 +69,17 @@ describe('SCM Action parity', () => {
       sessionId: 'bound-session', machineId: undefined, machine: undefined, runMachine: undefined }]);
     expect(spec.sessionTarget).toEqual({ field: 'sessionId', cardinality: 'one' });
     expect(spec.inputSchema.safeParse(input).success).toBe(true);
+  });
+
+  it('asks agents before a suggestion edit while admitting the person’s direct UI click', () => {
+    const actionId = 'scm.suggestion.apply';
+    const spec = getActionSpec(actionId);
+    expect(resolveActionApprovalRouting({ actionId, spec,
+      context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(true);
+    const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
+    expect(resolveActionApprovalRouting({ actionId, spec, context }).required).toBe(false);
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } });
+    expect(resolveActionApprovalRouting({ actionId, spec, context, settings }).required).toBe(true);
   });
 
   it('rejects a multi-Session pull before SCM effects and preserves an omitted Session operand', async () => {

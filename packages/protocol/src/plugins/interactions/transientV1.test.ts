@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { McpServerCatalogEntryV1Schema } from '../../mcp/servers/settingsV1.js';
 import { parseMcpToolWireNameV1 } from '../../mcp/servers/tools/mcpToolIdentityV1.js';
 import { createTransientInteractionOwner } from './owner.js';
+import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
+import { AccountReleasePluginSourceCustodyV1Schema } from '../runtime/sourceCustody.js';
 import {
   InteractionTransientAuthorRequestV1Schema,
   InteractionTransientRequestV1Schema,
@@ -34,6 +36,25 @@ const appScopeStamp = {
 } as const;
 
 describe('transient interaction contract', () => {
+  it('retains production Account-release custody through confirmation and refuses its retired occurrence', async () => {
+    const custody = AccountReleasePluginSourceCustodyV1Schema.parse({ kind: 'account_release',
+      pluginId: 'happier.triage', version: '0.0.0', archiveDigestSha256: `sha256:${'a'.repeat(64)}` });
+    const occurrenceId = createCanonicalJsonSigningInput(custody);
+    const requester = { ...appScopeStamp.requester, occurrenceId, invocationId: `ui-action:${occurrenceId}` };
+    let currentOccurrence = occurrenceId;
+    const owner = createTransientInteractionOwner({ scope: { kind: 'app' }, deadlineMs: null,
+      isOccurrenceCurrent: () => currentOccurrence === occurrenceId,
+      present: async request => ({ requestId: request.requestId, kind: 'confirmation', status: 'approved' }),
+    });
+    const request = { kind: 'confirmation', title: 'Continue?', message: 'Continue?' } as const;
+    expect(normalizeInteractionTransientRequestV1(request, { ...appScopeStamp, requester })).toMatchObject({
+      ok: true, value: { requester },
+    });
+    expect(await owner.request(request, { requester })).toMatchObject({ status: 'approved' });
+    currentOccurrence = 'replacement-occurrence';
+    expect(await owner.request(request, { requester })).toMatchObject({ status: 'occurrenceRetired' });
+    expect(owner.current()).toEqual([]);
+  });
   it('preserves a native tool identity while keeping interaction custody host-owned', () => {
     const normalized = normalizeInteractionTransientRequestV1({ kind: 'approval', title: 'Run command?',
       subject: { kind: 'tool', toolCallId: 'exec-native-command', name: 'Bash', input: { command: 'pwd' } },
@@ -280,7 +301,7 @@ describe('transient interaction contract', () => {
     });
   });
 
-  it('keeps approval tool names nonempty, Unicode-valid and closed while retaining short custody and question identifiers', () => {
+  it('keeps approval tool names nonempty, Unicode-valid and closed while retaining short request and question identifiers', () => {
     const author = {
       kind: 'approval', title: 'Run tool?', subject: { kind: 'tool', name: 'Bash', input: {} },
     } as const;
@@ -293,12 +314,19 @@ describe('transient interaction contract', () => {
       ...author, subject: { ...author.subject, unexpected: true },
     }, stamp)).toEqual({ ok: false, code: 'invalid_interaction_request' });
     const longId = 'i'.repeat(129);
-    for (const invalidStamp of [
-      { ...stamp, requestId: longId },
-      { ...stamp, requester: { ...stamp.requester, occurrenceId: longId } },
-      { ...stamp, requester: { ...stamp.requester, invocationId: longId } },
+    expect(normalizeInteractionTransientRequestV1(author, { ...stamp, requestId: longId })).toEqual({
+      ok: false, code: 'invalid_interaction_request',
+    });
+    for (const invalidRequester of [
+      { ...stamp.requester, occurrenceId: 'i'.repeat(513) },
+      { ...stamp.requester, occurrenceId: '\ud800' },
+      { ...stamp.requester, invocationId: '' },
+      { ...stamp.requester, invocationId: '\ud800' },
+      { ...stamp.requester, invocationId: 'i'.repeat(MAX_INTERACTION_TRANSIENT_JSON_BYTES_V1) },
     ]) {
-      expect(normalizeInteractionTransientRequestV1(author, invalidStamp)).toEqual({ ok: false, code: 'invalid_interaction_request' });
+      expect(normalizeInteractionTransientRequestV1(author, { ...stamp, requester: invalidRequester })).toEqual({
+        ok: false, code: 'invalid_interaction_request',
+      });
     }
     expect(normalizeInteractionTransientRequestV1({
       kind: 'questions', questions: [{ id: longId, prompt: 'Why?', type: 'text' }],

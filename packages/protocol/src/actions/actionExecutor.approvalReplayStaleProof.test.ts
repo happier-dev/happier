@@ -7,7 +7,7 @@ const sessionSpawnInput = {
   creationKey: 'manual:stale-directory-proof-1',
   executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
   directory: { kind: 'path', path: '/workspace/project' },
-  organizationPlacement: { folderId: null, tagIds: [] },
+  organizationPlacement: { sectionId: null, tagIds: [] },
   agentTarget: {
     kind: 'agent',
     identity: { pluginId: 'happier.agent.codex', localId: 'codex' },

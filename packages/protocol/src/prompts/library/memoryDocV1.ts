@@ -1,5 +1,5 @@
 import * as z from 'zod/mini';
-import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { CoordinationMessageRefV1Schema } from '../../discussions/references.js';
 import type { PromptDocArtifactRefV1 } from './promptArtifactRefsV1.js';
 
@@ -41,21 +41,6 @@ export const MemoryDocBodyV1Schema = z.strictObject({
     && facts.every(fact => fact.supersedes === undefined || (fact.supersedes !== fact.id && archived.has(fact.supersedes)));
 }, { message: 'Topic titles and fact ids must be unique and supersedes must name an archived fact' }));
 export type MemoryDocBodyV1 = z.infer<typeof MemoryDocBodyV1Schema>;
-const retainedBody = z.union([
-  z.strictObject({ v: z.literal(1), index: z.array(MemoryFactV1Schema), topics: z.optional(z.array(MemoryTopicV1Schema)) }),
-  z.strictObject({ v: z.literal(1), facts: z.array(MemoryFactV1Schema), archive: z.array(MemoryFactV1Schema),
-    // Known current fields cannot be dropped by the legacy arm after current admission fails.
-    index: z.optional(z.never()), topics: z.optional(z.never()),
-  }).check(z.refine(body => !Object.hasOwn(body, 'index') && !Object.hasOwn(body, 'topics'))),
-]);
-defineStoredReadProjection(MemoryDocBodyV1Schema, () => z.pipe(
-  z.pipe(createStoredReadSchema(retainedBody),
-    z.transform((body: z.infer<typeof retainedBody>) => 'facts' in body
-      ? { v: body.v, index: body.facts, topics: body.archive.length ? [{ title: MEMORY_ARCHIVE_TOPIC_TITLE_V1,
-        summary: MEMORY_ARCHIVE_TOPIC_SUMMARY_V1, facts: body.archive }] : [] }
-      : { v: body.v, index: body.index, topics: body.topics ?? [] })),
-  MemoryDocBodyV1Schema,
-));
 export const MemoryDocBodyV1StoredSchema = createStoredReadSchema(MemoryDocBodyV1Schema);
 export const MemoryDocIndexV1Schema = z.strictObject({
   v: z.literal(1), index: z.array(MemoryFactV1Schema), topics: z.array(MemoryTopicSummaryV1Schema),

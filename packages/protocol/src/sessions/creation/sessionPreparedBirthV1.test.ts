@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { commitPreparedSessionBirthV1 } from './sessionPreparedBirthV1.js';
+import { buildSessionHostOnboardingInputV1, commitPreparedSessionBirthV1, readSessionHostOnboardingPresentationV1 } from './sessionPreparedBirthV1.js';
 
 describe('ordinary prepared Session birth', () => {
+  it('carries the first-task display facts separately from the hidden onboarding prompt', () => {
+    const prepared = buildSessionHostOnboardingInputV1({ templateName: 'Helper', templateVersion: '1.0.0', authorDisplayName: 'Ana', firstTask: 'Review my change' });
+    expect(prepared).toMatchObject({ meta: { happierHostOnboardingV1: {
+      v: 1, templateName: 'Helper', templateVersion: '1.0.0', authorDisplayName: 'Ana', firstTask: 'Review my change',
+    } } });
+    expect(readSessionHostOnboardingPresentationV1(prepared.meta)).toEqual(prepared.meta.happierHostOnboardingV1);
+    expect(readSessionHostOnboardingPresentationV1({ happierHostOnboardingV1: { ...prepared.meta.happierHostOnboardingV1,
+      futureDisplayField: true } })).toEqual(prepared.meta.happierHostOnboardingV1);
+    expect(readSessionHostOnboardingPresentationV1({})).toBeNull();
+    expect(readSessionHostOnboardingPresentationV1({ happierHostOnboardingV1: { v: 1, firstTask: 'Unattributed' } })).toBeNull();
+  });
   it('admits deferred input only after content settles, and retains the row on content failure', async () => {
     const state = { content: false, input: false, launched: false };
     let release!: () => void;

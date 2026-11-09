@@ -4,9 +4,49 @@ import {
   AGENT_SESSION_RUNTIME_EVENT_KINDS_V1,
   type AgentSessionRuntimeEventV1,
 } from '../../runtime/agentSessionV1.js';
-import { PluginEventContributionV1Schema } from './events.js';
+import { PluginEventContributionV1Schema, readAutomationEligibleEventContributionV1 } from './events.js';
 
 describe('plugin event contributions', () => {
+  it('reads only the declared eligible Event with its exact source contract', () => {
+    const event = PluginEventContributionV1Schema.parse({ id: 'changed', kind: 'event', title: 'Changed',
+      payloadSchema: { type: 'object' }, automation: { v: 1, eligible: true, source: {
+        sourceContractVersion: 2, supportedObservationTransports: ['checkpointedPull'],
+        sourceConfigSchema: { type: 'object' },
+        setupActionRef: { pluginId: 'com.acme.events', localId: 'setup' },
+      } } });
+    const read = (events: readonly typeof event[], sourceContractVersion?: number) =>
+      readAutomationEligibleEventContributionV1({ events, eventLocalId: 'changed', sourceContractVersion });
+    expect(read([event], 2)).toEqual(event);
+    expect(read([event])).toEqual(event);
+    expect(read([event], 1)).toBeNull();
+    expect(read([])).toBeNull();
+    expect(read([PluginEventContributionV1Schema.parse({ id: 'changed', kind: 'event', title: 'Changed' })])).toBeNull();
+    expect(read([PluginEventContributionV1Schema.parse({ id: 'changed', kind: 'subscription',
+      target: { kind: 'plugin', event: { pluginId: 'com.acme.events', localId: 'other' } } })])).toBeNull();
+  });
+
+  it('requires the declared webhook contribution exactly when durable push is supported', () => {
+    const source = {
+      sourceContractVersion: 1,
+      supportedObservationTransports: ['checkpointedPull', 'durablePush'],
+      webhookContributionRef: { pluginId: 'com.acme.events', localId: 'delivery' },
+      sourceConfigSchema: { type: 'object', additionalProperties: false },
+      setupActionRef: { pluginId: 'com.acme.events', localId: 'setup' },
+    };
+    const parse = (changes: Record<string, unknown> = {}) => PluginEventContributionV1Schema.safeParse({
+      id: 'changed', kind: 'event', title: 'Changed', payloadSchema: { type: 'object' },
+      automation: { v: 1, eligible: true, source: { ...source, ...changes } },
+    });
+    expect(parse().success).toBe(true);
+    for (const changes of [
+      { webhookContributionRef: undefined },
+      { supportedObservationTransports: ['checkpointedPull'] },
+      // Routing identity is carried by the existing observation transport,
+      // not by an unrecognized source-config transfer declaration.
+      { webhookEndpointSourceConfigPath: 'delivery.endpointId' },
+    ]) expect(parse(changes).success).toBe(false);
+  });
+
   it('reserves every canonical agent runtime event id from plugin publication', () => {
     const exhaustive: Exclude<
       AgentSessionRuntimeEventV1['kind'],

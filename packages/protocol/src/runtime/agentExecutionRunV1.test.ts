@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 as LIMITS } from './agentSessionLimitsV1.js';
 import { AgentExecutionRunEventV1Schema } from './agentExecutionRunV1.js';
 
 describe('AgentExecutionRunEventV1Schema', () => {
@@ -37,22 +36,12 @@ describe('AgentExecutionRunEventV1Schema', () => {
     }).success).toBe(false);
   });
 
-  it('uses the canonical aggregate event bound without truncating a valid finite report', () => {
-    expect(AgentExecutionRunEventV1Schema.safeParse({
-      sequence: 1,
-      runId: 'run-long-report',
-      emittedAtMs: 2,
-      kind: 'output-delta',
-      channel: 'assistant',
-      text: 'x'.repeat((64 * 1_024) + 1),
-    }).success).toBe(true);
-    expect(AgentExecutionRunEventV1Schema.safeParse({
-      sequence: 1,
-      runId: 'run-oversized-report',
-      emittedAtMs: 2,
-      kind: 'output-delta',
-      channel: 'assistant',
-      text: 'x'.repeat(LIMITS.p0MeasuredCandidates.eventMaxJsonBytes),
-    }).success).toBe(false);
+  it('preserves complete finite output beyond the former aggregate candidate ceiling', () => {
+    const base = { sequence: 1, runId: 'run-long-report', emittedAtMs: 2,
+      channel: 'assistant', messageId: 'message-1', text: 'é'.repeat(1_250_001) };
+    for (const kind of ['output-delta', 'output-message-committed']) {
+      const event = { ...base, kind };
+      expect(AgentExecutionRunEventV1Schema.parse(event)).toEqual(event);
+    }
   });
 });

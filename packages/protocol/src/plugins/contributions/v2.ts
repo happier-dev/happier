@@ -81,6 +81,7 @@ import {
 } from '../requestInterceptors/v1.js';
 import {
   PluginSettingsContributionV2Schema,
+  PluginSettingFieldIdV2Schema,
 } from './settings.js';
 import {
   PluginExecutionRunProfileContributionV2Schema,
@@ -635,6 +636,9 @@ const PluginAgentDisplayV2Shape = {
   metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),
   connectedAccounts: z.optional(ConnectedAccountPurposeDeclarationsV1Schema),
   providerRequirements: z.optional(AgentProviderRequirementsV1Schema),
+  accountSettings: z.optional(z.strictObject({
+    settingLocalIds: z.array(PluginSettingFieldIdV2Schema).check(z.minLength(1)),
+  })),
   availability: z.optional(PluginAvailabilityDescriptorV2Schema),
   surfaces: z.optional(z.strictObject({
     externalSession: z.strictObject({

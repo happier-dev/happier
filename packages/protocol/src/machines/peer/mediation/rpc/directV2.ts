@@ -5,7 +5,6 @@ import { SignedDirectRouteGrantV2Schema } from '../directRouteGrantV2.js';
 import { PeerRouteEphemeralProofV2Schema } from '../ephemeralPeerRouteProofV2.js';
 import { DirectPeerRouteKindV1Schema } from '../routeKind.js';
 import { PEER_MEDIATION_RECEIPTS } from '../receipts.js';
-import { PeerMachineRpcCommandReceiptRequestV1Schema, PeerMachineRpcCommandReceiptSuccessV1Schema } from './commandReceiptV1.js';
 import { PeerMachineRpcDirectFallbackReasonCodeV1Schema } from './directV1.js';
 
 export const PEER_MACHINE_RPC_DIRECT_PATH_V2 = '/peer-mediation/v2/rpc' as const;
@@ -20,7 +19,6 @@ export const PeerMachineRpcDirectRequestV2Schema = lazyZodSchema(() => z.strictO
   routeKind: DirectPeerRouteKindV1Schema,
   flowKind: z.literal('machine_rpc'),
   endpointFingerprint: z.string().check(z.minLength(1)),
-  commandReceipt: z.optional(PeerMachineRpcCommandReceiptRequestV1Schema),
 }));
 
 export const PeerMachineRpcDirectResponseV2Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
@@ -32,7 +30,6 @@ export const PeerMachineRpcDirectResponseV2Schema = lazyZodSchema(() => z.discri
     method: z.string().check(z.minLength(1)),
     routeKind: DirectPeerRouteKindV1Schema,
     result: z.unknown(),
-    commandReceipt: z.optional(PeerMachineRpcCommandReceiptSuccessV1Schema),
   }),
   z.strictObject({
     v: z.literal(2),

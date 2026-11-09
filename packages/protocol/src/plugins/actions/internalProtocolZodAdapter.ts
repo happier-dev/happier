@@ -63,8 +63,12 @@ export function asProtocolZod<TInput, TOutput>(
     const createAdapter = (safeParse: (value: unknown) => ProtocolSchemaSafeParseResult<TOutput>, projectJsonSchema: () => object) => {
       // A native transform alone advertises optional input. The custom input
       // boundary retains requiredness; only the final transform can refuse.
+      // An absent field reaches this bridge as undefined from every object option a parent union
+      // tries. Its outcome is a fixed fact of this immutable definition; deciding it per row
+      // allocated a strict-JSON refusal and a validation error each time.
+      let absent: ProtocolSchemaSafeParseResult<TOutput> | undefined;
       const adapter = mini.pipe(mini.custom<TInput>(), mini.transform<TInput, TOutput>((value, context) => {
-        const parsed = safeParse(value);
+        const parsed = value === undefined ? absent ??= safeParse(undefined) : safeParse(value);
         if (parsed.success) return parsed.data;
         context.issues.push({
           code: 'custom',

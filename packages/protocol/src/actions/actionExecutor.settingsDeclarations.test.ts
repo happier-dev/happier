@@ -68,9 +68,13 @@ describe('declared settings Actions', () => {
       expect(input).toEqual({ anchor: 'voiceAdvanced.modelPackInstall', input: { kind: 'model_pack', packId: 'stt-small', machineId: 'machine-a' } });
       return { anchor: 'voiceAdvanced.modelPackInstall', status: 'completed', value: { packId: 'stt-small', installed: true } };
     } } as unknown as ActionExecutorDeps);
+    const input = { anchor: 'voiceAdvanced.modelPackInstall', input: { kind: 'model_pack', packId: 'stt-small', machineId: 'machine-a' } };
+    expect(await executor.execute('settings.invoke', input, { surface: 'agent', actionsSettings }))
+      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    const waived = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'settings.invoke': ['agent'] } });
     expect(await executor.execute('settings.invoke', {
       anchor: 'voiceAdvanced.modelPackInstall', input: { kind: 'model_pack', packId: 'stt-small', machineId: 'machine-a' },
-    }, { surface: 'agent', actionsSettings })).toEqual({ ok: true, result: {
+    }, { surface: 'agent', actionsSettings: waived })).toEqual({ ok: true, result: {
       anchor: 'voiceAdvanced.modelPackInstall', status: 'completed', value: { packId: 'stt-small', installed: true },
     } });
     expect(await executor.execute('settings.invoke', { anchor: 'voiceAdvanced.modelPackInstall',
@@ -83,7 +87,7 @@ describe('declared settings Actions', () => {
       readable: true, writable: true, sensitive: false, storageScope: 'local' }];
     // The UI host is the process boundary; Protocol retains real admission and result validation.
     const deps = { settingsDeclarationAction: async ({ actionId }: { actionId: string }) => (
-      actionId === 'settings.list' ? { items } : actionId === 'settings.invoke' ? { anchor: 'appearance.density', status: 'interaction_opened' } : { anchor: 'appearance.density', value: 'compact' }
+      actionId === 'settings.list' ? { items } : actionId === 'settings.invoke' ? { anchor: 'appearance.personalize', status: 'interaction_opened' } : { anchor: 'appearance.density', value: 'compact' }
     ) } as unknown as ActionExecutorDeps;
     const executor = createActionExecutor(deps);
     expect(await executor.execute('settings.list' as ActionId, {}, { surface: 'agent', actionsSettings }))
@@ -96,8 +100,12 @@ describe('declared settings Actions', () => {
       surface: 'ui', actionsSettings, authority: 'present_user', presentUserConfirmation: { actionId: 'settings.set' },
     }))
       .toEqual({ ok: true, result: { anchor: 'appearance.density', value: 'compact' } });
-    expect(await executor.execute('settings.invoke' as ActionId, { anchor: 'appearance.density' }, { surface: 'agent', actionsSettings }))
-      .toEqual({ ok: true, result: { anchor: 'appearance.density', status: 'interaction_opened' } });
+    expect(await executor.execute('settings.invoke', { anchor: 'appearance.personalize' }, { surface: 'agent', actionsSettings }))
+      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    expect(await executor.execute('settings.invoke', { anchor: 'appearance.personalize' }, {
+      surface: 'ui', authority: 'present_user', actionsSettings,
+      presentUserConfirmation: { actionId: 'settings.invoke' },
+    })).toEqual({ ok: true, result: { anchor: 'appearance.personalize', status: 'interaction_opened' } });
     for (const id of ['settings.list', 'settings.get', 'settings.set']) {
       expect(getActionSpec(id as ActionId).surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: true });
     }

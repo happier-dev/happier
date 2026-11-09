@@ -231,6 +231,7 @@ describe('provider account usage protocol', () => {
         const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
         const sealed = accountUsageModule.sealProviderAccountUsageSnapshot({ material, snapshot,
             randomBytes: length => new Uint8Array(length).fill(3) });
+        expect(sealed).toHaveProperty('refreshErrorAt', diagnostics[0].observedAtMs);
         const opened = accountUsageModule.openSealedProviderAccountUsageSnapshot({ material, sealed });
         expect(opened).not.toBeNull();
         for (const value of [snapshot, opened!]) {

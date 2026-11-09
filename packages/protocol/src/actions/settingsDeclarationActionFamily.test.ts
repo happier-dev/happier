@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SETTINGS_DECLARATION_ACTION_IDS_V1, SettingsDeclarationActionInputSchemasV1 } from './settingsDeclarationActionFamily.js';
-import { getActionSpec } from './actionSpecs.js';
+import { getActionSpec, resolveActionExecutionPlacementForInput } from './actionSpecs.js';
 import { normalizeSessionListFilterV1 } from '../sessions/listFilter/sessionListFilterV1.js';
 
 describe('collection space intent admission', () => {
@@ -72,6 +72,15 @@ describe('Settings history purge operation admission', () => {
 });
 
 describe('explicit Settings resource target admission', () => {
+  it.each(['settings.get', 'settings.set', 'settings.reset'] as const)('routes %s for a mounted Public profile draft to its client while retaining ordinary Account placement', actionId => {
+    const input = SettingsDeclarationActionInputSchemasV1[actionId].parse({ anchor: 'appearance.atmosphereSource',
+      ...(actionId === 'settings.set' ? { value: 'none' } : {}) });
+    const spec = getActionSpec(actionId);
+    expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('account');
+    expect(resolveActionExecutionPlacementForInput(spec, { ...input,
+      target: { kind: 'public_profile_draft', serverId: 'home-1' } })).toBe('client');
+  });
+
   it('admits exact Home, Team and connection addresses and rejects caller authority fields', () => {
     for (const target of [
       { kind: 'home', serverId: 'home-1' },

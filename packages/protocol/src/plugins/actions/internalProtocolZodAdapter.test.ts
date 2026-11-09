@@ -4,12 +4,13 @@ import * as mini from 'zod/mini';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 import { compileActionInputJsonSchema } from '../../actions/actionInputJsonSchemaValidation.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { LaunchProfileIdV2ProtocolSchema } from '../../profiles/v2/profileId.js';
 import { PluginContributionIdentityV1Schema } from '../contributionIdentity.js';
 import { asProtocolZod, projectZodProtocolSchema } from './internalProtocolZodAdapter.js';
-import { createProtocolStoredReadSchema, defineProtocolArray, defineProtocolJsonValue, defineProtocolObject, defineProtocolString, defineProtocolUnion, defineProtocolUniqueArray } from './protocolComposableSchema.js';
-
 import * as strictJson from '../contributions/strictJsonValue.js';
+import type { ProtocolJsonValue } from './protocolComposableSchema.js';
+import { createProtocolStoredReadSchema, defineProtocolArray, defineProtocolJsonValue, defineProtocolObject, defineProtocolString, defineProtocolUnion, defineProtocolUniqueArray } from './protocolComposableSchema.js';
 
 describe('the private neutral-schema bridge for Mini parents', () => {
   it('composes and parses projected native schemas without constructing JSON documents', () => {
@@ -24,6 +25,71 @@ describe('the private neutral-schema bridge for Mini parents', () => {
     } finally {
       clones.mockRestore();
     }
+  });
+
+  it('projects native readonly annotations without widening the portable schema vocabulary', () => {
+    const projected = projectZodProtocolSchema(mini.strictObject({
+      value: mini.readonly(mini.strictObject({ id: mini.string().check(mini.minLength(1)) })),
+    }));
+    const parent = defineProtocolObject({ payload: projected }, { policy: 'closed' });
+    const value = { payload: { value: { id: 'accepted' } } };
+    expect(parent.parse(value)).toEqual(value);
+    const validate = compileActionInputJsonSchema(parent.jsonSchema);
+    expect(validate(value)).toBe(true);
+    expect(validate({ payload: { value: { id: 7 } } })).toBe(false);
+  });
+
+  it('keeps recursive native references rooted through objects, arrays, unions and nullable composition', () => {
+    type Tree = { id: string; children?: Tree[] };
+    const tree: mini.ZodMiniType<Tree> = mini.lazy(() => mini.strictObject({
+      id: mini.string().check(mini.minLength(1)), children: mini.optional(mini.array(tree)),
+    }));
+    const projected = projectZodProtocolSchema(tree);
+    const value = { id: 'root', children: [{ id: 'leaf' }] };
+    const nullable = projected.nullable();
+    const schema = defineProtocolObject({
+      'tree/~': projected,
+      rows: defineProtocolArray(projected),
+      unique: defineProtocolUniqueArray(projected),
+      choice: defineProtocolUnion([projected, defineProtocolString()]),
+      nullable,
+      extras: defineProtocolObject({}, { policy: 'additive-open/preserve', additionalProperties: projected }),
+    }, { policy: 'closed' });
+    const input = { 'tree/~': value, rows: [value], unique: [value], choice: value, nullable: value, extras: { first: value } };
+    expect(schema.parse(input)).toEqual(input);
+    const validate = compileActionInputJsonSchema(schema.jsonSchema);
+    expect(validate(input)).toBe(true);
+    expect(validate({ ...input, 'tree/~': { id: 'root', children: [{ id: 7 }] } })).toBe(false);
+    expect(compileActionInputJsonSchema(nullable.jsonSchema)(null)).toBe(true);
+    expect(compileActionInputJsonSchema(nullable.jsonSchema)(value)).toBe(true);
+    const nativeParent = mini.strictObject({ payload: asProtocolZod(projected) });
+    expect(nativeParent.parse({ payload: value })).toEqual({ payload: value });
+    const nativeValidate = compileActionInputJsonSchema(zodSchemaToJsonSchemaObject(nativeParent, { target: 'draft-7' }));
+    expect(nativeValidate({ payload: value })).toBe(true);
+    expect(nativeValidate({ payload: { id: 'root', children: [{ id: 7 }] } })).toBe(false);
+  });
+
+  it('projects incumbent Mini validation and derived JSON into neutral feature compositions', () => {
+    let constructions = 0;
+    const canonical = lazyZodSchema(() => {
+      constructions += 1;
+      return mini.strictObject({ id: mini.string().check(mini.trim(), mini.minLength(1)) });
+    });
+    const projected = projectZodProtocolSchema(canonical);
+    expect(constructions).toBe(0);
+    const parent = defineProtocolObject({ target: projected }, { policy: 'closed' });
+    expect(parent.parse({ target: { id: ' value ' } })).toEqual({ target: { id: 'value' } });
+    expectTypeOf(projected.parse({ id: 'value' })).toMatchTypeOf<ProtocolJsonValue>();
+    expect(constructions).toBe(1);
+    expect(parent.safeParse({ target: { id: ' ', extra: true } }).success).toBe(false);
+    const rejected = projected.safeParse({ id: 7 });
+    if (rejected.success) throw new Error('The canonical field remains strict');
+    expect(rejected.error.issues[0]?.path).toEqual(['id']);
+    expect(projected.optional().parse(undefined)).toBeUndefined();
+    expect(projected.nullable().parse(null)).toBeNull();
+    const validate = compileActionInputJsonSchema(parent.jsonSchema);
+    expect(validate({ target: { id: 'value' } })).toBe(true);
+    expect(validate({ target: { id: 'value', extra: true } })).toBe(false);
   });
 
   it('returns a native Mini schema that composes in a Mini parent', () => {
@@ -240,5 +306,26 @@ describe('the private neutral-schema bridge for Mini parents', () => {
     const validate = compileActionInputJsonSchema(json);
     expect(validate({ payload: retained })).toBe(true);
     expect(validate({ payload: { selection: { id: 'x' }, typed: {} } })).toBe(false);
+  });
+});
+
+describe('absent-field admission cost', () => {
+  it.each(['input', 'stored'] as const)('decides an absent non-optional neutral field once per adapter (%s)', (reader) => {
+    const inner = defineProtocolString();
+    let undefinedProbes = 0;
+    const counted = { jsonSchema: inner.jsonSchema, parse: inner.parse, optional: inner.optional, nullable: inner.nullable,
+      safeParse: (value: unknown) => { if (value === undefined) undefinedProbes += 1; return inner.safeParse(value); } };
+    // A union tries the first object option on every row; its absent field reaches the bridge as undefined.
+    const native = mini.union([
+      mini.object({ kind: mini.literal('a'), value: asProtocolZod(counted) }),
+      mini.object({ kind: mini.literal('b') }),
+    ]);
+    const schema = reader === 'stored' ? createStoredReadSchema(native) : native;
+    for (let index = 0; index < 50; index += 1) {
+      expect(schema.safeParse({ kind: 'b' }).success).toBe(true);
+      expect(schema.safeParse({ kind: 'a' }).success).toBe(false);
+    }
+    expect(schema.safeParse({ kind: 'a', value: 'x' }).success).toBe(true);
+    expect(undefinedProbes).toBeLessThanOrEqual(1);
   });
 });

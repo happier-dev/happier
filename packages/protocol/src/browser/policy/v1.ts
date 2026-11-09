@@ -76,7 +76,7 @@ export const BrowserTargetPolicyDecisionV1Schema = z.strictObject({
     profileMode: z.optional(BrowserProfileStorageModeV1Schema),
     origin: z.optional(BrowserHttpOriginV1Schema),
     security: z.optional(BrowserOriginSecuritySummaryV1Schema),
-    permissions: z._default(z.optional(BrowserTargetPermissionPolicyV1Schema), DEFAULT_BROWSER_TARGET_PERMISSION_POLICY_V1),
+    permissions: z.optional(BrowserTargetPermissionPolicyV1Schema),
     disabledReasons: z.optional(z.array(z.string().check(z.trim(), z.minLength(1), z.maxLength(256)))),
   }).check(z.superRefine((decision, context) => {
     if (decision.state !== 'allowed' && decision.reasonCode == null) {

@@ -5,6 +5,7 @@ import type { CapabilitySupport } from '../../providers/capabilities/v1.js';
 import { ACCOUNT_SETTING_DEFINITIONS, type AccountSettings } from '../../account/settings/accountSettings.js';
 import type { SettingDomainValueV1 } from './settingsOwnerActions.js';
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
+import { ConnectedServiceBindingsV2Schema } from '../../connect/connectedServiceBindings.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -95,26 +96,36 @@ function resolveModelOverride(
     if (!catalogId) return null;
     const selector = decodeScmDiffSummaryModelOverride(catalogId);
     const canonicalId = selector ? encodeScmDiffSummaryModelOverride(selector) : catalogId;
-    return catalogProfiles.find((profile) => profile.catalogId === canonicalId) ?? null;
+    // Catalog evidence describes the model; credential intent stays with the stored choice.
+    const catalogModelId = selector ? encodeScmDiffSummaryModelOverride({ ...selector, connectedServices: undefined }) : canonicalId;
+    const profile = catalogProfiles.find((profile) => profile.catalogId === canonicalId || profile.catalogId === catalogModelId);
+    return profile ? { ...profile, ...(selector ? { modelSelector: selector } : {}) } : null;
 }
 
 const MODEL_SELECTOR_PREFIX = 'model:';
-const StoredModelSelectionSchema = createStoredReadSchema(ProviderBoundModelRefSchema);
+const StoredModelSelectionSchema = createStoredReadSchema(z.intersection(ProviderBoundModelRefSchema,
+    z.object({ connectedServices: z.optional(z.nullable(ConnectedServiceBindingsV2Schema)) })));
 
 /** The existing string preference carries the canonical selector, never a display label. */
 export function encodeScmDiffSummaryModelOverride(selector: ScmDiffSummaryModelSelector): string {
     const parsed = ScmDiffSummaryModelSelectorSchema.parse(selector);
-    const selection = ProviderBoundModelRefSchema.parse({ agentTargetKey: parsed.backendTargetKey,
+    const selection = parsed.modelSelection ?? ProviderBoundModelRefSchema.parse({ agentTargetKey: parsed.backendTargetKey,
         providerConnectionId: null, modelId: parsed.modelId ?? 'default' });
-    return `${MODEL_SELECTOR_PREFIX}${JSON.stringify(selection)}`;
+    return `${MODEL_SELECTOR_PREFIX}${JSON.stringify({ ...selection,
+        ...(parsed.connectedServices !== undefined && (parsed.connectedServices !== null || selection.providerConnectionId !== null)
+            ? { connectedServices: parsed.connectedServices } : {}) })}`;
 }
 
 export function decodeScmDiffSummaryModelOverride(value: string): ScmDiffSummaryModelSelector | null {
     if (!value.startsWith(MODEL_SELECTOR_PREFIX)) return null;
     try {
         const selection = StoredModelSelectionSchema.parse(JSON.parse(value.slice(MODEL_SELECTOR_PREFIX.length)));
-        if (selection.providerConnectionId !== null) return null;
-        return { backendTargetKey: selection.agentTargetKey, modelId: selection.modelId };
+        const { connectedServices, ...modelSelection } = selection;
+        return { backendTargetKey: selection.agentTargetKey, modelId: selection.modelId, modelSelection,
+            // The retained native picker value is explicit own sign-in. Null is
+            // the existing run contract for native auth without Account defaults.
+            ...(connectedServices !== undefined ? { connectedServices }
+                : selection.providerConnectionId === null ? { connectedServices: null } : {}) };
     }
     catch { return null; }
 }

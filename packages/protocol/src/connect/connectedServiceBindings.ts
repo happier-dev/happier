@@ -7,6 +7,8 @@ import {
 } from '../plugins/contributionIdentity.js';
 import {
     BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
+    type BuiltInLegacyConnectedAccountOperation,
+    type BuiltInLegacyConnectedServiceId,
 } from './generatedBuiltInLegacyConnectedAccountCompatibility.js';
 import { QualifiedConnectedAccountRefSchema } from './qualifiedConnectedAccountPersistence.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -22,6 +24,30 @@ export const ConnectedServiceIdSchema = lazyZodSchema(() => z.enum([
 ]));
 
 export type ConnectedServiceId = z.infer<typeof ConnectedServiceIdSchema>;
+
+export type QualifiedConnectedAccountLegacyPeerClass =
+    | "exact_v0_2_1"
+    | "revisioned_v2_v3";
+
+/** The generated released-peer projection is the sole operation authority. */
+export function isBuiltInLegacyConnectedAccountPeerOperationSupported(
+    params: Readonly<{
+        serviceId: string;
+        peerClass: QualifiedConnectedAccountLegacyPeerClass;
+        operation: BuiltInLegacyConnectedAccountOperation;
+    }>,
+): boolean {
+    const compatibility =
+        BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
+            params.serviceId as BuiltInLegacyConnectedServiceId
+        ];
+    if (!compatibility) return false;
+    const operations: readonly BuiltInLegacyConnectedAccountOperation[] =
+        params.peerClass === "exact_v0_2_1"
+            ? compatibility.peerOperations.exactV0_2_1
+            : compatibility.peerOperations.revisionedV2V3;
+    return operations.includes(params.operation);
+}
 
 /** Exact qualified identity key for a current Connected Account service. */
 export const ConnectedAccountServiceKeySchema = lazyZodSchema(() => z
@@ -76,6 +102,7 @@ const ConnectedServiceGroupBindingV1Schema = lazyZodSchema(() => z.looseObject({
         selection: z.literal('group'),
         groupId: ConnectedServiceAuthGroupIdSchema,
         profileId: z.optional(ConnectedServiceProfileIdSchema),
+        appliedProfileId: z.optional(ConnectedServiceProfileIdSchema),
     }));
 
 export const ConnectedServiceBindingSelectionV1Schema = lazyZodSchema(() => z.union([
@@ -90,7 +117,6 @@ export const TeamResourceBrokeredConnectedServiceSelectionV2Schema = lazyZodSche
     source: z.literal('team_resource'),
     resourceId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
     deliveryMode: z.literal('brokered'),
-    disclosedMember: z.optional(z.never()),
 }));
 
 export const TeamResourceDirectConnectedServiceSelectionV2Schema = lazyZodSchema(() => z.strictObject({
@@ -119,8 +145,8 @@ export function teamResourceConnectedServiceSelectionKey(binding: TeamResourceCo
     return JSON.stringify([
         binding.resourceId,
         binding.deliveryMode,
-        binding.disclosedMember ? buildQualifiedPluginContributionKey(binding.disclosedMember.service) : null,
-        binding.disclosedMember?.accountId ?? null,
+        binding.deliveryMode === 'direct' ? buildQualifiedPluginContributionKey(binding.disclosedMember.service) : null,
+        binding.deliveryMode === 'direct' ? binding.disclosedMember.accountId : null,
     ]);
 }
 

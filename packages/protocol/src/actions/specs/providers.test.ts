@@ -51,6 +51,21 @@ describe('Provider Action placement declarations', () => {
     ]));
     expect(rows[0]).toMatchObject({ path: 'modelId' });
   });
+  it('rejects the retired Team confirmation subject while retaining personal confirmation', () => {
+    const spec = PROVIDER_ACTION_SPECS_V1.find(spec => spec.id === 'providers.models.experimental.confirm')!;
+    const input = { action: 'confirmExperimental', machineId: 'custodian-machine', connectionId: 'gateway',
+      expectedConnectionRevision: 4, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model',
+      compatibilityFingerprint: 'compatibility:v1:reviewed', subject: { kind: 'team_resource',
+        teamId: 'team', resourceId: 'resource', expectedRevision: 2, sourceRevision: 'source-current',
+        deliveryMode: 'vendor-native', application: { agentTargetKey: 'agent:happier.agent.codex/codex',
+          implementationIdentity: { pluginId: 'acme.gateway', localId: 'gateway' },
+          endpointTemplateId: 'responses', protocol: 'openai-responses' } } };
+    expect(spec.inputSchema.safeParse(input).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ ...input, machineId: undefined }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ ...input, subject: { ...input.subject, arbitrary: true } }).success).toBe(false);
+    const { subject: _subject, machineId: _machine, ...personal } = input;
+    expect(spec.inputSchema.parse(personal)).toEqual(personal);
+  });
   it('retains strict typed refusals in observations without disclosing private Provider payloads', () => {
     const spec = PROVIDER_ACTION_SPECS_V1.find(spec => spec.id === 'providers.probe')!;
     const error = createProviderErrorV1('provider_endpoint_rate_limited', {

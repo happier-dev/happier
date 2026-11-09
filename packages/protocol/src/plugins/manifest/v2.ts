@@ -5,7 +5,7 @@ import semver from 'semver';
 import { PluginEnginesV2Schema } from './engines.js';
 export { PluginEnginesV2Schema, type PluginEnginesV2 } from './engines.js';
 
-import { PluginOptionalStringSchema } from '../_shared.js';
+import { PluginHostAccessRequestIdV2Schema, PluginOptionalStringSchema } from '../_shared.js';
 import { CanonicalHttpOriginSchema } from '../../http/canonicalHttpOrigin.js';
 import { CanonicalPluginNetworkHostSuffixSchema } from '../networkHostSuffix.js';
 import { PluginContributesV2Schema, isDynamicPluginResourceContributionV2 } from '../contributions/v2.js';
@@ -36,7 +36,7 @@ const PluginRuntimeAgentFactoryV1Schema = lazyZodSchema(() => z.strictObject({
   loadMode: z.literal('immutable-js'),
 }));
 export const PluginRuntimeV2Schema = lazyZodSchema(() => z.strictObject({
-  apiVersion: z.literal(PLUGIN_RUNTIME_API_VERSION),
+  apiVersion: z._default(z.literal(PLUGIN_RUNTIME_API_VERSION), PLUGIN_RUNTIME_API_VERSION),
   /** Publisher-validated factories in this exact packaged runtime. */
   agentFactories: z.optional(z.array(PluginRuntimeAgentFactoryV1Schema).check(z.superRefine((factories, ctx) => {
     const ids = new Set<string>();
@@ -113,7 +113,7 @@ function uniqueNonEmptyArray<T extends z.ZodMiniType>(schema: T): z.ZodMiniArray
   return uniqueArray(schema).check(z.minLength(1));
 }
 const PluginHostAccessCommonV2Schema = lazyZodSchema(() => z.object({
-  id: z.string().check(z.trim(), z.minLength(1)),
+  id: PluginHostAccessRequestIdV2Schema,
   reason: PluginLocalizedStringV2Schema,
 }));
 const PluginConnectedAccountsHostAccessScopeV2Schema = lazyZodSchema(() => z.strictObject({
@@ -346,7 +346,7 @@ function createPluginManifestV2Schema() {
   displayName: PluginLocalizedStringV2Schema,
   description: z.optional(PluginLocalizedStringV2Schema),
   engines: PluginEnginesV2Schema,
-  runtime: PluginRuntimeV2Schema,
+  runtime: z._default(PluginRuntimeV2Schema, { apiVersion: PLUGIN_RUNTIME_API_VERSION }),
   entrypoints: z.optional(PluginEntrypointsV2Schema),
   brand: z.optional(PluginBrandV2Schema),
   executionTarget: z.optional(PluginExecutionTargetV2Schema),

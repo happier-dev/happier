@@ -27,7 +27,7 @@ export function recordPresentUserApprovalV1(args: Readonly<{
 // Confirmation belongs to one invocation. Weak membership retains no completed operation or timer.
 const consumedConfirmations = new WeakSet<object>();
 
-/** Consume the host's completed confirmation only after exact normalized operation admission. */
+/** Consume the host's completed confirmation for this exact normalized invocation. */
 export function admitPresentUserConfirmationV1(actionId: ActionId, input: unknown,
   context: ActionExecutorContext): NonNullable<ActionExecutorContext['presentUserApproval']> | null {
   const confirmation = context.presentUserConfirmation;
@@ -37,14 +37,11 @@ export function admitPresentUserConfirmationV1(actionId: ActionId, input: unknow
     || !isPresentUserHostInvocation({ ...context, externalActionExecutionAuthorization: undefined })
     || context.actionCaller?.kind !== 'host'
     || context.externalActionCredential || context.rpcSessionAuthorization
-    || binding && (!('authentication' in binding) || binding.authentication.kind !== 'account'
+    || binding && (!('authentication' in binding) || !(binding.authentication.kind === 'account'
+        || binding.authentication.kind === 'terminal' && context.surface === 'cli')
       || binding.sessionActionOrigin || binding.workflowActionOrigin
       || binding.accountId !== context.runtimeAccountId || binding.requestId !== context.actionRequestId
-      || binding.actionId !== actionId || !sameStrictJsonValue(binding.target, context.externalActionTarget)
-      // The existing request/operation owner admits or rejoins a carried
-      // confirmation before this consumer can honor it. Do not duplicate its
-      // request identity or receipt checks here.
-      || context.operationAcceptance?.actionId !== actionId)
+      || binding.actionId !== actionId || !sameStrictJsonValue(binding.target, context.externalActionTarget))
     || !context.runtimeAccountId || !context.actionRequestId
     || confirmation.accountId !== context.runtimeAccountId || confirmation.requestId !== context.actionRequestId
     || confirmation.serverId !== (context.serverIdentityId ?? context.serverId)

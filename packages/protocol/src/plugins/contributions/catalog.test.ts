@@ -10,6 +10,7 @@ import { defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV
 
 import {
   assertPluginProjectionFamilyIdsV2,
+  derivePluginAccountExecutionArtifactSlots,
   derivePluginClientContributionRegistrationRights,
   derivePluginContributionRegistrationRights,
   derivePluginDaemonContributionRegistrationRights,
@@ -72,6 +73,20 @@ describe('plugin contribution catalog', () => {
     expect(PluginContributesV2Schema.safeParse({ deploymentTargets: [target], resources,
       actions: actions.map(action => ({ ...action, inputSchema: closed })) }).success).toBe(false);
   });
+  it('extracts Account Collection migration artifact references only for declared migrations', () => {
+    const entry = PLUGIN_CONTRIBUTION_CATALOG_V2.find((candidate) => candidate.manifestKey === 'accountCollections')!;
+    const migrationArtifact = { artifactId: 'channel-state-migrations', exportName: 'collectionMigrations' };
+    expect(entry.extractReferences({
+      id: 'channels', migrations: [{ id: 'upgrade', fromSchemaVersion: 1, toSchemaVersion: 2 }], migrationArtifact,
+    })).toEqual([{
+      targetFamily: 'generated.uiArtifacts', reference: 'channel-state-migrations',
+      path: ['migrationArtifact', 'artifactId'],
+    }]);
+    expect(entry.extractReferences({ id: 'channels', migrations: [], migrationArtifact })).toEqual([]);
+    expect(entry.extractReferences({ id: 'channels', migrationArtifact })).toEqual([]);
+    expect(entry.extractReferences({ id: 'channels', migrations: [] })).toEqual([]);
+  });
+
   it('extracts portable Action artifact references only from their declared execution target', () => {
     const entry = PLUGIN_CONTRIBUTION_CATALOG_V2.find((candidate) => candidate.manifestKey === 'actions')!;
     expect(entry.extractReferences({ execution: {
@@ -102,6 +117,37 @@ describe('plugin contribution catalog', () => {
     expect(derivePluginClientContributionRegistrationRights(contributes, {
       artifactId: 'account-runtime', exportName: 'activateAccount', platform: 'web',
     })).toEqual([]);
+  });
+  it('projects distinct Account artifact slots for Actions, Resources and authentication without borrowing native or client rights', () => {
+    const closed = { type: 'object', properties: {}, additionalProperties: false };
+    const action = { title: 'Read', scopes: ['global'], surfaces: ['plugin'], dangerLevel: 'safe', readOnly: true,
+      inputSchema: closed, resultSchema: closed };
+    const authentication = { defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual',
+      outcomeReconciliation: 'none', fields: [] }] };
+    const contributes = PluginContributesV2Schema.parse({
+      actions: [
+        { ...action, id: 'shared', execution: { target: 'account', account: { artifactId: 'account-action', exportName: 'activateAction' } } },
+        { ...action, id: 'native', execution: { target: 'daemon' } },
+        { ...action, id: 'client', execution: { target: 'client', platforms: ['web'],
+          client: { artifactId: 'client-action', exportName: 'activateClient' } } },
+      ],
+      resources: [{ id: 'shared', source: 'dynamic', scope: 'global', kind: 'config', contentType: 'application/json',
+        execution: { target: 'account', account: { artifactId: 'account-resource', exportName: 'activateResource' } } }],
+      connectedAccountDescriptors: [
+        { id: 'shared', title: 'Portable authentication', authentication: { ...authentication,
+          account: { artifactId: 'account-authentication', exportName: 'activateAuthentication' } } },
+        { id: 'native', title: 'Native authentication', authentication },
+      ],
+    });
+    const slots = derivePluginAccountExecutionArtifactSlots(contributes);
+    expect(slots.map(({ contributionId, registrationRight }) => ({ contributionId, target: registrationRight.target }))
+      .sort((left, right) => left.contributionId.localeCompare(right.contributionId))).toEqual([
+      { contributionId: 'connectedAccountDescriptors/shared', target: { realm: 'account', artifactId: 'account-authentication', exportName: 'activateAuthentication' } },
+      { contributionId: 'resources/shared', target: { realm: 'account', artifactId: 'account-resource', exportName: 'activateResource' } },
+      { contributionId: 'shared', target: { realm: 'account', artifactId: 'account-action', exportName: 'activateAction' } },
+    ]);
+    expect(slots.find(slot => slot.contributionId === 'connectedAccountDescriptors/shared')
+      ?.registrationRight.connectedAccountDescriptorDeclaration).toEqual(contributes.connectedAccountDescriptors?.[0]);
   });
   it('admits one machine provisioner declaration and references its same-plugin daemon roles', () => {
     const roles = ['check', 'options', 'acquire', 'bootstrap', 'inspect', 'destroy', 'exec', 'put-file'];
@@ -255,7 +301,7 @@ describe('plugin contribution catalog', () => {
         mcp: { policy: 'pass_through' as const },
         permissionModeMapping: {
           default: null,
-          'safe-yolo': 'smart',
+          'safe-yolo': ['preferred', 'legacy'],
         },
         permissionModeArgv: {
           flag: '--approval-mode',
@@ -269,6 +315,18 @@ describe('plugin contribution catalog', () => {
 
     expect(PluginAgentRuntimeAcpV2Schema.parse(declarativeRuntime))
       .toEqual(declarativeRuntime);
+    for (const candidates of [[], ['']]) {
+      expect(PluginAgentRuntimeAcpV2Schema.safeParse({
+        ...declarativeRuntime,
+        definition: { ...declarativeRuntime.definition, permissionModeMapping: { 'safe-yolo': candidates } },
+      }).success).toBe(false);
+    }
+    expect(PluginAgentRuntimeAcpV2Schema.safeParse({
+      ...declarativeRuntime,
+      definition: { ...declarativeRuntime.definition,
+        permissionModeArgv: { flag: '--approval-mode', map: { 'safe-yolo': ['preferred', 'legacy'] } },
+      },
+    }).success).toBe(false);
     expect(PluginAgentRuntimeAcpV2Schema.safeParse({
       ...declarativeRuntime,
       definition: {
@@ -282,7 +340,7 @@ describe('plugin contribution catalog', () => {
     }).success).toBe(false);
   });
 
-  it('keeps the shared ACP permission map as a direct reference in both raw Manifest dialects', () => {
+  it('keeps launch-time ACP permission values scalar in both raw Manifest dialects', () => {
     for (const target of ['draft-7', 'draft-2020-12'] as const) {
       const raw = z.toJSONSchema(PluginManifestV2Schema, { io: 'input', target, unrepresentable: 'any' });
       const definitions = raw.$defs ?? raw.definitions ?? {};
@@ -292,8 +350,9 @@ describe('plugin contribution catalog', () => {
         && schema.properties?.map !== undefined
         && schema.required?.includes('flag')
         && schema.required.includes('map'));
-      expect(permissionModeArgv?.properties?.map).toEqual({
-        $ref: expect.stringMatching(target === 'draft-7' ? /^#\/definitions\// : /^#\/\$defs\//),
+      expect(permissionModeArgv?.properties?.map).toMatchObject({
+        type: 'object', additionalProperties: false,
+        properties: { 'safe-yolo': { anyOf: [{ type: 'string' }, { type: 'null' }] } },
       });
     }
   });
@@ -307,6 +366,7 @@ describe('plugin contribution catalog', () => {
       'ui.renderers',
       'ui.settingsGroups',
       'ui.settingsPages',
+      'ui.listExtensions',
       'ui.translations',
       'mcp.servers',
       'mcp.discoverySources',
@@ -326,7 +386,6 @@ describe('plugin contribution catalog', () => {
       expect(entry.runtimeRegistrationHost).toEqual(expect.any(Function));
       expect(entry.runtimeRegistrationFamily).toEqual(expect.any(Function));
       expect(entry.registrationHost === null).toBe(entry.allowedRuntimeRegistration === null);
-      expect(entry.canonicalize).toEqual(expect.any(Function));
       expect(entry.merge).toEqual(expect.any(Function));
       expect(entry.conflictKey).toEqual(expect.any(Function));
       expect(entry.projectIntrospection).toEqual(expect.any(Function));
@@ -409,9 +468,7 @@ describe('plugin contribution catalog', () => {
   });
 
   it('owns action references and keeps model providers delegated from Agents', () => {
-    expect(PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'commands')?.references)
-      .toContainEqual(expect.objectContaining({ field: 'action', targetFamily: 'actions' }));
-    expect(PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'tools')?.references)
+    expect(PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'browserActions')?.references)
       .toContainEqual(expect.objectContaining({ field: 'action', targetFamily: 'actions' }));
     expect(PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'providers')).toEqual(
       expect.objectContaining({ activationDemand: 'conditional', allowedRuntimeRegistration: 'providers' }),
@@ -618,13 +675,13 @@ describe('plugin contribution catalog', () => {
         family: 'providers',
         localId: 'managed',
         target: { realm: 'daemon' },
-        providerArms: { managedRuntime: true, catalogParserIds: [] },
+        providerArms: { managedRuntime: true, catalogParserIds: [], usageParserIds: [], requestCostParser: false },
       },
       {
         family: 'providers',
         localId: 'contributed-format',
         target: { realm: 'daemon' },
-        providerArms: { managedRuntime: false, catalogParserIds: ['acme-catalog-v3'] },
+        providerArms: { managedRuntime: false, catalogParserIds: ['acme-catalog-v3'], usageParserIds: [], requestCostParser: false },
       },
     ]);
 
@@ -644,6 +701,8 @@ describe('plugin contribution catalog', () => {
       providerArms: {
         managedRuntime: true,
         catalogParserIds: ['acme-catalog-v3', 'acme-command-v1'],
+        usageParserIds: [],
+        requestCostParser: false,
       },
     }]);
 
@@ -877,6 +936,12 @@ describe('plugin contribution catalog', () => {
     ]);
     expect(entry('settings').extractReferences({ target: { kind: 'agent', agent: { pluginId: 'com.acme.agent', localId: 'agent' } } })).toEqual([
       { targetFamily: 'agents', reference: { pluginId: 'com.acme.agent', localId: 'agent' }, path: ['target', 'agent'] },
+    ]);
+    expect(entry('notifications').extractReferences({ buttons: [
+      { id: 'open', label: 'Open', effect: { kind: 'open', page: { pageId: 'reviews', subPath: 'one' } } },
+      { id: 'default', label: 'Default', effect: { kind: 'open' } },
+    ] })).toEqual([
+      { targetFamily: 'ui.views', reference: 'reviews', path: ['buttons', 0, 'effect', 'page', 'pageId'] },
     ]);
     expect(entry('mcp.servers').extractReferences({
       transport: { kind: 'stdio', executable: { kind: 'managedDependency', id: 'acme-cli' } },

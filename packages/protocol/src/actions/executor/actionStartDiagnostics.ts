@@ -1,5 +1,5 @@
 import type { ActionExecutorContext } from './types.js';
-import type { WorkflowTargetUnavailableReasonV1, WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1.js';
+import type { WorkflowTargetUnavailableReasonV1 } from '../../workflows/workflowProgressV1.js';
 
 /** Host-only phases of the existing Session Action invocation; no input/content is captured. */
 export type ActionStartPhaseV1 =
@@ -23,7 +23,10 @@ export async function measureActionStartPhaseV1<T>(context: ActionExecutorContex
 }
 
 export function actionStartTargetUnavailableV1(context: ActionExecutorContext | undefined,
-  phase: ActionStartPhaseV1, reason: WorkflowTargetUnavailableReasonV1): Extract<WorkflowActionFailureV1, { errorCode: 'target_unavailable' }> {
+  phase: ActionStartPhaseV1, reason: WorkflowTargetUnavailableReasonV1): Readonly<{
+    ok: false; errorCode: 'target_unavailable'; error: 'target_unavailable';
+    details: Readonly<{ code: 'target_unavailable'; reason: WorkflowTargetUnavailableReasonV1 }>;
+  }> {
   context?.recordActionStartDiagnostic?.({ phase, refusalReason: reason });
   return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
     details: { code: 'target_unavailable', reason } };

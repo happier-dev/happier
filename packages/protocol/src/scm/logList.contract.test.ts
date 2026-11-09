@@ -18,6 +18,22 @@ import {
  * - every shape shipped before this expansion must keep parsing unchanged.
  */
 describe('ScmLogList wire contract with bounded commit query', () => {
+    it('admits only exact immutable range endpoints and preserves explicit completeness evidence', () => {
+        const revisionRange = { kind: 'revisionRange', baseOid: 'a'.repeat(40), headOid: 'b'.repeat(64) };
+        expect(ScmLogListRequestSchema.parse({ cwd: '/repo', revisionRange }).revisionRange).toEqual(revisionRange);
+        for (const invalid of [
+            { ...revisionRange, baseOid: 'HEAD' },
+            { ...revisionRange, headOid: 'b'.repeat(41) },
+            { ...revisionRange, repository: '/other' },
+        ]) expect(ScmLogListRequestSchema.safeParse({ cwd: '/repo', revisionRange: invalid }).success).toBe(false);
+        for (const selector of [{ query: '[skip ci]' }, { range: 'incoming' }]) {
+            expect(ScmLogListRequestSchema.safeParse({ cwd: '/repo', revisionRange, ...selector }).success).toBe(false);
+        }
+        const evidence = { ...revisionRange, historyComplete: false, nextSkip: 50 };
+        expect(ScmLogListResponseSchema.parse({ success: true, entries: [], revisionRange: evidence }).revisionRange).toEqual(evidence);
+        expect(ScmLogListResponseSchema.parse({ success: true, entries: [] }).revisionRange).toBeUndefined();
+    });
+
     it('accepts the legacy request/response shape without any query field', () => {
         const request = ScmLogListRequestSchema.parse({ cwd: '/repo', limit: 50, skip: 0 });
         expect(request.cwd).toBe('/repo');

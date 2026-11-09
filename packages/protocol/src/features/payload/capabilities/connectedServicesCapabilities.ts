@@ -1,6 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
-
 import { asProtocolZod } from '../../../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema } from '../../../plugins/contributionIdentity.js';
 
@@ -25,11 +24,11 @@ export const DEFAULT_CONNECTED_SERVICES_CAPABILITIES = Object.freeze({
   credentialDelete: DEFAULT_CONNECTED_SERVICES_CREDENTIAL_DELETE_CAPABILITIES,
 });
 
-export const ConnectedServicesQualifiedAccountsCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const ConnectedServicesQualifiedAccountsCapabilitiesSchema = lazyZodSchema(() => z.object({
   protocolVersion: z.literal(4),
 }));
 
-export const ConnectedServicesCredentialRemovalReviewCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const ConnectedServicesCredentialRemovalReviewCapabilitiesSchema = lazyZodSchema(() => z.object({
   protocolVersion: z.literal(1),
 }));
 

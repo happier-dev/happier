@@ -6,7 +6,8 @@ import { openExternalActionRequestV2, sealExternalActionRequestV2 } from './exte
 
 describe('encrypted managed acquire producer', () => {
   it.each([false, true])('projects only compute admission with continuation=%s for every caller', continuationPresent => {
-    const input = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'one-off', homeId: 'home',
+    const input = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: { kind: 'existingUser', role: 'personal' },
+      selection: { kind: 'one-off', homeId: 'home',
       controller: { machineId: 'controller', installationId: 'installation' },
       launch: { provider: { pluginId: 'machine.example', localId: 'vm' }, schemaVersion: 1, name: 'Work VM', choices: {} },
       retention: { kind: 'unused', afterMs: 3600000, effect: 'stop' }, wakeOnAcceptedMessage: true },

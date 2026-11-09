@@ -5,6 +5,14 @@ import { PluginUiViewV2Schema } from '../plugins/contributions/ui/v2.js';
 import { WidgetDefinitionV1Schema } from '../widgets/widgetDefinitionV1.js';
 
 describe('Action input hint path grammar', () => {
+  it('preserves optional catalog presentation while localizing an admitted choice', () => {
+    const hints = ActionInputHintsSchema.parse({ fields: [{ path: 'software', title: 'Software', widget: 'select',
+      options: [{ value: { pluginId: 'com.example.software', recipeId: 'fonts', revision: '1' }, label: 'Fonts',
+        icon: 'file', brand: { state: 'missing' }, source: { kind: 'path', locator: '/plugins/software' }, version: '2.0.0' }],
+    }] });
+    expect(normalizeActionInputHintsText(hints, text => `Localized ${text}`).fields[0]?.options?.[0])
+      .toEqual({ ...hints.fields[0]!.options![0]!, label: 'Localized Fonts' });
+  });
   it('preserves declared JSON defaults through plugin and host input-hint admission', async () => {
     const { PluginActionInputHintsV2Schema } = await import('../plugins/actions/v2.js');
     const hints = { fields: [

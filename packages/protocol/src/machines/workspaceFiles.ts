@@ -5,9 +5,7 @@ import { EXTERNAL_ACTION_SOCKET_MIN_BUFFER_BYTES_V2 } from '../actions/externalA
 import { ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES, ACCOUNT_SCOPED_SECRETBOX_OVERHEAD_BYTES } from '../crypto/accountScopedCipherEnvelope.js';
 import { stringifySerializedJsonValue } from '../crypto/serializedJsonValue.js';
 import { SESSION_DATA_KEY_NONCE_BYTES, SESSION_DATA_KEY_TAG_BYTES } from '../crypto/sessionDataKeyBundleV0.js';
-
-/** Matches the existing workspace corpus ceiling used by repository-tree/file-search consumers. */
-export const WORKSPACE_FILE_LIST_MAX_RESULTS = 5_000;
+import { FilesystemEffectFailureDetailsV1Schema } from './filesystemFailure.js';
 
 // Native root-namespace ACK: Engine.IO message (4), Socket.IO ACK (3), its
 // incrementing numeric id, and the JSON argument array. Socket.IO's Number
@@ -34,7 +32,7 @@ export const DaemonWorkspaceFileListRequestSchema = lazyZodSchema(() => z.strict
   rootPath: z.string().check(z.trim(), z.minLength(1), z.maxLength(10_000)),
   query: z.optional(z.string().check(maxCodeUnits(WORKSPACE_FILE_LIST_MAX_QUERY_CODE_UNITS))),
   includeHidden: z.optional(z.boolean()),
-  limit: z.optional(z.number().check(z.int(), z.positive(), z.maximum(WORKSPACE_FILE_LIST_MAX_RESULTS))),
+  limit: z.optional(z.number().check(z.int(), z.positive())),
   /** Remaining caller operation budget at dispatch; expiry returns an incomplete page. */
   budgetMs: z.optional(z.number().check(z.int(), z.nonnegative(), z.int())),
 }));
@@ -47,12 +45,13 @@ export const DaemonWorkspaceFileListErrorCodeSchema = lazyZodSchema(() => z.enum
   'method_unavailable',
   'ripgrep_unavailable',
   'ripgrep_failed',
+  'filesystem_identity_custody_unavailable',
 ]));
 export type DaemonWorkspaceFileListErrorCode = z.infer<typeof DaemonWorkspaceFileListErrorCodeSchema>;
 
 const DaemonWorkspaceFileListSuccessSchema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(true),
-  paths: z.array(z.string().check(z.minLength(1))).check(z.maxLength(WORKSPACE_FILE_LIST_MAX_RESULTS)),
+  paths: z.array(z.string().check(z.minLength(1))),
   truncated: z.boolean(),
 }).check(z.superRefine((value, context) => {
   if (new TextEncoder().encode(JSON.stringify(value)).byteLength > WORKSPACE_FILE_LIST_MAX_RESPONSE_UTF8_BYTES) {
@@ -67,6 +66,7 @@ const DaemonWorkspaceFileListFailureSchema = lazyZodSchema(() => z.strictObject(
   ok: z.literal(false),
   errorCode: DaemonWorkspaceFileListErrorCodeSchema,
   exitCode: z.optional(z.number().check(z.int())),
+  details: z.optional(FilesystemEffectFailureDetailsV1Schema),
 }));
 
 export const DaemonWorkspaceFileListResponseSchema = lazyZodSchema(() => z.discriminatedUnion('ok', [
@@ -101,8 +101,12 @@ export const WorkspaceFileSearchFileV1Schema = lazyZodSchema(() => z.strictObjec
   matches: z.array(WorkspaceFileSearchMatchV1Schema),
 }));
 export const DaemonWorkspaceFileSearchErrorCodeSchema = lazyZodSchema(() => z.enum([
-  'invalid_pattern', 'root_not_allowed', 'root_not_found', 'ripgrep_unavailable', 'ripgrep_failed',
+  'invalid_pattern', 'root_not_allowed', 'root_not_found', 'ripgrep_unavailable', 'ripgrep_failed', 'filesystem_identity_custody_unavailable',
 ]));
+const WorkspaceFileSearchFailureSchema = lazyZodSchema(() => z.strictObject({
+  ok: z.literal(false), code: DaemonWorkspaceFileSearchErrorCodeSchema,
+  message: z.optional(z.string()), details: z.optional(FilesystemEffectFailureDetailsV1Schema),
+}));
 export const DaemonWorkspaceFileSearchResponseSchema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.strictObject({
     ok: z.literal(true),
@@ -110,7 +114,7 @@ export const DaemonWorkspaceFileSearchResponseSchema = lazyZodSchema(() => z.dis
     hasMore: z.boolean(),
     coverage: z.enum(['complete', 'partial']),
   }),
-  z.strictObject({ ok: z.literal(false), code: DaemonWorkspaceFileSearchErrorCodeSchema, message: z.optional(z.string()) }),
+  WorkspaceFileSearchFailureSchema,
 ]).check(z.superRefine((value, context) => {
   if (value.ok && new TextEncoder().encode(JSON.stringify(value)).byteLength > WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES) {
     context.addIssue({ code: "custom", message: 'Workspace content-search response exceeds the machine transport ceiling' });
@@ -164,7 +168,7 @@ export const DaemonWorkspaceFileReplacePreviewResponseSchema = lazyZodSchema(() 
     hasMore: z.boolean(), coverage: z.enum(['complete', 'partial']),
     cursor: z.optional(WorkspaceFileReplaceCursorSchema),
   }),
-  z.strictObject({ ok: z.literal(false), code: DaemonWorkspaceFileSearchErrorCodeSchema, message: z.optional(z.string()) }),
+  WorkspaceFileSearchFailureSchema,
 ]).check(z.superRefine((value, context) => {
   if (value.ok && new TextEncoder().encode(JSON.stringify(value)).byteLength > WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES) {
     context.addIssue({ code: 'custom', message: 'Replace preview exceeds the machine transport ceiling' });
@@ -213,7 +217,8 @@ export const DaemonWorkspaceFileReplaceApplyResponseSchema = lazyZodSchema(() =>
     hash: z.optional(z.string()), matchCount: z.optional(z.number().check(z.int(), z.nonnegative())),
     edits: z.optional(z.array(WorkspaceFileReplaceInverseEditSchema)), reason: z.optional(z.string()), renameTo: z.optional(z.string()),
   })), cancelled: z.optional(z.array(z.string())), truncated: z.optional(z.boolean()) }),
-  z.strictObject({ ok: z.literal(false), code: z.enum(['invalid_request', 'invalid_pattern', 'root_not_allowed']) }),
+  z.strictObject({ ok: z.literal(false), code: z.enum(['invalid_request', 'invalid_pattern', 'root_not_allowed', 'filesystem_identity_custody_unavailable']),
+    details: z.optional(FilesystemEffectFailureDetailsV1Schema) }),
 ]).check(z.superRefine((value, context) => {
   if (value.ok && new TextEncoder().encode(JSON.stringify(value)).byteLength > WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES) {
     context.addIssue({ code: 'custom', message: 'Replace receipt exceeds the machine transport ceiling' });

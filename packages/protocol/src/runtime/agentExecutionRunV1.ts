@@ -65,7 +65,8 @@ export type AgentExecutionRunEventV1 =
       diagnostic?: AgentRuntimeDiagnosticDataV1;
     }>;
 
-const AgentExecutionRunEventCoreV1Schema: z.ZodMiniType<AgentExecutionRunEventV1> = lazyZodSchema(() => z.discriminatedUnion('kind', [
+/** Strict closed runtime boundary for finite Agent execution events. */
+export const AgentExecutionRunEventV1Schema: z.ZodMiniType<AgentExecutionRunEventV1> = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ ...BaseShape, kind: z.literal('run-start') }),
   z.strictObject({ ...BaseShape, kind: z.literal('run-progress') }),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.strictObject({
@@ -100,14 +101,4 @@ const AgentExecutionRunEventCoreV1Schema: z.ZodMiniType<AgentExecutionRunEventV1
   }),
 ]));
 
-function jsonByteLength(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
-}
-
-/** Strict closed runtime boundary for finite Agent execution events. */
-export const AgentExecutionRunEventV1Schema = lazyZodSchema(() => AgentExecutionRunEventCoreV1Schema.check(z.superRefine((value, context) => {
-    if (jsonByteLength(value) > LIMITS.p0MeasuredCandidates.eventMaxJsonBytes) {
-      context.addIssue({ code: 'custom', message: 'Agent execution run event exceeds the runtime event byte bound' });
-    }
-  })));
 export const AgentExecutionRunEventSchema = AgentExecutionRunEventV1Schema;

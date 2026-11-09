@@ -8,7 +8,6 @@ export * from './reverseDispatchV1.js';
 export * from './locators.js';
 
 export {
-  BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS,
   BrowserAutomationActionCapabilityMapV1Schema,
   BrowserAutomationActionCapabilityV1Schema,
   BrowserAutomationActionKindV1Schema,

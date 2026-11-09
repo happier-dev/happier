@@ -29,6 +29,7 @@ describe('PluginSessionHeaderActionDescriptorV1Schema', () => {
         destination: 'session-details',
         subPath: '/recent',
         instanceKey: 'current-session',
+        presentation: 'window',
       },
     });
 
@@ -48,6 +49,7 @@ describe('PluginSessionHeaderActionDescriptorV1Schema', () => {
       destination: { pluginId: 'acme.navigation', localId: 'session-details' },
       subPath: 'recent',
       instanceKey: 'current-session',
+      presentation: 'window',
     });
 
     expect(PluginUiPageHeaderActionV1Schema.parse({

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { HOME_RUNTIME_ACTION_INPUT_SCHEMAS_V1 } from '../home/runtime/actionsV1.js';
 import { REMOTE_HOST_ACTION_INPUT_SCHEMAS_V1 } from '../remoteHosts/remoteHostActionsV1.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { getActionSpec } from './actionSpecs.js';
 
 const context = { surface: 'ui', authority: 'present_user', bypassApprovals: true } as const;
 
@@ -16,8 +17,9 @@ describe('runtime Action input admission', () => {
       schema: HOME_RUNTIME_ACTION_INPUT_SCHEMAS_V1['home.runtime.restart'] },
   ] as const)('does not reparse admitted $actionId input before dispatch', async row => {
     // Observe real schema execution without replacing any validation or policy.
-    const safeParse = vi.spyOn(row.schema, 'safeParse');
-    const parse = vi.spyOn(row.schema, 'parse');
+    const schema = getActionSpec(row.actionId).inputSchema;
+    const safeParse = vi.spyOn(schema, 'safeParse');
+    const parse = vi.spyOn(schema, 'parse');
     const effects: unknown[] = [];
     // The answering client and connected Machine RPC are external boundaries.
     const executor = createActionExecutor({
@@ -42,8 +44,8 @@ describe('runtime Action input admission', () => {
           ? { machineId: 'machine-a', method: 'detect' }
           : { actionId: row.actionId, input: row.admitted });
       }
-      // Caller and semantic ingress each validate; dispatch needs no third pass.
-      expect(safeParse.mock.calls.length + parse.mock.calls.length).toBe(4);
+      // Each request parses its unchanged input once; dispatch spends that admission.
+      expect(safeParse.mock.calls.length + parse.mock.calls.length).toBe(2);
     } finally {
       parse.mockRestore();
       safeParse.mockRestore();

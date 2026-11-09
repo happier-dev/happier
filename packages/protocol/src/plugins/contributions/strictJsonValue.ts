@@ -1,33 +1,35 @@
-const textEncoder = new TextEncoder();
-
 // Only snapshots created and recursively frozen by this owner are proofs of
 // strict JSON. A caller's Object.freeze is shallow and cannot provide that proof.
 const normalizedStrictJsonObjects = new WeakSet<object>();
 
-function isWellFormedUnicode(value: string): boolean {
+/** The one Protocol owner for raw, well-formed UTF-8 string measurement. */
+export function measurePluginJsonUtf8Bytes(value: string, path: string): number {
+  let bytes = 0;
   for (let index = 0; index < value.length; index += 1) {
     const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= 0x7F) {
+      bytes += 1;
+      continue;
+    }
+    if (codeUnit <= 0x7FF) {
+      bytes += 2;
+      continue;
+    }
     if (codeUnit >= 0xD800 && codeUnit <= 0xDBFF) {
       const trailingCodeUnit = value.charCodeAt(index + 1);
-      if (!(trailingCodeUnit >= 0xDC00 && trailingCodeUnit <= 0xDFFF)) return false;
+      if (!(trailingCodeUnit >= 0xDC00 && trailingCodeUnit <= 0xDFFF)) {
+        throw new Error(`${path} must contain well-formed Unicode`);
+      }
+      bytes += 4;
       index += 1;
       continue;
     }
-    if (codeUnit >= 0xDC00 && codeUnit <= 0xDFFF) return false;
+    if (codeUnit >= 0xDC00 && codeUnit <= 0xDFFF) {
+      throw new Error(`${path} must contain well-formed Unicode`);
+    }
+    bytes += 3;
   }
-  return true;
-}
-
-function assertWellFormedUnicode(value: string, path: string): void {
-  if (!isWellFormedUnicode(value)) {
-    throw new Error(`${path} must contain well-formed Unicode`);
-  }
-}
-
-/** The one Protocol owner for raw, well-formed UTF-8 string measurement. */
-export function measurePluginJsonUtf8Bytes(value: string, path: string): number {
-  assertWellFormedUnicode(value, path);
-  return textEncoder.encode(value).byteLength;
+  return bytes;
 }
 
 /**
@@ -409,7 +411,8 @@ export function measureSerializedValidatedStrictPluginJsonUtf8Bytes(
   let measuredBytes = 0;
 
   const appendText = (text: string): boolean => {
-    const textBytes = textEncoder.encode(text).byteLength;
+    // Counting must not allocate an encoded buffer for every JSON token.
+    const textBytes = measurePluginJsonUtf8Bytes(text, path);
     if (maximumBytes !== undefined && textBytes > maximumBytes - measuredBytes) {
       measuredBytes = maximumBytes + 1;
       return false;

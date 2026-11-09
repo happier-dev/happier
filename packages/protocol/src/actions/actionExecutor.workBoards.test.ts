@@ -8,6 +8,7 @@ import { normalizeSessionListFilterV1 } from '../sessions/listFilter/sessionList
 import { createWorkBoardArtifactPortV1 } from '../boards/workBoardArtifactV1.js';
 import { createWorkBoardArtifactBoundary } from '../boards/workBoardArtifactV1.testkit.js';
 import { createWidgetActionInputResolverV1 } from '../widgets/widgetActionInputResolverV1.js';
+import { ArtifactJsonCreateHttpInputV1Schema } from '../artifacts/artifactMutationHttpV1.js';
 
 const ref = (serverId: string, id: string): BoardItemRefV1 => ({ kind: 'session', qualifiedId: { serverId, id } });
 
@@ -24,6 +25,28 @@ function createBoundary(initial: unknown = null) {
 }
 
 describe('Boards through the canonical Action executor', () => {
+  it('rejects invalid Board creation ids before Artifact access and writes valid ids through the HTTP contract', async () => {
+    const boundary = createWorkBoardArtifactBoundary();
+    const created: string[] = [];
+    const workBoardArtifacts = createWorkBoardArtifactPortV1({ ...boundary.transport, create: async input => {
+      const admitted = ArtifactJsonCreateHttpInputV1Schema.parse({ id: input.artifactId,
+        header: JSON.stringify(input.header), body: input.body, dataEncryptionKey: '' });
+      created.push(admitted.id);
+      return boundary.transport.create(input);
+    } });
+    const executor = createActionExecutor({ workBoardArtifacts });
+    const context = { surface: 'mcp', bypassApprovals: true } as const;
+    expect(await executor.execute('boards.apply', { intent: { kind: 'create', board: { id: 'not-a-uuid', name: 'Board' } } }, context))
+      .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(boundary.reads).toEqual([]);
+    expect(created).toEqual([]);
+    expect(boundary.rows.size).toBe(0);
+    const id = '22222222-2222-4222-8222-222222222222';
+    expect(await executor.execute('boards.apply', { intent: { kind: 'create', board: { id, name: 'Board' } } }, context))
+      .toMatchObject({ ok: true, result: { boardId: id, board: { id, name: 'Board' } } });
+    expect(created).toEqual([id]);
+    expect(JSON.parse(String(boundary.rows.get(id)?.body))).toMatchObject({ id, name: 'Board' });
+  });
   it('admits retained native widget edits through this Home while preserving stored refs and strict generic targets', async () => {
     const storedSurface = { serverId: 'ui-profile', accountId: 'account', owner: { kind: 'workBoard', boardId: 'b1' } } as const;
     const instance = { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'changes' }, bindings: {} } as const;
@@ -111,28 +134,28 @@ describe('Boards through the canonical Action executor', () => {
   it('round-trips every existing intent through individual Board Artifacts', async () => {
     const b = createBoundary();
     expect(await b.execute('boards.list')).toEqual({ ok: true, result: { boards: [] } });
-    expect(await b.apply({ kind: 'create', board: { id: 'b1', name: 'Overview' } }))
-      .toMatchObject({ ok: true, result: { boardId: 'b1', board: { id: 'b1', mode: 'canvas', source: { picked: [] } } } });
-    expect(await b.apply({ kind: 'update', boardId: 'b1', patch: {
+    expect(await b.apply({ kind: 'create', board: { id: '22222222-2222-4222-8222-222222222229', name: 'Overview' } }))
+      .toMatchObject({ ok: true, result: { boardId: '22222222-2222-4222-8222-222222222229', board: { id: '22222222-2222-4222-8222-222222222229', mode: 'canvas', source: { picked: [] } } } });
+    expect(await b.apply({ kind: 'update', boardId: '22222222-2222-4222-8222-222222222229', patch: {
       name: 'Release', mode: 'by_status', snap: false, pinnedInSessions: true,
       source: { sections: ['needs_you', 'running'], filter: normalizeSessionListFilterV1(), picked: [ref('a', 's1')] },
     } })).toMatchObject({ ok: true, result: { board: { name: 'Release', mode: 'by_status', snap: false, pinnedInSessions: true } } });
-    expect(await b.apply({ kind: 'add_items', boardId: 'b1', refs: [ref('a', 's1'), ref(' a ', 's1 '), ref('b', 's1')] }))
+    expect(await b.apply({ kind: 'add_items', boardId: '22222222-2222-4222-8222-222222222229', refs: [ref('a', 's1'), ref(' a ', 's1 '), ref('b', 's1')] }))
       .toMatchObject({ ok: true, result: { board: { source: { picked: [ref('a', 's1'), ref('b', 's1')] } } } });
     const key = buildWorkBoardItemKeyV1(ref('a', 's1'));
-    expect(await b.execute('boards.apply', { intent: { kind: 'set_positions', boardId: 'b1', positionsByItemRef: { [key]: { x: 24.4, y: 48.6 } } } }))
+    expect(await b.execute('boards.apply', { intent: { kind: 'set_positions', boardId: '22222222-2222-4222-8222-222222222229', positionsByItemRef: { [key]: { x: 24.4, y: 48.6 } } } }))
       .toMatchObject({ ok: true, result: { board: { positionsByItemRef: { [key]: { x: 24, y: 49 } } } } });
-    expect(await b.execute('boards.list')).toMatchObject({ ok: true, result: { boards: [{ id: 'b1', name: 'Release' }] } });
-    expect(await b.apply({ kind: 'remove_item', boardId: 'b1', ref: ref('a', 's1') }))
+    expect(await b.execute('boards.list')).toMatchObject({ ok: true, result: { boards: [{ id: '22222222-2222-4222-8222-222222222229', name: 'Release' }] } });
+    expect(await b.apply({ kind: 'remove_item', boardId: '22222222-2222-4222-8222-222222222229', ref: ref('a', 's1') }))
       .toMatchObject({ ok: true, result: { board: { source: { picked: [ref('b', 's1')] } } } });
-    expect(await b.apply({ kind: 'delete', boardId: 'b1' })).toEqual({ ok: true, result: { boardId: 'b1', board: null } });
+    expect(await b.apply({ kind: 'delete', boardId: '22222222-2222-4222-8222-222222222229' })).toEqual({ ok: true, result: { boardId: '22222222-2222-4222-8222-222222222229', board: null } });
     expect(b.read()).toEqual({ v: 1, boards: [] });
   });
 
   it('accepts Board membership beyond the unrelated Account settings collection quota', async () => {
     const b = createBoundary();
-    await b.apply({ kind: 'create', board: { id: 'b1', name: 'Overview' } });
-    expect(await b.apply({ kind: 'add_items', boardId: 'b1', refs: Array.from({ length: 300 }, (_, i) => ref('a', `s${i}`)) }))
+    await b.apply({ kind: 'create', board: { id: '22222222-2222-4222-8222-222222222229', name: 'Overview' } });
+    expect(await b.apply({ kind: 'add_items', boardId: '22222222-2222-4222-8222-222222222229', refs: Array.from({ length: 300 }, (_, i) => ref('a', `s${i}`)) }))
       .toMatchObject({ ok: true });
     expect(WorkBoardsV1Schema.parse(b.read()).boards[0]?.source.picked).toHaveLength(300);
   });
@@ -151,33 +174,33 @@ describe('Boards through the canonical Action executor', () => {
 
   it('preserves existing picks for a source-only update and refuses editing an unreadable Board', async () => {
     const b = createBoundary();
-    await b.apply({ kind: 'create', board: { id: 'b1', name: 'Overview' } });
-    await b.apply({ kind: 'add_items', boardId: 'b1', refs: [ref('a', 's1')] });
-    await b.apply({ kind: 'update', boardId: 'b1', patch: { source: { sections: ['my_machines'] } } });
+    await b.apply({ kind: 'create', board: { id: '22222222-2222-4222-8222-222222222229', name: 'Overview' } });
+    await b.apply({ kind: 'add_items', boardId: '22222222-2222-4222-8222-222222222229', refs: [ref('a', 's1')] });
+    await b.apply({ kind: 'update', boardId: '22222222-2222-4222-8222-222222222229', patch: { source: { sections: ['my_machines'] } } });
     expect(WorkBoardsV1Schema.parse(b.read()).boards[0]?.source.picked).toEqual([ref('a', 's1')]);
-    const unreadable = { id: 'b1', broken: true };
+    const unreadable = { id: '22222222-2222-4222-8222-222222222229', broken: true };
     const malformed = createBoundary({ boards: [unreadable] });
     expect(await malformed.execute('boards.list')).toMatchObject({ ok: true, result: { boards: [] } });
-    expect(await malformed.apply({ kind: 'update', boardId: 'b1', patch: { name: 'Overview' } }))
+    expect(await malformed.apply({ kind: 'update', boardId: '22222222-2222-4222-8222-222222222229', patch: { name: 'Overview' } }))
       .toMatchObject({ ok: false, errorCode: 'invalid_board_record' });
     expect(malformed.read()).toEqual({ v: 1, boards: [unreadable] });
   });
 
   it('keeps every existing position when an agent moves one item, even with stale membership', async () => {
     const b = createBoundary();
-    await b.apply({ kind: 'create', board: { id: 'b1', name: 'Overview' } });
+    await b.apply({ kind: 'create', board: { id: '22222222-2222-4222-8222-222222222229', name: 'Overview' } });
     const a = buildWorkBoardItemKeyV1(ref('a', 'section-only'));
     const other = buildWorkBoardItemKeyV1(ref('other-home', 'other'));
-    await b.execute('boards.apply', { intent: { kind: 'set_positions', boardId: 'b1',
+    await b.execute('boards.apply', { intent: { kind: 'set_positions', boardId: '22222222-2222-4222-8222-222222222229',
       positionsByItemRef: { [a]: { x: 1, y: 2 }, [other]: { x: 3, y: 4 } } } });
-    expect(await b.execute('boards.apply', { intent: { kind: 'set_positions', boardId: 'b1',
+    expect(await b.execute('boards.apply', { intent: { kind: 'set_positions', boardId: '22222222-2222-4222-8222-222222222229',
       positionsByItemRef: { [a]: { x: 5, y: 6 } }, membership: { liveItemKeys: [], unavailableServerIds: [] } } }))
       .toMatchObject({ ok: true, result: { board: { positionsByItemRef: { [a]: { x: 5, y: 6 }, [other]: { x: 3, y: 4 } } } } });
   });
 
   it('rejects a conflicting outer target instead of writing another board', async () => {
     const b = createBoundary();
-    expect(await b.execute('boards.apply', { boardId: 'other', intent: { kind: 'create', board: { id: 'b1', name: 'Overview' } } }))
+    expect(await b.execute('boards.apply', { boardId: 'other', intent: { kind: 'create', board: { id: '22222222-2222-4222-8222-222222222229', name: 'Overview' } } }))
       .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
     expect(b.read()).toBeNull();
   });
@@ -203,10 +226,10 @@ describe('Boards through the canonical Action executor', () => {
     const b = createBoundary();
     const item = ref('a', 'live-item');
     const key = buildWorkBoardItemKeyV1(item);
-    await b.apply({ kind: 'create', board: { id: 'b1', name: 'Overview' } });
-    await b.apply({ kind: 'update', boardId: 'b1', patch: { source: { sections: ['needs_you'], picked: [item] } } });
-    await b.apply({ kind: 'set_positions', boardId: 'b1', positionsByItemRef: { [key]: { x: 1, y: 2 } } });
-    expect(await b.apply({ kind: 'remove_item', boardId: 'b1', ref: item, membership: { liveItemKeys: [], unavailableServerIds: [] } }))
+    await b.apply({ kind: 'create', board: { id: '22222222-2222-4222-8222-222222222229', name: 'Overview' } });
+    await b.apply({ kind: 'update', boardId: '22222222-2222-4222-8222-222222222229', patch: { source: { sections: ['needs_you'], picked: [item] } } });
+    await b.apply({ kind: 'set_positions', boardId: '22222222-2222-4222-8222-222222222229', positionsByItemRef: { [key]: { x: 1, y: 2 } } });
+    expect(await b.apply({ kind: 'remove_item', boardId: '22222222-2222-4222-8222-222222222229', ref: item, membership: { liveItemKeys: [], unavailableServerIds: [] } }))
       .toMatchObject({ ok: true, result: { board: { source: { picked: [] }, positionsByItemRef: { [key]: { x: 1, y: 2 } } } } });
   });
 
@@ -219,7 +242,7 @@ describe('Boards through the canonical Action executor', () => {
     const b = createBoundary();
     // Unlike the round-trip cases, this uses the real unwired-policy default.
     const executor = createActionExecutor({ workBoardArtifacts: b.workBoardArtifacts } as unknown as ActionExecutorDeps);
-    expect(await executor.execute('boards.apply' as ActionId, { intent: { kind: 'create', board: { id: 'b1', name: 'Overview' } } }, { surface: 'agent' }))
+    expect(await executor.execute('boards.apply' as ActionId, { intent: { kind: 'create', board: { id: '22222222-2222-4222-8222-222222222229', name: 'Overview' } } }, { surface: 'agent' }))
       .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
     expect(b.read()).toBeNull();
   });

@@ -30,10 +30,13 @@ services:
       timeout: 5s
       retries: 10
 `;
+// Authored fixture variant for tests that exercise ready external catalog data.
+const httpOriginal = original.replace('"extra/healthcheck"', JSON.stringify(
+  'test "$(curl -s -o /dev/null -w \'%{http_code}\' http://localhost:3001/api/entry-page)" = 200'));
 const commit = 'a'.repeat(40);
 const source = (sourceId = 'catalog') => RegistrySourceDescriptorV1Schema.parse({ id: sourceId, title: 'Apps', format: 'coolify-templates',
   kinds: ['app'], url: 'https://github.com/example/catalog', enabled: true, addedAt: 0, origin: { kind: 'user' }, removable: true });
-function harness(body = original, entries: unknown = [{ name: 'uptime-kuma', slogan: 'Monitoring', category: 'monitoring', compose: 'not-base64', envs: 'not-base64' }], descriptor = source()) {
+function harness(body = httpOriginal, entries: unknown = [{ name: 'uptime-kuma', slogan: 'Monitoring', category: 'monitoring', compose: 'not-base64', envs: 'not-base64' }], descriptor = source()) {
   const calls: string[] = [];
   const http: RegistryHttpV1 = {
     getJson: async url => { calls.push(url); return { ok: true, fetchedAt: 1, value: url.includes('/commits/') ? { sha: commit } : entries }; },
@@ -49,7 +52,7 @@ describe('Compose catalog through the registered registry owner', () => {
     { itemId: 'uptime-kuma', metadata: { name: 'uPTIME Kuma v2', title: 'Other title' }, title: 'uPTIME Kuma v2' },
     { itemId: 'uptime-kuma', metadata: { title: 'myStatus v2' }, title: 'myStatus v2' },
   ])('uses $title for list and selected app display while preserving $itemId identity', async ({ itemId, metadata, title }) => {
-    const { host, calls } = harness(original, { [itemId]: { slogan: 'Monitoring', ...metadata } });
+    const { host, calls } = harness(httpOriginal, { [itemId]: { slogan: 'Monitoring', ...metadata } });
     expect(await host.fetchRequest({ op: 'list', sourceId: 'catalog', kind: 'app' }))
       .toMatchObject({ op: 'list', page: { items: [{ itemId, title }] } });
     expect(await host.fetchRequest({ op: 'read', sourceId: 'catalog', kind: 'app', itemId, version: commit }))
@@ -89,7 +92,7 @@ describe('Compose catalog through the registered registry owner', () => {
       category: 'monitoring', logo: 'svgs/uptime-kuma.svg', minversion: '0.0.0',
       template_last_updated_at: '2026-01-08T21:10:17+01:00', port: '3001',
     } };
-    const { host, calls } = harness(original, metadata);
+    const { host, calls } = harness(httpOriginal, metadata);
     const listed = await host.fetchRequest({ op: 'list', sourceId: 'catalog', kind: 'app' });
     const pinnedIcon = `https://raw.githubusercontent.com/example/catalog/${commit}/public/svgs/uptime-kuma.svg`;
     expect(listed).toMatchObject({ op: 'list', page: { items: [{ itemId: 'uptime-kuma', title: 'Uptime Kuma', iconUrl: pinnedIcon,
@@ -101,7 +104,7 @@ describe('Compose catalog through the registered registry owner', () => {
     if (selected.op !== 'read' || selected.item.payload.kind !== 'app' || selected.item.payload.state !== 'ready') throw new Error('Expected metadata-only upstream requirement');
     expect(selected.item.payload.app.minimumResources).toBeUndefined();
     const direct = RegistrySourceDescriptorV1Schema.parse({ ...source(), url: 'https://templates.example/service-templates.json' });
-    const directHarness = harness(original, metadata, direct);
+    const directHarness = harness(httpOriginal, metadata, direct);
     const directList = await directHarness.host.fetchRequest({ op: 'list', sourceId: 'catalog', kind: 'app' });
     expect(directList).toMatchObject({ op: 'list', page: { items: [{ appMetadata: { upstreamIcon: 'svgs/uptime-kuma.svg', upstreamMinimumVersion: '0.0.0' } }] } });
     if (directList.op !== 'list') throw new Error('Expected direct HTTP catalog');
@@ -130,7 +133,7 @@ describe('Compose catalog through the registered registry owner', () => {
   });
   it('browses one metadata index without reading or decoding unrelated bodies, then selects only the pinned original', async () => {
     const entries = Array.from({ length: 250 }, (_, i) => ({ name: `other-${i}`, slogan: 'Other', compose: 'deliberately-invalid-base64' }));
-    const { host, calls } = harness(original, [{ name: 'uptime-kuma', slogan: 'Monitoring', compose: 'deliberately-invalid-base64' }, ...entries]);
+    const { host, calls } = harness(httpOriginal, [{ name: 'uptime-kuma', slogan: 'Monitoring', compose: 'deliberately-invalid-base64' }, ...entries]);
     const listed = await host.fetchRequest({ op: 'list', sourceId: 'catalog', kind: 'app' });
     expect(listed).toMatchObject({ op: 'list', page: { status: { state: 'ok' }, total: 251 } });
     if (listed.op !== 'list') throw new Error('Expected app list');
@@ -141,9 +144,9 @@ describe('Compose catalog through the registered registry owner', () => {
     expect(selected.op).toBe('read');
     if (selected.op !== 'read' || selected.item.payload.kind !== 'app' || selected.item.payload.state !== 'ready') throw new Error('Expected app');
     expect(selected.item.summary.problem).toBeUndefined();
-    expect(selected.item.payload.app.domains).toEqual([{ key: 'SERVICE_URL_UPTIMEKUMA_3001', service: 'uptime-kuma', containerPort: 3001, protocol: 'http', required: true }]);
+    expect(selected.item.payload.app.domains).toEqual([{ key: 'SERVICE_URL_UPTIMEKUMA_3001', service: 'uptime-kuma', containerPort: 3001, protocol: 'http', required: true, healthCheck: { path: '/api/entry-page', expectStatus: 200 } }]);
     const effective = parse(selected.item.payload.app.compose.document);
-    expect(effective.services['uptime-kuma']).toMatchObject({ image: 'louislam/uptime-kuma:2', volumes: ['uptime-kuma-data:/app/data'], healthcheck: { test: ['CMD-SHELL', 'extra/healthcheck'], retries: 10 } });
+    expect(effective.services['uptime-kuma']).toMatchObject({ image: 'louislam/uptime-kuma:2', volumes: ['uptime-kuma-data:/app/data'], healthcheck: { test: ['CMD-SHELL', 'test "$(curl -s -o /dev/null -w \'%{http_code}\' http://localhost:3001/api/entry-page)" = 200'], retries: 10 } });
     expect(effective.services['uptime-kuma'].environment ?? []).not.toContain('SERVICE_URL_UPTIMEKUMA_3001');
     expect(calls.filter(url => /\.ya?ml$/.test(url))).toEqual([`https://raw.githubusercontent.com/example/catalog/${commit}/templates/compose/uptime-kuma.yaml`]);
   });
@@ -224,7 +227,7 @@ describe('Compose catalog through the registered registry owner', () => {
     expect(calls).toEqual([descriptor.url, 'https://templates.example/compose/uptime-kuma.yaml']);
   });
   it('honours ignored index entries and ignored selected headers without a direct-read bypass', async () => {
-    const ignored = harness(original, [{ name: 'hidden', ignore: true }, { name: 'uptime-kuma' }]);
+    const ignored = harness(httpOriginal, [{ name: 'hidden', ignore: true }, { name: 'uptime-kuma' }]);
     expect(await ignored.host.fetchRequest({ op: 'list', sourceId: 'catalog', kind: 'app' })).toMatchObject({ op: 'list', page: { items: [{ itemId: 'uptime-kuma' }], total: 1 } });
     expect(await ignored.host.fetchRequest({ op: 'read', sourceId: 'catalog', kind: 'app', itemId: 'hidden' })).toMatchObject({ op: 'error', status: { state: 'invalid_source' } });
     expect(ignored.calls.some(url => url.includes('/hidden.yaml'))).toBe(false);
@@ -246,7 +249,7 @@ describe('Compose catalog through the registered registry owner', () => {
     expect(response.item.payload.app.loginFields).toBeUndefined();
     expect(response.item.payload.app.generatedSecrets).toEqual([]);
     expect(calls.filter(url => /\.ya?ml$/.test(url))).toEqual([`https://raw.githubusercontent.com/coollabsio/coolify/${commit}/templates/compose/uptime-kuma.yaml`]);
-    expect((await read(original)).app.firstRunSetup).toBeUndefined();
+    expect((await read(httpOriginal)).app.firstRunSetup).toBeUndefined();
     const review = await harness('services: [', [{ name: 'uptime-kuma' }], builtin).host.fetchRequest({
       op: 'read', sourceId: builtin.id, kind: 'app', itemId: 'uptime-kuma', version: commit,
     });
@@ -257,7 +260,7 @@ describe('Compose catalog through the registered registry owner', () => {
   it('does not borrow curated metadata from a spoofed built-in id with another repository', async () => {
     for (const origin of [{ kind: 'user' }, { kind: 'built_in' }] as const) {
       const descriptor = RegistrySourceDescriptorV1Schema.parse({ ...source('builtin:compose-catalog'), origin });
-      const response = await harness(original, [{ name: 'uptime-kuma', slogan: 'Monitoring' }], descriptor).host.fetchRequest({
+      const response = await harness(httpOriginal, [{ name: 'uptime-kuma', slogan: 'Monitoring' }], descriptor).host.fetchRequest({
         op: 'read', sourceId: descriptor.id, kind: 'app', itemId: 'uptime-kuma', version: commit,
       });
       if (response.op !== 'read' || response.item.payload.kind !== 'app' || response.item.payload.state !== 'ready') throw new Error('Expected unhinted app');
@@ -277,7 +280,7 @@ describe('Compose catalog through the registered registry owner', () => {
     ];
     for (const variant of variants) {
       const descriptor = RegistrySourceDescriptorV1Schema.parse(variant);
-      const response = await harness(original, [{ name: 'uptime-kuma' }], descriptor).host.fetchRequest({
+      const response = await harness(httpOriginal, [{ name: 'uptime-kuma' }], descriptor).host.fetchRequest({
         op: 'read', sourceId: descriptor.id, kind: 'app', itemId: 'uptime-kuma', version: commit,
       });
       if (response.op !== 'read' || response.item.payload.kind !== 'app' || response.item.payload.state !== 'ready') throw new Error('Expected unhinted app');
@@ -312,6 +315,8 @@ describe('Compose catalog through the registered registry owner', () => {
   web-api:
     image: example/api:1
     environment: [SERVICE_URL_CUSTOM_ALIAS_8080]
+    healthcheck:
+      test: ['CMD-SHELL', 'test "$(curl -s -o /dev/null -w ''%{http_code}'' http://localhost:8080/ready)" = 204']
   worker:
     image: example/worker:1
     environment:
@@ -319,7 +324,7 @@ describe('Compose catalog through the registered registry owner', () => {
       API_HOST: \${SERVICE_FQDN_CUSTOM_ALIAS_8080}
 `);
     expect(problem).toBeUndefined();
-    expect(app.domains).toEqual([{ key: 'SERVICE_URL_CUSTOM_ALIAS_8080', service: 'web-api', containerPort: 8080, protocol: 'http', required: true }]);
+    expect(app.domains).toEqual([{ key: 'SERVICE_URL_CUSTOM_ALIAS_8080', service: 'web-api', containerPort: 8080, protocol: 'http', required: true, healthCheck: { path: '/ready', expectStatus: 204 } }]);
     expect(app.variables).toMatchObject([
       { key: 'SERVICE_URL_CUSTOM_ALIAS_8080', valueFrom: { kind: 'domainUrl', domainKey: 'SERVICE_URL_CUSTOM_ALIAS_8080' }, sites: [{ service: 'worker', path: ['environment', 'API_URL'] }] },
       { key: 'SERVICE_FQDN_CUSTOM_ALIAS_8080', valueFrom: { kind: 'domainHost', domainKey: 'SERVICE_URL_CUSTOM_ALIAS_8080' } },
@@ -328,6 +333,8 @@ describe('Compose catalog through the registered registry owner', () => {
   app:
     image: example/app:1
     environment: [SERVICE_URL_APP_8080]
+    healthcheck:
+      test: ['CMD-SHELL', 'test "$(curl -s -o /dev/null -w ''%{http_code}'' http://localhost:8080/ready)" = 204']
   worker:
     image: example/worker:1
     environment: {COPY: "$SERVICE_URL_APP_8080"}
@@ -369,6 +376,8 @@ describe('Compose catalog through the registered registry owner', () => {
   it('resolves supported mapping merges before finding inherited Domain and variable declarations', async () => {
     const { app, problem } = await read(`x-base: &base
   image: example/app:1
+  healthcheck:
+    test: ['CMD-SHELL', 'test "$(curl -s -o /dev/null -w ''%{http_code}'' http://localhost:8080/ready)" = 204']
   environment:
     SERVICE_URL_WEB_8080:
     TOKEN: \${TOKEN:?required}
@@ -377,7 +386,7 @@ services:
     <<: *base
 `);
     expect(problem).toBeUndefined();
-    expect(app.domains).toEqual([{ key: 'SERVICE_URL_WEB_8080', service: 'web', containerPort: 8080, protocol: 'http', required: true }]);
+    expect(app.domains).toEqual([{ key: 'SERVICE_URL_WEB_8080', service: 'web', containerPort: 8080, protocol: 'http', required: true, healthCheck: { path: '/ready', expectStatus: 204 } }]);
     expect(app.variables).toEqual(expect.arrayContaining([expect.objectContaining({ key: 'TOKEN', required: true,
       sites: [{ service: 'web', path: ['environment', 'TOKEN'] }] })]));
     expect(parse(app.compose.document).services.web).toMatchObject({ image: 'example/app:1', environment: { TOKEN: '${TOKEN:?required}' } });

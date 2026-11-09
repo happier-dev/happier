@@ -10,7 +10,7 @@ import { readFailureEnvelopeDetails } from '../actionFailureEnvelope.js';
 import { readRecord } from '../../../inputs/inputRecords.js';
 import { readExecutionRunStartRunCreation, ExecutionRunStartResponseSchema, ExecutionRunWaitResultSchema, ExecutionRunGetResponseSchema, withExecutionRunStartFailureDetails } from '../../../execution/runs/responseSchemas.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
-import { DetachedExecutionRunSendInputSchema, ExecutionRunPermissionRespondInputSchema } from '../../actionSpecs.js';
+import type { AdmittedActionInputById } from '../../actionSpecs.js';
 import type { ExecutionRunCallOptions } from '../executionRuns.js';
 import { normalizeId } from '../inputReading.js';
 import { ExecutionRunCancelTurnRequestSchema } from '../../../execution/runs/cancelTurn.js';
@@ -293,7 +293,7 @@ export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId'
 
         if (actionId === 'execution.run.send') {
           if (!deps.detachedExecutionRunSend) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-          const detachedInput = DetachedExecutionRunSendInputSchema.parse(parsed.data);
+          const detachedInput = parsed.data as AdmittedActionInputById[typeof actionId];
           const sessionId = detachedInput.sessionId;
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
@@ -551,7 +551,7 @@ export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId'
           if (!deps.executionRunPermissionRespond) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:execution.run.permission.respond' };
           }
-          const request = ExecutionRunPermissionRespondInputSchema.parse(parsed.data);
+          const request = parsed.data as AdmittedActionInputById[typeof actionId];
           return completeActionResult(await deps.executionRunPermissionRespond(request, ctx));
         }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { scmDiffSummarySettingBinding, encodeScmDiffSummaryModelOverride, SCM_DIFF_SUMMARY_SETTING_KEYS, resolveScmDiffSummarySettings, resolveScmDiffSummaryModelSelection } from './scmDiffSummarySettings.js';
+import { scmDiffSummarySettingBinding, encodeScmDiffSummaryModelOverride, decodeScmDiffSummaryModelOverride, SCM_DIFF_SUMMARY_SETTING_KEYS, resolveScmDiffSummarySettings, resolveScmDiffSummaryModelSelection } from './scmDiffSummarySettings.js';
 import { buildScmDiffSummaryModelProfiles } from './scmDiffSummaryModels.js';
 import { ProviderModelDescriptorV1Schema } from '../../models/descriptor.js';
 import { ScmDiffSummaryGenerateInputSchema } from '../../scm/diffSummary.js';
@@ -10,11 +10,39 @@ describe('portable SCM Summary setting admission', () => {
     it('stores the canonical native model reference rather than a task-specific selector', () => {
         const value = encodeScmDiffSummaryModelOverride({ backendTargetKey: 'agent:happier.agent.codex/codex', modelId: 'custom/model' });
         expect(JSON.parse(value.slice('model:'.length))).toEqual({ agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'custom/model' });
+        expect(decodeScmDiffSummaryModelOverride(value)).toMatchObject({ connectedServices: null });
         const selector = { backendTargetKey: 'agent:happier.agent.codex/codex', modelId: 'custom/model' };
         const retained = `model:${JSON.stringify({ ...JSON.parse(value.slice('model:'.length)), future: { irrelevant: true } })}`;
         expect(resolveScmDiffSummaryModelSelection({ storedValue: retained, catalogProfiles: [
             { catalogId: value, title: 'Custom', modelSelector: selector, structuredOutput: 'supported' },
         ] })).toMatchObject({ success: true, modelSelector: selector });
+    });
+    it.each([
+        { source: 'native' as const },
+        { source: 'connected' as const, selection: 'profile' as const, profileId: 'own-account' },
+        { source: 'connected' as const, selection: 'group' as const, groupId: 'codex-pool' },
+    ])('round trips explicit auth without replacing it with catalog defaults ($source)', binding => {
+        const modelSelection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6-luna' };
+        const selector = { backendTargetKey: modelSelection.agentTargetKey, modelId: modelSelection.modelId, modelSelection,
+            connectedServices: { v: 2 as const, bindingsByServiceId: { 'happier.agent.codex/openai-codex': binding } } };
+        const storedValue = encodeScmDiffSummaryModelOverride(selector);
+        const decoded = decodeScmDiffSummaryModelOverride(storedValue);
+        expect(decoded).toEqual(selector);
+        expect(ScmDiffSummaryGenerateInputSchema.parse({ cwd: '/repo', source: { kind: 'workingTree' }, modelSelector: decoded }).modelSelector).toEqual(selector);
+        const catalogProfiles = [{ catalogId: encodeScmDiffSummaryModelOverride({ backendTargetKey: modelSelection.agentTargetKey, modelId: modelSelection.modelId }), title: 'Luna', modelSelector: { backendTargetKey: modelSelection.agentTargetKey, modelId: modelSelection.modelId }, structuredOutput: 'supported' as const }];
+        expect(resolveScmDiffSummaryModelSelection({ storedValue, catalogProfiles })).toEqual({
+            success: true, backendTarget: expect.objectContaining({ backendId: 'codex' }), modelSelector: selector,
+        });
+        expect(resolveScmDiffSummarySettings({ storedSettings: { [SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride]: storedValue },
+            catalogProfiles: [{ catalogId: encodeScmDiffSummaryModelOverride({ backendTargetKey: modelSelection.agentTargetKey, modelId: modelSelection.modelId }), title: 'Luna', modelSelector: { backendTargetKey: modelSelection.agentTargetKey, modelId: modelSelection.modelId }, structuredOutput: 'supported' }],
+        }).modelOverride?.modelSelector).toEqual(selector);
+    });
+    it('round trips a Provider connection through the same stored selection codec', () => {
+        const modelSelection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_openai', modelId: 'gpt-6-luna' };
+        const selector = { backendTargetKey: modelSelection.agentTargetKey, modelId: modelSelection.modelId, modelSelection };
+        expect(decodeScmDiffSummaryModelOverride(encodeScmDiffSummaryModelOverride(selector))).toEqual(selector);
+        const withoutConnectedServices = { ...selector, connectedServices: null };
+        expect(decodeScmDiffSummaryModelOverride(encodeScmDiffSummaryModelOverride(withoutConnectedServices))).toEqual(withoutConnectedServices);
     });
     it('filters the same catalog by typed purpose without forbidding runner-only models', () => {
         const models = [{ id: 'structured', name: 'Structured', capabilities: { structuredOutput: 'supported' as const } },
@@ -30,7 +58,7 @@ describe('portable SCM Summary setting admission', () => {
         const binding = readPortableCatalogAccountSettingBindingV1({ anchor: 'sourceControl.investigateSurroundingFiles', pageId: 'sourceControl',
             sectionId: 'sourceControl.walkthroughs', titleKey: 'walkthroughSettings.investigateSurroundingFiles', title: 'Investigate surrounding files',
             storage: { scope: 'account', kind: 'owner', access: 'read_write', owner: 'scmDiffSummarySettingBinding', options: [key] },
-            targetKinds: [], sensitive: false, presentUserOnly: false });
+            targetKinds: [], sensitive: false });
         expect(binding).not.toBeNull();
         expect((await binding!.prepare!(settings, true, {}))?.(settings)).toEqual({ [key]: true });
         expect(binding!.parse('true')).toEqual({ success: false });

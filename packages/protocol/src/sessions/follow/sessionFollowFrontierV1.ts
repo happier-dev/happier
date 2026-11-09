@@ -114,7 +114,7 @@ export type SessionFollowSourceFrontierFactsV1 = Readonly<{
   agentStateVersion: number | null | undefined;
   latestTurnId: string | null | undefined;
   latestTurnStatus: string | null | undefined;
-  /** Supplied only by the reports-to presence observation, never by ordinary Follow. */
+  /** Canonical publisher presence for every Session Follow route. */
   active?: boolean | null;
 }>;
 

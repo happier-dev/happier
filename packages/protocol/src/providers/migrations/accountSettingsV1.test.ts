@@ -392,7 +392,7 @@ describe('provider account-settings migration', () => {
     expect(result.outcomes).toEqual([{ sourceProfileId: '__proto__', kind: 'default_environment' }]);
   });
 
-  it('refuses a record-valid migration that exceeds the canonical decoded subtree budget', () => {
+  it('preserves a record-valid migration beyond the retired Settings subtree budget', () => {
     const oversizedCandidates = Array.from({ length: 10 }, (_, connectionIndex) => {
       const connectionId = `pc_large_${connectionIndex}`;
       return {
@@ -420,11 +420,12 @@ describe('provider account-settings migration', () => {
       };
     });
 
-    expect(() => migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
+    const result = migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
       migratedAt: 20, candidates: oversizedCandidates, pendingCustomProfileIds: [],
-    })).not.toThrow();
-    expect(migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
-      migratedAt: 20, candidates: oversizedCandidates, pendingCustomProfileIds: [],
-    })).toMatchObject({ ok: false, changed: false, reason: 'provider_settings_limit_exceeded' });
+    });
+    expect(result).toMatchObject({ ok: true, changed: true });
+    if (!result.ok) throw new Error('Expected complete migration');
+    expect(result.providerSettings.connections).toHaveLength(10);
+    expect(Object.values(result.providerSettings.manualModelsByConnectionId).flat()).toHaveLength(5_000);
   });
 });

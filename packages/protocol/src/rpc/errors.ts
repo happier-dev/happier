@@ -1,4 +1,6 @@
+import { isPluginError } from '../plugins/errors.js';
 import { ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
+import { MachineAvailabilityDiagnosticV1Schema } from '../machines/machineAccessV1.js';
 
 export const MACHINE_RPC_TIMEOUT_ERROR_CODE = 'MACHINE_RPC_TIMEOUT';
 
@@ -88,18 +90,22 @@ export function isRpcError(error: unknown): error is RpcError {
   return carrier.name === 'RpcError' && typeof carrier.rpcErrorCode === 'string' && carrier.rpcErrorCode.trim().length > 0;
 }
 
-export function createRpcCallError(opts: { error: string; errorCode?: string | null | undefined; failureCause?: unknown }): Error {
+export function createRpcCallError(opts: { error: string; errorCode?: string | null | undefined; failureCause?: unknown; details?: unknown }): Error {
   const failureCause = ActionFailureCauseV1Schema.safeParse(opts.failureCause);
-  if (typeof opts.errorCode === 'string' && opts.errorCode.length > 0) {
-    return new RpcError(opts.error, opts.errorCode, failureCause.success ? failureCause.data : undefined);
-  }
-  return Object.assign(new Error(opts.error), failureCause.success ? { failureCause: failureCause.data } : {});
+  // Home owns availability; retain only its closed diagnostic, never infer one from the code.
+  const details = opts.errorCode === 'target_unavailable' && opts.details !== undefined
+    ? MachineAvailabilityDiagnosticV1Schema.safeParse(opts.details) : undefined;
+  const failure = typeof opts.errorCode === 'string' && opts.errorCode.length > 0
+    ? new RpcError(opts.error, opts.errorCode, failureCause.success ? failureCause.data : undefined)
+    : Object.assign(new Error(opts.error), failureCause.success ? { failureCause: failureCause.data } : {});
+  return details?.success ? Object.assign(failure, { details: details.data }) : failure;
 }
 
 export function readRpcErrorCode(error: unknown): string | undefined {
   if (!error || typeof error !== 'object') return undefined;
   const carrier = error as { rpcErrorCode?: unknown };
-  return typeof carrier.rpcErrorCode === 'string' ? carrier.rpcErrorCode : undefined;
+  return typeof carrier.rpcErrorCode === 'string' ? carrier.rpcErrorCode
+    : isPluginError(error) ? error.code : undefined;
 }
 
 export function isRpcMethodNotAvailableError(error: unknown): boolean {

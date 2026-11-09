@@ -135,6 +135,13 @@ const compiledSchemas = {
   'draft-07': new WeakMap<object, PluginJsonSchemaValidator>(),
   'draft-2020-12': new WeakMap<object, PluginJsonSchemaValidator>(),
 };
+// Normalization and declaration parsing hand over a fresh object for the same
+// schema, so equal content also shares a validator while any identity keeps it
+// alive. Held weakly: a retired content's engine is still collectable.
+const compiledContents = {
+  'draft-07': new Map<string, WeakRef<PluginJsonSchemaValidator>>(),
+  'draft-2020-12': new Map<string, WeakRef<PluginJsonSchemaValidator>>(),
+};
 
 export function compileProtocolJsonSchema(
   jsonSchema: object,
@@ -144,7 +151,16 @@ export function compileProtocolJsonSchema(
   const validators = compiledSchemas[dialect];
   const existing = validators.get(jsonSchema);
   if (existing) return existing;
-  const validate = createAjv(dialect).compile(prepareSchema ? prepareSchema(jsonSchema) : jsonSchema);
+  const schema = prepareSchema ? prepareSchema(jsonSchema) : jsonSchema;
+  const content = JSON.stringify(schema);
+  const contents = compiledContents[dialect];
+  let validate = contents.get(content)?.deref();
+  if (!validate) {
+    validate = createAjv(dialect).compile(schema);
+    // A new compilation is the rare path: drop keys whose validators were collected.
+    for (const [key, ref] of contents) if (!ref.deref()) contents.delete(key);
+    contents.set(content, new WeakRef(validate));
+  }
   validators.set(jsonSchema, validate);
   return validate;
 }

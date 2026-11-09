@@ -8,12 +8,16 @@ import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 
 describe('Project-first Action catalog', () => {
   it('publishes Project Action schemas when the Project owner is imported before the Action catalog', () => {
-    for (const id of ['projects.context.update', 'projects.visibility.set'] as const) {
+    for (const [id, targetField] of [
+      ['projects.context.update', 'target'],
+      ['projects.visibility.set', 'target'],
+      ['projects.organization.update', 'projectRef'],
+    ] as const) {
       const spec = getActionSpec(id);
       expect(spec.inputSchema, id).toBeDefined();
       expect(spec.outputSchema, id).toBeDefined();
       expect(zodSchemaToJsonSchemaObject(spec.inputSchema, { target: 'draft-7' }), id)
-        .toMatchObject({ type: 'object', required: expect.arrayContaining(['target', 'expectedRevision']) });
+        .toMatchObject({ type: 'object', required: expect.arrayContaining([targetField, 'expectedRevision']) });
     }
   });
 });

@@ -1,5 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { ArtifactBlobUploadInitV1Schema, ArtifactBodyEnvelopeV1Schema, ArtifactBodyEnvelopeV1StoredSchema } from './artifactBinaryV1';
+import { artifactSavedByFromActionContextV1, ArtifactBlobUploadInitV1Schema, ArtifactBodyEnvelopeV1Schema, ArtifactBodyEnvelopeV1StoredSchema } from './artifactBinaryV1';
+import type { ActionCaller } from '../actions/executor/types.js';
+
+describe('Artifact author attribution', () => {
+    it('does not relabel automated host and Run authors as people', () => {
+        const base = { runtimeAccountId: 'account-one', actionCaller: { kind: 'host' as const }, surface: 'cli' as const };
+        expect(artifactSavedByFromActionContextV1({ ...base, authority: 'account_automation' }))
+            .toEqual({ kind: 'agent', accountId: 'account-one' });
+        const runs: ActionCaller[] = [
+            { kind: 'workflowRun', runId: 'run-one', authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } },
+            { kind: 'automationRun', runId: 'run-one', automationId: 'automation-one', cause: { kind: 'manual', invokedAt: 1 } },
+        ];
+        for (const actionCaller of runs) {
+            expect(artifactSavedByFromActionContextV1({ ...base, authority: 'present_user', actionCaller }))
+                .toEqual({ kind: 'agent', accountId: 'account-one' });
+        }
+        expect(artifactSavedByFromActionContextV1({ ...base, authority: 'present_user' }))
+            .toEqual({ kind: 'person', accountId: 'account-one' });
+        expect(artifactSavedByFromActionContextV1({ ...base, surface: 'ui', authority: 'present_user',
+            approvedActionReplay: { artifactId: 'approved-save', origin: { surface: 'agent', accountId: 'original-author',
+                caller: { kind: 'session', sessionId: 'origin-session' } } } }))
+            .toEqual({ kind: 'agent', accountId: 'original-author', sessionId: 'origin-session' });
+        expect(artifactSavedByFromActionContextV1(base)).toBeUndefined();
+    });
+});
 
 describe('Artifact body envelope read and write admission', () => {
     it('projects retained envelope and blob extensions without weakening canonical writes or known fields', () => {

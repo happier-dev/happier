@@ -15,6 +15,8 @@ export const SYSTEM_TASK_PROMPT_KINDS_V1 = [
   'ssh.trustHost',
   'ssh.replaceHostKey',
   'ssh.password',
+  'sudo.password',
+  'administrator.establish',
   'ssh.privateKeyPassphrase',
   'ssh.keyboardInteractive',
   'auth.approveRemoteProvisioning',

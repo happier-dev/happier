@@ -1,6 +1,6 @@
-import { AgentsAcpBackendsGetInputV1Schema, AgentsAcpBackendsGetOutputV1Schema, AgentsAcpBackendsUpsertInputV1Schema, AgentsAcpBackendsUpsertOutputV1Schema, applyAcpBackendUpsertV1 } from '../../../acp/catalog/catalogMutationsV1.js';
+import { AgentsAcpBackendsGetOutputV1Schema, AgentsAcpBackendsUpsertOutputV1Schema, applyAcpBackendUpsertV1 } from '../../../acp/catalog/catalogMutationsV1.js';
 import { installAcpRegistryAgentV1 } from '../../../acp/catalog/registry/installAcpRegistryAgentV1.js';
-import { AgentsAcpBackendsInstallFromRegistryInputV1Schema } from '../../../acp/catalog/registry/registryInstallActionV1.js';
+import type { AdmittedActionInputById } from '../../actionSpecs.js';
 import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
 import { readRecord, readNonEmptyString } from '../../../inputs/inputRecords.js';
 import { resolveAcpPlatformFitV1 } from '../../../acp/catalog/registry/acpPlatformFitV1.js';
@@ -24,7 +24,7 @@ export async function dispatchAgentsAcp(inv: Pick<CoreInvocation, 'actionId' | '
 
         if (actionId === 'agents.acp.backends.get') {
           if (!deps.readAccountAcpCatalog) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-          const request = AgentsAcpBackendsGetInputV1Schema.parse(data);
+          const request = data as AdmittedActionInputById[typeof actionId];
           const catalog = await deps.readAccountAcpCatalog({ ...(ctx.signal ? { signal: ctx.signal } : {}) });
           if (catalog.status !== 'ready') return { ok: false, errorCode: 'acp_catalog_unavailable', error: 'acp_catalog_unavailable' };
           const backend = catalog.record.definitions.find(entry => entry.id === request.backendId);
@@ -33,12 +33,12 @@ export async function dispatchAgentsAcp(inv: Pick<CoreInvocation, 'actionId' | '
         }
 
         if (actionId === 'agents.acp.backends.installFromRegistry') {
-          return await installAcpRegistryAgentV1(AgentsAcpBackendsInstallFromRegistryInputV1Schema.parse(data), ctx, deps);
+          return await installAcpRegistryAgentV1(data as AdmittedActionInputById[typeof actionId], ctx, deps);
         }
         if (actionId === 'agents.acp.backends.upsert' && data.dryRun === true) {
           if (!deps.readAccountAcpCatalog) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           if (!deps.machinesList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-          const request = AgentsAcpBackendsUpsertInputV1Schema.parse(data);
+          const request = data as AdmittedActionInputById[typeof actionId];
           const catalog = await deps.readAccountAcpCatalog({ ...(ctx.signal ? { signal: ctx.signal } : {}) });
           if (catalog.status !== 'ready') return { ok: false, errorCode: 'acp_catalog_unavailable', error: 'acp_catalog_unavailable' };
           const outcome = applyAcpBackendUpsertV1({ settings: { v: 2, backends: catalog.record.definitions },

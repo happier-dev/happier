@@ -1,5 +1,5 @@
 import { ApprovalExecutionOriginV1Schema, ApprovalRequestOriginV1Schema, isApprovalRequesterConfirmationBoundToOriginV1, type ApprovalRequesterConfirmationV1, type ApprovalExecutionOriginCallerV1, type ApprovalExecutionOriginV1, type ApprovalRequest, type ApprovalRequestOriginV1 } from '../../approvals/approvalRequestV1.js';
-import { isWorkspaceSyncRelationshipWriteActionId, type ActionId } from '../actionIds.js';
+import { isLocalServiceStopActionIdV1, isWorkspaceSyncRelationshipWriteActionId, type ActionId } from '../actionIds.js';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '../actionSpecs.js';
 import type { ActionCaller, ActionExecutorContext } from './types.js';
 import { normalizeId } from './inputReading.js';
@@ -275,7 +275,13 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
   // Account storage does not erase the originating invocation's replay custody.
   // An unsigned Account/UI edit still needs no Machine; explicit invocation
   // targets, signed invocations and Session callers retain their replay custody.
-  const machineId = settingsTarget?.kind === 'daemon'
+  // An original Account Stop has a native destination, but its Ask has no
+  // originating daemon custody. Signed invocations retain their Machine even
+  // when public Artifact reads omit the private authorization.
+  const originalAccountStop = isLocalServiceStopActionIdV1(params.actionId)
+    && !externalAuthorization && !externalCredential && caller.kind === 'host'
+    && (surface === 'cli' || surface === 'mcp' || surface === 'ui');
+  const machineId = originalAccountStop ? '' : settingsTarget?.kind === 'daemon'
     ? settingsTarget.machineId
     : settingsTarget?.kind === 'account' && !externalAuthorization && caller.kind === 'host'
       && externalTarget?.kind !== 'machine'
@@ -296,7 +302,7 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
       ? normalizeId(params.context.actionCaller.materialization?.machineId) : '');
   // Capture the host's admitted execution Machine now. Other Machine provenance
   // alone does not select a target, and a contextual Session does not replace it.
-  const executionTarget = externalTarget
+  const executionTarget = originalAccountStop ? undefined : externalTarget
     ?? (machineId && normalizeId(params.context.defaultSessionMachineId)
       ? { kind: 'machine' as const, machineId } : undefined);
   const admittedWorkflowLeafDepth = readAdmittedWorkflowLeafStartDepthV1(params.actionId, params.context);

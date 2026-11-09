@@ -21,7 +21,7 @@ export type PendingDeliveryStatusV1 =
 export type PendingDeliveryResolvedReasonV1 = 'provider_accepted' | 'materialized' | 'manual_handled';
 export type PendingDeliveryArchivedUncertaintyReasonV1 = 'dismissed_uncertain' | 'resent_as_new';
 
-export const PENDING_DELIVERY_HIDDEN_DISCARDED_REASONS_V1 = ['resent_as_new'] as const satisfies readonly PendingDeliveryArchivedUncertaintyReasonV1[];
+export const PENDING_DELIVERY_HIDDEN_DISCARDED_REASONS_V1 = ['resent_as_new', 'session_input_muted'] as const;
 const pendingDeliveryHiddenDiscardedReasonsV1 = new Set<string>(PENDING_DELIVERY_HIDDEN_DISCARDED_REASONS_V1);
 
 export type PendingDeliveryStatusTransitionTargetV1 =

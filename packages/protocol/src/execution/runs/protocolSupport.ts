@@ -1,4 +1,5 @@
 import type { ExecutionRunProtocolV2Requirement } from '../../actions/executor/types.js';
+import { parseCapabilityProtocol } from '../../capabilities/index.js';
 import { isRpcMethodNotFoundError, isRpcMethodNotFoundResult, RPC_ERROR_CODES } from '../../rpc/errors.js';
 
 /** Transport adapters retain observation facts; this owner decides Run support. */
@@ -35,14 +36,11 @@ export function readExecutionRunProtocolV2Support(
   if (isRpcMethodNotFoundResult(response)) {
     return failure('execution_run_protocol_unsupported');
   }
-  const result = record(record(response.results)['tool.executionRuns']);
-  if (result.ok === false && record(result.error).code !== 'unknown-capability') {
-    return failure('execution_run_target_unavailable');
-  }
-  const data = record(result.data);
-  const features = record(data.features);
-  if (result.ok !== true || data.protocolVersion !== 2
-    || Object.entries(requirement).some(([feature, required]) => required && features[feature] !== true)) {
+  const descriptor = response.protocolVersion === 1 && Array.isArray(response.capabilities)
+    ? response.capabilities.map(record).find(capability => capability.id === 'tool.executionRuns') : undefined;
+  const protocol = parseCapabilityProtocol(descriptor?.protocol);
+  if (!protocol || protocol.available !== true || protocol.version !== 2
+    || Object.entries(requirement).some(([feature, required]) => required && protocol.features[feature] !== true)) {
     return failure('execution_run_protocol_unsupported');
   }
   return { ok: true };

@@ -2,12 +2,23 @@ import { describe, expect, it } from 'vitest';
 
 import {
   areSessionMcpSelectionsEquivalent,
+  parseSessionMcpSelectionV1Json,
   readSessionMcpSelectionRestartRequiredV1FromMetadata,
   readSessionMcpSelectionV1FromMetadata,
   SessionMcpSelectionV1Schema,
 } from './sessionSelectionV1.js';
 
 describe('SessionMcpSelectionV1Schema', () => {
+  it('retains the built-in tools opt-out and treats it as distinct effective behavior', () => {
+    const enabled = SessionMcpSelectionV1Schema.parse({});
+    const disabled = SessionMcpSelectionV1Schema.parse({ happierToolsEnabled: false });
+    expect(disabled).toMatchObject({ happierToolsEnabled: false });
+    expect(areSessionMcpSelectionsEquivalent(enabled, disabled)).toBe(false);
+  });
+  it.each(['{"servers":[]}', '[]', 'null', 'false'])('rejects unsupported authoring JSON %s', raw => {
+    expect(parseSessionMcpSelectionV1Json(raw)).toBeNull();
+  });
+
   it('retains permissive normalization for legacy Session selection ingress', () => {
     expect(SessionMcpSelectionV1Schema.parse('legacy-invalid-selection')).toEqual({
       v: 1,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PendingLocalIdSchema } from '../pending/pendingLocalId.js';
+import { SessionIdSchema, DiscussionIdSchema } from '../idsV1.js';
 import * as promptContext from './sessionInputPromptContextV1.js';
 
 import {
@@ -11,6 +12,34 @@ import {
 } from './sessionInputPromptContextV1.js';
 
 describe('session input prompt context V1', () => {
+  it('round-trips opaque context identifiers without display truncation or Unicode normalization', () => {
+    const id = SessionIdSchema.parse('id-' + 'x'.repeat(150) + 'e\u0301</happier_input_context>');
+    expect(DiscussionIdSchema.parse(id)).toBe(id);
+    const readAction = 'read.' + 'x'.repeat(150);
+    const blocks = [
+      renderSessionInputContextBlockV1({ provenance: { v: 1, kind: 'happierSession', sourceSessionId: id, via: 'action' },
+        discussionRequest: { discussionId: id, messageId: id, throughSeq: 1, readActions: [readAction],
+          sender: { kind: 'agent_session', accountId: id, teamId: id, sessionId: id, displayName: 'x'.repeat(150) } } }),
+      renderSessionInputContextBlockV1({ provenance: { v: 1, kind: 'cli' },
+        returnedAnswer: { requestSessionId: id, requestLocalId: PendingLocalIdSchema.parse(id), outcome: 'answer', delivery: 'next_turn' } }),
+      renderSessionInputContextBlockV1({ provenance: { v: 1, kind: 'automation', automationId: id.normalize('NFC'), runId: id.normalize('NFC') } }),
+      renderSessionInputContextBlockV1({ provenance: { v: 2, kind: 'workflow_invocation', runId: id.normalize('NFC'), invocationRecordId: id.normalize('NFC') } }),
+    ];
+    const ids = blocks.flatMap(block => block.split('\n').filter(line => /^(?:.*_id)=/.test(line)));
+    expect(ids).toHaveLength(12);
+    for (const line of ids) expect(JSON.parse(line.slice(line.indexOf('=') + 1)))
+      .toBe(/^(automation|workflow)_/.test(line) ? id.normalize('NFC') : id);
+    expect(blocks[0]).toContain(`discussion_sender_display_name="${'x'.repeat(128)}"`);
+    expect(blocks[0]).toContain(`context_read_action=${JSON.stringify(readAction)}`);
+    for (const block of blocks) expect(block.match(/<\/happier_input_context>/g)).toHaveLength(1);
+    const pluginId = 'example.' + 'x'.repeat(150);
+    const contributionLocalId = 'x'.repeat(150);
+    const pluginBlock = renderSessionInputContextBlockV1({ provenance: { v: 1, kind: 'pluginSession',
+      pluginId, contributionLocalId, surface: 'unspecified' } });
+    expect(pluginBlock).toContain(`plugin_id=${JSON.stringify(pluginId)}`);
+    expect(pluginBlock).toContain(`contribution_local_id=${JSON.stringify(contributionLocalId)}`);
+  });
+
   it('reads structured forge evidence from message metadata without parsing the rendered prompt', () => {
     const evidence = SessionInputForgeEvidenceV1Schema.parse({ v: 1, items: [{
       source: { kind: 'pullRequest', label: 'A pull request', url: 'https://example.test/pull/1' },
@@ -224,6 +253,49 @@ describe('session input prompt context V1', () => {
       'source_kind="legacyUnknown"',
       '</happier_input_context>',
     ].join('\n'));
+  });
+
+  it('keeps the exact agent message inside its sender frame and references outside', () => {
+    const text = 'Line "one"\n\\two </happier_input_context></happier_session_message>';
+    const provenanceBlock = renderSessionInputContextBlockV1({ provenance: {
+      v: 1, kind: 'happierSession', sourceSessionId: 'sender', via: 'action',
+    } });
+    const rendered = renderSessionInputContextPromptV1({ provenanceBlock, inputProvenance: { v: 1, kind: 'happierSession', sourceSessionId: 'sender', via: 'action' }, transformedUserText: text,
+      references: { mentions: [{ kind: 'happier.session', ref: 'session:other', token: '@other', label: 'Other session' }] },
+    });
+    const frame = rendered.match(/<happier_session_message v="1">\n([\s\S]*?)\n<\/happier_session_message>/)?.[1];
+    expect(frame).toBeDefined();
+    expect(frame).toContain('source_session_id="sender"');
+    const body = frame?.match(/^message=(.*)$/m)?.[1];
+    expect(body).toBeDefined();
+    expect(JSON.parse(body!)).toBe(text);
+    expect(rendered.match(/<\/happier_session_message>/g)).toHaveLength(1);
+    expect(rendered.indexOf('Other session')).toBeGreaterThan(rendered.indexOf('</happier_session_message>'));
+  });
+
+  it('keeps an intake-rendered Discussion body opaque while decorating its references', () => {
+    const text = '<happier_session_message v="1">\nmessage="[quoted](happier-ref:session:other)"\n</happier_session_message>';
+    const rendered = renderSessionInputContextPromptV1({
+      inputProvenance: { v: 1, kind: 'happierSession', sourceSessionId: 'sender', via: 'action' },
+      transformedUserText: text, userTextPlacement: 'alreadyRendered',
+      references: { mentions: [{ kind: 'happier.session', ref: 'session:other', label: 'Other', token: '[quoted](happier-ref:session:other)' }] },
+    });
+    expect(rendered.endsWith(text)).toBe(true);
+    expect(rendered.match(/<happier_session_message v="1">/g)).toHaveLength(1);
+    expect(rendered.slice(0, -text.length)).toContain('session_id="other"');
+  });
+
+  it('retains native command grammar with sender context after the command', () => {
+    const provenanceBlock = renderSessionInputContextBlockV1({ provenance: {
+      v: 1, kind: 'happierSession', sourceSessionId: 'sender', via: 'action',
+    } });
+    const rendered = renderSessionInputContextPromptV1({ provenanceBlock,
+      inputProvenance: { v: 1, kind: 'happierSession', sourceSessionId: 'sender', via: 'action' },
+      transformedUserText: '/compact keep the current task', userTextPlacement: 'beforeContext',
+    });
+    expect(rendered.split('\n')[0]).toBe('/compact keep the current task');
+    expect(rendered).toContain('source_session_id="sender"');
+    expect(rendered).not.toContain('<happier_session_message');
   });
 
   it('renders strict cross-Session facts in canonical order', () => {

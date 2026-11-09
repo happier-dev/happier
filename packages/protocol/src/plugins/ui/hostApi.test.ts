@@ -179,7 +179,12 @@ describe('plugin UI initial host-method vocabulary closure', () => {
     expect(resolvePluginUiHostApiVersionV1('^1.1.0')).toBe('1.1.0');
     expect(resolvePluginUiHostApiVersionV1('^1.2.0')).toBeNull();
     expect(resolvePluginUiHostApiVersionV1('not-a-range')).toBeNull();
+    expect(isPluginUiHostMethodSupportedInVersionV1('actionControl', '1.0.0')).toBe(false);
+    expect(isPluginUiHostMethodSupportedInVersionV1('openManagedMachineConfiguration', '1.0.0')).toBe(false);
     expect(isPluginUiHostMethodSupportedInVersionV1('selectActionInput', '1.0.0')).toBe(true);
+    expect(isPluginUiHostMethodSupportedInVersionV1('actionControl', '1.1.0')).toBe(true);
+    expect(isPluginUiHostMethodSupportedInVersionV1('openResource', '1.0.0')).toBe(false);
+    expect(isPluginUiHostMethodSupportedInVersionV1('openResource', '1.1.0')).toBe(true);
     expect(isPluginUiHostMethodSupportedInVersionV1('context', 'unknown')).toBe(false);
   });
 

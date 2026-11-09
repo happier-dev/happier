@@ -111,6 +111,7 @@ export async function dispatchAgentsSubagents1(inv: Pick<CoreInvocation, 'action
           const {
             teamCredentialSessionBindingConsent: _teamCredentialSessionBindingConsent,
             secretReferenceOverlay: _secretReferenceOverlay,
+            approvalProfileId: _approvalProfileId,
             ...runIntentInput
           } = data;
           const results = await fanoutStarts({
@@ -133,6 +134,7 @@ export async function dispatchAgentsSubagents1(inv: Pick<CoreInvocation, 'action
                   ...(intent === 'voice_agent' && typeof data.chatModelId === 'string' ? { chatModelId: data.chatModelId } : {}),
                   ...(intent === 'voice_agent' && typeof data.commitModelId === 'string' ? { commitModelId: data.commitModelId } : {}),
                   permissionMode,
+                  ...(data.approvalProfileId !== undefined ? { approvalProfileId: data.approvalProfileId } : {}),
                   retentionPolicy: data.retentionPolicy ?? 'ephemeral',
                   runClass: data.runClass ?? 'bounded',
                   ioMode: data.ioMode ?? 'request_response',

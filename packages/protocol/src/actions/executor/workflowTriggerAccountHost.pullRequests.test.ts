@@ -3,7 +3,7 @@ import type { AutomationDefinitionDetail, AutomationDefinitionReconcileRequest }
 import type { AvailableAutomationAccountEncryptionV1 } from '../../automations/automationAccountCurrentnessV1.js';
 import { AutomationTriggerDetailSchema } from '../../automations/automationTriggerProjectionV1.js';
 import { AutomationTriggerIdSchema } from '../../automations/automationTriggerIdentity.js';
-import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '../../automations/automationTriggerDefinitionStoredContent.js';
+import { openAutomationTriggerDefinitionStoredEnvelopeV1, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '../../automations/automationTriggerDefinitionStoredContent.js';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '../../crypto/accountScopedCipher.js';
 import { WorkflowDefinitionV1Schema } from '../../workflows/workflowV1.js';
 import { createAccountWorkflowTriggerActions, type WorkflowTriggerAccountHostParams } from './workflowTriggerAccountHost.js';
@@ -28,7 +28,7 @@ function fixture(encryption: AvailableAutomationAccountEncryptionV1) {
   // Automation HTTP persistence and Channels transport are external boundaries; codecs and Actions stay real.
   const params: WorkflowTriggerAccountHostParams = {
     resolveEncryption: async () => encryption, randomBytes: (length) => new Uint8Array(length).fill(1),
-    newId: () => `id-${++nextId}`, resolveWorkflow: async () => definition,
+    newId: () => `id-${++nextId}`, resolveWorkflow: async () => ({ definition }),
     resolveSession: async () => ({ project: { machineId: 'machine-one', directory: '/repo' }, nativeGoalOwner: false }),
     pullRequests: { listLinks: async () => linked ? [{ provider: 'github', ...pullRequest }] : [],
       attach: async () => { linked = true; }, removeTrigger: async () => undefined },
@@ -58,13 +58,24 @@ function fixture(encryption: AvailableAutomationAccountEncryptionV1) {
         if (!row) throw new Error('Missing row');
         written = input;
         const current = row;
-        row = { ...current, templateVersion: current.templateVersion + 1, executionRecipe: input.executionRecipe ?? current.executionRecipe,
+        row = { ...current, enabled: input.enabled, templateVersion: current.templateVersion + 1, executionRecipe: input.executionRecipe ?? current.executionRecipe,
           triggers: input.triggers.map((item) => {
             if (item.kind !== 'existing') throw new Error('Unexpected new trigger');
             const old = current.triggers.find((trigger) => trigger.id === item.triggerId)!;
+            let envelope = item.triggerDefinitionEnvelope;
+            if (!envelope && item.enabled !== undefined && encryption.witness.mode === 'plain'
+              && (old.kind === 'prComment' || old.kind === 'ciFailed')) {
+              const binding = { v: 1 as const, automationId: row!.id, triggerId: AutomationTriggerIdSchema.parse(old.id),
+                triggerRevision: old.revision, triggerKind: old.kind };
+              const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding,
+                envelope: JSON.parse(old.triggerDefinitionEnvelope) });
+              if (opened.kind !== 'available') throw new Error('Invalid persisted trigger');
+              envelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+                binding: { ...binding, triggerRevision: old.revision + 1 }, definition: opened.definition });
+            }
             return { ...old, revision: old.revision + (item.enabled === undefined ? 0 : 1),
               enabled: item.enabled ?? old.enabled,
-              ...(item.triggerDefinitionEnvelope ? { triggerDefinitionEnvelope: JSON.stringify(item.triggerDefinitionEnvelope) } : {}) };
+              ...(envelope ? { triggerDefinitionEnvelope: JSON.stringify(envelope) } : {}) };
           }) };
         return row;
       },
@@ -74,6 +85,96 @@ function fixture(encryption: AvailableAutomationAccountEncryptionV1) {
 }
 
 describe('Account PR trigger private content', () => {
+  it.each(['refused', 'unconfirmed'] as const)('retires only newly retained custody for %s trigger creation', async outcome => {
+    const f = fixture(modes[0]!);
+    const retained = new Set<string>();
+    const host = createAccountWorkflowTriggerActions({ ...f.params,
+      workflowRequesterCustody: {
+        retain: async ({ scopeId }) => { retained.add(scopeId); },
+        retire: async ({ scopeId }) => { retained.delete(scopeId); },
+      },
+      automations: { ...f.params.automations, create: async input => {
+        expect(retained.has(input.triggers[0]!.triggerId)).toBe(true);
+        if (outcome === 'refused') throw Object.assign(new Error('denied'), { response: { status: 403 } });
+        await f.params.automations.create(input);
+        throw new Error('lost_receipt');
+      } },
+    });
+    await expect(host.sessionAdd({ sessionId: 'session-one', target: { kind: 'inline', definition },
+      trigger: { kind: 'prComment', enabled: true, pullRequest } })).rejects.toBeDefined();
+    expect(retained.size).toBe(outcome === 'refused' ? 0 : 1);
+  });
+
+  it.each(['refused', 'unconfirmed'] as const)('preserves live trigger custody after a %s placement change', async outcome => {
+    const f = fixture(modes[0]!);
+    const retained = new Set<string>();
+    let machineId = 'machine-one';
+    const host = createAccountWorkflowTriggerActions({ ...f.params,
+      resolveSession: async () => ({ project: { machineId, directory: '/repo' }, nativeGoalOwner: false }),
+      workflowRequesterCustody: {
+        retain: async ({ scopeId, machineId }) => { retained.add(`${scopeId}/${machineId}`); },
+        retire: async ({ scopeId, machineId }) => { retained.delete(`${scopeId}/${machineId}`); },
+      },
+      automations: { ...f.params.automations, reconcile: async () => {
+        throw Object.assign(new Error('write_failed'), outcome === 'refused' ? { response: { status: 403 } } : {});
+      } },
+    });
+    const added = await host.sessionAdd({ sessionId: 'session-one', target: { kind: 'inline', definition },
+      trigger: { kind: 'prComment', enabled: true, pullRequest } });
+    machineId = 'machine-two';
+    await expect(host.sessionUpdate({ sessionId: 'session-one', triggerId: added.triggerId!, expectedRevision: added.set.revision,
+      patch: { enabled: true } })).rejects.toBeDefined();
+    expect(retained.has(`${added.triggerId}/machine-one`)).toBe(true);
+    expect(retained.has(`${added.triggerId}/machine-two`)).toBe(outcome === 'unconfirmed');
+  });
+
+  it.each(modes.flatMap(encryption => (['disable', 'remove'] as const).map(operation => ({ encryption, operation }))))(
+    'retains requester custody before trigger creation and retires only after $operation commits ($encryption.witness.mode)', async ({ encryption, operation }) => {
+    const f = fixture(encryption);
+    const retained = new Set<string>();
+    const associations = new Map<string, string | undefined>();
+    let reads = 0;
+    let failDisable = true;
+    const create = f.params.automations.create;
+    const reconcile = f.params.automations.reconcile;
+    const host = createAccountWorkflowTriggerActions({ ...f.params,
+      workflowRequesterCustody: {
+        retain: async ({ scopeId, machineId, automationId }) => {
+          expect(machineId).toBe('machine-one'); retained.add(scopeId); associations.set(scopeId, automationId);
+        },
+        retire: async ({ scopeId }) => { retained.delete(scopeId); },
+      },
+      automations: { ...f.params.automations,
+        get: async automationId => { reads++; return f.params.automations.get(automationId); },
+        create: async input => {
+          expect(retained.has(input.triggers[0]!.triggerId)).toBe(true);
+          expect(associations.get(input.triggers[0]!.triggerId)).toBe(input.automationId);
+          return create(input);
+        },
+        reconcile: async (...args) => {
+          expect(retained.has(args[2]!.triggers[0]!.id)).toBe(true);
+          if (failDisable) throw Object.assign(new Error('conflict'), { code: 'currentness_conflict' });
+          return reconcile(...args);
+        },
+        delete: async automationId => {
+          expect(retained.has(f.row().triggers[0]!.id)).toBe(true);
+          if (failDisable) throw Object.assign(new Error('conflict'), { code: 'currentness_conflict' });
+          return f.params.automations.delete(automationId);
+        },
+      },
+    });
+    const added = await host.sessionAdd({ sessionId: 'session-one', target: { kind: 'inline', definition },
+      trigger: { kind: 'prComment', enabled: true, pullRequest } });
+    const removeOrDisable = () => operation === 'disable' ? host.sessionUpdate({ sessionId: 'session-one', triggerId: added.triggerId!,
+      expectedRevision: added.set.revision, patch: { enabled: false } }) : host.remove({ automationId: added.set.automationId });
+    await expect(removeOrDisable()).rejects.toMatchObject({ code: 'currentness_conflict' });
+    expect(retained.has(added.triggerId!)).toBe(true);
+    failDisable = false;
+    await removeOrDisable();
+    expect(retained.size).toBe(0);
+    if (operation === 'remove') expect(reads).toBe(2); // One owner read per removal, including the refused attempt.
+  });
+
   it.each(['create', 'update'] as const)('rechecks Session admission after private %s encryption before transport commit', async (operation) => {
     const f = fixture(modes[1]!);
     const guardedDefinition = WorkflowDefinitionV1Schema.parse({ version: 1,

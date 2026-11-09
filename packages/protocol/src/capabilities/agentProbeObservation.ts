@@ -3,14 +3,16 @@ import { ProviderModelDescriptorV1Schema } from '../models/descriptor.js';
 import { ProbedCatalogOptionSchema } from './probedCatalogOption.js';
 import { SpawnFailureV1Schema } from '../machines/processes/spawnFailureV1.js';
 import { z } from 'zod/mini';
+import { NonBlankOpaqueIdentifierSchema } from '../strings/opaqueIdentifier.js';
 
 /** Native preflight observations, distinct from the public inventory projection. */
 export const AgentProbeModelSchema = lazyZodSchema(() => z.strictObject({
-  id: z.string().check(z.trim(), z.minLength(1)),
-  name: z.string().check(z.trim(), z.minLength(1)),
+  id: NonBlankOpaqueIdentifierSchema,
+  name: NonBlankOpaqueIdentifierSchema,
   description: z.optional(z.string()),
   contextWindowTokens: z.optional(z.number().check(z.int(), z.positive(), z.maximum(100_000_000))),
-  extendedContextModelId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  /** Native per-input text bound in Unicode scalar values, independent of context tokens. */
+  extendedContextModelId: z.optional(NonBlankOpaqueIdentifierSchema),
   modelOptions: z.optional(z.readonly(z.array(ProbedCatalogOptionSchema))),
   capabilities: ProviderModelDescriptorV1Schema.shape.capabilities,
   costTier: ProviderModelDescriptorV1Schema.shape.costTier,
@@ -30,6 +32,7 @@ export const AgentModelsProbeObservationSchema = lazyZodSchema(() => z.strictObj
   supportsFreeform: z.boolean(),
   observedAt: z.optional(z.number().check(z.nonnegative())),
   refreshError: z.optional(z.boolean()),
+  refreshErrorMessage: z.optional(z.string()),
   spawnFailure: z.optional(SpawnFailureV1Schema),
   cacheable: z.optional(z.boolean()),
   runtimeDescriptorV1Accepted: z.optional(z.boolean()),
@@ -52,5 +55,8 @@ export type AgentSessionModesProbeObservation = z.output<typeof AgentSessionMode
 export const AgentConfigOptionsProbeObservationSchema = lazyZodSchema(() => z.strictObject({
   ...AgentProbeObservationFields,
   configOptions: z.readonly(z.array(ProbedCatalogOptionSchema)),
+  modelConfigOptionId: z.optional(NonBlankOpaqueIdentifierSchema),
+  refreshError: z.optional(z.boolean()),
+  refreshErrorMessage: z.optional(z.string()),
 }));
 export type AgentConfigOptionsProbeObservation = z.output<typeof AgentConfigOptionsProbeObservationSchema>;

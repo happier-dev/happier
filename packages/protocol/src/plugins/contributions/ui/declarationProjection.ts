@@ -1,6 +1,7 @@
-import { PluginDeclaredUiEntriesV1Schema, type PluginDeclaredUiEntriesV1 } from '../../../daemon/contributionRegistryProjection.js';
+import { DaemonPluginUiArtifactByteIdentityV1Schema, PluginDeclaredUiEntriesV1Schema, type PluginDeclaredUiEntriesV1 } from '../../../daemon/contributionRegistryProjection.js';
 import {
   normalizePluginUiDestinationBindingV1,
+  resolvePluginUiDestinationBindingSlotV1,
   normalizePluginUiInlineSurfaceBindingV1,
   isPluginUiAuthoredViewInlineSurfaceRoleV1,
   normalizePluginUiSettingsPageBindingV1,
@@ -15,19 +16,22 @@ import type {
   PluginUiRendererV2,
   PluginUiSettingsPageV1,
   PluginUiSettingsGroupV1,
+  PluginCollectionListExtensionV1,
   PluginUiTranslationBundleV2,
 } from './v2.js';
 import type { PluginContributionIdentityV1 } from '../../contributionIdentity.js';
 import type { PluginOpenableContentViewerContributionV1 } from '../../openableContentViewerV1.js';
+import type { PluginSearchProviderContributionV1 } from '../searchProviders.js';
 import type { PluginUiResourceBindingCapabilityV1 } from '../../../daemon/contributionRegistryProjection.js';
 import type { StablePluginDeclarativeModel } from './declarativeModel.js';
 import { createStablePluginDeclarativeModel } from './declarativeModel.js';
 import { createStablePluginSettingsModels } from './settingsDescriptors.js';
 import type { PluginPortableReleaseManifestV1 } from '../../availability/v1.js';
-import { createPluginContributionIdentity } from '../../contributionIdentity.js';
+import { createPluginContributionIdentity, buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey, qualifyPluginContributionReferenceV1 } from '../../contributionIdentity.js';
 import type { PluginUiArtifactsManifestEntryV2 } from '../../ui/uiArtifactsManifest.js';
 import { PLUGIN_UI_HOST_API_VERSION_V1 } from '../../ui/hostApiDefinition.js';
-import { isPluginUiHostApiVersionCompatibleWithVersionV1 } from '../../ui/hostApi.js';
+import { isPluginUiHostApiVersionCompatibleV1 } from '../../ui/hostApi.js';
+import { deriveGeneratedHostedWebAssetPolicyV1, type GeneratedHostedWebAssetPolicyV1 } from '../../ui/hostedWebAssetPolicy.js';
 
 type DescriptiveContribution<T> = Readonly<{
     pluginId: string;
@@ -46,8 +50,10 @@ export type PluginUiPresentationRegistryV1 = Readonly<{
     uiViewsV2?: readonly ResolvedUiViewV2Contribution[];
     uiSettingsPagesV2?: readonly ResolvedUiSettingsPageV2Contribution[];
     uiSettingsGroupsV2?: readonly ResolvedUiSettingsGroupV2Contribution[];
+    uiListExtensionsV1?: readonly DescriptiveContribution<PluginCollectionListExtensionV1>[];
     uiTranslationsV2?: readonly ResolvedUiTranslationBundleV2Contribution[];
     openableContentViewers?: readonly DescriptiveContribution<PluginOpenableContentViewerContributionV1>[];
+    searchProviders?: readonly DescriptiveContribution<PluginSearchProviderContributionV1>[];
 }>;
 export type PluginUiProjectedEntryCandidate = Readonly<Record<string, unknown> & {
     id: string;
@@ -82,6 +88,42 @@ export function projectPluginReactNativeArtifactEntryV1(input: Readonly<{
         ...(input.artifact ? { artifactGraph: input.artifact } : {}), runtime: input.runtime,
     });
 }
+
+/** Shared hosted presentation facts; selection, frame capability and provenance stay with the caller. */
+export function projectPluginHostedWebArtifactEntryV1(input: Readonly<{
+    pluginId: string;
+    pluginVersion: string;
+    contributionId: string;
+    source: Extract<PluginUiRendererV2, { kind: 'hostedWeb' }>['source'];
+    artifact?: PluginUiArtifactsManifestEntryV2;
+    artifactSelectionOwner?: 'accountRelease' | 'daemonProjection';
+    hostedWebPolicy: GeneratedHostedWebAssetPolicyV1 | null;
+    requiredHostMethods: readonly string[];
+    runtime: Readonly<Record<string, unknown>>;
+}>): PluginUiProjectedEntryCandidate {
+    return Object.freeze({
+        id: `hostedWeb:${input.pluginId}:${input.contributionId}`,
+        pluginId: input.pluginId,
+        pluginVersion: input.pluginVersion,
+        contributionKind: 'hostedWeb',
+        contributionId: input.contributionId,
+        ...(input.artifactSelectionOwner ? { artifactSelectionOwner: input.artifactSelectionOwner } : {}),
+        generatedV2: true,
+        requiredHostMethods: input.requiredHostMethods,
+        source: Object.freeze({ ...input.source }),
+        ...(input.hostedWebPolicy ? {
+            service: Object.freeze({ kind: 'staticAssets' as const, assetRootId: input.hostedWebPolicy.assetRootId }),
+            entry: Object.freeze({ routeMode: input.hostedWebPolicy.routeMode, path: '/' }),
+            security: input.hostedWebPolicy.security,
+        } : {}),
+        bridge: Object.freeze({ allowedMessages: Object.freeze(['ready' as const, 'hostApi' as const]) }),
+        sandbox: Object.freeze({ scripts: true, sameOrigin: false, popups: false, topNavigation: false, mixedContent: false }),
+        runtimeDiagnostics: input.runtime.diagnostics,
+        ...(input.artifact ? { artifactGraph: input.artifact } : {}),
+        runtime: input.runtime,
+    });
+}
+
 type DeclarativeProjectionHostRuntimeContext = Readonly<{
     modelsByRendererKey?: Readonly<Record<string, StablePluginDeclarativeModel | undefined>>;
 }>;
@@ -238,11 +280,22 @@ function projectSurfaceAvailability<TEntry extends Readonly<Record<string, unkno
         ? decision.reason
         : 'unknown';
     const diagnostics = readStringArray(decision?.diagnostics);
-    if (decisionState === 'render' || decisionState === 'load') {
+    let hostedArtifactAwaitingFrame = false;
+    if (params.renderer.kind === 'hostedWeb' && entry.contributionKind === 'hostedWeb' && entry.generatedV2 === true
+        && runtime?.state === 'fallback' && decisionState === 'fallback'
+        && decisionReason === 'hosted_web_frame_adapter_unknown') {
+        const identity = DaemonPluginUiArtifactByteIdentityV1Schema.safeParse(runtime.artifactReadIdentity);
+        hostedArtifactAwaitingFrame = identity.success
+            && identity.data.artifactDigest === readRecord(entry.artifactGraph)?.digest;
+    }
+    // Portable declarations have no physical-host fact. Only that unknown
+    // adapter may reach mounted admission with an exact readable Artifact;
+    // a host's known-unavailable adapter still selects its declared fallback.
+    if (decisionState === 'render' || decisionState === 'load' || hostedArtifactAwaitingFrame) {
         return Object.freeze({
             state: 'available',
             reason: 'available',
-            diagnostics,
+            diagnostics: hostedArtifactAwaitingFrame ? Object.freeze([]) : diagnostics,
         });
     }
     if (decisionState === 'blocked' || decisionState === 'disabled') {
@@ -292,6 +345,9 @@ function generatedViewDisplay(view: ResolvedUiViewV2Contribution): Readonly<Reco
             ? { defaultPlacement: destinationDefinition.defaultPlacement } : {}),
         ...(destinationDefinition?.container === 'rightSidebarTab' && destinationDefinition.countResourceId !== undefined
             ? { countResourceId: destinationDefinition.countResourceId } : {}),
+        ...(destinationDefinition?.container === 'rightSidebarTab' && destinationDefinition.reach !== undefined
+            ? { reach: destinationDefinition.reach } : {}),
+        ...(destinationDefinition?.counts !== undefined ? { counts: destinationDefinition.counts } : {}),
         ...(destinationDefinition?.container === 'appPage' && destinationDefinition.description !== undefined
             ? { description: destinationDefinition.description }
             : {}),
@@ -683,6 +739,8 @@ function projectGeneratedUiViews(
             binding: selectedBinding,
             renderer: effectiveCandidate.projectedRenderer.rendererRef,
             display,
+            ...('resourceLinks' in view.definition && view.definition.resourceLinks !== undefined
+                ? { resourceLinks: view.definition.resourceLinks } : {}),
             ...(selectedBinding.kind === 'inline' && selectedBinding.role === 'widget'
                 && 'sizeDeclaration' in view.definition
                 ? { sizeDeclaration: view.definition.sizeDeclaration } : {}),
@@ -731,7 +789,9 @@ function projectGeneratedUiViews(
                 pluginId,
                 hostRuntime,
             ),
-            availability: effectiveCandidate.availability,
+            availability: Object.freeze({ ...effectiveCandidate.availability,
+                ...('availability' in view.definition ? view.definition.availability : {}),
+            }),
         });
     }
 }
@@ -799,8 +859,37 @@ export function projectPluginUiPresentationEntriesV1(params: Readonly<{
     modelsByRendererKey?: Readonly<Record<string, StablePluginDeclarativeModel | undefined>>;
     resourceCapabilityForPlugin?: (pluginId: string) => PluginUiResourceBindingCapabilityV1;
 }>): void {
+    for (const contribution of params.registry.searchProviders ?? []) {
+        const pluginId = readPluginId(contribution);
+        if (!pluginId || contribution.identity.pluginId !== pluginId
+            || contribution.identity.localId !== contribution.definition.id) continue;
+        addEntry(params.entriesById, {
+            id: `searchProvider:${pluginId}:${contribution.definition.id}`,
+            pluginId, contributionKind: 'searchProvider', descriptorId: contribution.definition.id,
+            identity: createPluginContributionIdentity({ pluginId, localId: contribution.definition.id }),
+            action: createPluginContributionIdentity({ pluginId, localId: contribution.definition.action }),
+        });
+    }
     const { registry, entriesById } = params;
     const declarative = { modelsByRendererKey: params.modelsByRendererKey };
+    for (const extension of registry.uiListExtensionsV1 ?? []) {
+        const { pluginId, definition } = extension;
+        addEntry(entriesById, {
+            id: `listExtension:${pluginId}:${definition.id}`, pluginId,
+            contributionKind: 'listExtension', identity: extension.identity,
+            listExtension: {
+                ...definition,
+                ...(definition.filterFields ? { filterFields: definition.filterFields.map(field => ({
+                    ...field, source: 'resource' in field.source
+                        ? { resource: qualifyPluginContributionReferenceV1(field.source.resource, pluginId) } : field.source,
+                })) } : {}),
+                ...(definition.rowMark ? { rowMark: { ...definition.rowMark,
+                    fieldId: buildQualifiedPluginContributionKey(parseQualifiedPluginContributionKey(definition.rowMark.fieldId)
+                        ?? { pluginId, localId: definition.rowMark.fieldId }),
+                } } : {}),
+            },
+        });
+    }
     projectGeneratedUiViews(registry, entriesById, declarative, params);
     projectOpenableContentViewers(registry, entriesById);
     projectGeneratedUiSettingsGroups(registry, entriesById);
@@ -850,11 +939,15 @@ export function projectPluginPortableUiDeclarationsV1(
     }));
     const registry = {
         uiRenderersV2: contributions(ui.renderers),
-        uiViewsV2: contributions(hostBundledArtifacts ? ui.views.filter(view => view.target.kind === 'app') : ui.views),
+        uiViewsV2: contributions(hostBundledArtifacts ? ui.views.filter(view => view.target.kind === 'app'
+            || view.container === 'appPage' && resolvePluginUiDestinationBindingSlotV1(view.container, view.target.kind) !== null
+            || view.target.kind === 'project' && view.container === 'widget') : ui.views),
         uiSettingsPagesV2: contributions(ui.settingsPages),
         uiSettingsGroupsV2: contributions(ui.settingsGroups),
+        uiListExtensionsV1: contributions(ui.listExtensions ?? []),
         uiTranslationsV2: ui.translations.map(definition => ({ pluginId, pluginVersion: manifest.version, definition })),
         openableContentViewers: contributions(manifest.contributes.openableContentViewers ?? []),
+        searchProviders: contributions(manifest.contributes.searchProviders ?? []),
     } satisfies PluginUiPresentationRegistryV1;
     const actions = contributions(manifest.contributes.actions ?? []);
     const destinations = [...registry.uiViewsV2, ...registry.uiSettingsPagesV2].map(entry => entry.identity);
@@ -888,12 +981,35 @@ export function projectPluginPortableUiDeclarationsV1(
     }
     const artifactEntries = registry.uiRenderersV2.flatMap(renderer => {
         const definition = renderer.definition;
+        if (definition.kind === 'hostedWeb') {
+            const candidates = hostBundledArtifacts?.filter(artifact => artifact.tier === 'hostedWeb'
+                && artifact.artifactId === definition.source.artifact) ?? [];
+            if (candidates.length !== 1) return [];
+            const artifact = candidates[0]!;
+            const hostedWebPolicy = deriveGeneratedHostedWebAssetPolicyV1(artifact);
+            const compatible = hostedWebPolicy !== null
+                && isPluginUiHostApiVersionCompatibleV1(artifact.hostUiApiRange);
+            // Immutable declarations cannot claim a physical frame. The UI host
+            // admits its adapter using this exact compatible Artifact identity.
+            const reason = compatible ? 'hosted_web_frame_adapter_unknown' : 'hosted_web_static_artifact_missing';
+            const diagnostics = Object.freeze([reason]);
+            return [projectPluginHostedWebArtifactEntryV1({
+                pluginId, pluginVersion: manifest.version, contributionId: definition.id,
+                source: definition.source, artifact, hostedWebPolicy,
+                requiredHostMethods: definition.requiredHostMethods ?? [],
+                runtime: Object.freeze({
+                    state: 'fallback', diagnostics,
+                    decision: Object.freeze({ state: 'fallback', reason, diagnostics }),
+                    ...(compatible ? { artifactReadIdentity: Object.freeze({ artifactDigest: artifact.digest }) } : {}),
+                }),
+            })];
+        }
         if (definition.kind !== 'reactNative') return [];
         const candidates = hostBundledArtifacts?.filter(artifact => artifact.tier === 'reactNative'
             && artifact.artifactId === definition.artifact) ?? [];
         if (candidates.length !== 1) return [];
         const artifact = candidates[0]!;
-        const compatible = isPluginUiHostApiVersionCompatibleWithVersionV1(PLUGIN_UI_HOST_API_VERSION_V1, artifact.hostUiApiRange);
+        const compatible = isPluginUiHostApiVersionCompatibleV1(artifact.hostUiApiRange);
         return [projectPluginReactNativeArtifactEntryV1({
             pluginId, pluginVersion: manifest.version, contributionId: definition.id,
             artifactId: artifact.artifactId, artifact, generatedOwnerKind: 'renderer',

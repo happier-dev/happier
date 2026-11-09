@@ -5,6 +5,7 @@ import { ActionDiscoveryDefinitionV1Schema } from './actionDefinitionV1.js';
 import { compileProtocolJsonSchema } from '../plugins/actions/jsonSchemaCompiler.js';
 import { SessionStatusActionResultV1Schema } from '../sessions/control/contract.js';
 import { projectSessionSummaryV1 } from '../sessions/control/listResult.js';
+import { RoleActionInputSchemasV1 } from '../prompts/roles/roleActionsV1.js';
 
 describe('Session target declaration discovery', () => {
   it('admits canonical contributed Action identities for inspection while retaining strict target input', () => {
@@ -35,6 +36,19 @@ describe('Session target declaration discovery', () => {
       ['session.goal.clear', 'one', {}],
       ['session.manager.set', 'one', { managerSessionId: 'new-manager', expectedManagerSessionId: null }],
       ['session.coordinator.enable', 'one', { roleId: 'orchestrator', keep: 'none', ruleSuggestions: [] }],
+      ['session.role.set', 'one', { roleId: 'orchestrator' }],
+      ['session.roles.override.set', 'one', { roleId: 'orchestrator', workspaceWrites: 'deny' }],
+      ['session.roles.override.clear', 'one', { roleId: 'orchestrator' }],
+      ['session.roles.add', 'one', { roleId: 'scout', role: {
+        name: 'Scout', instructions: 'Read and report.', runsAs: { kind: 'session' },
+        workspaceWrites: 'deny', secondOpinion: 'off', enabled: true,
+      } }],
+      ['session.roles.remove', 'one', { roleId: 'scout' }],
+      ['session.notes.set', 'one', { notes: 'Verify before reporting.' }],
+      ['session.tags.set', 'one', { tagIds: [] }],
+      ['session.memory.set', 'one', { serverId: 'home', expectedMetadataRevision: 3, enabled: false }],
+      ['session.context.update', 'one', { serverId: 'home', expectedMetadataRevision: 3, intent: { kind: 'set_plan', entryId: null } }],
+      ['session.roles.apply_to_reports', 'one', {}],
     ] as const) {
       const spec = getActionSpec(id);
       const input = { sessionId: { selector: 'workers', of: 'manager-id' }, ...extraInput };
@@ -65,6 +79,27 @@ describe('Session target declaration discovery', () => {
       }] })).toBe(false);
       expect(validate({ ...result, expandedTargets: true })).toBe(false);
     }
+  });
+
+  it('targets the Session participant policy without widening participant identity at storage', () => {
+    const spec = getActionSpec('discussion.participant.policy.set');
+    const input = { discussionId: 'discussion', participant: { kind: 'session', sessionId: { selector: 'self' } }, answerPolicy: 'reads_only' };
+    const discovered = ActionDiscoveryDefinitionV1Schema.parse(actionSpecToActionDefinitionV1(spec));
+    expect(discovered).toMatchObject({ sessionTarget: { field: 'participant.sessionId', cardinality: 'one' } });
+    expect(spec.inputSchema.safeParse(input).success).toBe(true);
+    expect(compileProtocolJsonSchema(discovered.inputSchema, 'draft-07')(input)).toBe(true);
+    expect(spec.inputSchema.safeParse({ ...input, participant: { kind: 'session', sessionId: { selector: 'self', authority: 'person' } } }).success).toBe(false);
+  });
+
+  it('keeps role mutation validation and exact leaf routing behind the shared target declaration', () => {
+    const selector = { selector: 'manager' };
+    const spec = getActionSpec('session.role.set');
+    expect(spec.inputSchema.safeParse({ sessionId: selector }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ sessionId: selector, answersWorkerQuestions: false }).success).toBe(true);
+    expect(spec.inputSchema.safeParse({ sessionId: selector, roleId: 'builder', extraAuthority: true }).success).toBe(false);
+    expect(RoleActionInputSchemasV1['session.role.set'].safeParse({ sessionId: selector, roleId: 'builder' }).success).toBe(false);
+    expect(getActionSpec('roles.list').sessionTarget).toBeUndefined();
+    expect(getActionSpec('roles.override.set').sessionTarget).toBeUndefined();
   });
 
   it('preserves the canonical status result inside strict group discovery output', () => {

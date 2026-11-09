@@ -96,10 +96,18 @@ export function homeDomainActionRow<
   TOutputSchema,
   'account_automation'
 > {
+  // Authored fields describe the domain's safe approval reading. Schema
+  // completion is input grammar, not a demand to disclose bearers, versions,
+  // pagination or retry keys in that reading.
+  const reviewFields = spec.inputHints?.fields.filter(field => field.widget !== 'secret');
+  const approvalPresentation = spec.approvalPresentation ?? (reviewFields?.length ? {
+    summary: () => null,
+    inputHints: { ...spec.inputHints, fields: reviewFields },
+  } : undefined);
   return {
     id: spec.id, approval: spec.approval,
     ...(spec.approvalPolicy ? { approvalPolicy: spec.approvalPolicy } : {}),
-    ...(spec.approvalPresentation ? { approvalPresentation: spec.approvalPresentation } : {}),
+    ...(approvalPresentation ? { approvalPresentation } : {}),
     title: spec.title,
     ...(spec.confirmVerb === undefined ? {} : { confirmVerb: spec.confirmVerb }),
     ...(spec.irreversible === undefined ? {} : { irreversible: spec.irreversible }),

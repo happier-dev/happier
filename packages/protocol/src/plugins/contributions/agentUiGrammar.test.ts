@@ -19,6 +19,16 @@ import { PluginAgentUiBehaviorContributionV2Schema } from './v2.js';
 const SUPPORTED_DECLARATION = {
   behavior: {
     descriptorId: 'acme.uiBehavior.v1',
+    connectedServices: {
+      poolSettings: [{
+        id: 'native-limit-waiting',
+        kind: 'boolean',
+        policyKey: 'claudeCodeAutoContinueAtUsageLimit',
+        serviceLocalIds: ['subscription', 'api'],
+        titleKey: 'acme.pool.nativeWaiting',
+        subtitleKey: 'acme.pool.nativeWaitingDescription',
+      }],
+    },
     permissions: { footer: { usePermissionUpdates: true, stopHandling: 'denyAndAbortRun' } },
     resume: {
       experimentSwitches: [{

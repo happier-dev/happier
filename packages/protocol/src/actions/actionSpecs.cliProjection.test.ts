@@ -3,6 +3,7 @@ import { z } from 'zod/mini';
 
 import { actionSpecToActionDefinitionV1, serializeActionSpec } from './actionCatalog.js';
 import { actionCliDerivedDefault } from './actionCliProjection.js';
+import { NOTIFICATION_CONFIGURATION_ACTION_IDS } from './notificationConfigurationActionIds.js';
 import {
   ActionSpecSchema,
   getActionSpec,
@@ -14,6 +15,24 @@ const CallerSchema = z.strictObject({
   sessionId: z.string().check(z.minLength(1)),
   message: z.string().check(z.minLength(1)),
   run: z.optional(z.string().check(z.minLength(1))),
+});
+
+it('declares mounted list and notification commands through the connected-client CLI route', () => {
+  const commands = listActionCliCommandDeclarations();
+  for (const id of ['ui.find', 'session.list.view.get', 'session.list.view.set', 'session.list.view.reset',
+    'discussion.list.view.get', 'discussion.list.view.set', 'discussion.list.view.reset',
+    ...NOTIFICATION_CONFIGURATION_ACTION_IDS] as const) {
+    const entry = commands.find(command => command.spec.id === id);
+    expect(entry, id).toBeDefined();
+    expect(entry?.spec.executionPlacement, id).toBe('client');
+    expect(entry?.spec.surfaces.cli, id).toBe(true);
+    expect(entry?.spec.inputSchema.safeParse({ clientId: 'mounted-app', unrelatedAuthority: true }).success, id).toBe(false);
+  }
+  expect(commands.find(command => command.spec.id === 'notifications.expoPush.update')?.binding.path)
+    .toEqual(['notifications', 'expo-push', 'update']);
+  expect(commands.find(command => command.spec.id === 'notifications.webhooks.signingSecret.set')?.binding.path)
+    .toEqual(['notifications', 'webhooks', 'signing-secret', 'set']);
+  expect(commands.find(command => command.spec.id === 'ui.find')?.binding.path).toEqual(['ui', 'find']);
 });
 
 function baseSpec(overrides: Record<string, unknown>): Record<string, unknown> {

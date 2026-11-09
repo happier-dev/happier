@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { UsageTimingBoundsV1Schema } from '../../usage/usageTimingV1.js';
 
 import { SessionIdSchema } from '../idsV1.js';
 import { PendingLocalIdSchema } from '../pending/pendingLocalId.js';
@@ -43,6 +44,7 @@ export const SessionPendingAdmissionSettlementRequestV1Schema = lazyZodSchema(()
     z.strictObject({
       kind: z.literal('admit'),
       finalContent: SessionStoredMessageContentSchema,
+      usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)),
       /** Original request evidence from the exact target publisher, never from an Account request. */
       requestEqualityEvidenceV1: z.optional(SessionInputRequestEqualityEvidenceV1Schema),
       validation: z.optional(SessionInputSettlementValidationV1Schema),

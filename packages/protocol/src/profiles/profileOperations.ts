@@ -4,6 +4,7 @@ import { createLegacyProfileCloneRecordV1, isLegacyProfileSourcePreservingCloneV
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { LaunchProfileV2Schema, StoredLaunchProfileV2Schema } from './v2/schema.js';
+import type { LaunchProfilePlacementPreferenceV1, LaunchProfileCheckoutPreferenceV1 } from './launchPreferencesV1.js';
 import { LaunchProfileIdV2Schema } from './v2/profileId.js';
 import { AIBackendProfileSchema } from './backendProfileSchema.js';
 import type { ArtifactSharingResourceV1 } from '../artifacts/artifactSharingV1.js';
@@ -84,6 +85,7 @@ export function applyProfileSecretBindingSelectionV1(bindings: ProfileRecordV1['
 /** A detached authoring draft is not a new Artifact or an acknowledged private row. */
 export function createProfileDuplicateDraftV1(input: Readonly<{
   profile: AiLaunchProfile; newProfileId: string; name: string; now: number;
+  placement?: LaunchProfilePlacementPreferenceV1; checkout?: LaunchProfileCheckoutPreferenceV1;
   sourceRow?: Readonly<{ record: ProfileRecordV1; revision: number }>;
   artifactsById?: ReadonlyMap<string, ArtifactSharingResourceV1>;
 }>): ProfileDuplicateDraftResultV1 {
@@ -93,7 +95,8 @@ export function createProfileDuplicateDraftV1(input: Readonly<{
       || (input.profile.profileRecordRevision !== undefined && input.profile.profileRecordRevision !== sourceRow.revision))
       return { status: 'invalid', reason: 'legacy-creation-unsupported', id: input.profile.id };
     const record = createLegacyProfileCloneRecordV1({ source: sourceRow.record, artifactsById: input.artifactsById,
-      id: input.newProfileId, name: input.name, createdAt: input.now, updatedAt: input.now });
+      id: input.newProfileId, name: input.name, createdAt: input.now, updatedAt: input.now,
+      placement: input.placement, checkout: input.checkout });
     if (!record || record.definition.kind !== 'legacy') return { status: 'invalid', reason: 'legacy-creation-unsupported', id: input.profile.id };
     const artifactId = sourceRow.record.definition.kind === 'artifact' ? sourceRow.record.definition.artifactId : undefined;
     const resource = artifactId ? input.artifactsById?.get(artifactId) : undefined;
@@ -115,7 +118,9 @@ export function createProfileDuplicateDraftV1(input: Readonly<{
   const newId = LaunchProfileIdV2Schema.safeParse(input.newProfileId);
   if (!source.success || !newId.success) return { status: 'invalid', reason: 'invalid-definition', id: input.newProfileId };
   const body = StoredLaunchProfileV2Schema.safeParse({ ...source.data,
-    id: newId.data, createdAt: input.now, updatedAt: input.now });
+    id: newId.data, createdAt: input.now, updatedAt: input.now,
+    ...(input.placement !== undefined ? { placement: input.placement } : {}),
+    ...(input.checkout !== undefined ? { checkout: input.checkout } : {}) });
   if (!body.success) return { status: 'invalid', reason: 'invalid-definition', id: input.newProfileId };
   const secretBindings: ProfileRecordV1['secretBindings'] = { ...input.profile.secretBindings };
   for (const [envName, binding] of Object.entries(sourceRow?.record.secretBindings ?? {})) {
@@ -217,6 +222,47 @@ export function createProfileOperations(ports: ProfileOperationsPorts) {
       expectedRevision: admitted.row.revision, operation: 'update',
       ...(input.savedSecretRevisions ? { savedSecretRevisions: input.savedSecretRevisions } : {}) });
   };
+  const read = (input: Readonly<{ id: string }>, capturedInventory?: Extract<ReturnType<typeof inventory>, { status: 'ready' }>) => {
+    const admitted = capturedInventory ?? rowInventory();
+    if (admitted.status !== 'ready') return admitted;
+    const row = admitted.rows.find(row => row.record.id === input.id);
+    let profile: AiLaunchProfile | undefined;
+    if (row) {
+      if (capturedInventory) profile = capturedInventory.profiles.find(profile => profile.id === input.id);
+      else {
+        const opened = readAiLaunchProfileRecords([row.record], { artifactsById: ports.artifactsById?.() ?? new Map(),
+          recordRevisionsById: new Map([[row.record.id, row.revision]]) });
+        if (opened.diagnostics.length > 0) return { status: 'unavailable' as const, reason: 'profile_definition_unavailable' };
+        profile = opened.entries.find(entry => entry.kind !== 'opaque')?.profile;
+      }
+    } else {
+      const opened = capturedInventory ?? inventory();
+      if (opened.status !== 'ready') return opened;
+      // Authored and granted identities are decided by the current inventory.
+      // Only a builtin can exist solely through remembered visibility evidence.
+      profile = opened.profiles.find(profile => profile.id === input.id && profile.artifactId);
+      if (!profile && getBuiltInBackendProfile(input.id)) {
+        const visible = ports.readVisibleProfiles?.();
+        if (!visible || 'status' in visible) return visible ?? {
+          status: 'unavailable' as const, reason: 'profile_selection_evidence_unavailable' };
+        profile = visible.find(profile => profile.id === input.id);
+      }
+    }
+    if (!profile) return invalid('profile-not-found', input.id);
+    const located = locationForProfile(profile, admitted.rows);
+    if (located.status !== 'located') return located;
+    if (located.location.kind === 'artifact') {
+      if (!located.artifactAccess) return { status: 'unavailable' as const, reason: 'profile_artifact_access_unavailable' };
+      const location = { ...located.location, access: located.artifactAccess };
+      return row ? { status: 'present' as const, profile, location, ...row }
+        : { status: 'present' as const, profile, location };
+    }
+    if (located.location.kind === 'account_row') {
+      if (!row) return { status: 'unavailable' as const, reason: 'profile_definition_unavailable' };
+      return { status: 'present' as const, profile, location: located.location, ...row };
+    }
+    return { status: 'present' as const, profile, location: located.location };
+  };
   return {
     validateSelection: (input: Readonly<{ id: string | null }>) => {
       if (input.id === null) return { status: 'selected' as const, id: null };
@@ -230,44 +276,7 @@ export function createProfileOperations(ports: ProfileOperationsPorts) {
         return { status: 'unavailable' as const, reason: 'profile_disabled' };
       return { status: 'selected' as const, id: input.id };
     },
-    read: (input: Readonly<{ id: string }>) => {
-      const admitted = rowInventory();
-      if (admitted.status !== 'ready') return admitted;
-      const row = admitted.rows.find(row => row.record.id === input.id);
-      let profile: AiLaunchProfile | undefined;
-      if (row) {
-        const opened = readAiLaunchProfileRecords([row.record], { artifactsById: ports.artifactsById?.() ?? new Map(),
-          recordRevisionsById: new Map([[row.record.id, row.revision]]) });
-        if (opened.diagnostics.length > 0) return { status: 'unavailable' as const, reason: 'profile_definition_unavailable' };
-        profile = opened.entries.find(entry => entry.kind !== 'opaque')?.profile;
-      } else {
-        const opened = inventory();
-        if (opened.status !== 'ready') return opened;
-        // Authored and granted identities are decided by the current inventory.
-        // Only a builtin can exist solely through remembered visibility evidence.
-        profile = opened.profiles.find(profile => profile.id === input.id && profile.artifactId);
-        if (!profile && getBuiltInBackendProfile(input.id)) {
-          const visible = ports.readVisibleProfiles?.();
-          if (!visible || 'status' in visible) return visible ?? {
-            status: 'unavailable' as const, reason: 'profile_selection_evidence_unavailable' };
-          profile = visible.find(profile => profile.id === input.id);
-        }
-      }
-      if (!profile) return invalid('profile-not-found', input.id);
-      const located = locationForProfile(profile, admitted.rows);
-      if (located.status !== 'located') return located;
-      if (located.location.kind === 'artifact') {
-        if (!located.artifactAccess) return { status: 'unavailable' as const, reason: 'profile_artifact_access_unavailable' };
-        const location = { ...located.location, access: located.artifactAccess };
-        return row ? { status: 'present' as const, profile, location, ...row }
-          : { status: 'present' as const, profile, location };
-      }
-      if (located.location.kind === 'account_row') {
-        if (!row) return { status: 'unavailable' as const, reason: 'profile_definition_unavailable' };
-        return { status: 'present' as const, profile, location: located.location, ...row };
-      }
-      return { status: 'present' as const, profile, location: located.location };
-    },
+    read: (input: Readonly<{ id: string }>) => read(input),
     search: (input: Readonly<{ query?: string }> = {}) => {
       const opened = inventory();
       if (opened.status !== 'ready') return opened;
@@ -408,29 +417,34 @@ export function createProfileOperations(ports: ProfileOperationsPorts) {
       return ports.writeRecord({ record, expectedRevision: existing?.revision ?? 'absent', operation: existing ? 'update' : 'create',
         ...(input.savedSecretRevisions ? { savedSecretRevisions: input.savedSecretRevisions } : {}) });
     },
-    duplicate: async (input: Readonly<{ id: string; expectedRevision: number; newProfileId: string; name: string; now: number }>): Promise<ProfileOperationResult> => {
+    duplicate: async (input: Readonly<{ id: string; expectedRevision: number | 'absent'; newProfileId: string; name: string; now: number;
+      placement?: LaunchProfilePlacementPreferenceV1; checkout?: LaunchProfileCheckoutPreferenceV1 }>): Promise<ProfileOperationResult> => {
       const opened = inventory();
       if (opened.status !== 'ready') return opened;
-      const admitted = current(input.id, input.expectedRevision);
-      if (admitted.status !== 'ready') return admitted;
-      const source = opened.profiles.find(profile => profile.id === input.id);
-      if (!source) return invalid('legacy-creation-unsupported', input.id);
+      const source = read({ id: input.id }, opened);
+      if (source.status !== 'present') return source;
+      const sourceRow = 'record' in source ? { record: source.record, revision: source.revision } : undefined;
+      if (input.expectedRevision !== (sourceRow?.revision ?? 'absent'))
+        return { status: 'conflict', id: input.id, revision: sourceRow?.revision ?? -1 };
       if (getBuiltInBackendProfile(input.newProfileId) || isHistoricalBuiltInAiLaunchProfileIdV1(input.newProfileId)
         || opened.profiles.some(profile => profile.id === input.newProfileId)) return invalid('duplicate-id', input.newProfileId);
       const name = input.name.trim();
       if (ports.builtinNames?.includes(name) || opened.profiles.some(profile => profile.name.trim() === name)) return invalid('duplicate-name', input.newProfileId);
-      const draft = createProfileDuplicateDraftV1({ profile: source, sourceRow: admitted.row,
-        artifactsById: ports.artifactsById?.(), newProfileId: input.newProfileId, name, now: input.now });
+      const draft = createProfileDuplicateDraftV1({ profile: source.profile, sourceRow,
+        artifactsById: ports.artifactsById?.(), newProfileId: input.newProfileId, name, now: input.now,
+        placement: input.placement, checkout: input.checkout });
       if (draft.status !== 'draft') return draft;
       if (draft.legacyCloneSource) {
-        const record = createLegacyProfileCloneRecordV1({ source: admitted.row.record, artifactsById: ports.artifactsById?.(),
-          id: input.newProfileId, name, createdAt: input.now, updatedAt: input.now });
+        if (!sourceRow) return invalid('legacy-creation-unsupported', input.id);
+        const record = createLegacyProfileCloneRecordV1({ source: sourceRow.record, artifactsById: ports.artifactsById?.(),
+          id: input.newProfileId, name, createdAt: input.now, updatedAt: input.now,
+          placement: input.placement, checkout: input.checkout });
         if (!record) return invalid('legacy-creation-unsupported', input.id);
         return ports.writeRecord({ record, expectedRevision: 'absent', operation: 'clone-legacy', legacyCloneSource: draft.legacyCloneSource });
       }
       const profile = createStoredReadSchema(LaunchProfileV2Schema).parse(draft.profile);
-      const record = ProfileRecordV1Schema.parse({ ...admitted.row.record, id: input.newProfileId,
-        definition: { kind: 'inline', profile }, secretBindings: draft.secretBindings });
+      const record = ProfileRecordV1Schema.parse({ ...(sourceRow?.record ?? { v: 1, enabled: true, promptStack: [], skillSeeds: [] }),
+        id: input.newProfileId, definition: { kind: 'inline', profile }, secretBindings: draft.secretBindings });
       return ports.writeRecord({ record, expectedRevision: 'absent', operation: 'create' });
     },
     setEnabled: async (input: Readonly<{ id: string; enabled: boolean; expectedRevision?: number }> | ProfileBuiltinEnabledInputV1): Promise<ProfileOperationResult | ProfileBuiltinEnabledResultV1> => {

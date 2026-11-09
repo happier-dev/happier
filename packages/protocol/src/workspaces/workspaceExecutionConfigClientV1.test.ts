@@ -137,6 +137,15 @@ describe('workspace execution config client', () => {
       transport: { read: async () => { throw new Error('Home unavailable'); }, mutate: async () => { throw new Error('unexpected mutation'); } },
     });
     expect(await unavailable.get({ workspace })).toMatchObject({ status: 'unavailable' });
+    const wrongMode = createWorkspaceExecutionConfigClientV1({
+      mode: 'e2ee', material: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
+      randomBytes: (length) => new Uint8Array(length), isCurrent: () => true,
+      transport: {
+        read: async () => ({ status: 'present', revision: 1, content: { t: 'plain', v: preference } }),
+        mutate: async () => { throw new Error('unexpected mutation'); },
+      },
+    });
+    expect(await wrongMode.get({ workspace })).toEqual({ status: 'invalid' });
   });
 
   it('observes an uncertain acknowledged write without replaying it', async () => {

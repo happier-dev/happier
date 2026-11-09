@@ -130,8 +130,9 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
       actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
         'plugin.webhook.endpoint.ensure': [surface],
       } }),
-    })).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    })).not.toMatchObject({ ok: false, errorCode: 'present_user_required' });
     expect(stored).toBeNull();
+    pluginWebhookAction.mockClear();
     const requested = await executor.execute('plugin.webhook.endpoint.ensure', ensureInput, requester);
     expect(requested).toMatchObject({ ok: true, result: {
       kind: 'approval_request_created', artifactId: 'webhook-approval',

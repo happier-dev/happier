@@ -5,7 +5,7 @@ import { getActionSpec } from './actionSpecs.js';
 import { listActionSpecsForCatalogSurface } from './actionCatalog.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
-import { listMachineVitalsSummariesV1 } from '../machines/vitals/listMachineVitalsSummariesV1.js';
+import { listMachineVitalsSummariesV1, readMachineVitalsResourcesProjectionV1 } from '../machines/vitals/listMachineVitalsSummariesV1.js';
 import { MachineResourceAttentionV1Schema } from '../machines/resources/machineResourceSummaryV1.js';
 import { MachineVitalsSampleV1Schema } from '../machines/vitals/machineVitalsSampleV1.js';
 import { MachineVitalsSummariesListOutputV1Schema } from './specs/machineVitals.js';
@@ -46,14 +46,17 @@ describe('Machine vitals Action front door', () => {
     }] });
     const sample = MachineVitalsSampleV1Schema.parse({
       v: 1, sampledAt: 30_000, intervalMs: 15_000,
-      cpu: { reported: true, busyPct: 32 },
+      cpu: { reported: true, busyPct: 32, load1: 0.314 },
       memory: { reported: true, availableBytes: 64, usedBytes: 960, totalBytes: 1024, pressure: { level: 'critical', source: 'kernel_level' } },
       disk: { reported: false, reason: 'unavailable' }, network: { reported: true, rxBps: 10, txBps: 20 },
     });
     const calls: string[] = [];
     const executor = createActionExecutor({ machineVitalsAction: async () => listMachineVitalsSummariesV1({
       machines: [
-        { machineId: 'live', name: 'Live', online: true, resources: { vitals: { state: 'reporting' }, attention } },
+        { machineId: 'live', name: 'Live', online: true, resources: readMachineVitalsResourcesProjectionV1({ resources: {
+          vitals: { state: 'reporting' }, attention,
+          host: { logicalCores: 8, effectiveCores: 0.5, memoryTotalBytes: 1024, bootedAt: 0 },
+        } }) },
         { machineId: 'old', name: 'Old', online: true },
         { machineId: 'offline', name: 'Offline', online: false, resources: { vitals: { state: 'reporting' }, attention } },
         { machineId: 'broken', name: 'Broken', online: true, resources: { vitals: { state: 'unavailable' }, attention } },
@@ -75,7 +78,7 @@ describe('Machine vitals Action front door', () => {
     expect(result).toMatchObject({ ok: true, result: [
       { machineId: 'live', state: 'reporting', attention, summary: {
         sampledAt: 30_000, stepMs: 15_000, seriesFrom: 15_000,
-        cpu: { busyPct: 32, tone: 'calm', series: [{ t: 15_000, y: 25 }] },
+        cpu: { busyPct: 32, load1: 0.31, logicalCores: 8, effectiveCores: 0.5, tone: 'calm', series: [{ t: 15_000, y: 25 }] },
         memory: { availableBytes: 64, totalBytes: 1024, pressure: 'critical', tone: 'crit', series: [{ t: 15_000, y: 80 / 1024 * 100 }] },
       } },
       { machineId: 'old', state: 'not_reporting' },

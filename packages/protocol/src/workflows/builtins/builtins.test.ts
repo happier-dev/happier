@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as catalog from './catalog.js';
+import { WORKFLOW_STARTER_EXAMPLES_V1, materializeWorkflowStarterExample, workflowStarterRequiresSession } from './examples.js';
 import { validateWorkflowDefinition } from '../workflowValidationV1.js';
 import { parseWorkflowDefinitionRefV1 } from '../workflowDefinitionRefV1.js';
 import { WorkflowDefinitionBaseSchema, type WorkflowBlock } from '../workflowV1.js';
@@ -15,6 +16,19 @@ function listBlocks(blocks: readonly WorkflowBlock[]): WorkflowBlock[] {
 }
 
 describe('built-in workflow catalog', () => {
+  it('binds round presentation only to the accepted catalog version and originating Discussion', () => {
+    const resultDelivery = { kind: 'originating_discussion' as const,
+      discussion: { serverId: 'home', discussionId: 'discussion' }, messageId: 'question', throughSeq: 1 };
+    expect(catalog.readWorkflowDiscussionRoundBindingV1({ source: { kind: 'catalog', ref: 'builtin:answer-and-review', version: 1 }, resultDelivery }))
+      .toEqual({ discussionId: 'discussion', pattern: 'answer_and_review' });
+    for (const source of [
+      { kind: 'inline' as const },
+      { kind: 'catalog' as const, ref: 'builtin:fresh-opinions', version: 2 },
+      { kind: 'catalog' as const, ref: 'plugin:external/fresh-opinions', version: '1' },
+      { kind: 'catalog' as const, ref: 'builtin:debate', version: 1 },
+    ]) expect(catalog.readWorkflowDiscussionRoundBindingV1({ source, resultDelivery })).toBeUndefined();
+    expect(catalog.readWorkflowDiscussionRoundBindingV1({ source: { kind: 'catalog', ref: 'builtin:fresh-opinions', version: 1 } })).toBeUndefined();
+  });
   it('binds the review publication to its exact answer, and rejects an unavailable parent', () => {
     const definition = catalog.resolveBuiltinWorkflowDefinitionV1('answer-and-review')!.definition;
     const review = listBlocks(definition.blocks).find(block => block.id === 'review');
@@ -68,8 +82,10 @@ describe('built-in workflow catalog', () => {
   it('offers portable examples through Protocol as unsaved seeds', () => {
     const examples = catalog.getWorkflowStarterExamplesV1();
     expect(examples.map((entry) => entry.key)).toEqual([
-      'ask-once', 'review-pull-request', 'work-through-each-file', 'repair-until-it-passes', 'triage-an-issue', 'morning-digest',
+      'ask-once', 'review-pull-request', 'work-through-each-file', 'repair-until-it-passes', 'triage-an-issue', 'morning-digest', 'deploy-on-push',
       'notify-when-agent-waits', 'daily-summary-in-session', 'memory-upkeep-in-session', 'install-deps-in-worktree', 'test-after-every-turn',
+      'check-for-drift', 'run-a-job-on-a-schedule',
+      'backup-verify', 'nightly-backups', 'daily-health-digest',
     ]);
     for (const example of examples) {
       expect(WorkflowDefinitionBaseSchema.safeParse(example.definition).success, example.key).toBe(true);
@@ -119,6 +135,24 @@ describe('built-in workflow catalog', () => {
         expect(name, `${seed.key}/${block.id}`).toBeTruthy();
         expect(parsedBlocks[index], `${seed.key}/${block.id}`).toMatchObject({ id: block.id, name });
       }
+    }
+  });
+});
+
+describe('workflow starter schedules without a Session', () => {
+  const byKey = (key: string) => WORKFLOW_STARTER_EXAMPLES_V1.find((entry) => entry.key === key)!;
+  it.each([['nightly-backups', '0 2 * * *'], ['run-a-job-on-a-schedule', '0 3 * * *']] as const)(
+    '%s opens with its schedule off, needing no Session', (key, scheduleExpr) => {
+      const selection = materializeWorkflowStarterExample(byKey(key), { timezone: 'Europe/Zurich' });
+      expect(workflowStarterRequiresSession(byKey(key))).toBe(false);
+      expect(selection).toMatchObject({ status: 'ready', example: { trigger: { kind: 'schedule', enabled: false,
+        schedule: { kind: 'cron', scheduleExpr, everyMs: null, timezone: 'Europe/Zurich' } } } });
+      expect(selection).not.toHaveProperty('example.sessionTarget');
+    });
+  it('still asks for a Session when the template runs in one', () => {
+    for (const key of ['daily-summary-in-session', 'memory-upkeep-in-session', 'notify-when-agent-waits']) {
+      expect(workflowStarterRequiresSession(byKey(key))).toBe(true);
+      expect(materializeWorkflowStarterExample(byKey(key)).status).toBe('requires_session');
     }
   });
 });

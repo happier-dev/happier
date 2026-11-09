@@ -4,12 +4,10 @@ import {
   PluginActionContributionV2Schema,
   PluginActionExecutionV2Schema,
   PluginActionInputHintsV2Schema,
-  PluginToolContributionV2Schema,
+  normalizePluginActionInputHintsV2,
   normalizePluginActionSlashV2,
   type PluginActionInputHintsV2,
-  type PluginToolContributionV2,
 } from './v2.js';
-import { PluginCommandContributionV2Schema } from '../contributions/v2.js';
 import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from './protocolComposableSchema.js';
 import type { PluginLocalizedStringV2 } from '../contributions/publicTypes.js';
 import type { InputOptionValue } from '../../inputs/inputFields.js';
@@ -41,61 +39,6 @@ describe('plugin executable contribution target grammar', () => {
     expect(PluginActionContributionV2Schema.safeParse({ ...action, scopes: ['environment'] }).success).toBe(false);
   });
 
-  it('admits a conditional Session target only in union arms declaring a string operand', () => {
-    const account = { type: 'object', properties: { kind: { const: 'account', type: 'string' } }, additionalProperties: false };
-    const session = { type: 'object', properties: { kind: { const: 'session', type: 'string' }, sessionId: { type: 'string' } }, additionalProperties: false };
-    const action = { id: 'inspect-target', title: localized, scopes: ['session'], surfaces: ['agent'],
-      execution: daemonExecution, dangerLevel: 'safe', sessionTarget: { field: 'sessionId', cardinality: 'one' },
-      inputSchema: { anyOf: [account, session] } };
-    expect(PluginActionContributionV2Schema.safeParse(action).success).toBe(true);
-    for (const operand of [{ type: 'number' }, { type: 'object' }]) {
-      expect(PluginActionContributionV2Schema.safeParse({ ...action, inputSchema: { anyOf: [account,
-        { ...session, properties: { ...session.properties, sessionId: operand } }] } }).success).toBe(false);
-    }
-    expect(PluginActionContributionV2Schema.safeParse({ ...action, sessionTarget: { field: 'missing', cardinality: 'one' } }).success).toBe(false);
-  });
-
-  it('keeps Action invocation surfaces explicit and resolves the execution realm', () => {
-    const daemonVoiceAction = {
-      id: 'start-voice-note',
-      title: localized,
-      scopes: ['session'],
-      surfaces: ['voice'],
-      execution: { target: 'daemon' },
-      dangerLevel: 'safe' as const,
-    };
-
-    expect(PluginActionContributionV2Schema.parse(daemonVoiceAction)).toMatchObject({
-      surfaces: ['voice'],
-      execution: { target: 'daemon' },
-    });
-    const { execution: _absent, ...withoutExecution } = daemonVoiceAction;
-    expect(PluginActionContributionV2Schema.safeParse(withoutExecution).success).toBe(false);
-    expect(PluginActionContributionV2Schema.safeParse({
-      ...daemonVoiceAction,
-      execution: undefined,
-    }).success).toBe(false);
-    expect(PluginActionContributionV2Schema.safeParse({
-      ...daemonVoiceAction,
-      execution: { target: 'host' },
-    }).success).toBe(false);
-    expect(PluginActionContributionV2Schema.safeParse({
-      ...daemonVoiceAction,
-      execution: { target: 'daemon', client: { artifactId: 'a', exportName: 'a' } },
-    }).success).toBe(false);
-  });
-
-  it('keeps named-tool presentation and CLI metadata closed on the Action', () => {
-    const action = { id: 'run', title: localized, scopes: ['global'], surfaces: ['agent', 'mcp', 'cli'],
-      execution: daemonExecution, dangerLevel: 'safe' };
-    expect(PluginActionContributionV2Schema.safeParse({ ...action, tool: {
-      name: 'run', examples: { mcp: { argsExample: '{}', extra: true } },
-    } }).success).toBe(false);
-    for (const cli of [{ path: [] }, { path: ['run'], visibility: 'internal' }, { path: ['run'], aliases: [[]] }]) {
-      expect(PluginActionContributionV2Schema.safeParse({ ...action, cli }).success).toBe(false);
-    }
-  });
-
   it('declares named tools and CLI paths on the Action without a second schema or policy', () => {
     const action = {
       id: 'save-note', title: localized, scopes: ['global'], surfaces: ['agent', 'mcp', 'cli'],
@@ -118,7 +61,6 @@ describe('plugin executable contribution target grammar', () => {
       tool: { ...action.tool, toolExposure: { mcp: 'direct' } },
     }).success).toBe(false);
   });
-
   it('carries explicit confirmation facts through the closed plugin declaration', () => {
     const action = {
       id: 'delete', title: localized, scopes: ['session'], surfaces: ['agent'],
@@ -194,6 +136,14 @@ describe('plugin executable contribution target grammar', () => {
     }).success).toBe(false);
   });
 
+  it('resolves scalar parameters before publishing portable Action input hints', () => {
+    const title = { key: 'review.scope', fallback: 'Scope for {target}', params: { target: 'changes' } };
+    const hints = PluginActionInputHintsV2Schema.parse({ fields: [{ path: 'scope', title, widget: 'text' }] });
+    expect(normalizePluginActionInputHintsV2(hints)).toMatchObject({
+      fields: [{ path: 'scope', title: 'Scope for changes', widget: 'text' }],
+    });
+  });
+
   it('accepts only declared root string fields as host-stamped contextual defaults', () => {
     const action = {
       id: 'search-memory',
@@ -229,9 +179,35 @@ describe('plugin executable contribution target grammar', () => {
     }).success).toBe(false);
   });
 
+  it('keeps Action invocation surfaces explicit and resolves the execution realm', () => {
+    const daemonVoiceAction = {
+      id: 'start-voice-note',
+      title: localized,
+      scopes: ['session'],
+      surfaces: ['voice'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'safe' as const,
+    };
 
-
-
+    expect(PluginActionContributionV2Schema.parse(daemonVoiceAction)).toMatchObject({
+      surfaces: ['voice'],
+      execution: { target: 'daemon' },
+    });
+    const { execution: _absent, ...withoutExecution } = daemonVoiceAction;
+    expect(PluginActionContributionV2Schema.safeParse(withoutExecution).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...daemonVoiceAction,
+      execution: undefined,
+    }).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...daemonVoiceAction,
+      execution: { target: 'host' },
+    }).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...daemonVoiceAction,
+      execution: { target: 'daemon', client: { artifactId: 'a', exportName: 'a' } },
+    }).success).toBe(false);
+  });
 
   it('accepts only a fully declared client Action execution target', () => {
     const clientAction = {
@@ -735,6 +711,34 @@ describe('plugin executable contribution target grammar', () => {
     }] }).success).toBe(false);
   });
 
+  it('lets a Connected Account select bind an optional nullable exact account leaf, and nothing looser', () => {
+    const exactRef = {
+      type: 'object' as const,
+      properties: {
+        service: {
+          type: 'object' as const,
+          properties: { pluginId: { type: 'string' as const }, localId: { type: 'string' as const } },
+          required: ['pluginId', 'localId'],
+          additionalProperties: false,
+        },
+        accountId: { type: 'string' as const },
+      },
+      required: ['service', 'accountId'],
+      additionalProperties: false,
+    };
+    const actionWith = (credentialRef: unknown) => ({
+      id: 'prepare-repository', title: localized, scopes: ['machine'], surfaces: ['plugin'],
+      execution: daemonExecution, dangerLevel: 'safe',
+      inputSchema: {
+        type: 'object', properties: { repository: { type: 'string' }, credentialRef },
+        required: ['repository'], additionalProperties: false,
+      },
+      inputHints: { fields: [{ path: 'credentialRef', title: 'Account', widget: 'select', connectedAccountOptions: true }] },
+    });
+    expect(PluginActionContributionV2Schema.safeParse(actionWith({ anyOf: [exactRef, { type: 'null' }] })).success).toBe(true);
+    expect(PluginActionContributionV2Schema.safeParse(actionWith({ anyOf: [{ type: 'string' }, { type: 'null' }] })).success).toBe(false);
+  });
+
   it('admits only the dedicated purpose-derived Connected Account field capability on exact account leaves', () => {
     expect(PluginActionInputHintsV2Schema.safeParse({
       fields: [{
@@ -1010,7 +1014,14 @@ describe('plugin executable contribution target grammar', () => {
     }).success).toBe(true);
   });
 
-
-
-
+  it('keeps named-tool presentation and CLI metadata closed on the Action', () => {
+    const action = { id: 'run', title: localized, scopes: ['global'], surfaces: ['agent', 'mcp', 'cli'],
+      execution: daemonExecution, dangerLevel: 'safe' };
+    expect(PluginActionContributionV2Schema.safeParse({ ...action, tool: {
+      name: 'run', examples: { mcp: { argsExample: '{}', extra: true } },
+    } }).success).toBe(false);
+    for (const cli of [{ path: [] }, { path: ['run'], visibility: 'internal' }, { path: ['run'], aliases: [[]] }]) {
+      expect(PluginActionContributionV2Schema.safeParse({ ...action, cli }).success).toBe(false);
+    }
+  });
 });

@@ -2,7 +2,7 @@ import { isSessionTerminalActionId } from '../../sessionTerminalActionFamily.js'
 import { normalizeActionExecutorThrownError, completeActionResult, settleActionOutput } from '../resultProjection.js';
 import { resolveActionSessionAddress } from '../sessionTargets.js';
 import { resolveSessionIdFromInput, projectSessionReferenceFailure, resolveServerIdForSession } from '../sessionScope.js';
-import type { PublicActionInputById } from '../../actionSpecs.js';
+import type { AdmittedActionInputById } from '../../actionSpecs.js';
 import type { SessionResumeRequestV1 } from '../../../sessions/control/sessionResumeRequestV1.js';
 import { SessionForkRpcParamsSchema } from '../../../sessions/fork.js';
 import { readRecord, readNonEmptyString, hasOwn } from '../../../inputs/inputRecords.js';
@@ -18,13 +18,14 @@ import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
 import { readSessionManagerSessionIdV1 } from '../../../sessions/follow/sessionManagerV1.js';
 import type { ActionExecuteResult, ActionExecutorContext } from '../types.js';
 import { ActionApprovalRequestCreatedResultSchema } from '../../actionExecutionResult.js';
-import { isSessionFollowActionIdV1, SessionFollowActionInputSchemasV1 } from '../../../sessions/follow/actions.js';
+import { isSessionFollowActionIdV1 } from '../../../sessions/follow/actions.js';
 import { parseSessionFollowActionResponse } from '../../../sessions/follow/actionTransport.js';
-import { isSessionReadStateActionIdV1, SESSION_READ_STATE_ACTION_INPUT_SCHEMAS_V1 } from '../../../sessions/readState/actions.js';
+import { isSessionReadStateActionIdV1 } from '../../../sessions/readState/actions.js';
 import { parseSessionReadStateActionResponse } from '../../../sessions/readState/actionTransport.js';
 import { type ActionId } from '../../actionIds.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecutorDeps } from '../types.js';
+import { resolveInheritedApprovalProfileIdV1 } from '../../approvalProfiles.js';
 
 
 
@@ -48,7 +49,7 @@ export async function dispatchSessionLifecycle1(inv: Pick<CoreInvocation, 'actio
           const resolution = await resolveActionSessionAddress(deps, data, ctx, 'session.open');
           if (resolution.kind !== 'unique') return projectSessionReferenceFailure(resolution);
           const { serverId, sessionId } = resolution.address;
-          const destination = (parsed.data as PublicActionInputById['session.open']).destination;
+          const destination = (parsed.data as AdmittedActionInputById['session.open']).destination;
           if (destination && 'sessionId' in destination.comparison && destination.comparison.sessionId
             && destination.comparison.sessionId !== sessionId) {
             return { ok: false, errorCode: 'invalid_parameters', error: 'comparison_session_mismatch' };
@@ -82,6 +83,7 @@ export async function dispatchSessionLifecycle1(inv: Pick<CoreInvocation, 'actio
 
         if (actionId === 'session.fork') {
           if (!deps.sessionFork) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const input = parsed.data as AdmittedActionInputById['session.fork'];
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
           const forkRequest = SessionForkRpcParamsSchema.safeParse({
@@ -91,6 +93,8 @@ export async function dispatchSessionLifecycle1(inv: Pick<CoreInvocation, 'actio
             ...(hasOwn(data, 'strategy') ? { strategy: data.strategy } : {}),
             ...(hasOwn(data, 'replaySummaryRunner') ? { replaySummaryRunner: data.replaySummaryRunner } : {}),
             ...(hasOwn(data, 'replayMaxSeedChars') ? { replayMaxSeedChars: data.replayMaxSeedChars } : {}),
+            ...(input.approvalProfileId !== undefined || ctx.approvalProfileId !== undefined
+              ? { approvalProfileId: resolveInheritedApprovalProfileIdV1(input.approvalProfileId, ctx.approvalProfileId) } : {}),
             ...(hasOwn(data, 'requestId')
               ? { requestId: data.requestId }
               : ctx.actionRequestId
@@ -113,6 +117,7 @@ export async function dispatchSessionLifecycle1(inv: Pick<CoreInvocation, 'actio
               ? { replayMaxSeedChars: forkRequest.data.replayMaxSeedChars }
               : {}),
             ...(forkRequest.data.requestId ? { requestId: forkRequest.data.requestId } : {}),
+            ...(forkRequest.data.approvalProfileId !== undefined ? { approvalProfileId: forkRequest.data.approvalProfileId } : {}),
             ...(serverId ? { serverId } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           }, ctx);
@@ -123,8 +128,11 @@ export async function dispatchSessionLifecycle1(inv: Pick<CoreInvocation, 'actio
           if (!deps.sessionContinueWithReplay) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.continue_with_replay' };
           }
+          const input = parsed.data as SessionContinueWithReplayRpcParams;
           const res = await deps.sessionContinueWithReplay({
-            ...(parsed.data as SessionContinueWithReplayRpcParams),
+            ...input,
+            ...(input.approvalProfileId !== undefined || ctx.approvalProfileId !== undefined
+              ? { approvalProfileId: resolveInheritedApprovalProfileIdV1(input.approvalProfileId, ctx.approvalProfileId) } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
           return completeActionResult(res);
@@ -316,7 +324,7 @@ export async function dispatchSessionLifecycle2(inv: Pick<CoreInvocation, 'actio
           if (actionId === 'follow.preview') {
             if (!deps.sessionFollowPreview) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
             result = await deps.sessionFollowPreview({ context: ctx,
-              input: SessionFollowActionInputSchemasV1['follow.preview'].parse(data), ...scope });
+              input: parsed.data as AdmittedActionInputById['follow.preview'], ...scope });
           } else {
             if (!deps.sessionFollowAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
             result = await deps.sessionFollowAction({ context: ctx, actionId, input: data, ...scope });
@@ -328,17 +336,17 @@ export async function dispatchSessionLifecycle2(inv: Pick<CoreInvocation, 'actio
 
         if (isSessionReadStateActionIdV1(actionId)) {
           if (!deps.sessionReadStateAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-          const parsed = SESSION_READ_STATE_ACTION_INPUT_SCHEMAS_V1[actionId].parse(data);
-          const sessionId = normalizeId(parsed.sessionId);
+          const input = parsed.data as AdmittedActionInputById['session.read_state.set'];
+          const sessionId = normalizeId(input.sessionId);
           if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
-          const result = await deps.sessionReadStateAction({ context: ctx, actionId, input: parsed,
+          const result = await deps.sessionReadStateAction({ context: ctx, actionId, input,
             ...(serverId ? { serverId } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
           const failure = readActionFailureEnvelope(result);
           if (failure) return failure;
           try {
-            return completeActionResult(parseSessionReadStateActionResponse(actionId, parsed, result));
+            return completeActionResult(parseSessionReadStateActionResponse(actionId, input, result));
           } catch {
             return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
           }

@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { SessionTerminalTargetV1Schema } from './workspace';
 
 describe('session terminal target ownership', () => {
+  it('keeps service-shell native selection at the Machine terminal owner', () => {
+    const launch = { kind: 'service_shell', serviceId: 'instance/app', expectedGeneration: 'generation-a' };
+    expect(SessionTerminalTargetV1Schema.safeParse({ kind: 'workspace_shell', launch }).success).toBe(false);
+    expect(SessionTerminalTargetV1Schema.safeParse({ kind: 'machine_shell', machineId: 'machine', cwd: '/caller', launch }).success).toBe(false);
+  });
+
   it('keeps a borrowed checkout on its actual Machine and preserves the accepted root separately from cwd', () => {
     const workspace = { serverId: 'home', workspaceId: 'worker-checkout', machineId: 'worker', rootPath: '/worker' };
     const target = { kind: 'terminal_view', machineId: 'worker', terminalId: 'pty', terminalKey: 'output',

@@ -786,7 +786,18 @@ export const PluginUiNewSessionPlacementV1Schema = lazyZodSchema(() => z.discrim
 export type PluginUiNewSessionPlacementV1 =
   z.infer<typeof PluginUiNewSessionPlacementV1Schema>;
 
+/** The configured action whose editable defaults this ordinary draft can save. */
+export const PluginUiNewSessionActionDefaultV1Schema = lazyZodSchema(() => z.strictObject({
+  pluginId: asProtocolZod(PluginIdSchema),
+  configuredActionId: z.string().check(z.trim(), z.minLength(1)),
+  // Draft names may be temporarily empty while editing; the save Action admits them.
+  label: z.string(),
+  launchMode: z.enum(['review', 'start']),
+}));
+export type PluginUiNewSessionActionDefaultV1 = z.infer<typeof PluginUiNewSessionActionDefaultV1Schema>;
+
 export const PluginUiNewSessionSeedV1Schema = lazyZodSchema(() => z.strictObject({
+  actionDefault: z.optional(PluginUiNewSessionActionDefaultV1Schema),
   /** An empty name requests the ordinary Session's automatic name. */
   sessionName: z.optional(z.string()),
   initialSessionFacts: zMini.optional(SessionIdentityAdditionsV1Schema),

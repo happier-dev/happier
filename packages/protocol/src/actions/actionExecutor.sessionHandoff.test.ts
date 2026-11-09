@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { computeWorkspaceSyncPolicyDigest } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 import { PUBLIC_ACTION_INPUT_SCHEMAS, PLUGIN_ACTION_INPUT_SCHEMAS } from './actionSpecs.js';
+import { computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
 
 function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutorDeps {
   return {
@@ -166,7 +167,7 @@ describe('createActionExecutor (session.handoff)', () => {
     expect(sessionHandoffStart).not.toHaveBeenCalled();
   });
 
-  it('routes one non-empty target replacement approval and replays only its exact host proof', async () => {
+  it('routes a newly discovered non-empty target replacement after native Confirm and replays only its exact host proof', async () => {
     const contentPolicy = {
       v: 1 as const,
       selection: 'all_files' as const,
@@ -223,8 +224,14 @@ describe('createActionExecutor (session.handoff)', () => {
     await expect(executor.execute('session.handoff', actionInput, {
       surface: 'ui',
       authority: 'present_user',
+      actionCaller: { kind: 'host' },
+      runtimeAccountId: 'owner',
       serverId: 'server_a',
+      defaultSessionMachineId: 'machine_1',
       actionRequestId: 'handoff-action-1',
+      presentUserConfirmation: { actionId: 'session.handoff', accountId: 'owner', serverId: 'server_a',
+        requestId: 'handoff-action-1', target: null,
+        inputDigest: computeActionInputApprovalDigestV1('session.handoff', PUBLIC_ACTION_INPUT_SCHEMAS['session.handoff'].parse(actionInput)) },
     })).resolves.toEqual({
       ok: true,
       result: {
@@ -242,8 +249,8 @@ describe('createActionExecutor (session.handoff)', () => {
     const decision = await executor.execute('approval.request.decide', {
       artifactId: 'handoff-target-approval-1',
       decision: 'approve',
-    }, { surface: 'ui', authority: 'present_user', serverId: 'server_a' });
-    expect(decision).toMatchObject({ ok: true, result: { execution: { ok: true } } });
+    }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'owner', serverId: 'server_a' });
+    expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: { execution: { ok: true } } });
     expect(preflight).toHaveBeenCalledTimes(2);
     expect(preflight).toHaveBeenCalledWith(expect.objectContaining({
       effectActionId: 'session.handoff',
@@ -257,7 +264,7 @@ describe('createActionExecutor (session.handoff)', () => {
     await expect(executor.execute('approval.request.decide', {
       artifactId: 'handoff-target-approval-1',
       decision: 'approve',
-    }, { surface: 'ui', authority: 'present_user', serverId: 'server_a' })).resolves.toMatchObject({ ok: true });
+    }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'owner', serverId: 'server_a' })).resolves.toMatchObject({ ok: true });
     expect(sessionHandoffStart).toHaveBeenCalledTimes(1);
     expect(approvalsCreate).toHaveBeenCalledTimes(1);
   });
@@ -331,6 +338,7 @@ describe('createActionExecutor (session.handoff)', () => {
       surface: 'ui',
       authority: 'present_user',
       serverId: 'server_a',
+      defaultSessionMachineId: 'machine_1',
       actionRequestId: 'handoff-action-mirror-1',
     })).resolves.toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     expect(persistedApproval).toMatchObject({ handoffTargetReplacementApproval: approval });
@@ -341,7 +349,7 @@ describe('createActionExecutor (session.handoff)', () => {
       decision: 'approve',
     }, { surface: 'ui', authority: 'present_user' });
 
-    expect(decided).toMatchObject({ ok: true, result: { execution: { ok: false, errorCode: 'approval_stale' } } });
+    expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: { execution: { ok: false, errorCode: 'approval_stale' } } });
     expect(sessionHandoffStart).not.toHaveBeenCalled();
     expect(approvalsCreate).toHaveBeenCalledTimes(1);
   });

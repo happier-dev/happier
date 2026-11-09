@@ -8,6 +8,8 @@ import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../account/settings/sessi
 import { LaunchProfileV2Schema } from '../profiles/v2/schema.js';
 import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import { RoleArtifactV1Schema } from '../prompts/roles/roleArtifactV1.js';
+import { getActionSpec } from '../actions/actionSpecs.js';
+import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '../actions/actionCatalog.js';
 
 const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
 const context = {
@@ -25,6 +27,26 @@ function materialize(overrides: Partial<MaterializeWorkflowAcceptedSnapshotV1Inp
 }
 
 describe('accepted Workflow selection bindings', () => {
+  it.each([
+    { defaults: {}, execution: undefined, expected: 'profile:origin' },
+    { defaults: { approvalProfileId: 'profile:default' }, execution: undefined, expected: 'profile:default' },
+    { defaults: { approvalProfileId: 'profile:default' }, execution: { approvalProfileId: 'profile:step' }, expected: 'profile:step' },
+    { defaults: { approvalProfileId: 'profile:default' }, execution: { approvalProfileId: null }, expected: null },
+    { defaults: { approvalProfileId: null }, execution: undefined, expected: null },
+  ])('freezes one reference for Agent and Action leaves with step/default/origin precedence ($expected)', async ({ defaults, execution, expected }) => {
+    const accepted = await materialize({ definition: { ...definition, defaults: { agentTarget, ...defaults }, blocks: [
+      { ...definition.blocks[0], execution },
+      { kind: 'action', id: 'list', actionId: 'workflow.trigger.list', execution,
+        input: { scope: { kind: 'literal', value: 'account_all' } } },
+    ] }, context: { ...context, origin: { kind: 'direct', actionPolicy: {
+      authority: 'account_automation', approvalProfileId: 'profile:origin',
+    } } }, effects: { resolveTargetAvailability: available, readActionContract: async () =>
+      freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec('workflow.trigger.list'))) },
+    });
+    expect(accepted).toMatchObject({ ok: true });
+    if (!accepted.ok) throw new Error(accepted.error.code);
+    expect(accepted.snapshot.materializedLeaves.map(leaf => leaf.selection.approvalProfileId)).toEqual([expected, expected]);
+  });
   it.each(['literal', 'input', 'item', 'model', 'child'] as const)('demands the selected Role at the canonical %s resolution and freezes its layered facts', async (kind) => {
     const roleId = 'selected-role';
     const reads: string[] = [];
@@ -50,7 +72,8 @@ describe('accepted Workflow selection bindings', () => {
       : kind === 'model' ? { chosen: { kind: 'model', launch } } : {};
     const effects = { resolveTargetAvailability: available,
       readWorkflowDefinition: async () => ({ definition: withRole, sourceKey: 'builtin:selected-child' }),
-      readRoleSelection: async (selectedId: string) => {
+      readRoleSelection: async (selectedId?: string) => {
+        if (selectedId === undefined) return {};
         reads.push(selectedId);
         return { settingsRoles: { [selectedId]: source },
           settingsOverrides: { [selectedId]: { roleId: selectedId, instructionsOverride: 'Fresh settings instructions' } } };
@@ -67,7 +90,10 @@ describe('accepted Workflow selection bindings', () => {
     reads.length = 0;
     const replay = await materialize({ definition: authored, context: { ...context, inputs },
       replay: { snapshot: accepted.snapshot }, effects: { ...effects,
-        readRoleSelection: async (selectedId: string) => { reads.push(selectedId); throw new Error('Live Role source is unavailable'); } } });
+        readRoleSelection: async (selectedId?: string) => {
+          if (selectedId === undefined) return {};
+          reads.push(selectedId); throw new Error('Live Role source is unavailable');
+        } } });
     expect(replay).toMatchObject({ ok: true });
     expect(reads).toEqual([]);
   });
@@ -152,7 +178,7 @@ describe('accepted Workflow selection bindings', () => {
       .toMatchObject({ ok: false, error: { code: 'target_unavailable', reason: 'run_admission_unavailable' } });
   });
 
-  it('freezes the complete model launch for each admitted item choice', async () => {
+  it.each(['profile:step', null] as const)('freezes the complete model launch and approval reference for each admitted item choice (%s)', async approvalProfileId => {
     const launch = { executionTarget: { serverId: 'home-b', machineId: 'machine' },
       directory: { kind: 'path', path: '/review' }, agentTarget, permissionMode: 'read-only',
       profileId: 'review-profile', title: 'Reviewer', primaryTeamId: 'team-a' };
@@ -160,12 +186,14 @@ describe('accepted Workflow selection bindings', () => {
     const authored = { version: 1, defaults: {}, inputs: [{ name: 'reviewers', valueType: 'json', multiple: true, required: true,
       inputType: { hostType: 'agentParticipant' } }], blocks: [{ kind: 'loop', id: 'opinions',
       repetition: { kind: 'items', items: { kind: 'input', name: 'reviewers' }, execution: 'parallel', failurePolicy: 'collect_outcomes' },
-      body: [{ ...definition.blocks[0], execution: { participant: { kind: 'item', field: 'value' } } }] }] };
+      body: [{ ...definition.blocks[0], execution: { participant: { kind: 'item', field: 'value' }, approvalProfileId } }] }] };
     const result = await materialize({ definition: authored, context: { ...context, inputs: { reviewers: [participant] } },
       effects: { resolveTargetAvailability: available, readLaunchProfile: async () => emptyProfile('review-profile') } });
     expect(result).toMatchObject({ ok: true });
     if (!result.ok) return;
     const accepted = WorkflowAcceptedSnapshotV1Schema.parse(result.snapshot);
+    expect(resolveWorkflowAcceptedStepSelectionV1(accepted.materializedLeaves[0]!, participant, accepted.inputs).selection.approvalProfileId)
+      .toEqual(approvalProfileId);
     expect(resolveWorkflowAcceptedStepSelectionV1(accepted.materializedLeaves[0]!, participant, accepted.inputs).participant)
       .toEqual(participant);
     expect(() => resolveWorkflowAcceptedStepSelectionV1(accepted.materializedLeaves[0]!, {
@@ -256,7 +284,8 @@ describe('accepted Workflow selection bindings', () => {
         { kind: 'workflow_run_leaf', leaf }, { caller: { kind: 'session', sessionId: 'origin', starterDepth: 1, turnDepth: 1 },
           baseline: { machineId: 'machine', directory: '/project', configuration: { agentTarget, permissionMode: 'default' } },
           ledSubtreeSessionIds: [], workDepthLimit: 4, roles: {}, callerPermissionCeiling: 'read-only' }) } }))
-      .toMatchObject({ ok: false, error: { code: 'permission_exceeds_ceiling' } });
+      .toMatchObject({ ok: false, error: { code: 'definition_exceeds_authority',
+        cause: { code: 'permission_exceeds_ceiling' } } });
     if (!accepted.ok) return;
     const changedProfile = { ...profile, defaultPermissionModeByTargetKey: { 'agent:happier.agent.codex/codex': 'read-only' as const } };
     expect(await materialize({ definition: authored, context: chosenContext, replay: { snapshot: accepted.snapshot },

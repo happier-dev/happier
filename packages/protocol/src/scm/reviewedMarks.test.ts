@@ -3,7 +3,7 @@ import { classifyAccountJsonKvKey } from '../account/accountJsonKv.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { buildScmComparisonSourceKey, type ScmComparison } from './comparison.js';
 import { buildReviewUnits, buildScmChangeKeys, buildScmReviewScopeId } from './comparisonOccurrences.js';
-import { applyScmReviewedMarkIntent, buildScmReviewedMarksKey, createScmReviewedMarksRecordPort, isScmSelectionReviewed,
+import { applyScmReviewedMarkIntent, buildScmReviewedMarksKey, createScmReviewedMarksRecordPort,
   ScmReviewedMarksRecordSchema, ScmReviewedMarkInputSchema, type ScmReviewedMarksJsonTransport } from './reviewedMarks.js';
 
 function capture(id: string, options: { text?: string; path?: string; line?: number; sessionId?: string; duplicate?: boolean } = {}): ScmComparison {
@@ -37,13 +37,14 @@ describe('scope personal marks owner', () => {
     expect(buildScmComparisonSourceKey({ cwd: '/repo', source: refreshed.source }))
       .not.toBe(buildScmComparisonSourceKey({ cwd: '/repo', source: first.source }));
     const read = await createScmReviewedMarksRecordPort({ comparison: refreshed, transport }).read();
-    expect(isScmSelectionReviewed(read.record, refreshed, ['refresh:0'])).toBe(true);
+    expect(read.record.reviewedChangeKeys).toEqual(buildScmChangeKeys(refreshed).get('refresh:0'));
     const source = refreshed.source;
     if (source.kind !== 'pullRequest') throw new Error('Expected a PR comparison');
     for (const locator of [{ ...source.locator, number: 43 },
       { ...source.locator, sourceAction: { action: { pluginId: 'happier.scm.github', localId: 'other' } } }]) {
       const other = { ...refreshed, source: { kind: 'pullRequest' as const, locator } };
-      expect(isScmSelectionReviewed(read.record, other, ['refresh:0'])).toBe(false);
+      await expect(createScmReviewedMarksRecordPort({ comparison: other, transport }).read())
+        .rejects.toMatchObject({ code: 'reviewed_marks_invalid_record' });
     }
   });
   it('retains reviewed content when a session comparison is recaptured with shifted lines', async () => {
@@ -53,26 +54,27 @@ describe('scope personal marks owner', () => {
     await createScmReviewedMarksRecordPort({ comparison, transport }).setReviewed(['first:0'], true);
     const recaptured = capture('second', { line: 20 });
     const read = await createScmReviewedMarksRecordPort({ comparison: recaptured, transport }).read();
-    expect(isScmSelectionReviewed(read.record, recaptured, ['second:0'])).toBe(true);
+    expect(read.record.reviewedChangeKeys).toEqual(buildScmChangeKeys(recaptured).get('second:0'));
     expect(read.record).toMatchObject({ v: 1, scopeId: expect.any(String), reviewedChangeKeys: [expect.any(String)] });
     expect(read.record).not.toHaveProperty('comparisonId');
   });
   it('invalidates edited text and distinguishes paths and session scopes', () => {
-    for (const changed of [capture('edited', { text: 'rewritten' }), capture('path', { path: 'other.ts' }), capture('session', { sessionId: 'session-b' })]) {
-      expect(isScmSelectionReviewed(marked(), changed, [`${changed.id}:0`])).toBe(false);
+    for (const changed of [capture('edited', { text: 'rewritten' }), capture('path', { path: 'other.ts' })]) {
+      expect(marked().reviewedChangeKeys).not.toEqual(buildScmChangeKeys(changed).get(`${changed.id}:0`));
     }
-    expect(isScmSelectionReviewed(marked(), comparison, [])).toBe(false);
+    expect(marked().scopeId).not.toBe(buildScmReviewScopeId({ repositoryRootPath: '/repo',
+      source: capture('session', { sessionId: 'session-b' }).source }));
     const noFinalNewline = capture('no-final-newline');
     noFinalNewline.inventory.files[0]!.evidence = { state: 'available', unifiedDiff: '@@ -2 +2 @@\n-before\n+after\n\\ No newline at end of file\n' };
-    expect(isScmSelectionReviewed(marked(), noFinalNewline, ['no-final-newline:0'])).toBe(false);
+    expect(marked().reviewedChangeKeys).not.toEqual(buildScmChangeKeys(noFinalNewline).get('no-final-newline:0'));
   });
   it('uses duplicate ordinals so the identical second run is independently reviewed', () => {
     const duplicate = capture('duplicate', { duplicate: true });
     const record = applyScmReviewedMarkIntent(duplicate, null, ['duplicate:1'], true);
-    expect(isScmSelectionReviewed(record, duplicate, ['duplicate:0'])).toBe(false);
-    expect(isScmSelectionReviewed(record, duplicate, ['duplicate:1'])).toBe(true);
+    expect(record.reviewedChangeKeys).not.toEqual(buildScmChangeKeys(duplicate).get('duplicate:0'));
+    expect(record.reviewedChangeKeys).toEqual(buildScmChangeKeys(duplicate).get('duplicate:1'));
     const shifted = capture('shifted', { duplicate: true, line: 30 });
-    expect(isScmSelectionReviewed(record, shifted, ['shifted:1'])).toBe(true);
+    expect(record.reviewedChangeKeys).toEqual(buildScmChangeKeys(shifted).get('shifted:1'));
   });
   it('addresses individual runs while a Walkthrough occurrence requires every run', async () => {
     const multiple = capture('multiple');
@@ -84,9 +86,9 @@ describe('scope personal marks owner', () => {
     const keys = buildScmChangeKeys(multiple).get('multiple:0')!;
     expect(keys).toHaveLength(2);
     const first = await port.setReviewedKeys([keys[0]!], true);
-    expect(first.success && isScmSelectionReviewed(first.record, multiple, ['multiple:0'])).toBe(false);
+    expect(first).toMatchObject({ success: true, record: { reviewedChangeKeys: [keys[0]] } });
     const all = await port.setReviewed(['multiple:0'], true);
-    expect(all.success && isScmSelectionReviewed(all.record, multiple, ['multiple:0'])).toBe(true);
+    expect(all).toMatchObject({ success: true, record: { reviewedChangeKeys: keys } });
   });
   it('uses the mode-admitted namespace and the same key for captured and displayed live evidence', async () => {
     const live = { repositoryRootPath: '/repo', source: { kind: 'workingTree' as const }, changeKeys: buildReviewUnits('a.ts', undefined, comparison.inventory.files[0]!.evidence.unifiedDiff!).map(unit => unit.key) };

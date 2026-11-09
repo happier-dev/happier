@@ -1,7 +1,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 
-/** The same native phase/readiness fact is presented by Machine and Environment reads. */
+/** The same native observation facts are presented by Machine and Environment reads. */
 export const ManagedServiceNativeStateV1Schema = lazyZodSchema(() => z.strictObject({
   phase: z.enum(['running', 'stopped', 'unknown']),
   readiness: z.enum(['ready', 'not_ready', 'not_reported']),

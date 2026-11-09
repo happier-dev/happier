@@ -1,5 +1,10 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { z } from 'zod/mini';
+import {
+  WORKFLOW_READ_ACTION_IDS as readActionIds,
+  WORKFLOW_DIRECT_MCP_ACTION_IDS as directMcpActionIds,
+  WORKFLOW_DANGER_ACTION_IDS as dangerActionIds,
+} from './specs/workflows.js';
 
 import type {
   CanonicalActionSpecDefinition,
@@ -528,42 +533,11 @@ describe('ActionSpec-generated plugin action types', () => {
   });
 
   it('keeps workflow Actions public, trusted-plugin invocable, and exact in the canonical type map', () => {
-    const readActionIds = new Set<WorkflowActionIdV1>([
-      'workflow.validate',
-      'workflow.run.list',
-      'workflow.run.summaries',
-      'workflow.run.get',
-      'workflow.run.wait',
-      'workflow.run.invocations.list',
-      'workflow.run.invocations.get',
-      'workflow.definition.list',
-      'workflow.definition.get',
-      'workflow.definition.import',
-      'workflow.definition.export',
-      'workflow.trigger.list',
-      'session.trigger.list',
-    ]);
-    const directMcpActionIds = new Set<WorkflowActionIdV1>([
-      'workflow.run.start',
-      'workflow.run.get',
-      'workflow.run.wait',
-      'workflow.run.cancel',
-    ]);
-    const dangerActionIds = new Set<WorkflowActionIdV1>([
-      'workflow.run.delete',
-      'workflow.definition.delete',
-      'workflow.trigger.add',
-      'workflow.trigger.update',
-      'workflow.trigger.remove',
-      'workflow.trigger.run_now',
-      'session.trigger.remove',
-    ]);
-
     for (const actionId of WORKFLOW_ACTION_IDS_V1) {
       const spec = getActionSpec(actionId);
       expect(spec, actionId).toMatchObject({
         executionPlacement: actionId === 'workflow.run.start' ? 'machine' : 'account',
-        requiredAuthority: actionId === 'workflow.run.invocations.complete_review' ? 'present_user' : 'account_automation',
+        requiredAuthority: 'account_automation',
         safety: dangerActionIds.has(actionId) ? 'danger' : 'safe',
         sideEffectClass: dangerActionIds.has(actionId)
           ? 'danger'
@@ -575,12 +549,12 @@ describe('ActionSpec-generated plugin action types', () => {
           : { result: 'optional', flow: 'deferred' },
         surfaces: {
           ui: true,
-          voice: actionId === 'workflow.run.list' || actionId === 'workflow.run.start' || actionId.startsWith('workflow.trigger.') || actionId.startsWith('session.trigger.'),
+          voice: actionId !== 'workflow.run.invocations.complete_review',
           agent: true,
           mcp: true,
           cli: true,
           rpc: true,
-          api: actionId !== 'workflow.run.invocations.complete_review',
+          api: true,
           plugin: true,
         },
       });
@@ -590,7 +564,7 @@ describe('ActionSpec-generated plugin action types', () => {
       // every other Workflow operation is discoverable-only on MCP so generic
       // `action_execute` remains its only generic transport projection.
       expect(spec.toolExposure, actionId).toEqual(
-        directMcpActionIds.has(actionId) ? undefined : { mcp: 'discoverable_only' },
+        directMcpActionIds.has(actionId) ? { agent: 'direct', mcp: 'direct' } : { mcp: 'discoverable_only' },
       );
     }
 

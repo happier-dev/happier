@@ -38,6 +38,17 @@ describe('localized presentation parameters', () => {
 });
 
 describe('PluginPolicyExpressionV2', () => {
+  it('admits repository kind through the string policy leaf and distinguishes absent from explicit unknown', () => {
+    const equals = PluginPolicyExpressionV2Schema.parse({ fact: 'project.repository.kind', operator: 'equals', value: 'github' });
+    const notEquals = PluginPolicyExpressionV2Schema.parse({ fact: 'project.repository.kind', operator: 'notEquals', value: 'github' });
+    expect(evaluatePluginPolicyExpressionV2(equals, { 'project.repository.kind': 'github' })).toBe(true);
+    expect(evaluatePluginPolicyExpressionV2(equals, { 'project.repository.kind': 'gitlab' })).toBe(false);
+    expect(evaluatePluginPolicyExpressionV2(notEquals, {})).toBe(null);
+    expect(evaluatePluginPolicyExpressionV2({ not: equals }, {})).toBe(null);
+    expect(evaluatePluginPolicyExpressionV2(notEquals, { 'project.repository.kind': 'unknown' })).toBe(true);
+    expect(evaluatePluginPolicyExpressionV2({ ...equals, value: 'unknown' }, { 'project.repository.kind': 'unknown' })).toBe(true);
+    expect(PluginPolicyExpressionV2Schema.safeParse({ fact: 'project.repository.deployment', operator: 'equals', value: 'custom' }).success).toBe(false);
+  });
   it('evaluates tri-state boolean algebra in the Protocol owner', () => {
     const expression = PluginPolicyExpressionV2Schema.parse({
       all: [

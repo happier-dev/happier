@@ -12,6 +12,9 @@ import {
 import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 import { ExecutionRunIdSchema } from '../idsV1.js';
 import { SessionWorkDepthV1Schema } from '../creation/sessionCreateOriginV1.js';
+import { SessionTurnLifecycleStatusV1Schema } from './sessionTurnLifecycleStatusV1.js';
+export { SessionTurnLifecycleStatusV1Schema } from './sessionTurnLifecycleStatusV1.js';
+export type { SessionTurnLifecycleStatusV1 } from './sessionTurnLifecycleStatusV1.js';
 
 export const SessionTurnInitiatorV1Schema = lazyZodSchema(() => z.enum(['user', 'agent_session', 'host', 'workflow']));
 export const SessionTurnWorkflowInvocationV1Schema = lazyZodSchema(() => z.strictObject({
@@ -37,15 +40,6 @@ export const SessionTurnProviderCheckpointV1Schema =
 export type SessionTurnProviderCheckpointV1 = z.infer<
   typeof SessionTurnProviderCheckpointV1Schema
 >;
-
-export const SessionTurnLifecycleStatusV1Schema = lazyZodSchema(() => z.enum([
-  'in_progress',
-  'waiting',
-  'completed',
-  'cancelled',
-  'failed',
-]));
-export type SessionTurnLifecycleStatusV1 = z.infer<typeof SessionTurnLifecycleStatusV1Schema>;
 
 export const SessionTurnRollbackStateV1Schema = lazyZodSchema(() => z.enum([
   'not_eligible',

@@ -98,13 +98,29 @@ function historyCurrentnessInputs(currentness: AccountEncryptionCurrentnessRespo
     signingKeyFingerprint: currentness.signingKeyFingerprint, contentKeyFingerprint: currentness.contentKeyFingerprint };
 }
 
-/** Process-local completion evidence. Fresh head, transfer and destination reads invalidate it;
- * the Account's unrelated event cursor is not a history input. Incomplete passes never advance it. */
+type AccountSettingsHistoryNormalizationInputsV1 = Readonly<{
+  currentness: ReturnType<typeof historyCurrentnessInputs>;
+  destination: Awaited<ReturnType<typeof captureAccountSettingsHistoryDestinationAuthorityV1>>;
+  savedSecretRecovery?: AccountSettingsHistorySavedSecretRecoveryV1;
+}>;
+
+/** Process-local evidence. Fresh head, transfer and destination reads invalidate it; the Account's
+ * unrelated event cursor is not a history input. `completed` is never advanced by an incomplete pass.
+ * `settledPending` proves nothing was cleaned: it records a pass that read every row, wrote nothing
+ * and hit no transport failure, so the same inputs and inventory would report the same versions.
+ * It carries no snapshot content or secret, and the versions stay reported pending. */
 export type AccountSettingsHistoryNormalizationCheckpointV1 = {
-  completed?: Readonly<{
-    currentness: ReturnType<typeof historyCurrentnessInputs>;
-    destination: Awaited<ReturnType<typeof captureAccountSettingsHistoryDestinationAuthorityV1>>;
-    savedSecretRecovery?: AccountSettingsHistorySavedSecretRecoveryV1;
+  completed?: AccountSettingsHistoryNormalizationInputsV1;
+  /**
+   * Rows whose recorded bytes this process read and found already normalized, per verdict inputs
+   * (destination authority, mode and key fingerprints; not the head version). A retained row's bytes
+   * change only through a normalize/purge mutation, so a head move re-reads only rows not yet verified
+   * instead of the whole inventory. Rows with Saved Secret recovery depend on the head and never enter it.
+   */
+  verifiedUnchanged?: Map<string, Set<number>>;
+  settledPending?: AccountSettingsHistoryNormalizationInputsV1 & Readonly<{
+    inventory: readonly number[];
+    versions: readonly number[];
   }>;
 };
 
@@ -144,6 +160,18 @@ type CapturePorts = Pick<AccountSettingsHistoryClientPortsV1, 'request' | 'readC
 
 async function assertCurrent(ports: CapturePorts): Promise<void> {
   if (!await ports.isCurrent()) ports.unavailable(0, 'Captured Account Settings scope retired');
+}
+
+/**
+ * Whether a historical row holds content `recoverSavedSecretHistoryAuthority` can turn into a
+ * transfer: personal saved secrets, the legacy inference key, notification channels or remote
+ * hosts. Only such a row's verdict depends on the recovery source and resources (current Settings
+ * can later stop holding the secret); any other row normalizes the same with or without recovery.
+ */
+function readsSavedSecretRecovery(raw: AccountSettingsPersistedObject): boolean {
+  return (Array.isArray(raw.secrets) && raw.secrets.length > 0)
+    || readSavedSecretTransferSourceV1({ inferenceOpenAIKey: raw.inferenceOpenAIKey }).inferenceCredential !== undefined
+    || Object.hasOwn(raw, 'notificationChannelsV1') || Object.hasOwn(raw, 'remoteHostsV1');
 }
 
 async function recoverSavedSecretHistoryAuthority(raw: AccountSettingsPersistedObject,
@@ -313,50 +341,67 @@ export async function normalizeAccountSettingsHistoryClientV1(input: Readonly<{
   };
   const inventory = await readList();
   // No historical content consumes destination authority when inventory is
-  // empty. Keep fresh head/crypto and inventory confirmation; explicit source
-  // transfer witnesses still follow the full authority path below.
+  // empty; explicit source transfer witnesses still follow the full path below.
   if (inventory.length === 0 && input.expectedProfileTransferRevision === undefined) {
     if (input.checkpoint) input.checkpoint.completed = undefined;
-    await ports.readCurrentness();
-    const latest = await readList();
-    // An empty final inventory leaves no historical content to normalize even
-    // when the Settings head/crypto inputs moved, just as in the full path.
-    return latest.length === 0
-      ? { status: 'complete' }
-      : { status: 'cleanup-pending', versions: latest.map(snapshot => snapshot.version).sort((a, b) => a - b) };
+    return { status: 'complete' };
   }
   const destination = await captureAccountSettingsHistoryDestinationAuthorityV1({ ...input, currentness });
   const inputs = { currentness: historyCurrentnessInputs(currentness), destination };
-  if ((input.expectedProfileTransferRevision === undefined
+  const sameInputs = (evidence: AccountSettingsHistoryNormalizationInputsV1 | undefined) => evidence !== undefined
+    && (input.expectedProfileTransferRevision === undefined
       || input.expectedProfileTransferRevision === destination.expectedProfileTransferRevision)
-    && input.checkpoint?.completed
-    && areAccountSettingsHistoryRecoveryInputsEqualV1(input.checkpoint.completed.savedSecretRecovery, input.savedSecretRecovery)
-    && sameStrictJsonValue(input.checkpoint.completed.currentness, inputs.currentness)
-    && sameStrictJsonValue(input.checkpoint.completed.destination, inputs.destination)) {
-    // Destination reads can overlap a Settings write, just as a full scan can.
-    // Keep the existing final authority recapture before accepting completion.
-    const confirmedCurrentness = await ports.readCurrentness();
-    const confirmedDestination = await captureAccountSettingsHistoryDestinationAuthorityV1({ ...input, currentness: confirmedCurrentness });
-    if (sameStrictJsonValue(inputs.currentness, historyCurrentnessInputs(confirmedCurrentness))
-      && sameStrictJsonValue(destination, confirmedDestination)) {
-      await assertCurrent(ports);
-      return { status: 'complete' };
-    }
+    && areAccountSettingsHistoryRecoveryInputsEqualV1(evidence.savedSecretRecovery, input.savedSecretRecovery)
+    && sameStrictJsonValue(evidence.currentness, inputs.currentness)
+    && sameStrictJsonValue(evidence.destination, inputs.destination);
+  if (sameInputs(input.checkpoint?.completed)) {
+    await assertCurrent(ports);
+    return { status: 'complete' };
   }
-  if (input.checkpoint) input.checkpoint.completed = undefined;
+  const settledPending = input.checkpoint?.settledPending;
+  const inventoryVersions = inventory.map(snapshot => snapshot.version);
+  if (settledPending && sameInputs(settledPending) && sameStrictJsonValue(settledPending.inventory, inventoryVersions)) {
+    await assertCurrent(ports);
+    return { status: 'cleanup-pending', versions: settledPending.versions };
+  }
+  if (input.checkpoint) { input.checkpoint.completed = undefined; input.checkpoint.settledPending = undefined; }
   if (input.expectedProfileTransferRevision !== undefined
     && input.expectedProfileTransferRevision !== destination.expectedProfileTransferRevision) {
     return { status: 'cleanup-pending', versions: inventory.map(snapshot => snapshot.version).sort((a, b) => a - b) };
   }
+  // Only a pass decided by its captured inputs and recorded bytes may be repeated by reference.
+  let settled = true;
+  // Only what `normalizeTransferredAccountSettingsHistoryV1` reads decides a row's verdict.
+  // Catalog and transfer revisions are CAS evidence for a mutation, not verdict inputs, so a
+  // destination edit on another device must not discard every row already verified clean.
+  const { activePrivateCatalogRevisions: _revisions, legacyRoleArtifactTransfers, ...verdictAuthority } = destination.authority;
+  // Saved-secret recovery can only add transfers for rows that hold such content, so a recovery
+  // pass keeps only rows without it, under its own key: a row verified without recovery may still
+  // hold a secret that a recovery pass must re-check.
+  const verdictKey = input.checkpoint ? JSON.stringify({
+    mode: inputs.currentness.mode, signingKeyFingerprint: inputs.currentness.signingKeyFingerprint,
+    contentKeyFingerprint: inputs.currentness.contentKeyFingerprint,
+    authority: { ...verdictAuthority, legacyRoleArtifactTransfers: legacyRoleArtifactTransfers !== undefined },
+    ...(input.savedSecretRecovery === undefined ? {} : { savedSecretRecovery: true }) }) : null;
+  let verified: Set<number> | null = null;
+  if (verdictKey !== null) {
+    const verdicts = input.checkpoint!.verifiedUnchanged ??= new Map();
+    verified = verdicts.get(verdictKey) ?? new Set();
+    verdicts.set(verdictKey, verified);
+  }
   for (const snapshot of inventory) {
+    if (verified?.has(snapshot.version)) continue;
+    let decidedByRecordedBytes = false;
     try {
       await assertCurrent(ports);
       const detailResponse = await ports.request(`/v2/account/settings/history/${snapshot.version}`, { method: 'GET' });
       await assertCurrent(ports);
       if (detailResponse.status < 200 || detailResponse.status >= 300) ports.unavailable(detailResponse.status, 'History snapshot unavailable');
       const detail = AccountSettingsV2HistoryDetailResponseSchema.parse(detailResponse.data);
-      if (detail.content === null) continue;
+      if (detail.content === null) { verified?.add(snapshot.version); continue; }
+      decidedByRecordedBytes = true;
       const raw = await ports.openSnapshot(detail.content);
+      decidedByRecordedBytes = false;
       const material = input.savedSecretRecovery?.resolveResourceValue && (Object.hasOwn(raw, 'notificationChannelsV1') || Object.hasOwn(raw, 'remoteHostsV1'))
         ? await ports.resolveTransferMaterial(currentness.mode) : null;
       const authority = await recoverSavedSecretHistoryAuthority(raw, destination.authority,
@@ -364,7 +409,11 @@ export async function normalizeAccountSettingsHistoryClientV1(input: Readonly<{
       const application = normalizeTransferredAccountSettingsHistoryV1(raw, authority);
       if (application.status === 'invalid') { pending.add(snapshot.version); continue; }
       if (application.cleanupPending) pending.add(snapshot.version);
-      if (application.status === 'unchanged') continue;
+      if (application.status === 'unchanged') {
+        if (!application.cleanupPending && !(input.savedSecretRecovery && readsSavedSecretRecovery(raw))) verified?.add(snapshot.version);
+        continue;
+      }
+      settled = false;
       const content = await ports.resealSnapshot(application.raw, detail.content);
       const mutation = AccountSettingsV2HistoryMutationRequestSchema.parse({
         expectedSettingsVersion: currentness.settingsVersion,
@@ -387,24 +436,30 @@ export async function normalizeAccountSettingsHistoryClientV1(input: Readonly<{
         || (result.data.status !== 'applied' && result.data.status !== 'unchanged')) pending.add(snapshot.version);
     } catch {
       await assertCurrent(ports);
+      if (!decidedByRecordedBytes) settled = false;
       pending.add(snapshot.version);
     }
   }
-  const finalCurrentness = await ports.readCurrentness();
-  const finalDestination = await captureAccountSettingsHistoryDestinationAuthorityV1({ ...input, currentness: finalCurrentness });
-  // Read after recapture: a concurrent Settings write can retain its previous version again.
+  // One admitted capture: every mutation above carried it as CAS, so a moved head,
+  // key or transfer refused its write. A Settings write during the scan can only
+  // add a retained row, which this final inventory reports; a later transfer runs
+  // its own normalization. Inputs moved at the next run's capture miss the checkpoint.
   const latest = await readList();
   // Retention and exact-version purge can remove a row after the initial list.
   // Only a fresh inventory proves it gone; a still-listed 404 remains unresolved.
   const retained = new Set(latest.map(snapshot => snapshot.version));
   for (const version of pending) if (!retained.has(version)) pending.delete(version);
+  // Versions are never reused, so evidence for a row retention dropped can never be consulted again.
+  for (const [key, rows] of input.checkpoint?.verifiedUnchanged ?? []) {
+    for (const version of rows) if (!retained.has(version)) rows.delete(version);
+    if (rows.size === 0 && key !== verdictKey) input.checkpoint!.verifiedUnchanged!.delete(key);
+  }
   const known = new Set(inventory.map(snapshot => snapshot.version));
   latest.forEach(snapshot => { if (!known.has(snapshot.version)) pending.add(snapshot.version); });
-  if (!sameStrictJsonValue(historyCurrentnessInputs(currentness), historyCurrentnessInputs(finalCurrentness))
-    || finalDestination.expectedProfileTransferRevision !== destination.expectedProfileTransferRevision
-    || !sameStrictJsonValue(destination.authority, finalDestination.authority)) {
-    latest.forEach(snapshot => pending.add(snapshot.version));
-  }
   if (pending.size === 0 && input.checkpoint) input.checkpoint.completed = { ...inputs, savedSecretRecovery: input.savedSecretRecovery };
-  return pending.size ? { status: 'cleanup-pending', versions: [...pending].sort((a, b) => a - b) } : { status: 'complete' };
+  const versions = [...pending].sort((a, b) => a - b);
+  if (versions.length > 0 && settled && input.checkpoint && sameStrictJsonValue(latest.map(snapshot => snapshot.version), inventoryVersions)) {
+    input.checkpoint.settledPending = { ...inputs, savedSecretRecovery: input.savedSecretRecovery, inventory: inventoryVersions, versions };
+  }
+  return versions.length ? { status: 'cleanup-pending', versions } : { status: 'complete' };
 }

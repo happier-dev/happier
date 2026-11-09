@@ -17,8 +17,10 @@ export function buildScmDiffSummaryModelProfiles(params: Readonly<{
     agentFormats?: readonly string[] | null;
     purpose?: AgentModelChoicePurpose;
 }>): readonly ScmDiffSummaryCatalogProfile[] {
+    if (params.models.length === 0) return [];
+    const backendTargetKey = buildBackendTargetKeyV2(params.backendTarget);
     const profiles: readonly ScmDiffSummaryCatalogProfile[] = params.models.map(model => {
-        const modelSelector = { backendTargetKey: buildBackendTargetKeyV2(params.backendTarget), modelId: model.id };
+        const modelSelector = { backendTargetKey, modelId: model.id };
         const costTier = model.costTier ?? params.catalogModels?.find(candidate => candidate.id === model.id)?.costTier;
         return { catalogId: encodeScmDiffSummaryModelOverride(modelSelector), title: model.name, modelSelector,
             ...(costTier ? { costTier } : {}),

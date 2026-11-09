@@ -159,7 +159,7 @@ export function resolveAgentEffectivePermission(
   if (!isAgentCaller(ctx)) {
     return { ok: true, effectiveCallerMode: null };
   }
-  if (!Object.prototype.hasOwnProperty.call(ctx, 'causalPermissionAuthority')) {
+  if (!Object.prototype.hasOwnProperty.call(ctx, 'causalPermissionAuthority') || ctx.causalPermissionAuthority === null) {
     return { ok: true, effectiveCallerMode: ctx.callerPermissionMode ?? 'default' };
   }
 
@@ -196,10 +196,11 @@ export function resolveWorkflowActionContext(
     if (effective.effectiveCallerMode === null) {
       return { ok: false, error: causalPermissionAuthorityFailure() };
     }
+    const { causalPermissionAuthority: _rawCausalPermissionAuthority, ...callerContext } = ctx;
     return {
       ok: true,
       context: Object.freeze({
-        ...ctx,
+        ...callerContext,
         callerPermissionMode: effective.effectiveCallerMode,
         ...(effective.causalPermissionAuthority
           ? { causalPermissionAuthority: effective.causalPermissionAuthority }
@@ -283,7 +284,11 @@ export function resolveSessionMessageSendAdmission(
     ctx,
     permissionResolution.causalPermissionAuthority,
   );
-  if (isAgentCaller(ctx) && ctx.actionCaller?.kind !== 'plugin' && !sessionInputSource) {
+  if (ctx.actionCaller?.kind === 'workflowRun') {
+    if (ctx.workflowSessionInput?.runId !== ctx.actionCaller.runId) {
+      return { ok: false, error: causalPermissionAuthorityFailure() };
+    }
+  } else if (isAgentCaller(ctx) && ctx.actionCaller?.kind !== 'plugin' && !sessionInputSource) {
     return { ok: false, error: causalPermissionAuthorityFailure() };
   }
   return {

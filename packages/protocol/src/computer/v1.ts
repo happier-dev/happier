@@ -6,14 +6,18 @@ import { BrowserActiveTargetV1Schema } from '../browser/events/activeTarget.js';
 import { COMPUTER_CUA_DRIVER_INSTALLABLE_KEY } from '../installables/definitions/computerCuaDriver.js';
 import { COMPUTER_AGENT_DESKTOP_INSTALLABLE_KEY } from '../installables/definitions/computerAgentDesktop.js';
 import { MachineLiveStreamKeyModifierV1Schema } from '../machines/peer/mediation/stream/inputModifiersV1.js';
+import { COMPUTER_RECORDING_ACTION_IDS_V1 } from '../actions/recordingActionIds.js';
 
 const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const PositiveSafeIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.positive()));
 const CoordinateSchema = lazyZodSchema(() => z.number());
 const DimensionSchema = lazyZodSchema(() => z.number().check(z.positive()));
 /** Selection lifetime owner; Machine-person identity comes from authenticated host context. */
-export type ComputerSourceIdentityV1 = Readonly<{ kind: 'session'; sessionId: string }>
-  | Readonly<{ kind: 'machine-person'; personId: string }>;
+export const ComputerSourceIdentityV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('session'), sessionId: IdSchema }),
+  z.strictObject({ kind: z.literal('machine-person'), personId: IdSchema }),
+]));
+export type ComputerSourceIdentityV1 = z.infer<typeof ComputerSourceIdentityV1Schema>;
 
 export function computerSourceIdentityKeyV1(source: ComputerSourceIdentityV1): string {
   return JSON.stringify([source.kind, source.kind === 'session' ? source.sessionId : source.personId]);
@@ -173,6 +177,7 @@ export const ComputerApprovalDisplayV1Schema = lazyZodSchema(() => z.strictObjec
   appName: z.optional(IdSchema),
   access: z.optional(ComputerAccessV1Schema),
   target: z.optional(z.strictObject({ kind: z.enum(['window', 'display']), title: z.string() })),
+  captureId: z.optional(IdSchema),
   captureMedia: z.optional(z.required(SessionImageMediaReferenceV1Schema, { file: true })),
 }));
 export type ComputerApprovalDisplayV1 = z.infer<typeof ComputerApprovalDisplayV1Schema>;
@@ -296,6 +301,7 @@ export const COMPUTER_PRESENT_USER_ACTION_IDS = [
   'computer.control.interrupt',
   'computer.control.handBack',
   'computer.target.close',
+  ...Object.values(COMPUTER_RECORDING_ACTION_IDS_V1),
 ] as const;
 export type ComputerPresentUserActionId = (typeof COMPUTER_PRESENT_USER_ACTION_IDS)[number];
 

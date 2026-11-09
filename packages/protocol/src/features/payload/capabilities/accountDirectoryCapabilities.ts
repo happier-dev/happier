@@ -15,7 +15,7 @@ const PublicKeyBase64UrlSchema = lazyZodSchema(() => z.string().check(z.regex(AC
     }
   }, 'publicKeyBase64Url must be canonical base64url for 32 bytes')));
 
-export const AccountDirectoryCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const AccountDirectoryCapabilitiesSchema = lazyZodSchema(() => z.object({
   version: z.literal(1),
   homeDirectory: z.boolean(),
   homeEnrollment: z.boolean(),

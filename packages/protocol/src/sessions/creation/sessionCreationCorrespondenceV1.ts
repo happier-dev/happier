@@ -6,7 +6,7 @@ import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js'
 import { ConnectedServiceBindingsV2IngressSchema } from '../../connect/connectedServiceBindings.js';
 import { readCapabilitySelectionCarrierV1, SessionCapabilitySelectionAuthoringV1Schema } from '../../reach/sessionCapabilitySelectionV1.js';
 import { SessionModelSelectionV1Schema } from '../../providers/selection/v1.js';
-import { AgentSessionConfigurationSnapshotV1Schema } from '../../runtime/agentSessionV1.js';
+import { AgentSessionConfigurationSnapshotV1Schema } from '../../runtime/agentSessionConfigurationV1.js';
 import { AgentSessionToolPolicyShapeV1 } from '../../runtime/permissionIntentV1.js';
 import { AgentSessionStartupInstructionsMarkerV1Schema } from '../../runtime/agentSessionStartupInstructionsV1.js';
 import { SessionAuthoringTerminalV1Schema, SessionAuthoringCheckoutCreationDraftV1Schema } from '../authoring/creationFieldsV1.js';
@@ -19,19 +19,6 @@ import { SessionPromptStackV1Schema } from '../context/sessionContextV1.js';
 import { ManagedControllerV1Schema } from '../../machines/managed/managedMachineV1.js';
 import { SessionDiscussionParticipantV1Schema } from './sessionDiscussionParticipantV1.js';
 import { SessionAuthoringSelectionFieldsV1 } from '../authoring/selectionFieldsV1.js';
-import { MachineSetupPlanInputV1Schema } from '../../machines/managed/actionsV1.js';
-import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema,
-  type ExternalActionExecutionAuthorizationV1, type ExternalActionRequestEnvelope } from '../../actions/externalActionApi.js';
-
-/** Original admitted setup authority; encrypted owner metadata carries it without minting authority. */
-export type SessionCreationMachineSetupExecutionV1 = Readonly<{
-  authorization: ExternalActionExecutionAuthorizationV1;
-  originalActionEnvelope: ExternalActionRequestEnvelope;
-}>;
-export const SessionCreationMachineSetupExecutionV1Schema: z.ZodMiniType<SessionCreationMachineSetupExecutionV1> = lazyZodSchema(() => z.strictObject({
-  authorization: ExternalActionExecutionAuthorizationV1Schema,
-  originalActionEnvelope: ExternalActionRequestEnvelopeSchema,
-}));
 
 /** Immutable birth provenance, validated against Home's admitted resource before Session creation. */
 export const SessionManagedCreationV1Schema = lazyZodSchema(() => z.strictObject({
@@ -56,8 +43,6 @@ const createSessionCreationImmutableRecipeSchema = () => z.strictObject({
   memoryEnabled: z.optional(z.boolean()),
   promptStack: z.optional(SessionPromptStackV1Schema),
   managedCreation: z.optional(SessionManagedCreationV1Schema),
-  machineSetupPlanInput: z.optional(z.lazy(() => MachineSetupPlanInputV1Schema)),
-  machineSetupExecution: z.optional(SessionCreationMachineSetupExecutionV1Schema),
   checkoutCreationDraft: z.optional(SessionAuthoringCheckoutCreationDraftV1Schema),
   discussionParticipant: z.optional(SessionDiscussionParticipantV1Schema),
   secretReferenceOverlay: z.optional(SecretReferenceOverlayV1Schema),
@@ -145,13 +130,10 @@ export function sessionCreationCorrespondenceMatchesV1(
 
 function semanticCorrespondence(value: SessionCreationCorrespondenceV1) {
   const { branchName: _observedBranch, ...checkout } = value.recipe.checkout ?? {};
-  // A fresh admission proof for the same creation key does not change the
-  // authored birth. The exact setup input above remains immutable retry meaning.
-  const { machineSetupExecution: _admissionProof, ...recipe } = value.recipe;
   return {
     ...value,
     recipe: {
-      ...recipe,
+      ...value.recipe,
       checkout: value.recipe.checkout ? checkout : null,
       ...normalizeSessionCreationSelectionIdentityV1(value.recipe),
     },

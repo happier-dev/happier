@@ -71,7 +71,7 @@ export function parseKeybindingRule(bindingOrRule: string | KeybindingRule): Par
 
     for (const part of parts) {
         const lower = part.toLowerCase();
-        if (lower === 'mod') parsed.mod = true;
+        if (lower === 'mod' || lower === 'cmdorctrl') parsed.mod = true;
         else if (lower === 'ctrl' || lower === 'control') parsed.ctrl = true;
         else if (lower === 'cmd' || lower === 'command' || lower === 'meta') parsed.meta = true;
         else if (lower === 'shift') parsed.shift = true;

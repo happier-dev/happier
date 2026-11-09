@@ -29,14 +29,14 @@ const LiveActivityDirectApnsConfigurationDiagnosticSchema = lazyZodSchema(() => 
   'apns_bundle_id_allowlist_missing',
 ]));
 
-export const LiveActivityRemoteUpdateModeDiagnosticSchema = lazyZodSchema(() => z.strictObject({
+export const LiveActivityRemoteUpdateModeDiagnosticSchema = lazyZodSchema(() => z.object({
     available: z.boolean(),
     reasons: z.array(LiveActivityRemoteUpdateCapabilityReasonSchema),
     configurationDiagnostics: z._default(z.optional(z
       .array(LiveActivityDirectApnsConfigurationDiagnosticSchema)), []),
   }));
 
-const LiveActivityPerActivityUpdateCapabilityDiagnosticSchema = lazyZodSchema(() => z.strictObject({
+const LiveActivityPerActivityUpdateCapabilityDiagnosticSchema = lazyZodSchema(() => z.object({
     id: z.literal('per_activity_update'),
     status: z.enum(['supported_when_configured', 'future_unsupported']),
     events: z.array(LiveActivityRemoteUpdateEventSchema),
@@ -45,7 +45,7 @@ const LiveActivityPerActivityUpdateCapabilityDiagnosticSchema = lazyZodSchema(()
     reasons: z.array(LiveActivityRemoteUpdateCapabilityReasonSchema),
   }));
 
-const LiveActivityPushToStartCapabilityDiagnosticSchema = lazyZodSchema(() => z.strictObject({
+const LiveActivityPushToStartCapabilityDiagnosticSchema = lazyZodSchema(() => z.object({
     id: z.literal('push_to_start'),
     status: z.enum(['supported_when_configured', 'future_unsupported']),
     events: z.tuple([z.literal('start')]),
@@ -54,7 +54,7 @@ const LiveActivityPushToStartCapabilityDiagnosticSchema = lazyZodSchema(() => z.
     reasons: z.array(LiveActivityRemoteUpdateCapabilityReasonSchema),
   }));
 
-const LiveActivityBroadcastChannelCapabilityDiagnosticSchema = lazyZodSchema(() => z.strictObject({
+const LiveActivityBroadcastChannelCapabilityDiagnosticSchema = lazyZodSchema(() => z.object({
     id: z.literal('broadcast_channel'),
     status: z.enum(['supported_when_configured', 'future_unsupported']),
     events: z.tuple([]),
@@ -63,13 +63,13 @@ const LiveActivityBroadcastChannelCapabilityDiagnosticSchema = lazyZodSchema(() 
     reasons: z.array(LiveActivityRemoteUpdateCapabilityReasonSchema),
   }));
 
-export const LiveActivityRemoteUpdateCapabilityDiagnosticsSchema = lazyZodSchema(() => z.strictObject({
-    modes: z.strictObject({
+export const LiveActivityRemoteUpdateCapabilityDiagnosticsSchema = lazyZodSchema(() => z.object({
+    modes: z.object({
         hosted_happier_relay: LiveActivityRemoteUpdateModeDiagnosticSchema,
         direct_apns: LiveActivityRemoteUpdateModeDiagnosticSchema,
         background_wake_best_effort: LiveActivityRemoteUpdateModeDiagnosticSchema,
       }),
-    capabilities: z.strictObject({
+    capabilities: z.object({
         perActivityUpdate: LiveActivityPerActivityUpdateCapabilityDiagnosticSchema,
         pushToStart: LiveActivityPushToStartCapabilityDiagnosticSchema,
         broadcastChannel: LiveActivityBroadcastChannelCapabilityDiagnosticSchema,

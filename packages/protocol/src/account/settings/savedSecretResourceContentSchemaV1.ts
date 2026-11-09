@@ -1,4 +1,3 @@
-import { PluginSecretSourceFieldV1Schema } from '../../plugins/contributions/secretSources.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { SavedSecretPasskeySourceV1Schema } from './savedSecretPasskeySourceV1.js';
@@ -15,6 +14,7 @@ import { SavedSecretSchema } from '../../profiles/backendProfileSchema.js';
 import { PluginIdSchema } from '../../plugins/pluginId.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
+import { PluginSecretSourceFieldV1Schema } from '../../plugins/contributions/secretSources.js';
 import { PluginSettingFieldIdV2Schema } from '../../plugins/contributions/settings.js';
 import {
   ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES,

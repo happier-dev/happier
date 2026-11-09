@@ -7,6 +7,7 @@ import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionAp
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+import { ActionIdSchema } from './actionIds.js';
 
 describe('app shell Actions', () => {
   it('owns notice admission for native and signed own-Account agents while excluding foreign and external credentials', () => {

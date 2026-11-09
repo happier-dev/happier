@@ -21,6 +21,14 @@ const baseRequest = {
 } as const;
 
 describe('browser automation protocol contracts', () => {
+  it('allows human stream input to follow its lifecycle without a synthetic action deadline', () => {
+    const { timeoutMs: _timeout, ...request } = baseRequest;
+    expect(BrowserAutomationActionRequestV1Schema.safeParse({ ...request, requestedBy: 'user', actionKind: 'click' }).success).toBe(true);
+    expect(BrowserAutomationActionRequestV1Schema.safeParse({ ...request, actionKind: 'click' }).success).toBe(false);
+  });
+  it('accepts the caller deadline beyond sixty seconds', () => {
+    expect(BrowserAutomationActionRequestV1Schema.safeParse({ ...baseRequest, actionKind: 'snapshot', timeoutMs: 120_000 }).success).toBe(true);
+  });
   it('admits a closed exact-match dialog response only on a mutating action', () => {
     const request = { ...baseRequest, actionKind: 'click', payload: { selector: '#continue' },
       dialogResponse: { kind: 'prompt', message: 'Your name?', accept: true, promptText: 'Alice' } };
@@ -153,7 +161,7 @@ describe('browser automation protocol contracts', () => {
     expect(invalid.success).toBe(false);
   });
 
-  it('keeps timeline entries bounded and rejects inline evidence payloads', async () => {
+  it('accepts producer-owned timeline retention and rejects inline evidence payloads', async () => {
     const mod = await loadAutomationModule();
 
     expect(mod?.BrowserAutomationTimelineV1Schema).toBeTypeOf('object');
@@ -204,17 +212,21 @@ describe('browser automation protocol contracts', () => {
       },
     }).success).toBe(false);
 
-    expect(timelineSchema.safeParse({
+    const timeline = {
       v: 1,
       browserSessionId: 'browser_session_1',
       viewId: 'browser_view_1',
-      maxEntries: 500,
+      maxEntries: 501,
       entries: Array.from({ length: 501 }, (_, index) => ({
         ...entry,
         timelineEntryId: `entry_${index}`,
         automationRequestId: `automation_request_${index}`,
       })),
-    }).success).toBe(false);
+    };
+    expect(timelineSchema.safeParse(timeline).success).toBe(true);
+    const { maxEntries: _producerRetention, ...withoutRetentionMetadata } = timeline;
+    expect(timelineSchema.safeParse(withoutRetentionMetadata).success).toBe(true);
+    expect(timelineSchema.safeParse({ ...timeline, maxEntries: 500 }).success).toBe(false);
   });
 
   it('accepts user-canceled automation results and timeline entries as canonical protocol evidence', async () => {

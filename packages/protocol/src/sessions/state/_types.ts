@@ -1,8 +1,7 @@
-import type { SessionBotFaceV1 } from '../identity/sessionBotFaceV1.js';
-import type { BotTemplateInstanceV1 } from '../../bots/templates/templateInstanceV1.js';
-import type { BotTemplateDraftRefV1Schema } from '../../bots/templates/botTemplateV1.js';
 import type { z } from 'zod/mini';
 import type { SessionBotV1 } from '../identity/sessionBotV1.js';
+import type { SessionBotFaceV1 } from '../identity/sessionBotFaceV1.js';
+import type { BotTemplateDraftRefV1Schema } from '../../bots/templates/botTemplateV1.js';
 
 import type { ModelOverrideV1 } from '../metadata/metadataOverridesV1.js';
 import type { SessionRoleConfigurationV1 } from '../../prompts/roles/sessionRolesSnapshot.js';
@@ -20,6 +19,8 @@ import type { SessionStateCapabilitiesV1Schema } from './capabilitySchema.js';
 import type { SessionUsageLimitRecoveryV1 } from './valueSchemas/usageLimitRecovery.js';
 import type { SessionRunnerRuntimeStateV1 } from '../control/sessionRunnerRuntimeV1.js';
 import type { SessionRuntimeActivitySnapshot } from '../runtime/activity/sessionRuntimeActivity.js';
+import type { SessionTurnProgressV1 } from './valueSchemas/turnProgress.js';
+import type { BotTemplateInstanceV1 } from '../../bots/templates/templateInstanceV1.js';
 
 export type SessionStateFieldId = (typeof SESSION_STATE_FIELD_IDS)[number];
 export type SessionStateFieldClass = (typeof SESSION_STATE_FIELD_CLASSES)[number];
@@ -65,6 +66,7 @@ export interface SessionStateFieldRegistry {
   'intent.role': { value: string };
   'intent.sessionRoles': { value: SessionRoleConfigurationV1 };
   'intent.memoryEnabled': { value: boolean };
+  'intent.approvalProfileId': { value: string | null };
   'intent.voicePreference': { value: SessionVoicePreferenceV1 | null };
   'intent.templateDraftRef': { value: z.infer<typeof BotTemplateDraftRefV1Schema> | null };
   'intent.templateInstance': { value: BotTemplateInstanceV1 | null };
@@ -77,6 +79,7 @@ export interface SessionStateFieldRegistry {
   'display.bot': { value: SessionBotV1 | null };
   'display.botFace': { value: SessionBotFaceV1 | null };
   'runtime.workState': { value: SessionWorkStateV1 };
+  'runtime.turnProgress': { value: SessionTurnProgressV1 };
   'runtime.activity': { value: SessionRuntimeActivitySnapshot };
   'runtime.externalAgent': { value: ExternalAgentObservationSnapshotV1 };
   'runtime.externalSessionOperation': { value: ExternalSessionOperationStateV1 };

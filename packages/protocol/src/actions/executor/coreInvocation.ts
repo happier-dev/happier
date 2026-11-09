@@ -1,8 +1,3 @@
-import type { WorkflowSessionScopeV1 } from '../../workflows/workflowSessionScopeV1.js';
-import type { SessionVisualAdmissionV1 } from './sessionVisualAdmission.js';
-import type { WidgetSurfaceReadV1 } from '../../widgets/actionsV1.js';
-import type { DiscussionAnswerPolicyV1 } from '../../discussions/participants.js';
-import type { ActionExecuteFailure } from '../actionExecutionResult.js';
 import { type ActionId } from '../actionIds.js';
 import type { ActionExecutorContext, ActionPreparedInvocation, ActionPrepareResult } from './types.js';
 import type { ActionApprovalScopeV1 } from '../actionSettings.js';
@@ -10,10 +5,18 @@ import { type MemoryWriteAdmissionV1 } from './memoryDocumentActions.js';
 import { type DiscussionModelParticipantLaunchV1 } from '../../discussions/modelParticipantLaunch.js';
 import type { ActionExecutorDeps } from './types.js';
 import type { ActionSpec } from '../actionSpecs.js';
+import type { DiscussionAnswerPolicyV1 } from '../../discussions/participants.js';
+import type { ActionExecuteFailure } from '../actionExecutionResult.js';
+import type { WorkflowSessionScopeV1 } from '../../workflows/workflowSessionScopeV1.js';
+import type { SessionVisualAdmissionV1 } from './sessionVisualAdmission.js';
+import type { WidgetSurfaceReadV1 } from '../../widgets/actionsV1.js';
+
+/** Invocation-local policy read by the executor, never caller-authored or persisted. */
+export type DiscussionPublicationPolicy = Readonly<{
+  ok: true; answerPolicy: DiscussionAnswerPolicyV1; informationalReturn: boolean;
+}> | ActionExecuteFailure | null;
 
 export type PreparedCoreAdmission = Readonly<{
-previewTemplateEnvironmentId?: string;
-
     actionId: ActionId;
     input: unknown;
     /** Post-hook semantic operands before domain preparation creates effect refs. */
@@ -37,6 +40,8 @@ previewTemplateEnvironmentId?: string;
     deploymentReview?: import('../../json/strictJsonValue.js').JsonValue;
     hostReviewedChildren?: import('./types.js').HostReviewedChildrenPlanV1;
     hostReviewedChildPolicies?: readonly import('./deploymentRoleChild.js').HostReviewedChildPolicyV1[];
+    /** The child issuer already admitted this exact effect before prepared dispatch. */
+    admittedReviewedChild?: true;
     /** The producer's closure retains its exact prepared facts without persisting domain state. */
     executeAdmittedAction?: import('./types.js').HostReviewedChildrenPreparationV1['executeAdmittedAction'];
     /** Deferred requester enrichment runs after review and before child-port binding. */
@@ -71,6 +76,7 @@ export type CoreOptions = Readonly<{
       prepared?: PreparedCoreAdmission;
       /** Private schema admission for this exact value, invalidated by input binding. */
       admittedInputSchema?: ActionSpec['inputSchema'];
+      discussionPublicationPolicy?: DiscussionPublicationPolicy;
       hostInternal?: boolean;
       approvalReplay?: boolean;
       /** This private dispatch already holds a concrete address, even if its ID resembles shorthand. */
@@ -95,7 +101,3 @@ export type CoreInvocation = Readonly<{
   deps: ActionExecutorDeps;
   options: CoreOptions | undefined;
 }>;
-
-export type DiscussionPublicationPolicy = Readonly<{
-  ok: true; answerPolicy: DiscussionAnswerPolicyV1; informationalReturn: boolean;
-}> | ActionExecuteFailure | null;

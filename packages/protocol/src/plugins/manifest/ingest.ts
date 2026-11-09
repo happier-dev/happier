@@ -3,7 +3,7 @@ import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '../contributions/catalog.js';
 import { readPluginSettingSecretCustody } from '../contributions/settings.js';
 import { isDynamicPluginResourceContributionV2 } from '../contributions/v2.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
-import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
+import { PluginContributionLocalIdSchema, buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '../contributionIdentity.js';
 import { pluginNetworkOriginPolicyAdmitsOrigin } from '../networkHostSuffix.js';
 import {
   isPluginDeclarativeDocumentContentTypeV1,
@@ -29,9 +29,9 @@ import { dropEmptyRetiredContributionFamilies, skipInvalidPluginContributions } 
 
 export type PluginManifestIngestionDiagnostic = Readonly<{
   code:
-    | 'plugin_contribution_skipped'
     | 'plugin_manifest_invalid_json'
     | 'plugin_manifest_invalid'
+    | 'plugin_contribution_skipped'
     | 'plugin_manifest_duplicate_contribution_id'
     | 'plugin_manifest_invalid_contribution_id'
     | 'plugin_manifest_dangling_reference'
@@ -949,14 +949,17 @@ function readRightSidebarCountResourceDiagnostics(manifest: ParsedPluginManifest
   const resourcesById = new Map(manifest.contributes.resources.map(resource => [resource.id, resource]));
   const diagnostics: PluginManifestIngestionDiagnostic[] = [];
   manifest.contributes.ui.views.forEach((view, index) => {
-    if (view.container !== 'rightSidebarTab' || view.countResourceId === undefined) return;
-    const resource = resourcesById.get(view.countResourceId);
+    if (view.container !== 'rightSidebarTab' && !(view.container === 'appPage' && view.target.kind === 'project')) return;
+    const resourceId = view.counts?.resourceId ?? view.countResourceId;
+    if (resourceId === undefined) return;
+    const resource = resourcesById.get(resourceId);
     // The catalog owns dangling and wrong-family reference diagnostics.
     if (!resource) return;
     if (!isDynamicPluginResourceContributionV2(resource) || resource.contentType !== 'application/json'
       || resource.scope === 'session' && view.target.kind !== 'session') {
-      diagnostics.push({ code: 'plugin_manifest_invalid', path: ['contributes', 'ui', 'views', index, 'countResourceId'],
-        message: `Right-sidebar count '${view.countResourceId}' must reference a dynamic JSON Resource with a compatible target scope.` });
+      diagnostics.push({ code: 'plugin_manifest_invalid', path: ['contributes', 'ui', 'views', index,
+        ...(view.counts ? ['counts', 'resourceId'] : ['countResourceId'])],
+        message: `Destination count '${resourceId}' must reference a dynamic JSON Resource with a compatible target scope.` });
     }
   });
   return diagnostics;
@@ -1049,6 +1052,50 @@ function readVoiceModelPackOriginDiagnostics(manifest: ParsedPluginManifestV2): 
   return diagnostics;
 }
 
+/** Field identity is plugin-qualified; a mark never borrows a field from another entity. */
+function readListExtensionFieldDiagnostics(manifest: ParsedPluginManifestV2): PluginManifestIngestionDiagnostic[] {
+  const fields = new Map<string, string>();
+  const diagnostics: PluginManifestIngestionDiagnostic[] = [];
+  manifest.contributes.ui.listExtensions?.forEach((extension, extensionIndex) => {
+    extension.filterFields?.forEach((field, fieldIndex) => {
+      const key = buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId: field.id });
+      if (fields.has(key)) diagnostics.push({ code: 'plugin_manifest_duplicate_contribution_id',
+        path: ['contributes', 'ui', 'listExtensions', extensionIndex, 'filterFields', fieldIndex, 'id'],
+        message: `List field '${key}' is already declared.`,
+      });
+      else fields.set(key, extension.entity);
+    });
+  });
+  manifest.contributes.ui.listExtensions?.forEach((extension, index) => {
+    if (!extension.rowMark) return;
+    const reference = extension.rowMark.fieldId;
+    const identity = parseQualifiedPluginContributionKey(reference)
+      ?? (PluginContributionLocalIdSchema.safeParse(reference).success ? { pluginId: manifest.id, localId: reference } : null);
+    const entity = identity ? fields.get(buildQualifiedPluginContributionKey(identity)) : undefined;
+    if (entity === extension.entity) return;
+    diagnostics.push({ code: entity === undefined ? 'plugin_manifest_dangling_reference' : 'plugin_manifest_wrong_family_reference',
+      path: ['contributes', 'ui', 'listExtensions', index, 'rowMark', 'fieldId'],
+      message: `Row mark '${reference}' must reference a declared field for '${extension.entity}'.`,
+    });
+  });
+  return diagnostics;
+}
+
+function readAgentCliSystemToolDiagnostics(manifest: ParsedPluginManifestV2): PluginManifestIngestionDiagnostic[] {
+  const toolIds = new Set(manifest.contributes.systemTools.map(tool => tool.id));
+  return manifest.contributes.agents.flatMap((agent, index) => {
+    const binding = agent.catalog?.agentCliSystemTool;
+    if (!binding) return [];
+    const path = ['contributes', 'agents', index, 'catalog', 'agentCliSystemTool'];
+    const diagnostics: PluginManifestIngestionDiagnostic[] = [];
+    if (!toolIds.has(binding.toolId)) diagnostics.push({ code: 'plugin_manifest_invalid', path,
+      message: `Agent '${agent.id}' CLI system-tool binding '${binding.toolId}' names no declared system tool` });
+    if (!agent.cli) diagnostics.push({ code: 'plugin_manifest_invalid', path,
+      message: `Agent '${agent.id}' CLI system-tool binding requires declared CLI metadata` });
+    return diagnostics;
+  });
+}
+
 type PluginManifestIngestionOptions = Readonly<{
   /** Authoring stays strict. Host load withdraws failed contributions as units. */
   mode?: 'author' | 'load';
@@ -1113,8 +1160,10 @@ export function admitDecodedPluginManifestV2(input: unknown, options: PluginMani
     manifest = { ...manifest, metadata };
   }
   const semanticDiagnostics = [
+    ...readAgentCliSystemToolDiagnostics(manifest),
     ...readContributionIds(manifest.contributes as Readonly<Record<string, unknown>>),
     ...readSettingsFieldIdentityDiagnostics(manifest),
+    ...readListExtensionFieldDiagnostics(manifest),
     ...readAgentUiSettingReferenceDiagnostics(manifest),
     ...readReferenceDiagnostics(manifest),
     ...readAgentInlineSurfaceDiagnostics(manifest),
@@ -1204,7 +1253,6 @@ export function resolvePluginManifestSetReferencesV2(
           const foundInTarget = targetFamilies.some((targetFamily) => (
             targetFamilyIndex?.get(targetFamily)?.has(targetLocalId) === true
               && (candidate.revision === undefined || targetFamilyIndex?.get(targetFamily)?.get(targetLocalId)?.revision === candidate.revision)
-
           ));
           if (foundInTarget) continue;
           const foundElsewhere = targetFamilyIndex

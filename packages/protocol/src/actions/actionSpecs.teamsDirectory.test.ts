@@ -36,7 +36,7 @@ describe('Team directory Action contracts', () => {
         ui: true,
         cli: true,
         agent: true,
-        mcp: !isRead || isRemoval,
+        mcp: true,
         api: isRead || isRemoval,
       });
     }

@@ -648,6 +648,22 @@ describe('built-in legacy Connected Services compatibility', () => {
         )).toEqual(tokenCredential);
     });
 
+    it('converts on edit: an untouched released key stays readable and a converted key never takes a released root', () => {
+        const ref = { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'work' };
+        // Untouched 0.2 storage is still the readable source for the qualified reader.
+        expect(parseQualifiedConnectedAccountCredentialPlaintextV1({ ref, authenticationModeId: 'api-key', plaintext: tokenCredential }))
+            .toMatchObject({ v: 1, values: { apiKey: 'sk-ant-test' } });
+        // A converted credential holds only its Saved Secret reference, so it keeps the
+        // qualified root: a released reader cannot mistake it for a token record.
+        const converted = { v: 1 as const, values: {}, secretRefs: { token: 'happier:shared-secret:v1:anthropic-key' } };
+        const projected = projectQualifiedConnectedAccountCredentialPlaintextV1({ ref, authenticationModeId: 'api-key',
+            payload: converted, now: 1_700_000_000_000 });
+        expect(projected).toEqual(converted);
+        expect(ReleasedCredentialRecordSchema.safeParse(projected).success).toBe(false);
+        expect(parseQualifiedConnectedAccountCredentialPlaintextV1({ ref, authenticationModeId: 'api-key', plaintext: projected }))
+            .toEqual(converted);
+    });
+
     it('translates the current Remote rich quota recovery credits without losing fields', () => {
         expect(RemoteRecoveryCreditsSchema.parse(remoteRecoveryCredits)).toEqual(remoteRecoveryCredits);
         expect(RemoteQuotaSnapshotFixtureSchema.parse(remoteQuotaSnapshot))

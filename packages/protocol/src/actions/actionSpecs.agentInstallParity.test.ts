@@ -26,8 +26,8 @@ describe('machine agent install Action parity', () => {
     expect(await executor.execute('machines.agents.install', { ...target, intent: 'install' }, context)).toMatchObject({ ok: true });
     expect(await executor.execute(uninstallId, target, context)).toMatchObject({ ok: true });
     expect(requests).toMatchObject([
-      { ...target, intent: 'install', consent: { vendorRecipe: false } },
-      { ...target, intent: 'uninstall', consent: { vendorRecipe: false } },
+      { ...target, intent: 'install', consent: { vendorRecipe: false }, context, effectActionId: 'machines.agents.install' },
+      { ...target, intent: 'uninstall', consent: { vendorRecipe: false }, context, effectActionId: 'machines.agents.uninstall' },
     ]);
     expect(getActionSpec('machines.agents.install').inputSchema.safeParse({ ...target, intent: 'uninstall' }).success).toBe(false);
   });

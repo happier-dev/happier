@@ -1,11 +1,9 @@
+import { ConnectedServiceUsageNotificationV1Schema, MachineVitalsNotificationV1Schema, type ConnectedServiceUsageNotificationV1, type MachineVitalsNotificationV1 } from './usageNotificationFactsV1.js';
+export { ConnectedServiceUsageNotificationV1Schema, MachineVitalsNotificationV1Schema, type ConnectedServiceUsageNotificationV1, type MachineVitalsNotificationV1 } from './usageNotificationFactsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import { WorkflowRunIdV1Schema } from '../workflows/workflowIdsV1.js';
-import { ProviderAccountUsageRecordIdSchema } from '../connect/providerAccountUsagePrimitives.js';
-import { ProviderAccountUsagePaceWindowV1Schema } from '../connect/deriveProviderAccountUsagePace.js';
-import { UsageQuotaNotificationKindV1Schema } from '../account/settings/usagePacingPreferencesV1.js';
-import { MachineVitalsDiskThresholdV1Schema } from '../machines/vitals/machineVitalsAlertsV1.js';
 import { SessionGuardStateV1Schema, SessionGuardMemoryObservationV1Schema } from '../machines/guard/sessionGuardStateV1.js';
 import { TerminalGuardStateV1Schema } from '../machines/guard/terminalGuardStateV1.js';
 import { PUSH_NOTIFICATION_CATEGORY_IDS } from '../push/pushNotificationActions.js';
@@ -13,14 +11,17 @@ import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS } from '../actions/specs/machineTerminal.js';
 import { FollowEventV1Schema } from '../sessions/follow/sessionFollowPolicyV1.js';
-import { SessionFollowSourceMessageV1Schema, SessionFollowSourceRequestsV1Schema } from '../sessions/follow/sessionFollowSourceOccurrenceV1.js';
-import { ExecutionRunFollowSourceV1Schema, WorkflowRunFollowOriginalV1Schema, RunFollowOccurrenceV1Schema } from '../sessions/follow/sessionFollowInputV1.js';
+import { SessionFollowSourceMessageV1Schema, SessionFollowSourceRequestsV1Schema, SessionFollowSourceTurnV1Schema } from '../sessions/follow/sessionFollowSourceOccurrenceV1.js';
+import { ExecutionRunFollowSourceV1Schema, WorkflowRunFollowOriginalV1Schema, RunFollowOccurrenceV1Schema, resolveSessionFollowTurnEventV1 } from '../sessions/follow/sessionFollowInputV1.js';
 import { DiscussionMessageRefV1Schema } from '../discussions/messageRefs.js';
 
 const followUpdateFields = { event: z.lazy(() => FollowEventV1Schema) };
 const FollowUpdateOriginalV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ ...followUpdateFields, sourceMessage: SessionFollowSourceMessageV1Schema, sourceRequests: z.optional(z.never()) }),
-  z.strictObject({ ...followUpdateFields, sourceRequests: SessionFollowSourceRequestsV1Schema, sourceMessage: z.optional(z.never()) }),
+  z.strictObject({ ...followUpdateFields, sourceMessage: SessionFollowSourceMessageV1Schema, sourceRequests: z.optional(z.never()), sourceTurn: z.optional(z.never()) }),
+  z.strictObject({ ...followUpdateFields, sourceRequests: SessionFollowSourceRequestsV1Schema, sourceMessage: z.optional(z.never()), sourceTurn: z.optional(z.never()) }),
+  z.strictObject({ event: z.strictObject({ kind: z.enum(['finished', 'failed_or_stopped']) }),
+    sourceTurn: SessionFollowSourceTurnV1Schema, sourceMessage: z.optional(z.never()), sourceRequests: z.optional(z.never()),
+  }).check(z.refine(value => value.event.kind === resolveSessionFollowTurnEventV1(value.sourceTurn).kind)),
 ]));
 /** Content-free semantic notice; private rule definitions and source text never leave the executor. */
 export const SessionFollowUpdateNotificationV1Schema = lazyZodSchema(() => z.strictObject({
@@ -40,57 +41,6 @@ export type DiscussionFollowUpdateNotificationV1 = z.infer<typeof DiscussionFoll
 export const SourceFollowUpdateNotificationV1Schema = lazyZodSchema(() => z.union([
   RunFollowUpdateNotificationV1Schema, DiscussionFollowUpdateNotificationV1Schema,
 ]));
-
-const UsageResetNotificationEvidenceV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ProviderAccountUsagePaceWindowV1Schema, {
-  observedAtMs: z.number().check(z.int(), z.nonnegative()), previousObservedAtMs: z.number().check(z.int(), z.nonnegative()),
-  witnessedAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
-})));
-const UsageWindowNotificationEvidenceV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(UsageResetNotificationEvidenceV1Schema, {
-  usedFraction: z.number().check(z.nonnegative()), elapsedFraction: z.number().check(z.positive(), z.maximum(1)),
-  pace: z.number().check(z.nonnegative()), projectedResetUtilizationFraction: z.number().check(z.nonnegative()),
-  qualification: z.enum(['confirmed', 'estimated']), sampleCount: z.number().check(z.int(), z.positive()),
-})));
-const UsageCreditNotificationEvidenceV1Schema = lazyZodSchema(() => z.strictObject({
-  recordId: ProviderAccountUsageRecordIdSchema, creditId: z.string().check(z.minLength(1)), expiresAtMs: z.number().check(z.int(), z.nonnegative()),
-  observedAtMs: z.number().check(z.int(), z.nonnegative()), previousObservedAtMs: z.number().check(z.int(), z.nonnegative()),
-}));
-export const ConnectedServiceUsageNotificationV1Schema = lazyZodSchema(() => z.strictObject({
-  topic: z.literal('connected_service_usage'), kind: UsageQuotaNotificationKindV1Schema,
-  serviceId: z.string().check(z.minLength(1)), profileId: z.string().check(z.minLength(1)), issueFingerprint: z.string().check(z.minLength(1)),
-  evidence: z.union([UsageWindowNotificationEvidenceV1Schema, UsageResetNotificationEvidenceV1Schema, UsageCreditNotificationEvidenceV1Schema]),
-}).check(z.superRefine((event, ctx) => {
-  if ((event.kind === 'credit_expiry') !== ('creditId' in event.evidence)
-    || (event.kind !== 'reset' && !('creditId' in event.evidence) && !('pace' in event.evidence))) {
-    ctx.addIssue({ code: 'custom', path: ['evidence'], message: 'Evidence must match notification kind' });
-  }
-})));
-export type ConnectedServiceUsageNotificationV1 = z.infer<typeof ConnectedServiceUsageNotificationV1Schema>;
-
-/** Closed V1 evidence envelope; no process identities or private Session labels. */
-export const MachineVitalsNotificationV1Schema = lazyZodSchema(() => {
-  const common = {
-    topic: z.literal('resource_limit'), phase: z.enum(['started', 'recovered']),
-    machineId: z.string().check(z.minLength(1)), machineName: z.optional(z.string().check(z.minLength(1))),
-    at: z.number().check(z.nonnegative()), since: z.number().check(z.nonnegative()),
-    workingSessionCount: z.optional(z.number().check(z.int(), z.nonnegative())), guardEnabled: z.boolean(),
-  };
-  return z.discriminatedUnion('kind', [
-    z.strictObject({ ...common, kind: z.literal('memory_pressure'), evidence: z.strictObject({
-      level: z.enum(['elevated', 'critical']), sustainMs: z.number().check(z.positive()),
-      swapUsedBytes: z.optional(z.number().check(z.nonnegative())), swapTotalBytes: z.optional(z.number().check(z.nonnegative())),
-    }) }),
-    z.strictObject({ ...common, kind: z.literal('cpu_busy'), evidence: z.strictObject({
-      abovePct: z.number().check(z.minimum(1), z.maximum(100)), sustainMs: z.number().check(z.positive()),
-      busyPct: z.number().check(z.minimum(0), z.maximum(100)),
-    }) }),
-    z.strictObject({ ...common, kind: z.literal('disk_nearly_full'), volumeId: z.string().check(z.minLength(1)),
-      volumeLabel: z.optional(z.string()), evidence: z.strictObject({
-        freeBytes: z.number().check(z.nonnegative()), totalBytes: z.number().check(z.nonnegative()),
-        threshold: MachineVitalsDiskThresholdV1Schema,
-      }) }),
-  ]).check(z.refine(notice => notice.since <= notice.at, { path: ['since'], message: 'Evidence window starts after occurrence' }));
-});
-export type MachineVitalsNotificationV1 = z.infer<typeof MachineVitalsNotificationV1Schema>;
 
 /** Closed routing envelope; the transport may add the known Home address. */
 export const MachineVitalsPushRoutingDataV1Schema = lazyZodSchema(() => z.strictObject({
@@ -143,7 +93,7 @@ export function buildGuardStopWarningActionsV1(warning: GuardStopWarningNotifica
   } : {
     keepRunning: { actionId: 'machines.guard.idleStop.keepRunning' as const,
       input: { machineId: warning.machineId, sessionId: warning.sessionId } },
-    stopNow: { actionId: 'session.stop' as const, input: { sessionId: warning.sessionId } },
+    stopNow: { actionId: 'session.stop' as const, input: { sessionId: warning.sessionId, stopIntent: 'lifecycle_control' as const } },
   };
 }
 

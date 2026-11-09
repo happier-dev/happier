@@ -3,6 +3,7 @@ import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { createPromptDocInLibrary, updatePromptDocInLibrary, readPromptDocInLibrary, type PromptLibraryArtifactStore } from '../prompts/library/promptLibraryActionOperations.js';
 import { PromptDocBodyV1Schema } from '../prompts/library/promptDocV2.js';
+import { artifactSavedByFromActionContextV1, type ArtifactRevisionProvenanceV1 } from '../artifacts/artifactBinaryV1.js';
 
 // Artifact custody and document persistence are the real external storage boundaries.
 function harness() {
@@ -10,18 +11,21 @@ function harness() {
   let revision = { headerVersion: 1, bodyVersion: 1 };
   let approval: ApprovalRequest | null = null;
   let created = 0;
+  let provenance: ArtifactRevisionProvenanceV1 | undefined;
   const store: PromptLibraryArtifactStore = {
     create: async () => { created += 1; return 'created'; },
     read: async (artifactId) => artifactId === 'memory' ? {
-      id: artifactId, revision, header: { v: 1, kind: 'prompt_doc.v2', title: 'Memory' },
+      id: artifactId, revision, provenance, header: { v: 1, kind: 'prompt_doc.v2', title: 'Memory' },
       body: JSON.stringify({ v: 1, markdown, createdAtMs: 1, updatedAtMs: 1 }),
     } : null,
-    update: async ({ body, expectedRevision }) => {
+    update: async ({ body, expectedRevision, savedBy }) => {
       if (expectedRevision.headerVersion !== revision.headerVersion || expectedRevision.bodyVersion !== revision.bodyVersion) {
         throw Object.assign(new Error('artifact_version_mismatch'), { code: 'version_mismatch' });
       }
       markdown = PromptDocBodyV1Schema.parse(JSON.parse(body)).markdown;
       revision = { headerVersion: revision.headerVersion + 1, bodyVersion: revision.bodyVersion + 1 };
+      provenance = savedBy ? { savedBy } : undefined;
+      return { revision };
     },
   };
   const empty = async () => ({});
@@ -45,7 +49,8 @@ function harness() {
       return { ok: true };
     },
     isApprovalExecutionOriginCurrent: async () => true,
-    promptDocUpdate: async ({ signal, ...request }) => updatePromptDocInLibrary({ store, request, signal }),
+    promptDocUpdate: async ({ signal, ...request }, context) => updatePromptDocInLibrary({ store, request, signal,
+      savedBy: artifactSavedByFromActionContextV1(context) }),
     promptDocGet: async ({ artifactId, signal }) => readPromptDocInLibrary({ store, artifactId, signal }),
     promptDocCreate: async ({ signal, ...request }) => createPromptDocInLibrary({ store, request, signal }),
   };
@@ -53,6 +58,16 @@ function harness() {
 }
 
 describe('workstream memory document Agent approval', () => {
+  it('carries the admitted Agent identity through approved execution into the accepted revision', async () => {
+    const { executor } = harness();
+    const agent = { surface: 'agent', runtimeAccountId: 'owner', defaultSessionId: 'worker', serverId: 'home',
+      actionRequestId: 'attributed-proposal' } as const;
+    await executor.execute('prompt_doc.update', { artifactId: 'memory', title: 'Memory', markdown: 'Accepted' }, agent);
+    const human = { surface: 'ui', authority: 'present_user', runtimeAccountId: 'owner', serverId: 'home' } as const;
+    expect(await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, human)).toMatchObject({ ok: true });
+    expect(await executor.execute('prompt_doc.get', { artifactId: 'memory' }, agent)).toMatchObject({ ok: true,
+      result: { markdown: 'Accepted', provenance: { savedBy: { kind: 'agent', accountId: 'owner', sessionId: 'worker' } } } });
+  });
   it('settles a stale reviewed approval as conflict while retaining the newer document', async () => {
     const { executor, read } = harness();
     const agent = { surface: 'agent', defaultSessionId: 'worker', serverId: 'home', actionRequestId: 'reviewed-proposal' } as const;

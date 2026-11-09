@@ -3,9 +3,12 @@ import { z } from 'zod/mini';
 import {
     MachineInstallationProofV1Schema,
     MachineInstallationPublicKeySchema,
-} from '../identity/installationIdentity.js';
+} from '../identity/installationKeySchemas.js';
 
 export const MACHINE_OWNER_CONFLICT_ERROR = 'machine-owner-conflict' as const;
+
+export const MACHINE_DAEMON_PUBLIC_RELEASE_CHANNEL_LABELS = ['stable', 'preview', 'dev'] as const;
+export const MachineDaemonPublicReleaseChannelLabelSchema = lazyZodSchema(() => z.enum(MACHINE_DAEMON_PUBLIC_RELEASE_CHANNEL_LABELS));
 
 export const MACHINE_DAEMON_STARTUP_SOURCE_VALUES = [
     'manual',

@@ -3,7 +3,7 @@
 import { defineConfig, mergeConfig } from 'vitest/config';
 import cliConfig from '../../../apps/cli/vitest.config.js';
 
-export default mergeConfig(cliConfig, defineConfig({
+const config = mergeConfig(cliConfig, defineConfig({
   plugins: process.env.SCHEMA_MEMORY_EAGER === '1' ? [{
     name: 'daemon-schema-eager-control',
     enforce: 'pre',
@@ -16,6 +16,16 @@ export default mergeConfig(cliConfig, defineConfig({
       }
     },
   }] : [],
-  test: { setupFiles: process.env.SCHEMA_MEMORY_CENSUS === '1'
-    ? [new URL('./daemon-schema-census.setup.mjs', import.meta.url).pathname] : [] },
 }));
+
+if (process.env.SCHEMA_MEMORY_CENSUS === '1') {
+  // Install native observation before the CLI locale setup imports Mini.
+  const setupFiles = config.test?.setupFiles;
+  config.test = {
+    ...config.test,
+    setupFiles: [new URL('./daemon-schema-census.setup.mjs', import.meta.url).pathname,
+      ...(Array.isArray(setupFiles) ? setupFiles : setupFiles ? [setupFiles] : [])],
+  };
+}
+
+export default config;

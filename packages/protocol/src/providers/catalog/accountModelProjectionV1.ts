@@ -6,6 +6,7 @@ import type { ProviderConnectionsCatalogV1 } from '../connections/catalogSchemas
 import type { ProviderDefaultModelSelectionsByAgentTargetKeyV1 } from '../selection/v1.js';
 import type { DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1 } from '../../rpc/providers.js';
 import type { DaemonProviderModelsResponseV1 } from '../../rpc/providers.js';
+import { ProviderModelDescriptorV1Schema, projectProviderModelGenerationSettings } from '../../models/descriptor.js';
 import { createProviderErrorV1 } from '../errors.js';
 import { resolveProviderBindingDeclarationCompatibilityV1 } from '../compatibility/resolve.js';
 import { mergeProviderCatalogV1, providerCatalogPermitsUnlistedModelIdV1 } from './merge.js';
@@ -71,6 +72,12 @@ export function projectAccountProviderConnectionModelsV1(input: AccountConnectio
   Extract<DaemonProviderModelsResponseV1, { status: 'success' }>['models'] {
   return mergeAccountConnectionCatalog(input).rows.map(row => ({
     id: row.descriptor.id, name: row.descriptor.name, source: row.sources.manual ? 'manual' : 'static',
+    // Editor operations and reasoning options need exact model facts on Account-only reads too.
+    ...(row.descriptor.modelOptions || row.descriptor.inlineCompletion || row.descriptor.nextEdit ? {
+      descriptor: ProviderModelDescriptorV1Schema.parse(projectProviderModelGenerationSettings(
+        row.descriptor, input.connection.modelSettings?.[row.descriptor.id],
+      )),
+    } : {}),
     stale: false, loadState: 'unknown',
     visibility: readOwnRecordValue(input.catalog.modelVisibilityByRef, serializeModelVisibilityRefV1({
       scope: 'allAgents', providerConnectionId: input.connection.id, modelId: row.descriptor.id,

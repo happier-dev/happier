@@ -159,6 +159,46 @@ describe('PluginWebhookDeliveryContentV1Schema', () => {
   });
 });
 
+describe('Sentry-verified webhook content and Action input', () => {
+  const sentryContent = {
+    ...validContent,
+    headers: [{ name: 'sentry-hook-resource', value: 'issue' }],
+    verified: {
+      verifier: 'sentry_hmac_sha256_v1',
+      providerDeliveryId: '6f1d4c4e-2a7b-4a51-9f3e-7f4a0a5b9c11',
+      eventType: 'issue',
+      credentialVersionId: 'wh_cred_1',
+    },
+  } as const;
+  const sentryActionInput = {
+    v: 1,
+    endpoint: { webhookContribution: { pluginId: 'acme.sentry', localId: 'sentry-events' }, sourceInstanceId: 'source-1' },
+    delivery: { deliveryId: 'delivery-1', attempt: 1, replay: 0, receivedAtMs: 1_700_000_000_000, providerDeliveryId: '6f1d4c4e-2a7b-4a51-9f3e-7f4a0a5b9c11' },
+    request: { contentType: 'application/json', headers: [{ name: 'sentry-hook-resource', value: 'issue' }], rawBodyBytes: 2, rawBodyBase64: 'e30=' },
+    verified: { verifier: 'sentry_hmac_sha256_v1', eventType: 'issue' },
+  } as const;
+
+  it('accepts the Sentry resource header as the verified event type', () => {
+    expect(PluginWebhookDeliveryContentV1Schema.parse(sentryContent)).toEqual(sentryContent);
+    expect(PluginWebhookActionInputV1Schema.parse(sentryActionInput)).toEqual(sentryActionInput);
+  });
+
+  it('refuses a selected header that belongs to another verifier', () => {
+    expect(PluginWebhookDeliveryContentV1Schema.safeParse({
+      ...sentryContent,
+      headers: [{ name: 'x-github-event', value: 'issue' }],
+    }).success).toBe(false);
+    expect(PluginWebhookDeliveryContentV1Schema.safeParse({
+      ...validContent,
+      headers: [{ name: 'sentry-hook-resource', value: 'issues' }],
+    }).success).toBe(false);
+    expect(PluginWebhookActionInputV1Schema.safeParse({
+      ...sentryActionInput,
+      request: { ...sentryActionInput.request, headers: [{ name: 'x-github-event', value: 'issue' }] },
+    }).success).toBe(false);
+  });
+});
+
 describe('PluginWebhookActionResultV1Schema', () => {
   it('keeps the result union and diagnostic code closed and bounded', () => {
     expect(PluginWebhookActionResultV1Schema.parse({ kind: 'settled', disposition: 'accepted' })).toEqual({

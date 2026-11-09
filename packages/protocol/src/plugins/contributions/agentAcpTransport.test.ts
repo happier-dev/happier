@@ -21,7 +21,7 @@ describe('plugin agent ACP transport contract', () => {
       preferredPath: '/opt/acme/codex',
       args: ['app-server'],
       env: { CODEX_HOME: '/plugin-data/codex' },
-      timeouts: { initializeMs: 10_000, idleMs: 60_000, toolCallMs: 120_000 },
+      timeouts: { initializeMs: 10_000, idleMs: 60_000 },
     } satisfies PluginAgentAcpTransport;
 
     expect(ManagedExecutableRefSchema.parse(executable)).toEqual(executable);
@@ -81,6 +81,7 @@ describe('plugin agent ACP transport contract', () => {
       { kind: 'ws', url: 'ws://127.0.0.1/acp' },
       { kind: 'webSocket', url: 'ws://127.0.0.1/acp', headers: {}, reconnectMs: 1 },
       { kind: 'tcp', host: '127.0.0.1', port: 1234, timeouts: { promptMs: 1 } },
+      { kind: 'tcp', host: '127.0.0.1', port: 1234, timeouts: { toolCallMs: 120_000 } },
     ]) {
       const schema = 'id' in candidate && candidate.kind === 'managedDependency'
         ? ManagedExecutableRefSchema
@@ -146,7 +147,7 @@ describe('plugin agent ACP transport contract', () => {
         kind: 'tcp',
         host: '127.0.0.1',
         port: 1234,
-        timeouts: { toolCallMs: 2_147_483_648 },
+        timeouts: { initializeMs: 2_147_483_648 },
       },
     ]) {
       expect(PluginAgentAcpTransportSchema.safeParse(candidate).success, JSON.stringify(candidate)).toBe(false);

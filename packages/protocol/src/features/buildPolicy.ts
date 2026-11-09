@@ -1,5 +1,6 @@
 import type { FeatureId } from './featureIds.js';
 import { isFeatureId } from './featureIds.js';
+import { getCanonicalFeatureId } from './catalog.js';
 
 export type FeatureBuildPolicy = Readonly<{
   allow: readonly FeatureId[];
@@ -21,9 +22,10 @@ function normalizeIds(raw: string | null | undefined): FeatureId[] {
   const seen = new Set<FeatureId>();
   for (const candidate of splitIds(raw)) {
     if (!isFeatureId(candidate)) continue;
-    if (seen.has(candidate)) continue;
-    seen.add(candidate);
-    out.push(candidate);
+    const featureId = getCanonicalFeatureId(candidate);
+    if (seen.has(featureId)) continue;
+    seen.add(featureId);
+    out.push(featureId);
   }
   return out;
 }
@@ -39,6 +41,7 @@ export function parseFeatureBuildPolicy(input: {
 }
 
 export function evaluateFeatureBuildPolicy(policy: FeatureBuildPolicy, featureId: FeatureId): FeatureBuildPolicyEvaluation {
+  featureId = getCanonicalFeatureId(featureId);
   if (policy.deny.includes(featureId)) return 'deny';
   if (policy.allow.includes(featureId)) return 'allow';
   if (policy.allow.length > 0) return 'deny';

@@ -10,6 +10,9 @@ import { SessionMessageDiscussionReplyReturnV1Schema } from '../sessions/message
 import { WorkflowDiscussionOriginV1Schema } from '../workflows/workflowDestinationsV1.js';
 import { DiscussionAttachmentBindingsV1Schema, DiscussionAttachmentSourcesV1Schema } from './attachments.js';
 import { readDiscussionAttachmentReferencesV1 } from './content.js';
+import { DiscussionErrorCodeV1Schema } from './errors.js';
+export { DISCUSSION_ERROR_CODES_V1, DiscussionErrorCodeV1Schema } from './errors.js';
+export type { DiscussionErrorCodeV1 } from './errors.js';
 
 import {
   SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1,
@@ -50,34 +53,6 @@ export type {
   DiscussionListQueryV1,
   DiscussionMessagesQueryV1,
 } from './query.js';
-
-export const DISCUSSION_ERROR_CODES_V1 = [
-  'discussions_unavailable',
-  'discussion_not_found',
-  'discussion_archived',
-  'discussion_read_denied',
-  'discussion_post_denied',
-  'discussion_manage_denied',
-  'discussion_access_forbidden',
-  'discussion_owner_grant_invalid',
-  'discussion_content_unavailable',
-  'discussion_encryption_mode_mismatch',
-  'discussion_invalid_content',
-  'discussion_invalid_mention',
-  'discussion_invalid_reply_target',
-  'discussion_idempotency_conflict',
-  'discussion_read_cursor_invalid',
-  'discussion_owner_transfer_required',
-  'discussion_subject_not_found',
-  'discussion_subject_ineligible',
-  'discussion_invalid_recipient_envelope',
-  'discussion_data_key_changed',
-  'recipient_key_unavailable',
-  'data_key_not_required',
-] as const;
-
-export const DiscussionErrorCodeV1Schema = lazyZodSchema(() => z.enum(DISCUSSION_ERROR_CODES_V1));
-export type DiscussionErrorCodeV1 = z.infer<typeof DiscussionErrorCodeV1Schema>;
 
 /**
  * The Discussion grant lifecycle establishes private cursor baselines. An
@@ -130,9 +105,13 @@ export type DiscussionListResponseV1 = z.infer<typeof DiscussionListResponseV1Sc
 
 /** Owner-native private attention read. It never acknowledges a person's cursor. */
 export const DiscussionAttentionQueryV1Schema = lazyZodSchema(() => z.strictObject({
+  discussionId: z.optional(DiscussionIdSchema),
+  /** Inclusive oldest loaded occurrence; cursor remains the exclusive page bound. */
+  afterCursor: DiscussionListQueryV1Schema.shape.cursor,
   cursor: DiscussionListQueryV1Schema.shape.cursor,
   limit: DiscussionListQueryV1Schema.shape.limit,
-}));
+}).check(z.refine(value => value.afterCursor === undefined || value.discussionId !== undefined,
+  'A loaded attention frontier requires exact Discussion selection')));
 export const DiscussionAttentionTypeV1Schema = lazyZodSchema(() => z.enum(['decision', 'mention', 'update']));
 export const DiscussionAttentionResponseV1Schema = lazyZodSchema(() => z.strictObject({
   discussions: z.array(z.strictObject({
@@ -546,7 +525,7 @@ export const DiscussionAgentPublisherResponseV1Schema = lazyZodSchema(() => z.un
 ]));
 export type DiscussionAgentPublisherResponseV1 = z.infer<typeof DiscussionAgentPublisherResponseV1Schema>;
 
-export const DiscussionReadResponseV1Schema = DiscussionReadCursorV1Schema;
+export const DiscussionReadResponseV1Schema = lazyZodSchema(() => DiscussionReadCursorV1Schema);
 export type DiscussionReadResponseV1 = z.infer<typeof DiscussionReadResponseV1Schema>;
 
 export { DiscussionAttentionFactsV1Schema };

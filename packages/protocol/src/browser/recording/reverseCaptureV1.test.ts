@@ -39,6 +39,7 @@ describe('UiBrowserRecordingCaptureFrame contract (W2C-BA-1)', () => {
         navigationGeneration: 0,
         captureRequestId: 'capture_1',
         outputPath: '/tmp/x.png',
+        maxBytes: 16_000_000,
       }).success,
     ).toBe(false);
   });

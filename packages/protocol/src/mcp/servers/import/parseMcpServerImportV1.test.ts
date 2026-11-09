@@ -10,7 +10,7 @@ describe('parseMcpServerImportV1', () => {
                 : { remote: { url: 'https://mcp.example.test/events', headers: {
                     Authorization: { t: 'template', template: 'Bearer {token}', vars: { token: { t: 'literal', v: 'private-header-token' } } },
                     'X-Tenant': { t: 'literal', v: 'private-tenant' },
-                }, auth: { kind: 'oauth' } } }),
+                }, ...(transport === 'http' ? { auth: { kind: 'oauth' } } : {}) } }),
             env: { API_KEY: { t: 'savedSecret', secretId: 'private-secret-ref' }, MODE: { t: 'literal', v: 'private-env-value' } },
             configOverrides: [{ target: { t: 'machine', machineId: 'private-machine' }, envPatch: { TOKEN: { t: 'literal', v: 'private-override' } } }],
             createdAt: 1, updatedAt: 1 });
@@ -21,15 +21,49 @@ describe('parseMcpServerImportV1', () => {
         expect(`${link}\n${payload}`).not.toContain('private-');
         expect(JSON.parse(payload)).toEqual({ name: server.name, title: server.title, transport,
             ...(server.stdio ? { command: 'tool', args: ['日本語'] } : { url: 'https://mcp.example.test/events' }),
+            ...(transport === 'http' ? { auth: { kind: 'oauth' } } : {}),
             headerNames: transport === 'stdio' ? [] : ['Authorization', 'X-Tenant'], envNames: ['API_KEY', 'MODE'] });
         const parsed = parseMcpServerImportV1(link);
         expect(parsed.errors).toEqual([]);
         expect(parsed.warnings).toEqual([]);
         expect(parsed.servers).toMatchObject([{ name: 'one', title: server.title, transport,
-            ...(server.stdio ? { stdio: { command: 'tool', args: ['日本語'] } } : { remote: { url: server.remote!.url } }) }]);
+            ...(server.stdio ? { stdio: { command: 'tool', args: ['日本語'] } }
+                : { remote: { url: server.remote!.url, ...(transport === 'http' ? { auth: { kind: 'oauth' } } : {}) } }) }]);
         expect(parsed.inputs.map(input => input.title).sort()).toEqual(transport === 'stdio'
             ? ['API_KEY', 'MODE'] : ['API_KEY', 'Authorization', 'MODE', 'X-Tenant']);
         expect(parsed.inputs.every(input => input.suggestedValue === undefined)).toBe(true);
+    });
+
+    it.each([null, 'oauth', {}, { kind: 'bearer' }, { kind: 'oauth', token: 'private-token' },
+        { kind: 'oauth', issuer: 'https://issuer.example.test' }, { kind: 'oauth', clientId: 'private-client' },
+        { kind: 'oauth', signedIn: true }])('refuses malformed or credential-bearing auth intent %#', auth => {
+        const parsed = parseMcpServerImportV1(JSON.stringify({ name: 'one', transport: 'http', url: 'https://mcp.example.test/mcp', auth }));
+        expect(parsed.servers).toEqual([]);
+        expect(parsed.errors).toEqual(['one: invalid-server-configuration']);
+    });
+
+    it.each([
+        { transport: 'stdio', command: 'tool' },
+        { transport: 'stdio', url: 'https://mcp.example.test/mcp' },
+        { transport: 'sse', url: 'https://mcp.example.test/events' },
+    ])('refuses OAuth intent on an unsupported transport %#', configuration => {
+        const parsed = parseMcpServerImportV1(JSON.stringify({ name: 'one', ...configuration, auth: { kind: 'oauth' } }));
+        expect(parsed.servers).toEqual([]);
+        expect(parsed.errors).toEqual(['one: invalid-server-configuration']);
+    });
+
+    it('refuses exporting OAuth intent on SSE instead of silently dropping it', () => {
+        const server = McpServerCatalogEntryV1Schema.parse({ id: 'one', name: 'one', transport: 'sse',
+            remote: { url: 'https://mcp.example.test/events', headers: {}, auth: { kind: 'oauth' } },
+            env: {}, createdAt: 0, updatedAt: 0 });
+        expect(() => encodeMcpServerInstallLinkV1(server, 'https://web.example.test')).toThrow();
+    });
+
+    it('refuses exporting credential-bearing OAuth state', () => {
+        const server = McpServerCatalogEntryV1Schema.parse({ id: 'one', name: 'one', transport: 'http',
+            remote: { url: 'https://mcp.example.test/mcp', headers: {} }, env: {}, createdAt: 0, updatedAt: 0 });
+        const withCredentials = { ...server, remote: { ...server.remote!, auth: { kind: 'oauth' as const, token: 'private-token' } } };
+        expect(() => encodeMcpServerInstallLinkV1(withCredentials, 'https://web.example.test')).toThrow();
     });
 
     it.each([
@@ -136,5 +170,14 @@ describe('parseMcpServerImportV1', () => {
         expect(parsed.errors).toEqual([]);
         expect(parsed.servers[0]).toMatchObject({ name: 'dev.example/one', stdio: { command: 'npx', args: ['-y', '@example/one@1.2.3'] },
             env: { API_KEY: { t: 'input', inputId: 'dev.example/one:env:API_KEY' } } });
+    });
+
+    it('refuses unsupported server.json auth instead of the registry decoder dropping it', () => {
+        const parsed = parseMcpServerImportV1(JSON.stringify({ name: 'dev.example/one', description: 'One', version: '1.2.3',
+            packages: [{ registryType: 'npm', identifier: '@example/one', version: '1.2.3', transport: { type: 'stdio' } }],
+            auth: { kind: 'oauth', token: 'private-token' },
+        }));
+        expect(parsed.servers).toEqual([]);
+        expect(parsed.errors).toEqual(['invalid-server-json']);
     });
 });

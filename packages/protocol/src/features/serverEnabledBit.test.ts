@@ -6,6 +6,17 @@ import { FEATURE_CATALOG } from './catalog.js';
 import { readServerEnabledBit, resolveServerEnabledBitPath, tryWriteServerEnabledBitInPlace } from './serverEnabledBit.js';
 
 describe('server enabled bit helpers', () => {
+  it('does not infer Workflows support from a released legacy-only Home response', () => {
+    const legacy = FeaturesResponseSchema.parse({ features: { automations: { enabled: true } }, capabilities: {} });
+    expect(readServerEnabledBit(legacy, 'workflows')).toBe(false);
+    expect(readServerEnabledBit(legacy, 'automations')).toBe(false);
+    const malformed = FeaturesResponseSchema.parse({
+      features: { automations: { enabled: true }, workflows: { enabled: 'true' } }, capabilities: {},
+    });
+    expect(readServerEnabledBit(malformed, 'workflows')).toBe(false);
+    expect(readServerEnabledBit(malformed, 'automations')).toBe(false);
+  });
+
   it('admits public profiles only with the explicit Account capability, independently of Friends', () => {
     const present = FeaturesResponseSchema.parse({ features: { account: { publicProfiles: { enabled: true } },
       social: { friends: { enabled: false } } }, capabilities: {} });

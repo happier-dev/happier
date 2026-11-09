@@ -1,10 +1,10 @@
-import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import { parseSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { isCanonicalProviderSavedSecretIdV1 } from '../providers/settings/v1.js';
 import { EnvVarRequirementSchema } from './environmentVariables.js';
+import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 
 /**
  * One optional, value-free launch override for Saved Secret requirement
@@ -71,6 +71,8 @@ export const SecretReferenceOverlayV1Schema = lazyZodSchema(() => z.strictObject
   }
 })));
 export type SecretReferenceOverlayV1 = Readonly<z.infer<typeof SecretReferenceOverlayV1Schema>>;
+/** Retains the reference-only parser and exact shared-resource revision checks. */
+export const SecretReferenceOverlayV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(SecretReferenceOverlayV1Schema));
 
 /** Deterministic own-key projection; never reads an inherited prototype key. */
 export function listSecretReferenceOverlayV1BindingNames(
@@ -89,5 +91,3 @@ export function readSecretReferenceOverlayV1Reference(
     ? overlay.bindings[requirementName] ?? null
     : null;
 }
-
-export const SecretReferenceOverlayV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(SecretReferenceOverlayV1Schema));

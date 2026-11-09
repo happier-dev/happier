@@ -8,6 +8,10 @@ import { buildSessionPermissionRespondRpcParamsV1, SessionUserActionAnswerRpcPar
 import { projectSessionBoardGetResultV1, SessionBoardGetInputV1Schema } from '../sessions/board/actions.js';
 import { SessionSurfaceItemV1Schema } from '../sessions/board/item.js';
 import { AutomationV3RunMutationResponseSchema } from '../automations/automationApiV3.js';
+import { createDeploymentApprovalScopeResolverV1 } from '../deployments/deploymentApprovalScopeV1.js';
+import { DeploymentEnvironmentGetResultV1Schema } from '../deployments/deploymentActionsV1.js';
+import { executeActionOperationActionV1 } from './executor/actionOperationActions.js';
+import { ActionOperationGetV2RequestSchema } from './operations/v1.js';
 
 function context(ids: string[], sessions = ['s1']): ActionExecutorContext {
   return {
@@ -20,6 +24,84 @@ function context(ids: string[], sessions = ['s1']): ActionExecutorContext {
 }
 
 describe('ActionExecutor API token grant admission', () => {
+  it('binds an operation Environment to its signed root before the original-host transport', async () => {
+    const reads: unknown[] = [];
+    const executor = createActionExecutor({
+      actionOperationAction: (args: Parameters<NonNullable<ActionExecutorDeps['actionOperationAction']>>[0]) => executeActionOperationActionV1({ ...args, transport: async request => {
+        reads.push(ActionOperationGetV2RequestSchema.parse(request.payload));
+        return { kind: 'not_found' };
+      } }),
+    } as unknown as ActionExecutorDeps);
+    const ctx = context(['action.operations.get'], []);
+    const credential = ctx.externalActionCredential!;
+    credential.grant.targets = { sessions: [], machines: [], environments: ['staging', 'production'] };
+    const target = { kind: 'machine' as const, machineId: 'original-host' };
+    ctx.externalActionTarget = target;
+    ctx.bypassApprovals = true;
+    ctx.externalActionExecutionAuthorization = { v: 1, token: 'signed-home-root', binding: {
+      ...credential, serverIdentityId: 'home', custodianAccountId: 'a1', installationId: 'installation',
+      actionId: 'action.operations.get', machineId: target.machineId, target,
+      requestId: 'read-staging', requestEnvelopeDigest: 'A'.repeat(43), environmentId: 'staging',
+    } };
+    const input = { serverId: 'home', machineId: target.machineId, operationId: 'original', environmentId: 'staging' };
+    expect(await executor.execute('action.operations.get', input, ctx)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
+    expect(await executor.execute('action.operations.get', { ...input, environmentId: 'production' }, ctx))
+      .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    const { environmentId: _environmentId, ...unscoped } = input;
+    expect(await executor.execute('action.operations.get', unscoped, ctx))
+      .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(await executor.execute('action.operations.get', input, { ...ctx, externalActionExecutionAuthorization: undefined }))
+      .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(reads).toEqual([{ operationId: input.operationId }]);
+    credential.grant.targets = { sessions: [], machines: [target.machineId] };
+    expect(await executor.execute('action.operations.get', unscoped, { ...ctx, externalActionExecutionAuthorization: undefined }))
+      .toMatchObject({ ok: true, result: { kind: 'not_found' } });
+  });
+  it('rechecks a decoded deployment against the granted and signed Environment before the transport', async () => {
+    const effects: string[] = [];
+    const deploymentAction: NonNullable<ActionExecutorDeps['deploymentAction']> = async (actionId, input) => {
+      if (!('environmentId' in input) || typeof input.environmentId !== 'string') throw new Error('Expected Environment');
+      if (actionId === 'deployments.environments.get') return DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
+        environment: { v: 1, id: input.environmentId, serverId: 'home', projectSourceId: 'source', revision: 1,
+          owner: { kind: 'account', accountId: 'a1' }, protection: 'nonProduction', purpose: 'standard',
+          deployerMode: 'managers', controllerMachineId: 'controller', createdByAccountId: 'a1',
+          contentArtifactId: 'environment-content', contentHeaderVersion: 1, contentBodyVersion: 1,
+          capabilities: { role: 'manager', read: true, deploy: true, manage: true,
+            manageBindings: true, manageTargets: true, delete: true }, createdAtMs: 1, updatedAtMs: 1 }, targetLinks: [] });
+      effects.push(input.environmentId);
+      return { ok: false, error: 'deployment_conflict' };
+    };
+    // Only the HTTP storage boundary is substituted; scope and token policy stay real.
+    const executor = createActionExecutor({ deploymentAction,
+      resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(deploymentAction) } as unknown as ActionExecutorDeps);
+    const ctx = context(['deployments.deploy'], []);
+    const credential = ctx.externalActionCredential!;
+    credential.grant.targets = { sessions: [], machines: [], environments: ['staging', 'production'] };
+    const target = { kind: 'machine' as const, machineId: 'controller' };
+    ctx.externalActionTarget = target;
+    // Confirmation was admitted by the host's current policy; it is not PAT decision authority.
+    ctx.bypassApprovals = true;
+    ctx.externalActionExecutionAuthorization = { v: 1, token: 'signed-home-root', binding: {
+      ...credential, serverIdentityId: 'home', custodianAccountId: 'a1', installationId: 'installation',
+      actionId: 'deployments.deploy', machineId: target.machineId, target,
+      requestId: 'deploy-staging', requestEnvelopeDigest: 'A'.repeat(43), environmentId: 'staging',
+    } };
+    const input = { serverId: 'home', environmentId: 'staging', expectedRevision: 1, requestKey: 'deploy-a',
+      targetLinkId: 'runtime', expectedTargetLinkRevision: 1,
+      contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 };
+    expect(await executor.execute('deployments.deploy', input, ctx))
+      .toMatchObject({ ok: false, errorCode: 'deployment_conflict' });
+    // Both Environments share a controller and are individually granted. The signed root still binds one.
+    expect(await executor.execute('deployments.deploy', { ...input, environmentId: 'production' }, ctx))
+      .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(await executor.execute('deployments.deploy', input, { ...ctx,
+      externalActionTarget: { kind: 'machine', machineId: 'another-host' } }))
+      .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(await executor.execute('deployments.deploy', input, { ...ctx, externalActionExecutionAuthorization: undefined }))
+      .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(effects).toEqual(['staging']);
+  });
+
   it.each(['action.invoke', 'wait', 'account.security.get', 'approval.request.create'] as const)('refuses %s effects when Home-origin preparation is cancelled', async actionId => {
     const controller = new AbortController();
     let effects = 0;
@@ -251,7 +333,7 @@ describe('ActionExecutor API token grant admission', () => {
     const spawnInput = {
       creationKey: 'create-one',
       directory: { kind: 'managed' as const }, agentTarget,
-      organizationPlacement: { folderId: 'leads', tagIds: ['inbound'] },
+      organizationPlacement: { sectionId: 'leads', tagIds: ['inbound'] },
     };
     const ctx = context(['session.spawn_new']);
     ctx.serverId = 'home';
@@ -259,7 +341,7 @@ describe('ActionExecutor API token grant admission', () => {
     ctx.externalActionTarget = { kind: 'machine', machineId: 'm1' };
     ctx.externalActionCredential.grant.create = {
       machineId: 'm1', agentTargetKey: buildBackendTargetKeyV2(agentTarget), directory: 'managed',
-      placement: spawnInput.organizationPlacement,
+      placement: { folderId: spawnInput.organizationPlacement.sectionId, tagIds: spawnInput.organizationPlacement.tagIds },
     };
     ctx.externalActionExecutionAuthorization = {
       v: 1, token: 'verified-creation-token', binding: {
@@ -274,6 +356,9 @@ describe('ActionExecutor API token grant admission', () => {
     expect(await executor.execute('session.spawn_new', spawnInput, ctx)).toMatchObject({ ok: true });
     expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
       creationAuthorization: { token: 'verified-creation-token' },
+      admittedInput: expect.objectContaining({
+        organizationPlacement: { folderId: 'leads', tagIds: ['inbound'] },
+      }),
     }));
   });
 

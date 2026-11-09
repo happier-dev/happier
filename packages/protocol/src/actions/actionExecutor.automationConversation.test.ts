@@ -69,49 +69,6 @@ describe('createActionExecutor (Automation conversation admission)', () => {
     });
   });
 
-  it('admits a current host-stamped external plugin caller through the generic admission policy', async () => {
-    const externalMaterialization = {
-      ...callerMaterialization,
-      pluginId: 'com.acme.other',
-    } as const;
-    const automationConversationAction = vi.fn(async () => ({
-      kind: 'admitted' as const,
-      runId: 'run-1',
-      checkpointSafe: true as const,
-    }));
-    const executor = createActionExecutor({
-      automationConversationAction,
-      isActionApprovalRequired: () => false,
-    } as ActionExecutorDeps);
-
-    await expect(executor.execute('automation.conversation.admit', conversationAdmitInput, {
-      surface: 'plugin',
-      actionCaller: {
-        kind: 'plugin',
-        pluginId: 'com.acme.other',
-        contributionLocalId: 'observation-ingest-v1',
-        materialization: externalMaterialization,
-      },
-    })).resolves.toEqual({
-      ok: true,
-      result: { kind: 'admitted', runId: 'run-1', checkpointSafe: true },
-    });
-    expect(automationConversationAction).toHaveBeenCalledWith({
-      actionId: 'automation.conversation.admit',
-      input: conversationAdmitInput,
-      caller: {
-        kind: 'plugin',
-        pluginId: 'com.acme.other',
-        contributionLocalId: 'observation-ingest-v1',
-        materialization: externalMaterialization,
-      },
-      context: {
-        surface: 'plugin',
-        actionCaller: { kind: 'plugin', pluginId: 'com.acme.other', contributionLocalId: 'observation-ingest-v1', materialization: externalMaterialization },
-      },
-    });
-  });
-
   it('routes target verification through the same exact host-stamped caller and cancellation boundary', async () => {
     const controller = new AbortController();
     const input = {
@@ -345,11 +302,12 @@ describe('createActionExecutor (Automation conversation admission)', () => {
       ok: true,
       result: { kind: 'admitted', runId: 'run-1', checkpointSafe: true },
     });
-    expect(automationConversationAction).toHaveBeenLastCalledWith(expect.objectContaining({
+    expect(automationConversationAction).toHaveBeenLastCalledWith({
       actionId: 'automation.conversation.admit',
       input: thirdPartyAdmitInput,
       caller: thirdPartyCaller,
-    }));
+      context: { surface: 'plugin', actionCaller: thirdPartyCaller },
+    });
 
     expect(automationConversationAction.mock.calls.map(([args]) => args.actionId)).toEqual([
       'automation.conversation.targets.list',

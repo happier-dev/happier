@@ -62,7 +62,7 @@ describe('Machine access Action front door', () => {
       ['machines.metadata.update', { patch: { displayName: 'alias' } }],
     ] as const;
     for (const [id, input] of neighbors) {
-      const context = { surface: 'cli', serverId: 'local-profile', serverIdentityId: 'srv_same_home' } as const;
+      const context = { surface: 'cli', authority: 'present_user', serverId: 'local-profile', serverIdentityId: 'srv_same_home' } as const;
       const target = { ...input, serverId: 'srv_same_home', machineId: 'machine' };
       expect(await executor.execute(id, target, context)).toMatchObject({ ok: false, errorCode: 'machine_unavailable' });
       expect(await executor.execute(id, { ...target, serverId: 'foreign' }, context))
@@ -152,8 +152,10 @@ describe('Machine access Action front door', () => {
     const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);
     expect(await executor.execute(actionId, input, context)).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
     expect(savedCount).toBe(0);
-    expect(approval?.preview).toMatchObject({ machineAccessDisclosure: { machineId: 'machine', sameOsUser: true,
-      localCredentialsExposed: true, accountEncryptionKeyExposedIfPresent: true, dedicatedMachineRecommended: true } });
+    expect(approval?.preview).toMatchObject({ machineAccessDisclosure: { machineId: 'machine',
+      ownerCanInspectDeliveredMaterial: true, sharedAgentUidExposesSelectedMaterial: true,
+      isolationRequiresObservedReadiness: true, trustedAdministrationCanDefeatIsolation: true,
+      dedicatedMachineRecommended: true } });
     const waived = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [actionId]: ['voice'] } });
     const waivedExecutor = createActionExecutor({ ...deps,
       isActionApprovalRequired: (id: ActionId, ctx: ActionExecutorContext) => isApprovalRequiredByActionsSettings(id, waived, ctx),

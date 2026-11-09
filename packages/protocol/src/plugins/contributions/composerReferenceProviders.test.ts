@@ -12,6 +12,18 @@ import { PluginComposerControlContributionV1Schema } from './composerControls.js
 import { PluginContributesV2Schema } from './v2.js';
 
 describe('composer reference provider contribution contract', () => {
+  it('admits status-strip regions through the existing closed composer region family', () => {
+    const region = { id: 'pr-status', placement: 'statusStrip', renderer: { renderer: 'pr-status-view' }, scopes: ['session'] };
+    expect(PluginContributesV2Schema.parse({ composerRegions: [region] }).composerRegions).toEqual([region]);
+    for (const emphasis of ['quiet', 'prominent']) {
+      const emphasized = { ...region, emphasis };
+      expect(PluginContributesV2Schema.parse({ composerRegions: [emphasized] }).composerRegions).toEqual([emphasized]);
+    }
+    expect(PluginContributesV2Schema.safeParse({ composerRegions: [{ ...region, emphasis: 'urgent' }] }).success).toBe(false);
+    expect(PluginContributesV2Schema.safeParse({ composerRegions: [{ ...region, placement: 'toolbar' }] }).success).toBe(false);
+    expect(PluginContributesV2Schema.safeParse({ composerRegions: [{ ...region, onPress: 'run' }] }).success).toBe(false);
+  });
+
   it('admits a declared composer reference with localized static launcher facts while rejecting an undeclared callback shape', () => {
     expect(PluginComposerReferenceProviderContributionV1Schema.parse({
       id: 'issues',

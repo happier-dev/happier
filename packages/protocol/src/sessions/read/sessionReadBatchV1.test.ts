@@ -42,4 +42,5 @@ describe('Session read batch V1', () => {
     }] }).success).toBe(false);
     expect(SessionReadBatchResponseV1Schema.safeParse({ ...result, accountId: 'other' }).success).toBe(false);
   });
+
 });

@@ -807,7 +807,7 @@ describe('plugin-generic session-hook management contracts', () => {
       expect(resolveMachineRpcRoutePolicy(rpcMethod)).toMatchObject({
         rpcClassification: 'action_spec_bound',
         actionSpecId: actionId,
-        routeClass: sideEffectClass === 'read' ? 'direct_ephemeral' : 'direct_medium_risk_receipted',
+        routeClass: sideEffectClass === 'read' ? 'direct_ephemeral' : 'direct_ephemeral',
       });
     }
   });

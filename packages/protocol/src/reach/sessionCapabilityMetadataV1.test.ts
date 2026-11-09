@@ -8,6 +8,7 @@ import {
 } from '../sessions/metadata/sessionMetadataEnvelopesV1.js';
 import {
     readAppliedSessionCapabilitySelectionFromMetadataV1,
+    isSessionHappierToolsEnabled,
     readPendingCapabilityApplyV1,
     readSessionCapabilitySelectionFromMetadataV1,
     resolveSelectionRestartMarkersForStartupV1,
@@ -20,6 +21,15 @@ const skills = { v: 1 as const, forceIncludeSkillIds: [], forceExcludeSkillIds: 
 const next = { mcp: { ...mcp, forceIncludeServerIds: ['linear'] }, skills: { ...skills, forceIncludeSkillIds: ['lint'] } };
 
 describe('session capability metadata codec', () => {
+    it('keeps built-in tool delivery at its applied baseline until restart', () => {
+        const pending = writeSessionCapabilitySelectionToMetadataV1({ mcpSelectionV1: mcp },
+            { mcp: { ...mcp, happierToolsEnabled: false } }, { sessionActive: true });
+        expect(isSessionHappierToolsEnabled(pending)).toBe(true);
+        const resumed = resolveSelectionRestartMarkersForStartupV1({ current: pending,
+            applied: { mcp: { ...mcp, happierToolsEnabled: false } } });
+        expect(isSessionHappierToolsEnabled(resumed)).toBe(false);
+    });
+
     it('retains MCP rule-only pending state through owner projection, unchanged overrides and preserved attach until actual startup', () => {
         const pending = { mcpSelectionV1: mcp, capabilitySelectionApplyV1: {
             mcp: { reason: 'next_turn', source: 'rules' as const },

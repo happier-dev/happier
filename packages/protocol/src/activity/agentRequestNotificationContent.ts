@@ -1,3 +1,4 @@
+import { projectNotificationQuestion } from '../push/notificationQuestionActions.js';
 import {
   buildAgentRequestSemanticSummary,
   requiresFullFormForRemoteUserAction,
@@ -34,16 +35,17 @@ export function buildAgentRequestNotificationContent(params: Readonly<{
     toolInput: params.toolInput,
   });
   const fullFormRequired = params.kind === 'user_action' && requiresFullFormForRemoteUserAction(summary.questions);
+  const question = params.includeMessageText !== false && params.turnId ? projectNotificationQuestion(summary) : null;
   const toolDetails = params.includeMessageText === false ? null : !fullFormRequired && typeof params.toolDetails === 'string' && params.toolDetails.trim()
     ? params.toolDetails.trim()
     : summarizeToolInputForNotification(params.toolName, params.toolInput);
-  const body = params.kind === 'user_action'
+  const body = question?.body ?? (params.kind === 'user_action'
     ? toolDetails
       ? `${agentDisplayName} needs your input for ${summary.normalizedToolLabel}\n${toolDetails}`
       : `${agentDisplayName} needs your input for ${summary.normalizedToolLabel}`
     : toolDetails
       ? `${agentDisplayName} asks permission to use ${summary.normalizedToolLabel}\n${toolDetails}`
-      : `${agentDisplayName} asks permission to use ${summary.normalizedToolLabel}`;
+      : `${agentDisplayName} asks permission to use ${summary.normalizedToolLabel}`);
 
   return {
     title,
@@ -52,6 +54,7 @@ export function buildAgentRequestNotificationContent(params: Readonly<{
       sessionId: params.sessionId,
       requestId: params.requestId,
       ...(params.turnId ? { turnId: params.turnId } : {}),
+      ...(question ? { questionAnswerV1: question.descriptor } : {}),
       tool: params.toolName,
       type,
       kind: params.kind,

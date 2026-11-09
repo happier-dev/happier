@@ -14,8 +14,26 @@ import { getActionSpec, listActionSpecs, PublicActionIdSchema } from './actionSp
 import { PluginInvocableActionIdSchema } from './pluginActionSurface.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { resolveActionSurfaceAvailability } from './actionSurfaceAvailability.js';
+import { HOME_GOVERNANCE_ACTION_SPECS } from './specs/home.js';
+import { TEAM_ACTION_SPECS } from './specs/teams.js';
+import { deriveActionInputHints } from './schemaInputHints.js';
+import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 
 describe('Home runtime Action parity', () => {
+  it('admits the canonical reference-only relay selection without a second provider identity', () => {
+    const spec = getActionSpec('relay.access.configure');
+    const config = { provider: { kind: 'builtin', id: 'lan' }, config: { url: 'https://relay.example.test' }, credentialRefs: [] };
+    expect(spec.inputSchema.safeParse({ config }).success).toBe(true);
+    expect(spec.inputSchema.safeParse({ providerId: 'lan', config }).success).toBe(false);
+    // LAN URLs can still contain credentials; durable approval uses a safe projection.
+    expect(spec.approvalInputCustody).toBe('live_only');
+    const credentialRefs = [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount',
+      account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'account-a' } } }];
+    const observed = spec.projectObservationInput?.({ config: { provider: { pluginId: 'happier.test', localId: 'access' },
+      config: { apiKey: 'private-key', token: 'public-option', tokenCount: 2, passwordPolicy: 'strict', body: 'ordinary config', url: 'https://user:password@relay.test/relay?secret=value' }, credentialRefs } });
+    expect(observed).toEqual({ config: { provider: { pluginId: 'happier.test', localId: 'access' },
+      config: { token: 'public-option', tokenCount: 2, passwordPolicy: 'strict', body: 'ordinary config', url: 'https://relay.test/relay' }, credentialRefs } });
+  });
   it('publishes the target and supported assignment choice for organization deletion', () => {
     for (const [actionId, identity, behavior] of [
       ['session.tags.delete', 'tagId', 'removeAssignments'],
@@ -148,92 +166,6 @@ const LANE_01_ACTION_IDS = [
   'teams.invitations.accept',
 ] as const;
 
-const LANE_01_SAFE_INPUT_HINT_PATHS = {
-  'home.governance.get': [],
-  'home.governance.eligibility.get': [],
-  'home.accounts.list': [],
-  'home.accounts.search': ['query', 'scope.kind', 'scope.teamId'],
-  'home.accounts.role.set': ['accountId', 'homeRole'],
-  'home.accounts.disable': ['accountId'],
-  'home.accounts.enable': ['accountId'],
-  'home.accounts.delete': ['accountId'],
-  'home.policy.set': [
-    'expectedRevision',
-    'teamCreationPolicy',
-    'teamsVisibleToMembers',
-    'authenticationPolicy.enabledMethodIds',
-    'authenticationPolicy.permittedAccountModes',
-    'authenticationPolicy.recommendedProvisioningMode',
-    'authenticationPolicy.admission',
-    'authenticationPolicy.signInService.mode',
-    'teamProviderPolicy.allowedTeamProviderKinds',
-    'teamProviderPolicy.teamJitAllowed',
-    'teamProviderPolicy.approvedGitHubEnterpriseOrigins',
-    'identityNetworkPolicy.mode',
-    'identityNetworkPolicy.hostnames',
-    'identityNetworkPolicy.cidrs',
-    'identityNetworkPolicy.ports',
-    'authenticationPolicy.anonymousSignup',
-    'authenticationPolicy.storagePolicy',
-    'confirmWidening',
-  ],
-  'teams.list': ['scope', 'archived'],
-  'teams.get': ['teamId'],
-  'teams.create': ['name', 'description', 'initialOwnerAccountId'],
-  'teams.update': ['teamId', 'name', 'description'],
-  'teams.logo.set': ['teamId', 'image.mimeType'],
-  'teams.logo.remove': ['teamId'],
-  'teams.policy.set': [
-    'teamId',
-    'sessionCreationPolicy',
-    'externalSharingPolicy',
-    'defaultSessionHistoryAccess',
-    'admissionMode',
-    'authenticationPolicy.mode',
-  ],
-  'teams.archive': ['teamId'],
-  'teams.restore': ['teamId'],
-  'teams.members.list': ['teamId', 'filter'],
-  'teams.members.get': ['teamId', 'membershipId'],
-  'teams.members.groups.list': ['teamId', 'membershipId'],
-  'teams.members.add': ['teamId', 'accountId', 'role', 'historyAccess'],
-  'teams.members.role.set': ['teamId', 'membershipId', 'role'],
-  'teams.members.suspend': ['teamId', 'membershipId'],
-  'teams.members.reactivate': ['teamId', 'membershipId'],
-  'teams.members.remove': ['teamId', 'membershipId'],
-  'teams.members.leave': ['teamId'],
-  'teams.members.management.set': [
-    'teamId',
-    'membershipId',
-    'management.kind',
-    'management.directorySourceId',
-  ],
-  'teams.groups.list': ['teamId', 'archived'],
-  'teams.groups.get': ['teamId', 'groupId'],
-  'teams.groups.create': ['teamId', 'name', 'description'],
-  'teams.groups.update': ['teamId', 'groupId', 'name', 'description'],
-  'teams.groups.archive': ['teamId', 'groupId'],
-  'teams.groups.restore': ['teamId', 'groupId'],
-  'teams.groups.members.list': ['teamId', 'groupId'],
-  'teams.groups.members.add': ['teamId', 'groupId', 'accountId', 'historyAccess'],
-  'teams.groups.members.remove': ['teamId', 'groupId', 'accountId'],
-  'teams.invitations.list': ['teamId', 'state'],
-  'teams.invitations.create': ['teamId', 'recipientEmail', 'role', 'historyAccess'],
-  'teams.invitations.revoke': ['teamId', 'invitationId'],
-  'teams.invitations.reissue': ['teamId', 'invitationId', 'recipientEmail'],
-  'teams.invitations.preview': [],
-  'teams.invitations.accept': [
-    'homeServerId',
-    'continuation.teamId',
-    'teamName',
-    'role',
-    'historyAccess',
-    'state',
-    'expiresAt',
-    'recipientEmailMask',
-  ],
-} as const satisfies Readonly<Record<typeof LANE_01_ACTION_IDS[number], readonly string[]>>;
-
 type ParsedHomeDomainActionErrorCodeV1 = NonNullable<
   ReturnType<typeof readHomeDomainActionErrorV1>
 >['code'];
@@ -246,22 +178,49 @@ describe('Home and Teams Action family', () => {
     expect(LANE_01_ACTION_IDS.length).toBe(43);
   });
 
-  it('declares useful observation-safe input fields for every Lane 01 intent', () => {
+  it('publishes canonical schema-derived fields with authored semantics for every Lane 01 intent', () => {
+    const authoredRows = [...HOME_GOVERNANCE_ACTION_SPECS, ...TEAM_ACTION_SPECS];
     for (const actionId of LANE_01_ACTION_IDS) {
-      expect(
-        getActionSpec(actionId).inputHints?.fields.map((field) => field.path),
-        actionId,
-      ).toEqual(LANE_01_SAFE_INPUT_HINT_PATHS[actionId]);
+      const authored = authoredRows.find(row => row.id === actionId);
+      expect(authored, actionId).toBeDefined();
+      if (!authored) throw new Error(`Missing authored Action: ${actionId}`);
+      expect(serializeActionSpec(getActionSpec(actionId)).inputHints, actionId).toEqual(
+        deriveActionInputHints(zodSchemaToJsonSchemaObject(authored.inputSchema, { unrepresentable: 'any' }), authored.inputHints),
+      );
     }
+  });
 
+  it('describes invitation secrets only with confidential, value-free field hints', () => {
+    // Field names are useful input grammar, never permission to publish a bearer.
+    for (const [actionId, paths] of [
+      ['teams.invitations.preview', ['token']],
+      ['teams.invitations.accept.prepareApproval', ['token']],
+      ['teams.invitations.accept', ['token', 'continuation.reference']],
+    ] as const) {
+      const fields = serializeActionSpec(getActionSpec(actionId)).inputHints?.fields;
+      for (const path of paths) {
+        const field = fields?.find(candidate => candidate.path === path);
+        expect.soft(field, `${actionId}:${path}`).toMatchObject({ path, widget: 'secret' });
+        // Allow only declarative reading/visibility metadata: no default, example,
+        // placeholder, option source or any other carrier for a secret value.
+        expect.soft(Object.keys(field ?? {}).filter(key => ![
+          'path', 'title', 'titleKey', 'description', 'descriptionKey', 'widget', 'required',
+        ].includes(key)), `${actionId}:${path}`).toEqual([]);
+      }
+    }
     const serializedHints = JSON.stringify(
       LANE_01_ACTION_IDS.map((actionId) => getActionSpec(actionId).inputHints),
     );
-    expect(serializedHints).not.toContain('token');
-    expect(serializedHints).not.toContain('continuation.reference');
     expect(serializedHints).not.toContain('joinUrl');
-    expect(serializedHints).not.toContain('dataBase64');
-    expect(serializedHints).not.toContain('requestKey');
+    // Schema-derived payload/idempotency fields can be described, not populated.
+    for (const actionId of LANE_01_ACTION_IDS) {
+      for (const field of getActionSpec(actionId).inputHints?.fields ?? []) {
+        if (!['image.dataBase64', 'requestKey'].includes(field.path)) continue;
+        expect(field).not.toHaveProperty('defaultValue');
+        expect(field).not.toHaveProperty('options');
+        expect(field).not.toHaveProperty('placeholder');
+      }
+    }
   });
 
   it('registers every declared family row in the shared Action catalog', () => {

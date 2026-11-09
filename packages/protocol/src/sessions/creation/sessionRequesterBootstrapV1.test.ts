@@ -29,6 +29,27 @@ const request = {
 } as const;
 
 describe('requester bootstrap installation confidentiality', () => {
+  it.each(['own_account', 'unknown', 'other_account', 'other_home', 'terminal', 'api', 'session', 'workflow', 'plugin', 'transport_plugin'] as const)(
+    'qualifies private host attribution against its admitted credential (%s)', kind => {
+    const invocation = bootstrap.ExternalActionRequesterInvocationV1Schema.parse({
+      caller: kind === 'plugin' ? { kind: 'plugin', pluginId: 'acme.agent', contributionLocalId: 'write' } : { kind: 'host' },
+      surface: 'mcp', authority: 'account_automation', actionRequestAttributionV1: {
+        requestRef: 'person-input', requester: kind === 'unknown' ? null : {
+          accountId: kind === 'other_account' ? 'other-person' : 'person',
+          serverId: kind === 'other_home' ? 'srv_other' : 'srv_home',
+        }, persona: { serverId: 'srv_home', sessionId: 'original-session' }, origin: null,
+      },
+    });
+    const result = bootstrap.admitExternalActionRequesterInvocationAttributionV1(invocation, {
+      accountId: 'person', serverIdentityId: 'srv_home',
+      ...(kind === 'api' ? {} : { authentication: { kind: kind === 'terminal' ? 'terminal' : 'account' } }),
+      ...(kind === 'session' ? { sessionActionOrigin: { caller: { kind: 'session', sessionId: 'agent-session' } } } : {}),
+      ...(kind === 'workflow' ? { workflowActionOrigin: { runId: 'workflow-run' } } : {}),
+    }, kind === 'transport_plugin' ? { kind: 'plugin' } : invocation.caller);
+    expect(result).toEqual(kind === 'own_account' || kind === 'unknown'
+      ? { ok: true, actionRequestAttributionV1: invocation.actionRequestAttributionV1 } : { ok: false });
+  });
+
   it.each((['plain', 'e2ee'] as const).flatMap((accountEncryptionMode) =>
     (['account', 'api'] as const).flatMap((requesterKind) =>
       [undefined, SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.role, 'other_admitted_setup_role'].map((role) => ({ accountEncryptionMode, requesterKind, role })))))(
@@ -92,6 +113,21 @@ describe('requester bootstrap installation confidentiality', () => {
       caller: { kind: 'plugin', pluginId: 'acme.fixture', contributionLocalId: 'inspect' },
       surface: 'plugin', authority: 'account_automation' }).success).toBe(false);
     expect(bootstrap.ExternalActionRequesterInvocationV1Schema.safeParse({ ...invocation, authority: 'account_automation' }).success).toBe(false);
+  });
+  it.each(['ui', 'voice', 'plugin'] as const)('retains only a Plugin action.invoke confirmation on a person surface (%s)', surface => {
+    const invocation = { caller: { kind: 'plugin' as const, pluginId: 'acme.picker', contributionLocalId: 'assignee' },
+      surface, authority: 'account_automation' as const, presentUserConfirmation: {
+        actionId: 'action.invoke' as const, inputDigest: 'b'.repeat(43), requestId: 'picker-commit',
+        accountId: 'person', serverId: 'home', target: { kind: 'machine' as const, machineId: 'selected' },
+      } };
+    expect(bootstrap.ExternalActionRequesterInvocationV1Schema.parse(invocation)).toEqual(invocation);
+    for (const surface of ['cli', 'mcp', 'agent', 'api', 'rpc'] as const) expect(
+      bootstrap.ExternalActionRequesterInvocationV1Schema.safeParse({ ...invocation, surface }).success).toBe(false);
+    expect(bootstrap.ExternalActionRequesterInvocationV1Schema.safeParse({ ...invocation, authority: 'present_user' }).success).toBe(false);
+    expect(bootstrap.ExternalActionRequesterInvocationV1Schema.safeParse({ ...invocation,
+      presentUserConfirmation: { ...invocation.presentUserConfirmation, actionId: 'machines.setup.apply' } }).success).toBe(false);
+    expect(bootstrap.ExternalActionRequesterInvocationV1Schema.safeParse({ ...invocation,
+      reviewedParent: { actionId: 'action.invoke', input: {} } }).success).toBe(false);
   });
   it('opens a managed creation child only under its exact Home continuation and invocation digest', () => {
     const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));

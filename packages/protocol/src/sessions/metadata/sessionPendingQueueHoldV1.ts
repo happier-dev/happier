@@ -39,26 +39,6 @@ function normalizeTimestampMs(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
 }
 
-function isHoldWithinProtocolTtl(hold: SessionPendingQueueHoldEntryV1): boolean {
-  return hold.expiresAtMs >= hold.updatedAtMs
-    && hold.expiresAtMs - hold.updatedAtMs <= SESSION_PENDING_QUEUE_HOLD_MAX_TTL_MS;
-}
-
-function isHoldActiveAt(hold: SessionPendingQueueHoldEntryV1, nowMs: number): boolean {
-  return hold.expiresAtMs > nowMs
-    && hold.expiresAtMs <= nowMs + SESSION_PENDING_QUEUE_HOLD_MAX_TTL_MS
-    && isHoldWithinProtocolTtl(hold);
-}
-
-function pruneInactiveHolds(
-  holdsById: Readonly<Record<string, SessionPendingQueueHoldEntryV1>>,
-  nowMs: number,
-): Record<string, SessionPendingQueueHoldEntryV1> {
-  return Object.fromEntries(
-    Object.entries(holdsById).filter(([, hold]) => isHoldActiveAt(hold, nowMs)),
-  );
-}
-
 export function readSessionPendingQueueHoldV1FromMetadata(metadata: unknown): SessionPendingQueueHoldV1 | null {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
     return null;
@@ -68,11 +48,18 @@ export function readSessionPendingQueueHoldV1FromMetadata(metadata: unknown): Se
   return parsed.success ? parsed.data : null;
 }
 
-export function isSessionPendingQueueHoldBlockingPendingDrain(metadata: unknown, nowMs: number = Date.now()): boolean {
+export function isSessionPendingQueueHoldBlockingPendingDrain(
+  metadata: unknown,
+  liveHoldIds: readonly string[] | null = null,
+): boolean {
+  // Admission on the socket is authoritative, including while the acquire's
+  // metadata publication is still in flight to another device.
+  if (liveHoldIds !== null) return liveHoldIds.length > 0;
   const holdState = readSessionPendingQueueHoldV1FromMetadata(metadata);
   if (!holdState) return false;
-  const now = normalizeTimestampMs(nowMs);
-  return Object.values(holdState.holdsById).some((hold) => isHoldActiveAt(hold, now));
+  // A retained acquire is not liveness. Until the existing socket's first
+  // observation arrives, only queues that actually contain a hold wait.
+  return Object.keys(holdState.holdsById).length > 0;
 }
 
 export function writeSessionPendingQueueHoldV1ToMetadata(
@@ -89,9 +76,7 @@ export function writeSessionPendingQueueHoldV1ToMetadata(
     normalizeTimestampMs(input.expiresAtMs),
     updatedAtMs + SESSION_PENDING_QUEUE_HOLD_MAX_TTL_MS,
   );
-  const retainedHoldsById = existing
-    ? pruneInactiveHolds(existing.holdsById, updatedAtMs)
-    : {};
+  const retainedHoldsById = existing?.holdsById ?? {};
 
   base[SESSION_PENDING_QUEUE_HOLD_METADATA_KEY] = {
     v: 1,
@@ -119,7 +104,7 @@ export function removeSessionPendingQueueHoldV1FromMetadata(
   const normalizedHoldId = holdId.trim();
   if (!existing || !normalizedHoldId) return base;
 
-  const nextHolds = pruneInactiveHolds(existing.holdsById, normalizeTimestampMs(Date.now()));
+  const nextHolds = { ...existing.holdsById };
   delete nextHolds[normalizedHoldId];
 
   if (Object.keys(nextHolds).length === 0) {

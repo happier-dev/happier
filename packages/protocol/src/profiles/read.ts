@@ -1,3 +1,4 @@
+import type { LaunchProfilePlacementPreferenceV1, LaunchProfileCheckoutPreferenceV1 } from './launchPreferencesV1.js';
 import { AIBackendProfileSchema } from './backendProfileSchema.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import {
@@ -237,9 +238,10 @@ export function readEffectiveProfileSecretBindingsV1(record: ProfileRecordV1, op
   return resolveEffectiveProfileSecretBindingsV1(artifact.secretBindings, record.secretBindings);
 }
 
-/** The only new legacy body is an exact copy of a captured, still-unrepresentable source. */
+/** A captured legacy source retains its body and attachments while launch preferences may change. */
 export function createLegacyProfileCloneRecordV1(input: Readonly<{
   source: ProfileRecordV1; id: string; name: string; createdAt: number; updatedAt: number;
+  placement?: LaunchProfilePlacementPreferenceV1; checkout?: LaunchProfileCheckoutPreferenceV1;
   artifactsById?: ReadonlyMap<string, ArtifactSharingResourceV1>;
 }>): ProfileRecordV1 | null {
   const artifact = input.source.definition.kind === 'artifact'
@@ -255,7 +257,9 @@ export function createLegacyProfileCloneRecordV1(input: Readonly<{
   if (!effective) return null;
   const clone = ProfileRecordV1Schema.safeParse({ ...input.source, id: input.id,
     definition: { kind: 'legacy', profile: { ...body, id: input.id, name: input.name,
-      isBuiltIn: false, createdAt: input.createdAt, updatedAt: input.updatedAt } },
+      isBuiltIn: false, createdAt: input.createdAt, updatedAt: input.updatedAt,
+      ...(input.placement !== undefined ? { placement: input.placement } : {}),
+      ...(input.checkout !== undefined ? { checkout: input.checkout } : {}) } },
     secretBindings: { ...effective, ...input.source.secretBindings } });
   return clone.success ? clone.data : null;
 }
@@ -266,7 +270,7 @@ export function isLegacyProfileSourcePreservingCloneV1(input: Readonly<{
   if (input.record.definition.kind !== 'legacy') return false;
   const body = input.record.definition.profile;
   const expected = createLegacyProfileCloneRecordV1({ ...input, id: input.record.id,
-    name: body.name, createdAt: body.createdAt, updatedAt: body.updatedAt });
+    name: body.name, createdAt: body.createdAt, updatedAt: body.updatedAt, placement: body.placement, checkout: body.checkout });
   return expected !== null && sameStrictJsonValue(projectNativeJsonValueForTransport(expected),
     projectNativeJsonValueForTransport(input.record));
 }

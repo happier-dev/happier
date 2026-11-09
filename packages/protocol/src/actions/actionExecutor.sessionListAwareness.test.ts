@@ -68,6 +68,40 @@ const agentContext = {
   bypassApprovals: true,
 } as const;
 
+describe('session.activity.get Recap projection', () => {
+  it.each([
+    { status: 'ready', recap: { source: 'synopsis', text: 'Memory summary', atMs: 20 } },
+    { status: 'ready', recap: { source: 'worker_update', text: 'Worker finished', body: 'Delivered result', atMs: 10, workerSessionId: 'worker' } },
+    { status: 'empty', recap: null },
+    { status: 'loading', recap: null },
+    { status: 'unavailable', recap: null },
+  ])('returns the admitted $status Recap through the existing read Action', async (state) => {
+    const result = { view: 'recap', sessionId: 'lead', ...state };
+    const executor = createExecutor({ sessionActivityGet: async (request) => {
+      expect(request).toMatchObject({ sessionId: 'lead', view: 'recap', serverId: 'home' });
+      return result;
+    } });
+    await expect(executor.execute('session.activity.get', { sessionId: 'lead', view: 'recap' },
+      { ...agentContext, serverId: 'home' })).resolves.toEqual({ ok: true, result });
+    expect(getActionSpec('session.activity.get').outputSchema.safeParse(result).success).toBe(true);
+  });
+
+  it('refuses an older host that ignored the view and a result from another Session', async () => {
+    for (const response of [{ sessionId: 'lead', working: false },
+      { view: 'recap', sessionId: 'other', status: 'empty', recap: null },
+      { view: 'recap', sessionId: 'lead', status: 'unavailable', recap: { source: 'synopsis', text: 'secret', atMs: 1 } }]) {
+      await expect(createExecutor({ sessionActivityGet: async () => response }).execute('session.activity.get',
+        { sessionId: 'lead', view: 'recap' }, agentContext)).resolves.toMatchObject({ ok: false, errorCode: 'recap_view_unsupported' });
+    }
+  });
+
+  it('does not discard the Recap selector when preparing a Session confirmation', () => {
+    expect(getActionSpec('session.activity.get').projectSessionConfirmation?.(
+      { sessionId: 'lead', view: 'recap' }, { sessionId: 'lead' },
+    )).toEqual({ sessionId: 'lead', view: 'recap' });
+  });
+});
+
 describe('session.list execution', () => {
   it('admits Under-self on current-Session credentials while refusing a foreign subtree', async () => {
     const executor = createExecutor({ sessionList: async ({ query }) => markSessionListQueryResultV1({
@@ -275,6 +309,14 @@ describe('session.list execution', () => {
       values: ['m2'] }, { surface: 'ui', authority: 'present_user', serverId: 'home-current' }))
       .resolves.toMatchObject({ ok: true, result: { options: [{ value: 'm2' }] } });
     expect(machinesList).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers each Machine by its id when the inventory rows carry machineId (the UI machines list shape)', async () => {
+    const machinesList = vi.fn(async () => ({ items: [{ machineId: 'm1', label: 'Studio' }, { machineId: 'm2', label: 'Laptop' }] }));
+    const executor = createExecutor({ machinesList });
+    await expect(executor.execute('action.options.resolve', { optionsSourceId: 'sessions.spawn.machines.available' },
+      { surface: 'ui', authority: 'present_user', serverId: 'home-current' }))
+      .resolves.toMatchObject({ ok: true, result: { options: [{ value: 'm1', label: 'Studio' }, { value: 'm2', label: 'Laptop' }] } });
   });
 
   it('does not return partial Session options when current read authority is refused on continuation', async () => {
@@ -614,13 +656,11 @@ describe('session.activity.get awareness view selector', () => {
     return getActionSpec(actionId).inputHints?.fields.find((field) => field.path === 'view');
   }
 
-  it('offers the one canonical view selector in the Action form hints', () => {
+  it('offers Recap only on the single-Session Action view selector', () => {
     const field = viewFieldOf('session.activity.get');
     expect(field?.widget).toBe('select');
-    expect(field?.options?.map((option) => option.value)).toEqual(['summary', 'awareness']);
-    // The selector is owned by the awareness contract, so both Actions offer the same values
-    // instead of each host or spec retyping its own list.
-    expect(field?.options).toEqual(viewFieldOf('session.list')?.options);
+    expect(field?.options?.map((option) => option.value)).toEqual(['summary', 'awareness', 'recap']);
+    expect(viewFieldOf('session.list')?.options?.map((option) => option.value)).toEqual(['summary', 'awareness']);
   });
 
   it('accepts the supported view values, keeps omission valid, and rejects anything else', () => {
@@ -628,6 +668,7 @@ describe('session.activity.get awareness view selector', () => {
     expect(schema.safeParse({ sessionId: 'session-1' }).success).toBe(true);
     expect(schema.safeParse({ sessionId: 'session-1', view: 'summary' }).success).toBe(true);
     expect(schema.safeParse({ sessionId: 'session-1', view: 'awareness' }).success).toBe(true);
+    expect(schema.safeParse({ sessionId: 'session-1', view: 'recap' }).success).toBe(true);
     expect(schema.safeParse({ sessionId: 'session-1', view: 'operational' }).success).toBe(false);
     expect(schema.safeParse({ sessionId: 'session-1', views: 'awareness' }).success).toBe(false);
   });

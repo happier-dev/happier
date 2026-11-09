@@ -54,17 +54,20 @@ describe('historical Account encryption key Forget Action', () => {
     expect(accountHistoricalEncryptionKeyForgetAction).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['agent', 'mcp'] as const)('refuses %s execution without human approval even when the host waives routine approval', async (surface) => {
+  it.each(['agent', 'mcp'] as const)('asks %s by default and runs once the user waives that Ask (no present-user floor)', async (surface) => {
     const accountHistoricalEncryptionKeyForgetAction = vi.fn(async () => ({ status: 'forgotten' as const }));
-    const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [actionId]: [surface] } });
+    let settings = ActionsSettingsV1Schema.parse({ v: 1 });
     const executor = createActionExecutor(Object.assign(createDeps(), {
       accountHistoricalEncryptionKeyForgetAction,
       isActionApprovalRequired: (id: ActionId, context: Parameters<typeof isApprovalRequiredByActionsSettings>[2]) =>
         isApprovalRequiredByActionsSettings(id, settings, context),
     }));
-    const result = await executor.execute(actionId, {}, { surface, authority: 'account_automation', actionCaller: { kind: 'host' } });
-    expect(result).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    const agent = { surface, authority: 'account_automation', actionCaller: { kind: 'host' } } as const;
+    expect(await executor.execute(actionId, {}, agent)).not.toMatchObject({ ok: true });
     expect(accountHistoricalEncryptionKeyForgetAction).not.toHaveBeenCalled();
+    settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [actionId]: [surface] } });
+    expect(await executor.execute(actionId, {}, agent)).toEqual({ ok: true, result: { status: 'forgotten' } });
+    expect(accountHistoricalEncryptionKeyForgetAction).toHaveBeenCalledOnce();
   });
 });
 
@@ -97,16 +100,19 @@ describe('historical Account automation template recovery Action', () => {
     });
   });
 
-  it.each(['agent', 'mcp'] as const)('requires human approval for %s recovery despite routine approval waivers', async surface => {
+  it.each(['agent', 'mcp'] as const)('asks %s by default for recovery and runs once the user waives that Ask', async surface => {
     const accountEncryptionAutomationTemplatesRecoverAction = vi.fn(async () => ({ templates: [] }));
-    const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [recoveryActionId]: [surface] } });
+    let settings = ActionsSettingsV1Schema.parse({ v: 1 });
     const executor = createActionExecutor(Object.assign(createDeps(), {
       accountEncryptionAutomationTemplatesRecoverAction,
       isActionApprovalRequired: (id: ActionId, context: Parameters<typeof isApprovalRequiredByActionsSettings>[2]) =>
         isApprovalRequiredByActionsSettings(id, settings, context),
     }));
-    await expect(executor.execute(recoveryActionId, {}, { surface, authority: 'account_automation', actionCaller: { kind: 'host' } }))
-      .resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    const agent = { surface, authority: 'account_automation', actionCaller: { kind: 'host' } } as const;
+    expect(await executor.execute(recoveryActionId, {}, agent)).not.toMatchObject({ ok: true });
     expect(accountEncryptionAutomationTemplatesRecoverAction).not.toHaveBeenCalled();
+    settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [recoveryActionId]: [surface] } });
+    await expect(executor.execute(recoveryActionId, {}, agent)).resolves.toEqual({ ok: true, result: { templates: [] } });
+    expect(accountEncryptionAutomationTemplatesRecoverAction).toHaveBeenCalledOnce();
   });
 });

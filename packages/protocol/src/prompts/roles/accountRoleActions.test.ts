@@ -1,18 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from '../../actions/actionExecutor.js';
-import { assertAccountRoleArtifactDeletionV1, createAccountRoleActionExecutorV1, createRoleSourceReaderV1, type RoleArtifactStoreV1 } from './accountRoleActions.js';
+import { prepareAccountRoleArtifactDeletionV1, createAccountRoleActionExecutorV1, createRoleSourceReaderV1, projectAccountRoleActionRefusalV1, RoleActionRefusalV1, type RoleArtifactStoreV1 } from './accountRoleActions.js';
 import { BUILT_IN_ROLES_V1 } from './builtInRolesV1.js';
 import type { ActionExecutorContext } from '../../actions/executor/types.js';
 import { applyRoleOverrideMutationV1, StoredRoleOverrideCatalogV1Schema, type RoleOverrideCatalogV1, type RoleOverrideMutationV1 } from './roleOverrideRecordV1.js';
 import { readLegacyRoleInventoryV1 } from '../../account/settings/rolesV1Migration.js';
 
-function createHarness(readError?: Error, guidanceSource?: Readonly<Record<string, unknown>> | Error | (() => Readonly<Record<string, unknown>>), storedArtifactId = 'user-role', retainedArtifactId?: string) {
+it('preserves the context reason carried by a Role mutation refusal', () => {
+  const details = { code: 'target_unavailable', reason: 'caller_depth_unavailable' };
+  expect(projectAccountRoleActionRefusalV1(new RoleActionRefusalV1('target_unavailable', details)))
+    .toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', details });
+});
+
+function createHarness(readError?: Error, guidanceSource?: Readonly<Record<string, unknown>> | Error | (() => Readonly<Record<string, unknown>>), storedArtifactId = 'user-role', retainedArtifactId?: string, settingsMutationError?: Error) {
   const record = (artifactId: string) => ({ artifactId, header: { kind: 'role.v1' }, body: JSON.stringify(BUILT_IN_ROLES_V1.builder),
     revision: { headerVersion: 1, bodyVersion: 1 }, ownerAccountId: 'account', access: 'owner' as const });
   const stored = record(storedArtifactId);
   const rows = new Map([[storedArtifactId, stored]]);
   if (retainedArtifactId) rows.set(retainedArtifactId, record(retainedArtifactId));
   let settingsWrites = 0;
+  let writtenSettings: Readonly<Record<string, unknown>> | undefined;
+  const readSettings = () => {
+    if (guidanceSource instanceof Error) throw guidanceSource;
+    return writtenSettings ?? (typeof guidanceSource === 'function' ? guidanceSource() : guidanceSource ?? { rolesV1: { overrides: {} } });
+  };
   // Artifact/settings persistence is the system boundary; Role decisions and
   // the public Action admission/failure projection remain real.
   const artifactStore: RoleArtifactStoreV1 = {
@@ -43,9 +54,10 @@ function createHarness(readError?: Error, guidanceSource?: Readonly<Record<strin
   };
   const roleActionExecute = createAccountRoleActionExecutorV1({
     accountId: 'account', artifactStore, generateId: () => 'generated-role',
-    readRawAccountSettings: async () => {
-      if (guidanceSource instanceof Error) throw guidanceSource;
-      return typeof guidanceSource === 'function' ? guidanceSource() : guidanceSource ?? { rolesV1: { overrides: {} } };
+    readRawAccountSettings: async () => readSettings(),
+    mutateRawAccountSettings: async mutate => {
+      if (settingsMutationError) throw settingsMutationError;
+      writtenSettings = await mutate(readSettings()); settingsWrites++;
     },
     mutateAccountRoleOverrides: async () => {},
   });
@@ -82,7 +94,7 @@ function createHarness(readError?: Error, guidanceSource?: Readonly<Record<strin
     daemonMemoryEnsureUpToDate: unusedHostBoundary,
   } satisfies ActionExecutorDeps;
   const execute = createActionExecutor(deps).execute;
-  return { execute, state: () => ({ body: stored.body, revision: stored.revision, deleted: !rows.has(storedArtifactId), settingsWrites }) };
+  return { execute, readSettings, state: () => ({ body: stored.body, revision: stored.revision, deleted: !rows.has(storedArtifactId), settingsWrites }) };
 }
 
 const context = { surface: 'ui', authority: 'present_user' } as const;
@@ -300,31 +312,39 @@ describe('Account Role Action refusal projection', () => {
   it.each(['known-target-amid-unknown', 'unclassified-target'] as const)('preserves generic deletion refusal for %s', async (scenario) => {
     const [retained] = readLegacyRoleInventoryV1({ executionRunsGuidanceEntries: [{ id: 'retained', description: 'Keep guidance' }] }, 'account').entries;
     if (!retained) throw new Error('Expected current source target');
-    await expect(assertAccountRoleArtifactDeletionV1({ accountId: 'account',
+    await expect(prepareAccountRoleArtifactDeletionV1({ accountId: 'account',
       artifactId: scenario === 'known-target-amid-unknown' ? retained.artifactId : 'unclassified',
       readTargetArtifactKind: () => scenario === 'known-target-amid-unknown' ? 'document.v1' : undefined,
       rawSettings: { executionRunsGuidanceEntries: scenario === 'known-target-amid-unknown'
         ? [{ id: 'retained', description: null }, { description: 'Missing identity' }] : null },
     })).rejects.toThrow('role_source_incomplete');
   });
-  it('preserves a retained guidance target until actual current source cleanup, without blocking unrelated Role deletion', async () => {
-    const guidance = { executionRunsGuidanceEntries: [{ id: 'legacy-delete', description: 'Retained guidance' }] };
-    let raw: Readonly<Record<string, unknown>> = guidance;
-    const [entry] = readLegacyRoleInventoryV1(raw, 'account').entries;
+  it('deletes the imported Role and its predecessor guidance without changing neighboring settings', async () => {
+    // Owner 2026-10-30: deleting an imported Role also removes its 0.2 guidance entry.
+    const neighbor = { id: 'neighbor', description: 'Keep this guidance', future: 'retained' };
+    const guidance = { executionRunsGuidanceEntries: [{ id: 'legacy-delete', description: 'Retained guidance' }, neighbor],
+      executionRunsGuidanceEnabled: false, futureSetting: { keep: true } };
+    const [entry, other] = readLegacyRoleInventoryV1(guidance, 'account').entries;
     if (!entry) throw new Error('Expected canonical guidance identity');
-    const h = createHarness(undefined, () => raw, entry.artifactId);
+    const h = createHarness(undefined, guidance, entry.artifactId, other?.artifactId);
     const input = { roleId: entry.artifactId, expectedRevision: { headerVersion: 1, bodyVersion: 1 } };
-    expect(await h.execute('roles.delete', input, context)).toMatchObject({ ok: false, errorCode: 'role_source_incomplete' });
-    expect(h.state().deleted).toBe(false);
-    expect(await h.execute('roles.list', {}, context)).toMatchObject({ ok: true, result: {
-      items: expect.arrayContaining([expect.objectContaining({ roleId: entry.artifactId })]),
-    } });
-    // This boundary now observes the acknowledged source cleanup; no Action-local source writer exists.
-    raw = {};
     expect(await h.execute('roles.delete', input, context)).toMatchObject({ ok: true, result: { deleted: true } });
+    const stale = createHarness(undefined, guidance, entry.artifactId, other?.artifactId);
+    expect(await stale.execute('roles.delete', { ...input, expectedRevision: { headerVersion: 0, bodyVersion: 0 } }, context))
+      .toMatchObject({ ok: false, errorCode: 'currentness_conflict' });
+    expect(stale.readSettings()).toEqual(guidance);
+    expect(stale.state().deleted).toBe(false);
+    const failed = createHarness(undefined, guidance, entry.artifactId, other?.artifactId, new Error('Settings CAS failed'));
+    expect(await failed.execute('roles.delete', input, context)).toMatchObject({ ok: false });
+    expect(failed.state().deleted).toBe(false);
+    expect(failed.readSettings()).toEqual(guidance);
     expect(h.state().deleted).toBe(true);
-    const unrelated = createHarness(undefined, guidance, 'ordinary-role', entry.artifactId);
-    expect(await unrelated.execute('roles.delete', { ...input, roleId: 'ordinary-role' }, context)).toMatchObject({ ok: true });
+    expect(h.readSettings()).toEqual({ ...guidance, executionRunsGuidanceEntries: [neighbor] });
+    const listed = await h.execute('roles.list', {}, context);
+    expect(listed).toMatchObject({ ok: true, result: { items: expect.not.arrayContaining([expect.objectContaining({ roleId: entry.artifactId })]) } });
+    const ordinary = createHarness(undefined, guidance, 'ordinary-role', entry.artifactId);
+    expect(await ordinary.execute('roles.delete', { ...input, roleId: 'ordinary-role' }, context)).toMatchObject({ ok: true });
+    expect(ordinary.state().settingsWrites).toBe(0);
   });
   it('serves a known canonical Role while reporting an unavailable pre-import guidance source', async () => {
     const h = createHarness(undefined, new Error('Settings transport unavailable'));

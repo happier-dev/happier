@@ -99,6 +99,18 @@ describe('provider endpoint URL syntax normalization', () => {
 });
 
 describe('provider endpoint safety', () => {
+  it('uses captured Machine scope only for configuration, keeping actual network assessment strict', () => {
+    const url = 'http://models.internal/v1';
+    expect(assessProviderEndpoint(url, { purpose: 'configuration', configurationScope: 'machine', privateNetworkConfirmed: true }))
+      .toMatchObject({ scope: 'machine', resolvedAddresses: [] });
+    expect(() => assessProviderEndpoint(url, { configurationScope: 'machine', privateNetworkConfirmed: true }))
+      .toThrow(expect.objectContaining({ code: 'dns_resolution_required' }));
+    expect(() => assessProviderEndpoint(url, { configurationScope: 'machine', privateNetworkConfirmed: true,
+      resolvedAddresses: ['8.8.8.8'] })).toThrow(expect.objectContaining({ code: 'http_public_forbidden' }));
+    expect(() => assessProviderEndpoint(url, { purpose: 'configuration', configurationScope: 'machine', privateNetworkConfirmed: true,
+      resolvedAddresses: ['169.254.169.254'] })).toThrow(expect.objectContaining({ code: 'unsafe_address' }));
+  });
+
   it('canonicalizes IDNA, default ports, dot segments, and trailing-dot hostnames', () => {
     const result = assessProviderEndpoint('HTTPS://BÜCHER.example.:443/v1/../models?api-version=2024-01-01', {
       resolvedAddresses: ['93.184.216.34'],

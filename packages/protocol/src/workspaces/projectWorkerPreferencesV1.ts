@@ -1,10 +1,10 @@
-import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { z } from 'zod/mini';
 
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { MachinePoolIdV1Schema } from '../machines/pools/v1.js';
 import { ProjectServicePlacementV1Schema } from './projectServicePlacementV1.js';
+import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 
 const IdentifierSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 // Manifest declaration names are exact identities; trimming dictionary keys can merge two entries.
@@ -16,6 +16,7 @@ export const WorkspaceExecutionConfigAddressV1Schema = lazyZodSchema(() => z.str
   refId: IdentifierSchema,
 }));
 export type WorkspaceExecutionConfigAddressV1 = z.infer<typeof WorkspaceExecutionConfigAddressV1Schema>;
+export const WorkspaceExecutionConfigAddressV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(WorkspaceExecutionConfigAddressV1Schema));
 
 export const WorkerDestinationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('machine'), machineId: IdentifierSchema }),
@@ -89,6 +90,8 @@ export const WorkspaceWorkerPreferenceMutationResultV1Schema = lazyZodSchema(() 
   z.strictObject({ status: z.enum(['outcomeUnknown', 'cancelled', 'locked', 'invalid', 'unavailable']) }),
 ]));
 export type WorkspaceWorkerPreferenceMutationResultV1 = z.infer<typeof WorkspaceWorkerPreferenceMutationResultV1Schema>;
+export const WorkspaceWorkerPreferenceReadResultV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(WorkspaceWorkerPreferenceReadResultV1Schema));
+export const WorkspaceWorkerPreferenceMutationResultV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(WorkspaceWorkerPreferenceMutationResultV1Schema));
 
 /** Extract only the finite preference; service intents retain their separate namespace. */
 export function projectWorkspaceWorkerPreferenceV1(value: WorkspaceExecutionSettingsV1): WorkspaceWorkerPreferenceV1 {
@@ -182,9 +185,3 @@ export function resolveProjectExecutionChoiceV1(input: Readonly<{
   }
   return { status: 'resolved', choice: { kind: 'primary' }, provenance: 'default' };
 }
-
-export const WorkspaceExecutionConfigAddressV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(WorkspaceExecutionConfigAddressV1Schema));
-
-export const WorkspaceWorkerPreferenceReadResultV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(WorkspaceWorkerPreferenceReadResultV1Schema));
-
-export const WorkspaceWorkerPreferenceMutationResultV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(WorkspaceWorkerPreferenceMutationResultV1Schema));

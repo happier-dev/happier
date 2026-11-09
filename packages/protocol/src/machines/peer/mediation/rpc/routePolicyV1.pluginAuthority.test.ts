@@ -9,7 +9,7 @@ describe('plugin transport authority', () => {
     expect(resolveMachineRpcGovernance(RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE)).toEqual({ rpcClassification: 'internal_only' });
     const { resolveMachineRpcRoutePolicy, resolveMachineRpcExternalActionEffectV1 } = await import('./routePolicyV1.js');
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_PLUGIN_UI_CAPTURE_SOURCE_READ)).toMatchObject({
-      routeClass: 'direct_ephemeral', rpcClassification: 'internal_only', commandReceiptRequired: false,
+      routeClass: 'direct_ephemeral', rpcClassification: 'internal_only',
       scope: { accountRequired: true, machineRequired: true, serverRequired: false },
     });
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE)).toMatchObject({

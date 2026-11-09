@@ -138,6 +138,25 @@ describe('HAPPIER_BASE_SYSTEM_PROMPT_V1', () => {
     }
   });
 
+  it('keeps initial naming scoped to an unnamed ordinary Happier Session', () => {
+    for (const sessionMetadata of [
+      { summary: { text: 'Existing task', updatedAt: 1 } },
+      { name: 'Legacy title' },
+    ]) {
+      const args = { settings: { codingPromptBehaviorV1: { sessionTitleUpdates: 'initial' } }, sessionMetadata };
+      expect(buildHappierSessionTitleGuidanceV1(args)).toBe('');
+      expect(buildHappierBaseSystemPromptV1(args)).not.toContain('change_title');
+      expect(buildHappierSessionTitleGuidanceV1({ ...args,
+        settings: { codingPromptBehaviorV1: { sessionTitleUpdates: 'ongoing' } },
+      })).toContain('task changes significantly');
+      // Bots retain the conditional persona-name rule, including placeholder handling.
+      expect(buildHappierSessionTitleGuidanceV1({ ...args, createdAsBot: true })).toContain('persona name');
+    }
+    for (const sessionMetadata of [null, { summary: { text: '  ' } }, { summary: { text: 123 } }]) {
+      expect(buildHappierSessionTitleGuidanceV1({ sessionMetadata })).toContain('change_title');
+    }
+  });
+
   it('honors explicit tool constraints in ordinary and persona title guidance', () => {
     for (const createdAsBot of [false, true]) {
       expect(buildHappierBaseSystemPromptV1({ createdAsBot })).toMatch(/constrain[\s\S]*skip[\s\S]*title/i);

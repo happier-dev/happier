@@ -9,6 +9,7 @@ import type { ActionExecuteFailure, ActionExecuteResult } from '../actionExecuti
 import type { ActionExecutorContext } from './types.js';
 import { ManagedMachineActionOutputSchemasV1 } from '../../machines/managed/actionsV1.js';
 import { resolveManagedMachineWakeStateV1 } from '../../machines/managed/resolveMachineRetentionPolicyV1.js';
+import type { AdmittedActionInputById } from '../actionSpecs.js';
 
 export type ProjectPlacementActionExecutorV1 = (actionId: 'projects.inspect' | 'projects.worker.preferences.get'
   | 'projects.worker.status' | 'machines.pools.resolve' | 'machines.pools.get' | 'machines.managed.list', input: unknown) => Promise<ActionExecuteResult>;
@@ -39,10 +40,11 @@ export async function resolveProjectActionMachineV1(args: Readonly<{
   // for an exact target. Exact ad-hoc intent retains its incumbent carrier.
   if (actionId !== 'projects.prepare' && (!choice || choice.kind === 'workers' && choice.destination.kind === 'pool'
     || actionId === 'projects.script.run' && choice?.kind === 'workers'
+    || 'execution' in parsed.data && parsed.data.execution === 'primary'
     || context.executionRunTargetMachineId !== undefined)) {
     const executeRead = args.executeCanonicalAction;
     if (!executeRead) return failure('project_placement_unavailable');
-    const inspectionRead = executeRead('projects.inspect', { workspace });
+    const inspectionRead = executeRead('projects.inspect', { workspace, read: { kind: 'placement' } });
     const address = { serverId: workspace.serverId, refId: workspace.workspaceId };
     const preferenceRead = executeRead('projects.worker.preferences.get', { workspace: address });
     // These independent reads share this invocation's captured authority. SOURCE
@@ -55,7 +57,7 @@ export async function resolveProjectActionMachineV1(args: Readonly<{
     if (!opened.success) return failure('invalid_action_output');
     if (opened.data.definition.document?.status === 'invalid') return failure('invalid_manifest');
     const manifest = opened.data.definition.document?.manifest;
-    const script = actionId === 'projects.script.run' ? PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.script.run'].parse(parsed.data) : undefined;
+    const script = actionId === 'projects.script.run' ? parsed.data as AdmittedActionInputById['projects.script.run'] : undefined;
     const named = script?.selection.kind === 'named' ? manifest?.scripts?.[script.selection.name] : undefined;
     if (script?.selection.kind === 'named' && !named) return failure('project_script_not_found');
     const preference = await preferenceRead;
@@ -73,7 +75,7 @@ export async function resolveProjectActionMachineV1(args: Readonly<{
       }) : null;
       return failure(reason === 'worker_copy_missing' ? reason : unavailableReason(reason), details?.success ? details.data : undefined);
     };
-    const execution = actionId === 'projects.compute.exec' ? 'portable'
+    const execution = actionId === 'projects.compute.exec' ? ('execution' in parsed.data ? parsed.data.execution ?? 'portable' : 'portable')
       : named?.execution ?? 'primary';
     const resolved = resolveProjectExecutionChoiceV1({ execution, sourceMachineId: workspace.machineId,
       adHoc: actionId === 'projects.compute.exec', invocation: choice,

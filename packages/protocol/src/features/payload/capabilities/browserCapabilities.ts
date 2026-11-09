@@ -10,7 +10,7 @@ import {
   BrowserDiagnosticFamilyV1Schema,
   BrowserDiagnosticFidelityV1Schema,
 } from '../../../browser/diagnostics/v1.js';
-import { BrowserContextKindV1Schema } from '../../../browser/context/v1.js';
+import { BROWSER_CONTEXT_SELECTION_MAX_CHARS, BROWSER_CONTEXT_SUMMARY_MAX_CHARS, BrowserContextKindV1Schema } from '../../../browser/context/v1.js';
 import { BrowserPermissionKindV1Schema } from '../../../browser/permissions/v1.js';
 import {
   BrowserRecordingCaptureKindV1Schema,
@@ -18,7 +18,7 @@ import {
 } from '../../../browser/recording/v1.js';
 import { BrowserViewTargetKindV1Schema } from '../../../browser/target/v1.js';
 
-export const BrowserViewTargetCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const BrowserViewTargetCapabilitiesSchema = lazyZodSchema(() => z.object({
     enabled: z._default(z.optional(z.boolean()), false),
     supportedTargetKinds: z._default(z.optional(z.array(BrowserViewTargetKindV1Schema)), []),
     iframeAvailable: z._default(z.optional(z.boolean()), false),
@@ -37,7 +37,7 @@ export const DEFAULT_BROWSER_VIEW_TARGET_CAPABILITIES: BrowserViewTargetCapabili
   disabledReasons: [],
 };
 
-export const BrowserInternalCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const BrowserInternalCapabilitiesSchema = lazyZodSchema(() => z.object({
     enabled: z._default(z.optional(z.boolean()), false),
     supportedStorageModes: z._default(z.optional(z.array(z.enum(['ephemeral', 'session', 'user', 'plugin']))), []),
     supportedPermissionKinds: z._default(z.optional(z.array(BrowserPermissionKindV1Schema)), []),
@@ -52,7 +52,7 @@ export const DEFAULT_BROWSER_INTERNAL_CAPABILITIES: BrowserInternalCapabilities 
   disabledReasons: [],
 };
 
-export const BrowserSidecarCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const BrowserSidecarCapabilitiesSchema = lazyZodSchema(() => z.object({
     enabled: z._default(z.optional(z.boolean()), false),
     available: z._default(z.optional(z.boolean()), false),
     disabledReasons: z._default(z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))), []),
@@ -65,7 +65,7 @@ export const DEFAULT_BROWSER_SIDECAR_CAPABILITIES: BrowserSidecarCapabilities = 
   disabledReasons: [],
 };
 
-export const BrowserDiagnosticsRetentionCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const BrowserDiagnosticsRetentionCapabilitiesSchema = lazyZodSchema(() => z.object({
     consoleEntriesPerView: z._default(z.optional(z.number().check(z.int(), z.positive())), 1000),
     networkEntriesPerView: z._default(z.optional(z.number().check(z.int(), z.positive())), 500),
     maxBytesPerView: z._default(z.optional(z.number().check(z.int(), z.positive())), 8_388_608),
@@ -84,7 +84,7 @@ export const DEFAULT_BROWSER_DIAGNOSTICS_RETENTION_CAPABILITIES: BrowserDiagnost
 
 const BrowserCaptureAvailabilitySchema = lazyZodSchema(() => z.enum(['unavailable', 'off', 'metadataOnly']));
 
-export const BrowserDiagnosticsCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const BrowserDiagnosticsCapabilitiesSchema = lazyZodSchema(() => z.object({
     enabled: z._default(z.optional(z.boolean()), false),
     available: z._default(z.optional(z.boolean()), false),
     supportedFamilies: z._default(z.optional(z.array(BrowserDiagnosticFamilyV1Schema)), []),
@@ -109,7 +109,7 @@ export const DEFAULT_BROWSER_DIAGNOSTICS_CAPABILITIES: BrowserDiagnosticsCapabil
   disabledReasons: [],
 };
 
-export const BrowserContextScreenshotCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const BrowserContextScreenshotCapabilitiesSchema = lazyZodSchema(() => z.object({
     supported: z._default(z.optional(z.boolean()), false),
     requiresAttachmentUploads: z._default(z.optional(z.boolean()), true),
     maxWidth: z.optional(z.number().check(z.int(), z.positive())),
@@ -118,9 +118,9 @@ export const BrowserContextScreenshotCapabilitiesSchema = lazyZodSchema(() => z.
   }));
 export type BrowserContextScreenshotCapabilities = z.infer<typeof BrowserContextScreenshotCapabilitiesSchema>;
 
-export const BrowserContextTextCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
-    maxSelectionChars: z._default(z.optional(z.number().check(z.int(), z.positive())), 2048),
-    maxSummaryChars: z._default(z.optional(z.number().check(z.int(), z.positive())), 8192),
+export const BrowserContextTextCapabilitiesSchema = lazyZodSchema(() => z.object({
+    maxSelectionChars: z._default(z.optional(z.number().check(z.int(), z.positive())), BROWSER_CONTEXT_SELECTION_MAX_CHARS),
+    maxSummaryChars: z._default(z.optional(z.number().check(z.int(), z.positive())), BROWSER_CONTEXT_SUMMARY_MAX_CHARS),
   }));
 export type BrowserContextTextCapabilities = z.infer<typeof BrowserContextTextCapabilitiesSchema>;
 
@@ -130,11 +130,11 @@ export const DEFAULT_BROWSER_CONTEXT_SCREENSHOT_CAPABILITIES: BrowserContextScre
 };
 
 export const DEFAULT_BROWSER_CONTEXT_TEXT_CAPABILITIES: BrowserContextTextCapabilities = {
-  maxSelectionChars: 2048,
-  maxSummaryChars: 8192,
+  maxSelectionChars: BROWSER_CONTEXT_SELECTION_MAX_CHARS,
+  maxSummaryChars: BROWSER_CONTEXT_SUMMARY_MAX_CHARS,
 };
 
-export const BrowserContextCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const BrowserContextCapabilitiesSchema = lazyZodSchema(() => z.object({
     enabled: z._default(z.optional(z.boolean()), false),
     available: z._default(z.optional(z.boolean()), false),
     supportedContextKinds: z._default(z.optional(z.array(BrowserContextKindV1Schema)), []),
@@ -167,7 +167,7 @@ export type BrowserAutomationFidelityCapabilities = z.infer<
   typeof BrowserAutomationFidelityCapabilitiesSchema
 >;
 
-export const BrowserAutomationTimelineCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const BrowserAutomationTimelineCapabilitiesSchema = lazyZodSchema(() => z.object({
     maxEntriesPerView: z._default(z.optional(z.number().check(z.int(), z.positive())), 500),
     retentionMs: z._default(z.optional(z.number().check(z.int(), z.positive())), 300_000),
   }));
@@ -180,7 +180,7 @@ export const DEFAULT_BROWSER_AUTOMATION_TIMELINE_CAPABILITIES: BrowserAutomation
   retentionMs: 300_000,
 };
 
-export const BrowserAutomationInjectedPageCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const BrowserAutomationInjectedPageCapabilitiesSchema = lazyZodSchema(() => z.object({
     enabled: z._default(z.optional(z.boolean()), false),
     available: z._default(z.optional(z.boolean()), false),
     capabilityVersion: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(64))),
@@ -196,7 +196,7 @@ export const DEFAULT_BROWSER_AUTOMATION_INJECTED_PAGE_CAPABILITIES: BrowserAutom
   disabledReasons: [],
 };
 
-export const BrowserAutomationEvalCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const BrowserAutomationEvalCapabilitiesSchema = lazyZodSchema(() => z.object({
     enabled: z._default(z.optional(z.boolean()), false),
     available: z._default(z.optional(z.boolean()), false),
     requiresDiagnosticsInteraction: z._default(z.optional(z.boolean()), true),
@@ -211,7 +211,7 @@ export const DEFAULT_BROWSER_AUTOMATION_EVAL_CAPABILITIES: BrowserAutomationEval
   disabledReasons: [],
 };
 
-export const BrowserAutomationCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const BrowserAutomationCapabilitiesSchema = lazyZodSchema(() => z.object({
     enabled: z._default(z.optional(z.boolean()), false),
     available: z._default(z.optional(z.boolean()), false),
     supportedActions: z._default(z.optional(z.array(BrowserAutomationActionKindCapabilitiesSchema)), []),
@@ -238,7 +238,7 @@ export const DEFAULT_BROWSER_AUTOMATION_CAPABILITIES: BrowserAutomationCapabilit
   disabledReasons: [],
 };
 
-export const BrowserRecordingCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const BrowserRecordingCapabilitiesSchema = lazyZodSchema(() => z.object({
     enabled: z._default(z.optional(z.boolean()), false),
     attachmentsEnabled: z._default(z.optional(z.boolean()), false),
     available: z._default(z.optional(z.boolean()), false),

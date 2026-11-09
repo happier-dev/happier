@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { DaemonTerminalEnsureRequestSchema, DaemonTerminalListRequestV1Schema, DaemonTerminalListResponseV1Schema } from './terminal';
+import { MachineTerminalOpenInputSchema } from '../actions/specs/machineTerminal';
 
 describe('daemon terminal listing V1', () => {
   it('admits the read-only projection and rejects unknown authority or process fields', () => {
@@ -20,6 +21,38 @@ describe('daemon terminal listing V1', () => {
 });
 
 describe('DaemonTerminalEnsureRequestSchema', () => {
+  it('admits only an exact daemon-resolved service shell through both terminal front doors', () => {
+    const request = { terminalKey: 'service:app', launch: {
+      kind: 'service_shell', serviceId: 'environment-instance/app', expectedGeneration: 'generation-a',
+    } };
+    expect(DaemonTerminalEnsureRequestSchema.parse(request)).toEqual(request);
+    const action = { ...request, serverId: 'home', machineId: 'machine' };
+    expect(MachineTerminalOpenInputSchema.parse(action)).toEqual(action);
+    for (const extra of [{ cwd: '/caller' }, { workspace: { serverId: 'home', machineId: 'machine', rootPath: '/caller' } },
+      { sessionId: 'caller-session' }, { initialCommand: 'docker compose exec foreign sh' }]) {
+      expect(DaemonTerminalEnsureRequestSchema.safeParse({ ...request, ...extra }).success).toBe(false);
+      expect(MachineTerminalOpenInputSchema.safeParse({ ...action, ...extra }).success).toBe(false);
+    }
+    for (const launch of [{ ...request.launch, expectedGeneration: '' }, { ...request.launch, command: 'sh' },
+      { kind: 'service_shell', target: { kind: 'candidate', deploymentId: 'candidate-b', service: 'app' } }]) {
+      expect(DaemonTerminalEnsureRequestSchema.safeParse({ ...request, launch }).success).toBe(false);
+      expect(MachineTerminalOpenInputSchema.safeParse({ ...action, launch }).success).toBe(false);
+    }
+  });
+
+  it('normalizes the 0.2 startup command into the one typed launch at the parse boundary', () => {
+    const legacy = {
+      terminalKey: 'service-shell', initialCommand: 'docker compose exec app sh',
+    };
+    const canonical = { terminalKey: legacy.terminalKey,
+      launch: { kind: 'shell_command', command: legacy.initialCommand } };
+    expect(DaemonTerminalEnsureRequestSchema.parse(legacy)).toEqual(canonical);
+    expect(DaemonTerminalEnsureRequestSchema.parse(canonical)).toEqual(canonical);
+    expect(MachineTerminalOpenInputSchema.parse({ ...legacy, serverId: 'home', machineId: 'machine' }))
+      .toEqual({ ...canonical, serverId: 'home', machineId: 'machine' });
+    expect(DaemonTerminalEnsureRequestSchema.safeParse({ ...legacy, authority: 'present_user' }).success).toBe(false);
+  });
+
   it('accepts a typed attached-session action and rejects a competing raw command', () => {
     expect(DaemonTerminalEnsureRequestSchema.parse({
       terminalKey: 'session:dialog-attach',

@@ -125,6 +125,7 @@ describe('PendingDeliveryStatusV1', () => {
 
   it.each([
     [{ status: 'discarded', reason: 'resent_as_new' }, false],
+    [{ status: 'discarded', reason: 'session_input_muted' }, false],
     [{ status: 'discarded', reason: 'dismissed_uncertain' }, true],
     [{ status: 'discarded', reason: 'manual' }, true],
     [{ status: 'discarded', reason: null }, true],

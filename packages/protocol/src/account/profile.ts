@@ -18,7 +18,7 @@ export type AccountNameUpdateResponseV1 = z.infer<typeof AccountNameUpdateRespon
 export const AccountUsernameUpdateRequestV1Schema = lazyZodSchema(() => z.strictObject({ username: z.string() }));
 export const AccountUsernameUpdateResponseV1Schema = lazyZodSchema(() => z.strictObject({ username: z.string() }));
 export const AccountUsernameUpdateErrorV1Schema = lazyZodSchema(() => z.strictObject({
-  error: z.enum(['invalid-username', 'username-disabled', 'friends-disabled', 'username-taken']),
+  error: z.enum(['invalid-username', 'username-disabled', 'friends-disabled', 'username-taken', 'username-changed']),
 }));
 
 export const AccountUsernameCheckRequestV1Schema = lazyZodSchema(() => z.strictObject({ username: z.string() }));

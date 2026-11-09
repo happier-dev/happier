@@ -4,7 +4,7 @@ import { decideApprovalRequestTransition } from '../../approvals/approvalRequest
 import { computeWorkspaceSyncPolicyDigest } from '../../sessions/control/handoff/workspaceSyncSchemas.js';
 import { executeApprovalObservationAction } from './approvalObservation.js';
 
-it('settles an admitted unknown link from its owner without replaying the effect and preserves unknown on unavailable observation or failed storage', async () => {
+it.each([true, undefined] as const)('settles an admitted unknown link with producer effect evidence %s without replaying and preserves unknown on unavailable observation or failed storage', async effectAttempted => {
   const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
   const original = ApprovalRequestV2Schema.parse({ v: 2, status: 'outcome_unknown', createdAtMs: 1, updatedAtMs: 2,
     createdBy: { surface: 'agent', sessionId: 'session' }, requestedSurface: 'agent',
@@ -16,7 +16,7 @@ it('settles an admitted unknown link from its owner without replaying the effect
       serverId: 'profile', serverIdentityId: 'home', sessionId: 'session',
       actionId: 'workspace.sync.relationship.create', requestId: 'admitted-request' },
     decision: { kind: 'approve', decidedAtMs: 1 },
-    execution: { executedAtMs: 2, ok: false, effectAttempted: true, errorCode: 'RPC_OUTCOME_UNKNOWN' } });
+    execution: { executedAtMs: 2, ok: false, ...(effectAttempted !== undefined ? { effectAttempted } : {}), errorCode: 'RPC_OUTCOME_UNKNOWN' } });
   for (const scenario of ['present', 'absent', 'offline', 'storage_conflict', 'foreign_session'] as const) {
     let stored = original;
     let observations = 0;
@@ -51,6 +51,8 @@ it('settles an admitted unknown link from its owner without replaying the effect
       expect(stored.status).toBe(status);
       expect(stored.decision).toEqual(original.decision);
       expect(stored.executionOriginV1).toEqual(original.executionOriginV1);
+      if (effectAttempted === undefined) expect(stored.execution).not.toHaveProperty('effectAttempted');
+      else expect(stored.execution).toHaveProperty('effectAttempted', effectAttempted);
     }
   }
 });

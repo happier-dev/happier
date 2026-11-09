@@ -507,12 +507,8 @@ describe('protocol package root exports', () => {
 
     it('exports SCM diff-summary cache and selector protocol schemas for downstream packets', () => {
         expect((protocol as any).SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION).toBe(1);
-        expect(typeof (protocol as any).ScmDiffSummaryCacheEntrySchema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).ScmDiffSummaryCacheKeyDescriptorSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).ScmDiffSummaryCachePolicySchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).ScmDiffSummaryCostMetadataSchema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).ScmDiffSummaryGenerationStateSchema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).ScmDiffSummaryResolvedSelectorSchema?.safeParse).toBe('function');
     });
 
     it('exports automation change/update schemas through root exports', () => {

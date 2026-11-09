@@ -224,6 +224,10 @@ describe('typed provider security fingerprints', () => {
     expect(changedProtocol).not.toBe(a);
     expect(changedAvailabilityProbe).not.toBe(a);
     expect(a).toMatch(/^connection-security:v1:/);
+    const inline = { id: 'inline', mode: 'chat-fallback' as const, endpointTemplateId: 'responses', path: '/responses', wireFormat: 'openai-responses' as const };
+    const withInline = createProviderConnectionSecurityFingerprintV1({ ...connectionInput, inlineCompletion: [inline] });
+    expect(withInline).not.toBe(a);
+    expect(createProviderConnectionSecurityFingerprintV1({ ...connectionInput, inlineCompletion: [{ ...inline, path: '/other' }] })).not.toBe(withInline);
   });
 
   it('invalidates connection trust when a local catalog command contract changes', () => {
@@ -1138,11 +1142,11 @@ describe('typed provider security fingerprints', () => {
       binding: 'binding-security:v1:sJWzredb9c_zMusg1SuSlnmpcu1aZLg68xZq13px_Ts',
       endpointSet: 'endpoint-set:v1:f4ZdXevIRRzkFVGwThPc6Qx9j4h65iX5k50NQ_x5OAQ',
       compatibility: 'compatibility:v1:CiZD3bgW42HDQ6GXxOMx0ptNdo7KxQ5_dSpP9eGLeIs',
-      probeRequest: 'probe-request:v1:Z6W-8xY-bqWuOGOugX-lyYPaT-ka0OjrGvibqpzRhK8',
-      endpointObservation: 'endpoint-observation:v1:_yXkhiVFToIoMRDJ6g5nl8r9DIBMns6oFbl-Zyi42PE',
-      catalog: 'catalog:v1:KzohbZVoZlCNPUK8tpmzxUTMCMebiZEZXiUn-838eK4',
+      probeRequest: 'probe-request:v1:Eb16GT7N-zpr2uyyAxYGnbBuL-DEdjX6pufr3fe5pAU',
+      endpointObservation: 'endpoint-observation:v1:MBfUJQc7i00xZLOE2Yyn41miLQgncBk32-EH5q6a1rM',
+      catalog: 'catalog:v1:ZSDwlMyy2Ls_oOGjWE1Q60igc4ZkKAqOnrUNUMRXdcQ',
       observation: 'observation-authorization:v1:SuTDmbYo4O0wtiWtbteZ7gaRwUTDQfbATDiF4IuPELc',
-      probeObservation: 'probe-observation:v1:pabrD2k2rZ1bPvKbe8AOzx7I-3J1_0j-ZESeGz22Af0',
+      probeObservation: 'probe-observation:v1:RDiFNKbpEvzeeqzxwc6F7hLqUr0nV06PW8efbQANyYs',
       accountGrant: 'account-grant:v1:cI0puTgBEpYij46m9a81N7DXpwvuhKCUCmExkXrSGB8',
       machineGrant: 'machine-grant:v1:47tXQdT5LRTGbhQYMkJvPnCPM_fzgWtpdOpqI5x8SMk',
       savedSecret: 'saved-secret-record:v1:6u_bGJVm5x0_aLGfHoxELsYXFtrzLXglHBO9iLZqSeM',

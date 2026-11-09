@@ -1,4 +1,3 @@
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from './limits.js';
 import {
   isBaseCredentialDiagnosticKey,
   isUnsafeTelemetryDataKey,
@@ -30,7 +29,6 @@ function normalizeHeaderName(name: string): string {
   const normalized = name.trim().toLowerCase();
   if (
     !normalized
-    || normalized.length > PROVIDER_ENDPOINT_SAFETY_LIMITS.maxHeaderNameChars
     || !HEADER_NAME_PATTERN.test(normalized)
     || OBJECT_KEY_POISON_HEADER_NAMES.has(normalized)
   ) {
@@ -60,9 +58,6 @@ export function normalizeProviderPublicHeaders(
   headers: Readonly<Record<string, string>>,
 ): Readonly<Record<string, string>> {
   const entries = Object.entries(headers);
-  if (entries.length > PROVIDER_ENDPOINT_SAFETY_LIMITS.maxPublicHeaders) {
-    throw new Error('Provider public-header count exceeds the limit.');
-  }
   const normalized = new Map<string, string>();
   for (const [rawName, value] of entries) {
     const name = normalizeHeaderName(rawName);
@@ -71,8 +66,7 @@ export function normalizeProviderPublicHeaders(
     }
     if (normalized.has(name)) throw new Error('Provider public headers contain a case-equivalent duplicate.');
     if (
-      value.length > PROVIDER_ENDPOINT_SAFETY_LIMITS.maxHeaderValueChars
-      || CONTROL_CHARACTER_PATTERN.test(value)
+      CONTROL_CHARACTER_PATTERN.test(value)
     ) {
       throw new Error('Invalid provider public-header value.');
     }
@@ -94,7 +88,6 @@ export function normalizeProviderQueryParameterName(name: string): string {
   const normalized = name.trim();
   if (
     !normalized
-    || normalized.length > PROVIDER_ENDPOINT_SAFETY_LIMITS.maxHeaderNameChars
     || CONTROL_CHARACTER_PATTERN.test(normalized)
     || !QUERY_NAME_PATTERN.test(normalized)
   ) {

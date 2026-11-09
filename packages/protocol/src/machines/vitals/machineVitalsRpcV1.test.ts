@@ -17,7 +17,7 @@ describe('Machine vitals V1 transport', () => {
     });
     it('permits shared Machine Use reads over the ephemeral route', () => {
         for (const method of [RPC_METHODS.MACHINES_VITALS_GET, RPC_METHODS.MACHINES_VITALS_HISTORY_GET, RPC_METHODS.DAEMON_VITALS_WATCH]) {
-            expect(resolveMachineRpcRoutePolicy(method)).toMatchObject({ routeClass: 'direct_ephemeral', sharedMachineAccess: 'use', commandReceiptRequired: false });
+            expect(resolveMachineRpcRoutePolicy(method)).toMatchObject({ routeClass: 'direct_ephemeral', sharedMachineAccess: 'use' });
         }
     });
     it('rejects extra authority or unbounded provider bags at every payload boundary', () => {

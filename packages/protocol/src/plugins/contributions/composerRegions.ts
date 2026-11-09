@@ -8,10 +8,12 @@ import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 export const MAX_PLUGIN_COMPOSER_REGIONS_V1 = 64;
 
-/** A manifest-declared rich region adjacent to the host-owned composer. */
+/** A manifest-declared region in or adjacent to the host-owned composer. */
 export const PluginComposerRegionContributionV1Schema = lazyZodSchema(() => z.strictObject({
   id: asProtocolZod(PluginContributionLocalIdSchema),
-  placement: z.enum(['beforeComposer', 'afterComposer']),
+  placement: z.enum(['beforeComposer', 'afterComposer', 'statusStrip']),
+  /** Status-strip truncation priority; defaults to the public badge's prominent emphasis. */
+  emphasis: z.optional(z.enum(['quiet', 'prominent'])),
   renderer: PluginUiRendererChainBindingV1Schema,
   scopes: z.optional(z.array(ComposerScopeKindV1Schema).check(z.minLength(1))),
   order: z.optional(z.number()),

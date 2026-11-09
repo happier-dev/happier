@@ -241,9 +241,19 @@ function buildDecision(params: {
   };
 }
 
+// Surface passes decide once per candidate from one immutable policy object, so a parse
+// per decision scales with the Session count. Callers hold their policy object stable
+// (readEffectivePolicy keys it by settings identity), and a new policy is a new object.
+const parsedDecisionPolicies = new WeakMap<object, AttentionDeliveryPolicyV1>();
+
 function parseAttentionDeliveryPolicyForDecision(policy: unknown): AttentionDeliveryPolicyV1 {
+  const retainable = typeof policy === 'object' && policy !== null;
+  const retained = retainable ? parsedDecisionPolicies.get(policy) : undefined;
+  if (retained) return retained;
   const parsed = AttentionDeliveryPolicyV1Schema.safeParse(policy);
-  return parsed.success ? parsed.data : DEFAULT_ATTENTION_DELIVERY_POLICY_V1;
+  const result = parsed.success ? parsed.data : DEFAULT_ATTENTION_DELIVERY_POLICY_V1;
+  if (retainable) parsedDecisionPolicies.set(policy, result);
+  return result;
 }
 
 export function resolveAttentionDeliveryPreviewBehavior(params: Readonly<{

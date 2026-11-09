@@ -2,10 +2,18 @@ import { describe, expect, it } from 'vitest';
 
 import * as Api from './automationApiV3.js';
 import { AutomationRunReplyHandoffStateV1Schema } from './automationEventV1.js';
+import { MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES } from './automationStoredContentEnvelopeV1.js';
 
 const timestamp = 1_786_257_600_000;
 const occurrenceKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const templateCiphertext = '{"kind":"happier_automation_template_plain_v1"}';
+
+it.each([1_000, 3_600_000])('accepts the requested positive worker lease without a local duration policy (%i)', leaseDurationMs => {
+  expect(Api.AutomationV3WorkerClaimRequestSchema.parse({ machineId: 'machine-1', leaseDurationMs }))
+    .toEqual({ machineId: 'machine-1', leaseDurationMs });
+  expect(Api.AutomationV3WorkerHeartbeatRequestSchema.parse({ machineId: 'machine-1', attempt: 1, leaseDurationMs }))
+    .toEqual({ machineId: 'machine-1', attempt: 1, leaseDurationMs });
+});
 
 it('admits the closed session-scoped claim selector without accepting arbitrary capacity bypasses', () => {
   expect(Api.AutomationV3WorkerClaimRequestSchema.parse({ machineId: 'machine-1', scope: 'session_scoped' }))
@@ -79,6 +87,19 @@ const eventInput = {
   filter: null,
   maximumObservationAgeMs: 60_000,
 };
+
+it('admits observation-only Event enrollment without executable context and rejects mixed definition arms', () => {
+  const input = { automationId: 'deployment-monitor', name: 'Deployment monitoring', enabled: true,
+    observationOnly: { kind: 'observationOnly' as const, templateVersion: 1 },
+    assignments: [], triggers: [{ triggerId: 'deployment-trigger', trigger: eventInput }] };
+  expect(Api.AutomationDefinitionCreateRequestSchema.parse(input)).toEqual(input);
+  for (const invalid of [
+    { ...input, executionRecipe: workflowRecipe },
+    { ...input, assignments: [{ machineId: 'machine-1' }] },
+    { ...input, workflowDefinitionId: 'builtin:review' },
+    { ...input, triggers: [{ triggerId: 'schedule-trigger', trigger: scheduleInput }] },
+  ]) expect(Api.AutomationDefinitionCreateRequestSchema.safeParse(invalid).success).toBe(false);
+});
 
 const lifecycleInput = {
   kind: 'sessionLifecycle' as const,
@@ -688,6 +709,52 @@ describe('Automation versioned API schemas', () => {
       ...claim,
       automation: { id: 'fake', name: 'Fake', enabled: true },
     }).success).toBe(false);
+  });
+
+  it.each(['direct snapshot', 'Automation snapshot', 'previous checkpoint'] as const)(
+    'transports an admitted %s above the Automation input ceiling', kind => {
+      // A Workflow has already passed its own admission. Its claim sidecars
+      // are not Automation execution inputs (fin2's blocked snapshot: 547,949 bytes).
+      const envelope = JSON.stringify({ t: 'encrypted', c: 'e'.repeat(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES + 1) });
+      const common = { id: 'large-workflow', leaseExpiresAt: timestamp + 30_000, attempt: 1,
+        revision: 1, recipeKind: 'workflow-v2' as const, triggerId: null, triggerRetired: false };
+      const run = kind === 'direct snapshot'
+        ? { ...common, automationId: null, origin: { kind: 'direct' as const },
+          workflowAcceptedSnapshotEnvelope: envelope }
+        : { ...common, automationId: 'automation-1',
+          cause: { kind: 'manual' as const, invokedAt: timestamp },
+          executionInputEnvelope: '{"t":"encrypted","c":"definition"}', automationEvidenceEnvelope: null,
+          ...(kind === 'Automation snapshot' ? { workflowAcceptedSnapshotEnvelope: envelope }
+            : { lastSucceededRun: { runId: 'previous-run', checkpointEnvelope: envelope } }) };
+      const claim = { run, automation: kind === 'direct snapshot' ? null
+        : { id: 'automation-1', name: 'Workflow', enabled: true },
+        accountCurrentness: { mode: 'e2ee' as const, version: 3, contentKeyFingerprint: 'fingerprint' } };
+      expect(Api.AutomationV3WorkerClaimResponseSchema.parse(claim)).toEqual(claim);
+      // The existing Automation definition/evidence boundary still applies.
+      if (run.automationId !== null) {
+        expect(Api.AutomationV3WorkerClaimResponseSchema.safeParse({ ...claim,
+          run: { ...run, executionInputEnvelope: envelope } }).success).toBe(false);
+      }
+    },
+  );
+
+  it('admits optional server-owned direct Run deadlines as closed canonical wake facts', () => {
+    const response = { assignments: [], settings: { maxActiveRunsPerMachine: 4 } };
+    expect(Api.AutomationV3WorkerAssignmentsResponseSchema.parse(response)).toEqual(response);
+    for (const directRunClaimDeadlines of [[], [{ runId: 'retained-direct-run', nextClaimAt: timestamp }]]) {
+      const projected = { ...response, directRunClaimDeadlines };
+      expect(Api.AutomationV3WorkerAssignmentsResponseSchema.parse(projected)).toEqual(projected);
+    }
+    for (const deadline of [
+      { runId: '', nextClaimAt: timestamp },
+      { runId: 'retained-direct-run', nextClaimAt: -1 },
+      { runId: 'retained-direct-run', nextClaimAt: timestamp + 0.5 },
+      { runId: 'retained-direct-run', nextClaimAt: timestamp, machineId: 'another-machine' },
+    ]) {
+      expect(Api.AutomationV3WorkerAssignmentsResponseSchema.safeParse({
+        ...response, directRunClaimDeadlines: [deadline],
+      }).success).toBe(false);
+    }
   });
 
   it('preserves settings, worker lifecycle, and history contracts', () => {

@@ -87,7 +87,7 @@ export function parseSessionMcpSelectionV1Json(raw: string | null | undefined): 
   if (typeof raw !== 'string' || raw.trim().length === 0) return null;
   try {
     const parsed = JSON.parse(raw);
-    const selection = SessionMcpSelectionV1Schema.safeParse(parsed);
+    const selection = SessionMcpSelectionAuthoringV1Schema.safeParse(parsed);
     return selection.success ? selection.data : null;
   } catch {
     return null;

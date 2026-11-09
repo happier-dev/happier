@@ -5,8 +5,31 @@ import type { ResolvedRolesSnapshotV1 } from './rolesV1.js';
 import { RoleActionInputSchemasV1, RoleActionOutputSchemasV1 } from './roleActionsV1.js';
 import { renderSessionRoleBlockV1 } from './renderSessionRoleBlockV1.js';
 import { BUILT_IN_ROLES_V1 } from './builtInRolesV1.js';
+import { getActionSpec } from '../../actions/actionSpecs.js';
 
 describe('session role instruction blocks', () => {
+  it('teaches send, both ask modes, exact answer/pass and selector inspection with executable Action examples', () => {
+    for (const context of [
+      { role: { ...BUILT_IN_ROLES_V1.builder, roleId: 'builder' } },
+      { worker: { leadSessionId: 'lead', taskBoundary: 'Review the parser' } },
+    ]) {
+      const rendered = renderSessionRoleBlockV1(context);
+      const examples = [...rendered.matchAll(/^(session\.(?:message\.(?:send|reply)|targets\.resolve)) (\{.*\})$/gm)]
+        .map((match) => ({ id: match[1], input: JSON.parse(match[2]) as Record<string, unknown> }));
+      expect(examples.filter(example => example.id === 'session.message.send').map(example => example.input.reply))
+        .toEqual(['none', 'wait', 'return']);
+      expect(examples.filter(example => example.id === 'session.message.reply').map(example => example.input.reply))
+        .toEqual([{ kind: 'answer', message: expect.any(String) }, { kind: 'pass' }]);
+      expect(examples.find(example => example.id === 'session.targets.resolve')?.input)
+        .toMatchObject({ actionId: 'session.message.send', target: { selector: 'workers' } });
+      for (const example of examples) {
+        const spec = getActionSpec(example.id);
+        expect(spec.surfaces.agent, example.id).toBe(true);
+        expect(spec.inputSchema.safeParse(example.input).success, JSON.stringify(example)).toBe(true);
+      }
+    }
+  });
+
   it('admits a sparse role or worker-question preference intent and rejects empty or unknown configuration writes', () => {
     const schema = RoleActionInputSchemasV1['session.role.set'];
     for (const input of [
@@ -66,6 +89,7 @@ describe('session role instruction blocks', () => {
     const rendered = renderSessionRoleBlockV1({ role: roles.orchestrator,
       availableRoles: [...Object.values(roles), { ...roles.builder, roleId: 'disabled-builder', enabled: false }] });
     expect(rendered).toContain('Open a pull request');
+    expect(rendered).toContain("Never approve your own request; approval decisions follow the Action's policy.");
     expect(rendered).toContain('session.spawn_new');
     expect(rendered).toContain('execution.run.start');
     expect(rendered).toContain('"roleId":"builder"');
@@ -99,7 +123,7 @@ describe('session role instruction blocks', () => {
     expect(rendered).toContain('session.update.post');
     expect(rendered).toContain('Only implement the assigned parser');
     expect(rendered).not.toContain('prompt_doc.update');
-    expect(rendered).toContain('cannot approve');
+    expect(rendered).toContain("Never approve your own request; approval decisions follow the Action's policy.");
   });
 });
 

@@ -68,7 +68,9 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       { path: 'newProject', title: 'New repository-free Project and owner', widget: 'json' },
       { path: 'templateRef', title: 'Pinned catalog app', widget: 'json', required: true },
       { path: 'explicit', title: 'Your creation choices', widget: 'json' },
-    ] } as const : id === 'deployments.templates.instantiate' ? { fields: [
+    ] } as const : id === 'deployments.templates.instantiate' ? {
+      description: 'Preview the complete installation before applying. A new Environment with domainBindings deploys automatically even when deploy is omitted. If review.deploy is present, apply starts the app as well as saving its definition, bindings and routes; do not describe that preview as definition-only. An existing Environment deploys only when deploy is supplied.',
+      fields: [
       { path: 'mode', title: 'Preview or apply', widget: 'text', required: true },
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
       { path: 'machineId', title: 'Target Machine', widget: 'text', required: true },

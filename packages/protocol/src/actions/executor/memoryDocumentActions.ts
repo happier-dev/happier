@@ -11,7 +11,7 @@ import { readSessionBotV1 } from '../../sessions/identity/sessionBotV1.js';
 import { MemoryRememberInputV1Schema, MemoryDecisionSaveInputV1Schema, MemoryUpdateInputV1Schema, MemoryForgetInputV1Schema, type MemoryScopeTargetV1,
   type MemoryDuplicateChoiceRequiredV1, MemoryAttachmentFailureV1Schema, type MemoryAttachmentFailureV1 } from '../../prompts/library/memoryActionsV1.js';
 import { readMemoryDocVersionInLibrary, readReviewedMemoryDocInLibrary, readRestorableMemoryFactV1, createMemoryDocInLibrary, rememberMemoryFactInLibrary, updateMemoryFactInLibrary, forgetMemoryFactInLibrary,
-  type PromptLibraryArtifactStore, type MemoryDocMutationTargetV1, type MemoryDocVersionV1 } from '../../prompts/library/promptLibraryActionOperations.js';
+  type PromptLibraryArtifactStore, type MemoryDocMutationTargetV1, type MemoryDocMutationReadV1 } from '../../prompts/library/promptLibraryActionOperations.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 
 export type MemorySessionSnapshotV1 = Readonly<{
@@ -34,6 +34,8 @@ export type MemoryScopeContextV1 = Readonly<{
 /** Real host boundaries only: Artifact storage/exposure and the exact Session owner view. */
 export type MemoryLibraryActionPortV1 = Readonly<{
   serverId: string; store: PromptLibraryArtifactStore; randomId: () => string; nowMs?: () => number;
+  /** The host selects its existing Artifact transport for this invoking Account. */
+  storeForContext?: (context: ActionExecutorContext) => PromptLibraryArtifactStore;
   /** Hosts with Home aliases supply their canonical identity comparison. */
   isSameServerId?: (serverId: string) => boolean;
   readExposure: (artifactId: string, context: ActionExecutorContext) => Promise<Readonly<{
@@ -47,6 +49,7 @@ export type MemoryLibraryActionPortV1 = Readonly<{
 }>;
 export type MemoryWriteAdmissionV1 = Readonly<{
   safety: 'safe' | 'danger'; target: MemoryDocMutationTargetV1 | null;
+  read?: MemoryDocMutationReadV1;
   createScope?: 'bot' | 'account' | 'project'; attachAccountMemory?: MemoryAccountContextV1['attachAccountMemory'];
   attachMemory?: MemoryScopeContextV1['attachMemory'];
   duplicateReview?: MemoryDuplicateChoiceRequiredV1;
@@ -94,6 +97,7 @@ async function findScopeMemory(port: MemoryLibraryActionPortV1, entries: readonl
 
 export async function readMemoryWriteAdmissionV1(port: MemoryLibraryActionPortV1, actionId: string, input: unknown, context: ActionExecutorContext): Promise<MemoryWriteAdmissionV1> {
   assertMemoryHomeV1(port, context.serverId);
+  const store = port.storeForContext?.(context) ?? port.store;
   const decisionRequest = actionId === 'memory.decision.save' ? MemoryDecisionSaveInputV1Schema.parse(input) : null;
   const updateRequest = actionId === 'memory.update' ? MemoryUpdateInputV1Schema.parse(input) : null;
   const request = decisionRequest ?? updateRequest
@@ -102,7 +106,7 @@ export async function readMemoryWriteAdmissionV1(port: MemoryLibraryActionPortV1
     ? decisionRequest.sourceMessageRef.session.serverId : decisionRequest.sourceMessageRef.discussion.serverId);
   if ('duplicateChoice' in request && request.duplicateChoice && !('ref' in request) && request.reviewedTarget == null) refuse('approval_stale');
   let target: MemoryDocMutationTargetV1;
-  let currentRead: MemoryDocVersionV1 | undefined;
+  let currentRead: MemoryDocMutationReadV1 | undefined;
   let scopeSafety: 'safe' | 'danger' = 'safe';
   if ('scope' in request) {
     if (request.scope === 'project') assertMemoryHomeV1(port, request.projectRef.serverId);
@@ -121,8 +125,8 @@ export async function readMemoryWriteAdmissionV1(port: MemoryLibraryActionPortV1
       assertMemoryHomeV1(port, request.reviewedTarget.ref.serverId);
       target = request.reviewedTarget;
     } else {
-      currentRead = await readMemoryDocVersionInLibrary({ store: port.store, artifactId: attached.ref.artifactId, signal: context.signal });
-      target = { ref: { ...attached.ref, kind: 'doc' }, expectedRevision: currentRead.revision };
+      currentRead = await readMemoryDocVersionInLibrary({ store, artifactId: attached.ref.artifactId, signal: context.signal });
+      target = { ref: { ...attached.ref, kind: 'doc' }, expectedRevision: currentRead.artifact.revision };
     }
   } else if ('sessionRef' in request) {
     assertMemoryHomeV1(port, request.sessionRef.serverId);
@@ -170,23 +174,23 @@ export async function readMemoryWriteAdmissionV1(port: MemoryLibraryActionPortV1
       assertMemoryHomeV1(port, request.reviewedTarget.ref.serverId);
       target = request.reviewedTarget;
     } else {
-      currentRead = await readMemoryDocVersionInLibrary({ store: port.store, artifactId: selectedRef.artifactId, signal: context.signal });
-      target = { ref: selectedRef, expectedRevision: currentRead.revision };
+      currentRead = await readMemoryDocVersionInLibrary({ store, artifactId: selectedRef.artifactId, signal: context.signal });
+      target = { ref: selectedRef, expectedRevision: currentRead.artifact.revision };
     }
   } else {
     assertMemoryHomeV1(port, request.ref.serverId);
     target = request;
   }
   // The revision and candidates of a newly resolved target belong to the same admitted read.
-  // Reviewed replays and the final pre-CAS admission still perform their own fresh read.
-  const read = currentRead ?? await readReviewedMemoryDocInLibrary({ store: port.store, request: target, signal: context.signal });
+  // Deferred replays acquire their own read; this invocation carries its admitted body to CAS.
+  const read = currentRead ?? await readReviewedMemoryDocInLibrary({ store, request: target, signal: context.signal });
   const safety = await readSafety(port, target.ref.artifactId, context);
   const restored = updateRequest && 'restore' in updateRequest ? readRestorableMemoryFactV1(read.body, updateRequest.factId) : undefined;
   const text = 'text' in request ? request.text : restored?.text;
   const duplicateReview = text !== undefined ? reviewMemoryFactWriteV1({ body: read.body, target, text,
     nowMs: (port.nowMs ?? Date.now)(), duplicateChoice: 'duplicateChoice' in request ? request.duplicateChoice : undefined,
     excludeFactId: 'text' in request && 'factId' in request && typeof request.factId === 'string' ? request.factId : undefined }) : null;
-  return { target, safety: scopeSafety === 'danger' ? 'danger' : safety, ...(duplicateReview ? { duplicateReview } : {}) };
+  return { target, read, safety: scopeSafety === 'danger' ? 'danger' : safety, ...(duplicateReview ? { duplicateReview } : {}) };
 }
 
 export async function executeMemoryWriteV1(args: Readonly<{
@@ -206,24 +210,13 @@ export async function executeMemoryWriteV1(args: Readonly<{
   const author = { randomId: port.randomId, nowMs: port.nowMs, sourceSessionRef, approvedBy: args.approvedBy,
     ...(decisionRequest ? { decision: { reason: decisionRequest.reason, sourceMessageRef: decisionRequest.sourceMessageRef,
       approvedBy: args.approvedBy ?? null } } : {}) };
-  // Check again immediately before the existing store's full-revision CAS.
-  const store: PromptLibraryArtifactStore = { ...port.store, update: async input => {
-    const current = await readMemoryWriteAdmissionV1(port, args.actionId, args.input, context);
-    if (!current.target || current.target.ref.artifactId !== input.artifactId) refuse('approval_stale');
-    if (admission.safety === 'safe' && current.safety === 'danger') refuse('approval_stale');
-    input.signal?.throwIfAborted();
-    return port.store.update(input);
-  } };
+  const store = port.storeForContext?.(context) ?? port.store;
   if (args.actionId === 'memory.remember' || decisionRequest) {
     const request = decisionRequest ?? MemoryRememberInputV1Schema.parse(args.input);
     if (!('ref' in request) && admission.target === null) {
-      if (!port.store.create || (admission.createScope === 'bot' ? !args.sessionStateFieldSet : !(admission.attachMemory ?? admission.attachAccountMemory))) refuse('memory_target_unavailable');
-      // Re-read the Session and selected scope before creating anything; their incumbent writers own attachment CAS.
-      const current = await readMemoryWriteAdmissionV1(port, args.actionId, request, context);
-      if (current.target !== null || current.createScope !== admission.createScope) refuse('version_mismatch');
-      if (admission.safety === 'safe' && current.safety === 'danger') refuse('approval_stale');
-      const created = await createMemoryDocInLibrary({ store: port.store, request: {
-        title: current.createScope === 'bot' ? 'Bot memory' : current.createScope === 'project' ? 'Project memory' : 'Account memory', text: request.text,
+      if (!store.create || (admission.createScope === 'bot' ? !args.sessionStateFieldSet : !(admission.attachMemory ?? admission.attachAccountMemory))) refuse('memory_target_unavailable');
+      const created = await createMemoryDocInLibrary({ store, request: {
+        title: admission.createScope === 'bot' ? 'Bot memory' : admission.createScope === 'project' ? 'Project memory' : 'Account memory', text: request.text,
         ...(request.topic === undefined ? {} : { topic: request.topic }),
         ...(request.expiresAtMs === undefined ? {} : { expiresAtMs: request.expiresAtMs }),
       }, ...author, signal: context.signal });
@@ -232,10 +225,10 @@ export async function executeMemoryWriteV1(args: Readonly<{
       let attachment: 'attached' | 'conflict' = 'conflict';
       let attachmentFailure: MemoryAttachmentFailureV1 | undefined;
       try {
-        if (current.attachMemory) {
-          if (await current.attachMemory(ref)) attachment = 'attached';
-        } else if (current.createScope === 'account') {
-          if (await current.attachAccountMemory!(ref)) attachment = 'attached';
+        if (admission.attachMemory) {
+          if (await admission.attachMemory(ref)) attachment = 'attached';
+        } else if (admission.createScope === 'account') {
+          if (await admission.attachAccountMemory!(ref)) attachment = 'attached';
         } else {
           if (!('sessionRef' in request)) refuse('memory_target_unavailable');
           const result = await args.sessionStateFieldSet!({ actionId: 'session.context.update', context,
@@ -260,12 +253,12 @@ export async function executeMemoryWriteV1(args: Readonly<{
         ...(attachmentFailure ? { attachmentFailure } : {}) };
     }
     if (!admission.target) refuse('memory_doc_invalid');
-    return rememberMemoryFactInLibrary({ store, request: { ...admission.target, text: request.text,
+    return rememberMemoryFactInLibrary({ store, admittedRead: admission.read, request: { ...admission.target, text: request.text,
       ...(request.duplicateChoice === undefined ? {} : { duplicateChoice: request.duplicateChoice }),
       ...(request.topic === undefined ? {} : { topic: request.topic }),
       ...(request.expiresAtMs === undefined ? {} : { expiresAtMs: request.expiresAtMs }) }, ...author, signal: context.signal });
   }
-  if (args.actionId === 'memory.update') return updateMemoryFactInLibrary({ store,
+  if (args.actionId === 'memory.update') return updateMemoryFactInLibrary({ store, admittedRead: admission.read,
     request: MemoryUpdateInputV1Schema.parse(args.input), ...author, signal: context.signal });
-  return forgetMemoryFactInLibrary({ store, request: MemoryForgetInputV1Schema.parse(args.input), signal: context.signal });
+  return forgetMemoryFactInLibrary({ store, admittedRead: admission.read, request: MemoryForgetInputV1Schema.parse(args.input), signal: context.signal });
 }

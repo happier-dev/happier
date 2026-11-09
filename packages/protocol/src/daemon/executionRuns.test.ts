@@ -243,7 +243,7 @@ describe('DaemonExecutionRunMarkerSchema', () => {
       updatedAtMs: 2,
       finishedAtMs: 2,
       errorCode: 'execution_run_output_limit_exceeded',
-      resultSizeBytes: 1024,
+      resultSizeBytes: 2_500_001,
       resumeHandle: {
         kind: 'provider_session.v1',
         backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
@@ -271,12 +271,18 @@ describe('DaemonExecutionRunMarkerSchema', () => {
       updatedAtMs: 2,
       finishedAtMs: 2,
       errorCode: 'execution_run_output_limit_exceeded',
-      resultSizeBytes: 1024,
+      resultSizeBytes: 2_500_001,
     });
     expect(JSON.stringify(parsed)).not.toContain('/private/happy-home');
     expect(JSON.stringify(parsed)).not.toContain('private-configured-target');
     expect(JSON.stringify(parsed)).not.toContain('private prompt-derived label');
     expect(JSON.stringify(parsed)).not.toContain('private-provider-session');
+    expect(DaemonExecutionRunMarkerPersistenceReadSchema.parse(parsed).resultSizeBytes).toBe(2_500_001);
+    expect(DaemonExecutionRunMarkerOwnerWriteSchema.parse(parsed).resultSizeBytes).toBe(2_500_001);
+    for (const resultSizeBytes of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(DaemonExecutionRunMarkerSchema.safeParse({ ...parsed, resultSizeBytes }).success).toBe(false);
+      expect(DaemonExecutionRunMarkerPersistenceReadSchema.safeParse({ ...parsed, resultSizeBytes }).success).toBe(false);
+    }
   });
 
   it('drops connected-services launch configuration from canonical marker writes', () => {

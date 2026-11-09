@@ -2,10 +2,26 @@ import * as z from 'zod/mini';
 import { describe, expect, it } from 'vitest';
 
 import { pluginJsonValuesEqual } from './jsonSchemaValues';
-import { PluginJsonValueV2Schema } from './jsonSchema.js';
+import { PluginJsonSchemaV2Schema, PluginJsonValueV2Schema } from './jsonSchema.js';
+import { normalizePluginJsonSchema } from '../actions/protocolComposableSchema.js';
+import { compilePluginJsonSchema } from '../actions/jsonSchemaValidation.js';
 import Ajv from 'ajv';
 
 describe('structural JSON schema', () => {
+  it('preserves admitted immutable schema identity without trusting caller-frozen documents', () => {
+    const source = { type: 'object', properties: { name: { type: 'string' } }, additionalProperties: false };
+    const admitted = normalizePluginJsonSchema(source);
+    expect(PluginJsonSchemaV2Schema.parse(admitted)).toBe(admitted);
+    expect(compilePluginJsonSchema(PluginJsonSchemaV2Schema.parse(admitted))).toBe(compilePluginJsonSchema(admitted));
+    const mutable = structuredClone(admitted);
+    const parsed = PluginJsonSchemaV2Schema.parse(mutable);
+    expect(parsed).not.toBe(mutable);
+    mutable.properties!.name!.type = 'number';
+    expect(parsed.properties?.name?.type).toBe('string');
+    expect(PluginJsonSchemaV2Schema.safeParse(Object.freeze({ type: 'invented' })).success).toBe(false);
+    expect(PluginJsonSchemaV2Schema.safeParse(Object.freeze({ type: 'string', invented: true })).success).toBe(false);
+  });
+
   it('parses deep JSON with exact invalid child paths and independent shared values', () => {
     let value: unknown = true;
     for (let index = 0; index < 1_200; index += 1) value = { next: [value] };
@@ -25,6 +41,15 @@ describe('structural JSON schema', () => {
     const validate = new Ajv({ strict: false }).compile(z.toJSONSchema(PluginJsonValueV2Schema, { io: 'input', target: 'draft-7' }));
     expect(validate({ nested: [1, null, { text: 'value' }] })).toBe(true);
     expect(validate({ nested: [undefined] })).toBe(false);
+  });
+
+  it('retains the strict recursive JSON Schema vocabulary in native input and output projections', () => {
+    for (const io of ['input', 'output'] as const) {
+      const validate = new Ajv({ strict: false }).compile(z.toJSONSchema(PluginJsonSchemaV2Schema, { io, target: 'draft-7' }));
+      expect(validate({ type: 'object', properties: { name: { type: 'string' } }, additionalProperties: false })).toBe(true);
+      expect(validate({ type: 'object', properties: { name: { type: 'invented' } } })).toBe(false);
+      expect(validate({ type: 'string', invented: true })).toBe(false);
+    }
   });
 });
 

@@ -10,6 +10,10 @@ import {
 import { MAX_PLUGIN_COMPOSER_ATTACHMENTS_V1 } from '../contributions/composerAttachments.js';
 import { PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1 } from '../ui/targetedContributions.js';
 import { resolvePluginActionConnectedAccountUseRequestsV2 } from './v2.js';
+import { SessionTargetV1ProtocolSchema } from '../../actions/sessionTargetV1.js';
+import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolUnion } from '../actions/protocolComposableSchema.js';
+import { PluginActionContributionV2Schema } from '../actions/v2.js';
+import { QualifiedConnectedAccountRefJsonSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
 
 function manifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -34,6 +38,82 @@ describe('plugin manifest v2 root contract', () => {
       expect(PluginManifestV2Schema.safeParse(request(location)).success).toBe(false);
     }
     expect(PluginManifestV2Schema.safeParse(request({ root: 'machine', pathPrefix: '/var/log/journal' }, ['read', 'write'])).success).toBe(false);
+  });
+  it('admits the Account chooser across an explicitly mapped native credential arm', () => {
+    const action = { id: 'setup', title: 'Setup', scopes: ['global'], surfaces: ['plugin'],
+      dangerLevel: 'safe', execution: { target: 'daemon' },
+      connectedAccountPurposeBindings: [{ path: 'credentialRef', nativeServicePath: 'nativeService', purpose: 'authentication' }],
+      inputHints: { fields: [{ path: 'credentialRef', title: 'Account', widget: 'select', connectedAccountOptions: true }] },
+      inputSchema: { oneOf: [
+        { type: 'object', properties: { credentialRef: QualifiedConnectedAccountRefJsonSchema }, required: ['credentialRef'], additionalProperties: false },
+        { type: 'object', properties: { nativeService: { type: 'object', properties: {
+          pluginId: { type: 'string' }, localId: { type: 'string' },
+        }, required: ['pluginId', 'localId'], additionalProperties: false } }, required: ['nativeService'], additionalProperties: false },
+      ] },
+    };
+    expect(PluginActionContributionV2Schema.safeParse(action).success).toBe(true);
+    expect(PluginActionContributionV2Schema.safeParse({ ...action, connectedAccountPurposeBindings: [] }).success).toBe(false);
+  });
+  it('admits closed declaration-only configuration activation without executing plugin code', () => {
+    const configuration = { accountCollections: [{ pluginId: 'happier.channels', collectionId: 'state' }], automationEventSources: true };
+    const admitted = ingestPluginManifestV2(manifest({ activation: { configuration } }));
+    expect(admitted.ok ? admitted.manifest.activation : admitted.diagnostics).toEqual({ events: [], configuration });
+    for (const invalid of [{}, { automationEventSources: false }, { accountCollections: [] },
+      { accountCollections: [{ pluginId: 'happier.channels', collectionId: 'state', enabled: true }] }]) {
+      expect(ingestPluginManifestV2(manifest({ activation: { configuration: invalid } })).ok).toBe(false);
+    }
+  });
+  it('admits notification buttons only for the declaring plugin Actions and pages', () => {
+    const action = { id: 'merge', title: 'Merge', scopes: ['global'], surfaces: ['plugin'],
+      execution: { target: 'daemon' }, dangerLevel: 'safe' };
+    const button = { id: 'Merge this review', label: 'Merge', effect: { kind: 'action', invocation: {
+      action: { pluginId: 'com.acme.fixture', localId: 'merge' }, input: { reviewId: '42' },
+    } } };
+    const create = (buttons: unknown[]) => manifest({ contributes: {
+      actions: [action], notifications: [{ id: 'review', title: 'Review', kind: 'plugin', eventIds: [], buttons }],
+      ui: { renderers: [{ id: 'reviews-renderer', kind: 'declarative', root: { kind: 'text', text: 'Reviews' } }],
+        views: [{ id: 'reviews', container: 'appPage', target: { kind: 'app' }, renderer: 'reviews-renderer', title: 'Reviews' }] },
+    } });
+    const open = { id: 'Open exact review', label: 'Open review', effect: { kind: 'open', page: { pageId: 'reviews', subPath: 'changes/42' } } };
+    const admitted = ingestPluginManifestV2(create([button, open, { id: 'Open', label: 'Open', effect: { kind: 'open' } }]));
+    expect(admitted.ok ? admitted.manifest.contributes.notifications[0]?.buttons : admitted.diagnostics).toEqual([
+      button, open, { id: 'Open', label: 'Open', effect: { kind: 'open' } },
+    ]);
+    for (const invalid of [
+      { ...button, effect: { kind: 'action', invocation: { ...button.effect.invocation, action: { pluginId: 'other.plugin', localId: 'merge' } } } },
+      { ...button, effect: { kind: 'action', invocation: { ...button.effect.invocation, action: { pluginId: 'com.acme.fixture', localId: 'missing' } } } },
+      { id: 'Open', label: 'Open', effect: { kind: 'open', page: { pageId: 'missing' } } },
+    ]) expect(ingestPluginManifestV2(create([invalid]))).toMatchObject({ ok: false });
+  });
+  it('admits Session-targeted get/configure arms beside an untargeted Account list arm', () => {
+    const closed = { policy: 'closed' } as const;
+    const inputSchema = defineProtocolUnion([
+      defineProtocolObject({ kind: defineProtocolLiteral('list') }, closed),
+      defineProtocolObject({ kind: defineProtocolLiteral('get'), sessionId: SessionTargetV1ProtocolSchema }, closed),
+      defineProtocolObject({ kind: defineProtocolLiteral('configure'), sessionId: SessionTargetV1ProtocolSchema }, closed),
+    ]).jsonSchema;
+    const action = { id: 'watch', title: 'Watch', scopes: ['global', 'session'], surfaces: ['plugin'],
+      execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema,
+      sessionTarget: { field: 'sessionId', cardinality: 'one' } };
+    const admitted = ingestPluginManifestV2(manifest({ contributes: { actions: [action] } }));
+    expect(admitted.ok ? admitted.manifest.contributes.actions[0]?.sessionTarget : admitted.diagnostics)
+      .toEqual(action.sessionTarget);
+    const optional = ingestPluginManifestV2(manifest({ contributes: { actions: [{ ...action,
+      inputSchema: defineProtocolObject({ sessionId: SessionTargetV1ProtocolSchema.optional() }, closed).jsonSchema,
+    }] } }));
+    expect(optional.ok ? optional.ok : optional.diagnostics).toBe(true);
+    for (const invalid of [
+      { ...action, sessionTarget: { ...action.sessionTarget, field: 'typoSessionId' } },
+      { ...action, inputSchema: defineProtocolUnion([
+        defineProtocolObject({ kind: defineProtocolLiteral('list') }, closed),
+        defineProtocolObject({ kind: defineProtocolLiteral('get'), sessionId: SessionTargetV1ProtocolSchema }, closed),
+        defineProtocolObject({ kind: defineProtocolLiteral('configure'), sessionId: defineProtocolNumber() }, closed),
+      ]).jsonSchema },
+    ]) expect(ingestPluginManifestV2(manifest({ contributes: { actions: [invalid] } }))).toMatchObject({
+      ok: false, diagnostics: expect.arrayContaining([expect.objectContaining({
+        code: 'plugin_manifest_invalid', path: ['contributes', 'actions', 0, 'sessionTarget', 'field'],
+      })]),
+    });
   });
   it('admits an optional automatic Run-on opt-out while keeping routing declarations closed', () => {
     const result = ingestPluginManifestV2(manifest({ executionTarget: { autoPick: false } }));
@@ -74,6 +154,27 @@ describe('plugin manifest v2 root contract', () => {
     expect(resolvePluginActionConnectedAccountUseRequestsV2(parsed, 'missing')).toBeNull();
     const dangling = { ...parsed, contributes: { ...parsed.contributes, actions: [{ ...parsed.contributes.actions[0]!, hostAccess: ['missing'] }] } };
     expect(resolvePluginActionConnectedAccountUseRequestsV2(dangling, 'acquire')).toBeNull();
+  });
+  it.each(['actions', 'hooks', 'resources'] as const)('resolves dotted HostAccess request ids for %s', family => {
+    const requestId = family === 'resources' ? 'storage.account' : 'deploy.manage';
+    const request = family === 'resources'
+      ? { id: requestId, capability: 'storage.account', reason: 'Read Account state', scope: { enabled: true } }
+      : { id: requestId, capability: 'connectedAccounts', reason: 'Use the selected deployment account',
+        scope: { serviceRefs: [{ pluginId: 'acme.accounts', localId: 'account' }], operations: ['use'] } };
+    const contribution = family === 'actions'
+      ? { id: 'inspect', title: 'Inspect', scopes: ['global'], surfaces: ['cli'], dangerLevel: 'safe',
+        execution: { target: 'daemon' }, hostAccess: [requestId] }
+      : family === 'hooks' ? { id: 'inspect', on: 'agent.request.before', hostAccess: [requestId] }
+        : { id: 'inspect', source: 'dynamic', kind: 'config', contentType: 'application/json', hostAccess: [requestId] };
+    const input = manifest({ hostAccess: { required: [request], optional: [] }, contributes: { [family]: [contribution] } });
+    const admitted = ingestPluginManifestV2(input);
+    expect(admitted.ok, JSON.stringify(admitted)).toBe(true);
+    if (!admitted.ok) return;
+    expect(admitted.manifest.contributes[family][0]).toMatchObject({ hostAccess: [requestId] });
+    if (family === 'actions') expect(resolvePluginActionConnectedAccountUseRequestsV2(admitted.manifest, 'inspect'))
+      .toEqual([{ request: admitted.manifest.hostAccess.required[0], required: true }]);
+    expect(ingestPluginManifestV2(manifest({ hostAccess: input.hostAccess,
+      contributes: { [family]: [{ ...contribution, hostAccess: ['missing.purpose'] }] } })).ok).toBe(false);
   });
   it('admits Widget refresh dependencies only for its own declared Resources', () => {
     const resources = [{ id: 'live-status', source: 'dynamic', kind: 'config', contentType: 'text/plain' }];
@@ -414,10 +515,8 @@ describe('plugin manifest v2 root contract', () => {
     const hook = {
       id: 'before-agent-request',
       on: 'agent.request.before',
-      category: 'decision',
-      scope: 'agent',
-      executionKind: 'decide',
     };
+    const observer = { id: 'spawned', on: 'session.spawned', priority: 30, filters: { agentId: 'gemini' } };
 
     const parsed = PluginManifestV2Schema.parse(manifest({
       hostAccess: {
@@ -432,14 +531,32 @@ describe('plugin manifest v2 root contract', () => {
         }],
         optional: [],
       },
-      contributes: { hooks: [{ ...hook, hostAccess: ['account'] }] },
+      contributes: { hooks: [{ ...hook, hostAccess: ['account'] }, observer] },
     }));
-    expect(parsed.contributes.hooks).toEqual([{ ...hook, hostAccess: ['account'], hookApiVersion: 1 }]);
+    expect(parsed.contributes.hooks).toEqual([{
+      ...hook, hostAccess: ['account'], category: 'augmentation', scope: 'agent', executionKind: 'augment',
+    }, {
+      ...observer, category: 'lifecycle', scope: 'session', executionKind: 'observe',
+    }]);
     expect(PluginManifestV2Schema.safeParse(manifest({
       contributes: {
         hooks: [{ ...hook, on: 'acme.custom.before' }],
       },
     })).success).toBe(false);
+  });
+
+  it.each(['hookApiVersion', 'compatibility', 'metadata'])('rejects the retired hook %s carrier', (field) => {
+    expect(PluginManifestV2Schema.safeParse(manifest({ contributes: { hooks: [{
+      id: 'spawned', on: 'session.spawned', category: 'lifecycle', scope: 'session', executionKind: 'observe',
+      [field]: field === 'hookApiVersion' ? 1 : { arbitrary: true },
+    }] } })).success).toBe(false);
+  });
+
+  it('rejects the retired Action metadata bag', () => {
+    expect(PluginManifestV2Schema.safeParse(manifest({ contributes: { actions: [{
+      id: 'inspect', title: 'Inspect', scopes: ['global'], surfaces: ['cli'],
+      execution: { target: 'daemon' }, dangerLevel: 'safe', metadata: { arbitrary: true },
+    }] } })).success).toBe(false);
   });
 
   it('requires explicit use authority for bounded Connected Account materialization kinds', () => {

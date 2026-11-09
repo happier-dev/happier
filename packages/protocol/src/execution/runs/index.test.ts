@@ -474,6 +474,25 @@ describe('executionRuns protocol', () => {
     });
   });
 
+  it('preserves content-free preflight cause and phase through Start classification', () => {
+    const executionRunPreflight = { phase: 'capabilities.describe', cause: { code: 'not_authenticated' } };
+    const details = withExecutionRunStartFailureDetails({ executionRunPreflight }, 'noRunCreated');
+    expect(details).toEqual({ executionRunStart: { v: 1, runCreation: 'noRunCreated' }, executionRunPreflight });
+    expect(ExecutionRunStartFailureDetailsV1Schema.parse(details)).toEqual(details);
+    expect(withExecutionRunStartFailureDetails(details, 'outcomeUnknown')).toEqual({ ...details,
+      executionRunStart: { v: 1, runCreation: 'outcomeUnknown' } });
+    for (const unsafe of [
+      { phase: 'private phase', cause: { code: 'not_authenticated' } },
+      { phase: 'capabilities.describe', cause: { code: 'private receiver content' } },
+      { phase: 'capabilities.describe', cause: { code: 'not_authenticated', message: 'private receiver content' } },
+      { ...executionRunPreflight, request: 'private instructions' },
+    ]) {
+      expect(ExecutionRunStartFailureDetailsV1Schema.safeParse({ ...details, executionRunPreflight: unsafe }).success).toBe(false);
+      expect(withExecutionRunStartFailureDetails({ executionRunPreflight: unsafe }, 'noRunCreated'))
+        .toEqual({ executionRunStart: { v: 1, runCreation: 'noRunCreated' } });
+    }
+  });
+
   it('preserves a closed, content-free role admission refusal through start projection', () => {
     const details = { executionRunStart: { v: 1, runCreation: 'noRunCreated',
       refusal: { code: 'role_overrides_unavailable', phase: 'agent_start_context' } } };

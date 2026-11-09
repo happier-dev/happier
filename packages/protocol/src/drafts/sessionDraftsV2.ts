@@ -240,11 +240,14 @@ export const NewSessionDraftDocumentV2Schema = z.strictObject({
 }));
 export type NewSessionDraftDocumentV2 = z.infer<typeof NewSessionDraftDocumentV2Schema>;
 
+// Options are disjoint by `v` and target kind, so order changes no result. A union walks every
+// failed option's whole shape, so the most numerous current kind (newSession) is tried first and
+// the released V1 shape, read through its own V1 payload, last.
 export const SessionDraftDocumentV2Schema = z.union([
-  SessionDraftDocumentV1Schema,
   NewSessionDraftDocumentV2Schema,
   DiscussionDraftDocumentV2Schema,
   ProjectOpenDraftDocumentV2Schema,
+  SessionDraftDocumentV1Schema,
 ]);
 export type SessionDraftDocumentV2 = z.infer<typeof SessionDraftDocumentV2Schema>;
 
@@ -304,7 +307,7 @@ const SessionDraftPrivatePayloadV2OnlySchema = z.strictObject({
  * V1 addresses keep their exact V1 payload envelope on the shared rows, so a V2
  * client editing a main Session draft cannot break its V1 sibling.
  */
-export const SessionDraftPrivatePayloadV2Schema = z.union([
+export const SessionDraftPrivatePayloadV2Schema = z.discriminatedUnion('v', [
   SessionDraftPrivatePayloadV1Schema,
   SessionDraftPrivatePayloadV2OnlySchema,
 ]);

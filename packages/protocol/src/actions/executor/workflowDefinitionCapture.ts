@@ -3,7 +3,7 @@ import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
 import { DiscussionReadResultV1Schema, type DiscussionOpenedMessageV1 } from '../../discussions/actions.js';
 import { areServerProfileIdentifiersEquivalent } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
 import { captureWorkflowDiscussionV1, WorkflowDefinitionCaptureRequestV1Schema, WorkflowDefinitionCaptureResultV1Schema } from '../../workflows/workflowDiscussionCaptureV1.js';
-import { WorkflowRunGetResultV1Schema, WorkflowActionInputSchemasV1 } from '../../workflows/actionsV1.js';
+import { WorkflowRunGetResultV1Schema } from '../../workflows/actionsV1.js';
 import { validateWorkflowDefinition } from '../../workflows/workflowValidationV1.js';
 import { readDiscussionAttachmentPayloadsV1 } from '../../discussions/content.js';
 
@@ -83,12 +83,6 @@ export async function captureWorkflowDefinitionV1(input: unknown, context: Actio
       unresolved: [{ messageId: selected[0]!.id, reason: 'ambiguous_workflow' }] };
   }
   if (draft.definition && !validateWorkflowDefinition(draft.definition).valid) return unavailable();
-  // Canonical family validation also enforces host Workflow availability before disclosure.
-  const validation = await deps.workflowAction({ actionId: 'workflow.validate',
-    input: WorkflowActionInputSchemasV1['workflow.validate'].parse({ definition: draft.definition ?? { blocks: ['Review the capture selection'] } }), context,
-    ...(context.signal ? { signal: context.signal } : {}) });
-  const failure = readActionFailureEnvelope(validation);
-  if (failure) return failure;
   context.signal?.throwIfAborted();
   return WorkflowDefinitionCaptureResultV1Schema.parse(draft);
 }

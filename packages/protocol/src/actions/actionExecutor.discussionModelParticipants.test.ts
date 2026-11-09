@@ -27,7 +27,7 @@ describe('Discussion model participant Action composition', () => {
   it('rejoins an uncertain ordinary start from the saved slot without sending an initial prompt', async () => {
     // HTTP reservation and native creation are system boundaries. Parsing,
     // Action admission and creation identity use their real canonical owners.
-    const births: Parameters<ActionExecutorDeps['sessionSpawnNew']>[0][] = [];
+    const births: Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0][] = [];
     const executor = createActionExecutor({
       discussionAction: async () => ({ ...grantResult, modelParticipant: {
         participant: { kind: 'model', participantSlotId: 'reviewer-slot' },
@@ -75,7 +75,7 @@ describe('Discussion model participant Action composition', () => {
   });
 
   it('rejoins a saved slot through the current proven Home alias without changing its Machine or Agent', async () => {
-    const births: Parameters<ActionExecutorDeps['sessionSpawnNew']>[0][] = [];
+    const births: Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0][] = [];
     const savedLaunch = { ...launch, executionTarget: { ...launch.executionTarget, serverId: 'device-a-home' } };
     const executor = createActionExecutor({ discussionAction: async () => ({ ...grantResult, modelParticipant: {
       participant: { kind: 'model', participantSlotId: 'reviewer-slot' }, launch: savedLaunch,
@@ -98,7 +98,7 @@ describe('Discussion model participant Action composition', () => {
 
   it('retains the selected recipe while ordinary Profile admission adds its skills', async () => {
     const selectedLaunch = { ...launch, profileId: 'review-profile' };
-    const births: Parameters<ActionExecutorDeps['sessionSpawnNew']>[0][] = [];
+    const births: Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0][] = [];
     const record = ProfileRecordV1Schema.parse({ v: 1, id: 'review-profile', enabled: true,
       definition: { kind: 'inline', profile: { v: 2, id: 'review-profile', name: 'Review', createdAt: 1, updatedAt: 1 } },
       promptStack: [], secretBindings: {}, skillSeeds: ['review-seed'] });

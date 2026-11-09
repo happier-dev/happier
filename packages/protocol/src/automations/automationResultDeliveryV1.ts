@@ -18,7 +18,7 @@ import {
 } from './automationEventJsonBoundsV1.js';
 import { AutomationOccurredAtV1Schema } from './automationOccurredAtV1.js';
 import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from './automationTriggerIdentity.js';
-import { AutomationPullRequestTriggerSchema } from './automationTriggerDefinition.js';
+import { AutomationPullRequestTriggerSchema } from './pullRequestTrigger.js';
 import { SessionIdSchema } from '../sessions/idsV1.js';
 import { asProtocolZod, projectZodProtocolSchema } from "../plugins/actions/internalProtocolZodAdapter.js";
 import type { JsonValue } from '../json/strictJsonValue.js';

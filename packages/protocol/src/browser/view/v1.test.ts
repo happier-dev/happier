@@ -101,4 +101,14 @@ describe('browser session/view vocabulary v1', () => {
       sequence: 1,
     }).success).toBe(false);
   });
+
+  it('accepts viewer viewport/DPR and editable probes but rejects invalid geometry at the input boundary', async () => {
+    const mod = await loadBrowserModule();
+    const viewport = { kind: 'viewport', target: 'page', width: 390, height: 844, deviceScaleFactor: 3, sequence: 1 };
+    expect(mod?.BrowserInputEventV1Schema.safeParse(viewport).success).toBe(true);
+    expect(mod?.BrowserInputEventV1Schema.safeParse({ ...viewport, width: 0 }).success).toBe(false);
+    expect(mod?.BrowserInputEventV1Schema.safeParse({ ...viewport, deviceScaleFactor: 0 }).success).toBe(false);
+    expect(mod?.BrowserInputEventV1Schema.safeParse({ kind: 'editableProbe', target: 'page', x: 0.5, y: 0.5, sequence: 2 }).success).toBe(true);
+    expect(mod?.BrowserInputEventV1Schema.safeParse({ kind: 'editableProbe', target: 'page', x: 2, y: 0.5, sequence: 2 }).success).toBe(false);
+  });
 });

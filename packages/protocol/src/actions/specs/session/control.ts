@@ -95,7 +95,7 @@ function createSessionLifetimeControlActionSpecs() {
     id: 'session.stop', executionPlacement: 'session', approval: {result: 'none'},
     sessionTarget: { field: 'sessionId', cardinality: 'many' },
     title: 'Stop session',
-    description: 'Stop the specified session. Explicit Stop holds automatic wake until Resume; lifecycle control only frees the runner.',
+    description: 'Stop the specified session. Explicit Stop holds automatic wake until Resume or a new message send; lifecycle control only frees the runner.',
     safety: 'safe',
     sideEffectClass: 'write',
     placements: [],

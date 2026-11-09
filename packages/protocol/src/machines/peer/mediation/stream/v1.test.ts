@@ -74,6 +74,19 @@ const LIVE_STREAM_LARGE_BASE64_LENGTH = 16 * 1024 * 1024;
 const LIVE_STREAM_LARGE_DECODED_LENGTH = (LIVE_STREAM_LARGE_BASE64_LENGTH / 4) * 3;
 
 describe('MachineLiveStreamV1 schemas', () => {
+  it('carries a closed personal viewer grant without changing the custodian carrier', () => {
+    const payload = { ...baseStartRequest.authorization.payload, v: 2,
+      sourceId: 'personal-source', sourceMachineInstallationId: 'source-installation',
+      targetMachineId: baseStartRequest.sourceMachineId, viewerAccountId: 'guest', viewerSocketId: 'guest-tab',
+      personalSourceAdmission: { homeServerIdentityId: 'home', actorAccountId: 'guest',
+        streamFamily: 'screen', sourceId: 'personal-source', sourceOccurrenceId: 'occurrence' } };
+    expect(MachineLiveStreamRelayAuthorizationPayloadV1Schema.safeParse(payload).success).toBe(true);
+    expect(MachineLiveStreamRelayAuthorizationPayloadV1Schema.safeParse(baseStartRequest.authorization.payload).success).toBe(true);
+    expect(MachineLiveStreamRelayAuthorizationPayloadV1Schema.safeParse({ ...payload, viewerAccountId: undefined }).success).toBe(false);
+    expect(MachineLiveStreamRelayAuthorizationPayloadV1Schema.safeParse({ ...payload, extraAuthority: 'owner' }).success).toBe(false);
+    expect(MachineLiveStreamRelayAuthorizationPayloadV1Schema.safeParse({ ...payload,
+      personalSourceAdmission: { ...payload.personalSourceAdmission, actorAccountId: 'another-person' } }).success).toBe(false);
+  });
   it('describes a browser source without inventing a maximum frame rate', () => {
     expect(MachineLiveStreamCaptureSourceV1Schema.safeParse({
       v: 1, sourceId: 'browser-view', sourceKind: 'browser', supportedCodecs: ['image.mjpeg'],

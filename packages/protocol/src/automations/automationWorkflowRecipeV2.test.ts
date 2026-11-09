@@ -62,6 +62,17 @@ describe('AutomationStoredWorkflowDefinitionRecipeV2', () => {
     }).success).toBe(true);
   });
 
+  it('retains private deployment trigger routing without granting approval', () => {
+    const configured = { ...recipe, workflow: { ...recipe.workflow,
+      v: { ...recipe.workflow.v, deploymentTriggers: [{ triggerId: 'push-staging',
+        branch: 'refs/heads/main', paths: ['services/**', '!services/docs/**'] }] } } };
+    const serialized = serializeAutomationStoredWorkflowDefinitionRecipeV2(configured);
+    expect(serialized.kind).toBe('available');
+    if (serialized.kind !== 'available') throw new Error('expected private deployment routing');
+    expect(parseAutomationStoredWorkflowDefinitionRecipeV2(serialized.serialized)).toEqual(serialized);
+    expect(serialized.recipe.workflow).toEqual(configured.workflow);
+  });
+
   it('reads unknown recipe and inline-definition fields while canonical inputs stay strict', () => {
     const stored = { ...recipe, extra: true, workflow: { ...recipe.workflow, extra: true,
       v: { ...recipe.workflow.v, extra: true, workspace: { directory: '/workspace/project', extra: true },

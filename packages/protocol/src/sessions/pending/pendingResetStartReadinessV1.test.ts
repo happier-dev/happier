@@ -40,6 +40,36 @@ describe('Pending reset start readiness', () => {
     const input = readinessInput();
     expect(evaluatePendingResetStartReadinessV1({ ...input, witness: { ...input.witness, fetchedAtMs: 501 } })).toEqual({ status: 'waiting', reason: 'witness_unavailable' });
   });
+  it('does not leave an admitted reset-start hold waiting through every fresh window after a missed reset', () => {
+    const input = readinessInput();
+    expect(evaluatePendingResetStartAdmissionV1({ ...input, current: input.witness, nowMs: 750 }))
+      .toEqual({ status: 'available' });
+    // The same hold is releasable if the device observes its intended window.
+    expect(evaluatePendingResetStartReadinessV1(input)).toEqual({ status: 'ready' });
+
+    // Recorded snapshots after sleeping through that whole window are fresh,
+    // comparable observations, not stale quota or a changed entitlement.
+    const resumedSnapshots = [snapshot(2_000, 3_000), snapshot(3_000, 4_000), snapshot(4_000, 5_000)];
+    const resumedDecisions = resumedSnapshots.map(current => evaluatePendingResetStartReadinessV1({
+      ...input, current, nowMs: current.observedAtMs,
+    }));
+    // Owner ruling 2026-10-30: send at the next fresh comparable window,
+    // without changing the original hold's witness or creating another timer.
+    expect(resumedDecisions).toEqual(resumedSnapshots.map(() => ({ status: 'ready' })));
+    const current = resumedSnapshots[0]!;
+    expect(evaluatePendingResetStartReadinessV1({ ...input, current, nowMs: 2_000, authorityCurrent: false }))
+      .toEqual({ status: 'waiting', reason: 'authority_unavailable' });
+    expect(evaluatePendingResetStartReadinessV1({ ...input, current: { ...current, staleAfterMs: 100 }, nowMs: 2_200 }))
+      .toEqual({ status: 'waiting', reason: 'quota_stale' });
+    expect(evaluatePendingResetStartReadinessV1({ ...input, current: { ...current, planLabel: 'changed' }, nowMs: 2_000 }))
+      .toEqual({ status: 'waiting', reason: 'entitlement_changed' });
+    expect(evaluatePendingResetStartReadinessV1({ ...input, current: { ...current,
+      meters: current.meters.map(meter => ({ ...meter, limit: 200 })) }, nowMs: 2_000 }))
+      .toEqual({ status: 'waiting', reason: 'denominator_changed' });
+    expect(evaluatePendingResetStartReadinessV1({ ...input, current: { ...current,
+      observedAtMs: 1_500, fetchedAtMs: 2_000 }, nowMs: 2_000 }))
+      .toEqual({ status: 'waiting', reason: 'window_changed' });
+  });
   it('refuses a historical observation that did not load usage', () => {
     const input = readinessInput();
     expect(evaluatePendingResetStartReadinessV1({ ...input, witness: { ...input.witness, state: 'loaded_empty' } })).toEqual({ status: 'waiting', reason: 'witness_unavailable' });

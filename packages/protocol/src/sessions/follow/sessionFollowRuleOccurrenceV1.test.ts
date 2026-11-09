@@ -6,7 +6,7 @@ import type { SessionFollowRuleDefinitionV1 } from './sessionFollowRuleV1.js';
 import { z } from 'zod/mini';
 import { createSessionMessageMetaSchema } from '../messages/sessionMessageMeta.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
-import { projectSessionFollowFactsV1 } from './accountFollow.js';
+import { projectSessionFollowFactsV1, SessionAutoFollowPreferencesV1Schema, normalizeSessionFollowDefaultRulesV1 } from './accountFollow.js';
 
 const filter = normalizeSessionListFilterV1({ homeServerIds: ['home'], startedBy: ['you'], scope: 'all_accessible',
   projects: { include: [{ serverId: 'home', projectKey: 'payments' }], exclude: [] } });
@@ -17,6 +17,19 @@ const evidence = { v: 1 as const, ownerAccountId: 'alice', event: { kind: 'faile
 const currentFacts = { ...evidence.facts, projectKey: 'payments' };
 
 describe('current readable Follow rule matching', () => {
+  it('applies canonical defaultRules through the same relationship matcher as legacy stored preferences', () => {
+    const defaults = { assigned: true, direct: false, team: true, group: false };
+    const parsed = SessionAutoFollowPreferencesV1Schema.safeParse({ defaultRules: defaults });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw parsed.error;
+    expect(parsed.data).toEqual(SessionAutoFollowPreferencesV1Schema.parse(defaults));
+    const matched = normalizeSessionFollowDefaultRulesV1({ serverId: 'home', preferences: parsed.data,
+      relationships: { assigned: true, direct: true, team: true, group: true }, hasPersistentFollow: false });
+    expect(matched.rules.map(rule => rule.key)).toEqual(['assigned', 'team']);
+    expect(normalizeSessionFollowDefaultRulesV1({ serverId: 'home', preferences: parsed.data,
+      relationships: { assigned: true, team: true }, hasPersistentFollow: true }).rules).toEqual([]);
+  });
+
   it('requires needs_you evidence to name a current request original, never an immutable message', () => {
     const fields = { sourceSessionId: 'source', sourcePublisher: {
       publisherGeneration: '1', machineId: 'machine', committedFenceMs: 1 },

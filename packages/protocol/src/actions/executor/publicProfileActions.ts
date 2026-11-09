@@ -1,26 +1,31 @@
 import { z } from 'zod/mini';
 import { throwIfAborted } from '../../abortSignal.js';
-import { getUsageQueryKey, normalizeUsageQuery, type UsageQuery } from '../../inputs/usageQuery.js';
+import { getUsageQueryKey, normalizeUsageQuery, resolveUsageQueryPeriod, type UsageQuery } from '../../inputs/usageQuery.js';
 import { PublicProfilePolicyV1Schema, type PublicProfilePolicyV1,
   type PublicProfileMetadataV1, PublicProfileLinkV1Schema } from '../../account/publicProfile.js';
+import { resolvePublicProfileArtifactPeriod } from '../../account/publicProfileAccounting.js';
 import { PublicProfileOwnerReadV1Schema, PublicProfilePreparedRequestV1Schema, PublicProfileMutationResultV1Schema,
   type PublicProfileOwnerReadV1, type PublicProfilePreparedRequestV1, type PublicProfileOwnerRecordV1,
   type PublicProfileContextV1 } from '../../account/publicProfilePublication.js';
 import { PublicProfilePreviewIntentV1Schema, PublicProfilePublishIntentV1Schema, PublicProfileUpdateIntentV1Schema,
-  PublicProfilePreparationUnavailableReasonV1Schema, type PublicProfilePreparationUnavailableReasonV1,
+  type PublicProfilePreparationUnavailableReasonV1,
   type PublicProfileMetadataSelectionV1 } from '../../account/publicProfileIntents.js';
 import { type PublicProfilePreparationActionIdV1 } from '../../account/publicProfileActionIds.js';
-import { projectPublicProfilePreview } from '../../account/projectPublicProfile.js';
+import { projectPublicProfilePreview, projectPublicProfileSnapshot, resolvePublicProfileUsageDemand, hasWiderPublicProfileUsageFields } from '../../account/projectPublicProfile.js';
 import { ScmCredentialFreeRepositorySelectorV1Schema, type ScmHostingRepositoryGetResponseV1 } from '../../scm/repositoryClone.js';
 import { UsageQueryBatchResultSchema, type UsageQueryResultSlice } from '../../usage/resolveUsagePageAggregation.js';
 import type { ActionExecuteFailure, ActionExecuteResult } from '../actionExecutionResult.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import type { UsageActionPorts } from './usageActions.js';
 import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
+import { preparePublicProfileLayout } from './publicProfileLayout.js';
 import type { PublicProfileSnapshotBuildResult } from '../../account/publicProfileSnapshot.js';
 export type { PublicProfileSnapshotBuildResult } from '../../account/publicProfileSnapshot.js';
 
 type ProjectSelection = z.infer<typeof ScmCredentialFreeRepositorySelectorV1Schema>;
+
+/** A live host retains the canonical preview computation, never a caller-supplied snapshot. */
+export type PublicProfilePreviewAdmission = (query: UsageQuery, policy: PublicProfilePolicyV1) => PublicProfileSnapshotBuildResult | undefined;
 
 /** Hosts bind custody and real IO only. Snapshot computation remains a shared domain owner. */
 export type PublicProfileActionPorts = Readonly<{
@@ -63,8 +68,6 @@ export type PreparedPublicProfileAction = Readonly<{
   request: PublicProfilePreparedRequestV1;
   /** The same admitted owner read supplies this host-local review identity and destination. */
   publicationContext: PublicProfileContextV1;
-  /** The exact selected effect is retained by the host's existing live approval continuation. */
-  requiresRefresh: boolean;
 }>;
 export type PublicProfileActionPreparation = Readonly<{ kind: 'prepared'; effect: PreparedPublicProfileAction }>
   | Readonly<{ kind: 'settled'; result: ActionExecuteResult }>;
@@ -97,7 +100,7 @@ async function resolveMetadata(input: PublicProfileMetadataSelectionV1, policy: 
   if (!projectSelections.length) return { metadata, projectSelections };
   if (!ports.getRepository) return null;
   const observed = await Promise.all(projectSelections.map(selector => ports.getRepository!(selector, context)));
-  await check(ports, context);
+  throwIfAborted(context.signal);
   const projects: NonNullable<PublicProfileMetadataV1['projects']> = [];
   for (const observation of observed) {
     if (!('kind' in observation) || observation.kind !== 'public') return null;
@@ -114,7 +117,7 @@ async function recheckProjects(record: PublicProfileOwnerRecordV1, ports: Public
     try { return await ports.getRepository?.(selector, context); }
     catch { return undefined; }
   }));
-  await check(ports, context);
+  throwIfAborted(context.signal);
   // Refresh can remove consented links; even a newly public or renamed repository
   // cannot add a link that was absent from the acknowledged public edition.
   return (record.metadata?.projects ?? []).filter(link => observed.some(observation => observation
@@ -124,16 +127,31 @@ async function recheckProjects(record: PublicProfileOwnerRecordV1, ports: Public
 
 async function snapshot(query: UsageQuery, policy: PublicProfilePolicyV1, ports: PublicProfileActionPorts,
   context: ActionExecutorContext): Promise<PublicProfileSnapshotBuildResult> {
+  const demand = resolvePublicProfileUsageDemand(policy);
+  if (!demand.includeAccounting) {
+    const nowMs = Date.now();
+    const period = resolvePublicProfileArtifactPeriod(resolveUsageQueryPeriod(query, nowMs), query.timeZoneOffsetMinutes);
+    if (!period) {
+      return { kind: 'unavailable', reason: 'period_unavailable' };
+    }
+    return { kind: 'ready', snapshot: { v: 1, computedAtMs: nowMs,
+      period,
+      coverage: { status: 'unknown', method: 'unknown' }, fieldCoverage: {}, facts: {} } };
+  }
   if (!ports.usage || !ports.buildSnapshot) return { kind: 'unavailable', reason: 'usage_unavailable' };
-  const queried = await ports.usage.query({ queries: [query] }, { ...context, usageQueryReadiness: 'public_profile' });
-  await check(ports, context);
+  const requested = normalizeUsageQuery({ ...query, ...demand, includeSeries: false,
+    includeInsights: false, includeLeaders: false, includeModelTimeline: false, includeMessageStats: false,
+    includeQuotaHistory: false, includeTranscriptEvidence: false,
+    activityResolution: demand.includeActivity ? policy.fields.punch ? 'both' : 'calendar' : undefined });
+  const queried = await ports.usage.query({ queries: [requested] }, { ...context, usageQueryReadiness: 'public_profile' });
+  throwIfAborted(context.signal);
   if (readActionFailureEnvelope(queried)) return { kind: 'unavailable', reason: 'usage_unavailable' };
   const batch = UsageQueryBatchResultSchema.safeParse(queried);
   const slice = batch.success && batch.data.results.length === 1 ? batch.data.results[0] : undefined;
-  if (!slice || getUsageQueryKey(slice.requestedQuery) !== getUsageQueryKey(query)
-    || getUsageQueryKey(slice.shownQuery) !== getUsageQueryKey(query)) return { kind: 'unavailable', reason: 'usage_unavailable' };
+  if (!slice || getUsageQueryKey(slice.requestedQuery) !== getUsageQueryKey(requested)
+    || getUsageQueryKey(slice.shownQuery) !== getUsageQueryKey(requested)) return { kind: 'unavailable', reason: 'usage_unavailable' };
   const built = ports.buildSnapshot({ queryResult: slice, policy, nowMs: Date.now() });
-  await check(ports, context);
+  throwIfAborted(context.signal);
   return built;
 }
 
@@ -146,7 +164,8 @@ function publicQuery(query: UsageQuery) {
 
 /** Intent preparation always precedes approval and generic Home-domain dispatch. */
 export async function preparePublicProfileAction(actionId: PublicProfilePreparationActionIdV1, value: unknown,
-  ports: PublicProfileActionPorts | undefined, context: ActionExecutorContext): Promise<PublicProfileActionPreparation> {
+  ports: PublicProfileActionPorts | undefined, context: ActionExecutorContext,
+  layoutDeps: Pick<ActionExecutorDeps, 'widgetAccountScope' | 'artifactAction' | 'widgetCatalog'> = {}): Promise<PublicProfileActionPreparation> {
   const unavailable = (reason: PublicProfilePreparationUnavailableReasonV1): PublicProfileActionPreparation => ({ kind: 'settled', result: actionId === 'account.public_profile.preview'
     ? { ok: true, result: { kind: 'unavailable', reason } }
     : { ok: false, errorCode: 'public_profile_preparation_unavailable', error: 'public_profile_preparation_unavailable', details: { reason } },
@@ -154,7 +173,7 @@ export async function preparePublicProfileAction(actionId: PublicProfilePreparat
   if (!ports) return unavailable('preparation_unavailable');
   await check(ports, context);
   const read = await ports.read(context);
-  await check(ports, context);
+  throwIfAborted(context.signal);
   const refused = readActionFailureEnvelope(read);
   if (refused) return { kind: 'settled', result: refused };
   const parsedRead = PublicProfileOwnerReadV1Schema.safeParse(read);
@@ -165,16 +184,24 @@ export async function preparePublicProfileAction(actionId: PublicProfilePreparat
   if (actionId === 'account.public_profile.update') {
     const intent = PublicProfileUpdateIntentV1Schema.parse(value);
     if (!record?.policy) return unavailable('not_published');
+    const layout = intent.layout ? await preparePublicProfileLayout(intent.layout, layoutDeps, context) : undefined;
+    throwIfAborted(context.signal);
+    if (layout && 'ok' in layout) return { kind: 'settled', result: layout };
     const policy = intent.policy ?? record.policy;
     const metadata = intent.metadataSelection ? await resolveMetadata(intent.metadataSelection, policy, ports, context) : undefined;
     if (metadata === null) return unavailable('project_visibility_unavailable');
-    await check(ports, context);
+    throwIfAborted(context.signal);
+    const query = intent.query ? publicQuery(intent.query) : record.query ? publicQuery(record.query) : null;
+    const needsSnapshot = hasWiderPublicProfileUsageFields(record.policy, policy)
+      || intent.query !== undefined && (!record.query || getUsageQueryKey(publicQuery(record.query)) !== getUsageQueryKey(query));
+    const built = needsSnapshot && query ? await snapshot(query, policy, ports, context) : undefined;
+    if (needsSnapshot && !query) return unavailable('invalid_stored_content');
+    if (built?.kind === 'unavailable') return unavailable(built.reason);
     return { kind: 'prepared', effect: { actionId, publicationContext: owner.context,
-      requiresRefresh: intent.policy !== undefined || intent.query !== undefined,
       request: PublicProfilePreparedRequestV1Schema.parse({ operation: 'update', body: {
         ...(intent.policy ? { policy: intent.policy } : {}), ...(metadata ?? {}),
-        ...(intent.query ? { query: publicQuery(intent.query) } : {}),
-        ...(intent.layout ? { layout: intent.layout } : {}), ...(intent.appearance ? { appearance: intent.appearance } : {}),
+        ...(intent.query ? { query } : {}), ...(built?.kind === 'ready' ? { snapshot: built.snapshot } : {}),
+        ...(layout ? { layout } : {}), ...(intent.appearance ? { appearance: intent.appearance } : {}),
       } }),
     } };
   }
@@ -193,62 +220,49 @@ export async function preparePublicProfileAction(actionId: PublicProfilePreparat
     const built = await snapshot(query, record.policy, ports, context);
     if (built.kind === 'unavailable') return unavailable(built.reason);
     const projectLinks = await recheckProjects(record, ports, context);
-    await check(ports, context);
-    return { kind: 'prepared', effect: { actionId, publicationContext: owner.context, requiresRefresh: false,
+    throwIfAborted(context.signal);
+    return { kind: 'prepared', effect: { actionId, publicationContext: owner.context,
       request: PublicProfilePreparedRequestV1Schema.parse({ operation: actionId === 'account.public_profile.resume' ? 'resume' : 'refresh',
         body: { query, snapshot: built.snapshot, ...(projectLinks ? { projectLinks } : {}) } }),
     } };
   }
   const intent = actionId === 'account.public_profile.preview'
     ? PublicProfilePreviewIntentV1Schema.parse(value) : PublicProfilePublishIntentV1Schema.parse(value);
+  const layout = await preparePublicProfileLayout(intent.layout, layoutDeps, context);
+  throwIfAborted(context.signal);
+  if ('ok' in layout) return { kind: 'settled', result: layout };
   const policy = PublicProfilePolicyV1Schema.parse(intent.policy);
   const metadata = await resolveMetadata(intent.metadataSelection, policy, ports, context);
   if (!metadata) return unavailable('project_visibility_unavailable');
   const query = publicQuery(intent.query);
-  const built = await snapshot(query, policy, ports, context);
+  const preview = actionId === 'account.public_profile.publish' ? await context.publicProfilePreviewAdmission : null;
+  throwIfAborted(context.signal);
+  const built = preview?.(query, policy) ?? await snapshot(query, policy, ports, context);
   if (built.kind === 'unavailable') return unavailable(built.reason);
   if (actionId === 'account.public_profile.preview') {
     const view = projectPublicProfilePreview({ context: owner.context, policy, metadata: metadata.metadata,
-      snapshot: built.snapshot, layout: intent.layout, appearance: intent.appearance });
-    return view ? { kind: 'settled', result: { ok: true, result: { kind: 'ready', view } } } : unavailable('preparation_unavailable');
+      snapshot: built.snapshot, layout, appearance: intent.appearance, relativePeriod: query.period.relative });
+    if (!view) return unavailable('preparation_unavailable');
+    context.capturePublicProfilePreview?.((nextQuery, nextPolicy) =>
+      getUsageQueryKey(query) === getUsageQueryKey(nextQuery) && !hasWiderPublicProfileUsageFields(policy, nextPolicy)
+        ? { kind: 'ready', snapshot: projectPublicProfileSnapshot(built.snapshot, nextPolicy) } : undefined);
+    return { kind: 'settled', result: { ok: true, result: { kind: 'ready', view } } };
   }
-  await check(ports, context);
-  return { kind: 'prepared', effect: { actionId, publicationContext: owner.context, requiresRefresh: false,
+  throwIfAborted(context.signal);
+  return { kind: 'prepared', effect: { actionId, publicationContext: owner.context,
     request: PublicProfilePreparedRequestV1Schema.parse({ operation: 'publish', body: { policy, ...metadata, query,
-      snapshot: built.snapshot, layout: intent.layout, appearance: intent.appearance } }),
+      snapshot: built.snapshot, layout, appearance: intent.appearance } }),
   } };
 }
 
-/** Dispatch the retained bytes; acknowledgement is never undone by optional child refresh. */
+/** Dispatch the single prepared effect to its captured destination. */
 export async function executePublicProfileAction(effect: PreparedPublicProfileAction, ports: PublicProfileActionPorts,
-  context: ActionExecutorContext, refresh: () => Promise<ActionExecuteResult>): Promise<ActionExecuteResult> {
-  await check(ports, context);
+  context: ActionExecutorContext): Promise<ActionExecuteResult> {
+  throwIfAborted(context.signal);
   const raw = await ports.dispatchPrepared(effect.request, context);
   const refused = readActionFailureEnvelope(raw);
   if (refused) return refused;
   const result = PublicProfileMutationResultV1Schema.safeParse(raw);
   if (!result.success) return failure('invalid_action_output');
-  if (effect.request.operation !== 'update' || result.data.kind !== 'updated') return { ok: true, result: result.data };
-  const acknowledged = { ...result.data, refresh: 'not_needed' as const };
-  if (!effect.requiresRefresh) return { ok: true, result: acknowledged };
-  try {
-    await check(ports, context);
-    const followOn = await refresh();
-    if (!followOn.ok) {
-      const preparationUnavailable = followOn.errorCode === 'public_profile_preparation_unavailable';
-      const reason = PublicProfilePreparationUnavailableReasonV1Schema.safeParse(preparationUnavailable
-        && followOn.details && typeof followOn.details === 'object' && 'reason' in followOn.details ? followOn.details.reason : undefined);
-      return { ok: true, result: { ...acknowledged,
-        refresh: preparationUnavailable ? 'unavailable' : 'failed', refreshReason: reason.success ? reason.data : followOn.errorCode } };
-    }
-    const value = followOn.result;
-    if (value && typeof value === 'object' && 'kind' in value && value.kind === 'approval_request_created') {
-      return { ok: true, result: { ...acknowledged, refresh: 'pending_approval' } };
-    }
-    const settled = PublicProfileMutationResultV1Schema.safeParse(value);
-    return { ok: true, result: { ...acknowledged, ...(settled.success && settled.data.kind === 'updated'
-      ? { record: settled.data.record, refresh: 'complete' } : { refresh: 'unavailable' }) } };
-  } catch {
-    return { ok: true, result: { ...acknowledged, refresh: 'unavailable', refreshReason: context.signal?.aborted ? 'cancelled' : 'account_unavailable' } };
-  }
+  return { ok: true, result: result.data };
 }

@@ -1,5 +1,4 @@
 import type { WidgetSizeV1 } from './widgetPresentationV1.js';
-import type { PublicProfileLayoutV1 } from './widgetPublicSnapshotV1.js';
 import type { BuiltinUsagePublicPresentationV1 } from './builtinWidgetDescriptorV1.js';
 import type { WidgetAreaPresetV1 } from './widgetSurfaceArtifactV1.js';
 import type { WidgetInputBindingsV1 } from './widgetInstanceV1.js';
@@ -45,13 +44,4 @@ export function createPublicProfileWidgetAreaPresetsV1(host?: Readonly<{
       instance: { v: 1 as const, id: itemId, definition: { kind: 'builtin' as const, id: presentation.widgetId }, bindings,
         ...(title ? { displayName: title } : {}) } };
   }) }));
-}
-
-/** Titles are reviewed static text; the host supplies them in the person's language. */
-export function createPublicProfilePresetLayoutV1(id: PublicProfileLayoutPresetIdV1,
-  host: Readonly<{ title: (presentation: BuiltinUsagePublicPresentationV1) => string | undefined }>): PublicProfileLayoutV1 {
-  return { v: 1, items: PRESETS[id].map(([itemId, size, presentation]) => {
-    const title = host.title(presentation);
-    return { kind: 'widget', id: itemId, size, frameStyle: 'plain', presentation, ...(title ? { title } : {}) };
-  }) };
 }

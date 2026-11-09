@@ -84,6 +84,11 @@ describe('Session team credential binding contract', () => {
     expect(SessionTeamCredentialBindingMetadataPatchV1Schema.safeParse({
       ...patch,
       publisherPrecondition: { machineId: 'machine', committedFenceMs: 1, publisherGeneration: '1' },
+    }).success).toBe(true);
+    expect(SessionTeamCredentialBindingMetadataPatchV1Schema.safeParse({
+      ...patch,
+      publisherPrecondition: { machineId: 'machine', committedFenceMs: 1, publisherGeneration: '1' },
+      sessionExpectation: { kind: 'inactive_model_intent' },
     }).success).toBe(false);
     expect(SessionTeamCredentialBindingMetadataPatchV1Schema.safeParse({
       ...patch,

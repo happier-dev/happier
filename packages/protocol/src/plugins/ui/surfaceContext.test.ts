@@ -152,6 +152,11 @@ describe('plugin UI surface context', () => {
     expect(PluginUiHostApiSurfaceContextV1Schema.safeParse(staticAppPage).success).toBe(true);
     expect(PluginUiHostApiSurfaceContextV1Schema.parse({ ...appPage, page: { columnVisible: false } }).page).toEqual({ columnVisible: false });
     expect(PluginUiHostApiSurfaceContextV1Schema.safeParse({ ...appPage, page: { columnVisible: true, extra: true } }).success).toBe(false);
+    // A companion opened from a page item reads its opener's launch input and current location; nothing else rides along.
+    const openedFrom = { pageKind: { pluginId: 'happier.triage', localId: 'triage' }, launchInput: { lens: 'mine' }, subPath: 'e,issue,56' };
+    expect(PluginUiHostApiSurfaceContextV1Schema.parse({ ...appPage, openedFrom }).openedFrom).toEqual(openedFrom);
+    expect(PluginUiHostApiSurfaceContextV1Schema.parse({ ...appPage, openedFrom: { ...openedFrom, subPath: null } }).openedFrom?.subPath).toBeNull();
+    expect(PluginUiHostApiSurfaceContextV1Schema.safeParse({ ...appPage, openedFrom: { ...openedFrom, sessionId: 's-1' } }).success).toBe(false);
   });
 
   it('models one closed public destination-or-embedded mount context', () => {

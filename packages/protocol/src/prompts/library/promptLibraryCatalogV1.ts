@@ -228,7 +228,10 @@ async function cleanupSource(input: PromptLibraryLoadInputV1, catalog: Extract<P
   const transfer = input.transfer!;
   const active = new Set([...catalog.rows.map(row => row.record.key), ...catalog.tombstones.map(row => row.key)]);
   const raw = { ...source.raw };
-  let pending: PromptLibrarySourceCleanupV1 | null = null;
+  let pending: PromptLibrarySourceCleanupV1 | null = catalog.diagnostics.some(({ key }) => {
+    const root = PROMPT_LIBRARY_RETAINED_ROOTS_V1[key];
+    return root !== null && Object.hasOwn(raw, root);
+  }) ? { status: 'cleanup-pending', reason: 'source-unavailable' } : null;
   let legacyRoleArtifactTransfers: readonly AccountSettingsHistoryLegacyRoleArtifactTransferV1[] | undefined;
   const retiredRoots: string[] = [];
   for (const key of active) {

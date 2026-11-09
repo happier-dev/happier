@@ -18,6 +18,20 @@ function readRecord(value: unknown): Record<string, unknown> {
 }
 
 describe('mergeSessionWorkStateMetadataV1', () => {
+  it.each([null, { v: 1, backendId: 'native', updatedAt: 1, items: [] }])(
+    'honours a source primary hint within the winning priority bucket on first and merged publications (%j)', existing => {
+      const items = ['first', 'selected'].map(id => ({
+        id: `goal:${id}`, kind: 'goal' as const, origin: 'vendor' as const,
+        status: 'active' as const, title: id, updatedAt: 2,
+      }));
+      const merged = mergeSessionWorkStateV1({
+        existing,
+        nextOwned: { v: 1, backendId: 'native', updatedAt: 2, items, primaryItemId: 'goal:selected' },
+      });
+      expect(merged.primaryItemId).toBe('goal:selected');
+    },
+  );
+
   it('replaces owned item families while preserving unknown future items and envelope fields', () => {
     const merged = mergeSessionWorkStateMetadataV1({
       metadata: {

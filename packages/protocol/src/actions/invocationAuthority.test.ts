@@ -1,19 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { combineTerminalPresentUserPolicies, resolveInvocationAuthority } from './invocationAuthority.js';
+import { resolveInvocationAuthority } from './invocationAuthority.js';
 import { canCredentialDecideV1, resolveCredentialActionAdmissionV1 } from './decisionAuthority.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { getActionSpec } from './actionSpecs.js';
 import { resolveSocketRpcSessionAuthorization } from '../rpc/index.js';
 
 describe('verified invocation authority', () => {
-  it('combines terminal policies most restrictively', () => {
-    expect(combineTerminalPresentUserPolicies(undefined, null)).toBe('allowed');
-    expect(combineTerminalPresentUserPolicies('allowed', 'disallowed')).toBe('disallowed');
-  });
-  it('resolves credential, surface and terminal policy without caller claims', () => {
-    expect(resolveInvocationAuthority({ credential: 'terminal', surface: 'cli', terminalPolicy: 'allowed' })).toBe('present_user');
-    expect(resolveInvocationAuthority({ credential: 'terminal', surface: 'rpc', terminalPolicy: 'disallowed' })).toBe('account_automation');
-    expect(resolveInvocationAuthority({ credential: 'terminal', surface: 'cli' })).toBe('account_automation');
+  it('resolves credential and surface without caller claims', () => {
+    // A terminal credential is the person's own tool: person-class without any Account policy.
+    expect(resolveInvocationAuthority({ credential: 'terminal', surface: 'cli' })).toBe('present_user');
+    expect(resolveInvocationAuthority({ credential: 'terminal', surface: 'rpc' })).toBe('present_user');
+    for (const surface of ['agent', 'mcp', 'plugin', 'api'] as const) {
+      expect(resolveInvocationAuthority({ credential: 'terminal', surface })).toBe('account_automation');
+    }
     expect(resolveInvocationAuthority({ credential: 'account', surface: 'ui' })).toBe('present_user');
     expect(resolveInvocationAuthority({ credential: 'account', surface: 'voice' })).toBe('account_automation');
     expect(resolveInvocationAuthority({ credential: 'none', surface: 'ui' })).toBe('account_automation');
@@ -22,7 +21,7 @@ describe('verified invocation authority', () => {
     expect(resolveInvocationAuthority({ credential: 'none', surface: 'voice', localUiInteraction: true })).toBe('account_automation');
     for (const surface of ['plugin', 'api'] as const) expect(resolveInvocationAuthority({ credential: 'account', surface })).toBe('account_automation');
     for (const credential of ['terminal', 'api_token', 'plugin', 'agent', 'none'] as const) {
-      expect(resolveInvocationAuthority({ credential, surface: 'voice', terminalPolicy: 'allowed' })).toBe('account_automation');
+      expect(resolveInvocationAuthority({ credential, surface: 'voice' })).toBe('account_automation');
     }
   });
   it('approve permits decisions but never token/security mutations', () => {
@@ -31,8 +30,9 @@ describe('verified invocation authority', () => {
     expect(resolveCredentialActionAdmissionV1({ spec: getActionSpec('approval.request.decide'), authority: 'account_automation', grant })).toEqual({ ok: true });
     expect(resolveCredentialActionAdmissionV1({ spec: getActionSpec('account.apiTokens.create'), authority: 'account_automation', grant })).toEqual({ ok: false, errorCode: 'present_user_required' });
   });
-  it('delegates only request decisions to the Account Voice host while its preference is enabled', () => {
-    for (const actionId of ['approval.request.decide', 'session.permission.respond', 'session.user_action.answer'] as const) {
+  it('delegates the person-requested Actions to the Account Voice host while its preference is enabled', () => {
+    for (const actionId of ['approval.request.decide', 'session.permission.respond', 'session.user_action.answer',
+      'settings.set', 'session.stop', 'account.apiTokens.create', 'notifications.webhooks.remove'] as const) {
       expect(resolveInvocationAuthority({ credential: 'account', surface: 'voice', actionId,
         voiceCanApproveRequests: true })).toBe('present_user');
       for (const voiceCanApproveRequests of [false, undefined]) {
@@ -47,10 +47,6 @@ describe('verified invocation authority', () => {
         expect(resolveInvocationAuthority({ credential, surface: 'voice', actionId,
           voiceCanApproveRequests: true })).toBe('account_automation');
       }
-    }
-    for (const actionId of ['settings.set', 'session.stop', 'account.apiTokens.create'] as const) {
-      expect(resolveInvocationAuthority({ credential: 'account', surface: 'voice', actionId,
-        voiceCanApproveRequests: true })).toBe('account_automation');
     }
   });
   it('admits host decisions through surface approval policy without widening external credential authority', () => {
@@ -103,18 +99,18 @@ describe('verified invocation authority', () => {
         grant: null, surface: 'voice', hasExternalCredential: true }))
         .toEqual({ ok: false, errorCode: 'present_user_required' });
     }
+    // Credential admission only; the executor refuses pass-up without the Session question origin.
     expect(resolveCredentialActionAdmissionV1({ spec, actionInput: { requestId: 'q1', disposition: 'pass_up' },
-      authority: 'account_automation', grant: null, surface: 'voice' }))
-      .toEqual({ ok: false, errorCode: 'present_user_required' });
+      authority: 'account_automation', grant: null, surface: 'voice' })).toEqual({ ok: true });
   });
-  it('admits automation only to request fresh-folder consent, never to supply it as human authority', () => {
+  it('admits host automation to fresh-folder consent under its approval policy; scoped credentials never', () => {
     const spec = getActionSpec('session.open');
     const actionInput = { sessionId: 's1', approvedNewDirectoryCreation: true };
     for (const surface of ['agent', 'mcp', 'api', 'cli', 'ui', 'plugin', 'rpc', 'voice'] as const) {
       expect(resolveCredentialActionAdmissionV1({ spec, actionInput: { sessionId: 's1' },
         authority: 'account_automation', grant: null, surface })).toEqual({ ok: true });
       expect(resolveCredentialActionAdmissionV1({ spec, actionInput, authority: 'account_automation', grant: null, surface }))
-        .toEqual(surface === 'agent' || surface === 'mcp' || surface === 'plugin' ? { ok: true } : { ok: false, errorCode: 'present_user_required' });
+        .toEqual(surface === 'api' ? { ok: false, errorCode: 'present_user_required' } : { ok: true });
       expect(resolveCredentialActionAdmissionV1({ spec, actionInput, authority: 'present_user', grant: null, surface }))
         .toEqual({ ok: true });
       expect(resolveCredentialActionAdmissionV1({ spec, actionInput, authority: 'account_automation',

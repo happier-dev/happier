@@ -10,6 +10,7 @@
   "./sharing/public-viewer": "./src/sharing/publicViewer.ts",
   "./agents/codex/native-home-policy": "./src/agents/codex/nativeHomePolicy.ts",
   "./agents/claude/settings-policy": "./src/agents/claude/settingsPolicy.ts",
+  "./agents/claude/session-retention": "./src/agents/claude/sessionRetention.ts",
   "./agents/claude/predecessor-message-meta": "./src/agents/claude/predecessorMessageMeta.ts",
   "./agents/claude/transcripts": "./src/agents/claude/rawJsonLines.ts",
   "./providers/anthropic-models": "./src/providers/catalog/anthropic.ts",

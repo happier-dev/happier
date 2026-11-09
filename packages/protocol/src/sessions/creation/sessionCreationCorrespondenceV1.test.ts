@@ -9,6 +9,7 @@ import {
 } from './sessionCreationCorrespondenceV1.js';
 import { openSessionOwnerMetadataEnvelopeV1 } from '../metadata/sessionMetadataEnvelopesV1.js';
 import { sealAccountScopedBlobCiphertext } from '../../crypto/accountScopedCipher.js';
+import { ExternalActionExecutionAuthorizationV1Schema } from '../../actions/externalActionApi.js';
 
 const correspondence = {
   v: 1,
@@ -62,6 +63,33 @@ const retainedCorrespondence = {
 } as const;
 
 describe('SessionCreationCorrespondenceV1', () => {
+  it('retains authored checkout intent before its selected Machine can realize it', () => {
+    const checkoutCreationDraft = { kind: 'git_worktree' as const, displayName: 'bot', baseRef: 'main', branchMode: 'new' as const };
+    const selected = { ...correspondence, recipe: { ...correspondence.recipe, checkoutCreationDraft } };
+    expect(SessionCreationCorrespondenceV1Schema.parse(selected)).toEqual(selected);
+    expect(SessionCreationCorrespondenceV1ReadSchema.parse(selected)).toEqual(selected);
+    expect(sessionCreationCorrespondenceMatchesV1(selected, correspondence)).toBe(false);
+    expect(SessionCreationCorrespondenceV1Schema.safeParse({ ...selected, recipe: { ...selected.recipe,
+      execution: { ...selected.recipe.execution, directory: { kind: 'managed' } } } }).success).toBe(false);
+  });
+  it('refuses obsolete setup recipe authoring while reading ordinary retained birth meaning', () => {
+    const machineSetupPlanInput = { homeId: 'home-1', machineId: 'machine-1', mode: 'effects' as const };
+    const selected = { ...correspondence, recipe: { ...correspondence.recipe, machineSetupPlanInput } };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-template', binding: {
+      accountId: 'person', custodianAccountId: 'person', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'home-1', machineId: 'machine-1', installationId: 'installation', accountEncryptionMode: 'plain',
+      actionId: 'template.instantiate', requestId: 'create', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'machine-1' },
+    } });
+    const machineSetupExecution = { authorization, originalActionEnvelope: { v: 1 as const, requestId: 'create',
+      target: authorization.binding.target, input: {} } };
+    const admitted = { ...selected, recipe: { ...selected.recipe, machineSetupExecution } };
+    for (const obsolete of [selected, { ...correspondence, recipe: { ...correspondence.recipe, machineSetupExecution } }, admitted]) {
+      expect(SessionCreationCorrespondenceV1Schema.safeParse(obsolete).success).toBe(false);
+      expect(SessionCreationCorrespondenceV1ReadSchema.parse(obsolete)).toEqual(correspondence);
+      expect(sessionCreationCorrespondenceMatchesV1(obsolete, correspondence)).toBe(true);
+    }
+  });
   it('retains actual checkout branch evidence without treating an observation as retry intent', () => {
     const checkout = { kind: 'git_worktree' as const, finalDirectory: '/checkout', baseRef: 'main', branchMode: 'new' as const };
     const observed = { ...correspondence, recipe: { ...correspondence.recipe, checkout: { ...checkout, branchName: 'feature/actual' } } };

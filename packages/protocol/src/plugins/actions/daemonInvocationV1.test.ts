@@ -13,6 +13,9 @@ describe('client Action automated invocation provenance', () => {
       qualifiedActionId: 'com.acme.source/read', executionSurface: 'cli',
       invocation: { kind: 'clientPluginAction', clientActionBinding } };
     expect(DaemonPluginStructuredMessageActionExecuteRequestSchema.safeParse(request).success).toBe(true);
+    expect(DaemonPluginStructuredMessageActionExecuteRequestSchema.parse({ ...request, requiredReadOnly: true }))
+      .toMatchObject({ requiredReadOnly: true });
+    expect(DaemonPluginStructuredMessageActionExecuteRequestSchema.safeParse({ ...request, requiredReadOnly: false }).success).toBe(false);
     expect(DaemonPluginStructuredMessageActionExecuteRequestSchema.safeParse({ ...request,
       invocation: { ...request.invocation, clientActionBinding: { ...clientActionBinding, pluginVersion: ' ' } },
     }).success).toBe(false);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ActionIdSchema } from './actionIds.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
@@ -9,6 +9,7 @@ import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { DaemonWorkspaceFileSearchRequestSchema, DaemonWorkspaceFileSearchResponseSchema } from '../machines/workspaceFiles.js';
 import { bindContextualActionToolInput } from './actionToolContext.js';
 import { DaemonLspApplyRequestSchema, DaemonLspQueryRequestSchema } from '../machines/languageIntelligence.js';
+import { CodeIntelligenceRestartActionInputSchema } from './codeIntelligenceActionFamily.js';
 
 describe('search-backed code Actions', () => {
   it('binds the new editing intelligence reads to the session and preserves query operands', async () => {
@@ -254,8 +255,20 @@ describe('search-backed code Actions', () => {
       languageIntelligenceRestart: async (args: unknown, context: unknown) => { requests.push({ args, context }); return { status: 'ok' }; },
       languageIntelligenceQuery: async () => ({ status: 'ok', kind: 'hover', sections: [] }),
     } as unknown as ActionExecutorDeps);
-    expect(await executor.execute('code.restart', { machineId: 'machine', rootPath: '/repo', serverId: 'language.definition' },
-      { surface: 'ui', authority: 'present_user', serverId: 'home' })).toEqual({ ok: true, result: { status: 'ok' } });
+    expect(getActionSpec('code.restart').inputSchema).toBe(CodeIntelligenceRestartActionInputSchema);
+    const prepared = await executor.prepare('code.restart', { machineId: 'machine', rootPath: '/repo', serverId: 'language.definition' },
+      { surface: 'ui', authority: 'present_user', serverId: 'home' });
+    expect(prepared.kind).toBe('ready');
+    if (prepared.kind !== 'ready') throw new Error('Valid restart input was not admitted');
+    // Count the real schema call-through after admission; the Machine boundary
+    // still receives the request, but unchanged input needs no dispatch reparse.
+    const repeatedInputParse = vi.spyOn(CodeIntelligenceRestartActionInputSchema, 'parse');
+    try {
+      expect(await prepared.invocation.run()).toEqual({ ok: true, result: { status: 'ok' } });
+      expect(repeatedInputParse).not.toHaveBeenCalled();
+    } finally {
+      repeatedInputParse.mockRestore();
+    }
     expect(requests).toMatchObject([{ args: { machineId: 'machine', request: { rootPath: '/repo', serverId: 'language.definition' } }, context: { serverId: 'home' } }]);
     expect(await executor.execute('code.hover.get', { machineId: 'machine', rootPath: '/repo', path: 'a.ts', line: 1, character: 0 },
       { surface: 'agent' })).toMatchObject({ ok: false, errorCode: 'invalid_response' });

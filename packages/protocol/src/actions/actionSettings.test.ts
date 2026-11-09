@@ -5,6 +5,14 @@ import { PromptRegistryInstallInputSchema } from './actionSpecs.js';
 import { ActionsSettingsV1Schema, isActionEnabledByActionsSettings, normalizeActionsSettingsV1 } from './actionSettings.js';
 
 describe('ActionsSettingsV1Schema', () => {
+  it('refuses foreign Session HTML Actions by default without changing the own-Session UI policy', () => {
+    const settings = normalizeActionsSettingsV1({ v: 1, actions: {} });
+    const foreign = { surface: 'ui' as const, callerSurface: 'foreign_session_html' as const };
+    for (const actionId of ['session.message.send', 'session.stop'] as const) {
+      expect(isActionEnabledByActionsSettings(actionId, settings, foreign)).toBe(false);
+      expect(isActionEnabledByActionsSettings(actionId, settings, { surface: 'ui' })).toBe(true);
+    }
+  });
   it('retains predecessor agent policy through the production Account reader', async () => {
     const [{ accountSettingsParse }, { isApprovalRequiredByActionsSettings }, { resolveActionToolExposureMode }, { getActionSpec }] = await Promise.all([
       import('../account/settings/accountSettings.js'),

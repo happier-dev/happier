@@ -3,6 +3,7 @@ import { createWorkflowDefinitionActions, type WorkflowDefinitionArtifactOperati
 import { WorkflowDefinitionV1Schema } from '../../workflows/workflowV1.js';
 import { WorkflowDefinitionEditOpV1Schema } from '../../workflows/workflowDefinitionEditV1.js';
 import { resolveRoleSelectionV1 } from '../../prompts/roles/resolveRoleSelectionV1.js';
+import { workflowDefinitionAgentCaller } from '../../workflows/workflowDefinition.testkit.js';
 
 function harness() {
     const definitionId = 'definition-1';
@@ -24,7 +25,7 @@ function harness() {
       update, list: async () => ({ items: [] }), create: async () => {}, delete: async () => ({ ok: true }),
     };
     const owner = createWorkflowDefinitionActions({ artifactStore, encodeListCursor: () => '',
-      assertDefinitionWriteAllowed: () => {} });
+      resolveMaterializer: async () => ({ effects: { resolveTargetAvailability: async () => true } }) });
     return { owner, update, read, definitionId, definition, revision, metadata };
 }
 
@@ -34,7 +35,7 @@ describe('the shared definition edit owner', () => {
     const role = { roleId: 'workflow_reviewer', name: 'Security reviewer', instructions: 'Review the change',
       engine: { agentTargetKey: 'agent:acme.review/reviewer' }, runsAs: { kind: 'background_run', intent: 'task' } };
     const result = await owner.edit({ definitionId, expectedRevision: revision,
-      ops: [WorkflowDefinitionEditOpV1Schema.parse({ kind: 'upsert_role', role })] });
+      ops: [WorkflowDefinitionEditOpV1Schema.parse({ kind: 'upsert_role', role })] }, undefined, { surface: 'ui' });
     expect(result.definition.roles).toEqual([role]);
     expect(JSON.parse(update.mock.calls[0]![0].body).definition.roles).toEqual([role]);
     expect(resolveRoleSelectionV1({ roleId: role.roleId, workflowRoles: result.definition.roles }))
@@ -44,7 +45,7 @@ describe('the shared definition edit owner', () => {
     const { owner, update, read, definitionId, definition, revision, metadata } = harness();
     const result = await owner.edit({ definitionId, expectedRevision: revision,
       ops: [{ kind: 'set_step_prompt', blockId: 'step-1', text: 'After' }, { kind: 'rename', name: 'New' }] }, undefined,
-    { surface: 'agent', runtimeAccountId: 'editor', defaultSessionId: 'editing-session' });
+    { ...workflowDefinitionAgentCaller(definition, 'editing-session'), runtimeAccountId: 'editor' });
     expect(result).toEqual({ definition: { ...definition, blocks: [{ ...definition.blocks[0],
       document: { text: 'After', references: [], attachments: [] } }] },
       revision: { headerVersion: 3, bodyVersion: 4 }, metadata: { ...metadata, title: 'New' }, changedBlockIds: ['step-1'] });
@@ -82,7 +83,7 @@ describe('the shared definition edit owner', () => {
   it('reports a lost Artifact CAS without reopening or replaying', async () => {
     const { owner, update, read, definitionId, revision } = harness();
     update.mockResolvedValue({ ok: false, errorCode: 'version_mismatch', error: 'Changed' });
-    await expect(owner.edit({ definitionId, expectedRevision: revision, ops: [{ kind: 'rename', name: 'New' }] }))
+    await expect(owner.edit({ definitionId, expectedRevision: revision, ops: [{ kind: 'rename', name: 'New' }] }, undefined, { surface: 'ui' }))
       .rejects.toMatchObject({ code: 'currentness_conflict' });
     expect(update).toHaveBeenCalledOnce();
     expect(read).toHaveBeenCalledOnce();

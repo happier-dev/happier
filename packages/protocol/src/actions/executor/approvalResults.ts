@@ -1,22 +1,74 @@
-import { settleApprovalRequestReplayInputs } from '../../approvals/approvalRequestTransition.js';
-import { projectApprovalExecutionFailureV2 } from '../../approvals/approvalExecutionFailure.js';
-import { isActionOutcomeUnknownErrorCodeV1 } from '../actionExecutionResult.js';
 import { ActionIdSchema, type ActionId } from '../actionIds.js';
 import type { ActionExecuteResult, ActionExecutorContext } from './types.js';
 import { getActionSpec } from '../actionSpecs.js';
-import { requiresExactDaemonApprovalReplay, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
+import type { ApprovalRequest } from '../../approvals/approvalRequestV1.js';
 import type { ApprovalRequestPublicRead } from '../../approvals/approvalRequestPublicRead.js';
+import { resolveApprovalExecutor } from '../../approvals/resolveApprovalExecutor.js';
 import type { ActionExecuteFailure } from './types.js';
 import { normalizeId } from './inputReading.js';
-import { readApprovalExecutionFailure, ApprovalStaleFailureDetailsSchema } from '../../approvals/approvalExecutionFailure.js';
+import { readApprovalExecutionFailure, ApprovalStaleFailureDetailsSchema, projectApprovalExecutionFailureV2 } from '../../approvals/approvalExecutionFailure.js';
+import { settleApprovalRequestReplayInputs } from '../../approvals/approvalRequestTransition.js';
 import { projectApprovalExecutionForObservation } from '../actionApprovalPresentation.js';
 import { projectNativeJsonValueForTransport } from '../../json/strictJsonValue.js';
 import { PluginIdSchema } from '../../plugins/pluginId.js';
 import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';
 import type { ApprovalStaleReason } from '../../approvals/approvalExecutionFailure.js';
 import { normalizeActionExecutorThrownError } from './resultProjection.js';
-import { ActionExecuteResultSchema } from '../actionExecutionResult.js';
+import { ActionExecuteResultSchema, isActionOutcomeUnknownErrorCodeV1 } from '../actionExecutionResult.js';
 import { RpcError } from '../../rpc/errors.js';
+
+/** Project settled producer evidence and dispatch uncertainty into one receipt. */
+export function projectSettledApprovalExecution(args: Readonly<{
+  request: ApprovalRequest;
+  actionId: ActionId | null;
+  exec: ActionExecuteResult;
+  dispatchEffectAttempted: boolean;
+  executedAtMs: number;
+}>): Readonly<{ request: ApprovalRequest; exec: ActionExecuteResult }> {
+  const { request, actionId, executedAtMs } = args;
+  // An adapter may successfully return a declared domain refusal. Use the
+  // same catalog-validated owner as retained reads before choosing a terminal
+  // status; an opaque failure-looking payload is still ordinary Action data.
+  const returnedFailure = args.exec.ok && actionId !== null
+    ? readApprovalExecutionFailure({ ...request, execution: {
+        executedAtMs, ok: true, result: args.exec.result,
+      } }) : null;
+  const exec: ActionExecuteResult = returnedFailure
+    ? { ...returnedFailure, ...(args.exec.operationCredentialUses?.length
+        ? { operationCredentialUses: args.exec.operationCredentialUses } : {}) }
+    : args.exec;
+  // Dispatch proves delivery only. Preserve the producer's effect evidence;
+  // only a refusal before dispatch can be stamped false by settlement.
+  const effectAttempted = !exec.ok && typeof exec.effectAttempted === 'boolean'
+    ? exec.effectAttempted : args.dispatchEffectAttempted ? undefined : false;
+  // Private Artifact custody carries ordinary typed results back to a caller
+  // waiting on another host. Blocking flow alone does not make that result
+  // live-only. Only declared live-only results use the safe projection here;
+  // public reads and decisions independently apply the observation projection.
+  const persistedExec = actionId !== null
+    && getActionSpec(actionId).approvalResultCustody === 'live_only'
+    ? projectActionExecutionObservation(actionId, exec)
+    : exec;
+  // Deferred replay has already read the raw arguments. Terminal history keeps
+  // the Action's own observation projection instead of write-only secrets.
+  const settledRequest = settleApprovalRequestReplayInputs(request);
+  const executionReceipt = {
+    updatedAtMs: Math.max(executedAtMs, request.updatedAtMs),
+    execution: persistedExec.ok
+      ? { executedAtMs, ...(effectAttempted !== undefined ? { effectAttempted } : {}), ok: true, result: persistedExec.result }
+      : request.v === 2
+        ? projectApprovalExecutionFailureV2({ request, failure: persistedExec, executedAtMs, effectAttempted })
+        : { executedAtMs, ok: false, errorCode: persistedExec.errorCode, error: persistedExec.error },
+  };
+  const nextExecuted: ApprovalRequest = settledRequest.v === 2
+    ? { ...settledRequest, ...executionReceipt,
+        status: exec.ok ? 'executed' : effectAttempted !== false && isActionOutcomeUnknownErrorCodeV1(exec.errorCode) ? 'outcome_unknown' : 'failed' }
+    : { ...settledRequest, ...executionReceipt, status: exec.ok ? 'executed' : 'failed' };
+  if (nextExecuted.v === 2 && effectAttempted !== false && persistedExec.operationCredentialUses?.length) {
+    nextExecuted.execution = { ...nextExecuted.execution!, operationCredentialUses: [...persistedExec.operationCredentialUses] };
+  }
+  return { request: nextExecuted, exec };
+}
 
 /** Replay crosses a process boundary; malformed acknowledgements prove no outcome. */
 export function readApprovalReplayResult(result: unknown): ActionExecuteResult {
@@ -38,8 +90,8 @@ export function projectActionObservationInput(actionId: ActionId, input: unknown
 }
 
 export function readUnavailableApprovalReplayOrigin(request: ApprovalRequest): ActionExecuteFailure | null {
-  if (request.v !== 2 || !requiresExactDaemonApprovalReplay(request)
-    || normalizeId(request.executionOriginV1.machineId)) return null;
+  const executor = resolveApprovalExecutor(request);
+  if (executor.kind !== 'unavailable' || executor.reason !== 'missing_machine') return null;
   return {
     ok: false,
     errorCode: 'approval_origin_unavailable',
@@ -63,7 +115,7 @@ export function buildApprovalDecisionResult(request: ApprovalRequest, freshExecu
   // Keep ordinary execution receipts and live-only result custody unchanged.
   if (request.v === 2 && request.execution?.effectAttempted === false
     && request.execution.errorCode === 'approval_stale'
-    && getActionSpec(request.actionId).approvalInputCustody === 'live_only') {
+    && currentActionId.success && getActionSpec(currentActionId.data).approvalInputCustody === 'live_only') {
     const details = ApprovalStaleFailureDetailsSchema.safeParse(request.execution.details);
     if (details.success && details.data.reason === 'live_invocation_unavailable') {
       return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', details: details.data };
@@ -141,56 +193,4 @@ export async function classifyApprovalExecutionOriginCurrentness(args: Readonly<
     }
     return { status: 'read_failed', error, failure };
   }
-}
-
-export function projectSettledApprovalExecution(args: Readonly<{
-  request: ApprovalRequest;
-  actionId: ActionId | null;
-  exec: ActionExecuteResult;
-  dispatchEffectAttempted: boolean;
-  executedAtMs: number;
-}>): Readonly<{ request: ApprovalRequest; exec: ActionExecuteResult }> {
-  const { request, actionId, executedAtMs } = args;
-  // An adapter may successfully return a declared domain refusal. Use the
-  // same catalog-validated owner as retained reads before choosing a terminal
-  // status; an opaque failure-looking payload is still ordinary Action data.
-  const returnedFailure = args.exec.ok && actionId !== null
-    ? readApprovalExecutionFailure({ ...request, execution: {
-        executedAtMs, ok: true, result: args.exec.result,
-      } }) : null;
-  const exec: ActionExecuteResult = returnedFailure
-    ? { ...returnedFailure, ...(args.exec.operationCredentialUses?.length
-        ? { operationCredentialUses: args.exec.operationCredentialUses } : {}) }
-    : args.exec;
-  // Only an explicit typed failed result can refine the dispatch fact. A
-  // missing value or a thrown failure's normalization retains uncertainty.
-  const effectAttempted = !exec.ok && typeof exec.effectAttempted === 'boolean'
-    ? exec.effectAttempted : args.dispatchEffectAttempted;
-  // Private Artifact custody carries ordinary typed results back to a caller
-  // waiting on another host. Blocking flow alone does not make that result
-  // live-only. Only declared live-only results use the safe projection here;
-  // public reads and decisions independently apply the observation projection.
-  const persistedExec = actionId !== null
-    && getActionSpec(actionId).approvalResultCustody === 'live_only'
-    ? projectActionExecutionObservation(actionId, exec)
-    : exec;
-  // Deferred replay has already read the raw arguments. Terminal history keeps
-  // the Action's own observation projection instead of write-only secrets.
-  const settledRequest = settleApprovalRequestReplayInputs(request);
-  const executionReceipt = {
-    updatedAtMs: Math.max(executedAtMs, request.updatedAtMs),
-    execution: persistedExec.ok
-      ? { executedAtMs, effectAttempted, ok: true, result: persistedExec.result }
-      : request.v === 2
-        ? projectApprovalExecutionFailureV2({ request, failure: persistedExec, executedAtMs, effectAttempted })
-        : { executedAtMs, ok: false, errorCode: persistedExec.errorCode, error: persistedExec.error },
-  };
-  const nextExecuted: ApprovalRequest = settledRequest.v === 2
-    ? { ...settledRequest, ...executionReceipt,
-        status: exec.ok ? 'executed' : effectAttempted && isActionOutcomeUnknownErrorCodeV1(exec.errorCode) ? 'outcome_unknown' : 'failed' }
-    : { ...settledRequest, ...executionReceipt, status: exec.ok ? 'executed' : 'failed' };
-  if (nextExecuted.v === 2 && effectAttempted && persistedExec.operationCredentialUses?.length) {
-    nextExecuted.execution = { ...nextExecuted.execution!, operationCredentialUses: [...persistedExec.operationCredentialUses] };
-  }
-  return { request: nextExecuted, exec };
 }

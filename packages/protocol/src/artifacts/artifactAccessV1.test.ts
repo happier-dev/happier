@@ -1,12 +1,22 @@
 import { describe, expect, it } from 'vitest';
+
 import { encodeBase64 } from '../crypto/base64.js';
 import { computeContentPublicKeyFingerprint } from '../machines/identity/contentPublicKeyFingerprint.js';
 import { ArtifactAccessActionOutputSchemasV1, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessGrantRowV1Schema, ArtifactAccessGrantsListResponseV1Schema,
   ArtifactRecipientKeyEnvelopeInputV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema,
-  ArtifactReadBatchHttpInputV1Schema, ArtifactReadHeadersBatchResponseV1Schema } from './artifactAccessV1.js';
+  ArtifactHttpReadV1Schema, ArtifactReadBatchHttpInputV1Schema, ArtifactReadHeadersBatchResponseV1Schema } from './artifactAccessV1.js';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '../storage/artifactStoredContent.js';
 
 describe('Artifact grant mutation contract', () => {
+  it('accepts private-copy-free accepted version summaries on Artifact grant rows', () => {
+    const row = { principal: { kind: 'account', accountId: 'recipient' }, accessLevel: 'view', createdByAccountId: 'owner',
+      createdAt: 1, display: { name: null }, acceptedVersions: [{ version: '1.0.0', copies: 2, reportedAt: 1 }] };
+    expect(ArtifactAccessGrantRowV1Schema.safeParse(row).success).toBe(true);
+    expect(ArtifactAccessGrantRowV1Schema.safeParse({ ...row,
+      acceptedVersions: [{ version: 'not a version', copies: 2, reportedAt: 1 }] }).success).toBe(false);
+    expect(ArtifactAccessGrantRowV1Schema.safeParse({ ...row,
+      acceptedVersions: [{ version: '1.0.0', copies: 2, reportedAt: 1, copyId: 'private' }] }).success).toBe(false);
+  });
   it('retains a committed mutation receipt with pending recipient preparation through the Action output', () => {
     const receipt = { artifactId: 'artifact', ownerAccountId: 'owner', access: 'owner', grants: [], changed: true,
       preparation: { status: 'pending' } };

@@ -1,9 +1,9 @@
-import { SessionUpdatePostInputV1Schema, SessionUpdatePostOutputV1Schema } from '../../../sessions/relations/workerUpdateV1.js';
+import { SessionUpdatePostOutputV1Schema } from '../../../sessions/relations/workerUpdateV1.js';
 import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
 import { completeActionResult } from '../resultProjection.js';
-import { SessionManagerSetActionInputV1Schema, SessionManagerSetResultV1Schema } from '../../../sessions/follow/sessionManagerV1.js';
+import { SessionManagerSetResultV1Schema, type SessionManagerSetActionInputV1 } from '../../../sessions/follow/sessionManagerV1.js';
 import { resolveServerIdForSession } from '../sessionScope.js';
-import { SessionListActionInputV1Schema } from '../../actionSpecs.js';
+import type { AdmittedActionInputById } from '../../actionSpecs.js';
 import { resolveActionAgentStartContextV1 } from '../agentStartAdmission.js';
 import { isAgentCaller } from '../callerContext.js';
 import { readActionCallerLedSubtreeSessionIds } from '../sessionLedSubtree.js';
@@ -12,6 +12,8 @@ import { hasOwn } from '../../../inputs/inputRecords.js';
 import { SESSION_LIST_AWARENESS_UNSUPPORTED_ERROR_CODE, SESSION_LIST_AWARENESS_VIEW_V1, SESSION_LIST_QUERY_UPDATE_REQUIRED_ERROR_CODE, SessionListViewV1Schema, parseSessionAwarenessListResultV1, parseSessionListQueryActionResultV1 } from '../../../sessions/awareness/action.js';
 import { normalizeId, readNullableString } from '../inputReading.js';
 import { SessionAwarenessProjectionV1Schema } from '../../../sessions/awareness/projectionV1.js';
+import { SessionActivityViewV1Schema } from '../../../sessions/awareness/action.js';
+import { SessionRecapActionResultV1Schema } from '../../../sessions/awareness/recap.js';
 import type { ActionHomeEquivalence, CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 
@@ -21,10 +23,9 @@ export async function dispatchSessionAwareness(inv: Pick<CoreInvocation, 'action
   const { actionId, admittedInput, deps, ctx, data } = inv;
 
         if (actionId === 'session.update.post') {
-          const request = SessionUpdatePostInputV1Schema.safeParse(admittedInput);
-          if (!request.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const request = admittedInput as AdmittedActionInputById['session.update.post'];
           if (!deps.sessionUpdatePost) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.update.post' };
-          const response = await deps.sessionUpdatePost({ context: ctx, ...request.data });
+          const response = await deps.sessionUpdatePost({ context: ctx, ...request });
           const failure = readActionFailureEnvelope(response);
           if (failure) return failure;
           const output = SessionUpdatePostOutputV1Schema.safeParse(response);
@@ -32,12 +33,12 @@ export async function dispatchSessionAwareness(inv: Pick<CoreInvocation, 'action
           return completeActionResult(output.data);
         }
         if (actionId === 'session.manager.set') {
-          const request = SessionManagerSetActionInputV1Schema.safeParse(admittedInput);
-          if (!request.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          // Core has resolved the operational selector to the exact domain Session id.
+          const request = admittedInput as SessionManagerSetActionInputV1;
           if (!deps.sessionManagerSet) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.manager.set' };
-          const serverId = resolveServerIdForSession(deps, ctx, request.data.sessionId);
+          const serverId = resolveServerIdForSession(deps, ctx, request.sessionId);
           const rawResponse = await deps.sessionManagerSet({
-            ...request.data, context: ctx,
+            ...request, context: ctx,
             ...(serverId ? { serverId } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
@@ -50,7 +51,7 @@ export async function dispatchSessionAwareness(inv: Pick<CoreInvocation, 'action
             ok: false, errorCode: result.error, error: result.error,
             ...(result.error === 'manager_forbidden' ? { details: { reason: result.reason } } : {}),
           };
-          if (result.sessionId !== request.data.sessionId || result.managerSessionId !== request.data.managerSessionId) {
+          if (result.sessionId !== request.sessionId || result.managerSessionId !== request.managerSessionId) {
             return { ok: false, errorCode: 'session_manager_invalid_response', error: 'session_manager_invalid_response' };
           }
           return completeActionResult(result);
@@ -58,13 +59,8 @@ export async function dispatchSessionAwareness(inv: Pick<CoreInvocation, 'action
 
         if (actionId === 'session.list') {
           if (!deps.sessionList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-          // Parse through the canonical Action input owner: `query` reaches the listing
-          // dependency as a typed `SessionListQueryV1`, never as an untyped record cast.
-          const listInput = SessionListActionInputV1Schema.safeParse(admittedInput);
-          if (!listInput.success) {
-            return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-          }
-          const listRequest = listInput.data;
+          // Core admitted this exact Action schema; recover its erased id/input correlation.
+          const listRequest = admittedInput as AdmittedActionInputById['session.list'];
           if (listRequest.project && ctx.serverId && !inv.sameHome(ctx.serverId, listRequest.project.serverId)) {
             return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
           }
@@ -72,7 +68,7 @@ export async function dispatchSessionAwareness(inv: Pick<CoreInvocation, 'action
           if (ctx.sessionListAccess === 'current_session' && requestedRoot !== undefined) {
             const caller = await resolveActionAgentStartContextV1(deps, ctx, undefined, { purpose: 'session_scope' });
             if (requestedRoot !== ctx.defaultSessionId?.trim()
-              || caller?.caller.kind !== 'session' || caller.caller.sessionId !== requestedRoot) {
+              || !caller || 'ok' in caller || caller.caller.kind !== 'session' || caller.caller.sessionId !== requestedRoot) {
               return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.list' };
             }
           }
@@ -80,7 +76,7 @@ export async function dispatchSessionAwareness(inv: Pick<CoreInvocation, 'action
             || (isAgentCaller(ctx) && ctx.sessionListAccess !== 'current_session');
           const root = requestedRoot ?? (callerSubtree ? ctx.defaultSessionId?.trim() : undefined);
           if (callerSubtree && requestedRoot && requestedRoot !== ctx.defaultSessionId?.trim()
-            && !(await readActionCallerLedSubtreeSessionIds(deps, ctx))?.has(requestedRoot)) {
+            && !(await readActionCallerLedSubtreeSessionIds(deps, ctx, undefined, [requestedRoot]))?.has(requestedRoot)) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.list' };
           }
           if (root && (listRequest.activeOnly || listRequest.resumableOnly)) {
@@ -151,7 +147,7 @@ export async function dispatchSessionAwareness(inv: Pick<CoreInvocation, 'action
           if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           // The admitted input already satisfied the Action's strict schema, so read the selector
           // through the same canonical owner rather than comparing local literals.
-          const view = SessionListViewV1Schema.safeParse(data.view);
+          const view = SessionActivityViewV1Schema.safeParse(data.view);
           const res = await deps.sessionActivityGet({
             context: ctx,
             sessionId,
@@ -160,6 +156,13 @@ export async function dispatchSessionAwareness(inv: Pick<CoreInvocation, 'action
             ...(typeof ctx.serverId === 'string' ? { serverId: ctx.serverId } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
+          if (view.success && view.data === 'recap' && !readActionFailureEnvelope(res)) {
+            const parsed = SessionRecapActionResultV1Schema.safeParse(res);
+            if (!parsed.success || parsed.data.sessionId !== sessionId) return {
+              ok: false, errorCode: 'recap_view_unsupported', error: 'recap_view_unsupported',
+            };
+            return completeActionResult(parsed.data);
+          }
           if (view.success && view.data === SESSION_LIST_AWARENESS_VIEW_V1 && !readActionFailureEnvelope(res)) {
             // A host that ignored `view` answers with its activity digest. Refusing it keeps an
             // awareness caller from reading released booleans as the canonical projection (AWI-09).

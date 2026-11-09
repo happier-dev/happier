@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getActionSpec, listActionSpecs, listVoiceToolActionSpecs } from './actionSpecs.js';
+import { NOTIFICATION_CONFIGURATION_ACTION_IDS } from './notificationConfigurationActionIds.js';
 
 // These families are the Coordination program's public Action corridor. Other
 // product families retain their own surface policy and are outside this lane.
@@ -11,6 +12,33 @@ const personOnly = new Set([
 const tapOnly = new Set(['session.permission.respond']);
 
 describe('Coordination Voice parity', () => {
+  it('demonstrates an inline ask and a typed pass through the actual Voice Action schemas', () => {
+    const send = getActionSpec('session.message.send');
+    const reply = getActionSpec('session.message.reply');
+    const askInput = JSON.parse(send.examples?.voice?.argsExample ?? '{}');
+    const passInput = JSON.parse(reply.examples?.voice?.argsExample ?? '{}');
+    expect(askInput).toMatchObject({ reply: 'wait' });
+    expect(passInput).toMatchObject({ requestLocalId: expect.any(String), reply: { kind: 'pass' } });
+    expect(send.inputSchema.safeParse(askInput).success).toBe(true);
+    expect(reply.inputSchema.safeParse(passInput).success).toBe(true);
+  });
+
+  it('binds the remaining operational and mounted-client Actions through the Voice catalog', () => {
+    const tools = new Set(listVoiceToolActionSpecs().map(spec => spec.id));
+    const specs = listActionSpecs().filter(spec => /^(session\.tags\.|session\.list\.view\.|discussion\.list\.view\.|machines\.agents\.signIn\.|connectedServices\.authentication\.)/.test(spec.id)
+      || [...NOTIFICATION_CONFIGURATION_ACTION_IDS, 'session.pending.action.set', 'session.role.set', 'workflow.discussion.round.project', 'projects.list'].includes(spec.id));
+    expect(specs.length).toBeGreaterThan(20);
+    for (const spec of specs) {
+      expect(spec.surfaces.voice, spec.id).toBe(true);
+      expect(spec.bindings?.voiceClientToolName, spec.id).toBeTruthy();
+      expect(tools.has(spec.id), spec.id).toBe(true);
+    }
+    for (const id of ['notifications.desktop.permission.request', 'notifications.push.permission.request'] as const) {
+      expect(getActionSpec(id).approvalPolicy?.agentDefault, id).toBe('authority');
+    }
+    expect(getActionSpec('connectedServices.authentication.submitManual').approvalInputCustody).toBe('live_only');
+  });
+
   it('makes every program Action discoverable and bound except explicit person-only decisions', () => {
     const tools = new Set(listVoiceToolActionSpecs().map(spec => spec.id));
     const gaps = listActionSpecs().filter(spec => programAction.test(spec.id) && spec.surfaces.ui && !personOnly.has(spec.id) && !tapOnly.has(spec.id))

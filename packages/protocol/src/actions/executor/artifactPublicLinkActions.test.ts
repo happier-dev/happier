@@ -1,13 +1,15 @@
-import { ArtifactActionInputSchemasV1 } from '../../artifacts/artifactActionsV1.js';
+import { describe, expect, it } from 'vitest';
+import { createArtifactPublicLinkActionsV1, createArtifactSignedInLinkJoinActionV1, type ArtifactPublicLinkActionIdV1, type ArtifactPublicLinkIssuedV1, type ArtifactPublicLinkKeyholdingResourceV1 } from './artifactPublicLinkActions.js';
 import { sealPublicShareDataKeyV1 } from '../../crypto/publicShareEncryptedDataKeyEnvelopeV0.js';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { signAccountContentKeyBindingV1 } from '../../crypto/accountContentKeyBindingV1.js';
 import { encodeBase64, decodeBase64 } from '../../crypto/base64.js';
 import { openEncryptedDataKeyEnvelopeV1 } from '../../crypto/encryptedDataKeyEnvelopeV1.js';
-import { describe, expect, it } from 'vitest';
-import { createArtifactPublicLinkActionsV1, createArtifactSignedInLinkJoinActionV1, type ArtifactPublicLinkActionIdV1, type ArtifactPublicLinkIssuedV1, type ArtifactPublicLinkKeyholdingResourceV1 } from './artifactPublicLinkActions.js';
 import { openPublicShareDataKeyV1 } from '../../crypto/publicShareEncryptedDataKeyEnvelopeV0.js';
 import { StoredContentPublicShareV1Schema } from '../../sharing/storedContentPublicShareV1.js';
+import { artifactHtmlBundleFromBodyV1, ARTIFACT_HTML_BUNDLE_MIME_V1 } from '../../artifacts/artifactHtmlV1.js';
+import { getActionSpec } from '../actionSpecs.js';
+import { ArtifactActionInputSchemasV1, ArtifactSignedInLinkJoinReadV1Schema } from '../../artifacts/artifactActionsV1.js';
 
 const publicShare = StoredContentPublicShareV1Schema.parse({ id: 'share-1', subject: { kind: 'artifact', id: 'artifact-1' }, expiresAt: null,
   maxUses: null, useCount: 0, isConsentRequired: false, networkOff: false, createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' });
@@ -49,6 +51,13 @@ describe('keyholding Artifact public-link Actions', () => {
     expect(effects).toEqual([]);
     expect(ArtifactActionInputSchemasV1['artifact.public_link.audit'].safeParse({ artifactId: 'artifact-1', shareId: 'artifact-1', audience: 'signed_in' }).success).toBe(false);
   });
+  it('preserves the stored-content mode/key boundary when reading a signed-in link', () => {
+    const read = { subject: { kind: 'artifact', id: 'artifact' }, artifactId: 'artifact', authorAccountId: 'author', recipientAccountId: 'recipient',
+      recipientContentKey: { status: 'unavailable', reason: 'plain_account' }, keyDerivation: 'fragment_v1', isConsentRequired: false, networkOff: false,
+      content: { kind: 'artifact', header: 'header', body: 'body', headerVersion: 1, bodyVersion: 1 } };
+    expect(ArtifactSignedInLinkJoinReadV1Schema.safeParse({ ...read, encryptionMode: 'e2ee', encryptedDataKey: null }).success).toBe(false);
+    expect(ArtifactSignedInLinkJoinReadV1Schema.safeParse({ ...read, encryptionMode: 'plain', encryptedDataKey: 'encrypted' }).success).toBe(false);
+  });
   it.each(['known', 'wrong_account', 'substituted_key'] as const)('binds the encrypted join envelope to local Account custody (%s)', async identity => {
     const signingSecret = new Uint8Array(32).fill(3);
     const signingPublic = ed25519.getPublicKey(signingSecret);
@@ -87,7 +96,7 @@ describe('keyholding Artifact public-link Actions', () => {
     expect(JSON.stringify(requests)).not.toContain(secret);
     expect(opened).toEqual([{ artifact, source: { artifactId: 'artifact-1', authorAccountId: 'author' }, follow: true }]);
   });
-  it('opens an encrypted link once for a Plain Account without creating a grant or retaining a secret', async () => {
+  it('gives a Plain opener the encrypted-Account reason instead of a live copy', async () => {
     const secret = 'a'.repeat(43);
     const dataKey = new Uint8Array(32).fill(9);
     const requests: unknown[] = [];
@@ -104,10 +113,10 @@ describe('keyholding Artifact public-link Actions', () => {
         keyDerivation: 'fragment_v1', isConsentRequired: false, networkOff: false,
         content: { kind: 'artifact', header: 'ciphertext', body: 'ciphertext', headerVersion: 1, bodyVersion: 1 } }; },
     });
-    await expect(execute({ input: { lookupId: 'lookup' } })).resolves.toEqual({ artifactId: 'artifact-1', authorAccountId: 'author', follow: false, followUnavailableReason: 'plain_account' });
+    await expect(execute({ input: { lookupId: 'lookup' } })).rejects.toMatchObject({ code: 'recipient_key_unavailable', reason: 'plain_account' });
     expect(requests).toHaveLength(1);
     expect(JSON.stringify(requests)).not.toContain(secret);
-    expect(opened).toEqual([{ artifact, source: { authorAccountId: 'author', artifactId: 'artifact-1' }, follow: false, followUnavailableReason: 'plain_account' }]);
+    expect(opened).toEqual([]);
   });
   it('creates and manages signed-in links independently of anonymous publications', async () => {
     const requests: Array<{ method: string; path: string; body?: unknown }> = [];
@@ -155,6 +164,37 @@ describe('keyholding Artifact public-link Actions', () => {
     expect(requests).toEqual([expect.objectContaining({ method: 'POST', path: '/v1/artifact-signed-in-links',
       body: expect.objectContaining({ artifactId: 'artifact-1', preserveExisting: true }) })]);
     expect(issued).toEqual([]);
+  });
+  it('admits only the network-off restriction on the original approved document and publication options', () => {
+    const narrow = getActionSpec('artifact.public_link.create').approvalNarrowing!.narrow;
+    const original = { artifactId: 'artifact-1', maxUses: 3, isConsentRequired: true };
+    const chosen = { ...original, networkOff: true };
+    expect(narrow(original, chosen)).toEqual(chosen);
+    expect(narrow(original, { ...chosen, artifactId: 'other' })).toBeNull();
+    expect(narrow(original, { ...chosen, maxUses: 4 })).toBeNull();
+    expect(narrow(chosen, { ...chosen, networkOff: false })).toBeNull();
+  });
+  it.each(['plain', 'e2ee'] as const)('restricts the %s public link without rewriting the saved document', async encryptionMode => {
+    const body = JSON.stringify({ ...artifactHtmlBundleFromBodyV1('<p>Saved visual</p>'), requestedCapabilities: { network: 'open' } });
+    const requests: Array<{ method: string; body?: unknown }> = [];
+    let acknowledgeOff = true;
+    const execute = createArtifactPublicLinkActionsV1({
+      read: async () => ({ artifactId: 'artifact-1', access: 'owner', header: { kind: 'html', mime: ARTIFACT_HTML_BUNDLE_MIME_V1 }, body,
+        encryptionMode, dataKey: encryptionMode === 'plain' ? null : new Uint8Array(32).fill(7) }),
+      randomBytes: length => new Uint8Array(length), request: async request => {
+        requests.push(request);
+        return { publicShare: { ...publicShare, networkOff: acknowledgeOff }, viewerOrigin: 'https://public.example.test' };
+      },
+    });
+    await expect(execute({ actionId: 'artifact.public_link.create', input: { artifactId: 'artifact-1', networkOff: true } }))
+      .resolves.toMatchObject({ publicShare: { networkOff: true } });
+    expect(requests).toEqual([expect.objectContaining({ method: 'POST', body: expect.objectContaining({ networkOff: true }) })]);
+    acknowledgeOff = false;
+    await expect(execute({ actionId: 'artifact.public_link.create', input: { artifactId: 'artifact-1', networkOff: true } }))
+      .rejects.toMatchObject({ code: 'outcome_unknown' });
+    await expect(execute({ actionId: 'artifact.public_link.create', input: { artifactId: 'artifact-1' } }))
+      .resolves.toMatchObject({ publicShare });
+    expect(requests.at(-1)?.body).not.toHaveProperty('networkOff');
   });
   it('lets owners revoke existing layout publications after new publication admission is disabled', async () => {
     const requests: string[] = [];

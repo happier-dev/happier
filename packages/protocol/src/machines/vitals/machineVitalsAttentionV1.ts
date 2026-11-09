@@ -72,7 +72,7 @@ export function deriveMachineVitalsAttentionV1(input: MachineVitalsAttentionInpu
             const point = input.recent[index];
             if (!isObserved(point, previous, input.nearlyFull) || reasonsForSample(point, input.nearlyFull).some(reason => reason.key === previous.key)) break;
             // Recovery needs coverage; a sleeping machine's two isolated reads are not a calm minute.
-            if (next && next.sampledAt - point.sampledAt > 2 * next.intervalMs) break;
+            if (next && next.sampledAt - point.sampledAt > 2 * Math.max(next.intervalMs, point.intervalMs)) break;
             falseSince = point.sampledAt;
             next = point;
             if (latest.sampledAt - falseSince >= 60_000) break;

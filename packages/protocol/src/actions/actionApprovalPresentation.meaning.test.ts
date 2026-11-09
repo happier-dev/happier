@@ -98,4 +98,18 @@ describe('Action arguments read by meaning', () => {
     const readable = row?.kind === 'value' ? row.entries?.filter((entry) => entry.value !== null && !entry.technical) : [];
     expect(readable).toEqual([{ label: 'Reasoning effort', value: 'Low', depth: 0 }]);
   });
+
+  it('keeps a deploy\'s retry key, target link and content pins under Technical details', () => {
+    const presentation = describeApprovalActionFields({
+      actionId: 'deployments.deploy',
+      actionArgs: {
+        serverId: 'server-1', environmentId: 'env-1', expectedRevision: 3, requestKey: 'deploy-1',
+        targetLinkId: 'link-1', expectedTargetLinkRevision: 2, contentArtifactId: 'content-1',
+        contentHeaderVersion: 1, contentBodyVersion: 1,
+      },
+    });
+    expect(visible(presentation.rows).map((row) => row.path)).toEqual(['serverId', 'environmentId']);
+    expect(presentation.rows.filter((row) => row.kind === 'value' && row.technical).map((row) => row.path))
+      .toEqual(expect.arrayContaining(['requestKey', 'targetLinkId', 'contentArtifactId', 'contentHeaderVersion', 'contentBodyVersion']));
+  });
 });

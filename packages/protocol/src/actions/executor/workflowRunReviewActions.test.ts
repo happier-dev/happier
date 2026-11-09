@@ -8,8 +8,6 @@ import { encodeBase64 } from '../../crypto/base64.js';
 import { createWorkflowAccountRunActionOwner, type WorkflowAccountRunActionDeps } from './workflowRunActions.js';
 import { createWorkflowActionExecutor } from './workflowAccountActions.js';
 import { createActionExecutor } from '../actionExecutor.js';
-import { ApprovalRequestV2Schema, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
-import { decideApprovalRequestTransition } from '../../approvals/approvalRequestTransition.js';
 import type { WorkflowActionExecuteArgs } from './types.js';
 import {
   WorkflowDefinitionV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowRunInvocationIndexV1Schema,
@@ -67,6 +65,7 @@ function harness(options: Readonly<{
     dataKey: runDataKey, recipientPublicKey: x25519.getPublicKey(callerMachineKey), randomBytes })) : null;
   const definition = options.definition ?? program;
   const run = WorkflowRunSummaryV1Schema.parse({ sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null, id: runId, origin: { kind: 'direct' }, state: 'waiting_for_review', revision: 7,
+    attentionRequired: true, failureUnseen: false, invocationAttentionRequired: true, attentionSeenFailureAt: null, finishedAt: null,
     machineId: 'machine-a', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
     availability: { pause: true, resumeBoundary: false,
        restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
@@ -197,9 +196,8 @@ describe('Account review Actions', () => {
     expect(h.rows.get(heldId)!.index).toMatchObject({ contentRevision: '4', lifecycle: 'waiting_for_review' });
   });
 
-  it.each([false, true])('keeps agent-requested review custody until a present user decides (stale=%s)', async stale => {
+  it.each([false, true])('completes an auto-approved agent review with agent provenance and exact currentness (stale=%s)', async stale => {
     const h = harness({ callerAccountId: 'account-1' });
-    let stored: ApprovalRequest | null = null;
     // These unreachable ports represent other transport boundaries. Review uses
     // the real Workflow owner above and only substitutes HTTP/Artifact storage.
     const unreachable = async (): Promise<never> => { throw new Error('unexpected_transport'); };
@@ -216,39 +214,21 @@ describe('Account review Actions', () => {
       resetGlobalVoiceAgent: unreachable,
       workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: h.owner,
         definitions: { list: unavailable, get: unavailable, create: unavailable, update: unavailable, edit: unavailable, delete: unavailable } }),
-      approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'review-request' }; },
-      approvalsGet: async () => stored,
-      approvalsUpdate: async ({ request }) => {
-        if (!stored) return { ok: false, errorCode: 'not_found', error: 'not_found' };
-        const transition = decideApprovalRequestTransition(stored, request);
-        if (!transition.ok) return transition;
-        stored = ApprovalRequestV2Schema.parse(request);
-        return { ok: true };
-      },
-      isApprovalExecutionOriginCurrent: async () => true,
+      approvalsCreate: unreachable,
     });
     const input = { ...target, mode: 'use_result', value: 'stop' };
     const context = { surface: 'agent', authority: 'account_automation', serverId: 'home',
       runtimeAccountId: 'account-1', actionRequestId: 'review-attempt', actionCaller: { kind: 'host' },
       callerPermissionMode: 'safe-yolo' } as const;
-    expect(await executor.execute('workflow.run.invocations.complete_review', input, { ...context, bypassApprovals: true }))
-      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    expect(await executor.execute('workflow.run.invocations.complete_review', input, context))
-      .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'review-request' } });
-    expect(stored).toMatchObject({ status: 'open', actionArgs: input });
-    expect(h.operations.some(operation => operation.operation === 'invocations.complete_review')).toBe(false);
-    expect(await executor.execute('approval.request.decide', { artifactId: 'review-request', decision: 'approve' }, context))
-      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
     if (stale) h.rows.get(heldId)!.index = { ...h.rows.get(heldId)!.index, contentRevision: '5' };
-    const decision = await executor.execute('approval.request.decide', { artifactId: 'review-request', decision: 'approve' },
-      { ...actor, serverId: 'home', runtimeAccountId: 'account-1', actionCaller: { kind: 'host' } });
-    expect(decision).toMatchObject({ ok: true, result: { status: stale ? 'failed' : 'executed' } });
+    const decision = await executor.execute('workflow.run.invocations.complete_review', input, context);
     if (stale) {
-      expect(ApprovalRequestV2Schema.parse(stored).execution).toMatchObject({ ok: false, errorCode: 'currentness_conflict' });
+      expect(decision).toMatchObject({ ok: false, errorCode: 'currentness_conflict' });
       expect(h.operations.some(operation => operation.operation === 'invocations.complete_review')).toBe(false);
       expect(h.progress().result).toBe('continue');
     } else {
-      expect(h.progress()).toMatchObject({ result: 'stop', review: { resultSource: { kind: 'human', accountId: 'account-1' },
+      expect(decision).toMatchObject({ ok: true, result: { disposition: 'completed' } });
+      expect(h.progress()).toMatchObject({ result: 'stop', review: { resultSource: { kind: 'published', by: 'agent' },
         decision: { kind: 'use_result', requestedFromContentRevision: '4' } } });
     }
   });
@@ -323,12 +303,11 @@ describe('Account review Actions', () => {
     expect(h.progress().execution).toBeUndefined();
     expect(h.progress(historicalId)).toMatchObject({ result: 'continue', execution: { localInputId: 'initial-input' } });
   });
-  it.each(['use_result', 'generate'] as const)('rejects %s without present-user authority before storage reads', async mode => {
+  it.each(['use_result', 'generate'] as const)('allows %s from an authorized automated caller without a present-user floor', async mode => {
     const h = harness();
     await expect(h.owner.execute({ actionId: 'workflow.run.invocations.complete_review', input: { ...target, mode },
       context: { ...actor, authority: 'account_automation', externalActionTarget: { kind: 'machine', machineId: 'machine-a' } } }))
-      .rejects.toMatchObject({ code: 'present_user_required' });
-    expect(h.operations).toEqual([]);
+      .resolves.toMatchObject({ disposition: mode === 'use_result' ? 'completed' : 'generation_requested' });
   });
 
   it('accepts supplied bytes with the answering Account while retaining exact owned input', async () => {
@@ -338,6 +317,28 @@ describe('Account review Actions', () => {
     expect(result).toMatchObject({ disposition: 'completed', invocation: { lifecycle: 'completed', contentRevision: '5' } });
     expect(h.progress()).toMatchObject({ result: 'stop', execution: { localInputId: 'initial-input' }, review: {
       resultSource: { kind: 'human', accountId: 'editor' }, decision: { kind: 'use_result', requestedFromContentRevision: '4' } } });
+  });
+
+  it.each([false, true])('attributes agent-sourced complete_review without turning the Account into a human (e2ee=%s)', async e2ee => {
+    const contexts = [
+      { ...actor, actionCaller: { kind: 'session', sessionId: 'agent-session' } },
+      { ...actor, surface: 'cli', sessionInputSource: { sourceSessionId: 'agent-session', sourceTurnId: 'turn-1', via: 'action' } },
+      { ...actor, surface: 'mcp' },
+      { ...actor, authority: 'account_automation', surface: 'agent' },
+      { ...actor, approvedActionReplay: { artifactId: 'review-approval', origin: { surface: 'agent', accountId: 'editor',
+        caller: { kind: 'session', sessionId: 'agent-session' } } } },
+    ] satisfies WorkflowActionExecuteArgs['context'][];
+    for (const context of contexts) {
+      const h = harness({ callerAccountId: 'editor', e2ee, loseResponse: true });
+      const args = { actionId: 'workflow.run.invocations.complete_review',
+        input: { ...target, mode: 'use_result', value: 'stop' }, context } as const;
+      await expect(h.owner.execute(args)).resolves.toMatchObject({ disposition: 'completed' });
+      expect(h.progress()).toMatchObject({ result: 'stop', review: { resultSource: { kind: 'published', by: 'agent' } } });
+      await expect(h.owner.execute(args)).resolves.toMatchObject({ disposition: 'completed' });
+      expect(h.operations.filter(operation => operation.operation === 'invocations.complete_review')).toHaveLength(1);
+      // Matching bytes do not let a different caller source claim this acknowledgement.
+      await expect(h.owner.execute({ ...args, context: actor })).rejects.toMatchObject({ code: 'currentness_conflict' });
+    }
   });
 
   it.each([false, true])('finishes the accepted occurrence once with its exact stored value and source (e2ee=%s)', async e2ee => {
@@ -403,13 +404,14 @@ describe('Account review Actions', () => {
     expect(h.rows.size).toBe(2);
   });
 
-  it('records offline Generate for a revocable principal without a caller-side authority validator', async () => {
+  it('refuses offline Generate for a revocable principal without a caller-side authority validator', async () => {
+    // Generate admits new agent work: the decide step is its one authority check.
     const h = harness({ canContinue: false, authorization: { admittedPermissionCeiling: 'safe-yolo',
       principal: { kind: 'api', accountId: 'owner', principalId: 'api-user', credentialId: 'revocable-token' } } });
     await expect(h.owner.execute({ actionId: 'workflow.run.invocations.complete_review', input: { ...target, mode: 'generate' },
-      context: { ...actor, callerPermissionMode: 'default' } })).resolves.toMatchObject({ disposition: 'generation_requested' });
-    expect(h.progress()).toMatchObject({ review: { decision: { kind: 'generate' } }, execution: { localInputId: 'initial-input' } });
-    expect(h.rows.size).toBe(2);
+      context: { ...actor, callerPermissionMode: 'default' } })).rejects.toMatchObject({ code: 'run_access_denied' });
+    expect(h.rows.get(heldId)!.index.contentRevision).toBe('4');
+    expect(h.run.state).not.toBe('queued');
     const use = harness({ authorization: { admittedPermissionCeiling: 'safe-yolo',
       principal: { kind: 'api', accountId: 'owner', principalId: 'api-user', credentialId: 'revocable-token' } } });
     await expect(use.owner.execute({ actionId: 'workflow.run.invocations.complete_review', input: { ...target, mode: 'use_result' },
@@ -457,9 +459,9 @@ describe('Account review Actions', () => {
     }
   });
 
-  it('requires current controller dominance for Use', async () => {
+  it.each(['use_result', 'generate'] as const)('requires current controller dominance for %s', async mode => {
     const h = harness();
-    await expect(h.owner.execute({ actionId: 'workflow.run.invocations.complete_review', input: { ...target, mode: 'use_result' },
+    await expect(h.owner.execute({ actionId: 'workflow.run.invocations.complete_review', input: { ...target, mode },
       context: { ...actor, callerPermissionMode: 'read-only' } })).rejects.toMatchObject({ code: 'run_access_denied' });
     expect(h.rows.get(heldId)!.index.contentRevision).toBe('4');
   });
@@ -515,10 +517,10 @@ describe('Account review Actions', () => {
       .resolves.toMatchObject({ disposition: 'completed' });
   });
 
-  it('checks live revocation even when the admitted ceiling still fits', async () => {
+  it.each(['use_result', 'generate'] as const)('checks live revocation for %s even when the admitted ceiling still fits', async mode => {
     const h = harness();
     const owner = createWorkflowAccountRunActionOwner({ ...h.deps, isAcceptedAuthorizationCurrent: async () => false });
-    await expect(owner.execute({ actionId: 'workflow.run.invocations.complete_review', input: { ...target, mode: 'use_result' }, context: actor }))
+    await expect(owner.execute({ actionId: 'workflow.run.invocations.complete_review', input: { ...target, mode }, context: actor }))
       .rejects.toMatchObject({ code: 'run_access_denied' });
     expect(h.rows.get(heldId)!.index.contentRevision).toBe('4');
   });

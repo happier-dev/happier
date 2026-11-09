@@ -90,6 +90,8 @@ export const ACTION_PLUGIN_CALLER_POLICY_BY_ID: Readonly<
   'session.pendingInput.interruptAndRun': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'session.pending.action.set': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'session.pending.edit': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'session.pending.sendNow': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'session.pending.requeue': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'session.pending.withdraw': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'session.pending.markHandled': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'session.pending.dismiss': HOST_DOMAIN_PLUGIN_CALLER_POLICY,

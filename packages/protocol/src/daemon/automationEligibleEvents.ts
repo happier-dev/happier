@@ -5,7 +5,7 @@ import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js'
 import { PluginContributionIdentityV1Schema as CanonicalPluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { PluginUiRuntimeOccurrenceIdV1Schema as CanonicalPluginUiRuntimeOccurrenceIdV1Schema } from '../plugins/ui/targetedContributions.js';
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
-import { PluginJsonSchemaV2Schema } from '../plugins/contributions/publicTypes.js';
+import { PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema } from '../plugins/contributions/publicTypes.js';
 import { PluginEventAutomationDeclarationV1Schema } from '../automations/automationEventDeclarationV1.js';
 
 const PluginContributionIdentityV1Schema = lazyZodSchema(() => asProtocolZod(CanonicalPluginContributionIdentityV1Schema));
@@ -33,6 +33,10 @@ export const AutomationEligibleEventCatalogEntryV1Schema = lazyZodSchema(() => z
     sourceCustody: PluginSourceCustodyV1Schema,
     title: z.string().check(z.trim(), z.minLength(1)),
     description: z.nullable(z.string().check(z.trim(), z.minLength(1))),
+    localizedPresentation: z.optional(z.strictObject({
+      title: PluginLocalizedStringV2Schema,
+      description: z.optional(PluginLocalizedStringV2Schema),
+    })),
     payloadSchema: z.optional(PluginJsonSchemaV2Schema),
     automation: PluginEventAutomationDeclarationV1Schema,
   }),

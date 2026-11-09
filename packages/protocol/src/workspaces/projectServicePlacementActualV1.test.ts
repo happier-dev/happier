@@ -4,17 +4,27 @@ import type { WorkspaceSyncChildMachineFacts } from './workspaceSyncTopology.js'
 import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRelationshipV1 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 
 describe('actual service placement through admitted Sync endpoints', () => {
-  it.each(['currentness', 'workspace', 'topology', 'binding', 'child-read'] as const)('names the cause of an unavailable %s observation', async cause => {
+  it.each([
+    ['currentness', 'observation_changed'],
+    ['workspace', 'workspace_unavailable'],
+    ['topology', 'topology_unavailable'],
+    ['binding', 'binding_invalid'],
+    ['child-read', 'observation_unavailable'],
+  ] as const)('names the cause of an unavailable %s observation', async (cause, reasonCode) => {
     const source = { id: 'source', serverId: 'home', machineId: 'source-machine', rootPath: '/source', createdAtMs: 1 };
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
     const actual = await observeProjectServicePlacementActualV1({ workspace: { serverId: 'home', refId: source.id }, serviceName: 'web',
-      workspaceRefs: cause === 'workspace' ? [] : cause === 'topology' ? [source, { ...source, rootPath: '/other' }] : [source],
-      relationships: [], isCurrent: () => cause !== 'currentness',
+      workspaceRefs: cause === 'workspace' ? [] : [source],
+      relationships: cause === 'topology' ? [{ v: 1, relationshipId: 'broken', controllerMachineId: source.machineId,
+        alphaWorkspaceRefId: source.id, betaWorkspaceRefId: 'missing', mode: 'keep_synced', enabled: true,
+        contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, createdAtMs: 1, updatedAtMs: 1 }] : [],
+      isCurrent: () => cause !== 'currentness',
       ...(cause === 'child-read' ? { readChildMachines: async () => { throw new Error('Machine observation failed'); } } : {}),
       readSnapshot: async () => ({ protocolVersion: 1, snapshot: { v: 1, machineId: source.machineId, updatedAt: 1,
         targets: cause === 'binding' ? [{ id: 'incomplete', machineId: source.machineId, source: 'managed_service',
           sourceClass: { kind: 'managed_service', managedServiceId: 'instance' }, title: 'web', state: 'available', confidence: 'high', actions: [] }] : [] } }),
     });
-    expect(actual).toMatchObject({ status: 'unavailable', reasonCode: expect.any(String) });
+    expect(actual).toMatchObject({ status: 'unavailable', reasonCode });
     expect(ProjectServicePlacementGetResultV1Schema.parse({ status: 'ready', placement: createDefaultProjectServicePlacementV1(),
       revision: 'absent', provenance: 'default', actual }).actual).toEqual(actual);
   });

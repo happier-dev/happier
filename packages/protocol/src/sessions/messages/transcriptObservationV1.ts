@@ -1,3 +1,4 @@
+import { UsageTimingBoundsV1Schema } from '../../usage/usageTimingV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
@@ -32,6 +33,7 @@ export const SessionTranscriptSurfaceItemReferenceMemberV1Schema = lazyZodSchema
   z.extend(SessionTranscriptSurfaceItemReferenceV1Schema, {
     sourceItemId: SessionSurfaceItemIdSchema,
     sourceItemRevision: z.nullable(SessionSystemRecordRevisionSchema),
+    approvalRequestArtifactId: z.optional(NonBlankStringSchema),
   }));
 export type SessionTranscriptSurfaceItemReferenceMemberV1 = z.infer<typeof SessionTranscriptSurfaceItemReferenceMemberV1Schema>;
 
@@ -46,6 +48,13 @@ export const SessionTranscriptSurfaceItemReferencesV1Schema = lazyZodSchema(() =
 }));
 export type SessionTranscriptSurfaceItemReferencesV1 = z.infer<typeof SessionTranscriptSurfaceItemReferencesV1Schema>;
 
+/** A keyholding settlement producer offers this candidate; Session Item admission alone grants a read. */
+export const ApprovalTranscriptVisualPublicationV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1), sessionId: NonBlankStringSchema,
+  surfaceItemReference: SessionTranscriptSurfaceItemReferencesV1Schema,
+}));
+export type ApprovalTranscriptVisualPublicationV1 = z.infer<typeof ApprovalTranscriptVisualPublicationV1Schema>;
+
 /** The sole accepted-shape adapter: all new stored/wire writes carry one collection per native row. */
 export const SessionTranscriptSurfaceItemReferenceInputV1Schema = lazyZodSchema(() => z.pipe(z.union([
   SessionTranscriptSurfaceItemReferencesV1Schema, SessionTranscriptSurfaceItemReferenceV1Schema,
@@ -57,11 +66,12 @@ export function readSessionTranscriptSurfaceItemReferencesV1(value: unknown): re
   return parsed.success ? parsed.data.references : null;
 }
 
-/** Producer aggregation identity includes revision: two acknowledgements may share one copied child. */
+/** Distinct settled receipts may share one Item copy without losing their source correspondence. */
 export function getSessionTranscriptSurfaceItemReferenceSourceKeyV1(reference: Pick<SessionTranscriptSurfaceItemReferenceMemberV1,
-  'sourceAddress' | 'sourceItemId' | 'sourceItemRevision'>): string {
-  return JSON.stringify([reference.sourceAddress.serverId, reference.sourceAddress.sessionId,
-    reference.sourceItemId, reference.sourceItemRevision]);
+  'sourceAddress' | 'sourceItemId' | 'sourceItemRevision' | 'approvalRequestArtifactId'>): string {
+  const source = [reference.sourceAddress.serverId, reference.sourceAddress.sessionId,
+    reference.sourceItemId, reference.sourceItemRevision];
+  return JSON.stringify(reference.approvalRequestArtifactId ? [...source, reference.approvalRequestArtifactId] : source);
 }
 
 /** Existing per-request boundary shared by the v2 and v3 historical import epochs. */
@@ -71,6 +81,7 @@ export const SESSION_HISTORICAL_TRANSCRIPT_IMPORT_MAX_ITEMS = 500;
 export const SessionHistoricalTranscriptImportV3Schema = lazyZodSchema(() => z.strictObject({
   items: z.array(z.strictObject({
     localId: z.string().check(z.trim(), z.minLength(1)),
+    usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)),
     content: SessionStoredMessageContentSchema,
     messageRole: z.optional(SessionMessageRoleSchema),
     surfaceItemReference: z.optional(SessionTranscriptSurfaceItemReferenceInputV1Schema),
@@ -98,6 +109,7 @@ export function isRecoveredHistoryTranscriptObservationProvenance(
 const SessionTranscriptObservationBodyV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   sessionId: NonBlankStringSchema,
+  usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)),
   localId: PendingLocalIdSchema,
   sidechainId: z.optional(z.nullable(NonBlankStringSchema)),
   messageRole: z.optional(SessionMessageRoleSchema),
@@ -106,6 +118,17 @@ const SessionTranscriptObservationBodyV1Schema = lazyZodSchema(() => z.strictObj
   updatedAt: SessionTranscriptSourceTimestampMsSchema,
   provenance: SessionTranscriptObservationProvenanceV1Schema,
   sessionEventType: z.optional(z.literal('ready')),
+  /**
+   * What changed since the publisher's last acknowledged commit of this localId: `content` is the
+   * same record shape carrying only the appended text. Home stores `content`; it relays `append`
+   * to live consumers only when its stored row is that base (`baseUpdatedAt` = the stored
+   * source `updatedAt`), otherwise it publishes the full message.
+   */
+  append: z.optional(z.strictObject({
+    content: z.union([z.string().check(z.minLength(1)), SessionStoredMessageContentSchema]),
+    baseLength: z.number().check(z.int(), z.minimum(0)),
+    baseUpdatedAt: SessionTranscriptSourceTimestampMsSchema,
+  })),
 }));
 
 function refineObservationTimestamps(value: { createdAt: number; updatedAt: number }, context: z.core.$RefinementCtx) {
@@ -124,6 +147,7 @@ export const SessionTranscriptObservationV1Schema = lazyZodSchema(() =>
 export const SessionTranscriptObservationV2Schema = lazyZodSchema(() =>
   z.extend(SessionTranscriptObservationBodyV1Schema, { v: z.literal(2),
     surfaceItemReference: z.optional(SessionTranscriptSurfaceItemReferenceInputV1Schema),
+    approvalRequestArtifactId: z.optional(NonBlankStringSchema),
   }).check(z.superRefine(refineObservationTimestamps)));
 
 export const SessionTranscriptObservationInputSchema = lazyZodSchema(() =>
@@ -170,10 +194,3 @@ export const SessionTranscriptObservationAckV1Schema = lazyZodSchema(() => z.uni
 
 export type SessionTranscriptObservationCapabilityAckV1 = z.infer<typeof SessionTranscriptObservationCapabilityAckV1Schema>;
 export type SessionTranscriptObservationAckV1 = z.infer<typeof SessionTranscriptObservationAckV1Schema>;
-
-export type ApprovalTranscriptVisualPublicationV1 = z.infer<typeof ApprovalTranscriptVisualPublicationV1Schema>;
-
-export const ApprovalTranscriptVisualPublicationV1Schema = lazyZodSchema(() => z.strictObject({
-  v: z.literal(1), sessionId: NonBlankStringSchema,
-  surfaceItemReference: SessionTranscriptSurfaceItemReferencesV1Schema,
-}));

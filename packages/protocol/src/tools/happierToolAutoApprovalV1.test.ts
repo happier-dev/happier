@@ -8,15 +8,15 @@ import {
 
 describe('Happier tool Agent-layer auto-approval', () => {
   it('derives direct tools from current Action safety while Action approval retains custody', () => {
+    const expected = new Set(['action_execute', 'action_spec_search', 'action_spec_get', 'action_options_resolve']);
     for (const spec of listActionSpecs()) {
       const name = spec.bindings?.mcpToolName;
       if (!name) continue;
       expect(isHappierToolAutoApprovedByAgentLayerV1(name), spec.id).toBe(spec.safety === 'safe');
+      if (spec.safety === 'safe') expected.add(name);
     }
-    expect(listHappierToolAutoApprovedNamesV1()).toContain('action_execute');
-    expect(listHappierToolAutoApprovedNamesV1()).toContain('action_spec_search');
-    expect(listHappierToolAutoApprovedNamesV1()).toContain('action_spec_get');
-    expect(listHappierToolAutoApprovedNamesV1()).toContain('action_options_resolve');
+    if (expected.has('session_title_set')) expected.add('change_title');
+    expect(listHappierToolAutoApprovedNamesV1()).toEqual([...expected].sort());
   });
 
   it.each([

@@ -1,0 +1,119 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createProviderActionExecuteV1 } from './executeProviderActionV1.js';
+import { parseProviderActionRequestV1 } from './providerActionsV1.js';
+import { TeamCredentialProviderModelCatalogEntryV1Schema } from '../teams/credentials/resourceV1.js';
+import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } from './connections/connectionRowsV1.js';
+import type { ProviderConnectionsCatalogSnapshotV1 } from './connections/connectionRowsV1.js';
+import { DaemonProviderModelProjectionResponseV1Schema } from '../rpc/providers.js';
+import { RPC_METHODS } from '../rpc/methods.js';
+import { createProviderErrorV1 } from './errors.js';
+import { createActionExecutor } from '../actions/actionExecutor.js';
+import { ApprovalRequestV2Schema } from '../approvals/approvalRequestV1.js';
+
+afterEach(() => vi.restoreAllMocks());
+
+const agentTargetKey = 'agent:happier.agent.codex/codex';
+const teamCredentialModel = TeamCredentialProviderModelCatalogEntryV1Schema.parse({
+  selection: { kind: 'team_credential_provider_model', resourceId: 'resource-a', teamId: 'team-a',
+    expectedResourceRevision: 1, deliveryMode: 'brokered', agentTargetKey, modelId: 'model-a' },
+  descriptor: { id: 'model-a', name: 'Model A' },
+  application: { agentTargetKey, implementationIdentity: { pluginId: 'acme.gateway', localId: 'gateway' },
+    endpointTemplateId: 'responses', protocol: 'openai-responses' },
+  confirmationSource: { connectionId: 'connected-source:recipient', catalogSourceKey: 's'.repeat(43) },
+  sourceRevision: 'source-a', availability: 'available',
+});
+
+describe('shared Provider Action recipient catalog admission', () => {
+  it.each(['different-action', 'malformed', 'retired'] as const)('refuses a %s forwarded approval', async scenario => {
+    const input = { machineId: 'hub', agentTargetKey, forceRefresh: true as const };
+    const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: 'test-home', machineId: 'hub', actionRequestId: 'refresh-request' } as const;
+    const receiver = createActionExecutor({ approvalsCreate: async ({ request }) => {
+      ApprovalRequestV2Schema.parse(request);
+      return { artifactId: 'refresh-approval' };
+    } });
+    const produced = await receiver.execute('providers.models.refresh', input, context);
+    if (!produced.ok || typeof produced.result !== 'object' || !produced.result) throw new Error('Expected pending producer');
+    let current = true;
+    const forward = createProviderActionExecuteV1({ assertCurrent() {
+      if (!current) throw Object.assign(new Error('Account retired'), { code: 'scope-retired' });
+    }, rpc: async () => {
+      if (scenario === 'retired') current = false;
+      return { ...produced.result, ...(scenario === 'different-action' ? { actionId: 'providers.probe' } : {}),
+        ...(scenario === 'malformed' ? { artifactId: '' } : {}) };
+    }, setDefault: async () => ({ status: 'unchanged' }),
+      readAccountCatalog: async () => { throw new Error('Unexpected Account read'); },
+    });
+    const result = forward(parseProviderActionRequestV1('providers.models.refresh', input), context);
+    if (scenario === 'retired') await expect(result).rejects.toMatchObject({ code: 'scope-retired' });
+    else expect(await result).toMatchObject({ ok: false, errorCode: 'provider_rpc_response_invalid' });
+  });
+
+  it('routes usage refresh separately from model discovery and admits typed source refusals', async () => {
+    const error = createProviderErrorV1('provider_endpoint_rate_limited', { connectionId: 'pc_1', machineId: 'machine-a' });
+    const reply = { status: 'success', sources: [{ sourceId: 'credits', status: 'not_configured' },
+      { sourceId: 'spend', status: 'error', error }] };
+    const execute = createProviderActionExecuteV1({ assertCurrent() {},
+      rpc: async ({ method }) => method === RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH ? reply
+        : { status: 'success', models: [] },
+      readAccountCatalog: async () => { throw new Error('Usage must not read the model catalog'); },
+      setDefault: async () => ({ status: 'unchanged' }),
+    });
+    expect(await execute(parseProviderActionRequestV1('providers.usage.refresh', {
+      connectionId: 'pc_1', machineId: 'machine-a',
+    }), {})).toEqual({ ok: true, result: reply });
+  });
+  it('admits each Team projection once before applying recipient consent', async () => {
+    // Observe both real entry points; neither validator implementation is replaced.
+    const admissions = vi.spyOn(DaemonProviderModelProjectionResponseV1Schema, 'safeParse');
+    const repeatedParses = vi.spyOn(DaemonProviderModelProjectionResponseV1Schema, 'parse');
+    const execute = createProviderActionExecuteV1({
+      assertCurrent: () => {},
+      rpc: async () => ({ status: 'success', agentTargetKey, groups: [] }),
+      readAccountCatalog: async () => ({ status: 'ready', revision: 1, catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 }),
+      setDefault: async () => ({ status: 'unchanged' }),
+    });
+    expect(await execute(parseProviderActionRequestV1('providers.models.projection', {
+      machineId: 'machine-a', agentTargetKey, teamCredentialModel,
+    }), {})).toMatchObject({ ok: true, result: { status: 'success', groups: [] } });
+    expect(admissions).toHaveBeenCalledTimes(1);
+    expect(repeatedParses).toHaveBeenCalledTimes(0);
+  });
+
+  it.each(['providers.models.projection', 'providers.models.refresh'] as const)(
+    'refuses unavailable recipient consent through %s', async actionId => {
+      const execute = createProviderActionExecuteV1({
+        assertCurrent: () => {},
+        rpc: async () => ({ status: 'success', agentTargetKey, groups: [] }),
+        readAccountCatalog: async () => ({ status: 'unavailable', reason: 'authority-not-confirmed' }),
+        setDefault: async () => ({ status: 'unchanged' }),
+      });
+      expect(await execute(parseProviderActionRequestV1(actionId, {
+        machineId: 'machine-a', agentTargetKey, teamCredentialModel,
+        ...(actionId === 'providers.models.refresh' ? { forceRefresh: true } : {}),
+      }), {})).toMatchObject({ ok: true, result: { status: 'error', error: { code: 'provider_settings_invalid' } } });
+    },
+  );
+
+  it.each(['cancelled', 'retired'] as const)('does not disclose a projection %s during the Account read', async scenario => {
+    const controller = new AbortController();
+    let current = true;
+    const execute = createProviderActionExecuteV1({
+      assertCurrent: context => {
+        context.signal?.throwIfAborted();
+        if (!current) throw Object.assign(new Error('Account retired'), { code: 'scope-retired' });
+      },
+      rpc: async () => ({ status: 'success', agentTargetKey, groups: [] }),
+      readAccountCatalog: async (): Promise<ProviderConnectionsCatalogSnapshotV1> => {
+        if (scenario === 'cancelled') controller.abort();
+        else current = false;
+        return { status: 'ready', revision: 1, catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 };
+      },
+      setDefault: async () => ({ status: 'unchanged' }),
+    });
+    await expect(execute(parseProviderActionRequestV1('providers.models.projection', {
+      machineId: 'machine-a', agentTargetKey, teamCredentialModel,
+    }), { signal: controller.signal })).rejects.toMatchObject(scenario === 'cancelled'
+      ? { name: 'AbortError' } : { code: 'scope-retired' });
+  });
+});

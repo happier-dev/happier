@@ -16,6 +16,43 @@ import { describe, expect, it, vi } from 'vitest';
  * so this check deliberately enters the way consumers do.
  */
 describe('protocol root barrel', () => {
+  it('loads Artifact sharing before the widget area intent schema', async () => {
+    vi.resetModules();
+    await import('./artifacts/artifactSharingV1.js');
+    const widgets = await import('./widgets/widgetSurfaceArtifactV1.js');
+    const intent = { kind: 'remove', instanceId: 'widget-copy' };
+
+    expect(widgets.WidgetAreaLayoutIntentV1Schema.parse(intent)).toEqual(intent);
+    expect(widgets.WidgetAreaLayoutIntentV1Schema.safeParse({ ...intent, instanceId: '' }).success).toBe(false);
+  }, 60_000);
+
+  it('loads Voice tracked addresses before widget Action inputs', async () => {
+    vi.resetModules();
+    const voice = await import('./sessions/follow/voiceTrackedTargetsCompatibilityV1.js');
+    const widgets = await import('./widgets/actionsV1.js');
+    const boundSession = { serverId: 'home', sessionId: 'session' };
+    const input = { surface: { serverId: 'home', accountId: 'owner', owner: { kind: 'home' } }, boundSession };
+
+    expect(voice.VoiceTrackedSessionAddressV1Schema.parse(boundSession)).toEqual(boundSession);
+    expect(widgets.WidgetInstanceActionInputSchemasV1['widgets.catalog.list'].parse(input)).toEqual(input);
+    expect(widgets.readWidgetCatalogBoundSessionV1(input)).toEqual(boundSession);
+  }, 60_000);
+
+  it('loads the built-in widget catalog before reading the missing Home preset', async () => {
+    vi.resetModules();
+    const widgets = await import('./widgets/builtinWidgetDescriptorV1.js');
+    const home = await import('./home/homeHubLayoutV1.js');
+
+    const layout = home.normalizeHomeHubLayoutV1(undefined);
+    expect(widgets.readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'usage_capacity' }))
+      .toMatchObject({ definition: { kind: 'builtin', id: 'usage_capacity' } });
+    expect(layout.items).toMatchObject([{ kind: 'widget', instance: {
+      id: 'default:builtin:usage_capacity', definition: { kind: 'builtin', id: 'usage_capacity' },
+    } }, { kind: 'widget', instance: { id: 'default:builtin:machine_fleet', definition: { kind: 'builtin', id: 'machine_fleet' } } },
+      { kind: 'widget', instance: { id: 'default:builtin:local_services_app', definition: { kind: 'builtin', id: 'local_services_app' } } }]);
+    expect(home.normalizeHomeHubLayoutV1(undefined)).toBe(layout);
+  }, 60_000);
+
   it('initializes the direct Action registry before any root import', async () => {
     vi.resetModules();
     const actions = await import('./actions/actionSpecs.js');

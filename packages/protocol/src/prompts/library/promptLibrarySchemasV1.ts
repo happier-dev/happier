@@ -5,7 +5,7 @@ import { PromptStackEntryV1Schema } from './promptStacksV1.js';
 import { PromptFoldersV1RecordSchema } from './promptFoldersV1.js';
 import { PromptInvocationEntryV1Schema } from './promptInvocationsV1.js';
 import { PromptExternalLinkEntryV1Schema, PromptExternalLinksV1Schema } from './promptExternalLinksV1.js';
-import { RegistrySourcesRecordV1Schema, RegistrySourcesReadEnvelopeV1Schema, readRegistrySourcesRecordV1 } from '../../registries/registrySourcesV1.js';
+import { RegistrySourcesRecordV1Schema, RegistrySourcesReadEnvelopeV1Schema, readRegistrySourcesInventoryV1 } from '../../registries/registrySourcesV1.js';
 import { ContextSelectionV1Schema } from './contextSelectionsV1.js';
 import { RoleOverrideRecordV1Schema } from '../roles/roleOverrideRecordV1.js';
 import { SkillRuleV1Schema } from '../../reach/reachRuleV1.js';
@@ -44,11 +44,12 @@ export const PromptLibraryRecordV1Schema = lazyZodSchema(() => z.discriminatedUn
   ) }),
   z.strictObject({ key: z.literal('registry-sources'), value: defineStoredReadProjection(RegistrySourcesRecordV1Schema,
     () => z.pipe((<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.unknown() }) as z.ZodMiniObject<T['shape'], z.core.$loose>)(RegistrySourcesReadEnvelopeV1Schema), z.transform((value, context) => {
-      try { return readRegistrySourcesRecordV1(value); }
-      catch {
-        context.issues.push({ code: 'custom', message: 'Registry token reference inventory is incomplete', input: context.value });
-        return z.NEVER;
-      }
+      try {
+        const inventory = readRegistrySourcesInventoryV1(value);
+        if (inventory.status === 'ready') return inventory.record;
+      } catch { /* Invalid envelopes or incomplete token references cannot admit authority. */ }
+      context.issues.push({ code: 'custom', message: 'Registry source inventory is incomplete', input: context.value });
+      return z.NEVER;
     }))) }),
   z.strictObject({ key: z.literal('contexts'), value: z.strictObject({ v: z.literal(1), selectionsByKey: z.record(z.string(), (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(ContextSelectionV1Schema)) }) }),
   z.strictObject({ key: z.literal('role-overrides'), value: RoleOverrideRecordV1Schema }),

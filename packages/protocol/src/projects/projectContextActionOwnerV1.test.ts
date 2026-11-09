@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readProjectContextEntriesV1, readProjectContextAttachmentTargetV1, updatePersonalProjectContextV1, ProjectContextUpdateInputV1Schema, type ProjectContextActionOwnerDepsV1 } from './projectContextV1.js';
 import type { ProjectAccountOrganizationV1 } from './projectAccountRowsV1.js';
 import type { ProjectSourceV1, ProjectSourcesUpdateInputV1 } from './sources/projectSourceV1.js';
+import { MemoryDocBodyV1Schema } from '../prompts/library/memoryDocV1.js';
 
 function harness() {
   let value: ProjectAccountOrganizationV1 = { hidden: true, pinned: true };
@@ -110,7 +111,7 @@ describe('personal Project context Account Action owner', () => {
     const fixture = harness();
     const result = await updatePersonalProjectContextV1({ ...fixture.deps,
       readArtifact: async () => ({ id: 'doc', revision: { headerVersion: 0, bodyVersion: 0 },
-        header: { kind: 'memory_doc.v1' }, body: JSON.stringify({ v: 1, facts: [], archive: [] }) }),
+        header: { kind: 'memory_doc.v1' }, body: JSON.stringify(MemoryDocBodyV1Schema.parse({ v: 1, index: [], topics: [] })) }),
     }, request());
     expect(result).toMatchObject({ ok: true, revision: 0, row: { promptStack: [{ id: 'entry' }] } });
     expect(fixture.current().writes).toBe(1);

@@ -41,13 +41,31 @@ const defaultApprovalPolicy: NonNullable<ActionExecutorDeps['isActionApprovalReq
     context, undefined, undefined, input);
 
 describe('createActionExecutor plugin caller policy', () => {
+  it('preserves the real plugin caller through contributed dispatch and keeps target admission authoritative', async () => {
+    const calls: Parameters<NonNullable<ActionExecutorDeps['invokeContributedAction']>>[0][] = [];
+    const executor = createExecutor({ invokeContributedAction: async request => {
+      calls.push(request);
+      return { ok: false, errorCode: 'plugin_action_surface_unavailable', error: 'plugin_action_surface_unavailable' };
+    } });
+    const input = { action: { pluginId: 'example.target', localId: 'handoff' }, input: { task: 'fix' } };
+    expect(await executor.execute('action.invoke', input, { surface: 'plugin' }))
+      .toMatchObject({ ok: false, errorCode: 'plugin_action_caller_required' });
+    expect(calls).toHaveLength(0);
+    const caller = pluginCaller('example.requester');
+    expect(await executor.execute('action.invoke', input, { surface: 'plugin', actionCaller: caller }))
+      .toMatchObject({ ok: false, errorCode: 'plugin_action_surface_unavailable' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ action: input.action, input: input.input,
+      context: { surface: 'plugin', actionCaller: caller } });
+  });
+
   it('permits selected-field export under safe-read caller admission while retaining the Resource ceiling', async () => {
     const query = normalizeUsageQuery({});
     const accounting = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCount: 1,
       tokens: { input: 10, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 12 },
       cost: { reportedUsd: 1, estimatedUsd: 0, currency: 'USD' } } });
     const executor = createExecutor({ usageActions: { query: async request => resolveUsagePageAggregation({ queries: request.queries,
-      accounting: [{ query, value: accounting, status: 'available', asOfMs: 150 }] }) } });
+      accounting: request.queries.map(query => ({ query, value: accounting, status: 'available' as const, asOfMs: 150 })) }) } });
     const request = { query, format: 'json', fields: ['totals'] };
     const permitted = await executor.execute('usage.export', request, { surface: 'plugin', actionCaller: pluginCaller('example.usage') });
     expect(permitted.ok).toBe(true);
@@ -59,17 +77,21 @@ describe('createActionExecutor plugin caller policy', () => {
       .toMatchObject({ ok: false, errorCode: 'credential_scope_retired' });
     expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource: { hostRead: 'usage.export', input: request }, subscriptionId: 'export' }).success).toBe(false);
   });
-  it('enforces explicit caller policy on safe host reads in both prepare and execute', async () => {
+  it.each([
+    { actionId: 'usage.query', input: { queries: [{}] } },
+    { actionId: 'action.operations.get', input: { serverId: 'home', machineId: 'machine-1', operationId: 'operation-1' } },
+  ] as const)('enforces explicit caller policy on safe host read $actionId in both prepare and execute', async ({ actionId, input }) => {
     const executor = createExecutor();
     const context = { surface: 'plugin' as const };
-    const input = { queries: [{}] };
-    await expect(executor.prepare('usage.query', input, context)).resolves.toMatchObject({
+    expect(getActionSpec(actionId).surfaces.plugin).toBe(true);
+    expect(getActionSpec(actionId).pluginCallerPolicy).toEqual({ kind: 'caller' });
+    await expect(executor.prepare(actionId, input, context)).resolves.toMatchObject({
       kind: 'settled', result: { ok: false, errorCode: 'plugin_action_caller_required' },
     });
-    await expect(executor.execute('usage.query', input, context)).resolves.toMatchObject({
+    await expect(executor.execute(actionId, input, context)).resolves.toMatchObject({
       ok: false, errorCode: 'plugin_action_caller_required',
     });
-    await expect(executor.prepare('usage.query', input, { ...context,
+    await expect(executor.prepare(actionId, input, { ...context,
       actionCaller: { kind: 'plugin', pluginId: 'acme.author', contributionLocalId: 'surface' },
     })).resolves.toMatchObject({ kind: 'ready' });
   });
@@ -373,7 +395,7 @@ describe('createActionExecutor plugin caller policy', () => {
     expect(pluginsDevLoopAction).not.toHaveBeenCalled();
   });
 
-  it('refuses uninstall without human authority when a trusted plugin has waived approval', async () => {
+  it('uninstalls once the user waives the plugin surface Ask (no present-user floor)', async () => {
     const pluginsDevLoopAction = vi.fn(async () => ({ ok: true, kind: 'plugins_uninstall' }));
     const approvalsCreate = vi.fn<NonNullable<ActionExecutorDeps['approvalsCreate']>>(
       async () => ({ artifactId: 'approval-uninstall-1' }),
@@ -391,12 +413,9 @@ describe('createActionExecutor plugin caller policy', () => {
       actionRequestId: 'uninstall-1',
       actionCaller: caller,
       actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'plugins.uninstall': ['plugin'] } }),
-    })).resolves.toMatchObject({
-      ok: false,
-      errorCode: 'present_user_required',
-    });
+    })).resolves.not.toMatchObject({ ok: false, errorCode: 'present_user_required' });
     expect(approvalsCreate).not.toHaveBeenCalled();
-    expect(pluginsDevLoopAction).not.toHaveBeenCalled();
+    expect(pluginsDevLoopAction).toHaveBeenCalledOnce();
   });
 
   it('allows a plugin to reload itself, propagating its host-stamped caller and cancellation signal', async () => {

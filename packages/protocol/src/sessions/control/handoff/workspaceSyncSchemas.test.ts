@@ -53,6 +53,12 @@ const contentPolicyInput = {
 const contentPolicy = { ...contentPolicyInput, policyDigest: computeWorkspaceSyncPolicyDigest(contentPolicyInput) };
 
 describe('workspace sync protocol schemas', () => {
+  it('carries a nonblocking preserved-state diagnostic without implying a quarantine', () => {
+    const preserved = { status: 'preserved', path: '/home/example/workspace-replication' };
+    expect(WorkspaceSyncLegacyStateInspectionV1Schema.parse(preserved)).toEqual(preserved);
+    expect(WorkspaceSyncLegacyStateInspectionV1Schema.safeParse({ ...preserved, quarantinePath: '/elsewhere' }).success).toBe(false);
+  });
+
   it('preserves coincident cross-owner copy locators until target qualification while relationships stay graph-local', () => {
     const operation = { v: 1, operationId: 'qualified-copy', controllerMachineId: 'physical-source',
       alphaWorkspaceRefId: 'coincident-row', betaWorkspaceRefId: 'coincident-row', contentPolicy };

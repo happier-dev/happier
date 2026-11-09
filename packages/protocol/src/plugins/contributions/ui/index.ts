@@ -15,12 +15,12 @@ export * from './defaultPlacement.js';
 export * from './hostedWeb.js';
 export * from './hostedHtmlSourceV1.js';
 export * from './hostedHtmlCapabilitiesV1.js';
-export * from './executableSurfaceApprovalV1.js';
 export * from './hostedWebSecurity.js';
 export * from './i18n.js';
 export * from './json.js';
 export * from './predicates.js';
 export * from './resources.js';
+export * from './resourceLinks.js';
 export * from './sessionHeaderActions.js';
 export * from './transcriptActivities.js';
 export * from './sessionInfoSections.js';
@@ -29,6 +29,7 @@ export { PluginUiWidgetAreaDeclarationV1Schema, PluginUiWidgetAreaDeclarationsV1
 export * from './surfaceTargets.js';
 export * from './tokens.js';
 export type {
+  PluginCollectionListExtensionV1,
   PluginUiAppPageColumnV1,
   PluginUiWidgetAreaDeclarationV1,
   PluginUiDestinationPlacementV1,
@@ -41,13 +42,17 @@ export type {
   PluginUiViewV2Input,
 } from './v2.js';
 export {
+  PluginCollectionListExtensionV1Schema,
   PluginUiAppPageColumnV1Schema,
+  PluginUiCountsBindingV1Schema,
+  createPluginUiCountsValueV1Schema,
   PluginRightSidebarDefaultPlacementSchema,
   PluginRightSidebarCountV1Schema,
   PluginUiDestinationPlacementV1Schema,
   PluginUiWidgetHomeV1Schema,
 } from './v2.js';
 export type { PluginRightSidebarDefaultPlacement, PluginRightSidebarCountV1 } from './v2.js';
+export type { PluginUiCountsBindingV1 } from './v2.js';
 export { selectPluginUiWidgetEntriesV1 } from './widgetInventory.js';
 export {
   PLUGIN_TRANSCRIPT_PRESENTATION_NODE_V1_KINDS,

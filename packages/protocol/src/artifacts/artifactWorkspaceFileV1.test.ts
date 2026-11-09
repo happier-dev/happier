@@ -32,10 +32,10 @@ describe('workspace HTML publication', () => {
     'pages/index.html': { mime: 'text/html', contentBase64: 'PGgxPkhlbGxvPC9oMT4=' },
   } };
 
-  it('prepares acquired folders as a canonical HTML bundle with workspace provenance', () => {
+  it('prepares declared HTML folders as a canonical bundle with workspace provenance', () => {
     const bytes = new TextEncoder().encode(JSON.stringify(bundle));
     const result = prepareArtifactWorkspaceFileV1({ caller: { sessionId: 'session', machineId: 'machine' },
-      file: { bytes, name: 'site', path: 'site', sha: 'a'.repeat(64), bundle }, input: {} });
+      file: { bytes, name: 'site', path: 'site', sha: 'a'.repeat(64), bundle }, input: { kind: 'html', mime: 'text/html' } });
     expect(result).toMatchObject({ header: { kind: 'html', mime: ARTIFACT_HTML_BUNDLE_MIME_V1, title: 'site' },
       source: { path: 'site', sha: 'a'.repeat(64) }, binary: { bytes, mime: ARTIFACT_HTML_BUNDLE_MIME_V1 } });
   });
@@ -45,6 +45,15 @@ describe('workspace HTML publication', () => {
       .toEqual({ path: 'site', entrypoint: 'pages/index.html' });
     for (const entrypoint of ['../index.html', 'a\\index.html', '/index.html', 'a%2findex.html']) {
       expect(ArtifactPublishFromFileInputV1Schema.safeParse({ path: 'site', entrypoint }).success).toBe(false);
+    }
+  });
+
+  it('refuses declarations that conflict with an acquired HTML folder', () => {
+    const bytes = new TextEncoder().encode(JSON.stringify(bundle));
+    for (const input of [{ kind: 'published.v1' }, { mime: 'text/plain' }]) {
+      expect(() => prepareArtifactWorkspaceFileV1({ caller: { sessionId: 'session', machineId: 'machine' },
+        file: { bytes, name: 'site', path: 'site', sha: 'a'.repeat(64), bundle }, input }))
+        .toThrowError(expect.objectContaining({ code: 'artifact_source_forbidden' }));
     }
   });
 

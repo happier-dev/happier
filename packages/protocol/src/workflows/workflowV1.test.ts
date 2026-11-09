@@ -49,6 +49,18 @@ function codesOf(result: ReturnType<typeof validateWorkflowDefinition>): string[
 }
 
 describe('workflow input option sources', () => {
+  it('round-trips Workflow defaults and step approval references without copying profile rules', () => {
+    const definition = WorkflowDefinitionSchema.parse({ version: 1, defaults: { approvalProfileId: 'profile:default' },
+      blocks: [textStep('review', 'Review', { execution: { approvalProfileId: null } }),
+        { kind: 'action', id: 'effect', actionId: 'workflow.trigger.list', execution: { approvalProfileId: 'profile:effect' } }],
+    });
+    expect(WorkflowDefinitionSchema.parse(JSON.parse(JSON.stringify(definition)))).toMatchObject({
+      defaults: { approvalProfileId: 'profile:default' }, blocks: [
+        { execution: { approvalProfileId: null } }, { execution: { approvalProfileId: 'profile:effect' } },
+      ],
+    });
+    expect(WorkflowSessionAuthoringSelectionSchema.safeParse({ approvalProfileId: { defaultMode: 'allow' } }).success).toBe(false);
+  });
   it('retains unattended tool restrictions in the canonical workflow selection', () => {
     const policy = { allowedTools: ['mcp__wilson-brief__*'], unlistedTools: 'deny' };
     expect(WorkflowSessionAuthoringSelectionSchema.parse(policy)).toMatchObject(policy);
@@ -93,6 +105,28 @@ describe('workflow input option sources', () => {
 });
 
 describe('workflow definition normalization', () => {
+  it('requires every service command argv element to be literal without changing target bindings', () => {
+    const command = (argv: unknown) => ({ kind: 'action', id: 'command', actionId: 'machines.services.exec', input: {
+      serverId: { kind: 'literal', value: 'home' }, machineId: { kind: 'input', name: 'machine' },
+      target: { kind: 'input', name: 'target' }, mode: { kind: 'literal', value: 'run' }, argv,
+    } });
+    for (const argv of [
+      { kind: 'literal', value: ['tool', '', '${event.text}'] },
+      { kind: 'list', items: [{ kind: 'literal', value: 'tool' }, { kind: 'literal', value: '' }] },
+    ]) expect(WorkflowBlockSchema.safeParse(command(argv)).success).toBe(true);
+    for (const argv of [
+      { kind: 'input', name: 'argv' },
+      { kind: 'result', producer: { blockId: 'event', scope: { kind: 'current' } }, path: ['argv'] },
+      { kind: 'list', items: [{ kind: 'literal', value: 'tool' }, { kind: 'input', name: 'eventText' }] },
+      { kind: 'list', items: [{ kind: 'result', producer: { blockId: 'event', scope: { kind: 'current' } }, path: ['command'] },
+        { kind: 'literal', value: 'fixed-argument' }] },
+    ]) {
+      const result = WorkflowBlockSchema.safeParse(command(argv));
+      expect(result.success).toBe(false);
+    }
+    expect(WorkflowBlockSchema.safeParse({ kind: 'action', id: 'host', actionId: 'machines.command.run',
+      input: { command: { kind: 'list', items: [{ kind: 'literal', value: 'echo hello' }] } } }).success).toBe(false);
+  });
   it('admits inputless fresh Session creation while refusing reused conversations and hidden input', () => {
     const definition = { defaults: { agentTarget: CLAUDE_AGENT_TARGET, conversation: { kind: 'fresh' } },
       blocks: [textStep('create', '', { inputMode: 'none' })] };

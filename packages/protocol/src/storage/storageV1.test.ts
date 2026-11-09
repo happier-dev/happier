@@ -199,7 +199,7 @@ describe('storage V1 contract', () => {
 
   it('classifies read, parked watch and explicit remeasurement routes with Action governance', () => {
     for (const method of [RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET, RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST, RPC_METHODS.DAEMON_STORAGE_WATCH]) {
-      expect(resolveMachineRpcRoutePolicy(method)).toMatchObject({ routeClass: 'direct_ephemeral', sharedMachineAccess: 'use', commandReceiptRequired: false });
+      expect(resolveMachineRpcRoutePolicy(method)).toMatchObject({ routeClass: 'direct_ephemeral', sharedMachineAccess: 'use' });
     }
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET)).toMatchObject({ rpcClassification: 'action_spec_bound', actionSpecId: 'machines.storage.summary.get' });
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST)).toMatchObject({ rpcClassification: 'action_spec_bound', actionSpecId: 'machines.storage.category.list' });

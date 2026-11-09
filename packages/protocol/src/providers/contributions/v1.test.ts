@@ -43,6 +43,23 @@ function validContribution() {
 }
 
 describe('ProviderContributionV1Schema', () => {
+  it('admits required endpoint coordinates and declaration-owned family and public policy constraints', () => {
+    const { baseUrl: _base, ...endpoint } = validContribution().endpointTemplates[0];
+    const constrained = { ...endpoint, requiresEndpointOverride: true,
+      addressConstraint: { origin: 'https://gateway.example', pathSegments: ['v1', null, 'responses'] },
+      modelIdPattern: '^[^/\\s]+$', requiredPublicHeaders: ['X-Gateway'],
+      publicHeaderHints: { 'X-Gateway': 'Select the gateway' } };
+    const declaration = { ...validContribution(), endpointTemplates: [constrained] };
+    expect(ProviderContributionV1Schema.parse(declaration).endpointTemplates[0]).toMatchObject({
+      requiresEndpointOverride: true, requiredPublicHeaders: ['x-gateway'], publicHeaderHints: { 'x-gateway': 'Select the gateway' },
+      addressConstraint: constrained.addressConstraint, modelIdPattern: constrained.modelIdPattern,
+    });
+    for (const invalid of [
+      { ...constrained, baseUrl: 'https://gateway.example/v1' },
+      { ...constrained, addressConstraint: { ...constrained.addressConstraint, origin: 'http://gateway.example' } },
+      { ...constrained, modelIdPattern: '[' }, { ...constrained, requiredPublicHeaders: ['Authorization'] },
+    ]) expect(ProviderContributionV1Schema.safeParse({ ...declaration, endpointTemplates: [invalid] }).success).toBe(false);
+  });
   it('admits usage sources only on declared endpoints with distinct optional billing slots', () => {
     const source = { id: 'credits', endpointTemplateId: 'responses', path: '/v1/credits', parser: 'credits-v1' };
     const value = { ...validContribution(), usageSources: [source] };
@@ -72,6 +89,13 @@ describe('ProviderContributionV1Schema', () => {
     } }).success).toBe(false);
   });
 
+  it('admits only declared inline completion routes with an exact runtime credential transport', () => {
+    const declaration = { ...validContribution(), inlineCompletion: [{ id: 'chat', mode: 'chat-fallback', endpointTemplateId: 'responses', path: '/responses', wireFormat: 'openai-responses' }] };
+    expect(ProviderContributionV1Schema.safeParse(declaration).success).toBe(true);
+    expect(ProviderContributionV1Schema.safeParse({ ...declaration, inlineCompletion: [{ ...declaration.inlineCompletion[0], endpointTemplateId: 'foreign' }] }).success).toBe(false);
+    expect(ProviderContributionV1Schema.safeParse({ ...declaration, inlineCompletion: [{ ...declaration.inlineCompletion[0], path: 'https://foreign.test/' }] }).success).toBe(false);
+    expect(ProviderContributionV1Schema.safeParse({ ...declaration, inlineCompletion: [{ ...declaration.inlineCompletion[0], mode: 'native-fim' }] }).success).toBe(false);
+  });
   it('retains a credential-free model catalog on its exact managed service purpose', () => {
     const model = { id: 'sdk-model', name: 'SDK model', capabilities: { toolRoundTrips: 'unknown' as const } };
     const value = {
@@ -790,25 +814,5 @@ describe('ProviderContributionV1Schema', () => {
       'http://127.0.0.1:11434/',
     ];
     expect(ProviderContributionV1Schema.safeParse(local).success).toBe(false);
-  });
-});
-
-describe('Provider endpoint declarations', () => {
-  it('admits required endpoint coordinates and declaration-owned family and public policy constraints', () => {
-    const { baseUrl: _base, ...endpoint } = validContribution().endpointTemplates[0];
-    const constrained = { ...endpoint, requiresEndpointOverride: true,
-      addressConstraint: { origin: 'https://gateway.example', pathSegments: ['v1', null, 'responses'] },
-      modelIdPattern: '^[^/\\s]+$', requiredPublicHeaders: ['X-Gateway'],
-      publicHeaderHints: { 'X-Gateway': 'Select the gateway' } };
-    const declaration = { ...validContribution(), endpointTemplates: [constrained] };
-    expect(ProviderContributionV1Schema.parse(declaration).endpointTemplates[0]).toMatchObject({
-      requiresEndpointOverride: true, requiredPublicHeaders: ['x-gateway'], publicHeaderHints: { 'x-gateway': 'Select the gateway' },
-      addressConstraint: constrained.addressConstraint, modelIdPattern: constrained.modelIdPattern,
-    });
-    for (const invalid of [
-      { ...constrained, baseUrl: 'https://gateway.example/v1' },
-      { ...constrained, addressConstraint: { ...constrained.addressConstraint, origin: 'http://gateway.example' } },
-      { ...constrained, modelIdPattern: '[' }, { ...constrained, requiredPublicHeaders: ['Authorization'] },
-    ]) expect(ProviderContributionV1Schema.safeParse({ ...declaration, endpointTemplates: [invalid] }).success).toBe(false);
   });
 });

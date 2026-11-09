@@ -104,7 +104,8 @@ function readRetainedPluginObligationSubject(request: ApprovalRequestV2): Plugin
  * digest binding the remaining input.
  */
 export function deriveRetainedPluginObligationDuplicateKey(request: ApprovalRequest): string | null {
-  if (request.v !== 2 || !request.requestInputDigest || !request.approval) return null;
+  // A retired Publish history keeps unvalidated authorization JSON and is never a retained obligation.
+  if (request.v !== 2 || isHistoricalPublishApprovalRequestV2(request) || !request.requestInputDigest || !request.approval) return null;
   const subject = readRetainedPluginObligationSubject(request);
   return subject ? JSON.stringify([request.approval.flow,
     deriveApprovalRequestSourceIdForSubject(request, request.executionOriginV1, subject)]) : null;

@@ -51,6 +51,9 @@ export const WorkspaceAddressV1Schema = lazyZodSchema(() => z.strictObject({
   rootPath: LookupNonEmptyStringSchema,
 }));
 export type WorkspaceAddressV1 = z.infer<typeof WorkspaceAddressV1Schema>;
+/** Feature protocols embed the canonical accepted-checkout address. */
+export const WorkspaceAddressV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(WorkspaceAddressV1Schema));
+
 /** Private accepted checkout facts, emitted only after Session and Account census admission. */
 export const SessionAcceptedWorkspaceV1Schema = lazyZodSchema(() => z.strictObject({
   checkout: WorkspaceAddressV1Schema,
@@ -65,5 +68,3 @@ export const ProjectKeyV1Schema = lazyZodSchema(() => z.union([
   QualifiedProjectKeyV1Schema,
 ]));
 export type ProjectKeyV1 = z.infer<typeof ProjectKeyV1Schema>;
-
-export const WorkspaceAddressV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(WorkspaceAddressV1Schema));

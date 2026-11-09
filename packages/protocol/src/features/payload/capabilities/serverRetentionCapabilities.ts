@@ -1,16 +1,16 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
-const KeepForeverRetentionPolicySchema = lazyZodSchema(() => z.strictObject({
+const KeepForeverRetentionPolicySchema = lazyZodSchema(() => z.object({
   mode: z.literal('keep_forever'),
 }));
 
-const DeleteOlderThanRetentionPolicySchema = lazyZodSchema(() => z.strictObject({
+const DeleteOlderThanRetentionPolicySchema = lazyZodSchema(() => z.object({
   mode: z.literal('delete_older_than'),
   days: z.number().check(z.int(), z.minimum(1)),
 }));
 
-const DeleteInactiveSessionsRetentionPolicySchema = lazyZodSchema(() => z.strictObject({
+const DeleteInactiveSessionsRetentionPolicySchema = lazyZodSchema(() => z.object({
   mode: z.literal('delete_inactive'),
   inactivityDays: z.number().check(z.int(), z.minimum(1)),
   requires: z.tuple([z.literal('updatedAt'), z.literal('lastActiveAt')]),
@@ -26,7 +26,7 @@ export const SessionRetentionPolicySchema = lazyZodSchema(() => z.discriminatedU
   DeleteInactiveSessionsRetentionPolicySchema,
 ]));
 
-export const ServerRetentionCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const ServerRetentionCapabilitiesSchema = lazyZodSchema(() => z.object({
   policyVersion: z.literal(1),
   enabled: z.boolean(),
   sessions: SessionRetentionPolicySchema,

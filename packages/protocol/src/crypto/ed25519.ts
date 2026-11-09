@@ -5,6 +5,18 @@ export const ED25519_SECRET_KEY_BYTES = 64;
 export const ED25519_SIGNATURE_BYTES = 64;
 const ED25519_SEED_BYTES = 32;
 
+/** Derive the released NaCl representation from a platform-generated seed. */
+export function deriveEd25519KeyPair(seed: Uint8Array): Readonly<{ publicKey: Uint8Array; secretKey: Uint8Array }> {
+  if (seed.length !== ED25519_SEED_BYTES) {
+    throw new Error(`Invalid Ed25519 seed length: expected ${ED25519_SEED_BYTES} bytes`);
+  }
+  const publicKey = ed25519.getPublicKey(seed);
+  const secretKey = new Uint8Array(ED25519_SECRET_KEY_BYTES);
+  secretKey.set(seed);
+  secretKey.set(publicKey, ED25519_SEED_BYTES);
+  return { publicKey, secretKey };
+}
+
 /** Sign with the released NaCl secret-key representation (`seed || publicKey`). */
 export function signEd25519Message(message: Uint8Array, secretKey: Uint8Array): Uint8Array {
   if (secretKey.length !== ED25519_SECRET_KEY_BYTES) {
@@ -29,15 +41,4 @@ export function verifyEd25519Signature(message: Uint8Array, signature: Uint8Arra
   } catch {
     return false;
   }
-}
-
-export function deriveEd25519KeyPair(seed: Uint8Array): Readonly<{ publicKey: Uint8Array; secretKey: Uint8Array }> {
-  if (seed.length !== ED25519_SEED_BYTES) {
-    throw new Error(`Invalid Ed25519 seed length: expected ${ED25519_SEED_BYTES} bytes`);
-  }
-  const publicKey = ed25519.getPublicKey(seed);
-  const secretKey = new Uint8Array(ED25519_SECRET_KEY_BYTES);
-  secretKey.set(seed);
-  secretKey.set(publicKey, ED25519_SEED_BYTES);
-  return { publicKey, secretKey };
 }

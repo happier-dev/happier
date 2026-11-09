@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { encodeBase64 } from '../crypto/base64.js';
 import { ARTIFACT_HTML_BUNDLE_MIME_V1, ArtifactHtmlBundleV1Schema, GeneratedArtifactHtmlBundleV1Schema, artifactHtmlBundleFromBodyV1,
-  isArtifactHtmlHeaderV1, ArtifactHtmlPreviewResponseV1Schema } from './artifactHtmlV1.js';
+  isArtifactHtmlHeaderV1 } from './artifactHtmlV1.js';
 import { buildArtifactHtmlContentCspV1, buildArtifactHtmlDocumentV1 } from './artifactHtmlDocumentV1.js';
 import { readArtifactPublicNetworkPolicyV1 } from './artifactPublicNetworkPolicyV1.js';
 import { isPortableRelativePath } from '../filesystem/portablePathSegment.js';
@@ -190,12 +190,5 @@ describe('Artifact HTML bundle V1', () => {
     expect(ArtifactHtmlBundleV1Schema.safeParse({ ...bundle, files: {
       'index.html': { contentBase64: '' },
     } }).success).toBe(false);
-  });
-  it('admits only an isolated shell location without document bytes', () => {
-    expect(ArtifactHtmlPreviewResponseV1Schema.safeParse({ url: 'https://artifact.preview.test/a/artifact' }).success).toBe(true);
-    for (const url of ['not a URL', 'http://artifact.preview.test/a/artifact', 'https://user:secret@artifact.preview.test/a/artifact',
-      'https://artifact.preview.test/a/artifact#d=private', 'https://artifact.preview.test/a/artifact?d=private']) {
-      expect(ArtifactHtmlPreviewResponseV1Schema.safeParse({ url }).success).toBe(false);
-    }
   });
 });

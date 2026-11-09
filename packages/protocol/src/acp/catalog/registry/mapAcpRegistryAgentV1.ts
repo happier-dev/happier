@@ -11,14 +11,18 @@ export function selectAcpRegistryDistributionV1(distributions: AcpRegistryAgentV
   return null;
 }
 
+/** Archive recognition shared by ACP mapping and platform-fit projection. */
+export function isAcpRegistryArchiveUrlV1(archiveUrl: string): boolean {
+  return /\.(?:zip|tar\.gz|tgz|tar\.xz|tar\.bz2|tbz2)$/i.test(new URL(archiveUrl).pathname);
+}
+
 /** The only ACP URL → archive/raw executable conversion, shared by mapping and platform fit. */
 export function mapAcpRegistryBinaryAssetsV1(
   binary: NonNullable<AcpRegistryAgentV1['distributions']['binary']>,
 ): ReturnType<typeof PinnedArchiveAssetsByPlatformSchema.safeParse> {
   return PinnedArchiveAssetsByPlatformSchema.safeParse(Object.fromEntries(Object.entries(binary).map(([platform, asset]) => [platform, {
     archiveUrl: asset.archiveUrl, ...(asset.sha256 ? { sha256: asset.sha256 } : {}),
-    // Upstream FORMAT.md also names .tbz2; both bzip2 aliases remain archives with unsupported extraction.
-    kind: /\.(?:zip|tar\.gz|tgz|tar\.xz|tar\.bz2|tbz2)$/i.test(new URL(asset.archiveUrl).pathname) ? 'archive' : 'executable',
+    kind: isAcpRegistryArchiveUrlV1(asset.archiveUrl) ? 'archive' : 'executable',
     executableSubpath: asset.command.replace(/\\/g, '/').replace(/^\.\//, ''), args: asset.args,
   }])));
 }

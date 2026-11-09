@@ -45,7 +45,7 @@ export type EphemeralRunnerMachineRpcAuthority =
    */
   | 'externalActionDispatch';
 
-export type MachineRpcRouteClass = 'server_required' | 'direct_ephemeral' | 'direct_medium_risk_receipted';
+export type MachineRpcRouteClass = 'server_required' | 'direct_ephemeral';
 
 export type MachineRpcServerRequiredReason =
   | 'unclassified' | 'durable_session_write' | 'transcript_write'
@@ -87,7 +87,6 @@ export type MachineRpcRoutePolicyV1 = Readonly<{
   sharedMachineAccess: 'use' | 'manage' | 'custodian_only';
   /** Non-custodian effects require the exact daemon enforce-or-refuse capability. */
   requesterExecutionIsolationRequired?: true;
-  commandReceiptRequired: boolean;
   scope: MachineRpcRoutePolicyScopeV1;
   serverRequiredReason?: MachineRpcServerRequiredReason;
   relayFallback?: MachineRpcRouteRelayFallbackPolicyV1;
@@ -156,6 +155,7 @@ function directEphemeral(
   sharedMachineAccess: MachineRpcRoutePolicyV1['sharedMachineAccess'],
   ephemeralRunnerAuthority?: EphemeralRunnerMachineRpcAuthority,
   requesterExecutionIsolationRequired?: true,
+  relayFallback?: MachineRpcRouteRelayFallbackPolicyV1,
 ): MachineRpcRoutePolicyV1 {
   return {
     method,
@@ -163,29 +163,6 @@ function directEphemeral(
     rationale,
     ownerPacket: 'PMS-5',
     ...resolveMachineRpcGovernance(method),
-    commandReceiptRequired: false,
-    sharedMachineAccess,
-    scope: DIRECT_EPHEMERAL_SCOPE,
-    ...(ephemeralRunnerAuthority ? { ephemeralRunnerAuthority } : {}),
-    ...(requesterExecutionIsolationRequired ? { requesterExecutionIsolationRequired } : {}),
-  };
-}
-
-function directMediumRiskReceipted(
-  method: MachineRpcMethod,
-  rationale: string,
-  sharedMachineAccess: MachineRpcRoutePolicyV1['sharedMachineAccess'],
-  relayFallback?: MachineRpcRouteRelayFallbackPolicyV1,
-  ephemeralRunnerAuthority?: EphemeralRunnerMachineRpcAuthority,
-  requesterExecutionIsolationRequired?: true,
-): MachineRpcRoutePolicyV1 {
-  return {
-    method,
-    routeClass: 'direct_medium_risk_receipted',
-    rationale,
-    ownerPacket: 'PMS-5',
-    ...resolveMachineRpcGovernance(method),
-    commandReceiptRequired: true,
     sharedMachineAccess,
     scope: DIRECT_EPHEMERAL_SCOPE,
     ...(relayFallback ? { relayFallback } : {}),
@@ -209,7 +186,6 @@ function serverRequired(
     rationale,
     ownerPacket: 'PMS-5',
     ...resolveMachineRpcGovernance(method),
-    commandReceiptRequired: false,
     sharedMachineAccess,
     scope,
     serverRequiredReason,
@@ -260,7 +236,6 @@ const EXTERNAL_ACTION_DAEMON_DISPATCH_ROUTE_POLICY: MachineRpcRoutePolicyV1 = Ob
   rationale: 'Public Action dispatch carries a Home-minted invocation authority bound to the exact Machine and request envelope; it is server-origin only and never a direct machine route.',
   ownerPacket: 'PMS-5',
   rpcClassification: 'internal_only',
-  commandReceiptRequired: false,
   sharedMachineAccess: 'use',
   scope: SERVER_REQUIRED_SCOPE,
   serverRequiredReason: 'auth',
@@ -422,45 +397,42 @@ const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
   directEphemeral(RPC_METHODS.SCM_BACKEND_DESCRIBE, 'Daemon-local source-control backend capability describe read.', 'use', undefined, true),
   directEphemeral(RPC_METHODS.SCM_WORKSPACE_WATCH, 'Daemon-local native workspace change observation; returns revision or unavailable facts and retains no repository content or server state.', 'use', undefined, true),
   directEphemeral(RPC_METHODS.CAPABILITIES_DESCRIBE, 'Daemon-local capability descriptor read.', 'use'),
-] satisfies readonly MachineRpcRoutePolicyV1[]);
-
-const DIRECT_MEDIUM_RISK_RECEIPTED_POLICIES = Object.freeze([
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE, 'Daemon-local private-preview openOrCreate mutates the machine-scoped preview registry and mints a BrowserViewTarget-bearing snapshot row; direct routing requires command receipt coverage.', 'use', undefined, 'submitAgentInput'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_REVOKE, 'Daemon-local private-preview revoke unregisters a machine-scoped preview registry row; direct routing requires command receipt coverage.', 'use', undefined, 'submitAgentInput'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START, 'Daemon-local local-services launcher start can launch local service targets; direct routing requires command receipt coverage.', 'use', undefined, undefined, true),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_OPEN_PREVIEW, 'Daemon-local local-services launcher openPreview resolves and opens a local preview target; direct routing requires command receipt coverage.', 'use'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_REGISTER_PREVIEW, 'Daemon-local local-services launcher registerPreview persists a private preview target; direct routing requires command receipt coverage.', 'use'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_HISTORY_CLEAR, 'Daemon-local local-services launcher history clear mutates the daemon-owned launcher feed; direct routing requires command receipt coverage.', 'use'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_EXECUTE, 'Daemon-local local-services action dispatch can stop/restart/terminate local services; direct routing requires command receipt coverage.', 'manage'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_CREATE, 'Daemon-mediated public-preview create can expose a local service through a public URL; direct routing requires command receipt coverage and server-side authorization.', 'use', undefined, 'manageAccess'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_REVOKE, 'Daemon-mediated public-preview revoke terminates a public exposure; direct routing requires command receipt coverage and server-side authorization.', 'use', undefined, 'manageAccess'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_BROWSER_CONTEXT_DISPATCH, 'Daemon-local browser context dispatch can capture, attach, clear, or annotate browser context through one typed runtime dispatcher; direct routing requires command receipt coverage.', 'use'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_NPM_REGISTRY_PROFILES_MUTATE, 'Daemon-local npm registry profile mutation writes private machine configuration; direct routing requires command receipt coverage.', 'manage'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_INSTALL, 'Explicit Agent session-hook install mutates machine-local Agent configuration and rotates a scoped credential; direct routing requires command receipt coverage.', 'manage'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_DISABLE, 'Explicit Agent session-hook disable mutates machine-local Agent configuration; direct routing requires command receipt coverage.', 'manage'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_ENABLE, 'Explicit Agent session-hook enable mutates machine-local Agent configuration; direct routing requires command receipt coverage.', 'manage'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_UNINSTALL, 'Explicit Agent session-hook uninstall removes owned machine-local configuration and revokes its scoped credential; direct routing requires command receipt coverage.', 'manage'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_SETTINGS_SET, 'Daemon-local plugin settings mutation writes machine-scoped configuration; direct routing requires command receipt coverage.', 'manage'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_COLLECTION_CANDIDATE_PREPARATION_EXECUTE, 'Daemon-owned Collection candidate preparation invokes only exact trusted target callbacks and writes bounded non-authoritative Account Data stages; direct routing requires command receipt coverage.', 'use'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_SECRET_SET, 'Daemon-local declared plugin-secret creation or replacement mutates the selected machine custody through its current generation-bound service; direct routing requires command receipt coverage.', 'manage'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_SECRET_DELETE, 'Daemon-local declared plugin-secret deletion mutates the selected machine custody through its current generation-bound service; direct routing requires command receipt coverage.', 'manage'),
+  directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE, 'Daemon-local private-preview openOrCreate mutates the machine-scoped preview registry and mints a BrowserViewTarget-bearing snapshot row.', 'use', 'submitAgentInput'),
+  directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_REVOKE, 'Daemon-local private-preview revoke unregisters a machine-scoped preview registry row.', 'use', 'submitAgentInput'),
+  directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START, 'Daemon-local local-services launcher start can launch local service targets.', 'use', undefined, true),
+  directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_OPEN_PREVIEW, 'Daemon-local local-services launcher openPreview resolves and opens a local preview target.', 'use'),
+  directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_REGISTER_PREVIEW, 'Daemon-local local-services launcher registerPreview persists a private preview target.', 'use'),
+  directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_HISTORY_CLEAR, 'Daemon-local local-services launcher history clear mutates the daemon-owned launcher feed.', 'use'),
+  directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_EXECUTE, 'Daemon-local local-services action dispatch can stop/restart/terminate local services.', 'manage'),
+  directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_CREATE, 'Daemon-mediated public-preview create can expose a local service through a public URL; server-side authorization is required.', 'use', 'manageAccess'),
+  directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_REVOKE, 'Daemon-mediated public-preview revoke terminates a public exposure; server-side authorization is required.', 'use', 'manageAccess'),
+  directEphemeral(RPC_METHODS.DAEMON_BROWSER_CONTEXT_DISPATCH, 'Daemon-local browser context dispatch can capture, attach, clear, or annotate browser context through one typed runtime dispatcher.', 'use'),
+  directEphemeral(RPC_METHODS.DAEMON_NPM_REGISTRY_PROFILES_MUTATE, 'Daemon-local npm registry profile mutation writes private machine configuration.', 'manage'),
+  directEphemeral(RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_INSTALL, 'Explicit Agent session-hook install mutates machine-local Agent configuration and rotates a scoped credential.', 'manage'),
+  directEphemeral(RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_DISABLE, 'Explicit Agent session-hook disable mutates machine-local Agent configuration.', 'manage'),
+  directEphemeral(RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_ENABLE, 'Explicit Agent session-hook enable mutates machine-local Agent configuration.', 'manage'),
+  directEphemeral(RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_UNINSTALL, 'Explicit Agent session-hook uninstall removes owned machine-local configuration and revokes its scoped credential.', 'manage'),
+  directEphemeral(RPC_METHODS.DAEMON_PLUGIN_SETTINGS_SET, 'Daemon-local plugin settings mutation writes machine-scoped configuration.', 'manage'),
+  directEphemeral(RPC_METHODS.DAEMON_PLUGIN_COLLECTION_CANDIDATE_PREPARATION_EXECUTE, 'Daemon-owned Collection candidate preparation invokes only exact trusted target callbacks and writes bounded non-authoritative Account Data stages.', 'use'),
+  directEphemeral(RPC_METHODS.DAEMON_PLUGIN_SECRET_SET, 'Daemon-local declared plugin-secret creation or replacement mutates the selected machine custody through its current generation-bound service.', 'manage'),
+  directEphemeral(RPC_METHODS.DAEMON_PLUGIN_SECRET_DELETE, 'Daemon-local declared plugin-secret deletion mutates the selected machine custody through its current generation-bound service.', 'manage'),
   serverRequired(RPC_METHODS.MACHINES_WORK_SUMMARY_GET, 'sharing',
     'Content-free Machine work summary requires current custodian or Manage admission at the Home.', 'manage') satisfies MachineRpcRoutePolicyV1,
   ...USAGE_SOURCE_ACTION_IDS.filter(id => id !== 'usage.sources.dismiss').map((method): MachineRpcRoutePolicyV1 => (serverRequired(method, 'account_change', 'Native source metadata and consent require the exact captured Account and current Machine installation.', 'custodian_only') satisfies MachineRpcRoutePolicyV1)),
   ...[MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD].map((method): MachineRpcRoutePolicyV1 => ({
     method, routeClass: 'server_required', rationale: 'Managed retention reads exact private guest activity and reversible drain through current Manage admission.',
-    ownerPacket: 'PMS-5', rpcClassification: 'internal_only', commandReceiptRequired: false,
+    ownerPacket: 'PMS-5', rpcClassification: 'internal_only',
     sharedMachineAccess: 'manage', scope: SERVER_REQUIRED_SCOPE, serverRequiredReason: 'server_persistence',
   })),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, 'Daemon-local structured-message action execution enters the canonical plugin action executor; direct routing requires command receipt coverage.', 'use'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_CONFIGURE, 'Exact-machine Voice diagnostics configuration mutates private local retention policy; direct routing requires command receipt coverage.', 'use'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_DELETE_ALL, 'Exact-machine Voice diagnostics delete-all destroys private retained artifacts and active export sessions; direct routing requires command receipt coverage.', 'use'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_REVOKE_CAPTURE, 'Exact-machine Voice diagnostics revocation mutates local capture authorization; direct routing requires command receipt coverage.', 'use'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_INIT, 'Exact-machine Voice diagnostics export init authorizes and opens an encrypted ephemeral download session; direct routing requires command receipt coverage.', 'use'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_FINALIZE, 'Exact-machine Voice diagnostics export finalize closes an ephemeral download session; direct routing requires command receipt coverage.', 'use'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_ABORT, 'Exact-machine Voice diagnostics export abort closes an ephemeral download session; direct routing requires command receipt coverage.', 'use'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START, 'Delivers a server-minted signed live-stream start request to the source daemon; direct routing requires command receipt coverage before the server re-verifies the echoed authorization.', 'manage'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_ALL, 'Daemon-local session-runner bulk restart mutates local runtime processes; direct routing requires command receipt coverage.', 'manage'),
+  directEphemeral(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, 'Daemon-local structured-message action execution enters the canonical plugin action executor.', 'use'),
+  directEphemeral(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_CONFIGURE, 'Exact-machine Voice diagnostics configuration mutates private local retention policy.', 'use'),
+  directEphemeral(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_DELETE_ALL, 'Exact-machine Voice diagnostics delete-all destroys private retained artifacts and active export sessions.', 'use'),
+  directEphemeral(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_REVOKE_CAPTURE, 'Exact-machine Voice diagnostics revocation mutates local capture authorization.', 'use'),
+  directEphemeral(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_INIT, 'Exact-machine Voice diagnostics export init authorizes and opens an encrypted ephemeral download session.', 'use'),
+  directEphemeral(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_FINALIZE, 'Exact-machine Voice diagnostics export finalize closes an ephemeral download session.', 'use'),
+  directEphemeral(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_ABORT, 'Exact-machine Voice diagnostics export abort closes an ephemeral download session.', 'use'),
+  directEphemeral(RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START, 'Delivers a server-minted signed live-stream start request to the source daemon; the server verifies the echoed signed authorization.', 'manage'),
+  directEphemeral(RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_ALL, 'Daemon-local session-runner bulk restart mutates local runtime processes.', 'manage'),
 ] satisfies readonly MachineRpcRoutePolicyV1[]);
 
 const DAEMON_VOICE_AUDIO_RELAY_FALLBACK_POLICY = Object.freeze({
@@ -496,10 +468,10 @@ const DAEMON_VOICE_AUDIO_DIRECT_METHODS = [
 const DAEMON_VOICE_AUDIO_DIRECT_METHOD_SET = new Set<string>(DAEMON_VOICE_AUDIO_DIRECT_METHODS);
 
 const DAEMON_VOICE_AUDIO_DIRECT_POLICIES = Object.freeze(
-  DAEMON_VOICE_AUDIO_DIRECT_METHODS.map((method) => directMediumRiskReceipted(
+  DAEMON_VOICE_AUDIO_DIRECT_METHODS.map((method) => directEphemeral(
     method,
-    'Daemon voice audio/control operation is daemon-local and direct-preferred only with command receipts; server relay fallback remains opt-in and requires signed authorization, relay caps, metering, and lifecycle receipts for remote web or native mobile clients without a direct route.',
-    'use', DAEMON_VOICE_AUDIO_RELAY_FALLBACK_POLICY,
+    'Daemon voice audio/control operation is daemon-local and direct-preferred; server relay fallback remains opt-in and requires signed authorization, relay caps, metering, and lifecycle receipts for remote web or native mobile clients without a direct route.',
+    'use', undefined, undefined, DAEMON_VOICE_AUDIO_RELAY_FALLBACK_POLICY,
   )),
 );
 
@@ -650,7 +622,7 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
   ...MANAGED_MACHINE_ACTION_IDS_V1.map((method): MachineRpcRoutePolicyV1 => ({
     method, routeClass: 'server_required', rationale: 'Managed-resource Actions require current Manage, exact installation and row admission before reviewed native effects.',
     ownerPacket: 'PMS-5', rpcClassification: 'action_spec_bound', actionSpecId: method,
-    sharedMachineAccess: 'manage', commandReceiptRequired: false, scope: SERVER_REQUIRED_SCOPE, serverRequiredReason: 'auth',
+    sharedMachineAccess: 'manage', scope: SERVER_REQUIRED_SCOPE, serverRequiredReason: 'auth',
   })),
   ...serverRequiredRows([
     RPC_METHODS.DAEMON_FILESYSTEM_CREATE_DIRECTORY, RPC_METHODS.DAEMON_FILESYSTEM_RENAME,
@@ -661,7 +633,6 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
     RPC_METHODS.DAEMON_FILESYSTEM_TRANSFER_CANCEL,
   ], 'auth', 'Semantic filesystem Actions require verified requester Account and exact Machine ingress before their canonical approval, root and prepared-transfer owners admit effects.', 'use', undefined, undefined, true),
   ...DIRECT_EPHEMERAL_POLICIES,
-  ...DIRECT_MEDIUM_RISK_RECEIPTED_POLICIES,
   ...DAEMON_VOICE_AUDIO_DIRECT_POLICIES,
   actionSpecServerRequired(RPC_METHODS.DAEMON_WORKSPACE_FILES_REPLACE_APPLY, 'destructive_or_recovery_mutation', 'Replace and inverse restore require the reviewed file hash and canonical Action admission.', 'workspace.files.replace', 'use', undefined, true),
   actionSpecServerRequired(RPC_METHODS.DAEMON_LSP_RENAME_APPLY, 'destructive_or_recovery_mutation', 'Semantic rename requires reviewed hashes and its canonical Action admission.', 'code.rename.apply', 'use', undefined, true),
@@ -960,7 +931,7 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
   // Normal controls enter the requester's accepted Workspace and Account owner.
   ...serverRequiredRows([
     RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE, RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_RESOLVE,
-  ], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', 'use', undefined, undefined, true),
+  ], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', 'use', undefined, undefined, true),
   // These separate target transports retain their existing private custody.
   ...serverRequiredRows([
     RPC_METHODS.DAEMON_WORKSPACE_SYNC_PREPARE_BETWEEN,
@@ -969,32 +940,32 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
     RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_APPLY,
     RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_STAGE_DISCARD,
     RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_CAPTURE_RELEASE
-  ], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', 'custodian_only', undefined, undefined, true),
+  ], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', 'custodian_only', undefined, undefined, true),
   ...serverRequiredRows([
     RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
     RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE
-  ], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', 'custodian_only'),
+  ], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', 'custodian_only'),
   ...serverRequiredRows([
     RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE
-  ], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', 'custodian_only', undefined, undefined, true),
+  ], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', 'custodian_only', undefined, undefined, true),
   serverRequired(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT,
     'destructive_or_recovery_mutation', 'Destination replacement preflight uses the selected Machine Manage admission; native target custody still owns the destination root.', 'manage') satisfies MachineRpcRoutePolicyV1,
   serverRequired(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_RECOVER, 'destructive_or_recovery_mutation',
-    'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', 'use', undefined, undefined, true),
-  ...[...serverRequiredRows([RPC_METHODS.DAEMON_LSP_RESTART], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', "use", undefined, undefined, true),
-  ...serverRequiredRows([RPC_METHODS.STOP_DAEMON], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', "manage"),
-  ...serverRequiredRows([RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', "use"),
-  ...serverRequiredRows([RPC_METHODS.DAEMON_MEMORY_SETTINGS_SET, RPC_METHODS.DAEMON_MEMORY_CLEAR_INDEX], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', "manage"),
-  ...serverRequiredRows([RPC_METHODS.DAEMON_VOICE_SPEECH_SETTINGS_ACTION_EXECUTE], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', "use"),
-  ...serverRequiredRows([RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL, RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LICENSE_ACCEPT, RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_REMOVE], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', "manage"),
-  ...serverRequiredRows([RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_ACK, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_CANCEL, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_ABORT, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_CANCEL, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CANCEL, RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_ABORT, RPC_METHODS.DAEMON_VOICE_SPEECH_DOWNLOAD_ABORT], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', "use"),
-  ...serverRequiredRows([RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE, RPC_METHODS.DAEMON_PROVIDERS_MODEL_SETTINGS_MUTATE, RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFIRM, RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_PREPARE_SOURCE, RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFLICT_CONFIRM], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', "custodian_only"),
-  ...serverRequiredRows([RPC_METHODS.DAEMON_EXTENSIONS_RELOAD, RPC_METHODS.SKILLS_MACHINE_INSTALL, RPC_METHODS.SKILLS_MACHINE_UNINSTALL], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', "manage"),
-  ...serverRequiredRows([RPC_METHODS.SCM_CHANGE_INCLUDE, RPC_METHODS.SCM_CHANGE_EXCLUDE, RPC_METHODS.SCM_CHANGE_DISCARD, RPC_METHODS.SCM_COMMIT_CREATE, RPC_METHODS.SCM_COMMIT_BACKOUT, RPC_METHODS.SCM_COMMIT_UNDO_LAST, RPC_METHODS.SCM_BRANCH_CREATE, RPC_METHODS.SCM_BRANCH_CHECKOUT, RPC_METHODS.SCM_BRANCH_MERGE, RPC_METHODS.SCM_BRANCH_REBASE, RPC_METHODS.SCM_BRANCH_OPERATION_CONTINUE, RPC_METHODS.SCM_BRANCH_OPERATION_SKIP, RPC_METHODS.SCM_BRANCH_OPERATION_ABORT, RPC_METHODS.SCM_CONFLICT_ACCEPT_SIDE, RPC_METHODS.SCM_CONFLICT_MARK_RESOLVED, RPC_METHODS.SCM_WORKTREE_CREATE, RPC_METHODS.SCM_WORKTREE_REMOVE, RPC_METHODS.SCM_WORKTREE_PRUNE, RPC_METHODS.SCM_REMOTE_ADD, RPC_METHODS.SCM_REMOTE_SET_URL, RPC_METHODS.SCM_REMOTE_REMOVE, RPC_METHODS.SCM_REMOTE_FETCH, RPC_METHODS.SCM_REMOTE_PUSH, RPC_METHODS.SCM_REMOTE_PULL, RPC_METHODS.SCM_REMOTE_PUBLISH, RPC_METHODS.SCM_STASH_DROP, RPC_METHODS.SCM_STASH_CREATE, RPC_METHODS.SCM_STASH_POP, RPC_METHODS.SCM_STASH_APPLY, RPC_METHODS.SCM_PULL_REQUEST_CHECKOUT, RPC_METHODS.SCM_PULL_REQUEST_PREPARE_WORKTREE, RPC_METHODS.SCM_PULL_REQUEST_RUN_STACKED, RPC_METHODS.SCM_REPOSITORY_CLONE, RPC_METHODS.SCM_REPOSITORY_INIT, RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK, RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_EDIT, RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_UNDO], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', "use", undefined, undefined, true),
-  ...serverRequiredRows([RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_DELETE, RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_CLEAR], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', "custodian_only", undefined, undefined, true),
-  ...serverRequiredRows([RPC_METHODS.SCM_DIFF_SUMMARY_REFINE, RPC_METHODS.SCM_DIFF_SUMMARY_ADD_OUTPUTS, RPC_METHODS.SCM_DIFF_SUMMARY_DISCUSS], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', "use", undefined, undefined, true),
-  ...serverRequiredRows([RPC_METHODS.SCM_DIFF_SUMMARY_REVIEWED_MARK, RPC_METHODS.SCM_DIFF_SUMMARY_REVIEWED_UNMARK], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', "custodian_only", undefined, undefined, true)],
-  ...serverRequiredRows(LOCAL_MUTATION_AGENT_INPUT_METHODS, 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.', 'use', undefined, 'submitAgentInput', true),
+    'Daemon-local or repository mutation remains server-routed.', 'use', undefined, undefined, true),
+  ...[...serverRequiredRows([RPC_METHODS.DAEMON_LSP_RESTART], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', "use", undefined, undefined, true),
+  ...serverRequiredRows([RPC_METHODS.STOP_DAEMON], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', "manage"),
+  ...serverRequiredRows([RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', "use"),
+  ...serverRequiredRows([RPC_METHODS.DAEMON_MEMORY_SETTINGS_SET, RPC_METHODS.DAEMON_MEMORY_CLEAR_INDEX], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', "manage"),
+  ...serverRequiredRows([RPC_METHODS.DAEMON_VOICE_SPEECH_SETTINGS_ACTION_EXECUTE], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', "use"),
+  ...serverRequiredRows([RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL, RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LICENSE_ACCEPT, RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_REMOVE], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', "manage"),
+  ...serverRequiredRows([RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_ACK, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_CANCEL, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_ABORT, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_CANCEL, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CANCEL, RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_ABORT, RPC_METHODS.DAEMON_VOICE_SPEECH_DOWNLOAD_ABORT], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', "use"),
+  ...serverRequiredRows([RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE, RPC_METHODS.DAEMON_PROVIDERS_MODEL_SETTINGS_MUTATE, RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFIRM, RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_PREPARE_SOURCE, RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFLICT_CONFIRM], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', "custodian_only"),
+  ...serverRequiredRows([RPC_METHODS.DAEMON_EXTENSIONS_RELOAD, RPC_METHODS.SKILLS_MACHINE_INSTALL, RPC_METHODS.SKILLS_MACHINE_UNINSTALL], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', "manage"),
+  ...serverRequiredRows([RPC_METHODS.SCM_CHANGE_INCLUDE, RPC_METHODS.SCM_CHANGE_EXCLUDE, RPC_METHODS.SCM_CHANGE_DISCARD, RPC_METHODS.SCM_COMMIT_CREATE, RPC_METHODS.SCM_COMMIT_BACKOUT, RPC_METHODS.SCM_COMMIT_UNDO_LAST, RPC_METHODS.SCM_BRANCH_CREATE, RPC_METHODS.SCM_BRANCH_CHECKOUT, RPC_METHODS.SCM_BRANCH_MERGE, RPC_METHODS.SCM_BRANCH_REBASE, RPC_METHODS.SCM_BRANCH_OPERATION_CONTINUE, RPC_METHODS.SCM_BRANCH_OPERATION_SKIP, RPC_METHODS.SCM_BRANCH_OPERATION_ABORT, RPC_METHODS.SCM_CONFLICT_ACCEPT_SIDE, RPC_METHODS.SCM_CONFLICT_MARK_RESOLVED, RPC_METHODS.SCM_WORKTREE_CREATE, RPC_METHODS.SCM_WORKTREE_REMOVE, RPC_METHODS.SCM_WORKTREE_PRUNE, RPC_METHODS.SCM_REMOTE_ADD, RPC_METHODS.SCM_REMOTE_SET_URL, RPC_METHODS.SCM_REMOTE_REMOVE, RPC_METHODS.SCM_REMOTE_FETCH, RPC_METHODS.SCM_REMOTE_PUSH, RPC_METHODS.SCM_REMOTE_PULL, RPC_METHODS.SCM_REMOTE_PUBLISH, RPC_METHODS.SCM_STASH_DROP, RPC_METHODS.SCM_STASH_CREATE, RPC_METHODS.SCM_STASH_POP, RPC_METHODS.SCM_STASH_APPLY, RPC_METHODS.SCM_PULL_REQUEST_CHECKOUT, RPC_METHODS.SCM_PULL_REQUEST_PREPARE_WORKTREE, RPC_METHODS.SCM_PULL_REQUEST_RUN_STACKED, RPC_METHODS.SCM_REPOSITORY_CLONE, RPC_METHODS.SCM_REPOSITORY_INIT, RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK, RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_EDIT, RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_UNDO], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', "use", undefined, undefined, true),
+  ...serverRequiredRows([RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_DELETE, RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_CLEAR], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', "custodian_only", undefined, undefined, true),
+  ...serverRequiredRows([RPC_METHODS.SCM_DIFF_SUMMARY_REFINE, RPC_METHODS.SCM_DIFF_SUMMARY_ADD_OUTPUTS, RPC_METHODS.SCM_DIFF_SUMMARY_DISCUSS], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', "use", undefined, undefined, true),
+  ...serverRequiredRows([RPC_METHODS.SCM_DIFF_SUMMARY_REVIEWED_MARK, RPC_METHODS.SCM_DIFF_SUMMARY_REVIEWED_UNMARK], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', "custodian_only", undefined, undefined, true)],
+  ...serverRequiredRows(LOCAL_MUTATION_AGENT_INPUT_METHODS, 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', 'use', undefined, 'submitAgentInput', true),
   ...serverRequiredRows([
     RPC_METHODS.DAEMON_WORKSPACE_SYNC_GET, RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST,
     RPC_METHODS.DAEMON_WORKSPACE_SYNC_WATCH, RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST,
@@ -1094,7 +1065,6 @@ const RETAINED_RIPGREP_REFUSAL_POLICY: MachineRpcRoutePolicyV1 = {
   rationale: 'No deployed PMS-5 route policy row exists for this method; deny direct by default.',
   ownerPacket: 'PMS-5',
   rpcClassification: 'advisory_unclassified',
-  commandReceiptRequired: false,
   sharedMachineAccess: 'custodian_only',
   scope: SERVER_REQUIRED_SCOPE,
   serverRequiredReason: 'unclassified',
@@ -1143,7 +1113,6 @@ export function resolveMachineRpcRoutePolicy(method: string): MachineRpcRoutePol
     rationale: 'No deployed PMS-5 route policy row exists for this method; deny direct by default.',
     ownerPacket: 'PMS-5',
     rpcClassification: 'advisory_unclassified',
-    commandReceiptRequired: false,
     sharedMachineAccess: 'custodian_only',
     scope: SERVER_REQUIRED_SCOPE,
     serverRequiredReason: 'unclassified',
@@ -1305,7 +1274,7 @@ export function resolveEphemeralRunnerMachineRpcAuthority(
 }
 
 export function isMachineRpcDirectRoutePolicy(policy: Pick<MachineRpcRoutePolicyV1, 'routeClass'>): boolean {
-  return policy.routeClass === 'direct_ephemeral' || policy.routeClass === 'direct_medium_risk_receipted';
+  return policy.routeClass === 'direct_ephemeral';
 }
 
 export function resolveMachineRpcRelayFallbackDecision(input: Readonly<{
@@ -1335,8 +1304,7 @@ function isValidRelayFallbackPolicy(policy: MachineRpcRoutePolicyV1): boolean {
   const relayFallback = policy.relayFallback;
   if (!relayFallback) return true;
   return DAEMON_VOICE_AUDIO_DIRECT_METHOD_SET.has(policy.method)
-    && policy.routeClass === 'direct_medium_risk_receipted'
-    && policy.commandReceiptRequired
+    && policy.routeClass === 'direct_ephemeral'
     && relayFallback.flowKind === 'daemon_voice_audio'
     && relayFallback.defaultSharedServerMode === 'disabled'
     && relayFallback.authorizationRequired === true
@@ -1370,12 +1338,6 @@ export function validateMachineRpcRoutePolicies(
       invalidMethods.add(policy.method);
     }
     if (policy.routeClass !== 'server_required' && policy.serverRequiredReason) {
-      invalidMethods.add(policy.method);
-    }
-    if (policy.routeClass === 'direct_medium_risk_receipted' && !policy.commandReceiptRequired) {
-      invalidMethods.add(policy.method);
-    }
-    if (policy.routeClass === 'direct_ephemeral' && policy.commandReceiptRequired) {
       invalidMethods.add(policy.method);
     }
     if (isMachineRpcDirectRoutePolicy(policy) && policy.rpcClassification === 'advisory_unclassified') {

@@ -43,6 +43,16 @@ function createDeps(
 }
 
 describe('createActionExecutor (public External Session actions)', () => {
+  it.each(['ui', 'agent', 'mcp', 'cli'] as const)('routes %s background-follow intent through the host owner without plugin provenance', async (surface) => {
+    const externalSessionAction = vi.fn();
+    const response = { ok: true as const, enabled: true, leaseActive: true, updatedAtMs: 42 };
+    const executor = createActionExecutor({ ...createDeps(externalSessionAction),
+      hostExternalSessionAction: async () => ({ ok: true, result: response }) });
+    await expect(executor.execute('sessions.external.backgroundFollow.set', {
+      sessionId: 'session-1', enabled: true,
+    }, { surface, authority: 'account_automation', defaultSessionId: 'session-1' })).resolves.toEqual({ ok: true, result: response });
+    expect(externalSessionAction).not.toHaveBeenCalled();
+  });
   it.each(['ui', 'agent', 'mcp'] as const)('routes %s import through the existing host operation without plugin identity', async (surface) => {
     const externalSessionAction = vi.fn();
     const result = { ok: false as const, error: { code: 'upgrade_required', message: 'Newer daemon required' } };

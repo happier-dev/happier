@@ -1,5 +1,6 @@
 import { isSessionHappierToolsEnabled } from '../reach/sessionCapabilityMetadataV1.js';
 import { trimIdent } from '../strings/trimIdent.js';
+import { hasSessionTitleInMetadata } from '../sessions/metadata/sessionTitle.js';
 import { SessionOwnerCompatibilityViewV1Schema } from '../sessions/metadata/sessionMetadataSchemasV1.js';
 import { readLeadingCodingPromptPlanV1 } from './promptPlanV1.js';
 import {
@@ -52,6 +53,8 @@ export interface HappierSessionTitleGuidanceV1Options {
   settings?: Record<string, unknown> | null | undefined;
   sessionTitleToolAvailable?: boolean;
   sessionMetadata?: unknown;
+  /** Title presence basis held by a plan producer; defaults to the Session metadata. */
+  sessionTitled?: boolean;
   createdAsBot?: boolean;
   preferredToolName?: string;
 }
@@ -66,7 +69,9 @@ const HAPPIER_SESSION_COMPACTION_NUDGE_V1 = 'In long sessions, when you finish a
 /** The title policy shared by the base prompt, dynamic suffix and transport appendix. */
 export function buildHappierSessionTitleGuidanceV1(args: HappierSessionTitleGuidanceV1Options = {}): string {
   const mode = resolveCodingPromptSessionTitleUpdatesModeV1(args.settings);
-  if (args.sessionTitleToolAvailable === false || mode === 'disabled') return '';
+  if (!isSessionHappierToolsEnabled(args.sessionMetadata) || args.sessionTitleToolAvailable === false || mode === 'disabled') return '';
+  const titled = args.sessionTitled ?? hasSessionTitleInMetadata(args.sessionMetadata);
+  if (args.createdAsBot !== true && mode === 'initial' && titled) return '';
   const guidance = args.createdAsBot === true
     ? HAPPIER_BASE_SYSTEM_PROMPT_BOT_TITLE_V1
     : mode === 'initial'

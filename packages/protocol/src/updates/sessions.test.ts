@@ -6,7 +6,7 @@ import { SessionConsumptionReplaceV1Schema, SessionConsumptionReplaceAckV1Schema
 import { buildSessionMessageObservationFactsV1, SessionMessageObservationFactsV1Schema } from '../sessions/messages/sessionMessageObservationFactsV1.js';
 
 it('classifies durable-only, live and unconsumed events with one policy', () => {
-  for (const event of ['new-message', 'message-updated', 'checkpoint', 'delta'] as const) {
+  for (const event of ['new-message', 'message-updated', 'checkpoint', 'delta', 'update-session'] as const) {
     expect(classifySessionEventDelivery({ event, consumption: { durableBodies: false, liveSegments: true } }))
       .toEqual({ delivery: 'full', materialization: 'full' });
     for (const durableBodies of [true, false]) {
@@ -15,6 +15,17 @@ it('classifies durable-only, live and unconsumed events with one policy', () => 
           : { delivery: durableBodies ? 'full' : 'hint', materialization: event === 'new-message' ? 'projection' : 'stale' });
     }
   }
+});
+
+it('omits only metadata documents while retaining full Agent state in a Session metadata hint', () => {
+  const hint = { t: 'update-session', id: 's', metadataDocument: 'omitted', metadataLayoutVersion: 1,
+    metadataVersion: 9, agentState: { version: 3, value: 'unchanged-agent-state' }, pendingPermissionRequestCount: 1 };
+  expect(UpdateBodySchema.parse(hint)).toEqual(hint);
+  for (const metadata of [
+    { metadata: { version: 9, value: 'private-shared-metadata' } },
+    { ownerMetadata: { value: { t: 'plain', v: { v: 1 } } } },
+    { metadataVersion: undefined }, { metadataLayoutVersion: undefined },
+  ]) expect(UpdateBodySchema.safeParse({ ...hint, ...metadata }).success).toBe(false);
 });
 
 it('keeps consumption declaration and refusal envelopes closed', () => {
@@ -63,6 +74,17 @@ function buildNewSessionUpdateBody(overrides: Record<string, unknown> = {}) {
 }
 
 describe('session update payloads', () => {
+  it('carries closed pending activation causes and explicit clearing without private failure prose', () => {
+    const update = { t: 'pending-changed', sid: 's1', pendingVersion: 2, pendingCount: 1,
+      pendingActivationAuthorization: { requestId: 'input', requestedAt: 1, status: 'failed', failureCode: 'runtime_start_failed' },
+      pendingActivationFailureDetails: { reason: 'spawn-rejected', spawnErrorCode: 'SPAWN_VALIDATION_FAILED', runtimeReason: 'no_eligible_member' } };
+    expect(UpdateBodySchema.parse(update)).toEqual(update);
+    expect(UpdateBodySchema.parse({ ...update, pendingActivationAuthorization: null, pendingActivationFailureDetails: null }))
+      .toMatchObject({ pendingActivationAuthorization: null, pendingActivationFailureDetails: null });
+    expect(UpdateBodySchema.safeParse({ ...update, pendingActivationFailureDetails: {
+      ...update.pendingActivationFailureDetails, message: 'private provider prose',
+    } }).success).toBe(false);
+  });
   it('accepts legacy new-session updates without a storage encryption mode', () => {
     const parsed = UpdateBodySchema.parse(buildNewSessionUpdateBody({ encryptionMode: undefined }));
 

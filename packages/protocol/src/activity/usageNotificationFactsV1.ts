@@ -55,3 +55,4 @@ export const MachineVitalsNotificationV1Schema = lazyZodSchema(() => {
   ]).check(z.refine(notice => notice.since <= notice.at, { path: ['since'], message: 'Evidence window starts after occurrence' }));
 });
 export type MachineVitalsNotificationV1 = z.infer<typeof MachineVitalsNotificationV1Schema>;
+

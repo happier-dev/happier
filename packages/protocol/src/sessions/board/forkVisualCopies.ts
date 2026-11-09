@@ -1,6 +1,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { SessionSurfaceItemIdSchema } from './ids.js';
+import { SessionSystemRecordRevisionSchema } from '../system/records/sessionSystemRecordRevision.js';
 import { areServerProfileIdentifiersEquivalent, type ServerProfileScopeResolver } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
 
 const origin = {
@@ -35,6 +36,12 @@ export const SessionForkVisualOriginV1Schema = lazyZodSchema(() => z.strictObjec
     sessionId: z.string().check(z.trim(), z.minLength(1)),
     sourceMessageId: z.string().check(z.trim(), z.minLength(1)),
     sourceSeq: z.number().check(z.int(), z.nonnegative()),
+    // Source-only settled correspondence survives an unavailable child copy; it grants no read.
+    settledApprovalReferences: z.optional(z.array(z.strictObject({
+        approvalRequestArtifactId: z.string().check(z.minLength(1)),
+        sourceItemId: SessionSurfaceItemIdSchema,
+        sourceItemRevision: SessionSystemRecordRevisionSchema,
+    }))),
 }));
 export type SessionForkVisualOriginV1 = Readonly<z.infer<typeof SessionForkVisualOriginV1Schema>>;
 

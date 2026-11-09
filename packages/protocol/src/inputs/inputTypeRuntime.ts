@@ -1,4 +1,3 @@
-import { SharedSavedSecretReferenceSelectionV1Schema } from '../account/settings/savedSecretReferenceV1.js';
 import type { PublicActionInputById } from '../actions/actionSpecs.js';
 import { z } from 'zod/mini';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '../plugins/actions/jsonSchemaValidation.js';
@@ -13,10 +12,11 @@ import { UsageQuerySchema, normalizeUsageQuery } from './usageQuery.js';
 import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
 import type { HostInputTypeReferenceV1, InputTypeReferenceV1 } from './inputTypes.js';
 import { inputTypeOptionsSourceId } from './inputTypes.js';
-import { VoiceTrackedSessionAddressV1Schema } from '../sessions/follow/voiceTrackedTargetsCompatibilityV1.js';
+import { VoiceTrackedSessionAddressV1Schema } from '../sessions/follow/voiceTrackedSessionAddressV1.js';
 import { WorkspaceRefV1Schema } from '../workspaces/workspaceRefV1.js';
 import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
 import { normalizeExecutableParticipantSelectionV1 } from '../discussions/executableParticipants.js';
+import { SharedSavedSecretReferenceSelectionV1Schema } from '../account/settings/savedSecretReferenceV1.js';
 
 function isInputOptionAvailable(value: unknown, options: readonly Pick<InputOption, 'value' | 'disabled'>[]): boolean {
   return options.some(option => !option.disabled && pluginJsonValuesEqual(option.value, value));
@@ -75,9 +75,11 @@ export function readInputFieldOptionsConstraint(field: InputFieldHint, type?: Re
   viewerPurpose = false, selection: Readonly<{ contextBound?: boolean; value?: JsonValue }> = {}): Readonly<{ kind: 'none' }> | Readonly<{ kind: 'static'; options: readonly InputOption[] }> | Readonly<{ kind: 'dynamic' }> {
   // The binder owns followed values. Choices constrain own selections, and an empty
   // collection selects nothing (Usage's All), so neither needs a choice inventory.
-  if (selection.contextBound || field.widget === 'multiselect' && Array.isArray(selection.value) && selection.value.length === 0)
+  if (selection.contextBound
+    || field.widget === 'multiselect' && Array.isArray(selection.value) && selection.value.length === 0)
     return { kind: 'none' };
   if (type?.definition.options) return { kind: 'dynamic' };
+  if (field.allowCustomValue === true) return { kind: 'none' };
   if (field.options !== undefined) return { kind: 'static', options: field.options };
   if (field.optionsSourceId || field.connectedAccountOptions && !viewerPurpose) return { kind: 'dynamic' };
   return { kind: 'none' };
@@ -88,6 +90,8 @@ export function validateInputFieldSchema(params: Readonly<{
   field: InputFieldHint; value: JsonValue; type?: ResolvedInputTypeV1 | null;
 }>): ReturnType<typeof validateInputTypeValue> | Readonly<{ status: 'unavailable'; reasonCode: string }> {
   const { field, value, type } = params;
+  if (field.allowCustomValue === true && typeof value !== 'string')
+    return { status: 'invalid', reasonCode: 'input_type_value_invalid' };
   const values = field.widget === 'multiselect' && Array.isArray(value) ? value : [value];
   const reference = field.inputType;
   if (reference && 'pluginId' in reference && (!type || type.identity.pluginId !== reference.pluginId
@@ -125,11 +129,12 @@ export function validateInputFieldValue(params: Readonly<{
   if (schema.status !== 'valid') return schema;
   if (params.contextBound) return schema;
   const constraint = readInputFieldOptionsConstraint(params.field, params.type, params.viewerPurpose, params);
+  if (params.field.allowCustomValue === true && constraint.kind === 'none') return schema;
   const options = constraint.kind === 'static' ? constraint.options : params.options;
   if (constraint.kind === 'dynamic' && options === undefined && !params.storedValue)
     return { status: 'unavailable', reasonCode: 'input_type_options_unavailable' };
   const values = readInputFieldSelectedValues(params.field, params.value);
-  const fieldOptions = params.field.options;
+  const fieldOptions = params.field.allowCustomValue === true ? undefined : params.field.options;
   if (fieldOptions && values.some(selected => !isInputOptionAvailable(selected, fieldOptions)))
     return { status: 'invalid', reasonCode: 'input_type_option_invalid' };
   if (options && values.some(selected => !isInputOptionAvailable(selected, options)))
@@ -173,8 +178,9 @@ export async function resolveInputTypeOptions(params: Readonly<{
   ctx: ActionExecutorContext;
   identity: InputTypeReferenceV1;
   sessionId?: string;
+  query?: InputTypeOptionsQueryV1;
   readFailure: (result: unknown) => Extract<ActionExecuteResult, { ok: false }> | null;
-}>): Promise<Extract<ActionExecuteResult, { ok: false }> | Readonly<{ ok: true; result: readonly InputOption[]; optionsSourceId?: null }>> {
+}>): Promise<Extract<ActionExecuteResult, { ok: false }> | Readonly<{ ok: true; result: readonly InputOption[]; optionsSourceId?: null; nextCursor?: string }>> {
   const { deps, ctx, identity } = params;
   if ('hostType' in identity) return ctx.signal?.aborted
     ? { ok: false, errorCode: 'input_type_retired', error: 'input_type_retired' }
@@ -190,14 +196,18 @@ export async function resolveInputTypeOptions(params: Readonly<{
   if (!resource) return { ok: true, result: [], optionsSourceId: null };
   if (!deps.readInputTypeResource) return { ok: false, errorCode: 'input_type_options_unavailable', error: 'input_type_options_unavailable' };
   const result = await deps.readInputTypeResource({ type, resource, context: ctx,
-    ...(params.sessionId ? { sessionId: params.sessionId } : {}) });
+    ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+    ...(params.query ? { query: params.query } : {}) });
   const failure = params.readFailure(result);
   if (failure) return failure;
   const current = await deps.resolveInputType(identity, ctx);
   if (ctx.signal?.aborted || !current || current.occurrenceId !== type.occurrenceId) {
     return { ok: false, errorCode: 'input_type_retired', error: 'input_type_retired' };
   }
-  const options = readInputTypeOptions(type, result);
-  return options ? { ok: true, result: options }
+  const page = Array.isArray(result) ? { options: result } : result;
+  const parsedPage = z.strictObject({ options: z.array(InputOptionSchema), nextCursor: z.optional(z.string()) }).safeParse(page);
+  const options = parsedPage.success ? readInputTypeOptions(type, parsedPage.data.options) : null;
+  return options ? { ok: true, result: options,
+    ...(parsedPage.success && parsedPage.data.nextCursor !== undefined ? { nextCursor: parsedPage.data.nextCursor } : {}) }
     : { ok: false, errorCode: 'input_type_options_invalid', error: 'input_type_options_invalid' };
 }

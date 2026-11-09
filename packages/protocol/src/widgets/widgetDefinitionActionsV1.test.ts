@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '../actions/actionExecutor.js';
 import { ActionsSettingsV1Schema } from '../actions/actionSettings.js';
 import { isApprovalRequiredByActionsSettings } from '../actions/actionApprovalPolicy.js';
+import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { createWorkBoardArtifactBoundary } from '../boards/workBoardArtifactV1.testkit.js';
 import { createWidgetDefinitionArtifactPortV1 } from './widgetDefinitionArtifactV1.js';
 import { createSessionWidgetDefinitionSourceReaderV1 } from './widgetDefinitionPromotionV1.js';
@@ -15,6 +16,28 @@ const descriptor = { sizeDeclaration: { sizes: ['medium', 'full'] as ('medium' |
     inputSchema: { type: 'object' as const, properties: { session: { type: 'object' as const, properties: { serverId: { type: 'string' as const }, sessionId: { type: 'string' as const } }, required: ['serverId', 'sessionId'], additionalProperties: false } }, required: ['session'], additionalProperties: false },
     sessionInputPath: 'session' };
 describe('widget definition semantic Actions', () => {
+    it.each(['widgets.definition.create', 'widgets.definition.duplicate', 'widgets.definition.saveFromSession'] as const)('refuses an invalid new Artifact identity at the %s boundary', async actionId => {
+        const requests: unknown[] = [];
+        const boundary = createWorkBoardArtifactBoundary();
+        const port = createWidgetDefinitionArtifactPortV1(boundary.forAccount(account.accountId), { accountId: account.accountId });
+        const draft = { name: 'Count', sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' }, inputs: { fields: [] },
+            inputSchema: { type: 'object', additionalProperties: false },
+            body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Count' } } } };
+        await port.create(WidgetDefinitionV1Schema.parse({ v: 1, id: 'retained-id', ...draft, provenance: { source: { kind: 'authored' } } }));
+        const executor = createActionExecutor({ widgetAccountScope: () => account, widgetDefinitionArtifacts: port,
+            approvalsCreate: async ({ request }) => { requests.push(request); return { artifactId: 'approval' }; } });
+        const input = actionId === 'widgets.definition.create'
+            ? { account, artifactId: 'not-a-uuid', definition: draft }
+            : actionId === 'widgets.definition.duplicate' ? { account, artifactId: 'retained-id', newArtifactId: 'not-a-uuid' }
+                : { account, artifactId: 'not-a-uuid', session: { serverId: account.serverId, sessionId: 'session-a' }, itemId: 'source' };
+        expect(await executor.execute(actionId, input, { surface: 'agent', serverId: account.serverId,
+            defaultSessionId: 'session-a', actionRequestId: 'invalid-identity' }))
+            .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+        expect(requests).toEqual([]);
+        expect(await port.get('not-a-uuid')).toBeNull();
+        expect(await executor.execute('widgets.definition.get', { account, artifactId: 'retained-id' }, { surface: 'ui', serverId: account.serverId }))
+            .toMatchObject({ ok: true, result: { definition: { id: 'retained-id' } } });
+    });
     it('promotes HTML through the real Save Action into an independent library bundle with its admitted policy', async () => {
         const boundary = createWorkBoardArtifactBoundary();
         const port = createWidgetDefinitionArtifactPortV1({ ...boundary.transport,
@@ -33,29 +56,29 @@ describe('widget definition semantic Actions', () => {
             incomplete: false, page: { cursor: null, hasNext: false } }), readInstalledDescriptor: async () => null });
         const executor = createActionExecutor({ widgetAccountScope: () => account, widgetDefinitionArtifacts: port, readSessionWidgetDefinitionSource: reader });
         const result = await executor.execute('widgets.definition.saveFromSession', { account, session: { serverId: account.serverId, sessionId: 'session-a' },
-            itemId: 'source', artifactId: 'saved-html' }, { surface: 'ui', authority: 'present_user', serverId: account.serverId, bypassApprovals: true });
-        expect(result).toMatchObject({ ok: true, result: { definition: { id: 'saved-html', body: {
+            itemId: 'source', artifactId: 'f886bc99-2489-4bb8-8214-fac6458c9f38' }, { surface: 'ui', authority: 'present_user', serverId: account.serverId, bypassApprovals: true });
+        expect(result).toMatchObject({ ok: true, result: { definition: { id: 'f886bc99-2489-4bb8-8214-fac6458c9f38', body: {
             kind: 'html', source, requestedCapabilities: { networkOrigins: ['https://cdn.example.com'] },
         } }, suggestedBindings: {} } });
-        const saved = await port.get('saved-html');
+        const saved = await port.get('f886bc99-2489-4bb8-8214-fac6458c9f38');
         expect(saved?.body).toEqual({ kind: 'html', source, requestedCapabilities: { networkOrigins: ['https://cdn.example.com'] } });
-        expect(await port.list()).toMatchObject([{ artifactId: 'saved-html', bodyKind: 'html' }]);
+        expect(await port.list()).toMatchObject([{ artifactId: 'f886bc99-2489-4bb8-8214-fac6458c9f38', bodyKind: 'html' }]);
         currentItem = SessionSurfaceItemV1Schema.parse({ ...item, source: { kind: 'widget', instance: {
             v: 1, id: 'source', definition: { kind: 'inline', definition: saved }, bindings: {}, networkOverride: { network: 'none' },
         } } });
         expect(await executor.execute('widgets.definition.saveFromSession', { account, session: { serverId: account.serverId, sessionId: 'session-a' },
-            itemId: 'source', artifactId: 'saved-inline-html' }, { surface: 'ui', authority: 'present_user', serverId: account.serverId, bypassApprovals: true }))
+            itemId: 'source', artifactId: 'af0d3196-5428-41e6-88bd-03f3c41a8ee6' }, { surface: 'ui', authority: 'present_user', serverId: account.serverId, bypassApprovals: true }))
             .toMatchObject({ ok: true, result: { definition: { networkOverride: { network: 'none' },
                 body: { kind: 'html', source, requestedCapabilities: { network: 'none' } } } } });
         source.files['index.html'].contentBase64 = 'PGgxPkVkaXQ8L2gxPg==';
-        expect((await port.get('saved-html'))?.body).toEqual(saved?.body);
-        expect(await executor.execute('widgets.definition.create', { account, artifactId: 'agent-html', definition: {
+        expect((await port.get('f886bc99-2489-4bb8-8214-fac6458c9f38'))?.body).toEqual(saved?.body);
+        expect(await executor.execute('widgets.definition.create', { account, artifactId: 'aaf11a6d-d846-4a0b-8cda-8c0f48b22829', definition: {
             name: 'New HTML', body: saved!.body, inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
             sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
         } }, { surface: 'agent', serverId: account.serverId, defaultSessionId: 'session-a',
             actionCaller: { kind: 'session', sessionId: 'session-a', starterDepth: 0, turnDepth: 0 }, actionRequestId: 'html-create' }))
             .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
-        expect(await port.get('agent-html')).toBeNull();
+        expect(await port.get('aaf11a6d-d846-4a0b-8cda-8c0f48b22829')).toBeNull();
     });
 
     it('defers saving Session content until the canonical approval owner admits the library copy', async () => {
@@ -73,11 +96,11 @@ describe('widget definition semantic Actions', () => {
         const executor = createActionExecutor({ widgetAccountScope: () => account, widgetDefinitionArtifacts: port, readSessionWidgetDefinitionSource: reader,
             approvalsCreate: async ({ request }) => { requests.push(request); return { artifactId: 'save-approval' }; },
         });
-        expect(await executor.execute('widgets.definition.saveFromSession', { account, session: { serverId: account.serverId, sessionId: 'session-a' }, itemId: 'source', artifactId: 'saved' },
+        expect(await executor.execute('widgets.definition.saveFromSession', { account, session: { serverId: account.serverId, sessionId: 'session-a' }, itemId: 'source', artifactId: 'fae94558-ca81-4a2e-8fdb-ec1bed33c7af' },
             { surface: 'cli', serverId: account.serverId, defaultSessionId: 'session-a', actionCaller: { kind: 'host' }, actionRequestId: 'save-from-session' }))
             .toEqual({ ok: true, result: { kind: 'approval_request_created', artifactId: 'save-approval', actionId: 'widgets.definition.saveFromSession' } });
         expect(requests).toMatchObject([{ actionId: 'widgets.definition.saveFromSession', approval: { flow: 'deferred', result: 'required' } }]);
-        expect(await port.get('saved')).toBeNull();
+        expect(await port.get('fae94558-ca81-4a2e-8fdb-ec1bed33c7af')).toBeNull();
         expect(item.source).toEqual({ kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Private output' } } });
     });
     it('promotes a shared live definition into configurable Session inputs rather than retaining the source Session pin', async () => {
@@ -99,11 +122,11 @@ describe('widget definition semantic Actions', () => {
             incomplete: false, page: { cursor: null, hasNext: false } }), readInstalledDescriptor: async () => null });
         const executor = createActionExecutor({ widgetAccountScope: () => account, widgetDefinitionArtifacts: port, readSessionWidgetDefinitionSource: reader });
         const promoted = await executor.execute('widgets.definition.saveFromSession', { account, session: { serverId: 'home', sessionId: 'session-a' },
-            itemId: 'source', artifactId: 'promoted-live' }, { surface: 'cli', serverId: 'home', bypassApprovals: true });
+            itemId: 'source', artifactId: '9224803d-1ffe-4a49-8c63-92aa7382ccff' }, { surface: 'cli', serverId: 'home', bypassApprovals: true });
         expect(promoted).toMatchObject({ ok: true, result: { suggestedBindings: { session: { kind: 'context', slot: 'session' } } } });
-        const saved = await port.get('promoted-live');
+        const saved = await port.get('9224803d-1ffe-4a49-8c63-92aa7382ccff');
         expect(saved).not.toBeNull();
-        const bound = resolveConfiguredWidgetInputs({ instance: { v: 1, id: 'placed-b', definition: { kind: 'artifact', artifactId: 'promoted-live' },
+        const bound = resolveConfiguredWidgetInputs({ instance: { v: 1, id: 'placed-b', definition: { kind: 'artifact', artifactId: '9224803d-1ffe-4a49-8c63-92aa7382ccff' },
             bindings: { session: { kind: 'context', slot: 'session' } } }, descriptor: saved!, providedContext: { session: [{ serverId: 'home', sessionId: 'session-b' }] }, viewerValues: {} });
         expect(bound).toEqual({ status: 'ready', input: { session: { serverId: 'home', sessionId: 'session-b' } } });
         expect(saved?.body).toEqual(definition.body);
@@ -129,39 +152,43 @@ describe('widget definition semantic Actions', () => {
         });
         const executor = createActionExecutor({ widgetAccountScope: () => account, widgetDefinitionArtifacts: port, readSessionWidgetDefinitionSource: reader });
         const result = await executor.execute('widgets.definition.saveFromSession', { account, session: { serverId: 'home', sessionId: 'session-a' },
-            itemId: 'source-item', artifactId: 'promoted' }, { surface, serverId: 'home', bypassApprovals: true });
-        expect(result).toMatchObject({ ok: true, result: { definition: { id: 'promoted', inputs: descriptor.inputs,
+            itemId: 'source-item', artifactId: '8ced9e9f-4305-4794-8dd9-8138b9ac378e' }, { surface, serverId: 'home', bypassApprovals: true });
+        expect(result).toMatchObject({ ok: true, result: { definition: { id: '8ced9e9f-4305-4794-8dd9-8138b9ac378e', inputs: descriptor.inputs,
             provenance: { source: { kind: 'session', serverId: 'home', sessionId: 'session-a', itemId: 'source-item' } } },
             suggestedBindings: { session: { kind: 'context', slot: 'session' } } } });
         expect(requests).toEqual(['session.board.get']);
         expect(item.source.kind === 'widget' && item.source.instance.bindings.session).toEqual({ kind: 'value', value: { serverId: 'home', sessionId: 'session-a' } });
-        expect(await port.get('promoted')).toMatchObject({ sessionInputPath: 'session', networkOverride: { network: 'none' } });
-        const wrongAccount = await executor.execute('widgets.definition.get', { account: { ...account, accountId: 'other' }, artifactId: 'promoted' }, { surface: 'cli', serverId: 'home' });
+        expect(await port.get('8ced9e9f-4305-4794-8dd9-8138b9ac378e')).toMatchObject({ sessionInputPath: 'session', networkOverride: { network: 'none' } });
+        const wrongAccount = await executor.execute('widgets.definition.get', { account: { ...account, accountId: 'other' }, artifactId: '8ced9e9f-4305-4794-8dd9-8138b9ac378e' }, { surface: 'cli', serverId: 'home' });
         expect(wrongAccount).toMatchObject({ ok: false, errorCode: 'account_target_mismatch' });
     });
-    it('uses Voice admission and Ask first before changing the Account library', async () => {
+    it('honors an explicit Voice Ask before changing the Account library', async () => {
         const boundary = createWorkBoardArtifactBoundary();
         const port = createWidgetDefinitionArtifactPortV1({ ...boundary.transport,
             read: async (...args) => { const row = await boundary.transport.read(...args); return row ? { ...row, ownerAccountId: 'owner' } : null; },
             list: async args => { const page = await boundary.transport.list(args); return { ...page, items: page.items.map(row => ({ ...row, ownerAccountId: 'owner' })) }; },
         }, { accountId: 'owner' });
+        let approvalRequest: ApprovalRequest | null = null;
         const executor = createActionExecutor({ widgetAccountScope: () => account, widgetDefinitionArtifacts: port,
             isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), context),
-            approvalsCreate: async () => ({ artifactId: 'definition-approval' }),
-            // Human approval delivery and persistence are host system boundaries.
-            approvalsWaitForDecision: async ({ request }) => {
-                expect((await port.get('by-voice'))?.name).toBe('Original');
-                return { decision: 'reject', request };
-            },
-            approvalsUpdate: async () => ({ ok: true }),
+            // Approval persistence is a host system boundary; the decision owner remains real.
+            approvalsCreate: async ({ request }) => { approvalRequest = request; return { artifactId: 'definition-approval' }; },
+            approvalsGet: async () => approvalRequest,
+            approvalsUpdate: async ({ request }) => { approvalRequest = request; return { ok: true }; },
         });
         const context = { surface: 'voice' as const, serverId: 'home', actionCaller: { kind: 'host' as const }, actionRequestId: 'definition-update' };
-        const input = { account, artifactId: 'by-voice', definition: { name: 'Original', ...descriptor,
+        const input = { account, artifactId: 'a685e92b-ed95-4899-85dc-7b2162f004e0', definition: { name: 'Original', ...descriptor,
             body: { kind: 'installed', surface: { pluginId: 'com.acme.test', localId: 'signups' } } } };
         expect(await executor.execute('widgets.definition.create', input, context)).toMatchObject({ ok: true });
         const update = { account, artifactId: input.artifactId, patch: { name: 'Changed' } };
-        const approval = await executor.execute('widgets.definition.update', update, context);
-        expect(approval).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+        const approval = await executor.execute('widgets.definition.update', update, { ...context,
+            actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'widgets.definition.update': { approvalRequiredSurfaces: ['voice'] } } }),
+        });
+        expect(approval).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'definition-approval' } });
+        expect((await port.get(input.artifactId))?.name).toBe('Original');
+        expect(await executor.execute('approval.request.decide', { artifactId: 'definition-approval', decision: 'reject' },
+            { surface: 'ui', authority: 'present_user', serverId: 'home' }))
+            .toMatchObject({ ok: true, result: { status: 'rejected' } });
         expect((await port.get(input.artifactId))?.name).toBe('Original');
         expect(await executor.execute('widgets.definition.update', update, { ...context,
             actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'widgets.definition.update': { enabled: false } } }),
@@ -227,17 +254,17 @@ describe('widget definition semantic Actions', () => {
         vi.useFakeTimers();
         try {
             vi.setSystemTime(Date.UTC(2026, 9, 3, 9, 30));
-            expect(await executor.execute('widgets.definition.create', { account, artifactId: 'by-agent', definition: draft },
+            expect(await executor.execute('widgets.definition.create', { account, artifactId: 'aaa148c0-2da1-48dc-8aa5-3046717b4beb', definition: draft },
                 { surface: 'agent', serverId: 'home', bypassApprovals: true })).toMatchObject({ ok: true });
             vi.setSystemTime(Date.UTC(2026, 9, 4, 12, 0));
-            expect(await executor.execute('widgets.definition.create', { account, artifactId: 'by-person', definition: { ...draft, name: 'Mine' } },
+            expect(await executor.execute('widgets.definition.create', { account, artifactId: '1f72c7e9-ae22-4903-85b6-339d144f6ecc', definition: { ...draft, name: 'Mine' } },
                 { surface: 'ui', serverId: 'home', authority: 'present_user', bypassApprovals: true })).toMatchObject({ ok: true });
         } finally { vi.useRealTimers(); }
         const listed = await executor.execute('widgets.definition.list', { account }, { surface: 'ui', serverId: 'home', authority: 'present_user' });
         expect(listed).toMatchObject({ ok: true, result: { definitions: expect.arrayContaining([
-            expect.objectContaining({ artifactId: 'by-agent', author: { kind: 'agent' }, createdAt: Date.UTC(2026, 9, 3, 9, 30) }),
-            expect.objectContaining({ artifactId: 'by-person', author: { kind: 'person' }, createdAt: Date.UTC(2026, 9, 4, 12, 0) }),
+            expect.objectContaining({ artifactId: 'aaa148c0-2da1-48dc-8aa5-3046717b4beb', author: { kind: 'agent' }, createdAt: Date.UTC(2026, 9, 3, 9, 30) }),
+            expect.objectContaining({ artifactId: '1f72c7e9-ae22-4903-85b6-339d144f6ecc', author: { kind: 'person' }, createdAt: Date.UTC(2026, 9, 4, 12, 0) }),
         ]) } });
-        expect((await port.get('by-agent'))?.provenance).toMatchObject({ author: { kind: 'agent' }, createdAt: Date.UTC(2026, 9, 3, 9, 30) });
+        expect((await port.get('aaa148c0-2da1-48dc-8aa5-3046717b4beb'))?.provenance).toMatchObject({ author: { kind: 'agent' }, createdAt: Date.UTC(2026, 9, 3, 9, 30) });
     });
 });

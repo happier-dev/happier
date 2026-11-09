@@ -36,7 +36,7 @@ const ExternalProviderApiBaseUrlV1Schema = lazyZodSchema(() => z.string().check(
 })));
 
 export const TeamCredentialExternalApiAvailabilityV1Schema = lazyZodSchema(() => z.discriminatedUnion('available', [
-  z.strictObject({
+  z.object({
     available: z.literal(true),
     baseUrl: ExternalProviderApiBaseUrlV1Schema,
     protocols: z.array(TeamCredentialRequestProtocolKindV1Schema).check(z.length(TEAM_CREDENTIAL_EXTERNAL_PROVIDER_PROTOCOLS_V1.length), z.superRefine((protocols, context) => {
@@ -45,7 +45,7 @@ export const TeamCredentialExternalApiAvailabilityV1Schema = lazyZodSchema(() =>
         }
       })),
   }),
-  z.strictObject({
+  z.object({
     available: z.literal(false),
     reason: TeamCredentialExternalApiUnavailableReasonV1Schema,
   }),
@@ -54,8 +54,8 @@ export type TeamCredentialExternalApiAvailabilityV1 = z.infer<
   typeof TeamCredentialExternalApiAvailabilityV1Schema
 >;
 
-export const TeamCredentialCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
-  credentialResources: z.strictObject({
+export const TeamCredentialCapabilitiesSchema = lazyZodSchema(() => z.object({
+  credentialResources: z.object({
     externalApi: TeamCredentialExternalApiAvailabilityV1Schema,
   }),
 }));

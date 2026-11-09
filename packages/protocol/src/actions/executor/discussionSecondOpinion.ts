@@ -1,7 +1,7 @@
 import { DiscussionCreateInputV1Schema, DiscussionCreateResultV1Schema, DiscussionInviteResultV1Schema, DiscussionPostInputV1Schema, DiscussionPostResultV1Schema,
   type DiscussionCreateInputV1 } from '../../discussions/actions.js';
 import { DiscussionSecondOpinionStartInputV1Schema, type DiscussionSecondOpinionStartResultV1 } from '../../discussions/secondOpinionActions.js';
-import { DiscussionSecondOpinionPreviewResponseV1Schema, type DiscussionSecondOpinionPreviewInputV1,
+import { DiscussionSecondOpinionPreviewResponseV1Schema, resolveDiscussionSecondOpinionSourceGrantsV1, type DiscussionSecondOpinionPreviewInputV1,
   type DiscussionSecondOpinionPreviewV1, type DiscussionSecondOpinionSourceV1 } from '../../discussions/secondOpinion.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { locateDocPassageV1 } from '../../artifacts/artifactPassageV1.js';
@@ -43,7 +43,7 @@ function projectDocPassageSource(passage: Extract<DiscussionSecondOpinionSourceV
 export function prepareAnchoredDiscussionCreateV1(input: Readonly<{
   source: DiscussionSecondOpinionSourceV1; title: string; quote: string;
   creationLocalId: string; quoteLocalId: string; participants?: DiscussionCreateInputV1['participants'];
-}>): DiscussionCreateInputV1 {
+}>): Omit<DiscussionCreateInputV1, 'attachmentSources'> {
   const text = { v: 1 as const, parts: [{ t: 'text' as const, text: input.quote.normalize('NFC') }] };
   return DiscussionCreateInputV1Schema.parse({ title: input.title, creationLocalId: input.creationLocalId,
     ...(input.participants ? { participants: input.participants } : {}),
@@ -104,7 +104,8 @@ export async function readDiscussionSecondOpinionSourceV1(source: DiscussionSeco
 function matchesConfirmedPreview(current: DiscussionSecondOpinionPreviewV1, confirmed: DiscussionSecondOpinionPreviewV1): boolean {
   if (!sameStrictJsonValue(current.source, confirmed.source) || current.reviewers.length !== confirmed.reviewers.length
     || !sameStrictJsonValue(current.discussionAudienceAccountIds, confirmed.discussionAudienceAccountIds)
-    || !sameStrictJsonValue(current.publisher, confirmed.publisher)) return false;
+    || !sameStrictJsonValue(current.publisher, confirmed.publisher)
+    || !current.missingDiscussionSourceAccountIds.every(id => confirmed.missingDiscussionSourceAccountIds.includes(id))) return false;
   return current.reviewers.every((reviewer, index) => {
     const prior = confirmed.reviewers[index]!;
     return sameStrictJsonValue(reviewer.selection, prior.selection) && reviewer.sourceAccess === prior.sourceAccess
@@ -158,7 +159,7 @@ export async function executeDiscussionSecondOpinionV1(input: unknown, deps: Act
     return value;
   };
   try {
-    let current = await preview();
+    const current = await preview();
     if (!current.sourceContentReady) return failure('encryption_material_unavailable');
     // Preview itself returns plaintext into the invoking Agent's native context.
     // Its audience must be admitted before opening the source, not only at Ask.
@@ -172,11 +173,9 @@ export async function executeDiscussionSecondOpinionV1(input: unknown, deps: Act
     if (!request.confirmedPreview || !matchesConfirmedPreview(current, request.confirmedPreview)) {
       return { ok: true, result: { status: 'preview_changed', preview: current, grantedAccountIds } };
     }
-    if (!current.discussionDisclosure.ok || current.missingDiscussionSourceAccountIds.length) return failure('discussion_access_forbidden');
-    if (current.reviewers.some(reviewer => reviewer.missingSourceAccountIds.length && (reviewer.sourceAccess !== 'read' || !reviewer.canGrantSource))) {
-      return failure('discussion_access_forbidden');
-    }
-    for (const accountId of new Set(current.reviewers.flatMap(reviewer => reviewer.missingSourceAccountIds))) {
+    const grants = resolveDiscussionSecondOpinionSourceGrantsV1(current);
+    if (!grants.ok) return failure(grants.errorCode);
+    for (const accountId of grants.accountIds) {
       const grant = request.source.kind === 'session'
         ? await execute('session.access.grant.set', { sessionId: request.source.message.session.sessionId,
           subject: { kind: 'account', accountId }, accessLevel: 'view', canApprovePermissions: false }, context)
@@ -186,12 +185,6 @@ export async function executeDiscussionSecondOpinionV1(input: unknown, deps: Act
       if (ActionApprovalRequestCreatedResultSchema.safeParse(grant.result).success) return pending('approval_required');
       grantedAccountIds.push(accountId);
     }
-    current = await preview();
-    if (!matchesConfirmedPreview(current, request.confirmedPreview)) return { ok: true, result: {
-      status: 'preview_changed', preview: current, grantedAccountIds,
-    } };
-    if (!current.sourceContentReady) return pending('encryption_material_unavailable');
-    if (current.reviewers.some(reviewer => !reviewer.disclosure.ok || reviewer.missingSourceAccountIds.length)) return pending('discussion_access_forbidden');
     stage = 'create';
     const created = await execute('discussion.create', prepareAnchoredDiscussionCreateV1({ source: request.source,
       title: request.title, quote, creationLocalId: request.retry.creationLocalId, quoteLocalId: request.retry.quoteLocalId,

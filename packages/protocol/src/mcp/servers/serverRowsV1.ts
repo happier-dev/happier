@@ -21,7 +21,7 @@ export const MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 = '@happier/account/mcp/v1/catalo
 export const MCP_SERVER_CATALOG_ROWS_ROUTE_V1 = '/v1/account/entity-rows/mcp' as const;
 export const MCP_SERVER_CATALOG_ACCOUNT_CIPHER_KIND_V1 = 'account_mcp_catalog' as const;
 
-export function assertMcpServerCatalogContentForModeV1(content: StoredMcpServerCatalogContentV1, mode: 'plain' | 'e2ee'): void {
+export function assertMcpServerCatalogContentForModeV1(content: Readonly<{ t: 'plain'; v: unknown }> | Readonly<{ t: 'encrypted'; c: string }>, mode: 'plain' | 'e2ee'): void {
   if ((mode === 'plain') !== (content.t === 'plain') || (content.t === 'encrypted'
     && !isAccountScopedBlobCiphertextForKind({ kind: MCP_SERVER_CATALOG_ACCOUNT_CIPHER_KIND_V1, ciphertext: content.c }))) {
     throw new Error('account-mode-mismatch');

@@ -119,8 +119,11 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     getText: (...args) => transport(() => source.getText(...args)),
     getBytes: (...args) => transport(() => source.getBytes(...args)),
   });
+  const wrapAppCatalog = (read: RegistryFetchContextV1['withAppCatalog']): RegistryFetchContextV1['withAppCatalog'] => read
+    ? (input, consume) => read(input, sharedHttp => consume(wrapHttp(sharedHttp)))
+    : undefined;
   const http = wrapHttp(deps.http);
-  const ctx: RegistryFetchContextV1 = { http, signal: deps.signal, git: deps.git, packageContent: deps.packageContent, withAppCatalog: deps.withAppCatalog };
+  const ctx: RegistryFetchContextV1 = { http, signal: deps.signal, git: deps.git, packageContent: deps.packageContent, withAppCatalog: wrapAppCatalog(deps.withAppCatalog) };
   const viaDaemon = async (request: RegistryFetchRequestV1): Promise<RegistryFetchResponseV1> => {
     const fetch = deps.daemonFetch;
     return fetch
@@ -137,7 +140,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     if (!source.enabled) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
     if (!deps.admitSource) return operationCtx;
     const admitted = await deps.admitSource(source);
-    return { ...admitted, http: wrapHttp(admitted.http) };
+    return { ...admitted, http: wrapHttp(admitted.http), withAppCatalog: wrapAppCatalog(admitted.withAppCatalog) };
   };
   const direct=async(request:Extract<RegistryFetchRequestV1,{sourceId:string}>,source:RegistrySourceDescriptorV1, operationCtx: RegistryFetchContextV1):Promise<RegistryFetchResponseV1>=>{
     if ('packageContent' in source) {

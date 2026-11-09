@@ -4,6 +4,7 @@ import type { WidgetSurfaceRefV1 } from './widgetInstanceV1.js';
 import { readWidgetActionSurfacePortV1 } from './executeWidgetInstanceActionV1.js';
 import { WidgetSurfaceReadV1Schema, type WidgetSurfaceReadV1 } from './actionsV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
+import { createWidgetAreaReadFailureV1, projectWidgetAreaReadExceptionV1 } from './widgetAreaReadFailureV1.js';
 
 export type WidgetActionAccountScopeV1 = Readonly<{
   serverId: string;
@@ -61,15 +62,15 @@ export async function readWidgetActionSurfaceAdmissionV1(
       const admitted = await port.read(surface, context, context.signal);
       if ('ok' in admitted) return admitted;
       const parsed = WidgetSurfaceReadV1Schema.safeParse(admitted);
-      if (!parsed.success || !sameStrictJsonValue(parsed.data.surface, surface)) return failure('invalid_action_output');
+      if (!parsed.success || !sameStrictJsonValue(parsed.data.surface, surface)) return createWidgetAreaReadFailureV1('invalid_action_output');
       if (context.signal?.aborted) return failure('cancelled');
       if (!isAccountCurrent()) return failure('widget_scope_unavailable');
       return { ok: true, read: parsed.data };
-    } catch {
+    } catch (error) {
       if (context.signal?.aborted) return failure('cancelled');
       // A failed surface read does not establish that its Account authority changed.
       // Recheck that authority before distinguishing a retryable layout read failure.
-      return failure(isAccountCurrent() ? 'widget_area_unavailable' : 'widget_scope_unavailable');
+      return isAccountCurrent() ? projectWidgetAreaReadExceptionV1(error) : failure('widget_scope_unavailable');
     }
   }
   return { ok: true, read: null };

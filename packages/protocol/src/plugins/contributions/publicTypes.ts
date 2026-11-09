@@ -100,7 +100,7 @@ export const PluginPolicyExpressionV2Schema: z.ZodMiniType<PluginPolicyExpressio
   z.strictObject({ fact: z.enum(['plugin.enabled', 'session.exists', 'project.exists', 'browser.exists']), operator: z.literal('equals'), value: z.boolean() }),
   z.strictObject({ fact: z.literal('host.platform'), operator: z.enum(['equals', 'notEquals']), value: z.enum(['web', 'ios', 'android', 'desktop']) }),
   z.strictObject({ fact: z.literal('host.feature'), operator: z.literal('enabled'), value: z.string().check(z.trim(), z.minLength(1)) }),
-  z.strictObject({ fact: z.enum(['session.agentId', 'session.state', 'project.id', 'machine.id', 'browser.origin']), operator: z.enum(['equals', 'notEquals']), value: z.string() }),
+  z.strictObject({ fact: z.enum(['session.agentId', 'session.state', 'project.id', 'project.repository.kind', 'machine.id', 'browser.origin']), operator: z.enum(['equals', 'notEquals']), value: z.string() }),
   z.strictObject({ fact: z.literal('session.capability'), operator: z.literal('contains'), value: z.string().check(z.trim(), z.minLength(1)) }),
   z.strictObject({ all: z.array(PluginPolicyExpressionV2Schema) }),
   z.strictObject({ any: z.array(PluginPolicyExpressionV2Schema) }),

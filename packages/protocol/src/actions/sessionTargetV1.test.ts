@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeSessionListFilterV1 } from '../sessions/listFilter/sessionListFilterV1.js';
 import { normalizeSessionTargetV1, SessionTargetV1Schema, ActionResolvedSessionTargetsV1Schema } from './sessionTargetV1.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 describe('Session target routing contract', () => {
+  it('retains unknown stored matching restrictions while refusing unsupported current routing inputs', () => {
+    const filter = normalizeSessionListFilterV1({ homeServerIds: ['home'] });
+    const future = { selector: 'matching', filter: { ...filter, futureCore: { value: 'narrow' } } };
+    expect(createStoredReadSchema(SessionTargetV1Schema).parse(future)).toEqual(future);
+    for (const narrowing of [{ attention: 'needs_my_attention' }, { branches: { include: ['main'], exclude: [] } },
+      { extensions: { 'acme.flag': { kind: 'boolean', value: true } } }]) {
+      expect(SessionTargetV1Schema.safeParse({ selector: 'matching', filter: { ...filter, ...narrowing } }).success).toBe(false);
+    }
+  });
   it('normalizes only reserved shorthand and keeps exact reference operands exact', () => {
     expect(normalizeSessionTargetV1('session-existing')).toBe('session-existing');
     expect(normalizeSessionTargetV1('workers')).toEqual({ selector: 'workers' });

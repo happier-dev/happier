@@ -333,6 +333,16 @@ export type ExternalSessionLinkEnsureResponse = z.infer<typeof ExternalSessionLi
 export const ExternalSessionActivityV1Schema = lazyZodSchema(() => z.enum(['running', 'active_recently', 'idle', 'unknown']));
 export type ExternalSessionActivityV1 = z.infer<typeof ExternalSessionActivityV1Schema>;
 
+export const MAX_EXTERNAL_SESSION_CANDIDATE_TITLE_CODE_UNITS = 10_000;
+
+/** Preserve a usable candidate when native title text exceeds its existing wire field. */
+export function projectExternalSessionCandidateTitle(title: string): string {
+  if (title.length <= MAX_EXTERNAL_SESSION_CANDIDATE_TITLE_CODE_UNITS) return title;
+  const prefix = title.slice(0, MAX_EXTERNAL_SESSION_CANDIDATE_TITLE_CODE_UNITS - 3)
+    .replace(/[\uD800-\uDBFF]$/, '');
+  return `${prefix}...`;
+}
+
 /**
  * An Agent's internal thread rather than a session a person started: an approval reviewer judging
  * another thread's action, or a sub-agent a session spawned. Classified by the Agent's own
@@ -343,14 +353,14 @@ export const ExternalSessionCandidateThreadV1Schema = lazyZodSchema(() => z.stri
   /** The thread that spawned or is reviewed by this one, when the Agent records it. */
   parentRemoteSessionId: z.nullable(NonBlankOpaqueIdentifierSchema.check(z.maxLength(2000))),
   /** The parent's title, when the Agent's index knows it without an extra read. */
-  parentTitle: z.optional(z.string().check(z.minLength(1), z.maxLength(10_000))),
+  parentTitle: z.optional(z.string().check(z.minLength(1), z.maxLength(MAX_EXTERNAL_SESSION_CANDIDATE_TITLE_CODE_UNITS))),
 }));
 export type ExternalSessionCandidateThreadV1 = z.infer<typeof ExternalSessionCandidateThreadV1Schema>;
 
 export const ExternalSessionCandidateV1Schema = lazyZodSchema(() => z.looseObject({
     remoteSessionId: NonBlankOpaqueIdentifierSchema.check(z.maxLength(2000)),
     candidateKey: z.optional(z.string().check(z.minLength(1), z.maxLength(128))),
-    title: z.optional(z.string().check(z.minLength(1), z.maxLength(10_000))),
+    title: z.optional(z.string().check(z.minLength(1), z.maxLength(MAX_EXTERNAL_SESSION_CANDIDATE_TITLE_CODE_UNITS))),
     cwd: z.optional(z.string().check(z.minLength(1))),
     messageCount: z.optional(z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER))),
     updatedAtMs: z.number().check(z.int(), z.minimum(0)),
@@ -588,6 +598,8 @@ const ExternalSessionTranscriptPageCanonicalRequestSchema = lazyZodSchema(() => 
   agentId: ExternalSessionsAgentIdSchema,
   remoteSessionId: NonBlankOpaqueIdentifierSchema.check(z.maxLength(2000)),
   source: ExternalSessionsSourceSchema,
+  /** Selected preview item; safely ignorable and never a completeness claim. */
+  sourceItemId: z.optional(ExternalSessionTranscriptItemIdV1Schema),
   direction: z.enum(['older', 'newer']),
   cursor: z.optional(z.string().check(z.minLength(1))),
   maxBytes: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(10 * 1024 * 1024))),

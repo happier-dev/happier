@@ -20,7 +20,11 @@ function createFixture(executorDeps: Pick<ActionExecutorDeps, 'isActionApprovalR
       revision: { headerVersion: 1, bodyVersion: 1 } });
     },
     transport: {
-      list: async () => projection(),
+      list: async () => {
+        if (readFailure) throw readFailure;
+        if (removed) throw Object.assign(new Error('artifact_not_found'), { code: 'artifact_not_found' });
+        return projection();
+      },
       set: async (input) => {
         grants = [{ principal: input.principal, accessLevel: input.accessLevel, createdByAccountId: 'owner', createdAt: 1, display: { name: 'Team' } }];
         return { ...projection(), changed: true };

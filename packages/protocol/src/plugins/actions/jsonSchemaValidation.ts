@@ -13,6 +13,7 @@ import { z } from 'zod/mini';
 import { defineStoredReadProjection } from '../../json/storedReadSchema.js';
 
 import { compileProtocolJsonSchema } from './jsonSchemaCompiler.js';
+import { jsonSchemaContainsReference } from '../../actions/actionInputJsonSchema.js';
 
 import type { PluginJsonSchemaV2 } from '../contributions/jsonSchema.js';
 import {
@@ -20,6 +21,7 @@ import {
   normalizePluginJsonSchema,
   cloneStrictPluginJsonValue,
   pluginJsonValuesEqual,
+  embedProtocolJsonSchema,
   type PluginJsonSchemaValidator,
   type ProtocolJsonValue,
 } from './protocolComposableSchema.js';
@@ -128,6 +130,7 @@ export function createPluginJsonSchemaZodValueAdapter(schema: object) {
   return createPluginJsonSchemaZodAdapter(schema, z.unknown(), false) as z.ZodMiniType<ProtocolJsonValue>;
 }
 
+/** Whether a schema fragment carries a document-local `$ref` anywhere in its schema tree. */
 function createPluginJsonSchemaZodAdapter<Schema extends z.ZodMiniType>(schema: object, root: Schema, objectRoot: boolean) {
   const prepared = preparePluginJsonSchema(schema);
   const { jsonSchema: normalized, validate } = prepared;
@@ -149,6 +152,12 @@ function createPluginJsonSchemaZodAdapter<Schema extends z.ZodMiniType>(schema: 
   };
   return defineStoredReadProjection(adapter, () => {
     const branchValidators = new WeakMap<object, PluginJsonSchemaValidator>();
+    // A trial arm is a fragment of this document. Keep every local reference
+    // rooted in the original document, including pointers outside $defs.
+    // Only an arm that refers into the document needs that root: a
+    // self-contained arm compiles alone, so a large contract (Channels'
+    // channel-state is 545 KB) is not re-processed by every union trial.
+    let referenceRoot: PluginJsonSchemaV2 | undefined;
     const matches = (branch: PluginJsonSchemaV2, value: unknown): boolean => {
       let validator = branchValidators.get(branch);
       if (!validator) {
@@ -163,10 +172,12 @@ function createPluginJsonSchemaZodAdapter<Schema extends z.ZodMiniType>(schema: 
             }
           }
         }
-        validator = compilePluginJsonSchema({ ...branch,
-          ...(normalized.definitions ? { definitions: normalized.definitions } : {}),
-          ...(normalized.$defs ? { $defs: normalized.$defs } : {}),
-        });
+        // Both fragments are already admitted. Use the canonical compiler
+        // directly rather than cloning/re-admitting the whole root per arm.
+        validator = compileProtocolJsonSchema(jsonSchemaContainsReference(branch) ? {
+          $defs: { storedReadRoot: referenceRoot ??= embedProtocolJsonSchema(normalized, ['$defs', 'storedReadRoot']) },
+          allOf: [embedProtocolJsonSchema(branch, ['$defs', 'storedReadRoot'])],
+        } : branch, 'draft-07');
         branchValidators.set(branch, validator);
       }
       return isValidPluginJsonSchemaValue(validator, value);
@@ -174,8 +185,8 @@ function createPluginJsonSchemaZodAdapter<Schema extends z.ZodMiniType>(schema: 
     const reference = (pointer: string): PluginJsonSchemaV2 => {
       let node: unknown = normalized;
       for (const segment of pointer.slice(2).split('/').filter(() => pointer !== '#')) {
-        if (!node || typeof node !== 'object' || Array.isArray(node)) throw new Error('Invalid stored schema reference');
-        node = (node as Record<string, unknown>)[segment.replace(/~1/g, '/').replace(/~0/g, '~')];
+        if (!node || typeof node !== 'object') throw new Error('Invalid stored schema reference');
+        node = Reflect.get(node, segment.replace(/~1/g, '/').replace(/~0/g, '~'));
       }
       if (!node || typeof node !== 'object' || Array.isArray(node)) throw new Error('Invalid stored schema reference');
       return node as PluginJsonSchemaV2;

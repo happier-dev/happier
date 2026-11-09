@@ -61,6 +61,9 @@ export type AgentRequestQuestionSummary = Readonly<{
   choices: readonly AgentRequestQuestionChoiceSummary[];
   freeformDescription?: string;
   freeformPlaceholder?: string;
+  freeformMultiline?: boolean;
+  freeformInitialValue?: string;
+  freeformAllowEmpty?: boolean;
 }>;
 
 export type AgentRequestSemanticSummary = Readonly<{
@@ -208,6 +211,9 @@ function extractQuestionSummaries(
       choices: Object.freeze(choices),
       ...(firstString(freeform?.description) ? { freeformDescription: firstString(freeform?.description)! } : {}),
       ...(firstString(freeform?.placeholder) ? { freeformPlaceholder: firstString(freeform?.placeholder)! } : {}),
+      ...(typeof freeform?.multiline === 'boolean' ? { freeformMultiline: freeform.multiline } : {}),
+      ...(typeof freeform?.initialValue === 'string' ? { freeformInitialValue: freeform.initialValue } : {}),
+      ...(typeof freeform?.allowEmpty === 'boolean' ? { freeformAllowEmpty: freeform.allowEmpty } : {}),
     }));
   }
   return Object.freeze(summaries);

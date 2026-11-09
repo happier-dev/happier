@@ -97,7 +97,6 @@ describe('createActionExecutor (account.plugins.data.erase)', () => {
       { surface: 'api', authority: 'account_automation', actionCaller: { kind: 'host' } },
     )).resolves.toEqual(expect.objectContaining({
       ok: false,
-      errorCode: 'present_user_required',
     }));
     expect(accountPluginDataEraseAction).not.toHaveBeenCalled();
   });

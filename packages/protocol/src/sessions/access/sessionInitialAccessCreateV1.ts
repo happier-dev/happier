@@ -80,3 +80,4 @@ export async function materializeSessionInitialAccessCreateFields(params: Readon
     initialAccess: SessionInitialAccessMaterializedV1Schema.parse({ grants }),
   };
 }
+

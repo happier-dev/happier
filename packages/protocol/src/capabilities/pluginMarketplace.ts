@@ -1,6 +1,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PluginUpdatePolicyV1Schema } from '../marketplace/pluginUpdatePolicyV1.js';
+import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js';
 
 /** Development lifecycle facts have one wire owner for daemon, Actions and Settings. */
 export const PluginDevelopmentPhaseV1Schema = lazyZodSchema(() => z.enum([
@@ -21,7 +22,7 @@ export const PluginDevelopmentStatusV1Schema = lazyZodSchema(() => z.readonly(z.
     phase: PluginDevelopmentPhaseV1Schema,
     occurrenceId: z.optional(z.string().check(z.minLength(1))),
     uiArtifactDigest: z.optional(z.string().check(z.minLength(1))),
-    diagnostic: z.optional(z.readonly(z.strictObject({ code: z.string().check(z.minLength(1)), message: z.optional(z.string()) }))),
+    diagnostic: z.optional(z.readonly(z.strictObject({ code: z.string().check(z.minLength(1)), message: z.optional(z.string()), details: z.optional(PluginJsonValueV2Schema) }))),
   })))),
 })));
 export type PluginDevelopmentStatusV1 = z.infer<typeof PluginDevelopmentStatusV1Schema>;
@@ -32,6 +33,7 @@ export const PluginDevelopmentControlResultV1Schema = lazyZodSchema(() => z.disc
   z.strictObject({ kind: z.literal('trustRequired'), projectRoot: z.string().check(z.minLength(1)), pluginRoot: z.string().check(z.minLength(1)),
     status: PluginDevelopmentStatusV1Schema }),
   z.strictObject({ kind: z.literal('failed'), code: z.string().check(z.minLength(1)), message: z.string(),
+    details: z.optional(PluginJsonValueV2Schema),
     status: PluginDevelopmentStatusV1Schema }),
 ]));
 export type PluginDevelopmentControlResultV1 = z.infer<typeof PluginDevelopmentControlResultV1Schema>;

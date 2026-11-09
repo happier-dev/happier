@@ -75,21 +75,6 @@ describe('protocol base64 helpers', () => {
     expect(Array.from(decoded)).toEqual(Array.from(bytes));
   });
 
-  it('decodes large canonical padded base64 with a bounded iterative scan', () => {
-    const bytes = createDeterministicBytes(4096);
-    const encoded = encodeBase64(bytes, 'base64');
-    const charCodeAtSpy = vi.spyOn(String.prototype, 'charCodeAt');
-
-    try {
-      const decoded = decodeBase64(encoded, 'base64');
-
-      expect(Array.from(decoded)).toEqual(Array.from(bytes));
-      expect(charCodeAtSpy.mock.calls.length).toBeLessThan(encoded.length * 3);
-    } finally {
-      charCodeAtSpy.mockRestore();
-    }
-  });
-
   it('reads strict canonical padded base64 decoded lengths without decoding', () => {
     expect(readCanonicalPaddedBase64DecodedLength('')).toBe(0);
     expect(readCanonicalPaddedBase64DecodedLength('AQID')).toBe(3);
@@ -100,24 +85,103 @@ describe('protocol base64 helpers', () => {
     expect(readCanonicalPaddedBase64DecodedLength(' AA==')).toBeNull();
   });
 
-  it('admits a canonical payload without allocating a substring or scanning it with RegExp', () => {
-    const encoded = encodeBase64(createDeterministicBytes(65_537));
-    // Observe the real string operations, preserving their implementations.
-    const regex = vi.spyOn(RegExp.prototype, 'test');
-    const slice = vi.spyOn(String.prototype, 'slice');
-    let length: number | null;
-    let regexScans: number;
-    let substringCopies: number;
-    try {
-      length = readCanonicalPaddedBase64DecodedLength(encoded);
-      regexScans = regex.mock.calls.filter(([input]) => input.length >= encoded.length - 2).length;
-      substringCopies = slice.mock.contexts.filter(input => input === encoded).length;
-    } finally {
-      regex.mockRestore();
-      slice.mockRestore();
+  it('admits canonical payloads without per-character JavaScript work or substring copies', () => {
+    // The Agents profile spent 2.9s in the old JS alphabet loop. Native scanning
+    // may read every byte, but JS work must not grow with the ciphertext size.
+    for (const size of [4_097, 65_537]) {
+      const encoded = encodeBase64(createDeterministicBytes(size));
+      const characters = vi.spyOn(String.prototype, 'charCodeAt');
+      const slice = vi.spyOn(String.prototype, 'slice');
+      let length: number | null;
+      let characterReads: number;
+      let substringCopies: number;
+      try {
+        length = readCanonicalPaddedBase64DecodedLength(encoded);
+        characterReads = characters.mock.contexts.filter(input => input === encoded).length;
+        substringCopies = slice.mock.contexts.filter(input => input === encoded).length;
+      } finally {
+        characters.mockRestore();
+        slice.mockRestore();
+      }
+      expect(length).toBe(size);
+      expect(characterReads).toBeLessThanOrEqual(1);
+      expect(substringCopies).toBe(0);
     }
-    expect(length).toBe(65_537);
-    expect({ regexScans, substringCopies }).toEqual({ regexScans: 0, substringCopies: 0 });
+  });
+
+  it('uses native decoding without per-byte JavaScript reads and returns owned plain bytes', () => {
+    const bytes = createDeterministicBytes(65_537);
+    const encoded = encodeBase64(bytes);
+    const characters = vi.spyOn(String.prototype, 'charCodeAt');
+    let decoded: Uint8Array;
+    let characterReads: number;
+    try {
+      decoded = decodeBase64(encoded);
+      characterReads = characters.mock.contexts.filter(input => input === encoded).length;
+    } finally {
+      characters.mockRestore();
+    }
+    expect(decoded).toEqual(bytes);
+    expect(characterReads).toBeLessThanOrEqual(1);
+    expect(decoded.constructor).toBe(Uint8Array);
+    expect(decoded.byteOffset).toBe(0);
+    expect(decoded.buffer.byteLength).toBe(bytes.length);
+    const copy = decoded.slice();
+    copy[0] ^= 255;
+    expect(decoded[0]).toBe(bytes[0]);
+  });
+
+  it('preserves strict admission across every byte at each alphabet position', () => {
+    for (let code = 0; code < 256; code += 1) {
+      for (let index = 0; index < 4; index += 1) {
+        const input = `${'A'.repeat(index)}${String.fromCharCode(code)}${'A'.repeat(3 - index)}`;
+        const isAlphabet = /^[A-Za-z0-9+/]{4}$/.test(input);
+        expect(readCanonicalPaddedBase64DecodedLength(input)).toBe(isAlphabet ? 3 : index === 3 && code === 61 ? 2 : null);
+      }
+    }
+    for (const invalid of ['AAA\ud800', 'AAA\udfff', 'AA\u2028A', 'AA\u2029A', 'AA\ufeffA']) {
+      expect(readCanonicalPaddedBase64DecodedLength(invalid)).toBeNull();
+    }
+  });
+
+  it('preserves permissive normalization and plain byte ownership on every decoder platform', () => {
+    const vectors: [string, 'base64' | 'base64url', number[]][] = [
+      ['AA=A', 'base64', [0, 0]], ['Zg==Zm8=', 'base64', [102, 6, 102]],
+      ['AA-_', 'base64', [0]], ['AA-_', 'base64url', [0, 15, 191]],
+      ['AB==', 'base64', [0]], ['AAA=', 'base64', [0, 0]],
+      [' Zm\n9v!\u00a0', 'base64', [102, 111, 111]], ['A', 'base64', []],
+    ];
+    const verify = () => {
+      for (const [input, variant, expected] of vectors) {
+        const decoded = decodeBase64(input, variant);
+        expect(Array.from(decoded)).toEqual(expected);
+        expect(decoded.constructor).toBe(Uint8Array);
+        expect(decoded.byteOffset).toBe(0);
+        expect(decoded.buffer.byteLength).toBe(decoded.length);
+      }
+    };
+    verify();
+    // Native codec availability is a platform boundary. Keep normalization real.
+    const descriptor = Object.getOwnPropertyDescriptor(Uint8Array, 'fromBase64');
+    const native = vi.fn((input: string) => new Uint8Array(Buffer.from(input, 'base64')));
+    Object.defineProperty(Uint8Array, 'fromBase64', { configurable: true, value: native });
+    try {
+      verify();
+      expect(native).toHaveBeenCalledTimes(vectors.length);
+      expect(native.mock.calls[1][0]).toBe('ZgZm');
+    } finally {
+      if (descriptor) Object.defineProperty(Uint8Array, 'fromBase64', descriptor);
+      else Reflect.deleteProperty(Uint8Array, 'fromBase64');
+    }
+    Object.defineProperty(Uint8Array, 'fromBase64', { configurable: true, value: undefined });
+    vi.stubGlobal('Buffer', undefined);
+    try {
+      verify();
+    } finally {
+      vi.unstubAllGlobals();
+      if (descriptor) Object.defineProperty(Uint8Array, 'fromBase64', descriptor);
+      else Reflect.deleteProperty(Uint8Array, 'fromBase64');
+    }
   });
 
   it('rejects invalid alphabet and padding while checking every unused padding-bit value', () => {

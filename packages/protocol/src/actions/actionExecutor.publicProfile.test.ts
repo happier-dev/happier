@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
+import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { bindHomeDomainActionHttpRequestV1, bindPublicProfilePreparedHttpRequestV1 } from './homeDomainActionFamily.js';
-import { bindPublicProfileActionPorts, type PreparedPublicProfileAction } from './executor/publicProfileActions.js';
-import { normalizeUsageQuery } from '../inputs/usageQuery.js';
-import { DEFAULT_PUBLIC_PROFILE_POLICY_V1, PublicProfileSnapshotV1Schema } from '../account/publicProfile.js';
+import { bindPublicProfileActionPorts, type PreparedPublicProfileAction, type PublicProfilePreviewAdmission } from './executor/publicProfileActions.js';
+import { normalizeUsageQuery, type UsageQuery } from '../inputs/usageQuery.js';
+import { DEFAULT_PUBLIC_PROFILE_POLICY_V1, PUBLIC_PROFILE_FIELDS_V1, PublicProfileSnapshotV1Schema } from '../account/publicProfile.js';
 import { DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1, PublicProfileOwnerReadV1Schema, PublicProfileViewV1Schema, type PublicProfilePreparedAppearanceV1 } from '../account/publicProfilePublication.js';
 import { PublicProfilePreviewResultV1Schema, PublicProfileUpdateResultV1Schema } from '../account/publicProfileIntents.js';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
@@ -14,6 +16,11 @@ import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { buildPublicProfileSnapshot } from '../account/publicProfileSnapshot.js';
 import { resolveUsagePageAggregation } from '../usage/resolveUsagePageAggregation.js';
 import { UsageAnalyticsQueryResponseSchema } from '../usage/usageAnalyticsContracts.js';
+import { createWorkBoardArtifactBoundary } from '../boards/workBoardArtifactV1.testkit.js';
+import { createWidgetDefinitionArtifactPortV1 } from '../widgets/widgetDefinitionArtifactV1.js';
+import { WidgetDefinitionV1Schema } from '../widgets/widgetDefinitionV1.js';
+import { WidgetAreaLayoutV1Schema } from '../widgets/widgetSurfaceArtifactV1.js';
+import { ArtifactActionInputSchemasV1, ArtifactDocumentV1Schema } from '../artifacts/artifactActionsV1.js';
 
 const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
   'account.public_profile.update': ['cli', 'plugin'], 'account.public_profile.refresh': ['cli'],
@@ -42,6 +49,284 @@ function owner() {
 }
 
 describe('public-profile Actions through the shared executor', () => {
+  it('prepares metadata-only All with the incumbent bounded artifact period and no Usage read', async () => {
+    const current = owner();
+    const policy = { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields } };
+    for (const field of PUBLIC_PROFILE_FIELDS_V1) policy.fields[field] = field === 'name';
+    const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args => {
+      if (args.actionId === 'account.public_profile.get') return current;
+      throw new Error('Preview cannot mutate Home');
+    };
+    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
+    } as ActionExecutorDeps);
+    const result = await executor.execute('account.public_profile.preview', { policy, metadataSelection: {},
+      query: normalizeUsageQuery({ period: { relative: 'all' } }), layout, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1 }, context);
+    expect(result).toMatchObject({ ok: true, result: { kind: 'ready', view: { snapshot: { period: { startMs: 0,
+      endMs: expect.any(Number) }, facts: {} } } } });
+  });
+  it.each([
+    { fields: ['tokens'], session: false, work: false, activity: false },
+    { fields: ['calendar'], session: false, work: false, activity: true },
+    { fields: ['agentTime'], session: true, work: false, activity: false },
+    { fields: ['mergedPrs'], session: false, work: true, activity: false },
+  ])('carries a widened $fields snapshot in one Update with only selected Usage demand', async scenario => {
+    const current = owner();
+    if (current.kind !== 'ready') throw new Error('Expected existing edition');
+    current.record.policy = { indexable: false, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields } };
+    for (const field of PUBLIC_PROFILE_FIELDS_V1) current.record.policy.fields[field] = false;
+    current.record.query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1_000 } });
+    const policy = structuredClone(current.record.policy);
+    for (const field of PUBLIC_PROFILE_FIELDS_V1) policy.fields[field] = scenario.fields.includes(field);
+    const writes: unknown[] = [];
+    const queries: UsageQuery[] = [];
+    const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args => {
+      if (args.actionId === 'account.public_profile.get') return current;
+      writes.push(bindPublicProfilePreparedHttpRequestV1(args.actionId, args.preparedRequest));
+      return { kind: 'updated', record: current.record };
+    };
+    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {}, buildSnapshot: buildPublicProfileSnapshot,
+        usage: { query: async request => {
+          queries.push(...request.queries);
+          return resolveUsagePageAggregation({ queries: request.queries, accounting: request.queries.map(query => ({ query,
+            status: 'available', asOfMs: 1_000, value: UsageAnalyticsQueryResponseSchema.parse({ v: 1,
+              totals: { eventCount: 0, tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+                cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, contributions: [],
+              coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [],
+                range: { startMs: 0, endMs: 1_000, complete: true }, sources: [] },
+            }),
+          })) });
+        } },
+      }),
+    } as ActionExecutorDeps);
+    expect(await executor.execute('account.public_profile.update', { policy }, context)).toMatchObject({ ok: true });
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toMatchObject({ population: 'public_eligible_personal', includeAccounting: true, includeComparison: false,
+      includeSessionEvidence: scenario.session, includeWorkEvidence: scenario.work, includeActivity: scenario.activity,
+      includeQuotaHistory: false, includeTranscriptEvidence: false });
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({ path: '/v1/account/public-profile/policy', body: { policy, snapshot: { v: 1, facts: {} } } });
+  });
+  it.each(['ui', 'cli', 'agent', 'mcp', 'plugin'] as const)('allows facts-only Refresh by default on %s while respecting explicit Ask', surface => {
+    const defaults = ActionsSettingsV1Schema.parse({ v: 1 });
+    const ctx = { surface, authority: 'account_automation' as const };
+    expect(isApprovalRequiredByActionsSettings('account.public_profile.refresh', defaults, ctx)).toBe(false);
+    expect(isApprovalRequiredByActionsSettings('account.public_profile.refresh', ActionsSettingsV1Schema.parse({ v: 1,
+      actions: { 'account.public_profile.refresh': { approvalRequiredSurfaces: [surface] } } }), ctx)).toBe(true);
+  });
+  it('resumes directly for a present UI user while agents still ask', () => {
+    const defaults = ActionsSettingsV1Schema.parse({ v: 1 });
+    expect(isApprovalRequiredByActionsSettings('account.public_profile.resume', defaults,
+      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } })).toBe(false);
+    expect(isApprovalRequiredByActionsSettings('account.public_profile.resume', defaults,
+      { surface: 'agent', authority: 'account_automation' })).toBe(true);
+  });
+  it('admits one captured operation once and finishes its Update without a child Refresh', async () => {
+    let admissions = 0;
+    const writes: unknown[] = [];
+    const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args => {
+      if (args.actionId === 'account.public_profile.get') return owner();
+      writes.push(args.preparedRequest);
+      return { kind: 'updated', record: null };
+    };
+    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => { admissions += 1; } }),
+    } as ActionExecutorDeps);
+    const result = await executor.execute('account.public_profile.update', { policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1 }, context);
+    expect(admissions).toBe(1);
+    expect(result).toEqual({ ok: true, result: { kind: 'updated', record: null } });
+    expect(writes).toEqual([{ operation: 'update', body: { policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1 } }]);
+  });
+  it('keeps an unchanged query and wider identity fields independent of Usage availability', async () => {
+    const current = owner();
+    if (current.kind !== 'ready' || !current.record.policy || !current.record.query) throw new Error('Expected existing edition');
+    current.record.policy = { ...current.record.policy, fields: { ...current.record.policy.fields, name: false } };
+    const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args =>
+      args.actionId === 'account.public_profile.get' ? current : { kind: 'updated', record: current.record };
+    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {},
+        usage: { query: async () => { throw new Error('No selected Usage change'); } } }),
+    } as ActionExecutorDeps);
+    expect(await executor.execute('account.public_profile.update', { query: current.record.query,
+      policy: { ...current.record.policy, fields: { ...current.record.policy.fields, name: true } } }, context))
+      .toMatchObject({ ok: true, result: { kind: 'updated' } });
+  });
+  it.each(['ui', 'cli', 'agent'] as const)('compiles a private widget selection at Action preparation from %s without Usage', async surface => {
+    const requests: unknown[] = [];
+    const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args => {
+      if (args.actionId === 'account.public_profile.get') return owner();
+      requests.push(args.preparedRequest);
+      return { kind: 'updated', record: null };
+    };
+    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+      widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
+      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
+    } as ActionExecutorDeps);
+    const selection = WidgetAreaLayoutV1Schema.parse({ v: 1, surface: { serverId: 'home', accountId: 'account',
+      owner: { kind: 'corePage', pageId: 'public-profile', area: 'main', layoutId: 'minimal' } }, items: [{
+      kind: 'widget', size: 'wide', frameStyle: 'plain', instance: { v: 1, id: 'chosen-totals', displayName: 'My totals',
+        definition: { kind: 'builtin', id: 'usage_period_summary' }, bindings: {} },
+    }] });
+    await expect(executor.execute('account.public_profile.update', { layout: selection }, { ...context, surface,
+      ...(surface === 'ui' ? { actionCaller: { kind: 'host' as const } } : {}),
+      ...(surface === 'agent' ? { authority: 'account_automation' as const, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'account.public_profile.update': ['agent'] } }) } : {}),
+    })).resolves.toMatchObject({ ok: true, result: { kind: 'updated' } });
+    expect(requests).toEqual([{ operation: 'update', body: { layout: { v: 1, items: [{ kind: 'widget', id: 'chosen-totals',
+      size: 'wide', frameStyle: 'plain', title: 'My totals', presentation: { kind: 'usage', widgetId: 'usage_period_summary', inputs: {} },
+    }] } } }]);
+    await expect(executor.execute('account.public_profile.update', { layout: { ...selection,
+      surface: { ...selection.surface, accountId: 'another-account' } } }, { ...context, surface }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'account_target_mismatch' });
+    expect(requests).toHaveLength(1);
+  });
+  it('retains the exact compiled Artifact copy across review and refuses its later unavailable declaration', async () => {
+    const boundary = createWorkBoardArtifactBoundary();
+    const definitions = createWidgetDefinitionArtifactPortV1({ ...boundary.transport,
+      read: async (id, options) => {
+        const row = await boundary.transport.read(id, options);
+        return row ? { ...row, ownerAccountId: 'account' } : null;
+      },
+    }, { accountId: 'account' });
+    await definitions.create(WidgetDefinitionV1Schema.parse({ v: 1, id: 'shared-days', name: 'Days',
+      sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' }, inputs: { fields: [] },
+      inputSchema: { type: 'object', additionalProperties: false },
+      publicPresentation: { kind: 'declarative', document: { version: 1, root: { kind: 'metric', label: 'Active days',
+        data: { kind: 'value', value: { kind: 'public_profile' } }, value: { path: ['snapshot', 'facts', 'activeDays'], type: 'number' } } } },
+      body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'PRIVATE-BODY' } } },
+      provenance: { source: { kind: 'authored' } },
+    }));
+    const writes: unknown[] = [];
+    let artifactOwnerAccountId = 'account';
+    const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args => {
+      if (args.actionId === 'account.public_profile.get') return owner();
+      writes.push(args.preparedRequest);
+      return { kind: 'updated', record: null };
+    };
+    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+      widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
+      artifactAction: async args => {
+        expect(args.actionId).toBe('artifact.get');
+        expect('readOnly' in args && args.readOnly).toBe(true);
+        const input = ArtifactActionInputSchemasV1['artifact.get'].parse(args.input);
+        const row = await boundary.transport.read(input.artifactId, { signal: args.signal });
+        return { artifact: row ? ArtifactDocumentV1Schema.parse({ artifactId: row.artifactId, header: row.header,
+          body: row.body, revision: row.revision, ownerAccountId: artifactOwnerAccountId, access: 'owner',
+          seq: 0, createdAt: 0, updatedAt: 0 }) : null };
+      },
+      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
+    } as ActionExecutorDeps);
+    const selection = WidgetAreaLayoutV1Schema.parse({ v: 1, surface: { serverId: 'home', accountId: 'account',
+      owner: { kind: 'corePage', pageId: 'public-profile', area: 'main' } }, items: [{ kind: 'widget',
+      instance: { v: 1, id: 'days', definition: { kind: 'artifact', artifactId: 'shared-days' }, bindings: {} },
+    }] });
+    await expect(executor.execute('account.public_profile.update', { layout: selection }, { ...context,
+      reviewPublicProfilePreparedAction: async () => { await definitions.update('shared-days', { publicPresentation: null }); return true; },
+    })).resolves.toMatchObject({ ok: true });
+    expect(writes).toMatchObject([{ operation: 'update', body: { layout: { items: [{ id: 'days', title: 'Days',
+      presentation: { kind: 'declarative', document: { root: { label: 'Active days' } } },
+    }] } } }]);
+    expect(JSON.stringify(writes)).not.toContain('PRIVATE-BODY');
+    artifactOwnerAccountId = 'another-account';
+    await expect(executor.execute('account.public_profile.update', { layout: selection }, context))
+      .resolves.toMatchObject({ ok: false, errorCode: 'widget_definition_account_mismatch' });
+    expect(writes).toHaveLength(1);
+    artifactOwnerAccountId = 'account';
+    await expect(executor.execute('account.public_profile.update', { layout: selection }, context))
+      .resolves.toMatchObject({ ok: false, errorCode: 'widget_public_presentation_unavailable' });
+    expect(writes).toHaveLength(1);
+  });
+  it('compiles installed selections from exact metadata without listing saved placements or Account definitions', async () => {
+    let metadataReads = 0;
+    let unrelatedReads = 0;
+    const requests: unknown[] = [];
+    const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args => {
+      if (args.actionId === 'account.public_profile.get') return owner();
+      requests.push(args.preparedRequest);
+      return { kind: 'updated', record: null };
+    };
+    const identity = { pluginId: 'example.metrics', localId: 'days' };
+    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+      widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
+      widgetCatalog: {
+        list: async () => { unrelatedReads += 1; return []; },
+        readInstalledDescriptor: async () => {
+          metadataReads += 1;
+          return { title: 'Shared days', availability: 'unavailable', sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
+            publicPresentation: { kind: 'declarative', document: { version: 1, root: { kind: 'metric', label: 'Active days',
+              data: { kind: 'value', value: { kind: 'public_profile' } }, value: { path: ['snapshot', 'facts', 'activeDays'], type: 'number' } } } } };
+        },
+      },
+      artifactAction: async () => { unrelatedReads += 1; return { artifact: null }; },
+      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
+    } as ActionExecutorDeps);
+    const selection = WidgetAreaLayoutV1Schema.parse({ v: 1, surface: { serverId: 'home', accountId: 'account',
+      owner: { kind: 'corePage', pageId: 'public-profile', area: 'main' } }, items: ['first', 'second'].map(id => ({ kind: 'widget',
+      instance: { v: 1, id, definition: { kind: 'installed', surface: identity }, bindings: {} },
+    })) });
+    await expect(executor.execute('account.public_profile.update', { layout: selection }, context)).resolves.toMatchObject({ ok: true });
+    expect(requests).toMatchObject([{ operation: 'update', body: { layout: { items: [
+      { id: 'first', title: 'Shared days', presentation: { kind: 'declarative' } },
+      { id: 'second', title: 'Shared days', presentation: { kind: 'declarative' } },
+    ] } } }]);
+    expect(metadataReads).toBe(1);
+    expect(unrelatedReads).toBe(0);
+  });
+  it('keeps a private layout selection out of durable Action observations', () => {
+    const selection = WidgetAreaLayoutV1Schema.parse({ v: 1,
+      surface: { serverId: 'home', accountId: 'account', owner: { kind: 'corePage', pageId: 'public-profile', area: 'main' } },
+      items: [{ kind: 'widget', instance: { v: 1, id: 'private', definition: { kind: 'inline', definition: {
+        v: 1, id: 'private-definition', name: 'Private draft', sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
+        inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false }, provenance: { source: { kind: 'authored' } },
+        body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'PRIVATE-DRAFT-BODY' } } },
+      } }, bindings: {} } }],
+    });
+    const observed = getActionSpec('account.public_profile.update').projectObservationInput?.({ layout: selection });
+    expect(observed).not.toHaveProperty('layout');
+    expect(JSON.stringify(observed)).not.toContain('PRIVATE-DRAFT-BODY');
+  });
+  it.each([
+    { surface: 'ui', authority: 'present_user', caller: 'host', ask: false, succeeds: true },
+    { surface: 'ui', authority: 'present_user', caller: 'host', ask: true, succeeds: false },
+    { surface: 'agent', authority: 'account_automation', caller: 'host', ask: false, succeeds: false },
+    { surface: 'ui', authority: 'account_automation', caller: 'host', ask: false, succeeds: false },
+    { surface: 'ui', authority: 'present_user', caller: 'plugin', ask: false, succeeds: false },
+  ] as const)('counts the exact prepared review as confirmation only for the present host UI user ($surface/$authority/$caller/ask=$ask)', async scenario => {
+    const current = owner();
+    if (current.kind !== 'ready') throw new Error('Expected existing edition');
+    current.record.query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1_000 } });
+    let writes = 0;
+    const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args => {
+      if (args.actionId === 'account.public_profile.get') return current;
+      writes += 1;
+      return { kind: 'updated', record: null };
+    };
+    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {}, buildSnapshot: buildPublicProfileSnapshot,
+        usage: { query: async ({ queries }) => resolveUsagePageAggregation({ queries, accounting: queries.map(query => ({ query,
+          status: 'available', asOfMs: 1_000, value: UsageAnalyticsQueryResponseSchema.parse({ v: 1,
+            totals: { eventCount: 1, tokens: { input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 5 },
+              cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } },
+            contributions: [{ id: 'request', observedAtMs: 1, sessionId: null, turnId: null, agentId: 'codex', modelId: null,
+              machineId: null, projectKey: null, workspaceId: null, source: 'runtime', eventCount: 1,
+              tokens: { input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 5 },
+              cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }],
+          }) })) }) } }),
+    } as ActionExecutorDeps);
+    const result = await executor.execute('account.public_profile.publish', {
+      intent: 'publish', policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1, metadataSelection: {},
+      query: current.record.query, layout, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1,
+    }, { ...context, surface: scenario.surface, authority: scenario.authority,
+      actionCaller: scenario.caller === 'host' ? { kind: 'host' } : { kind: 'plugin', pluginId: 'example.profiles', contributionLocalId: 'surface' },
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, ...(scenario.ask ? {
+        actions: { 'account.public_profile.publish': { approvalRequiredSurfaces: ['ui'] } },
+      } : {}) }),
+      reviewPublicProfilePreparedAction: async effect => effect.request.operation === 'publish',
+    });
+    expect(result).toMatchObject({ ok: scenario.succeeds });
+    expect(writes).toBe(scenario.succeeds ? 1 : 0);
+  });
   it.each(['publish', 'resume', 'update', 'refresh'] as const)('requires a declared public population in the prepared %s HTTP grammar', operation => {
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1 } });
     const snapshot = PublicProfileSnapshotV1Schema.parse({ v: 1, computedAtMs: 1,
@@ -87,7 +372,7 @@ describe('public-profile Actions through the shared executor', () => {
     } as ActionExecutorDeps);
     await expect(executor.execute('account.public_profile.update', { layout }, { ...context, surface,
       ...(surface === 'plugin' ? { actionCaller: { kind: 'plugin' as const, pluginId: 'example.profiles', contributionLocalId: 'surface' } } : {}) }))
-      .resolves.toMatchObject({ ok: true, result: { kind: 'updated', refresh: 'not_needed' } });
+      .resolves.toMatchObject({ ok: true, result: { kind: 'updated' } });
     expect(requests).toEqual([{ method: 'GET', path: '/v1/account/public-profile', body: undefined },
       { method: 'PUT', path: '/v1/account/public-profile/policy', body: { layout } }]);
   });
@@ -98,6 +383,44 @@ describe('public-profile Actions through the shared executor', () => {
     await expect(executor.execute('account.public_profile.refresh', { snapshot: {}, confirmed: true }, context))
       .resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
     expect(requests).toEqual([]);
+  });
+
+  it.each(['retained', 'missing', 'period', 'wider'] as const)('uses the live preview only for compatible Publish facts: %s', async scenario => {
+    const policy = { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields } };
+    for (const field of PUBLIC_PROFILE_FIELDS_V1) policy.fields[field] = field === 'tokens';
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1_000 } });
+    const queries: UsageQuery[] = [];
+    const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async () => owner();
+    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {}, buildSnapshot: buildPublicProfileSnapshot,
+        usage: { query: async request => {
+          queries.push(...request.queries);
+          return resolveUsagePageAggregation({ queries: request.queries, accounting: request.queries.map(query => ({ query,
+            status: 'available', asOfMs: 1_000, value: UsageAnalyticsQueryResponseSchema.parse({ v: 1,
+              totals: { eventCount: 0, tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+                cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, contributions: [],
+              coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [],
+                range: { startMs: 0, endMs: 1_000, complete: true }, sources: [] },
+            }),
+          })) });
+        } },
+      }),
+    } as ActionExecutorDeps);
+    const intent = { policy, metadataSelection: {}, query, layout, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1 };
+    let preview: PublicProfilePreviewAdmission | null = null;
+    expect(await executor.execute('account.public_profile.preview', intent, { ...context,
+      capturePublicProfilePreview: admitted => { preview = admitted; },
+    })).toMatchObject({ ok: true, result: { kind: 'ready' } });
+    expect(preview).not.toBeNull();
+    const reviewed: PreparedPublicProfileAction[] = [];
+    expect(await executor.execute('account.public_profile.publish', { ...intent, intent: 'publish',
+      ...(scenario === 'period' ? { query: normalizeUsageQuery({ period: { startMs: 0, endMs: 2_000 } }) } : {}),
+      ...(scenario === 'wider' ? { policy: { ...policy, fields: { ...policy.fields, activeDays: true } } } : {}),
+    }, { ...context, publicProfilePreviewAdmission: Promise.resolve(scenario === 'missing' ? null : preview),
+      reviewPublicProfilePreparedAction: async effect => { reviewed.push(effect); return false; },
+    })).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+    expect(reviewed).toHaveLength(1);
+    expect(queries).toHaveLength(scenario === 'retained' ? 1 : 2);
   });
 
   it.each([
@@ -133,12 +456,13 @@ describe('public-profile Actions through the shared executor', () => {
       }),
     } as ActionExecutorDeps);
     const intent = { policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1, metadataSelection: {},
-      query: normalizeUsageQuery({ period: { startMs: 0, endMs: 1_000 } }), layout, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1 };
+      query: normalizeUsageQuery({ period: { relative: '30days' } }), layout, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1 };
     const result = await executor.execute('account.public_profile.preview', intent, context);
     expect(result).toMatchObject({ ok: true, result: { kind: missing === 'usage' ? 'unavailable' : 'ready' } });
     if (!result.ok) throw new Error('Expected a local preview result');
     const preview = PublicProfilePreviewResultV1Schema.parse(result.result);
     if (preview.kind === 'ready') {
+      expect(preview.view.relativePeriod).toBe('30days');
       expect(preview.view.service).toEqual(read.context.service);
       expect(preview.view.urls).toBeNull();
       expect(PublicProfileViewV1Schema.safeParse(preview.view).success).toBe(false);
@@ -196,11 +520,11 @@ describe('public-profile Actions through the shared executor', () => {
     // Assert outside the boundary callback so the executor cannot normalize this regression into a generic failure.
     expect(offeredBeforeDecision).toBeDefined();
     expect(JSON.stringify(offeredBeforeDecision)).not.toContain(picturePng);
-    expect(result).toMatchObject({ ok: true, result: { kind: 'updated', refresh: 'not_needed', record: { policy: { fields: { tokens: false } } } } });
+    expect(result).toMatchObject({ ok: true, result: { kind: 'updated', record: { policy: { fields: { tokens: false } } } } });
     expect(requests).toEqual([{ method: 'PUT', path: '/v1/account/public-profile/policy', body: reviewed }]);
   });
 
-  it('retains a confirmed policy narrowing when the optional refresh cannot build an eligible snapshot', async () => {
+  it('applies a policy narrowing without querying Usage or adding refresh result states', async () => {
     const current = owner();
     const requests: unknown[] = [];
     const policy = { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields, tokens: false } };
@@ -210,17 +534,18 @@ describe('public-profile Actions through the shared executor', () => {
       return args.actionId === 'account.public_profile.get' ? current : { kind: 'updated', record };
     };
     const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
-      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
+      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {},
+        usage: { query: async () => { throw new Error('Narrowing must not query Usage'); } } }),
     } as ActionExecutorDeps);
     await expect(executor.execute('account.public_profile.update', { policy }, context)).resolves.toMatchObject({ ok: true,
-      result: { kind: 'updated', record: { policy: { fields: { tokens: false } } }, refresh: 'unavailable' } });
-    expect(requests).not.toContain('account.public_profile.refresh');
+      result: { kind: 'updated', record: { policy: { fields: { tokens: false } } } } });
+    expect(requests).toEqual(['account.public_profile.get', 'account.public_profile.update']);
   });
 
   it.each([
     { empty: true, reason: 'no_eligible_personal_usage' },
     { empty: false, reason: 'source_time_unavailable' },
-  ] as const)('preserves $reason through preview, publication and optional refresh preparation', async ({ empty, reason }) => {
+  ] as const)('preserves $reason through preview and publication without reading Usage for an unchanged policy', async ({ empty, reason }) => {
     const current = owner();
     if (current.kind !== 'ready') throw new Error('Expected existing edition');
     current.record.query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1_000 } });
@@ -263,13 +588,14 @@ describe('public-profile Actions through the shared executor', () => {
     expect(writes).toEqual([]);
     current.record.state = 'published';
     const updated = await executor.execute('account.public_profile.update', { policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1 }, context);
-    expect(updated).toMatchObject({ ok: true, result: { kind: 'updated', refresh: 'unavailable', refreshReason: reason } });
+    expect(updated).toMatchObject({ ok: true, result: { kind: 'updated' } });
     if (!updated.ok) throw new Error('Expected acknowledged policy update');
-    expect(PublicProfileUpdateResultV1Schema.parse(updated.result)).toMatchObject({ refresh: 'unavailable', refreshReason: reason });
+    expect(PublicProfileUpdateResultV1Schema.parse(updated.result)).toEqual({ kind: 'updated', record: current.record });
     expect(writes).toEqual(['account.public_profile.update']);
   });
 
   it.each(['publish', 'resume', 'refresh', 'preview', 'preview_required'] as const)('keeps the exact computed %s snapshot out of durable approvals and observations', async variant => {
+    const coordinator = createBlockingApprovalCoordinator();
     const operation = variant === 'preview_required' ? 'preview' : variant;
     const current = owner();
     if (current.kind !== 'ready') throw new Error('Expected existing edition');
@@ -311,12 +637,17 @@ describe('public-profile Actions through the shared executor', () => {
         if (!stored) throw new Error('Missing approval');
         const next = decideApprovalRequestTransition(stored, request);
         if (!next.ok) return next;
-        stored = request; return { ok: true };
+        stored = request;
+        coordinator.notifyApprovalUpdated({ artifactId: 'snapshot-review', request });
+        return { ok: true };
       },
       approvalsWaitForDecision: async ({ request }) => {
         observedTokens = 7654321;
-        return { decision: 'approve', decisionAuthority: 'present_user', request };
+        const decision = await coordinator.waitForDecision({ artifactId: 'snapshot-review', request,
+          readRequest: async () => stored, subscribeChanges: listener => coordinator.subscribeApprovalChanges(listener) });
+        return { ...decision, request: ApprovalRequestV2Schema.parse(decision.request) };
       }, isApprovalExecutionOriginCurrent: async () => true,
+      approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
       observeActionExecution: observation => { observations.push(observation); },
     } as ActionExecutorDeps);
     const appearance = operation === 'preview' ? reviewedPictureAppearance() : DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1;
@@ -326,9 +657,10 @@ describe('public-profile Actions through the shared executor', () => {
         repository: { nameWithOwner: 'private-unreviewed-owner/private-repo' }, protocol: 'https',
       }] },
       query: current.record.query, layout, appearance } : {};
-    const previewSettings = variant === 'preview_required' ? ActionsSettingsV1Schema.parse({ v: 1,
-      actions: { 'account.public_profile.preview': { approvalRequiredSurfaces: ['agent'] } } }) : settings;
-    const result = await executor.execute(`account.public_profile.${operation}`, input, { ...context, actionsSettings: previewSettings,
+    const previewSettings = variant === 'preview_required' || operation === 'refresh' ? ActionsSettingsV1Schema.parse({ v: 1,
+      actions: { [`account.public_profile.${operation}`]: { approvalRequiredSurfaces: ['agent'] } } }) : settings;
+    // Native MCP operands cross JSON framing before Action admission.
+    const pending = executor.execute(`account.public_profile.${operation}`, projectNativeJsonValueForTransport(input), { ...context, actionsSettings: previewSettings,
       surface: 'agent', authority: 'account_automation',
       reviewPublicProfilePreparedAction: async (effect: PreparedPublicProfileAction) => {
         reviewOrder.push('review');
@@ -337,6 +669,18 @@ describe('public-profile Actions through the shared executor', () => {
         return true;
       },
       runtimeAccountId: 'account', actionCaller: { kind: 'host' }, actionRequestId: 'snapshot-request', defaultSessionMachineId: 'machine' });
+    let result: Awaited<typeof pending>;
+    try {
+      if (variant !== 'preview') {
+        await vi.waitFor(() => expect(coordinator.getLiveWaiterCount('snapshot-review')).toBe(1));
+        expect(writes).toEqual([]);
+        expect(await executor.execute('approval.request.decide', { artifactId: 'snapshot-review', decision: 'approve' }, {
+          surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        })).toMatchObject({ ok: true });
+      }
+      result = await pending;
+      expect(result.ok, !result.ok ? JSON.stringify({ errorCode: result.errorCode, error: result.error, details: result.details }) : undefined).toBe(true);
+    } finally { coordinator.dispose(); }
     expect(reviewOrder).toEqual(operation === 'preview' ? variant === 'preview_required' ? ['approval'] : [] : ['review', 'approval']);
     expect(reviewed).toHaveLength(operation === 'preview' ? 0 : 1);
     if (offered !== undefined) expect(JSON.stringify(offered)).not.toContain('private-unreviewed');
@@ -365,9 +709,8 @@ describe('public-profile Actions through the shared executor', () => {
     expect(JSON.stringify(writes)).not.toContain('private-unreviewed');
   });
 
-  it.each(['cancel', 'abort', 'retire'] as const)('stops %s during prepared review before approval or an outward write', async outcome => {
+  it.each(['cancel', 'abort'] as const)('stops %s during prepared review before approval or an outward write', async outcome => {
     const controller = new AbortController();
-    let current = true;
     const effects: string[] = [];
     const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args => {
       if (args.actionId === 'account.public_profile.get') return owner();
@@ -375,29 +718,28 @@ describe('public-profile Actions through the shared executor', () => {
       return { kind: 'updated', record: null };
     };
     const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
-      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {
-        if (!current) throw Object.assign(new Error('Retired Account'), { code: 'action_account_scope_changed' });
-      } }),
+      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
       approvalsCreate: async () => { effects.push('approval'); return { artifactId: 'unexpected-approval' }; },
     } as ActionExecutorDeps);
-    const result = await executor.execute('account.public_profile.update', { layout }, { ...context, signal: controller.signal,
+    const result = await executor.execute('account.public_profile.update', { layout }, { ...context, surface: 'ui', authority: 'present_user',
+      actionCaller: { kind: 'host' }, signal: controller.signal,
       reviewPublicProfilePreparedAction: async (effect: PreparedPublicProfileAction) => {
         effects.push('review');
         expect(effect.request).toEqual({ operation: 'update', body: { layout } });
         if (outcome === 'abort') controller.abort();
-        if (outcome === 'retire') current = false;
         return outcome !== 'cancel';
       },
     });
-    expect(result).toMatchObject({ ok: false, errorCode: { cancel: 'approval_canceled', abort: 'cancelled', retire: 'action_account_scope_changed' }[outcome] });
+    expect(result).toMatchObject({ ok: false, errorCode: { cancel: 'approval_canceled', abort: 'cancelled' }[outcome] });
     expect(effects).toEqual(['review']);
   });
 
-  it('derives the public population before retaining a caller query update without binding a snapshot builder', async () => {
+  it('refuses a query change without a snapshot builder before applying any part of Update', async () => {
     const current = owner();
     const requests: unknown[] = [];
     const ordinaryQuery = normalizeUsageQuery({ period: { relative: '30days' }, agents: ['claude'] });
     const publicQuery = normalizeUsageQuery({ ...ordinaryQuery, population: 'public_eligible_personal', includeAccounting: true,
+      includeComparison: false,
       includeActivity: true, activityResolution: 'both', includeSessionEvidence: true, includeWorkEvidence: true,
       includeQuotaHistory: false, includeTranscriptEvidence: false });
     const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args => {
@@ -411,28 +753,26 @@ describe('public-profile Actions through the shared executor', () => {
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
     } as ActionExecutorDeps);
     await expect(executor.execute('account.public_profile.update', { query: ordinaryQuery }, context))
-      .resolves.toMatchObject({ ok: true, result: { kind: 'updated', refresh: 'unavailable' } });
-    expect(requests).toContainEqual({ method: 'PUT', path: '/v1/account/public-profile/policy', body: { query: publicQuery } });
+      .resolves.toMatchObject({ ok: false, errorCode: 'public_profile_preparation_unavailable', details: { reason: 'usage_unavailable' } });
+    expect(requests).toEqual([{ method: 'GET', path: '/v1/account/public-profile', body: undefined }]);
     expect(ordinaryQuery.population).toBe('all_personal_history');
   });
 
-  it('refuses a retired Account after preparation and never retargets the retained Apply', async () => {
-    let current = true;
+  it('aborts a retired captured operation after preparation before any retained Apply', async () => {
+    const controller = new AbortController();
     const requests: unknown[] = [];
     const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args => {
       if (args.actionId === 'account.public_profile.get') return owner();
       requests.push(args); return { kind: 'updated', record: null };
     };
     const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
-      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {
-        if (!current) throw Object.assign(new Error('Account retired'), { code: 'action_account_scope_changed' });
-      } }),
+      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
     } as ActionExecutorDeps);
-    const prepared = await executor.prepare('account.public_profile.update', { layout }, context);
+    const prepared = await executor.prepare('account.public_profile.update', { layout }, { ...context, signal: controller.signal });
     expect(prepared.kind).toBe('ready');
-    current = false;
+    controller.abort();
     if (prepared.kind !== 'ready') throw new Error('Expected a prepared Apply');
-    await expect(prepared.invocation.run()).resolves.toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+    await expect(prepared.invocation.run()).resolves.toMatchObject({ ok: false, errorCode: 'cancelled' });
     expect(requests).toEqual([]);
   });
 

@@ -45,20 +45,11 @@ async function importRpcProtocol() {
 }
 
 describe('PeerMachineRpcDirectV1', () => {
-  it('validates direct machine RPC envelopes and deterministic command hashes', async () => {
+  it('validates direct machine RPC envelopes', async () => {
     const protocol = await importRpcProtocol();
     expect(protocol).toHaveProperty('PeerMachineRpcDirectRequestV1Schema');
     if ('importError' in protocol) throw protocol.importError;
 
-    const requestHash = protocol.createPeerMachineRpcRequestHashV1({
-      method: RPC_METHODS.DAEMON_MEMORY_STATUS,
-      params: { includeWorkers: true },
-      grantId: 'grant_1',
-      endpointFingerprint: 'endpoint_1',
-      replayKey: 'replay_1',
-    });
-
-    expect(requestHash).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(protocol.PeerMachineRpcDirectRequestV1Schema.parse({
       v: 1,
       requestId: 'request_1',
@@ -69,13 +60,6 @@ describe('PeerMachineRpcDirectV1', () => {
       routeKind: 'loopback_direct',
       flowKind: 'machine_rpc',
       endpointFingerprint: 'endpoint_1',
-      commandReceipt: {
-        v: 1,
-        issuer: 'ui',
-        issuedAtMs: 2_000,
-        requestHash,
-        replayKey: 'replay_1',
-      },
     }).requestId).toBe('request_1');
   });
 

@@ -14,9 +14,50 @@ function hostFor(page: unknown = MCP_REGISTRY_V01_PAGE_FIXTURE, read: unknown = 
   const unused = async (): Promise<never> => { throw new Error('Unexpected transport'); };
   const http: RegistryHttpV1 = { getJson: async raw => { const url = new URL(raw); urls.push(url);
     return { ok: true, value: url.pathname.endsWith('/servers') ? page : read, fetchedAt: 10 }; }, getText: unused, getBytes: unused };
-  return { host: createRegistryHostV1({ host: 'web', http, readSources: async () => BUILT_IN_REGISTRY_SOURCES_V1 }), http, urls };
+  // This adapter harness answers MCP wire records; unrelated curated-source failures have their own host tests.
+  return { host: createRegistryHostV1({ host: 'web', http,
+    readSources: async () => BUILT_IN_REGISTRY_SOURCES_V1.filter(source => source.format === 'mcp-registry') }), http, urls };
 }
 describe('registered MCP Registry reader', () => {
+  it.each([['Tandem documentation', 'Tandem documentation'], [undefined, 'ac.tandem/docs-mcp']])(
+    'uses the declared display title %s or the unchanged registry id in list and read', async (title, expected) => {
+      const record = { ...MCP_REGISTRY_V01_READ_FIXTURE,
+        server: { ...MCP_REGISTRY_V01_READ_FIXTURE.server, name: 'ac.tandem/docs-mcp', title } };
+      const { host } = hostFor({ servers: [record], metadata: { count: 1 } }, record);
+      expect(await host.execute('registries.items.list', { kind: 'mcpServer' }))
+        .toMatchObject({ pages: [{ items: [{ itemId: record.server.name, title: expected }] }] });
+      const result = await host.execute('registries.items.read', { kind: 'mcpServer', sourceId: 'builtin:mcp-registry',
+        itemId: record.server.name, version: record.server.version });
+      expect(RegistryItemV1Schema.parse((result as { item: unknown }).item))
+        .toMatchObject({ summary: { itemId: record.server.name, title: expected }, payload: { kind: 'mcpServer', server: { name: record.server.name } } });
+    });
+
+  it('carries declared theme variants through list/read without changing install identity or operands', async () => {
+    const light = 'https://example.test/mark-light.png';
+    const dark = 'https://example.test/mark-dark.png';
+    const fallback = 'https://example.test/mark.png';
+    const pointer = { kind: 'mcpServer' as const, sourceId: 'builtin:mcp-registry',
+      itemId: MCP_REGISTRY_V01_READ_FIXTURE.server.name, version: MCP_REGISTRY_V01_READ_FIXTURE.server.version };
+    const installs = [];
+    for (const icons of [undefined, [{ src: fallback }], [{ src: dark, theme: 'dark' }, { src: fallback }, { src: light, theme: 'light' }]]) {
+      const record = { ...MCP_REGISTRY_V01_READ_FIXTURE, server: { ...MCP_REGISTRY_V01_READ_FIXTURE.server, icons } };
+      const { host } = hostFor({ servers: [record], metadata: { count: 1 } }, record);
+      const listed = await host.execute('registries.items.list', { kind: 'mcpServer' });
+      const result = await host.execute('registries.items.read', pointer);
+      const item = RegistryItemV1Schema.parse((result as { item: unknown }).item);
+      expect(listed).toMatchObject({ pages: [{ items: [item.summary] }] });
+      const themed = icons?.length === 3;
+      expect(item.summary).toMatchObject(icons === undefined ? {} : { iconUrl: themed ? light : fallback });
+      expect(Reflect.get(item.summary, 'iconDarkUrl')).toBe(themed ? dark : undefined);
+      if (item.payload.kind !== 'mcpServer') throw new Error('Wrong payload');
+      expect(item.payload.server.iconUrl).toBe(item.summary.iconUrl);
+      expect(Reflect.get(item.payload.server, 'iconDarkUrl')).toBe(themed ? dark : undefined);
+      installs.push(mapMcpRegistryServerV1({ server: item.payload.server, id: 'mapped', name: 'mapped', nowMs: 12,
+        inputs: { Authorization: { t: 'savedSecret', secretId: 'canonical-ref' } } }));
+    }
+    expect(installs[1]).toEqual(installs[0]);
+    expect(installs[2]).toEqual(installs[0]);
+  });
   it('marks a deleted registry record removed upstream and refuses its pinned install read', async () => {
     const deleted = { ...MCP_REGISTRY_V01_READ_FIXTURE,
       _meta: { 'io.modelcontextprotocol.registry/official': {
@@ -53,6 +94,33 @@ describe('registered MCP Registry reader', () => {
     expect(browse?.searchParams.get('search')).toBe('playwright');
     expect(Number(browse?.searchParams.get('limit'))).toBeLessThanOrEqual(100);
     expect(urls.at(-1)?.pathname).toContain('/versions/1.0.0');
+  });
+  it('keeps absent and unthemed v0.1 icons readable without changing pinned installation operands', async () => {
+    // The captured record has no icons. The unthemed variant uses the optional
+    // Icon shape in its pinned 2025-12-11 upstream schema, not a released host DTO.
+    const iconUrl = 'https://playwrightgen.com/icon.png';
+    const pointer = { kind: 'mcpServer' as const, sourceId: 'builtin:mcp-registry',
+      itemId: MCP_REGISTRY_V01_READ_FIXTURE.server.name, version: MCP_REGISTRY_V01_READ_FIXTURE.server.version };
+    const installed = [];
+    for (const icons of [undefined, [{ src: iconUrl }]]) {
+      const record = { ...MCP_REGISTRY_V01_READ_FIXTURE, server: {
+        ...MCP_REGISTRY_V01_READ_FIXTURE.server, ...(icons === undefined ? {} : { icons }),
+      } };
+      const { host } = hostFor({ servers: [record], metadata: { count: 1 } }, record);
+      const listed = await host.execute('registries.items.list', { kind: 'mcpServer' });
+      const result = await host.execute('registries.items.read', pointer);
+      const item = RegistryItemV1Schema.parse((result as { item: unknown }).item);
+      expect(listed).toMatchObject({ pages: [{ items: [item.summary] }] });
+      expect(item.summary.iconUrl).toBe(icons === undefined ? undefined : iconUrl);
+      if (item.payload.kind !== 'mcpServer') throw new Error('Wrong payload');
+      expect(item.payload.server.iconUrl).toBe(item.summary.iconUrl);
+      installed.push(mapMcpRegistryServerV1({ server: item.payload.server, id: 'mapped', name: 'mapped', nowMs: 12,
+        inputs: { Authorization: { t: 'savedSecret', secretId: 'canonical-ref' } } }));
+    }
+    expect(installed[0]).toMatchObject({ ok: true, entry: { transport: 'http',
+      remote: { url: MCP_REGISTRY_V01_READ_FIXTURE.server.remotes[0].url,
+        headers: { Authorization: { t: 'savedSecret', secretId: 'canonical-ref' } } } } });
+    expect(installed[1]).toEqual(installed[0]);
   });
   it('detects base/v0.1 subregistries and keeps unsupported/deprecated rows visible', async () => {
     const { http } = hostFor();

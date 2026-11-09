@@ -23,7 +23,7 @@ export const PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS = {
   maxCounterSampleHz: 2,
 } as const;
 
-export const PeerMediationObservabilityRetentionCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const PeerMediationObservabilityRetentionCapabilitiesSchema = lazyZodSchema(() => z.object({
     perFlowEvents: z._default(z.optional(z.number().check(z.int(), z.positive(), z.maximum(PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.perFlowEvents))), PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.perFlowEvents),
     perMachineEvents: z._default(z.optional(z.number().check(z.int(), z.positive(), z.maximum(PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.perMachineEvents))), PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.perMachineEvents),
     eventPayloadMaxBytes: z._default(z.optional(z.number().check(z.int(), z.positive(), z.maximum(PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.eventPayloadMaxBytes))), PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.eventPayloadMaxBytes),
@@ -44,7 +44,7 @@ export const DEFAULT_PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPABILITIES: PeerMe
   maxCounterSampleHz: PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.maxCounterSampleHz,
 };
 
-export const PeerMediationObservabilitySamplingCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const PeerMediationObservabilitySamplingCapabilitiesSchema = lazyZodSchema(() => z.object({
     counterSampleHz: z._default(z.optional(z.number().check(z.positive(), z.maximum(PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.maxCounterSampleHz))), PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.maxCounterSampleHz),
     throughputWindowMs: z._default(z.optional(z.number().check(z.int(), z.positive())), 1000),
   }));
@@ -57,7 +57,7 @@ export const DEFAULT_PEER_MEDIATION_OBSERVABILITY_SAMPLING_CAPABILITIES: PeerMed
   throughputWindowMs: 1000,
 };
 
-export const PeerMediationObservabilityCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const PeerMediationObservabilityCapabilitiesSchema = lazyZodSchema(() => z.object({
     enabled: z._default(z.optional(z.boolean()), false),
     available: z._default(z.optional(z.boolean()), false),
     supportedFlowKinds: z._default(z.optional(z.array(PeerFlowKindV1Schema)), []),

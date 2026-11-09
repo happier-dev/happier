@@ -235,7 +235,8 @@ export function preparePluginContributionPointDeclarationsV1<T extends Readonly<
       // otherwise admitted release or its unrelated contribution points.
       return schema;
     }
-    rehydrateCanonicalProtocolComposableSchema(owned);
+    // Owning declaration bytes is not demand for an executable parser. The
+    // canonical rehydrator admits/compiles this immutable schema on first use.
     return owned;
   };
   return { ...contributes, pluginContributionPoints: contributes.pluginContributionPoints.map(point => ({

@@ -4,21 +4,35 @@ import { PluginActionConfirmationV2Schema, PluginActionContributionV2Schema } fr
 import { pluginActionRequiresPresentUserIntent } from './invocation.js';
 
 describe('PluginActionConfirmationV2Schema', () => {
-  it('keeps an explicit CLI default separate from human authority and per-Action Ask', () => {
-    const action = PluginActionContributionV2Schema.parse({
-      id: 'attach', title: 'Attach', execution: { target: 'daemon' },
-      scopes: ['global'], surfaces: ['ui', 'cli', 'agent', 'mcp'], placementBindings: [],
-      dangerLevel: 'writesLocal', confirmation: { title: 'Attach?' },
-      confirmationWhen: { presentUserUi: false, cli: false },
-    });
-    expect(pluginActionRequiresPresentUserIntent(action, 'cli', {}, 'account_automation')).toBe(false);
-    expect(pluginActionRequiresPresentUserIntent({ ...action, approvalRequiredByActionSettings: true },
-      'cli', {}, 'account_automation')).toBe(true);
-    for (const surface of ['agent', 'mcp', 'api', 'ui']) {
-      expect(pluginActionRequiresPresentUserIntent(action, surface, {}, 'account_automation')).toBe(true);
+  it('admits only reviewed fields declared by the Action input schema, including conditional array operands', () => {
+    const action = {
+      id: 'merge', title: 'Merge', execution: { target: 'daemon' },
+      scopes: ['global'], surfaces: ['ui'], placementBindings: [], dangerLevel: 'writesRemote',
+      inputSchema: { anyOf: [
+        { type: 'object', properties: { kind: { type: 'string', const: 'normal' } }, additionalProperties: false },
+        { type: 'object', properties: { kind: { type: 'string', const: 'withoutWaiting' },
+          skippedRequirements: { type: 'array', items: { type: 'object', properties: {
+            label: { type: 'string' }, id: { type: 'string' },
+          }, additionalProperties: false } },
+        }, additionalProperties: false },
+      ] },
+      confirmation: { title: 'Merge?', body: 'This cannot be undone.', inputFields: [
+        { path: 'skippedRequirements.[].label', title: { key: 'merge.skipping', fallback: 'Skipping' } },
+      ] },
+    };
+    expect(PluginActionContributionV2Schema.parse(action).confirmation).toEqual(action.confirmation);
+    for (const path of ['undeclared', 'skippedRequirements.[].missing', 'skippedRequirements.label']) {
+      expect(PluginActionContributionV2Schema.safeParse({ ...action, confirmation: {
+        ...action.confirmation, inputFields: [{ path, title: 'Skipping' }],
+      } }).success).toBe(false);
     }
-    expect(PluginActionContributionV2Schema.safeParse({ ...action,
-      confirmationWhen: { presentUserUi: false, cli: false, unknownSurface: false },
+    expect(PluginActionContributionV2Schema.safeParse({ ...action, inputSchema: undefined }).success).toBe(false);
+    // Read-only review traversal does not grant wildcard editing/credential binding to form hints.
+    expect(PluginActionContributionV2Schema.safeParse({ ...action, inputHints: { fields: [
+      { path: 'skippedRequirements.[].label', title: 'Skipping', widget: 'text', visibleWhen: { op: 'truthy', path: 'kind' } },
+    ] } }).success).toBe(false);
+    expect(PluginActionConfirmationV2Schema.safeParse({ ...action.confirmation,
+      inputFields: [{ path: 'skippedRequirements.[].label', title: 'Skipping', template: '{{input}}' }],
     }).success).toBe(false);
   });
 
@@ -41,6 +55,24 @@ describe('PluginActionConfirmationV2Schema', () => {
     expect(pluginActionRequiresPresentUserIntent({ ...action, approvalRequiredByActionSettings: true }, 'ui', { kind: 'list' }, 'present_user')).toBe(true);
     expect(PluginActionContributionV2Schema.safeParse({ ...action,
       confirmationWhen: { ...action.confirmationWhen, unknownAuthority: true },
+    }).success).toBe(false);
+  });
+
+  it('keeps an explicit CLI default separate from human authority and per-Action Ask', () => {
+    const action = PluginActionContributionV2Schema.parse({
+      id: 'attach', title: 'Attach', execution: { target: 'daemon' },
+      scopes: ['global'], surfaces: ['ui', 'cli', 'agent', 'mcp'], placementBindings: [],
+      dangerLevel: 'writesLocal', confirmation: { title: 'Attach?' },
+      confirmationWhen: { presentUserUi: false, cli: false },
+    });
+    expect(pluginActionRequiresPresentUserIntent(action, 'cli', {}, 'account_automation')).toBe(false);
+    expect(pluginActionRequiresPresentUserIntent({ ...action, approvalRequiredByActionSettings: true },
+      'cli', {}, 'account_automation')).toBe(true);
+    for (const surface of ['agent', 'mcp', 'api', 'ui']) {
+      expect(pluginActionRequiresPresentUserIntent(action, surface, {}, 'account_automation')).toBe(true);
+    }
+    expect(PluginActionContributionV2Schema.safeParse({ ...action,
+      confirmationWhen: { presentUserUi: false, cli: false, unknownSurface: false },
     }).success).toBe(false);
   });
 

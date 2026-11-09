@@ -33,6 +33,38 @@ describe('Session section Actions', () => {
     expect(getActionSpec('session.sections.delete').safety).toBe('safe');
   });
 
+  it('requires strict section results and publishes a captured inverse only after matching acknowledgement', async () => {
+    const section = { sectionId: 'launch', sortKey: null, displayState: { status: 'available', value: { name: 'Launch', icon: null } } };
+    expect(getActionSpec('session.sections.list').outputSchema!.parse({ sections: [section] })).toEqual({ sections: [section] });
+    expect(getActionSpec('session.sections.list').outputSchema!.safeParse({ sections: [{ ...section, accountId: 'forged' }] }).success).toBe(false);
+    expect(getActionSpec('session.section.set').outputSchema!.safeParse({ sessionId: 's', sectionId: 'launch' }).success).toBe(false);
+    expect(getActionSpec('session.section.set').outputSchema!.parse({ sessionId: 's', sectionId: 'launch', previousSectionId: null })).toEqual({ sessionId: 's', sectionId: 'launch', previousSectionId: null });
+    let mode: 'matched' | 'mismatched' | 'unknown' = 'matched';
+    let storedAssignment = 'captured';
+    const port: SessionSectionActionPortV1 = {
+      assertCurrent: () => {}, allocateFolderId: () => 'unused',
+      readSnapshot: async () => ({ folders: [], folderAssignments: [{ sessionId: 's', folderId: 'captured' }] }),
+      upsertFolder: async () => { throw new Error('unexpected_definition_write'); },
+      deleteFolder: async () => { throw new Error('unexpected_delete'); },
+      setAssignment: async (sessionId, folderId) => {
+        // Another writer may act after the admitted read. The inverse stays the
+        // captured value; the protocol does not promise a transactional rollback.
+        storedAssignment = 'intervening';
+        storedAssignment = folderId ?? '';
+        return mode === 'unknown' ? { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' }
+          : { sessionId: mode === 'matched' ? sessionId : 'different', folderId };
+      },
+    };
+    expect(await executeSessionSectionActionV1('session.section.set', { sessionId: 's', sectionId: 'launch' }, port))
+      .toEqual({ sessionId: 's', sectionId: 'launch', previousSectionId: 'captured' });
+    expect(storedAssignment).toBe('launch');
+    mode = 'mismatched';
+    expect(await executeSessionSectionActionV1('session.section.set', { sessionId: 's', sectionId: 'launch' }, port))
+      .toEqual({ ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' });
+    mode = 'unknown';
+    expect(await executeSessionSectionActionV1('session.section.set', { sessionId: 's', sectionId: 'launch' }, port))
+      .toEqual({ ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' });
+  });
   it.each([
     { name: 'mixed retained keys', keys: [null, 'a0', 'a0', 'a1', 'a2', 'zzz'], expectedKey: 'a3' },
     { name: 'only null or invalid retained keys', keys: [null, '0001', 'zzz'], expectedKey: 'a0' },

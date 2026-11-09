@@ -2,8 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { ActionIdSchema } from './actionIds.js';
 import { getActionSpec } from './actionSpecs.js';
 import { getActionRequiredServerFeatureId } from './actionRequiredServerFeature.js';
+import { BrowserExtensionsListResultV1Schema } from './browserExtensionActions.js';
 
 describe('browser extension Action contract', () => {
+  it('reads saved profile suggestions without exposing profile custody or requiring installed extensions', () => {
+    expect(BrowserExtensionsListResultV1Schema.parse({ status: 'ready', entries: [],
+      profiles: [{ profileId: 'personal', displayName: 'Personal' }, { profileId: 'empty' }] }))
+      .toMatchObject({ profiles: [{ profileId: 'personal', displayName: 'Personal' }, { profileId: 'empty' }] });
+    expect(BrowserExtensionsListResultV1Schema.parse({ status: 'ready', entries: [] }))
+      .toEqual({ status: 'ready', entries: [] });
+    expect(BrowserExtensionsListResultV1Schema.safeParse({ status: 'ready', entries: [],
+      profiles: [{ profileId: 'personal', owner: { kind: 'user', id: 'person' } }] }).success).toBe(false);
+  });
+
   it('consumes the Store selected version through the extension update Action', () => {
     const parsed = ActionIdSchema.safeParse('browser.extensions.update');
     expect(parsed.success).toBe(true);

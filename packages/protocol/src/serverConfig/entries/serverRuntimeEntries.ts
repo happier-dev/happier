@@ -18,9 +18,9 @@ const SOCKET_MIN_BUFFER_BYTES = Math.max(
 );
 
 /**
- * Process, networking, logging, monitoring, UI serving, sockets, presence and RPC. All are
- * Home-editable except the managed-runtime marker; `apply: 'restart'` keys are read at startup and
- * take effect at the next start (an explicitly set env value always wins, plan D-14).
+ * Process, networking, logging, monitoring, UI serving, sockets, presence and RPC. Entries are
+ * Home-editable except bootstrap constraints and producer-owned runtime facts. Restart keys are
+ * read at startup and take effect at the next start (explicit env always wins, plan D-14).
  */
 export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
     PORT: {
@@ -52,7 +52,7 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
         bounds: { values: ['light', 'full'] },
         sensitivity: 'plain',
         apply: 'restart',
-        editable: 'home',
+        editable: 'internal',
         section: 'server',
         group: 'process',
         aliases: ['HAPPY_SERVER_FLAVOR'],
@@ -173,7 +173,7 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
         type: 'string',
         sensitivity: 'plain',
         apply: 'restart',
-        editable: 'home',
+        editable: 'internal',
         section: 'server',
         group: 'process',
         description: 'Relocation operation a restarting Personal Home completes. Set by the relocation runtime.',
@@ -182,7 +182,7 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
         type: 'string',
         sensitivity: 'plain',
         apply: 'restart',
-        editable: 'home',
+        editable: 'internal',
         section: 'server',
         group: 'process',
         description: 'File the server writes its startup receipt to. Set by the process supervisor.',
@@ -191,7 +191,7 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
         type: 'string',
         sensitivity: 'plain',
         apply: 'restart',
-        editable: 'home',
+        editable: 'internal',
         section: 'server',
         group: 'process',
         description: 'Nonce echoed in the startup receipt. Set by the process supervisor.',
@@ -200,7 +200,7 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
         type: 'string',
         sensitivity: 'plain',
         apply: 'restart',
-        editable: 'home',
+        editable: 'internal',
         section: 'server',
         group: 'process',
         description: 'Declares that the updater can recover forward from an irreversible migration. Set by the updater.',
@@ -209,7 +209,7 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
         type: 'string',
         sensitivity: 'plain',
         apply: 'restart',
-        editable: 'home',
+        editable: 'internal',
         section: 'server',
         group: 'process',
         description: 'Source commit of this build, reported by the version route.',
@@ -303,7 +303,7 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
         section: 'server',
         group: 'logging',
         aliases: ['HAPPY_AUTH_DECORATOR_DIAGNOSTIC_LOGS'],
-        description: 'Logs authentication decorator diagnostics. Only the value `1` turns it on.',
+        description: 'Logs authentication decorator diagnostics. Only the value `1` turns it on. A Home settings change applies live on the server instance that saves it and at restart on other instances.',
         docs: 'self-hosting/env#advanced--debug-controls',
     },
     HAPPIER_SOCKET_MESSAGE_DIAGNOSTIC_LOGS: {
@@ -699,7 +699,7 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
         section: 'server',
         group: 'presence',
         aliases: ['HAPPY_PRESENCE_WORKER_READ_BLOCK_MS'],
-        description: 'How long a presence stream read blocks, in milliseconds.',
+        description: 'Presence stream blocking read duration; capped by the Machine deadline recovery budget, in milliseconds.',
         docs: 'self-hosting/env#core-runtime',
     },
     HAPPIER_PRESENCE_WORKER_READ_COUNT: {
@@ -805,7 +805,7 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
         editable: 'home',
         section: 'server',
         group: 'rpc',
-        description: 'Poll interval while waiting for an RPC method to register, in milliseconds.',
+        description: 'Caller-currentness check interval during an admitted managed RPC wake, in milliseconds. Method availability uses room-join notifications.',
         docs: 'self-hosting/env#core-runtime',
     },
     HAPPIER_RPC_CLUSTER_FETCH_TIMEOUT_MS: {

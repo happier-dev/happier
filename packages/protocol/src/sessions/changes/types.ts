@@ -186,9 +186,3 @@ export type SessionWorkingTreeProjection = Readonly<{
   projectionReliability: ChangeConfidence;
 }>;
 
-/** Raw repository facts supplied by a workspace-wide touched-path fallback adapter. */
-export type WorkspaceTouchedFileEvidence = Readonly<{
-  filePath: string;
-  changeKind: FileChangeKind;
-  binary?: boolean;
-}>;

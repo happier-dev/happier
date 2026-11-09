@@ -10,7 +10,6 @@ import { projectUsagePlanInsights } from './usagePlanInsights.js';
 import { applyUsageCoachPreferences, evaluateUsageCoach } from './coach/evaluateUsageCoach.js';
 import { UsageCoachEvaluationSchema } from './coach/coachFinding.js';
 import { UsagePromptCompositionSchema } from './coach/usagePromptComposition.js';
-import { DEFAULT_USAGE_COACH_PREFERENCES_V1 } from '../account/settings/usageCoachPreferencesV1.js';
 import { UsageAnalyticsQueryResponseSchema } from './usageAnalyticsContracts.js';
 import { resolveUsagePageAggregation } from './resolveUsagePageAggregation.js';
 import { UsageWorkProjectionSchema } from './usageOutcomeAllocation.js';
@@ -77,7 +76,7 @@ describe('admitted Usage data stays typed inside the process', () => {
       const started = performance.now();
       const evaluation = evaluateUsageCoach({ queryKey: 'q', period: { startMs: 0, endMs: 45_001 }, asOfMs: 45_000,
         currentness: 'current', composition, compositionCoverage: 'partial' });
-      const preferred = applyUsageCoachPreferences(evaluation, DEFAULT_USAGE_COACH_PREFERENCES_V1, 45_000);
+      const preferred = applyUsageCoachPreferences(evaluation, { suppressions: [] }, 45_000);
       expect(preferred, 'unchanged preferences retain the admitted finding tree without a whole-value equality pass').toBe(evaluation);
       console.info(JSON.stringify({ admission45kCoach: true, elapsedMs: performance.now() - started,
         compositionParses: facts.mock.calls.length, evaluationParses: findings.mock.calls.length }));

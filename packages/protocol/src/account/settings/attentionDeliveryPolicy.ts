@@ -10,6 +10,7 @@ const ATTENTION_DELIVERY_EVENT_DEFINITIONS = [
   { id: 'user_action_request', remoteAlert: true },
   { id: 'follow_update', remoteAlert: true },
   { id: 'machine_offline', remoteAlert: true },
+  { id: 'service_health', remoteAlert: true },
   { id: 'notify_me', remoteAlert: false },
   { id: 'session_started', remoteAlert: false },
   { id: 'task_acknowledged', remoteAlert: false },
@@ -172,10 +173,25 @@ const ChannelMapSchema = lazyZodSchema(() => z.pipe((<I extends z.core.$ZodType,
 
 const LocalTimeSchema = lazyZodSchema(() => z.string().check(z.regex(/^([01]\d|2[0-3]):[0-5]\d$/)));
 
-const QuietHoursWindowSchema = lazyZodSchema(() => z.looseObject({
+/** Current schedule authoring uses the existing local-time and weekday contract. */
+export const AttentionQuietHoursWindowInputSchema = lazyZodSchema(() => z.strictObject({
     startLocalTime: LocalTimeSchema,
     endLocalTime: LocalTimeSchema,
-    days: z.catch(z.optional(z.array(z.enum(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']))), undefined),
+    days: z.optional(z.array(z.enum(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']))),
+  }));
+export const AttentionQuietHoursInputSchema = lazyZodSchema(() => z.strictObject({
+    enabled: z.boolean(),
+    timezone: z.string().check(z.trim(), z.minLength(1), z.refine(timezone => {
+      try { new Intl.DateTimeFormat('en-GB', { timeZone: timezone }); return true; }
+      catch { return false; }
+    })),
+    windows: z.array(AttentionQuietHoursWindowInputSchema),
+  }));
+export type AttentionQuietHoursInput = z.infer<typeof AttentionQuietHoursInputSchema>;
+
+const QuietHoursWindowSchema = lazyZodSchema(() => z.looseObject({
+    ...AttentionQuietHoursWindowInputSchema.shape,
+    days: z.catch(AttentionQuietHoursWindowInputSchema.shape.days, undefined),
   }));
 
 const QuietHoursSchema = lazyZodSchema(() => z.catch(z.looseObject({

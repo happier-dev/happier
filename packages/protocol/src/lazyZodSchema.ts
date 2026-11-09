@@ -1,14 +1,21 @@
+import './zodRuntimePolicy.js';
 import { core, globalRegistry, lazy } from 'zod/mini';
 
 const PARSE_METHODS = new Set(['parse', 'safeParse', 'parseAsync', 'safeParseAsync']);
 type DefinitionLifetime = {
   readonly resolve: () => object;
+  readonly resolvedValue?: object;
   readonly canonicalZodIdentity: boolean;
   readonly nativeZodSchema: boolean;
   parserSchema?: core.$ZodType;
 };
 const definitionLifetimes = new WeakMap<object, DefinitionLifetime>();
 const resolvedDefinitionSources = new WeakMap<object, object>();
+
+/** @internal Resolve method receivers to their admitted value without warming cold definitions. */
+export function getResolvedLazyDefinitionValue<TDefinition extends object>(definition: TDefinition): TDefinition {
+  return (definitionLifetimes.get(definition)?.resolvedValue ?? definition) as TDefinition;
+}
 
 /** @internal Fluent composition may retain the concrete identity of this same definition. */
 export function getResolvedLazyDefinitionSource<TDefinition extends object>(definition: TDefinition): TDefinition | undefined {
@@ -48,11 +55,32 @@ function createLazyDefinition<TSchema extends object>(
   canonicalZodIdentity: boolean,
   nativeZodSchema = canonicalZodIdentity,
 ): TSchema {
-  const target = {} as TSchema;
-  let schema: TSchema | undefined;
-  const methods = new Map<PropertyKey, (...args: unknown[]) => unknown>();
-  const resolve = (): TSchema => {
-    if (!schema) {
+  return new LazyDefinitionState(create, canonicalZodIdentity, nativeZodSchema).definition;
+}
+
+// Proxy handlers are shared prototype methods. Each definition retains state,
+// not a fresh set of trap closures and its already-consumed constructor graph.
+class LazyDefinitionState<TSchema extends object> implements ProxyHandler<TSchema> {
+  readonly target = {} as TSchema;
+  readonly definition: TSchema;
+  private schema: TSchema | undefined;
+  private methods: Map<PropertyKey, (...args: unknown[]) => unknown> | undefined;
+  parserSchema?: core.$ZodType;
+
+  constructor(
+    private create: (() => TSchema) | undefined,
+    readonly canonicalZodIdentity: boolean,
+    readonly nativeZodSchema: boolean,
+  ) {
+    this.definition = new Proxy(this.target, this);
+    definitionLifetimes.set(this.definition, this);
+  }
+
+  get resolvedValue(): TSchema | undefined { return this.schema; }
+
+  resolve(): TSchema {
+    if (!this.schema) {
+      const create = this.create!;
       const created = create();
       // A deferred composition may return another facade from this owner.
       // Resolve it before inspecting its prototype, since reflection stays
@@ -60,11 +88,11 @@ function createLazyDefinition<TSchema extends object>(
       const createdLifetime = definitionLifetimes.get(created);
       const concrete = (createdLifetime
         ? createdLifetime.resolve() : created) as TSchema;
-      Object.setPrototypeOf(target, Object.getPrototypeOf(concrete));
+      Object.setPrototypeOf(this.target, Object.getPrototypeOf(concrete));
       const descriptors: PropertyDescriptorMap = Object.getOwnPropertyDescriptors(concrete);
       const concreteSchema = concrete instanceof core.$ZodType ? concrete : undefined;
-      if (concreteSchema && canonicalZodIdentity && !resolvedDefinitionSources.has(concreteSchema)) {
-        resolvedDefinitionSources.set(concreteSchema, definition);
+      if (concreteSchema && this.canonicalZodIdentity && !resolvedDefinitionSources.has(concreteSchema)) {
+        resolvedDefinitionSources.set(concreteSchema, this.definition);
       }
       if (concreteSchema) {
         // Projection processors close over the concrete instance. Construction
@@ -72,19 +100,19 @@ function createLazyDefinition<TSchema extends object>(
         // recursive definitions and refinements do not gain extra references.
         // Inherit all other internals, including lazy getters and the parser.
         const processJSONSchema: NonNullable<core.$ZodType['_zod']['processJSONSchema']> = (context, json, params) => {
-          if (!canonicalZodIdentity) {
-            context.seen.delete(definition as unknown as core.$ZodType);
+          if (!this.canonicalZodIdentity) {
+            context.seen.delete(this.definition as unknown as core.$ZodType);
             core.process(concreteSchema, context, {
               ...params,
-              schemaPath: params.schemaPath.map(item => item === definition ? concreteSchema : item),
+              schemaPath: params.schemaPath.map(item => item === this.definition ? concreteSchema : item),
             });
-            context.seen.set(definition as unknown as core.$ZodType, context.seen.get(concreteSchema)!);
+            context.seen.set(this.definition as unknown as core.$ZodType, context.seen.get(concreteSchema)!);
             return;
           }
           // Native callbacks refer to their concrete constructor instance.
           // Give that callback the facade's existing record, rather than
           // traversing a second wrapper or processing its parent twice.
-          const facade = definition as unknown as core.$ZodType;
+          const facade = this.definition as unknown as core.$ZodType;
           const seen = context.seen.get(facade)!;
           const existing = context.seen.get(concreteSchema);
           if (existing) {
@@ -109,52 +137,55 @@ function createLazyDefinition<TSchema extends object>(
           }),
         };
       }
-      Object.defineProperties(target, descriptors);
-      schema = concrete;
-      if (concreteSchema && canonicalZodIdentity) {
+      Object.defineProperties(this.target, descriptors);
+      this.schema = concrete;
+      this.create = undefined;
+      if (concreteSchema && this.canonicalZodIdentity) {
         // Zod stores annotations by instance identity, outside the definition.
         // The public facade must carry those annotations as well as its fields.
         const metadata = globalRegistry.get(concreteSchema);
-        if (metadata) globalRegistry.add(definition as unknown as core.$ZodType, metadata);
+        if (metadata) globalRegistry.add(this.definition as unknown as core.$ZodType, metadata);
       }
     }
-    return schema;
-  };
-  const invoke = (key: PropertyKey, args: unknown[]): unknown => {
-    const concrete = resolve();
+    return this.schema;
+  }
+
+  private invoke(key: PropertyKey, args: unknown[]): unknown {
+    const concrete = this.resolve();
     const method: unknown = Reflect.get(concrete, key);
     if (typeof method !== 'function') throw new TypeError(`Invalid Zod method: ${String(key)}`);
     return Reflect.apply(method, concrete, args);
-  };
-  const definition = new Proxy(target, {
-    get(_target, key) {
-      // Native parse getters now memoize on first access. Retain the existing
-      // cached invocation for frozen facades without prewarming every member.
-      if (canonicalZodIdentity && typeof key === 'string'
-        && ((!schema && (key === 'check' || key === 'with'))
-          || (PARSE_METHODS.has(key) && (!schema || !Object.hasOwn(target, key))))) {
-        let method = methods.get(key);
-        if (!method) {
-          method = key === 'check' || key === 'with'
-            ? (...args) => lazyZodSchema(() => invoke(key, args) as core.$ZodType)
-            : (...args) => invoke(key, args);
-          methods.set(key, method);
-        }
-        return method;
+  }
+
+  get(_target: TSchema, key: PropertyKey): unknown {
+    // Fast Refresh probes every exported value before cyclic importers finish.
+    // React's component marker is not schema access and must keep definitions cold.
+    if (!this.schema && this.nativeZodSchema && key === '$$typeof') return undefined;
+    // Native parse getters now memoize on first access. Retain the existing
+    // cached invocation for frozen facades without prewarming every member.
+    if (this.canonicalZodIdentity && typeof key === 'string'
+      && ((!this.schema && (key === 'check' || key === 'with'))
+        || (PARSE_METHODS.has(key) && (!this.schema || !Object.hasOwn(this.target, key))))) {
+      const methods = this.methods ??= new Map<PropertyKey, (...args: unknown[]) => unknown>();
+      let method = methods.get(key);
+      if (!method) {
+        method = key === 'check' || key === 'with'
+          ? (...args: unknown[]) => lazyZodSchema(() => this.invoke(key, args) as core.$ZodType)
+          : (...args: unknown[]) => this.invoke(key, args);
+        methods.set(key, method);
       }
-      resolve();
-      // Native Zod getters bind and memoize methods on their receiver. Keep
-      // fluent parents attached to the public facade, never its hidden target.
-      return Reflect.get(target, key, definition);
-    },
-    ownKeys() { resolve(); return Reflect.ownKeys(target); },
-    getOwnPropertyDescriptor(_target, key) { resolve(); return Reflect.getOwnPropertyDescriptor(target, key); },
-    has(_target, key) { resolve(); return Reflect.has(target, key); },
-    set(_target, key, value) { resolve(); return Reflect.set(target, key, value); },
-    defineProperty(_target, key, descriptor) { resolve(); return Reflect.defineProperty(target, key, descriptor); },
-    deleteProperty(_target, key) { resolve(); return Reflect.deleteProperty(target, key); },
-    preventExtensions() { resolve(); return Reflect.preventExtensions(target); },
-  });
-  definitionLifetimes.set(definition, { resolve, canonicalZodIdentity, nativeZodSchema });
-  return definition;
+      return method;
+    }
+    this.resolve();
+    // Native Zod getters bind and memoize methods on their receiver. Keep
+    // fluent parents attached to the public facade, never its hidden target.
+    return Reflect.get(this.target, key, this.definition);
+  }
+  ownKeys() { this.resolve(); return Reflect.ownKeys(this.target); }
+  getOwnPropertyDescriptor(_target: TSchema, key: PropertyKey) { this.resolve(); return Reflect.getOwnPropertyDescriptor(this.target, key); }
+  has(_target: TSchema, key: PropertyKey) { this.resolve(); return Reflect.has(this.target, key); }
+  set(_target: TSchema, key: PropertyKey, value: unknown) { this.resolve(); return Reflect.set(this.target, key, value); }
+  defineProperty(_target: TSchema, key: PropertyKey, descriptor: PropertyDescriptor) { this.resolve(); return Reflect.defineProperty(this.target, key, descriptor); }
+  deleteProperty(_target: TSchema, key: PropertyKey) { this.resolve(); return Reflect.deleteProperty(this.target, key); }
+  preventExtensions() { this.resolve(); return Reflect.preventExtensions(this.target); }
 }

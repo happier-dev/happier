@@ -8,6 +8,21 @@ import {
 } from './pluginInstallationReviewV1.js';
 
 describe('PluginInstallationReviewSchema', () => {
+  it('carries observed daemon rights without deriving them from plugin permissions', () => {
+    const daemonRights = {
+      freshness: 'current',
+      observation: {
+        version: 1, observedAt: 1, daemonUid: 1000, daemonUsername: 'happier',
+        daemonIdentity: 'nonRoot', rootEquivalentGroups: [], passwordlessSudoToRoot: 'denied',
+        managedDropIn: 'absent', tailscaledOperator: { authorization: 'allowed' },
+      },
+    };
+    const review = { ...createPluginInstallationReviewFixture(), daemonRights };
+    expect(PluginInstallationReviewSchema.safeParse(review).success).toBe(true);
+    expect(PluginInstallationReviewSchema.safeParse({ ...review,
+      daemonRights: { ...daemonRights, root: true } }).success).toBe(false);
+  });
+
   it('preserves large review facts and normalized JSON without competing projection cutoffs', () => {
     const normalizedScope: Record<string, unknown> = Object.fromEntries(
       Array.from({ length: 300 }, (_, index) => [`key-${index}`, 'value'.repeat(1_000)]),

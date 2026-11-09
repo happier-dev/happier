@@ -104,6 +104,27 @@ describe('WorkflowAcceptedSnapshotV1', () => {
     }).normalizedDefinition!)).toBe('default');
   });
 
+  it('counts declared non-Agent permissions without granting default authority when they are omitted', () => {
+    for (const block of [
+      { kind: 'action', id: 'list', actionId: 'workflow.starters.list', input: {} },
+      { kind: 'wait', id: 'wait', document: { text: 'Continue' } },
+      { kind: 'workflow', id: 'nested', workflowRef: 'plugin:external.recipes/nested', input: {} },
+    ]) {
+      const authored = validateWorkflowDefinition({ version: 1, defaults: { permissionMode: 'yolo' }, blocks: [block] });
+      expect(authored.valid).toBe(true);
+      expect(deriveWorkflowAcceptedPermissionCeilingV1(authored.normalizedDefinition!)).toBe('yolo');
+      const unprivileged = validateWorkflowDefinition({ version: 1, defaults: {}, blocks: [block] });
+      expect(unprivileged.valid).toBe(true);
+      expect(deriveWorkflowAcceptedPermissionCeilingV1(unprivileged.normalizedDefinition!)).toBe('read-only');
+      const mixed = validateWorkflowDefinition({ version: 1, defaults: { permissionMode: 'read-only' },
+        blocks: [{ kind: 'step', id: 'agent', document: { text: 'Read' }, execution: {
+          agentTarget: { kind: 'agent', identity: { pluginId: 'external.agent', localId: 'reader' } },
+        } }, block] });
+      expect(mixed.valid).toBe(true);
+      expect(deriveWorkflowAcceptedPermissionCeilingV1(mixed.normalizedDefinition!)).toBe('read-only');
+    }
+  });
+
   it('freezes the complete direct admission correspondence', () => {
     const snapshot = WorkflowAcceptedSnapshotV1Schema.parse({
       ...frozen,

@@ -23,6 +23,12 @@ describe('AcceptedPendingSettlementRequestV1Schema', () => {
 });
 
 describe('AcceptedPendingSettlementResponseV1Schema', () => {
+  it('carries an explicit publication prerequisite without inventing a transaction failure', () => {
+    expect(AcceptedPendingSettlementResponseV1Schema.parse({
+      ok: false, error: 'turn-publication-pending',
+    })).toEqual({ ok: false, error: 'turn-publication-pending' });
+  });
+
   it('accepts only a bounded typed transaction-unavailable retry response', () => {
     expect(AcceptedPendingSettlementResponseV1Schema.safeParse({
       ok: false,

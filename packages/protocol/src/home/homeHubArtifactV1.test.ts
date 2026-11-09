@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
 import { createWorkBoardArtifactBoundary } from '../boards/workBoardArtifactV1.testkit.js';
 import { createHomeHubArtifactPortV1, buildHomeHubArtifactIdV1, HOME_HUB_ARTIFACT_KIND_V1, type HomeHubArtifactTransportV1 } from './homeHubArtifactV1.js';
-import { HOME_HUB_DEFAULT_LAYOUT, homeHubDefaultWidgetInstanceId, type HomeHubWidgetInput } from './homeHubLayoutV1.js';
+import { getHomeHubDefaultLayoutV1, homeHubDefaultWidgetInstanceId, type HomeHubWidgetInput } from './homeHubLayoutV1.js';
 import { flattenWidgetLayoutWidgetsV1, type WidgetLayoutItemV1 } from '../widgets/widgetLayoutItemV1.js';
 import { createHomeWidgetActionPortV1 } from '../widgets/homeWidgetActionPortV1.js';
 import { readBuiltinWidgetDescriptorV1 } from '../widgets/builtinWidgetDescriptorV1.js';
@@ -136,7 +136,7 @@ describe('Home Account Artifact semantic edits', () => {
 
         const id = buildHomeHubArtifactIdV1(accountId);
         const instanceId = homeHubDefaultWidgetInstanceId(shown.key);
-        const layout = { ...HOME_HUB_DEFAULT_LAYOUT, items: [{ kind: 'widget', instance: { ...copy(instanceId, 'A'), bindings: {} }, size: 'medium', frameStyle: 'plain' }] };
+        const layout = { ...getHomeHubDefaultLayoutV1(), items: [{ kind: 'widget', instance: { ...copy(instanceId, 'A'), bindings: {} }, size: 'medium', frameStyle: 'plain' }] };
         const row = { artifactId: id, header: { v: 1, kind: HOME_HUB_ARTIFACT_KIND_V1 },
             body: JSON.stringify(layout), revision: { headerVersion: 1, bodyVersion: 1 } };
         b.rows.set(id, row);
@@ -172,10 +172,10 @@ describe('Home Account Artifact semantic edits', () => {
         const row = { artifactId: id, header: { v: 1, kind: HOME_HUB_ARTIFACT_KIND_V1 }, body, revision: { headerVersion: 1, bodyVersion: 1 } };
         b.rows.set(id, row);
         const port = createHomeHubArtifactPortV1(b.transport, { accountId });
-        expect(await port.read()).toEqual(HOME_HUB_DEFAULT_LAYOUT);
+        expect(await port.read()).toEqual(getHomeHubDefaultLayoutV1());
         expect(b.rows.get(id)).toBe(row);
         expect(b.updates).toEqual([]);
-        expect((await port.apply({ kind: 'reset' })).layout).toEqual(HOME_HUB_DEFAULT_LAYOUT);
+        expect((await port.apply({ kind: 'reset' })).layout).toEqual(getHomeHubDefaultLayoutV1());
     });
 
     it('drops nested stored extras, writes canonical content, and retains strict widget inputs', async () => {
@@ -193,7 +193,7 @@ describe('Home Account Artifact semantic edits', () => {
         });
         const port = createHomeHubArtifactPortV1(b.transport, { accountId });
         seed([storedInstance]);
-        const known = { ...HOME_HUB_DEFAULT_LAYOUT, items: [{ kind: 'widget', instance, frameStyle: 'plain' }], order: ['one'] };
+        const known = { ...getHomeHubDefaultLayoutV1(), items: [{ kind: 'widget', instance, frameStyle: 'plain' }], order: ['one'] };
         expect(await port.read()).toEqual(known);
         await expect(port.apply({ kind: 'widget_add', instance: storedInstance })).rejects.toBeInstanceOf(z.core.$ZodError);
         expect(b.updates).toEqual([]);
@@ -203,25 +203,30 @@ describe('Home Account Artifact semantic edits', () => {
         expect(await port.read()).toEqual(edited);
         const { id: _missing, ...withoutIdentity } = storedInstance;
         seed([withoutIdentity]);
-        expect(await port.read()).toEqual(HOME_HUB_DEFAULT_LAYOUT);
+        expect(await port.read()).toEqual(getHomeHubDefaultLayoutV1());
         seed([instance, instance]);
-        expect(await port.read()).toEqual(HOME_HUB_DEFAULT_LAYOUT);
+        expect(await port.read()).toEqual(getHomeHubDefaultLayoutV1());
     });
 
     it('projects stable defaults without writes, then materializes them once on the first setup/layout edit', async () => {
         const b = boundary();
-        const port = createHomeHubArtifactPortV1(b.transport, { accountId, readWidgets: () => [shown] });
+        const triage: HomeHubWidgetInput = { key: 'happier.triage/latest', surface: { pluginId: 'happier.triage', localId: 'latest' }, homeDefault: 'shown' };
+        const port = createHomeHubArtifactPortV1(b.transport, { accountId, readWidgets: () => [shown, triage] });
         const projected = await port.describe(await port.read());
-        expect(projected.sections.filter(section => section.kind === 'widget').map(section => section.id))
-            .toEqual(['default:builtin:usage_capacity', homeHubDefaultWidgetInstanceId(shown.key)]);
+        // The first-run showcase (owner 10-31): Capacity beside New in PRs & Issues, then the smalls row
+        // (Machines, Local services, then Latest runs last); another shown plugin default joins after the preset's own slots.
+        expect(projected.sections.map(section => section.id)).toEqual(['start', 'attention', 'setup',
+            'default:builtin:usage_capacity', homeHubDefaultWidgetInstanceId(triage.key), 'default:builtin:machine_fleet',
+            'default:builtin:local_services_app', homeHubDefaultWidgetInstanceId(shown.key), 'automations']);
+        expect(projected.sections.filter(section => section.kind === 'widget').map(section => section.size)).toEqual(['medium', 'medium', 'small', 'small', 'medium']);
         expect(b.rows.size).toBe(0);
         const first = (await port.apply({ kind: 'setup_visibility', stepId: 'addPhone', hidden: true })).layout;
-        expect(configuredCopies(first).map(instance => instance.id)).toEqual([homeHubDefaultWidgetInstanceId(shown.key)]);
+        expect(configuredCopies(first).map(instance => instance.id)).toEqual([homeHubDefaultWidgetInstanceId(triage.key), homeHubDefaultWidgetInstanceId(shown.key)]);
         const second = (await port.apply({ kind: 'frameStyle', sectionId: configuredCopies(first)[0]!.id, frameStyle: 'plain' })).layout;
-        expect(configuredCopies(second)).toHaveLength(1);
+        expect(configuredCopies(second)).toHaveLength(2);
         expect(second.hidden).toContain('setup:addPhone');
         expect(b.rows.size).toBe(1);
-        const reload = createHomeHubArtifactPortV1(b.transport, { accountId, readWidgets: () => [shown] });
+        const reload = createHomeHubArtifactPortV1(b.transport, { accountId, readWidgets: () => [shown, triage] });
         expect(await reload.read()).toEqual(second);
     });
 
@@ -371,7 +376,7 @@ describe('Home Account Artifact semantic edits', () => {
         const b = boundary();
         const artifactId = buildHomeHubArtifactIdV1(accountId);
         b.rows.set(artifactId, { artifactId, header: { v: 1, kind: HOME_HUB_ARTIFACT_KIND_V1 },
-            body: JSON.stringify({ ...HOME_HUB_DEFAULT_LAYOUT, order: ['unresolved', 'setup'], items: [{ kind: 'widget', instance: copy('one', 'A') }] }),
+            body: JSON.stringify({ ...getHomeHubDefaultLayoutV1(), order: ['unresolved', 'setup'], items: [{ kind: 'widget', instance: copy('one', 'A') }] }),
             revision: { headerVersion: 1, bodyVersion: 1 } });
         const port = createHomeHubArtifactPortV1(b.transport, { accountId });
         const added = (await port.apply({ kind: 'widget_add', instance: copy('two', 'B'),
@@ -395,7 +400,7 @@ describe('Home Account Artifact semantic edits', () => {
         const b = boundary();
         const artifactId = buildHomeHubArtifactIdV1(accountId);
         b.rows.set(artifactId, { artifactId, header: { v: 1, kind: HOME_HUB_ARTIFACT_KIND_V1 },
-            body: JSON.stringify({ ...HOME_HUB_DEFAULT_LAYOUT, order: ['unresolved'] }), revision: { headerVersion: 1, bodyVersion: 1 } });
+            body: JSON.stringify({ ...getHomeHubDefaultLayoutV1(), order: ['unresolved'] }), revision: { headerVersion: 1, bodyVersion: 1 } });
         const port = createHomeHubArtifactPortV1(b.transport, { accountId, readWidgets: () => [shown] });
         const sparse = await port.read();
         const projected = await port.describe(sparse);
@@ -423,7 +428,7 @@ describe('Home Account Artifact semantic edits', () => {
         const id = buildHomeHubArtifactIdV1(accountId);
         expect(z.string().check(z.uuid()).parse(id)).toBe(id);
         expect(buildHomeHubArtifactIdV1('account-two')).not.toBe(id);
-        b.rows.set(id, { artifactId: id, header: { v: 1, kind: 'another-kind' }, body: JSON.stringify(HOME_HUB_DEFAULT_LAYOUT), revision: { headerVersion: 1, bodyVersion: 1 } });
+        b.rows.set(id, { artifactId: id, header: { v: 1, kind: 'another-kind' }, body: JSON.stringify(getHomeHubDefaultLayoutV1()), revision: { headerVersion: 1, bodyVersion: 1 } });
         const port = createHomeHubArtifactPortV1(b.transport, { accountId });
         await expect(port.read()).rejects.toMatchObject({ code: 'invalid_home_hub_record' });
         await expect(port.apply({ kind: 'reset' })).rejects.toMatchObject({ code: 'invalid_home_hub_record' });
@@ -435,7 +440,7 @@ describe('Home Account Artifact semantic edits', () => {
     it('fails closed on transport mode refusal and Account retirement without replacing the stored bytes', async () => {
         const b = boundary();
         const id = buildHomeHubArtifactIdV1(accountId);
-        const row = { artifactId: id, header: { v: 1, kind: HOME_HUB_ARTIFACT_KIND_V1 }, body: JSON.stringify(HOME_HUB_DEFAULT_LAYOUT), revision: { headerVersion: 1, bodyVersion: 1 } };
+        const row = { artifactId: id, header: { v: 1, kind: HOME_HUB_ARTIFACT_KIND_V1 }, body: JSON.stringify(getHomeHubDefaultLayoutV1()), revision: { headerVersion: 1, bodyVersion: 1 } };
         b.rows.set(id, row);
         const refused = createHomeHubArtifactPortV1({ ...b.transport, read: async () => { throw Object.assign(new Error('artifact_account_mode_mismatch'), { code: 'artifact_account_mode_mismatch' }); } }, { accountId });
         await expect(refused.read()).rejects.toMatchObject({ code: 'artifact_account_mode_mismatch' });
@@ -472,7 +477,7 @@ describe('Home Account Artifact semantic edits', () => {
             if (incumbent) {
                 incumbent = false;
                 b.rows.set(id, { artifactId: id, header: input.header,
-                    body: JSON.stringify({ ...HOME_HUB_DEFAULT_LAYOUT, hidden: ['setup:addMachine'] }),
+                    body: JSON.stringify({ ...getHomeHubDefaultLayoutV1(), hidden: ['setup:addMachine'] }),
                     revision: { headerVersion: 3, bodyVersion: 4 } });
             }
             return b.transport.create(input);
@@ -487,7 +492,7 @@ describe('Home Account Artifact semantic edits', () => {
         const b = boundary();
         const id = buildHomeHubArtifactIdV1(accountId);
         b.rows.set(id, { artifactId: id, header: { v: 1, kind: HOME_HUB_ARTIFACT_KIND_V1 },
-            body: JSON.stringify(HOME_HUB_DEFAULT_LAYOUT), revision: { headerVersion: 1, bodyVersion: 1 } });
+            body: JSON.stringify(getHomeHubDefaultLayoutV1()), revision: { headerVersion: 1, bodyVersion: 1 } });
         let current = true;
         const published: unknown[] = [];
         const port = createHomeHubArtifactPortV1({ ...b.transport, update: async input => {
@@ -507,7 +512,7 @@ describe('Home Account Artifact semantic edits', () => {
         const b = boundary();
         const id = buildHomeHubArtifactIdV1(accountId);
         const row = { artifactId: id, header: { v: 1, kind: HOME_HUB_ARTIFACT_KIND_V1 },
-            body: JSON.stringify(HOME_HUB_DEFAULT_LAYOUT), revision: { headerVersion: 1, bodyVersion: 1 } };
+            body: JSON.stringify(getHomeHubDefaultLayoutV1()), revision: { headerVersion: 1, bodyVersion: 1 } };
         b.rows.set(id, row);
         let current = true;
         // The Account Artifact transport is the authoritative mode-admission boundary.

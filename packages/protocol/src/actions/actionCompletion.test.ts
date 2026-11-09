@@ -3,7 +3,8 @@ import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.
 
 import { getActionSpec } from './actionSpecs.js';
 import { serializeActionSpec } from './actionCatalog.js';
-import { readActionCompletionRunObservationV1, prepareActionCompletionV1 } from './actionCompletion.js';
+import { readActionCompletionRunObservationV1, prepareActionCompletionV1,
+  freezeActionCompletionContractV1, resumeActionCompletionV1 } from './actionCompletion.js';
 
 describe('Action completion contract', () => {
   it('preserves the source failure cause separately from failed Action details', () => {
@@ -13,6 +14,50 @@ describe('Action completion contract', () => {
       error: 'unavailable', details, failureCause })).toEqual({ kind: 'failed', errorCode: 'storage_unavailable',
       error: 'unavailable', value: details, failureCause });
   });
+  it('waits for the qualified pending deployment operation and accepts only its completed Environment receipt', async () => {
+    const actionId = 'deployments.deploy';
+    const declaration = getActionSpec(actionId).completion;
+    if (!declaration) throw new Error('Deployment completion is unavailable');
+    const pending = { ok: true, environmentId: 'environment', revision: 3, kind: 'pending', actionOperationId: 'operation' };
+    const address = { serverId: 'home', machineId: 'accepted-host', operationId: pending.actionOperationId };
+    const accepted = { ...pending, operation: address };
+    const prepare = (result: unknown) => prepareActionCompletionV1(declaration, { ok: true, result }, { serverId: 'home' });
+    const prepared = prepare(accepted);
+    expect(prepared.kind).toBe('awaiting');
+    if (prepared.kind !== 'awaiting') throw new Error('Pending deployment must await its accepted operation');
+    expect(prepared.state.awaitedOperations).toEqual([{ key: 'deployment', ...address }]);
+    expect(prepare(pending).kind).toBe('outcome_uncertain');
+    expect(prepare({ ...accepted, operation: { ...address, operationId: 'different-operation' } }).kind).toBe('outcome_uncertain');
+    const receipt = { ok: true, environmentId: pending.environmentId, revision: 4,
+      deploymentId: 'receipt', deploymentRevision: 2, state: 'succeeded' };
+    expect(prepare(receipt)).toEqual({ kind: 'completed', value: receipt });
+    for (const state of ['queued', 'running', 'waitingApproval']) {
+      expect(prepare({ ...receipt, state }).kind).toBe('outcome_uncertain');
+    }
+    const operation = { version: 1, operationId: address.operationId, revision: 3, actionId,
+      state: 'succeeded', scope: { accountId: 'requester', machineId: address.machineId }, title: 'Deploy',
+      createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported', result: receipt };
+    const resume = (observed: unknown, state = prepared.state) => resumeActionCompletionV1({ actionId,
+      completion: freezeActionCompletionContractV1(declaration), state,
+      resolveDeclaration: id => id === actionId ? declaration : undefined,
+      observeOperation: async () => observed });
+    expect(await resume(operation)).toEqual({ kind: 'completed', value: receipt });
+    for (const other of [
+      { ...operation, operationId: 'other' },
+      { ...operation, result: { ...receipt, environmentId: 'other' } },
+      { ...operation, result: accepted },
+      { ...operation, result: { ...receipt, state: 'running' } },
+    ]) expect((await resume(other)).kind).toBe('outcome_uncertain');
+    expect((await resume(operation, { ...prepared.state, awaitedOperations: [{ key: 'deployment', ...address, serverId: 'other-home' }] })).kind)
+      .toBe('outcome_uncertain');
+    const { result: _result, ...withoutResult } = operation;
+    expect((await resume({ ...withoutResult, state: 'failed', error: {
+      errorCode: 'permission_denied', error: 'Permission denied' } }))).toMatchObject({
+      kind: 'failed', errorCode: 'permission_denied',
+    });
+    expect((await resume({ ...withoutResult, state: 'cancelled' })).kind).toBe('cancelled');
+  });
+
   it('observes settled walkthrough output independently of a healthy retained process', () => {
     const output = {
       success: true, sourceKey: 'comparison-1', summaryMarkdown: undefined,

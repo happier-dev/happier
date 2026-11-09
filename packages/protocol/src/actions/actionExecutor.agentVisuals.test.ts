@@ -3,9 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps } from './actionExecutor.js';
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { normalizeUiSurfaceCapabilityRequestV1 } from '../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
-import { SessionBoardAuthoredItemUpsertInputV1Schema } from '../sessions/board/actions.js';
+import { SessionBoardAuthoredItemUpsertInputV1Schema, SessionBoardGetInputV1Schema } from '../sessions/board/actions.js';
 import { SessionSurfaceItemV1Schema, type SessionSurfaceItemV1 } from '../sessions/board/item.js';
-import { normalizeActionsSettingsV1 } from './actionSettings.js';
+import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1 } from './actionSettings.js';
+import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { createWidgetActionInputResolverV1 } from '../widgets/widgetActionInputResolverV1.js';
 import { describeApprovalRequestFields } from './actionApprovalPresentation.js';
 
@@ -22,25 +23,39 @@ const context: ActionExecutorContext = { surface: 'agent', authority: 'account_a
 
 function harness(initialSetting: unknown = 'allowed', extraDeps: Partial<ActionExecutorDeps> = {}) {
   let setting = initialSetting;
-  let stored: { item: SessionSurfaceItemV1; revision: string; creator: unknown } | null = null;
+  let policyReads = 0;
+  let stored: { item: SessionSurfaceItemV1; revision: string } | null = null;
   let approval: ApprovalRequest | null = null;
+  let copyItem: SessionSurfaceItemV1 | null = null;
+  const approvals: ApprovalRequest[] = [];
+  const writes: SessionSurfaceItemV1[] = [];
+  const boardReads: unknown[] = [];
   let executor: ReturnType<typeof createActionExecutor>;
   const deps: Partial<ActionExecutorDeps> = {
     // Exact Account settings and sealed Session record transports are boundaries;
     // parsing, consequences, preparation and approval replay stay real.
-    readAgentHtmlNetworkPolicy: async () => setting,
+    readAgentHtmlNetworkPolicy: async () => { policyReads++; return setting; },
     sessionBoardAction: async ({ actionId, input }: Parameters<NonNullable<ActionExecutorDeps['sessionBoardAction']>>[0]) => {
-      if (actionId === 'session.board.get') return { v: 1, serverId: 'home', sessionId: 'session',
+      if (actionId === 'session.board.get') {
+        boardReads.push(input);
+        const sessionId = SessionBoardGetInputV1Schema.parse(input).sessionId ?? 'session';
+        const row = sessionId === 'session' ? stored : copyItem ? { item: copyItem, revision } : null;
+        return { v: 1, serverId: 'home', sessionId,
         capabilities: { readTranscript: true, editSessionRecords: true }, layout: null,
-        items: stored ? [{ itemId: 'visual', ...stored, title: stored.item.title, sourceKind: stored.item.source.kind }] : [],
+        items: row ? [{ itemId: 'visual', ...row, title: row.item.title, sourceKind: row.item.source.kind }] : [],
         incomplete: false, page: { cursor: null, hasNext: false } };
+      }
       const request = SessionBoardAuthoredItemUpsertInputV1Schema.parse(input);
-      stored = { item: SessionSurfaceItemV1Schema.parse(request.item), revision,
-        creator: stored?.creator ?? { kind: 'session', sessionId: 'session' } };
+      if (request.expectedItemRevision !== (stored?.revision ?? null)) {
+        return { ok: false, errorCode: 'session_board_revision_conflict', error: 'session_board_revision_conflict',
+          details: { currentItemRevision: stored?.revision ?? null } };
+      }
+      stored = { item: SessionSurfaceItemV1Schema.parse(request.item), revision };
+      writes.push(stored.item);
       return { v: 1, serverId: 'home', sessionId: 'session', itemDestination: 'transcript', destination: null,
         result: { operation: 'upsert_item', itemId: 'visual', outcome: request.expectedItemRevision ? 'updated' : 'created', itemRevision: revision } };
     },
-    approvalsCreate: async ({ request }: { request: ApprovalRequest }) => { approval = request; return { artifactId: 'approval' }; },
+    approvalsCreate: async ({ request }: { request: ApprovalRequest }) => { approval = request; approvals.push(request); return { artifactId: 'approval' }; },
     approvalsGet: async () => approval,
     approvalsUpdate: async ({ request }: { request: ApprovalRequest }) => { approval = request; return { ok: true }; },
     isApprovalExecutionOriginCurrent: async ({ origin }) => origin.serverId === 'home'
@@ -55,9 +70,11 @@ function harness(initialSetting: unknown = 'allowed', extraDeps: Partial<ActionE
     ...extraDeps,
   };
   executor = createActionExecutor(deps);
-  return { executor, get stored() { return stored; }, get approval() { return approval; },
+  return { executor, approvals, writes, boardReads, get stored() { return stored; }, get approval() { return approval; },
+    get policyReads() { return policyReads; },
     setSetting(value: unknown) { setting = value; },
     setStored(value: typeof stored) { stored = value; },
+    setCopyItem(value: SessionSurfaceItemV1) { copyItem = value; },
     show(item: unknown, expectedItemRevision: string | null = null, ctx = context) {
       return executor.execute('session.board.item.upsert', { itemId: 'visual', expectedItemRevision, item }, ctx);
     },
@@ -67,7 +84,74 @@ function harness(initialSetting: unknown = 'allowed', extraDeps: Partial<ActionE
 }
 
 describe('agent visuals through canonical Action admission', () => {
-  it('applies reversible present-user visual content directly but confirms outward network effects', async () => {
+  it.each(['default', 'explicit'] as const)('honors the host-owned %s policy for an Agent Note and replays an explicit Ask exactly once', async policy => {
+    // The live Session host holds its current policy outside invocation context.
+    // Use the real resolver, not a stubbed approval verdict.
+    const settings = normalizeActionsSettingsV1(policy === 'explicit' ? { v: 1, actions: {
+      'session.board.item.upsert': { approvalRequiredSurfaces: ['agent'] },
+    } } : { v: 1 });
+    const host = harness('allowed', {
+      isActionApprovalRequired: (id, ctx, input, uiConfirmation, approvedOperation, approvalScope, defaultSafety) =>
+        isApprovalRequiredByActionsSettings(id, settings, ctx, defaultSafety, undefined, input, uiConfirmation, undefined, approvedOperation, approvalScope),
+    });
+    if (policy === 'default') {
+      expect(await host.show(note)).toMatchObject({ ok: true, result: { result: { outcome: 'created' } } });
+      expect(host.approvals).toEqual([]);
+      expect(host.writes).toHaveLength(1);
+      return;
+    }
+    expect(await host.show(note)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(host.approvals).toHaveLength(1);
+    expect(host.stored).toBeNull();
+    expect(host.writes).toEqual([]);
+    expect(await host.decide('approve')).toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(host.writes).toHaveLength(1);
+    expect(host.stored?.item).toMatchObject(note);
+    expect(await host.decide('approve')).toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(host.writes).toHaveLength(1);
+    expect(host.approvals).toHaveLength(1);
+  });
+
+  it('keeps the same visual direct for a present person under the real host policy', async () => {
+    const settings = normalizeActionsSettingsV1({ v: 1 });
+    const host = harness('allowed', {
+      isActionApprovalRequired: (id, ctx, input, uiConfirmation) =>
+        isApprovalRequiredByActionsSettings(id, settings, ctx, undefined, undefined, input, uiConfirmation),
+    });
+    expect(await host.show(note, null, { ...context, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }))
+      .toMatchObject({ ok: true, result: { result: { outcome: 'created' } } });
+    expect(host.approvals).toEqual([]);
+    expect(host.writes).toHaveLength(1);
+  });
+
+  it.each(['follow.set', 'session.access.grant.set'] as const)('preserves Approve and Deny for neighboring %s requests', async actionId => {
+    const policy = { preset: 'important' as const };
+    const grant = { subject: { kind: 'account' as const, accountId: 'recipient' }, accessLevel: 'edit' as const, canApprovePermissions: false };
+    const input = actionId === 'follow.set'
+      ? { receiver: { kind: 'session', sessionId: 'session' }, source: { kind: 'session', sessionId: 'source' }, policy }
+      : { sessionId: 'session', ...grant };
+    for (const decision of ['approve', 'reject'] as const) {
+      const effects: string[] = [];
+      const settings = normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['agent'] } } });
+      const host = harness('allowed', {
+        isActionApprovalRequired: (id, ctx, admitted) => isApprovalRequiredByActionsSettings(id, settings, ctx, undefined, undefined, admitted),
+        // HTTP mutation ports are the boundaries; approval construction,
+        // decision authority, replay and strict Action outputs remain real.
+        sessionFollowAction: async () => { effects.push('follow'); return { changed: true, source: {
+          destinationSessionId: 'session', sourceSessionId: 'source', policy, deliveryState: 'eligible', hasPendingUpdates: false,
+        } }; },
+        sessionAccessAction: async () => { effects.push('grant'); return { changed: true, grant }; },
+      });
+      expect(await host.executor.execute(actionId, input, context)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(host.approvals).toHaveLength(1);
+      expect(effects).toEqual([]);
+      expect(await host.decide(decision)).toMatchObject({ ok: true, result: { status: decision === 'approve' ? 'executed' : 'rejected' } });
+      expect(effects).toHaveLength(decision === 'approve' ? 1 : 0);
+      expect(host.approvals).toHaveLength(1);
+    }
+  });
+
+  it('applies reversible present-user visual edits directly and honors an explicit Ask', async () => {
     const ui = { ...context, surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
     const host = harness();
     expect(await host.show(note, null, ui)).toMatchObject({ ok: true, result: { result: { outcome: 'created' } } });
@@ -75,12 +159,59 @@ describe('agent visuals through canonical Action admission', () => {
     expect(await host.show({ ...note, title: 'Updated' }, revision, ui))
       .toMatchObject({ ok: true, result: { result: { outcome: 'updated' } } });
     expect(host.approval).toBeNull();
-    expect(await host.show(html({ network: 'open' }), revision, ui))
-      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(host.approval).toBeNull();
+    expect(host.boardReads).toEqual([]);
     const ask = harness();
     expect(await ask.show(note, null, { ...ui, actionsSettings: normalizeActionsSettingsV1({ v: 1,
       actions: { 'session.board.item.upsert': { approvalRequiredSurfaces: ['ui'] } },
     }) })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+  });
+  it.each(['ui', 'agent'] as const)('asks for own-Session capability expansion and copies on %s, but honors the generic waiver', async surface => {
+    const caller = surface === 'ui'
+      ? { ...context, surface, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } }
+      : context;
+    const cases = [
+      { prior: html({}), next: html({ network: 'open' }) },
+      { prior: html({ networkOrigins: ['https://one.example.com'] }),
+        next: html({ networkOrigins: ['https://one.example.com', 'https://two.example.com'] }) },
+      { prior: html({}), next: html({ actions: ['session.board.get'], hostMethods: ['executeAction'] }) },
+      { prior: null, next: null },
+    ];
+    for (const testCase of cases) {
+      for (const waived of [false, true]) {
+        const actionsSettings = normalizeActionsSettingsV1({ v: 1,
+          ...(waived ? { approvalWaivedSurfaces: { 'session.board.item.upsert': [surface] } } : {}) });
+        // The actual host holds Account policy outside caller context. Keep the
+        // canonical policy real so dropping a consequence fact loses Ask here.
+        const host = harness('allowed', { isActionApprovalRequired: (id, ctx, input, uiConfirmation, approvedOperation, approvalScope, defaultSafety) =>
+          isApprovalRequiredByActionsSettings(id, actionsSettings, ctx, defaultSafety, undefined, input, uiConfirmation, undefined, approvedOperation, approvalScope) });
+        if (testCase.prior) host.setStored({ item: SessionSurfaceItemV1Schema.parse(testCase.prior), revision });
+        else host.setCopyItem(SessionSurfaceItemV1Schema.parse(html({ network: 'open' })));
+        const result = testCase.next
+          ? await host.show(testCase.next, revision, caller)
+          : await host.executor.execute('session.board.item.upsert', { itemId: 'visual', destination: 'transcript',
+            expectedItemRevision: null, copySource: { serverId: 'home', sessionId: 'source', itemId: 'visual', expectedItemRevision: revision } },
+          caller);
+        expect(result, JSON.stringify({ surface, waived, testCase })).toMatchObject(waived
+          ? { ok: true, result: { result: { outcome: testCase.next ? 'updated' : 'created' } } }
+          : { ok: true, result: { kind: 'approval_request_created' } });
+        expect(host.writes).toHaveLength(waived ? 1 : 0);
+        expect(host.boardReads).toEqual([{ sessionId: testCase.next ? 'session' : 'source', itemIds: ['visual'] }]);
+      }
+    }
+  });
+
+  it('keeps same or narrower present-user capabilities direct without widening host Actions', async () => {
+    const ui = { ...context, surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
+    const host = harness();
+    host.setStored({ item: SessionSurfaceItemV1Schema.parse(html({ network: 'open', actions: ['session.board.get'], hostMethods: ['executeAction'] })), revision });
+    for (const next of [html({ network: 'open', actions: ['session.board.get'], hostMethods: ['executeAction'] }),
+      html({ networkOrigins: ['https://one.example.com'], actions: ['session.board.get'], hostMethods: ['executeAction'] }), html({})]) {
+      expect(await host.show(next, revision, ui)).toMatchObject({ ok: true, result: { result: { outcome: 'updated' } } });
+    }
+    expect(host.approvals).toEqual([]);
+    expect(host.writes).toHaveLength(3);
+    expect(host.boardReads).toHaveLength(2);
   });
   it.each(['hostedHtml', 'inlineHtmlWidget'] as const)('refuses unrenderable %s before asking for approval', async kind => {
     const host = harness('ask');
@@ -101,6 +232,7 @@ describe('agent visuals through canonical Action admission', () => {
   it('uses the Account default for absent data, asks for malformed data, and preserves host admission', async () => {
     const defaultHost = harness(); defaultHost.setSetting(undefined);
     expect(await defaultHost.show(html({ network: 'open' }))).toMatchObject({ ok: true, result: { result: { outcome: 'created' } } });
+    expect(defaultHost.approvals).toEqual([]);
     expect(await harness('invalid').show(html({ network: 'open' }))).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     expect(await harness().show(note, null, { ...context, bypassApprovals: true })).toMatchObject({ ok: true, result: { result: { outcome: 'created' } } });
   });
@@ -110,25 +242,27 @@ describe('agent visuals through canonical Action admission', () => {
       const declared = normalizeUiSurfaceCapabilityRequestV1(request)!;
       const networkRequested = declared.networkOrigins.length > 0 || 'network' in request && request.network === 'open';
       const result = await host.show(html(request));
-      if (setting === 'ask' && networkRequested) {
-        expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      const asks = setting === 'ask' && networkRequested;
+      expect(result).toMatchObject(asks ? { ok: true, result: { kind: 'approval_request_created' } }
+        : { ok: true, result: { result: { outcome: 'created' } } });
+      if (asks) {
         expect(describeApprovalRequestFields(host.approval!).rows).toContainEqual(expect.objectContaining({
           title: 'Network', value: declared.network === 'open' ? 'Any site' : `Only ${declared.networkOrigins.join(', ')}`,
         }));
         expect(host.stored).toBeNull();
-        expect(await host.decide('approve')).toMatchObject({ ok: true });
-        expect(host.approval?.execution).toEqual(expect.objectContaining({ ok: true }));
-      } else expect(result).toMatchObject({ ok: true, result: { result: { outcome: 'created' } } });
+        expect(await host.decide('approve')).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+      } else expect(host.approvals).toEqual([]);
       expect(host.stored?.item.source.kind).toBe('hostedHtml');
       const source = host.stored?.item.source;
       expect(source?.kind === 'hostedHtml' && normalizeUiSurfaceCapabilityRequestV1(source.requestedCapabilities))
         .toMatchObject(setting === 'off' ? { networkOrigins: [], network: 'none' } : declared);
       if (setting === 'off' && networkRequested) expect(result).toMatchObject({ result: {
         effectiveNetwork: { network: 'none', networkOrigins: [] }, notices: [{ code: 'agent_html_network_off' }] } });
+      else if (!asks && result.ok) expect(result.result).not.toHaveProperty('notices');
     }
   });
 
-  it.each(['host_action', 'stricter_policy'] as const)('describes the admitted off-policy consequence for %s approval and rejects a changed setting', async reason => {
+  it.each(['host_action', 'stricter_policy'] as const)('replays the exact admitted off-policy consequence for %s after the Account setting changes', async reason => {
     const item = html({ network: 'open', ...(reason === 'host_action'
       ? { actions: ['session.board.get'], hostMethods: ['executeAction'] } : {}) });
     const approvalContext = reason === 'stricter_policy' ? { ...context,
@@ -138,38 +272,53 @@ describe('agent visuals through canonical Action admission', () => {
     } : context;
     const host = harness('off');
     expect(await host.show(item, null, approvalContext)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    expect(host.approval?.actionArgs).toMatchObject({ reviewedVisual: { networkSetting: 'off' },
-      item: { source: { requestedCapabilities: { network: 'open' } } } });
+    expect(host.approval?.actionArgs).toMatchObject({
+      item: { source: { requestedCapabilities: { network: 'none', networkOrigins: [] } } } });
     expect(describeApprovalRequestFields(host.approval!).rows).toContainEqual(expect.objectContaining({
       title: 'Network', value: 'No network access',
     }));
     expect(await host.decide('approve')).toMatchObject({ ok: true, result: { status: 'executed', execution: {
-      ok: true, result: { effectiveNetwork: { network: 'none', networkOrigins: [] }, notices: [{ code: 'agent_html_network_off' }] },
+      ok: true, result: { effectiveNetwork: { network: 'none', networkOrigins: [] } },
     } } });
     expect(host.stored?.item.source).toMatchObject({ requestedCapabilities: { network: 'none', networkOrigins: [] } });
 
-    const stale = harness('off');
-    await stale.show(item, null, approvalContext);
-    stale.setSetting('allowed');
-    expect(await stale.decide('approve')).toMatchObject({ ok: true, result: {
-      status: 'failed', execution: { ok: false, errorCode: 'approval_stale' },
+    const changed = harness('off');
+    await changed.show(item, null, approvalContext);
+    const admittedPolicyReads = changed.policyReads;
+    changed.setSetting('allowed');
+    expect(await changed.decide('approve')).toMatchObject({ ok: true, result: {
+      status: 'executed', execution: { ok: true },
     } });
-    expect(stale.stored).toBeNull();
+    expect(changed.stored?.item.source).toMatchObject({ requestedCapabilities: { network: 'none', networkOrigins: [] } });
+    expect(changed.policyReads).toBe(admittedPolicyReads);
   });
 
-  it('admits own Session notes, resumed own-created updates, and respects stricter user policy', async () => {
+  it('allows own Session Notes and resumed reversible updates by default', async () => {
     const host = harness();
     expect(await host.show(note)).toMatchObject({ ok: true, result: { result: { outcome: 'created' } } });
-    expect(await host.show({ ...note, title: 'Updated' }, revision, { ...context, actionRequestId: 'resumed' })).toMatchObject({ ok: true, result: { result: { outcome: 'updated' } } });
-    const actionsSettings = normalizeActionsSettingsV1({ v: 1, actions: { 'session.board.item.upsert': { approvalRequiredSurfaces: ['agent'] } } });
-    expect(await host.show(note, revision, { ...context, actionsSettings })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(await host.show({ ...note, title: 'Updated' }, revision, { ...context, actionRequestId: 'resumed' }))
+      .toMatchObject({ ok: true, result: { result: { outcome: 'updated' } } });
+    expect(host.approvals).toEqual([]);
+    expect(host.stored?.item.title).toBe('Updated');
   });
 
-  it.each([{ kind: 'user' }, { kind: 'plugin' }, { kind: 'unknown' }, undefined, { kind: 'session', sessionId: 'foreign' }])(
-    'asks for an edit with creator %j', async creator => {
-      const host = harness(); host.setStored({ item: note, revision, creator });
-      expect(await host.show(note, revision)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    });
+  it('honors Allowed and Blocked from the host policy for the same Agent visual', async () => {
+    for (const enabled of [true, false]) {
+      const settings = normalizeActionsSettingsV1({ v: 1,
+        actions: { 'session.board.item.upsert': { enabled } },
+        approvalWaivedSurfaces: { 'session.board.item.upsert': ['agent'] },
+      });
+      const host = harness('allowed', {
+        isActionEnabled: (id, ctx) => isActionEnabledByActionsSettings(id, settings, ctx),
+        isActionApprovalRequired: (id, ctx, input) => isApprovalRequiredByActionsSettings(id, settings, ctx, undefined, undefined, input),
+      });
+      expect(await host.show(note)).toMatchObject(enabled
+        ? { ok: true, result: { result: { outcome: 'created' } } }
+        : { ok: false, errorCode: 'action_disabled' });
+      expect(host.approvals).toEqual([]);
+      expect(host.writes).toHaveLength(enabled ? 1 : 0);
+    }
+  });
 
   it('asks for any existing network change and host Actions, while rejection leaves content untouched', async () => {
     const host = harness(); await host.show(html({}));
@@ -198,6 +347,27 @@ describe('agent visuals through canonical Action admission', () => {
     expect(host.stored?.item.source).toMatchObject({ requestedCapabilities: { network: 'open' } });
   });
 
+  it('keeps Ask network creation approval when the generic Action is explicitly Allowed', async () => {
+    const actionsSettings = normalizeActionsSettingsV1({ v: 1,
+      approvalWaivedSurfaces: { 'session.board.item.upsert': ['agent'] } });
+    const noNetwork = harness('ask');
+    expect(await noNetwork.show(html({}), null, { ...context, actionsSettings }))
+      .toMatchObject({ ok: true, result: { result: { outcome: 'created' } } });
+    expect(noNetwork.approval).toBeNull();
+
+    for (const [request, label] of [
+      [{ networkOrigins: ['https://httpbin.org'] }, 'Only https://httpbin.org'],
+      [{ network: 'open' }, 'Any site'],
+    ] as const) {
+      const requestedNetwork = harness('ask');
+      expect(await requestedNetwork.show(html(request), null, { ...context, actionsSettings }))
+        .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(requestedNetwork.stored).toBeNull();
+      expect(describeApprovalRequestFields(requestedNetwork.approval!).rows)
+        .toContainEqual(expect.objectContaining({ title: 'Network', value: label }));
+    }
+  });
+
   it.each(['installed', 'inline'] as const)('retains %s renderer admission and asks before switching an existing explicit override to inheritance', async kind => {
     const surface = { pluginId: 'acme.visuals', localId: 'report' };
     const installed = SessionSurfaceItemV1Schema.parse({ ...note, source: { kind: 'widget', instance: {
@@ -218,25 +388,26 @@ describe('agent visuals through canonical Action admission', () => {
     const created = await host.show(installed);
     expect(created).toMatchObject({ ok: true, result: { result: { outcome: 'created' } } });
     expect(host.stored?.item.source).toEqual(installed.source);
-    expect(created.ok && created.result).not.toHaveProperty('effectiveNetwork');
+    expect(created).toMatchObject({ ok: true });
+    if (created.ok) expect(created.result).not.toHaveProperty('effectiveNetwork');
     const explicitNone = SessionSurfaceItemV1Schema.parse({ ...installed, source: { ...installed.source,
       instance: { ...(installed.source.kind === 'widget' ? installed.source.instance : {}), networkOverride: { network: 'none' } } } });
-    expect(await host.show(explicitNone, revision)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    await host.decide('approve');
+    expect(await host.show(explicitNone, revision)).toMatchObject({ ok: true, result: { result: { outcome: 'updated' } } });
     expect(host.stored?.item.source).toMatchObject({ instance: { networkOverride: { network: 'none' } } });
-    expect(await host.show(installed, revision)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(await host.show(installed, revision, { ...context, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     await host.decide('reject');
     expect(host.stored?.item.source).toMatchObject({ instance: { networkOverride: { network: 'none' } } });
   });
 
-  it('does not trust caller-authored attribution or omit caller proof', async () => {
+  it('refuses caller-authored attribution and uses the host-bound Session without a new caller classifier', async () => {
     const host = harness();
     expect(await host.show({ ...note, creator: { kind: 'session', sessionId: 'session' } }))
       .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
     expect(host.stored).toBeNull();
     expect(await host.show(note, null, { ...context, actionCaller: undefined }))
-      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    expect(host.stored).toBeNull();
+      .toMatchObject({ ok: true, result: { result: { outcome: 'created' } } });
+    expect(host.stored?.item).toMatchObject(note);
   });
 
   it('admits a promoted inline HTML copy with its stored network choice and asks before changing it', async () => {
@@ -259,30 +430,28 @@ describe('agent visuals through canonical Action admission', () => {
       networkOverride: { network: 'open' } } } }, revision)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
   });
 
-  it('binds installed inheritance to the reviewed policy even when normalized origins remain empty', async () => {
+  it('uses the item revision when installed inheritance changes after review', async () => {
     const installed = SessionSurfaceItemV1Schema.parse({ ...note, source: { kind: 'widget', instance: {
       v: 1, id: 'visual', definition: { kind: 'installed', surface: { pluginId: 'acme.visuals', localId: 'report' } }, bindings: {},
     } } });
     const explicitNone = SessionSurfaceItemV1Schema.parse({ ...installed, source: { ...installed.source,
       instance: { ...(installed.source.kind === 'widget' ? installed.source.instance : {}), networkOverride: { network: 'none' } } } });
     const host = harness();
-    const creator = { kind: 'session', sessionId: 'session' };
-    host.setStored({ item: explicitNone, revision, creator });
+    host.setStored({ item: explicitNone, revision });
     expect(await host.show(installed, revision)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    host.setStored({ item: installed, revision, creator });
+    host.setStored({ item: installed, revision: 'ssr1.AAAACHN5c3JlY18xAAAAAg' });
     expect(await host.decide('approve')).toMatchObject({ ok: true, result: {
-      status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } } });
+      status: 'failed', execution: { ok: false, errorCode: 'session_board_revision_conflict' } } });
     expect(host.stored?.item).toEqual(installed);
   });
 
-  it('preserves existing effective egress when the Account default changes and asks even to narrow it', async () => {
+  it('preserves existing effective egress when the Account default changes and directly narrows it', async () => {
     const host = harness(); await host.show(html({ network: 'open' })); host.setSetting('off');
     expect(await host.show({ ...html({ network: 'open' }), title: 'Continued' }, revision))
       .toMatchObject({ ok: true, result: { result: { outcome: 'updated' }, effectiveNetwork: { network: 'open' } } });
-    expect(await host.show(html({ network: 'none' }), revision)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    expect(describeApprovalRequestFields(host.approval!).rows).toContainEqual(expect.objectContaining({ title: 'Network', value: 'No network access' }));
-    await host.decide('reject');
-    expect(host.stored?.item.source).toMatchObject({ requestedCapabilities: { network: 'open' } });
+    expect(await host.show(html({ network: 'none' }), revision)).toMatchObject({ ok: true, result: { result: { outcome: 'updated' }, effectiveNetwork: { network: 'none' } } });
+    expect(host.stored?.item.source).toMatchObject({ requestedCapabilities: { network: 'none' } });
+    expect(host.approvals).toEqual([]);
   });
 
   it('fails closed with a typed result when the exact Account policy cannot be read', async () => {
@@ -308,29 +477,26 @@ describe('agent visuals through canonical Action admission', () => {
     expect(mutationRan).toBe(false);
   });
 
-  it('rechecks Account preference and current record after preparation before writing', async () => {
-    const host = harness();
-    const prepared = await host.executor.prepare('session.board.item.upsert', { itemId: 'visual', expectedItemRevision: null, item: html({ network: 'open' }) }, context);
-    expect(prepared.kind).toBe('ready'); host.setSetting('off');
-    if (prepared.kind === 'ready') expect(await prepared.invocation.run()).toMatchObject({ ok: false, errorCode: 'approval_stale' });
-    expect(host.stored).toBeNull();
+  it.each(['allowed', 'off'] as const)('keeps prepared %s input and consequences when the Account preference changes', async setting => {
+    const host = harness(setting);
+    const actionsSettings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.board.item.upsert': ['agent'] } });
+    const prepared = await host.executor.prepare('session.board.item.upsert', { itemId: 'visual', expectedItemRevision: null, item: html({ network: 'open' }) }, { ...context, actionsSettings });
+    expect(prepared.kind).toBe('ready'); host.setSetting(setting === 'off' ? 'allowed' : 'off');
+    if (prepared.kind === 'ready') expect(await prepared.invocation.run()).toMatchObject({ ok: true,
+      ...(setting === 'off' ? { result: { notices: [{ code: 'agent_html_network_off' }] } } : {}) });
+    expect(host.stored?.item.source).toMatchObject({ requestedCapabilities: { network: setting === 'off' ? 'none' : 'open' } });
+    expect(host.policyReads).toBe(1);
     const pending = harness('ask'); await pending.show(html({ network: 'open' })); pending.setSetting('allowed');
-    await pending.decide('approve'); expect(pending.stored).toBeNull();
+    await pending.decide('approve'); expect(pending.stored?.item.source).toMatchObject({ requestedCapabilities: { network: 'open' } });
   });
 
-  it.each(['revision', 'source', 'policy', 'creator'] as const)('refuses a pending update after its stored %s changes', async change => {
+  it('refuses a pending update after the domain item revision changes', async () => {
     const host = harness(); await host.show(html({}));
     await host.show(html({ network: 'open' }), revision);
     const current = host.stored!;
-    host.setStored({ ...current,
-      ...(change === 'revision' ? { revision: 'ssr1.AAAACHN5c3JlY18xAAAAAg' } : {}),
-      ...(change === 'creator' ? { creator: { kind: 'user' } } : {}),
-      ...(change === 'source' ? { item: SessionSurfaceItemV1Schema.parse({ ...current.item, source: {
-        kind: 'hostedHtml', source: { v: 1, entrypoint: 'index.html', files: { 'index.html': { mime: 'text/html', contentBase64: 'PGgyPkNoYW5nZWQ8L2gyPg==' } } }, requestedCapabilities: {} } }) } : {}),
-      ...(change === 'policy' ? { item: SessionSurfaceItemV1Schema.parse(html({ networkOrigins: ['https://other.example.com'] })) } : {}),
-    });
+    host.setStored({ ...current, revision: 'ssr1.AAAACHN5c3JlY18xAAAAAg' });
     const changed = host.stored;
-    expect(await host.decide('approve')).toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } } });
+    expect(await host.decide('approve')).toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'session_board_revision_conflict' } } });
     expect(host.stored).toEqual(changed);
   });
 });

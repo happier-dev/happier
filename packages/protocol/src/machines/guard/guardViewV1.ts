@@ -11,7 +11,7 @@ export const MachineGuardLadderCandidateV1Schema = lazyZodSchema(() => z.strictO
   ref: z.string().check(z.minLength(1)),
   /** The census process identity (pid + birth), the same ref the Processes census and stop Actions use. */
   processRef: z.optional(z.string().check(z.minLength(1))),
-  kind: z.enum(['browser', 'service', 'session']), label: z.string(), qualifier: z.string(),
+  kind: z.enum(['browser', 'service', 'session']), label: z.nullable(z.string()), qualifier: z.string(),
   footprintBytes: z.number().check(z.nonnegative()), wayBack: z.optional(z.array(MachineGuardActivityWayBackV1Schema)),
 }));
 export const MachineGuardLadderV1Schema = lazyZodSchema(() => z.strictObject({
@@ -20,7 +20,7 @@ export const MachineGuardLadderV1Schema = lazyZodSchema(() => z.strictObject({
     candidates: z.array(MachineGuardLadderCandidateV1Schema),
   })),
   excluded: z.array(z.strictObject({ ref: z.string().check(z.minLength(1)), processRef: z.optional(z.string().check(z.minLength(1))), kind: z.enum(['browser', 'service', 'session']),
-    label: z.string(), reason: GuardKeepReasonV1Schema, footprintBytes: z.nullable(z.number().check(z.nonnegative())),
+    label: z.nullable(z.string()), reason: GuardKeepReasonV1Schema, footprintBytes: z.nullable(z.number().check(z.nonnegative())),
   })),
   summary: z.strictObject({ candidatesBytes: z.number().check(z.nonnegative()), inUseBytes: z.number().check(z.nonnegative()),
     workingBytes: z.number().check(z.nonnegative()), workingSessions: z.number().check(z.int(), z.nonnegative()),

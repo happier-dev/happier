@@ -37,7 +37,7 @@ export function readMachineActionRpcResult<T>(result: T): T {
   // successful payload. The Action executor already preserves RpcError codes.
   throw Object.assign(new RpcError(failure.error, failure.errorCode, failure.failureCause),
     failure.details === undefined ? {} : { details: failure.details },
-    failure.effectAttempted === false ? { effectAttempted: false } : {});
+    failure.effectAttempted !== undefined ? { effectAttempted: failure.effectAttempted } : {});
 }
 
 export function readFailureEnvelopeDetails(record: Readonly<Record<string, unknown>>): unknown | undefined {

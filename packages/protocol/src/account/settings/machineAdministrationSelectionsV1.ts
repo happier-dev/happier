@@ -9,7 +9,7 @@ import { MAX_PLUGIN_IDENTIFIER_BYTES } from '../../plugins/pluginId.js';
 export const MACHINE_ADMINISTRATION_SELECTION_KEY_MAX_LENGTH_V1 = Math.max(200, 'plugin.runOn:'.length + MAX_PLUGIN_IDENTIFIER_BYTES);
 export const MACHINE_ADMINISTRATION_SELECTION_MAX_ENTRIES_V1 = 256;
 
-const MachineAdministrationSelectionKeyV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(MACHINE_ADMINISTRATION_SELECTION_KEY_MAX_LENGTH_V1)));
+export const MachineAdministrationSelectionKeyV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(MACHINE_ADMINISTRATION_SELECTION_KEY_MAX_LENGTH_V1)));
 
 export const MachineAdministrationTargetV1Schema = lazyZodSchema(() => z.strictObject({
   serverIdentityId: z.string().check(z.trim(), z.regex(SERVER_IDENTITY_ID_PATTERN)),

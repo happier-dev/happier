@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from './agentSessionLimitsV1.js';
 import { projectMcpToolLaunchPolicyV1 } from '../mcp/servers/tools/resolveMcpToolDecisionV1.js';
+import { normalizeProbedCatalogOption, ProbedCatalogOptionSchema } from '../capabilities/probedCatalogOption.js';
+import { AgentConfigOptionsProbeObservationSchema, AgentModelsProbeObservationSchema, AgentProbeModelSchema } from '../capabilities/agentProbeObservation.js';
+import { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, encodeSessionOwnerMetadataEnvelopeV1, openSessionOwnerMetadataEnvelopeV1, parseSessionOwnerMetadataEnvelopeV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1, sealSessionOwnerMetadataEnvelopeV1 } from '../sessions/metadata/sessionMetadataEnvelopesV1.js';
 import {
   AGENT_SESSION_RUNTIME_EVENT_KINDS_V1,
   AgentLaunchEnvironmentV1Schema,
@@ -13,6 +15,9 @@ import {
   AgentSessionRuntimeEventV1Schema,
   AgentSessionSendRequestV1Schema,
 } from './agentSessionV1.js';
+
+import { estimateUsageModelCost } from '../usage/usageCost.js';
+import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 as LIMITS } from './agentSessionLimitsV1.js';
 
 it('admits typed native Connected Account identity evidence without authority or native grammar bags', () => {
   const event = { kind: 'connected-account-identity-observed', sequence: 1, sessionId: 'session', emittedAtMs: 20,
@@ -33,6 +38,114 @@ const diagnostic = {
   code: 'provider_unavailable',
   severity: 'warning',
 } as const;
+
+it('preserves complete send input beyond the former aggregate candidate ceiling', () => {
+  const text = 'é'.repeat(1_250_001);
+  const request = {
+    inputIds: ['input-1'],
+    input: { text },
+    delivery: { kind: 'newTurn', turnId: 'turn-1' },
+  };
+  expect(AgentSessionSendRequestV1Schema.parse(request)).toEqual(request);
+  const structuredRequest = { ...request, input: { text: '', structuredInput: { text } } };
+  expect(AgentSessionSendRequestV1Schema.parse(structuredRequest)).toEqual(structuredRequest);
+});
+
+it('preserves native Agent model identities and presentation independently from Provider model ids', () => {
+  const model = { id: ' native-model/+ = ', name: ' Native model ', extendedContextModelId: ' native-extended= ' };
+  expect(AgentProbeModelSchema.parse(model)).toEqual(model);
+});
+
+it('retains a failed config refresh alongside the last observed catalog', () => {
+  const snapshot = { agentId: 'native', source: 'dynamic', refreshError: true, refreshErrorMessage: ' Sign in to the native Provider.\n',
+    modelConfigOptionId: 'engine-choice', configOptions: [{ id: 'engine-choice', name: 'Engine', type: 'select', currentValue: 'accepted' }] };
+  expect(AgentConfigOptionsProbeObservationSchema.parse(snapshot)).toEqual(snapshot);
+  const models = { agentId: snapshot.agentId, source: snapshot.source, refreshError: snapshot.refreshError,
+    refreshErrorMessage: snapshot.refreshErrorMessage, availableModels: [], supportsFreeform: false };
+  expect(AgentModelsProbeObservationSchema.parse(models)).toEqual(models);
+});
+
+it('retains the producer-resolved opaque model selector identity across config event and metadata roots', () => {
+  const modelConfigOptionId = ' native/model-selector= ';
+  const event = AgentSessionRuntimeEventV1Schema.parse({ kind: 'config-options', sequence: 1, sessionId: 'session', emittedAtMs: 1,
+    modelConfigOptionId, configOptions: [{ id: modelConfigOptionId, name: 'Engine', type: 'select', currentValue: 'native' }] });
+  expect(event).toHaveProperty('modelConfigOptionId', modelConfigOptionId);
+  if (event.kind !== 'config-options') throw new Error('Expected config catalog event');
+  expect(AgentConfigOptionsProbeObservationSchema.parse({ configOptions: event.configOptions, modelConfigOptionId }))
+    .toEqual({ configOptions: event.configOptions, modelConfigOptionId });
+  const catalog = { v: 1, agentId: 'native', updatedAt: 1, modelConfigOptionId, configOptions: event.configOptions };
+  const created = createSessionOwnerMetadataV1({ metadata: { sessionConfigOptionsV1: catalog } });
+  expect(created.ok).toBe(true);
+  if (!created.ok) throw new Error('Resolved selector rejected');
+  expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata: projectSessionSharedMetadataV1({ metadata: {} }), ownerMetadata: created.ownerMetadata }))
+    .toMatchObject({ sessionConfigOptionsV1: catalog });
+});
+
+it('carries the complete observed config catalog through the runtime, preflight and owner metadata contracts', () => {
+  // FX 0.0.14 session/new, captured 2026-10-27: E-fx-live-probe.md §3.
+  const provider = { id: 'provider', name: 'Provider', category: 'model', type: 'select', currentValue: 'codex',
+    options: [{ value: 'gateway', name: 'Vercel AI Gateway' }, { value: 'codex', name: 'Codex subscription' }, { value: 'grok', name: 'Grok subscription' }] };
+  const fast = { id: 'fast', name: 'Fast Mode', category: 'model', type: 'select', currentValue: 'false',
+    options: [{ value: 'false', name: 'off' }, { value: 'true', name: 'on' }] };
+  // Constructed neighboring case: opaque native ids and presentation bytes survive grouping.
+  const grouped = { id: ' custom/+ = ', name: ' Custom control ', description: ' Keep spacing\n', category: 'model_config', type: 'select', currentValue: ' true ',
+    options: [{ value: ' true ', name: ' On ', description: ' Native choice ' }],
+    groups: [{ id: ' native/group= ', name: ' Native group ', options: [{ value: ' true ', name: ' On ', description: ' Native choice ' }] }] };
+  const emptyValue = { id: 'optional', name: 'Optional control', description: '', type: 'select', currentValue: '',
+    options: [{ value: '', name: 'Default', description: '' }, { value: ' ', name: 'Space' }] };
+  const configOptions = [provider, fast, grouped, emptyValue];
+  const event = AgentSessionRuntimeEventV1Schema.parse({ kind: 'config-options', sequence: 1, sessionId: 'session', emittedAtMs: 1, configOptions });
+  expect(event).toMatchObject({ kind: 'config-options', configOptions });
+  if (event.kind !== 'config-options') throw new Error('Expected config catalog event');
+  const catalog = { v: 1, agentId: 'fx', updatedAt: 1, configOptions: event.configOptions };
+  const overrides = { v: 1, updatedAt: 2, overrides: { [grouped.id]: { updatedAt: 2, value: ' ' } } };
+  const created = createSessionOwnerMetadataV1({ metadata: { sessionConfigOptionsV1: catalog,
+    sessionConfigOptionOverridesV1: overrides,
+    sessionModelsV1: { v: 1, agentId: 'fx', updatedAt: 1, currentModelId: 'model', availableModels: [{ id: 'model', name: 'Model', modelOptions: [grouped] }] } } });
+  expect(created.ok).toBe(true);
+  if (!created.ok) throw new Error('Config catalog rejected');
+  expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata: projectSessionSharedMetadataV1({ metadata: {} }), ownerMetadata: created.ownerMetadata })).toMatchObject({
+    sessionConfigOptionsV1: catalog,
+    sessionConfigOptionOverridesV1: overrides,
+    sessionModelsV1: { availableModels: [{ modelOptions: [grouped] }] },
+  });
+  const material = { type: 'dataKey', machineKey: new Uint8Array(32).fill(7) } as const;
+  for (const accountMode of ['plain', 'e2ee'] as const) {
+    const envelope = accountMode === 'plain' ? createPlainSessionOwnerMetadataEnvelopeV1(created.ownerMetadata)
+      : sealSessionOwnerMetadataEnvelopeV1({ ownerMetadata: created.ownerMetadata, material, randomBytes: length => new Uint8Array(length).fill(3) });
+    const opened = openSessionOwnerMetadataEnvelopeV1({ accountMode, material,
+      envelope: parseSessionOwnerMetadataEnvelopeV1(encodeSessionOwnerMetadataEnvelopeV1(envelope)) });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) throw new Error('Config catalog unavailable after persistence');
+    expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata: projectSessionSharedMetadataV1({ metadata: {} }), ownerMetadata: opened.ownerMetadata }))
+      .toMatchObject({ sessionConfigOptionsV1: catalog, sessionConfigOptionOverridesV1: overrides });
+  }
+  expect(event.configOptions.map(option => ProbedCatalogOptionSchema.parse(normalizeProbedCatalogOption(option)))).toEqual(configOptions);
+  expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...event, turnId: 'turn' }).success).toBe(false);
+  expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...event, configOptions: [{ ...grouped, groups: [{ ...grouped.groups[0], authority: true }] }] }).success).toBe(false);
+  expect(AgentSessionRuntimeEventV1Schema.parse({ ...event, configOptions: [] })).toMatchObject({ configOptions: [] });
+});
+
+it('admits priced cache savings while preserving closed usage envelopes and string-key limits', () => {
+  const estimate = estimateUsageModelCost('gpt-5.4', { input: 7, output: 3, reasoning: 2, cacheRead: 3, cacheWrite: 0, total: 15 })!;
+  const event = { kind: 'usage-observed', sequence: 1, sessionId: 'session', emittedAtMs: 1,
+    observationId: 'usage', source: 'native', scope: 'turn_delta', cost: {
+      reportedUsd: 0, estimatedUsd: estimate.estimatedUsd, currency: 'USD', breakdown: estimate.breakdown } };
+  expect(Object.getOwnPropertySymbols(estimate.breakdown!)).toHaveLength(1);
+  for (const candidate of [event, JSON.parse(JSON.stringify(event))]) {
+    expect(AgentSessionRuntimeEventV1Schema.parse(candidate)).toEqual(JSON.parse(JSON.stringify(event)));
+  }
+  for (const breakdown of [{ '': 1 }, { ' padded': 1 }, { 'padded ': 1 },
+    { ['x'.repeat(LIMITS.usage.breakdownKeyMaxCodeUnits + 1)]: 1 }, { invalid: -1 }, { invalid: '1' },
+    { invalid: Infinity }, Object.fromEntries(Array.from({ length: LIMITS.usage.breakdownMaxEntries + 1 }, (_, i) => [`key-${i}`, 1]))]) {
+    expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...event, cost: { ...event.cost, breakdown } }).success).toBe(false);
+  }
+  const boundary = { ['x'.repeat(LIMITS.usage.breakdownKeyMaxCodeUnits)]: 0,
+    ...Object.fromEntries(Array.from({ length: LIMITS.usage.breakdownMaxEntries - 1 }, (_, i) => [`key-${i}`, i])) };
+  expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...event, cost: { ...event.cost, breakdown: boundary } }).success).toBe(true);
+  expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...event, authority: true }).success).toBe(false);
+  expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...event, cost: { ...event.cost, authority: true } }).success).toBe(false);
+});
 
 it('retains explicit incomplete native accounting without admitting untyped history evidence', () => {
   const event = { kind: 'usage-observed', sequence: 1, sessionId: 'session', emittedAtMs: 1,
@@ -62,6 +175,18 @@ describe('Agent session VB4 open inputs', () => {
       optional: { value: null, updatedAtMs: 8 },
     },
   } as const;
+
+  it.each(['explicit', 'inherited'] as const)('preserves %s model-selection provenance through strict configuration readers', selectionSource => {
+    const snapshot = { ...configuration, model: { ...configuration.model, selectionSource } };
+    expect(AgentSessionConfigurationSnapshotV1Schema.parse(snapshot)).toEqual(snapshot);
+    expect(AgentSessionConfigurationUpdateV1Schema.parse(snapshot)).toEqual(snapshot);
+    expect(AgentSessionConfigurationSnapshotV1Schema.safeParse({
+      ...snapshot, model: { ...snapshot.model, selectionSource: 'unknown' },
+    }).success).toBe(false);
+    expect(AgentSessionConfigurationSnapshotV1Schema.safeParse({
+      ...snapshot, mode: { ...snapshot.mode, selectionSource },
+    }).success).toBe(false);
+  });
 
   it('accepts bounded launch allow/unset data and preserves independent field timestamps', () => {
     expect(AgentLaunchEnvironmentV1Schema.parse({
@@ -306,24 +431,6 @@ describe('AgentRuntimeJsonValueV1Schema', () => {
 });
 
 describe('AgentSessionRuntimeEventV1Schema', () => {
-  it('keeps provider continuation correlation closed and separate from host permission authority', () => {
-    const base = { sequence: 1, sessionId: 'session-1', emittedAtMs: 1 };
-    const facts = [
-      { ...base, kind: 'provider-continuation-registered', continuationId: 'task', parentTurnId: 'first', parentToolCallId: 'tool' },
-      { ...base, kind: 'provider-continuation-released', continuationId: 'task' },
-      { ...base, kind: 'provider-tool-contexts-released', parentTurnId: 'first', toolCallIds: ['tool'] },
-      { ...base, kind: 'turn-start', turnId: 'next', startedBy: 'provider', causedByTurnId: 'first', continuationId: 'task' },
-    ];
-    for (const fact of facts) {
-      expect(AgentSessionRuntimeEventV1Schema.safeParse(fact).success).toBe(true);
-      expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...fact, permissionMode: 'yolo' }).success).toBe(false);
-    }
-    const start = facts[3]!;
-    expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...start, startedBy: 'host' }).success).toBe(false);
-    expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...start, causedByTurnId: undefined }).success).toBe(false);
-  });
-
-
   it('accepts only internally consistent complete runtime activity snapshots', () => {
     const base = { kind: 'runtime-activity-snapshot', sequence: 1, sessionId: 'session-1', emittedAtMs: 1 } as const;
 
@@ -416,35 +523,16 @@ describe('AgentSessionRuntimeEventV1Schema', () => {
     }
   });
 
-  it('admits a tool payload between the Action gate and the event bound, and rejects past the event bound', () => {
-    // The boundary a runtime event payload actually has is the event's own
-    // aggregate byte bound. A payload above the plugin Action gate but below
-    // that bound was admissible when these events were written, so it is still
-    // readable: this schema is parsed on read (Host Event dispatch, external
-    // transcript replay), and narrowing it would orphan already-written data.
+  it('preserves complete tool payloads beyond the former aggregate candidate ceiling', () => {
     const base = { sequence: 1, sessionId: 'session-1', emittedAtMs: 1, turnId: 'turn-1' } as const;
-    const inBand = 'x'.repeat(1_500_000);
+    const text = 'é'.repeat(1_250_001);
     for (const event of [
-      { ...base, kind: 'tool-call', toolCallId: 'tool-1', toolName: 'read', input: { text: inBand } },
-      { ...base, kind: 'tool-progress', toolCallId: 'tool-1', progress: { text: inBand } },
-      { ...base, kind: 'tool-result', toolCallId: 'tool-1', output: { text: inBand } },
+      { ...base, kind: 'tool-call', toolCallId: 'tool-1', toolName: 'read', input: { text } },
+      { ...base, kind: 'tool-progress', toolCallId: 'tool-1', progress: { text } },
+      { ...base, kind: 'tool-result', toolCallId: 'tool-1', output: { text } },
     ]) {
-      expect(
-        AgentSessionRuntimeEventV1Schema.safeParse(event),
-        String(event.kind),
-      ).toMatchObject({ success: true });
+      expect(AgentSessionRuntimeEventV1Schema.parse(event)).toEqual(event);
     }
-
-    const pastEventBound = AgentSessionRuntimeEventV1Schema.safeParse({
-      ...base,
-      kind: 'tool-result',
-      toolCallId: 'tool-1',
-      output: { text: 'x'.repeat(2_500_001) },
-    });
-    expect(pastEventBound.success).toBe(false);
-    expect(pastEventBound.error?.issues.some((issue) => (
-      issue.message === 'Agent runtime event exceeds the CORE-A candidate byte bound'
-    ))).toBe(true);
   });
 
   it('rejects provider checkpoints larger than the canonical turn checkpoint limit', () => {
@@ -584,7 +672,7 @@ describe('AgentSessionRuntimeEventV1Schema', () => {
       path: '/tmp/file',
       oldContent: 'x'.repeat(1_000_000),
       newContent: 'y'.repeat(1_000_000),
-    }).success).toBe(false);
+    }).success).toBe(true);
 
     expect(AgentSessionRuntimeEventV1Schema.safeParse({
       kind: 'usage-observed',
@@ -624,10 +712,8 @@ describe('AgentSessionRuntimeEventV1Schema', () => {
     }).success).toBe(true);
     expect(AgentSessionRuntimeEventV1Schema.safeParse({
       ...base,
-      text: 'x'.repeat(
-        AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1.p0MeasuredCandidates.eventMaxJsonBytes,
-      ),
-    }).success).toBe(false);
+      text: 'x'.repeat(2_500_001),
+    }).success).toBe(true);
     expect(AgentSessionRuntimeEventV1Schema.safeParse({
       ...base,
       text: 'ok',

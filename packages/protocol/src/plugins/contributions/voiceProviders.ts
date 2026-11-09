@@ -596,6 +596,8 @@ export const VoiceProviderSettingsPresentationSchema = lazyZodSchema(() => z.str
     titleKey: z.optional(VoiceProviderSettingsPresentationTextSchema),
     promptTitleKey: z.optional(VoiceProviderSettingsPresentationTextSchema),
     promptBodyKey: z.optional(VoiceProviderSettingsPresentationTextSchema),
+    /** Short steps to create the key; the Connect sheet links the first to `links.apiKeys`. */
+    checklist: z.optional(z.array(VoiceProviderSettingsPresentationTextSchema).check(z.maxLength(8))),
   }),
   links: z.strictObject({
     account: z.optional(z.string().check(z.url(), z.maxLength(2_048))),
@@ -1098,6 +1100,48 @@ export function resolveVoiceCredentialOperationAuthorization(input: Readonly<{
   return projection.kind === 'materializedHttpHeaders'
     ? Object.freeze({ source, projection })
     : null;
+}
+
+/** Existing grant-review tuples for mediated Saved Secret recipients; no raw disclosure authority. */
+export function resolveVoiceCredentialMediatedGrantDeclarationsV1(input: Readonly<{
+  pluginId: string;
+  contribution: VoiceProviderContribution;
+  realm?: VoiceRawCredentialGrantDeclaration['realm'];
+  phase?: VoiceCredentialAccessPhase;
+  operationId?: string;
+  existingGrants?: readonly VoiceRawCredentialGrantDeclaration[];
+}>): readonly VoiceRawCredentialGrantDeclaration[] {
+  const contribution = input.contribution;
+  const declaredRealms: readonly VoiceRawCredentialGrantDeclaration['realm'][] = contribution.kind === 'speech'
+    ? ['daemon'] : contribution.platforms;
+  const realms = input.realm === undefined ? declaredRealms : declaredRealms.filter(realm => realm === input.realm);
+  const grants = new Map<string, VoiceRawCredentialGrantDeclaration>();
+  for (const grant of input.existingGrants ?? []) {
+    if ((input.realm === undefined || grant.realm === input.realm)
+      && (input.phase === undefined || grant.phase === input.phase)) {
+      grants.set(canonicalVoiceRawCredentialGrantUniquenessKey(grant), grant);
+    }
+  }
+  for (const source of contribution.credentials?.sources ?? []) {
+    if (source.kind !== 'savedSecret') continue;
+    for (const projection of source.operationProjections ?? []) {
+      if (projection.kind !== 'recipientCredential'
+        || input.phase !== undefined && projection.phase !== input.phase
+        || input.operationId !== undefined && projection.operation !== input.operationId) continue;
+      if (!resolveVoiceCredentialOperationAuthorization({ pluginId: input.pluginId,
+        contributionId: contribution.id, contribution, selectedSource: { kind: 'savedSecret' },
+        phase: projection.phase, operationId: projection.operation })) continue;
+      const operation = contribution.credentials?.hostMediated?.operations.find(candidate => candidate.id === projection.operation);
+      if (!operation) continue;
+      for (const realm of realms) {
+        const grant: VoiceRawCredentialGrantDeclaration = { realm, phase: projection.phase,
+          request: { kind: 'httpHeaders', origin: operation.request.origin,
+            headerNames: [operation.request.credential.name] } };
+        grants.set(canonicalVoiceRawCredentialGrantUniquenessKey(grant), grant);
+      }
+    }
+  }
+  return [...grants.values()];
 }
 
 export type VoiceSpeechSettingsSnapshot = Readonly<

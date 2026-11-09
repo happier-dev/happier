@@ -74,6 +74,10 @@ describe('workspaceSyncTopology', () => {
       controller: { machineId: 'parent', installationId: 'parent-current', available: true } };
     const input = { namespace: admittedNamespace, workspaceRefs: [physical], childMachines: [child] };
     const unavailable = { ok: false, code: 'workspace_sync_child_unavailable' };
+    const { controller: _boundController, ...withoutController } = managedMachine;
+    const unbound = { ...input, childMachines: [{ ...child, managedMachine: withoutController }] };
+    expect(resolveWorkspaceSyncEndpoint(unbound)).toEqual(unavailable);
+    expect(resolveWorkspaceSyncTransportAddress(unbound)).toEqual(unavailable);
 
     expect(resolveWorkspaceSyncEndpoint(input)).toEqual({ ok: true, endpoint: physical });
     expect(resolveWorkspaceSyncEndpoint({ ...input,

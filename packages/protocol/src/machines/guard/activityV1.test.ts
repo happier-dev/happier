@@ -6,6 +6,12 @@ const entry = { v: 1, id: 'stop', at: 1, kind: 'stopped_session', rule: 'idle_se
   subject: { kind: 'session', sessionId: 'session', title: 'Private title' },
   wayBack: [{ label: 'resume', actionId: 'session.open', input: { sessionId: 'session' } }] } as const;
 describe('Machine Guard Activity V1', () => {
+  it('retains named historical receipts and admits an explicitly untitled Session', () => {
+    expect(MachineGuardActivityStoredReadV1Schema.parse(entry).subject).toEqual(entry.subject);
+    const untitled = { ...entry, subject: { ...entry.subject, title: null } };
+    expect(MachineGuardActivityEntryV1Schema.parse(untitled).subject).toEqual(untitled.subject);
+    expect(MachineGuardActivityStoredReadV1Schema.parse(untitled).subject).toEqual(untitled.subject);
+  });
   it('closes write envelopes and executable references while dropping only unknown stored presentation facts', () => {
     expect(MachineGuardActivityEntryV1Schema.safeParse(entry).success).toBe(true);
     expect(MachineGuardActivityEntryV1Schema.safeParse({ ...entry, future: true }).success).toBe(false);

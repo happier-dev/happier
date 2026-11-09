@@ -3,9 +3,156 @@ import { describe, expect, it } from 'vitest';
 import { ActivityWebhookPayloadV1Schema, buildActivityWebhookPayload, MachineVitalsPushRoutingDataV1Schema,
   buildGuardStopWarningPushDataV1, GuardStopWarningPushDataV1Schema, readGuardStopWarningPushActionV1,
   isGuardStopWarningCurrentV1 } from './webhookPayload.js';
-import { readUsageNoticeArtifactV1, readAccountNoticeArtifactV1, readAccountNoticeArtifactHeaderV1, AccountNoticeArtifactHeaderV1Schema } from './usageNoticeArtifactV1.js';
+import { readUsageNoticeArtifactV1, readAccountNoticeArtifactV1, readAccountNoticeArtifactHeaderV1, AccountNoticeArtifactHeaderV1Schema,
+  AccountNoticePushDataV1Schema, projectAccountNoticeInboxItemV1 } from './usageNoticeArtifactV1.js';
+import { MachineServiceIdentityV1Schema } from '../local/services/serviceIdentityV1.js';
+import { MachineServiceRowV1Schema } from '../actions/specs/machine/services.js';
+import { getActionSpec } from '../actions/actionSpecs.js';
+import { buildSessionStopHoldV1, resolveSessionAutoResumeAdmissionV1 } from '../sessions/metadata/sessionExplicitStopV1.js';
 
 describe('private Account notices', () => {
+  it('round-trips adopted Machine service C1 operands from the canonical list/detail facts', () => {
+    const row = MachineServiceRowV1Schema.parse({ authority: 'machine', serviceId: 'watch-a', name: 'Ingress',
+      watchId: 'watch-a', watchRevision: 'watch-revision-a', lifecyclePurpose: 'infrastructure',
+      generation: 'native-generation-a', state: 'unhealthy',
+      capabilities: { start: true, stop: true, restart: true, logs: true, accounting: false } });
+    const service = MachineServiceIdentityV1Schema.parse({ kind: 'adopted', machineId: 'machine-a', serviceId: row.serviceId,
+      watchId: row.watchId, watchRevision: row.watchRevision });
+    const source = { kind: 'host', topic: 'service_health', subject: service };
+    const page = { kind: 'host', page: 'machine_service', machine: { serverId: 'home', machineId: 'machine-a' }, service };
+    const content = { v: 1, source, page, type: 'update', resolved: false, healthPhase: 'open' };
+    const header = { ...content, kind: 'account_notice.v1', title: 'Service unavailable', status: 'open' };
+    expect(readAccountNoticeArtifactV1({ header, body: JSON.stringify(content) })).toEqual(header);
+    const push = { v: 1, topic: 'account_notice', accountId: 'owner', artifactId: 'notice', source, page, serverId: 'home' };
+    expect(AccountNoticePushDataV1Schema.parse(push)).toEqual(push);
+    for (const invalidPage of [
+      { ...page, machine: { ...page.machine, machineId: 'foreign-machine' } },
+      { ...page, service: { ...service, watchRevision: 'replaced-watch' } },
+      { ...page, environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' } },
+      { ...page, service: { ...service, kind: 'infrastructure' } },
+    ]) {
+      expect(AccountNoticeArtifactHeaderV1Schema.safeParse({ ...header, page: invalidPage }).success).toBe(false);
+      expect(AccountNoticePushDataV1Schema.safeParse({ ...push, page: invalidPage }).success).toBe(false);
+    }
+    for (const actionId of ['deployments.health.read', 'deployments.drift.read', 'deployments.logs.read'] as const) {
+      const input = { serverId: 'home', machineId: 'machine-a', environmentId: 'environment', deploymentId: 'deployment',
+        targetLinkId: 'runtime', installationId: 'installation', service,
+        ...(actionId === 'deployments.drift.read' ? { expectedRevision: 1 } : {}),
+        ...(actionId === 'deployments.logs.read' ? { kind: 'runtime' } : {}) };
+      expect(getActionSpec(actionId).inputSchema.safeParse(input).success).toBe(false);
+      expect(getActionSpec(actionId).inputSchema.safeParse({ ...input, service: {
+        kind: 'deployment', machineId: 'machine-a', environmentId: 'environment', environmentInstanceId: 'instance',
+        composeService: 'web', serviceId: 'instance/web',
+      } }).success).toBe(true);
+    }
+  });
+  it('retains one bounded provider investigation operand without granting routing authority', () => {
+    const content = { v: 1, source: { kind: 'plugin', pluginId: 'qa.alerts', itemId: 'source:issue' },
+      type: 'update', resolved: false, healthPhase: 'open', body: 'Bounded provider evidence' };
+    const header = { ...content, kind: 'account_notice.v1', title: 'Issue', status: 'open' };
+    const investigation = { kind: 'alertEntry', entry: {
+      entryRef: { source: { pluginId: 'qa.alerts', localId: 'issues' }, kindId: 'issue', collisionScope: 'project', entryId: 'issue-1' },
+      sourceInstanceId: '11111111-1111-4111-8111-111111111111',
+    } };
+    const authored = { ...header, investigation };
+    expect(AccountNoticeArtifactHeaderV1Schema.safeParse(authored).success).toBe(true);
+    expect(readAccountNoticeArtifactV1({ header: authored, body: JSON.stringify({ ...content, investigation }) })).toEqual(authored);
+    expect(readAccountNoticeArtifactV1({ header, body: JSON.stringify(content) })).toEqual(header);
+    expect(readAccountNoticeArtifactV1({ header: authored, body: JSON.stringify(content) })).toBeNull();
+    for (const invalid of [
+      { ...investigation, configuredActionId: 'hidden-profile' },
+      { ...investigation, entry: { ...investigation.entry, machineId: 'chosen-machine' } },
+      { ...investigation, entry: { ...investigation.entry, sourceInstanceId: 'unbounded-source-routing-token' } },
+      { ...investigation, entry: { ...investigation.entry, entryRef: { ...investigation.entry.entryRef,
+        source: { pluginId: 'other.plugin', localId: 'issues' } } } },
+      { ...investigation, entry: { ...investigation.entry, entryRef: { ...investigation.entry.entryRef,
+        entryId: 'x'.repeat(129) } } },
+    ]) {
+      const invalidHeader = { ...header, investigation: invalid };
+      expect(AccountNoticeArtifactHeaderV1Schema.safeParse(invalidHeader).success).toBe(false);
+      expect(readAccountNoticeArtifactHeaderV1(invalidHeader)).toBeNull();
+      expect(readAccountNoticeArtifactV1({ header: invalidHeader,
+        body: JSON.stringify({ ...content, investigation: invalid }) })).toBeNull();
+    }
+  });
+
+  it('admits explicit plugin health lifecycle while preserving ordinary plugin notices', () => {
+    const content = { v: 1, source: { kind: 'plugin', pluginId: 'qa.alerts', itemId: 'source:issue' },
+      type: 'update', resolved: false, page: { pageId: 'alerts', subPath: 'issue' } };
+    const header = { ...content, kind: 'account_notice.v1', title: 'Issue', status: 'open' };
+    expect(readAccountNoticeArtifactV1({ header, body: JSON.stringify(content) })).toEqual(header);
+    for (const healthPhase of ['open', 'recovered']) {
+      const health = { ...content, healthPhase };
+      const healthHeader = { ...header, healthPhase };
+      expect(readAccountNoticeArtifactV1({ header: healthHeader, body: JSON.stringify(health) })).toEqual(healthHeader);
+    }
+    for (const invalid of [{ healthPhase: 'recovered', type: 'blocked' }, { healthPhase: 'open', resolved: true },
+      { healthPhase: 'open', type: 'approval' }]) {
+      expect(AccountNoticeArtifactHeaderV1Schema.safeParse({ ...header, ...invalid }).success).toBe(false);
+    }
+  });
+
+  it.each([
+    { kind: 'platformTarget', environmentId: 'environment', targetLinkId: 'runtime' },
+    { kind: 'environment', environmentId: 'environment', targetLinkId: 'runtime', condition: 'health' },
+    { kind: 'environment', environmentId: 'environment', targetLinkId: 'runtime', condition: 'deployment_failed' },
+    ...['run', 'verify', 'prune', 'restore'].map(check => ({ kind: 'backup', environmentId: 'environment', check })),
+    { kind: 'healthCheck', subject: { kind: 'environment', environmentId: 'environment' }, checkId: 'http' },
+    ...['domain_probe_failed', 'certificate_renewal_failed'].map(condition => ({ kind: 'domain',
+      environmentId: 'environment', targetLinkId: 'runtime', domainId: 'domain', condition })),
+  ])('binds each non-service condition to its Environment page without a Machine: %#', subject => {
+    const source = { kind: 'host', topic: 'service_health', subject };
+    const page = { kind: 'host', page: 'environment', targetLinkId: 'runtime',
+      environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' } };
+    const content = { v: 1, source, page, type: 'update', resolved: false, healthPhase: 'open' };
+    const header = { ...content, kind: 'account_notice.v1', title: 'Needs attention', status: 'open' };
+    expect(readAccountNoticeArtifactV1({ header, body: JSON.stringify(content) })).toEqual(header);
+    const push = { v: 1, topic: 'account_notice', accountId: 'owner', artifactId: 'notice', source, page, serverId: 'home' };
+    expect(AccountNoticePushDataV1Schema.parse(push)).toEqual(push);
+    for (const invalidPage of [undefined, { ...page, environment: { ...page.environment, environmentId: 'other' } },
+      ...('targetLinkId' in subject ? [{ ...page, targetLinkId: 'other' }] : [])]) {
+      expect(AccountNoticeArtifactHeaderV1Schema.safeParse({ ...header, page: invalidPage }).success).toBe(false);
+      expect(AccountNoticePushDataV1Schema.safeParse({ ...push, page: invalidPage }).success).toBe(false);
+    }
+    expect(AccountNoticePushDataV1Schema.safeParse({ ...push, serverId: 'other' }).success).toBe(false);
+    expect(AccountNoticeArtifactHeaderV1Schema.safeParse({ ...header,
+      source: { ...source, subject: { ...subject, deploymentId: 'attempt' } } }).success).toBe(false);
+  });
+
+  it('binds a deployed health notice and push to the exact service, Machine and Environment', () => {
+    const service = MachineServiceIdentityV1Schema.parse({ kind: 'deployment', machineId: 'machine',
+      environmentId: 'environment', environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' });
+    const source = { kind: 'host', topic: 'service_health', subject: service };
+    const page = { kind: 'host', page: 'machine_service', machine: { serverId: 'home', machineId: 'machine' },
+      service, environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' } };
+    const content = { v: 1, source, page, type: 'blocked', resolved: false, healthPhase: 'open', body: 'Connection refused' };
+    const header = { ...content, kind: 'account_notice.v1', title: 'Service unavailable', status: 'open' };
+    expect(readAccountNoticeArtifactV1({ header, body: JSON.stringify(content) })).toEqual(header);
+    const admitted = AccountNoticeArtifactHeaderV1Schema.parse(header);
+    expect(projectAccountNoticeInboxItemV1({ header: admitted, artifactId: 'notice', serverId: 'home',
+      createdAt: 1, pageRoute: '/inbox' })).toMatchObject({ view: 'needs_you' });
+    const push = { v: 1, topic: 'account_notice', accountId: 'owner', artifactId: 'notice', source, page, serverId: 'home' };
+    expect(AccountNoticePushDataV1Schema.parse(push)).toEqual(push);
+    for (const invalidPage of [undefined, { ...page, machine: { ...page.machine, machineId: 'another' } },
+      { ...page, service: { ...service, machineId: 'another' } },
+      { ...page, environment: { ...page.environment, environmentId: 'another' } },
+      { ...page, environment: { ...page.environment, serverId: 'another' } }]) {
+      expect(AccountNoticeArtifactHeaderV1Schema.safeParse({ ...header, page: invalidPage }).success).toBe(false);
+      expect(AccountNoticePushDataV1Schema.safeParse({ ...push, page: invalidPage }).success).toBe(false);
+    }
+    expect(AccountNoticeArtifactHeaderV1Schema.safeParse({ ...header, healthPhase: undefined }).success).toBe(false);
+    expect(AccountNoticeArtifactHeaderV1Schema.safeParse({ ...header, notice: { topic: 'resource_limit' } }).success).toBe(false);
+    const check = { kind: 'host', topic: 'service_health', subject: { kind: 'healthCheck',
+      subject: { kind: 'machineService', machineId: service.machineId, serviceId: service.serviceId }, checkId: 'http' } };
+    expect(AccountNoticeArtifactHeaderV1Schema.safeParse({ ...header, source: check }).success).toBe(true);
+    expect(AccountNoticeArtifactHeaderV1Schema.safeParse({ ...header, source: { ...check,
+      subject: { ...check.subject, subject: { ...check.subject.subject, serviceId: 'another-service' } } } }).success).toBe(false);
+    expect(AccountNoticeArtifactHeaderV1Schema.safeParse({ ...header, source: { ...check,
+      subject: { ...check.subject, subject: { ...check.subject.subject, machineId: 'another-machine' } } } }).success).toBe(false);
+    expect(AccountNoticePushDataV1Schema.safeParse({ ...push, pluginNotification: { pluginId: 'qa.plugin', categoryId: 'alert',
+      occurrenceId: 'occurrence', clientRequestId: 'request' } }).success).toBe(false);
+  });
+
   it('binds the stored body to its plugin source and preserves independent personal state', () => {
     const content = { v: 1, source: { kind: 'plugin', pluginId: 'acme.tasks', itemId: 'task-1' },
       type: 'update', resolved: false, page: { pageId: 'tasks', subPath: 'task-1' }, body: 'Changed' };
@@ -32,7 +179,15 @@ describe('guard warning routing and withdrawal', () => {
     const home = { serverId: 'admitted-home' };
     expect(readGuardStopWarningPushActionV1(session, 'keepRunning', home)).toEqual({
       actionId: 'machines.guard.idleStop.keepRunning', input: { machineId: 'machine', sessionId: 'session', serverId: home.serverId } });
-    expect(readGuardStopWarningPushActionV1(session, 'stopNow', home)).toEqual({ actionId: 'session.stop', input: { sessionId: 'session', serverId: home.serverId } });
+    expect(readGuardStopWarningPushActionV1(session, 'stopNow', home)).toEqual({ actionId: 'session.stop',
+      input: { sessionId: 'session', serverId: home.serverId, stopIntent: 'lifecycle_control' } });
+    const action = readGuardStopWarningPushActionV1(session, 'stopNow', home);
+    if (!action || action.actionId !== 'session.stop') throw new Error('Expected the admitted Session Stop action');
+    const hold = buildSessionStopHoldV1({ rawSession: { id: 'session' }, requestId: 'guard-stop', requestedAtMs: 1,
+      stopIntent: action.input.stopIntent ?? 'explicit_stop' });
+    expect(hold).toEqual({ kind: 'no_hold' });
+    expect(resolveSessionAutoResumeAdmissionV1({ metadata: hold.kind === 'hold' ? { sessionExplicitStopV1: hold.stop } : {},
+      machineAvailable: true, authorityAvailable: true })).toBe('eligible');
     // @ts-expect-error A JavaScript consumer can violate the required admitted-Home context.
     expect(readGuardStopWarningPushActionV1(session, 'keepRunning', {})).toBeNull();
     const state = { v: 1, kind: 'stopping', rule: 'idle_sessions', stopAt: 300_000 };

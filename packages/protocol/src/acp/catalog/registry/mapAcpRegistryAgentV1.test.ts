@@ -54,7 +54,7 @@ describe('registry Agent mapping', () => {
     expect(mapAcpRegistryAgentToDefinitionV1({ ...raw, agent: { ...raw.agent, distributions: { binary: { 'linux-x64': { ...asset, command: '../agent' } } } } })).toEqual({ ok: false, code: 'no_supported_distribution' });
     const bzip = { ...raw, agent: { ...raw.agent, distributions: { binary: { 'linux-x64': { ...asset, archiveUrl: 'https://example.com/agent.tbz2' } } } } };
     expect(mapAcpRegistryAgentToDefinitionV1(bzip)).toMatchObject({ ok: true, definition: { launch: { assetsByPlatform: { 'linux-x64': { kind: 'archive' } } } } });
-    expect(resolveAcpPlatformFitV1(bzip.agent.distributions, { platform: 'linux', arch: 'x64' })).toEqual({ kind: 'cant_run', reason: 'archive_type_unsupported' });
+    expect(resolveAcpPlatformFitV1(bzip.agent.distributions, { platform: 'linux', arch: 'x64' })).toEqual({ kind: 'can_run', via: 'archive', target: 'linux-x64' });
   });
   it('refuses inconsistent provenance instead of producing a false registry pin', async () => {
     const input = await agent('goose');

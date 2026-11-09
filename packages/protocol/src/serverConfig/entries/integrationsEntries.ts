@@ -8,6 +8,19 @@ import { defineServerConfigRegistry } from '../serverConfigEntry.js';
  */
 
 export const INTEGRATIONS_SERVER_CONFIG = defineServerConfigRegistry({
+    HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_CLIENT_ID: {
+        type: 'string', default: '', sensitivity: 'plain', apply: 'live', editable: 'home',
+        section: 'server', group: 'connectedServices',
+        bounds: { noControlChars: true },
+        description: 'Public Cloudflare OAuth client registered for Happier. Empty by default; people can still use their own client or scoped tokens.',
+        docs: 'self-hosting/env#cloudflare-public-oauth-client',
+    },
+    HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_SCOPES: {
+        type: 'list', default: [], sensitivity: 'plain', apply: 'live', editable: 'home',
+        section: 'server', group: 'connectedServices',
+        description: 'Exact registered API scope IDs for Cloudflare consent. Empty by default; include Account Settings Read and only the Workers, Pages, Tunnel or DNS permissions your client offers.',
+        docs: 'self-hosting/env#cloudflare-public-oauth-client',
+    },
     // Live Activity remote updates.
     HAPPIER_LIVE_ACTIVITY_REMOTE_UPDATES_ENABLED: {
         type: 'boolean',

@@ -1482,6 +1482,21 @@ function normalizeVoiceSettingsServerDelta<T extends object>(
             providerSettings,
             preserveUnchangedChat,
         );
+    // 0.3 has no 0.2 client to serve, so the `voice` carrier is kept only while it holds 0.2-created
+    // material the canonical root does not (pending Chat import, legacy credential source, transcript
+    // epoch, retired tuning, recovery carriers). A pure derivation of `voiceSettingsV1` is dropped:
+    // it would double every Voice write for no reader.
+    const { voice: _carrier, ...withoutCarrier } = account;
+    const carriesPredecessorData = pendingLegacyImport !== null
+        || (readSavedSecretTransferSourceV1(account).legacyVoiceCredentials?.length ?? 0) > 0
+        || readLegacyVoiceTranscriptEpoch(account) > 0
+        || !areAccountSettingsJsonValuesEqual(predecessorProjection,
+            createPredecessorVoiceProjection(canonical, withoutCarrier, undefined, providerSettings, preserveUnchangedChat));
+    if (!carriesPredecessorData) {
+        const { voice: _runtimeVoice, ...withoutVoice } = diagnosticsNormalized as Record<string, unknown>;
+        return Object.assign(withoutVoice, { [VOICE_SETTINGS_ACCOUNT_SETTING_KEY]: canonical }) as T
+            & VoiceDiagnosticsAccountProjection & VoiceSettingsAccountProjection;
+    }
     return Object.assign({}, diagnosticsNormalized, {
         [VOICE_SETTINGS_ACCOUNT_SETTING_KEY]: canonical,
         voice: predecessorProjection,

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 import {
@@ -160,6 +160,407 @@ describe('Collection migration Artifact ownership', () => {
 });
 
 describe('Plugin Account Collection contracts', () => {
+  it('admits the exact QA #86 Channels V19 optional-resource reader without granting write authority', () => {
+    const captured = JSON.parse(readFileSync(new URL(
+      './__fixtures__/channelStateV19Qa86.json', import.meta.url,
+    ), 'utf8'));
+    const source = PluginCollectionContractReadResultV1Schema.parse({ access: 'writable', contract: captured.writer }).contract;
+    const target = PluginCollectionContractReadResultV1Schema.parse({ access: 'readOnly', contract: captured.reader }).contract;
+    expect(source.contractDigest).toBe('iSOXghZrHUKbVl_3-eLGAl2PKAO8pQ5lX_RF9s3tmMc');
+    expect(target.contractDigest).toBe('q7wLIcoGHSuK1fQe6by-0VK4OsRP3trYAf691pzZMUk');
+    expect(isPluginCollectionSchemaWideningV1({ source, target })).toBe(true);
+    expect(isPluginCollectionSchemaWideningV1({ source: target, target: source })).toBe(false);
+    expect(resolvePluginCollectionContractAccessV1({ currentWriter: source, requested: target })).toBe('readOnly');
+  });
+
+  describe('retained oneOf arm optional-property compatibility', () => {
+    const normalize = (payload: PluginJsonSchemaV2) => normalizePluginAccountCollectionContractV1({ pluginId: 'example.compat',
+      contribution: PluginAccountCollectionContributionV1Schema.parse({ ...baseCollection, schema: {
+        ...baseCollection.schema, properties: { ...baseCollection.schema.properties, payload },
+        required: [...baseCollection.schema.required, 'payload'],
+      } }),
+    });
+    const disjoint = (additionalProperties: boolean, resource: boolean) => normalize({ type: 'object', oneOf: [
+      { type: 'object', properties: { kind: { const: 'notice' }, detail: {
+        type: 'object', properties: { token: { type: 'string' }, ...(resource ? { resource: { type: 'string' as const } } : {}) },
+        required: ['token'], additionalProperties,
+      } }, required: ['kind', 'detail'], additionalProperties: false },
+      { type: 'object', properties: { kind: { const: 'other' } }, required: ['kind'], additionalProperties: false },
+    ] });
+
+    it('admits an optional field in a closed nested object and preserves old values', () => {
+      const source = disjoint(false, false);
+      const target = disjoint(false, true);
+      const retained = { id: 'row', status: 'open', title: 'Retained', payload: { kind: 'notice', detail: { token: 'value' } } };
+      const added = { ...retained, payload: { ...retained.payload, detail: { ...retained.payload.detail, resource: 'pr-54' } } };
+      const before = createPluginJsonSchemaZodValueAdapter(source.schema);
+      const after = createPluginJsonSchemaZodValueAdapter(target.schema);
+      expect(before.safeParse(retained).success).toBe(true);
+      expect(after.safeParse(retained).success).toBe(true);
+      expect(before.safeParse(added).success).toBe(false);
+      expect(after.safeParse(added).success).toBe(true);
+      expect(isPluginCollectionSchemaWideningV1({ source, target })).toBe(true);
+      expect(isPluginCollectionSchemaWideningV1({ source: target, target: source })).toBe(false);
+    });
+
+    it('refuses an optional declaration that narrows an existing open-object catchall', () => {
+      const source = disjoint(true, false);
+      const target = disjoint(true, true);
+      const retained = { id: 'row', status: 'open', title: 'Retained', payload: { kind: 'notice', detail: { token: 'value', resource: 42 } } };
+      expect(createPluginJsonSchemaZodValueAdapter(source.schema).safeParse(retained).success).toBe(true);
+      expect(createPluginJsonSchemaZodValueAdapter(target.schema).safeParse(retained).success).toBe(false);
+      expect(isPluginCollectionSchemaWideningV1({ source, target })).toBe(false);
+    });
+
+    it('refuses an optional field that makes a retained arm overlap its sibling', () => {
+      const contract = (added: boolean) => normalize({ type: 'object', oneOf: [
+        { type: 'object', properties: { first: { type: 'string' }, ...(added ? { second: { type: 'string' as const } } : {}) }, additionalProperties: false },
+        { type: 'object', properties: { second: { type: 'string' } }, required: ['second'], additionalProperties: false },
+      ] });
+      const source = contract(false);
+      const target = contract(true);
+      const retained = { id: 'row', status: 'open', title: 'Retained', payload: { second: 'value' } };
+      expect(createPluginJsonSchemaZodValueAdapter(source.schema).safeParse(retained).success).toBe(true);
+      expect(createPluginJsonSchemaZodValueAdapter(target.schema).safeParse(retained).success).toBe(false);
+      expect(isPluginCollectionSchemaWideningV1({ source, target })).toBe(false);
+      expect(resolvePluginCollectionContractAccessV1({ currentWriter: source, requested: target })).toBeNull();
+    });
+  });
+
+  it('admits the exact QA #83 Channels V19 required-subset reader without rewriting retained rows', () => {
+    // Captured public declarations: only compacted.anyOf[0].required loses
+    // retainedAttentionObligationRowIds in the reader. No private rows are captured.
+    const captured = JSON.parse(readFileSync(new URL(
+      './__fixtures__/channelStateV19Qa83.json', import.meta.url,
+    ), 'utf8'));
+    const source = PluginCollectionContractReadResultV1Schema.parse({ access: 'writable', contract: captured.writer }).contract;
+    const target = PluginCollectionContractReadResultV1Schema.parse({ access: 'readOnly', contract: captured.reader }).contract;
+    expect(source.contractDigest).toBe('ZCIN0iy4_9cyHInjpCWmN7SvQOgFgqsFkLF7xq4N1qA');
+    expect(target.contractDigest).toBe('ufPxsnT5xHYmSjbWwcIPer3eXXsfw7dM7G0o-WffSH4');
+    expect(isPluginCollectionSchemaWideningV1({ source, target })).toBe(true);
+    expect(resolvePluginCollectionContractAccessV1({ currentWriter: source, requested: target })).toBe('readOnly');
+    // Requiring the omitted field again is a genuine narrowing.
+    expect(isPluginCollectionSchemaWideningV1({ source: target, target: source })).toBe(false);
+  });
+
+  describe('retained oneOf arm required-subset compatibility', () => {
+    const normalize = (payload: PluginJsonSchemaV2) => normalizePluginAccountCollectionContractV1({ pluginId: 'example.compat',
+      contribution: PluginAccountCollectionContributionV1Schema.parse({ ...baseCollection, schema: {
+        ...baseCollection.schema, properties: { ...baseCollection.schema.properties, payload },
+        required: [...baseCollection.schema.required, 'payload'],
+      } }),
+    });
+    const disjoint = (required: readonly string[] | undefined) => normalize({ type: 'object', oneOf: [
+      { type: 'object', properties: { kind: { const: 'notice' }, detail: {
+        type: 'object', properties: { token: { type: 'string' }, label: { type: 'string' } },
+        ...(required === undefined ? {} : { required }), additionalProperties: false,
+      } }, required: ['kind', 'detail'], additionalProperties: false },
+      { type: 'object', properties: { kind: { const: 'other' } }, required: ['kind'], additionalProperties: false },
+    ] });
+
+    it.each([{ required: ['token'] }, { required: [] }, { required: undefined }])('admits fewer nested requirements $required while retaining disjoint siblings', ({ required }) => {
+      const source = disjoint(['token', 'label']);
+      const target = disjoint(required);
+      expect(isPluginCollectionSchemaWideningV1({ source, target })).toBe(true);
+      const retained = { id: 'row', status: 'open', title: 'Retained', payload: {
+        kind: 'notice', detail: { token: 'secret', label: 'Label' },
+      } };
+      expect(createPluginJsonSchemaZodValueAdapter(source.schema).safeParse(retained).success).toBe(true);
+      expect(createPluginJsonSchemaZodValueAdapter(target.schema).safeParse(retained).success).toBe(true);
+    });
+
+    it('refuses a reader that adds a nested requirement', () => {
+      const source = disjoint(['token']);
+      const target = disjoint(['token', 'label']);
+      const retained = { id: 'row', status: 'open', title: 'Retained', payload: { kind: 'notice', detail: { token: 'secret' } } };
+      expect(createPluginJsonSchemaZodValueAdapter(source.schema).safeParse(retained).success).toBe(true);
+      expect(createPluginJsonSchemaZodValueAdapter(target.schema).safeParse(retained).success).toBe(false);
+      expect(isPluginCollectionSchemaWideningV1({ source, target })).toBe(false);
+    });
+
+    it('refuses fewer requirements when a retained oneOf arm then overlaps its sibling', () => {
+      const contract = (required: readonly string[]) => normalize({ type: 'object', oneOf: [
+        { type: 'object', properties: { first: { type: 'string' } }, required, additionalProperties: false },
+        { type: 'object', properties: { second: { type: 'string' } }, additionalProperties: false },
+      ] });
+      const source = contract(['first']);
+      const target = contract([]);
+      const retained = { id: 'row', status: 'open', title: 'Retained', payload: {} };
+      expect(createPluginJsonSchemaZodValueAdapter(source.schema).safeParse(retained).success).toBe(true);
+      expect(createPluginJsonSchemaZodValueAdapter(target.schema).safeParse(retained).success).toBe(false);
+      expect(isPluginCollectionSchemaWideningV1({ source, target })).toBe(false);
+      expect(resolvePluginCollectionContractAccessV1({ currentWriter: source, requested: target })).toBeNull();
+    });
+  });
+
+  it('admits a disjoint retained accepted-child oneOf append inside the Channels allOf without rewriting rows', () => {
+    const captured = JSON.parse(readFileSync(new URL(
+      '../../../../plugins/channels/src/testkit/fixtures/channelContractsV19V5.json', import.meta.url,
+    ), 'utf8'));
+    const contracts: readonly unknown[] = captured.contracts;
+    const source = contracts.map(contract => PluginCollectionContractReadResultV1Schema.parse({ access: 'writable', contract }).contract)
+      .find(contract => contract.collectionId === 'channel-deliveries')!;
+    expect(source.contractDigest).toBe('GXlZR7BbKZ2iUM-7MrE6boxLkizDle-1a15m7J9ML6w');
+    const { pluginId, collectionId, contractDigest: _digest, ...declaration } = source;
+    const normalize = (schema: PluginJsonSchemaV2) => normalizePluginAccountCollectionContractV1({ pluginId,
+      contribution: PluginAccountCollectionContributionV1Schema.parse({ ...declaration, id: collectionId, schema }),
+    });
+    const union = source.schema.allOf![0]!;
+    const completed = union.oneOf!.find(member => member.properties?.payload?.properties?.state?.enum?.includes('resolvedAccepted'))!;
+    const payload = completed.properties!.payload!;
+    const pending: PluginJsonSchemaV2 = { ...completed, properties: { ...completed.properties,
+      terminal: { type: 'boolean', const: false },
+      payload: { ...payload, properties: { ...payload.properties,
+        state: { type: 'string', const: 'resolvedAccepted' }, threadBindingPending: { const: true },
+      }, required: [...payload.required!, 'threadBindingPending'] },
+    } };
+    const append = (member: PluginJsonSchemaV2) => normalize({ ...source.schema,
+      allOf: [{ ...union, oneOf: [...union.oneOf!, member] }],
+    });
+    const target = append(pending);
+    expect(isPluginCollectionSchemaWideningV1({ source, target })).toBe(true);
+    expect(resolvePluginCollectionContractAccessV1({ currentWriter: source, requested: target })).toBe('readOnly');
+    expect(resolvePluginCollectionContractAccessV1({ currentWriter: target, requested: source })).toBe('readOnly');
+    expect(isPluginCollectionSchemaWideningV1({ source: target, target: source })).toBe(false);
+    // Appending an overlapping arm invalidates existing exactly-one matches.
+    expect(isPluginCollectionSchemaWideningV1({ source, target: append(completed) })).toBe(false);
+    expect(isPluginCollectionSchemaWideningV1({ source, target: normalize({ ...target.schema,
+      required: [...target.schema.required!, 'binding-id'],
+    }) })).toBe(false);
+    expect(isPluginCollectionSchemaWideningV1({ source, target: { ...target, serverReadable: [] } })).toBe(false);
+    expect(isPluginCollectionSchemaWideningV1({ source, target: normalize({ ...target.schema,
+      properties: { ...target.schema.properties, terminal: { type: 'string' } },
+    }) })).toBe(false);
+  });
+
+  describe('Channels Discussion targets appended at nested union paths of retained state arms', () => {
+    const captured = JSON.parse(readFileSync(new URL(
+      '../../../../plugins/channels/src/testkit/fixtures/channelContractsV19V5.json', import.meta.url,
+    ), 'utf8'));
+    const contracts: readonly unknown[] = captured.contracts;
+    const source = contracts.map(contract => PluginCollectionContractReadResultV1Schema.parse({ access: 'writable', contract }).contract)
+      .find(contract => contract.collectionId === 'channel-state')!;
+    const { pluginId, collectionId, contractDigest: _digest, ...declaration } = source;
+    const normalize = (schema: PluginJsonSchemaV2) => normalizePluginAccountCollectionContractV1({ pluginId,
+      contribution: PluginAccountCollectionContributionV1Schema.parse({ ...declaration, id: collectionId, schema }),
+    });
+    const id = { type: 'string', minLength: 1, maxLength: 256 } satisfies PluginJsonSchemaV2;
+    const discussionTarget = (kind: string): PluginJsonSchemaV2 => ({ type: 'object', properties: {
+      kind: { type: 'string', const: kind }, discussionId: id, policy: { type: 'object',
+        properties: { deliveryMode: { const: 'repliesOnly' } }, required: ['deliveryMode'], additionalProperties: false },
+    }, required: ['kind', 'discussionId', 'policy'], additionalProperties: false });
+    const discussionFrontier: PluginJsonSchemaV2 = { type: 'object', properties: {
+      targetDiscussionId: id, lastScannedSeq: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    }, required: ['targetDiscussionId', 'lastScannedSeq'], additionalProperties: false };
+    type Edit = (arms: Readonly<Record<string, PluginJsonSchemaV2>>) => void;
+    const edit = (...edits: readonly Edit[]) => {
+      const schema = structuredClone(source.schema);
+      const arms = Object.fromEntries(schema.allOf![0]!.oneOf!.map(arm => [String(arm.properties!['record-kind']!.const), arm]));
+      for (const apply of edits) apply(arms);
+      return normalize(schema);
+    };
+    const bindingTarget = (arms: Readonly<Record<string, PluginJsonSchemaV2>>) => arms.binding!.properties!.payload!.properties!.target!;
+    const ingressTarget = (arms: Readonly<Record<string, PluginJsonSchemaV2>>) => arms['ingress-obligation']!
+      .properties!.payload!.oneOf![0]!.properties!.target!.anyOf![0]!;
+    const appendBinding: Edit = arms => { bindingTarget(arms).anyOf!.push(discussionTarget('discussion')); };
+    const appendIngress: Edit = arms => { ingressTarget(arms).oneOf!.push(discussionTarget('discussion')); };
+    const appendFrontier: Edit = arms => {
+      const frontier = arms['projection-frontier']!.properties!;
+      frontier.payload = { anyOf: [frontier.payload!, discussionFrontier] };
+    };
+    const appendFrontierOneOf: Edit = arms => {
+      const frontier = arms['projection-frontier']!.properties!;
+      frontier.payload = { oneOf: [frontier.payload!, discussionFrontier] };
+    };
+    const frontierRow = (payload: unknown) => ({ id: 'frontier-1', 'record-kind': 'projection-frontier', v: 1,
+      'binding-id': 'binding-1', 'created-at': 1, 'updated-at': 1, payload });
+
+    it.each([
+      ['binding target', [appendBinding]],
+      ['ingress frozen target', [appendIngress]],
+      ['projection frontier payload', [appendFrontier]],
+      ['projection frontier payload as a oneOf', [appendFrontierOneOf]],
+      ['all three', [appendBinding, appendIngress, appendFrontier]],
+    ] as const)('admits the %s append as no-rewrite widening', (_name, edits) => {
+      const target = edit(...edits);
+      expect(target.contractDigest).not.toBe(source.contractDigest);
+      expect(isPluginCollectionSchemaWideningV1({ source, target })).toBe(true);
+      expect(isPluginCollectionSchemaWideningV1({ source: target, target: source })).toBe(false);
+      expect(resolvePluginCollectionContractAccessV1({ currentWriter: target, requested: source })).toBe('readOnly');
+    });
+
+    it('keeps retained rows valid while the appended alternative is newly accepted', () => {
+      const target = edit(appendBinding, appendIngress, appendFrontier);
+      const retained = frontierRow({ targetSessionId: 'session-1', transcriptCursor: null, lastScannedSeq: 3, revision: 1 });
+      const discussion = frontierRow({ targetDiscussionId: 'discussion-1', lastScannedSeq: 3 });
+      const before = createPluginJsonSchemaZodValueAdapter(source.schema);
+      const after = createPluginJsonSchemaZodValueAdapter(target.schema);
+      expect(before.safeParse(retained).success).toBe(true);
+      expect(after.safeParse(retained).success).toBe(true);
+      expect(before.safeParse(discussion).success).toBe(false);
+      expect(after.safeParse(discussion).success).toBe(true);
+    });
+
+    it.each([
+      ['a narrowed existing branch', [appendBinding, (arms: Readonly<Record<string, PluginJsonSchemaV2>>) => {
+        const session = bindingTarget(arms).anyOf![0]!;
+        session.properties = { ...session.properties, sessionId: { ...session.properties!.sessionId!, minLength: 2 } };
+      }]],
+      ['a removed branch', [(arms: Readonly<Record<string, PluginJsonSchemaV2>>) => {
+        const union = bindingTarget(arms).anyOf!;
+        union.splice(union.length - 1, 1, discussionTarget('discussion'));
+      }]],
+      ['a new required field', [appendBinding, (arms: Readonly<Record<string, PluginJsonSchemaV2>>) => {
+        const payload = arms.binding!.properties!.payload!;
+        payload.properties = { ...payload.properties, discussionId: id };
+        payload.required = [...payload.required!, 'discussionId'];
+      }]],
+      ['a frontier alternative that overlaps the retained payload', [(arms: Readonly<Record<string, PluginJsonSchemaV2>>) => {
+        const frontier = arms['projection-frontier']!.properties!;
+        frontier.payload = { oneOf: [frontier.payload!, { type: 'object', properties: { lastScannedSeq: {} } }] };
+      }]],
+      ['a non-disjoint appended branch', [(arms: Readonly<Record<string, PluginJsonSchemaV2>>) => {
+        // Open, so every retained Session target also matches it.
+        ingressTarget(arms).oneOf!.push({ type: 'object', properties: { kind: { type: 'string', const: 'session' } }, required: ['kind'] });
+      }]],
+    ] as const)('refuses %s', (_name, edits) => {
+      expect(isPluginCollectionSchemaWideningV1({ source, target: edit(...edits) })).toBe(false);
+    });
+  });
+
+  it('admits nested finite enum supersets in retained oneOf arms while refusing subsets and type changes', () => {
+    const normalize = (icon: PluginJsonSchemaV2) => normalizePluginAccountCollectionContractV1({ pluginId: 'example.compat',
+      contribution: PluginAccountCollectionContributionV1Schema.parse({ ...baseCollection, schema: {
+        ...baseCollection.schema,
+        properties: { ...baseCollection.schema.properties, kind: { type: 'string' }, attachments: { type: 'array' } },
+        allOf: [{ oneOf: [
+          { properties: { kind: { const: 'notice' }, attachments: { type: 'array', items: {
+            type: 'object', properties: { presentation: {
+              type: 'object', properties: { icon }, required: ['icon'], additionalProperties: false,
+            } }, required: ['presentation'], additionalProperties: false,
+          } } }, required: ['kind', 'attachments'] },
+          { properties: { kind: { const: 'other' } }, required: ['kind'] },
+        ] }],
+      } }),
+    });
+    const source = normalize({ type: 'string', enum: ['bell', 'mail'] });
+    const target = normalize({ type: 'string', enum: ['bell', 'mail', 'task'] });
+    const retained = { id: 'row', title: 'Retained', status: 'open', kind: 'notice',
+      attachments: [{ presentation: { icon: 'mail' } }] };
+    expect(createPluginJsonSchemaZodValueAdapter(source.schema).safeParse(retained).success).toBe(true);
+    expect(createPluginJsonSchemaZodValueAdapter(target.schema).safeParse(retained).success).toBe(true);
+    expect(isPluginCollectionSchemaWideningV1({ source, target })).toBe(true);
+    expect(resolvePluginCollectionContractAccessV1({ currentWriter: source, requested: target })).toBe('readOnly');
+    expect(isPluginCollectionSchemaWideningV1({ source: target, target: source })).toBe(false);
+    const subset = normalize({ type: 'string', enum: ['bell'] });
+    expect(createPluginJsonSchemaZodValueAdapter(subset.schema).safeParse(retained).success).toBe(false);
+    expect(isPluginCollectionSchemaWideningV1({ source, target: subset })).toBe(false);
+    const integerSource = normalize({ type: 'integer', enum: [1, 2] });
+    const changedType = normalize({ type: 'number', enum: [1, 2, 3] });
+    const retainedNumber = { ...retained, attachments: [{ presentation: { icon: 1 } }] };
+    expect(createPluginJsonSchemaZodValueAdapter(integerSource.schema).safeParse(retainedNumber).success).toBe(true);
+    expect(createPluginJsonSchemaZodValueAdapter(changedType.schema).safeParse(retainedNumber).success).toBe(true);
+    // Even the scalar proof's safe integer-to-number widening is outside the retained-arm ruling.
+    expect(isPluginCollectionSchemaWideningV1({ source: integerSource, target: changedType })).toBe(false);
+  });
+
+  it('refuses a nested enum superset that makes a retained oneOf arm overlap its sibling', () => {
+    const normalize = (values: readonly string[]) => normalizePluginAccountCollectionContractV1({ pluginId: 'example.compat',
+      contribution: PluginAccountCollectionContributionV1Schema.parse({ ...baseCollection, schema: {
+        ...baseCollection.schema,
+        properties: { ...baseCollection.schema.properties, kind: { type: 'string' } },
+        allOf: [{ oneOf: [
+          { properties: { kind: { type: 'string', enum: values } }, required: ['kind'] },
+          { properties: { kind: { const: 'other' } }, required: ['kind'] },
+        ] }],
+      } }),
+    });
+    const source = normalize(['notice']);
+    const disjoint = normalize(['notice', 'task']);
+    const overlapping = normalize(['notice', 'other']);
+    const retained = { id: 'row', title: 'Retained', status: 'open', kind: 'other' };
+    expect(createPluginJsonSchemaZodValueAdapter(source.schema).safeParse(retained).success).toBe(true);
+    expect(createPluginJsonSchemaZodValueAdapter(overlapping.schema).safeParse(retained).success).toBe(false);
+    expect(isPluginCollectionSchemaWideningV1({ source, target: disjoint })).toBe(true);
+    expect(isPluginCollectionSchemaWideningV1({ source, target: overlapping })).toBe(false);
+  });
+
+  it('refuses a nested append that makes a retained oneOf arm overlap its sibling', () => {
+    const normalize = (schema: PluginJsonSchemaV2) => normalizePluginAccountCollectionContractV1({ pluginId: 'example.compat',
+      contribution: PluginAccountCollectionContributionV1Schema.parse({ ...baseCollection, schema }),
+    });
+    const withFirstArm = (kind: PluginJsonSchemaV2, note: PluginJsonSchemaV2) => normalize({ ...baseCollection.schema, properties: {
+      ...baseCollection.schema.properties, kind: { type: 'string' }, note: {},
+    }, allOf: [{ oneOf: [
+      { properties: { kind, note }, required: ['kind'] },
+      { properties: { kind: { const: 'b' } }, required: ['kind'] },
+    ] }] });
+    const source = withFirstArm({ const: 'a' }, { anyOf: [{ type: 'string' }] });
+    const disjoint = withFirstArm({ const: 'a' }, { anyOf: [{ type: 'string' }, { type: 'integer' }] });
+    // The discriminator itself gains the sibling's literal.
+    const overlapping = withFirstArm({ anyOf: [{ const: 'a' }, { const: 'b' }] }, { anyOf: [{ type: 'string' }] });
+    const retained = { id: 'row', title: 'Retained', status: 'open', kind: 'b' };
+    expect(createPluginJsonSchemaZodValueAdapter(source.schema).safeParse(retained).success).toBe(true);
+    expect(createPluginJsonSchemaZodValueAdapter(overlapping.schema).safeParse(retained).success).toBe(false);
+    expect(isPluginCollectionSchemaWideningV1({ source, target: disjoint })).toBe(true);
+    expect(isPluginCollectionSchemaWideningV1({ source, target: overlapping })).toBe(false);
+  });
+
+  it('widens nested anyOf constraints through allOf while refusing overlapping oneOf arms without required discriminators', () => {
+    const normalize = (schema: PluginJsonSchemaV2) => normalizePluginAccountCollectionContractV1({ pluginId: 'example.compat',
+      contribution: PluginAccountCollectionContributionV1Schema.parse({ ...baseCollection, schema }),
+    });
+    const source = normalize({ ...baseCollection.schema, allOf: [{ properties: {
+      status: { anyOf: [{ const: 'open' }] },
+    } }] });
+    const target = normalize({ ...baseCollection.schema, allOf: [{ properties: {
+      status: { anyOf: [{ const: 'open' }, { const: 'closed' }] },
+    } }] });
+    expect(isPluginCollectionSchemaWideningV1({ source, target })).toBe(true);
+    expect(isPluginCollectionSchemaWideningV1({ source: target, target: source })).toBe(false);
+    const optional = normalize({ ...baseCollection.schema, properties: { ...baseCollection.schema.properties,
+      note: { type: 'object', properties: { kind: { type: 'string' } }, additionalProperties: false,
+        oneOf: [{ type: 'object', properties: { kind: { const: 'old' } } }] },
+    } });
+    const note = optional.schema.properties!.note!;
+    const ambiguous = normalize({ ...optional.schema, properties: { ...optional.schema.properties,
+      note: { ...note, oneOf: [...note.oneOf!, { type: 'object', properties: { kind: { const: 'new' } } }] },
+    } });
+    // The empty object matches both arms: optional discriminators prove nothing.
+    expect(isPluginCollectionSchemaWideningV1({ source: optional, target: ambiguous })).toBe(false);
+    expect(createPluginJsonSchemaZodValueAdapter(note).safeParse({}).success).toBe(true);
+    expect(createPluginJsonSchemaZodValueAdapter(ambiguous.schema.properties!.note!).safeParse({}).success).toBe(false);
+    const untyped = normalize({ ...optional.schema, properties: { ...optional.schema.properties,
+      note: { oneOf: [{ properties: { kind: { const: 'old' } }, required: ['kind'] }] },
+    } });
+    const untypedAppend = normalize({ ...untyped.schema, properties: { ...untyped.schema.properties,
+      note: { oneOf: [...untyped.schema.properties!.note!.oneOf!,
+        { properties: { kind: { const: 'new' } }, required: ['kind'] }] },
+    } });
+    // required/properties are ignored for scalars, so these arms overlap too.
+    expect(isPluginCollectionSchemaWideningV1({ source: untyped, target: untypedAppend })).toBe(false);
+    expect(createPluginJsonSchemaZodValueAdapter(untyped.schema.properties!.note!).safeParse('retained').success).toBe(true);
+    expect(createPluginJsonSchemaZodValueAdapter(untypedAppend.schema.properties!.note!).safeParse('retained').success).toBe(false);
+  });
+
+  it('refuses a union append that changes an unchanged local reference under not', () => {
+    const normalize = (schema: PluginJsonSchemaV2) => normalizePluginAccountCollectionContractV1({ pluginId: 'example.compat',
+      contribution: PluginAccountCollectionContributionV1Schema.parse({ ...baseCollection, schema }),
+    });
+    const source = normalize({ ...baseCollection.schema, properties: { ...baseCollection.schema.properties,
+      privateStatus: { oneOf: [{ const: 'old' }] },
+      excludedStatus: { not: { $ref: '#/properties/privateStatus' } },
+    } });
+    const target = normalize({ ...source.schema, properties: { ...source.schema.properties,
+      privateStatus: { oneOf: [{ const: 'old' }, { const: 'new' }] },
+    } });
+    const retained = { id: 'row', title: 'Retained', status: 'open', privateStatus: 'old', excludedStatus: 'new' };
+    expect(createPluginJsonSchemaZodValueAdapter(source.schema).safeParse(retained).success).toBe(true);
+    expect(createPluginJsonSchemaZodValueAdapter(target.schema).safeParse(retained).success).toBe(false);
+    expect(isPluginCollectionSchemaWideningV1({ source, target })).toBe(false);
+    expect(isPluginCollectionSchemaWideningV1({ source, target: source })).toBe(true);
+  });
+
   it.each(['channelStateV5.json', 'channelStateV9.json'])('requires a versioned migration for retained Channels union widening: %s', (fixture) => {
     // Actual generated declarations, not reconstructed from current types.
     // Compare against the projection the CLI actually consumes.
@@ -172,8 +573,8 @@ describe('Plugin Account Collection contracts', () => {
       contributions: declarations.map((value: unknown) => PluginAccountCollectionContributionV1Schema.parse(value)) })
       .find(collection => collection.collectionId === source.collectionId)!;
     expect(target.contractDigest).not.toBe(source.contractDigest);
-    // This is the server's exact equal-version admission predicate. Changes
-    // inside allOf/oneOf deliberately require the existing migration path.
+    // These older declarations change existing union arms, not just append
+    // disjoint arms; they still require the existing versioned migration path.
     expect(isPluginCollectionSchemaWideningV1({ source, target: { ...target, schemaVersion: source.schemaVersion } })).toBe(false);
     expect(target.schemaVersion).toBeGreaterThan(source.schemaVersion);
     expect(resolvePluginCollectionMigrationChainV1({
@@ -181,13 +582,11 @@ describe('Plugin Account Collection contracts', () => {
       targetSchemaVersion: target.schemaVersion,
       readableSchemaVersions: target.readableSchemaVersions,
       migrations: target.migrations,
-    })).toEqual([
-      { id: 'channel-state-v5-to-v6', fromSchemaVersion: 5, toSchemaVersion: 6 },
-      { id: 'channel-state-v6-to-v7', fromSchemaVersion: 6, toSchemaVersion: 7 },
-      { id: 'channel-state-v7-to-v8', fromSchemaVersion: 7, toSchemaVersion: 8 },
-      { id: 'channel-state-v8-to-v9', fromSchemaVersion: 8, toSchemaVersion: 9 },
-      { id: 'channel-state-v9-to-v10', fromSchemaVersion: 9, toSchemaVersion: 10 },
-    ].filter(step => step.fromSchemaVersion >= source.schemaVersion));
+    })?.map(({ fromSchemaVersion, toSchemaVersion }) => ({ fromSchemaVersion, toSchemaVersion })))
+      .toEqual(Array.from({ length: target.schemaVersion - source.schemaVersion }, (_, index) => ({
+        fromSchemaVersion: source.schemaVersion + index,
+        toSchemaVersion: source.schemaVersion + index + 1,
+      })));
   });
 
   it('admits same-version nested schema widenings without granting a retained reader write authority', () => {
@@ -1330,8 +1729,8 @@ describe('Plugin Account Collection contracts', () => {
       {
         source: { rowId: sourceRow.rowId, revision: sourceRow.revision },
         target: {
-          content: { t: 'encrypted' as const, c: 'target-ciphertext' },
-          projection: { id: 'task-1', status: 'open', title: 'Ship the migration seam' },
+          content: { t: 'encrypted' as const, c: 'target-"ciphertext"\\\n' },
+          projection: { id: 'task-1', status: 'open', title: 'Ship 🦊 日本語\t"migration"' },
         },
       },
       {
@@ -1370,6 +1769,35 @@ describe('Plugin Account Collection contracts', () => {
     );
 
     const splitCandidateStageRequests = splitPluginCollectionCandidatePreparationStageRequestsForKnownLimitsV1;
+    expect(splitCandidateStageRequests({
+      binding, items: [], limits: { maxBatchRows: 1, maxBatchBytes: 1 },
+    })).toEqual([]);
+    const forgedStageItem = { ...stageItems[0]!, callback: 'forged-callback' };
+    expect(() => splitCandidateStageRequests({
+      binding, items: [forgedStageItem], limits: { maxBatchRows: 100, maxBatchBytes: 1_000_000 },
+    })).toThrow();
+    expect(() => splitCandidateStageRequests({
+      binding: { ...binding, target: { ...binding.target, collectionId: 'other-tasks' } },
+      items: stageItems,
+      limits: { maxBatchRows: 100, maxBatchBytes: 1_000_000 },
+    })).toThrow();
+    expect(() => splitCandidateStageRequests({
+      binding,
+      items: Array.from({ length: PLUGIN_COLLECTION_LIMITS_V1.maximumMutationBatchRows + 1 }, () => stageItems[0]!),
+      limits: { maxBatchRows: PLUGIN_COLLECTION_LIMITS_V1.maximumMutationBatchRows, maxBatchBytes: 1_000_000 },
+    })).toThrow();
+
+    const exactStageBytes = new TextEncoder().encode(JSON.stringify(stageRequest)).byteLength;
+    expect(JSON.stringify(splitCandidateStageRequests({
+      binding,
+      items: stageItems,
+      limits: { maxBatchRows: stageItems.length, maxBatchBytes: exactStageBytes },
+    }))).toBe(JSON.stringify([PluginCollectionCandidatePreparationStageRequestV1Schema.parse(stageRequest)]));
+    expect(splitCandidateStageRequests({
+      binding,
+      items: stageItems,
+      limits: { maxBatchRows: stageItems.length, maxBatchBytes: exactStageBytes - 1 },
+    }).map((request) => request.items)).toEqual(stageItems.map((item) => [item]));
 
     const maxSingletonBytes = Math.max(
       ...stageRequest.items.map((item) => (
@@ -1409,6 +1837,11 @@ describe('Plugin Account Collection contracts', () => {
       binding,
       items: [singleton],
       limits: { maxBatchRows: 1, maxBatchBytes: singletonBytes - 1 },
+    })).toEqual([singletonRequest]);
+    expect(splitCandidateStageRequests({
+      binding,
+      items: [singleton],
+      limits: { maxBatchRows: 0, maxBatchBytes: 0 },
     })).toEqual([singletonRequest]);
 
     const stageResult = { results: [{ status: 'staged' as const }, { status: 'sourceChanged' as const }] };
@@ -1460,6 +1893,44 @@ describe('Plugin Account Collection contracts', () => {
       stage: '/v1/plugins/data/candidate-preparation/stage',
       retire: '/v1/plugins/data/candidate-preparation/retire',
     });
+  });
+
+  it('parses and measures candidate-stage rows once across a thousand-row preparation', () => {
+    const binding = {
+      source: { pluginId: 'example.tasks', collectionId: 'tasks', schemaVersion: 1, contractDigest: 'a'.repeat(43) },
+      target: { pluginId: 'example.tasks', collectionId: 'tasks', schemaVersion: 2, contractDigest: 'b'.repeat(43) },
+      candidate: { releaseVersion: '1.2.3', artifactDigest: `sha256:${'c'.repeat(64)}` },
+    };
+    const items = Array.from({ length: 1_000 }, (_, index) => ({
+      source: { rowId: `cost-row-${index}`, revision: index + 1 },
+      target: { content: { t: 'encrypted' as const, c: 'ciphertext' }, projection: { title: '🦊\\\n"' } },
+    }));
+    // Observe the real row-id admission and JSON string encoding without
+    // replacing either schema logic or the strict-JSON measurement walker.
+    const encode = vi.spyOn(TextEncoder.prototype, 'encode');
+    const { requests, parsedRowVisits, encodedRowVisits } = (() => {
+      try {
+        const requests = splitPluginCollectionCandidatePreparationStageRequestsForKnownLimitsV1({
+          binding,
+          items,
+          limits: { maxBatchRows: 50, maxBatchBytes: PLUGIN_COLLECTION_LIMITS_V1.maximumMutationBatchEncodedBytes },
+        });
+        return {
+          requests,
+          parsedRowVisits: encode.mock.calls.filter(([value]) => /^cost-row-\d+$/u.test(value ?? '')).length,
+          encodedRowVisits: encode.mock.calls.filter(([value]) => /^"cost-row-\d+"$/u.test(value ?? '')).length,
+        };
+      } finally {
+        encode.mockRestore();
+      }
+    })();
+    expect({ parsedRowVisits, encodedRowVisits }).toEqual({
+      parsedRowVisits: items.length,
+      encodedRowVisits: items.length,
+    });
+    expect(requests).toHaveLength(20);
+    expect(requests.flatMap((request) => request.items)).toEqual(items);
+    expect(requests.every((request) => request.items.length === 50)).toBe(true);
   });
 
   it('normalizes equivalent static UI query declarations into one immutable digest', () => {

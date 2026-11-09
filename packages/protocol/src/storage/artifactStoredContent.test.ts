@@ -21,6 +21,24 @@ describe('artifactStoredContent', () => {
       expect(parse).toHaveBeenCalled();
     } finally { parse.mockRestore(); }
   });
+  it('rejects an encrypted data-key envelope as plain without decoding or parsing it', () => {
+    // A sealed data key is binary; only bytes that can begin a JSON object may reach the JSON reader.
+    const sealedKey = Buffer.from(Uint8Array.from({ length: 73 }, (_, index) => (index * 37 + 1) % 256)).toString('base64');
+    const parse = vi.spyOn(JSON, 'parse');
+    try {
+      for (let index = 0; index < 100; index += 1) {
+        expect(isPlainArtifactDataKeyMarker(sealedKey)).toBe(false);
+        expect(isPlainArtifactStoredContent(sealedKey)).toBe(false);
+      }
+      expect(parse).not.toHaveBeenCalled();
+      // Leading JSON whitespace and a UTF-8 byte-order mark still reach the tolerant reader.
+      const spaced = Buffer.from(` \n{"t":"plain","v":null}`, 'utf8').toString('base64');
+      const marked = Buffer.from(`\uFEFF{"t":"plain","v":null}`, 'utf8').toString('base64');
+      expect(isPlainArtifactDataKeyMarker(spaced)).toBe(true);
+      expect(isPlainArtifactDataKeyMarker(marked)).toBe(true);
+      expect(isPlainArtifactDataKeyMarker(` ${ARTIFACT_PLAIN_DATA_KEY_MARKER}`)).toBe(true);
+    } finally { parse.mockRestore(); }
+  });
   it('opens unknown stored envelope fields without altering opaque JSON content', () => {
     const value = { custom: { extra: true } };
     const encoded = Buffer.from(JSON.stringify({ t: 'plain', v: value, extra: true }), 'utf8').toString('base64');

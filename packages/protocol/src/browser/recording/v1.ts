@@ -1,3 +1,4 @@
+import { createRecordingResultSchemas } from '../../recording/results.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -161,23 +162,15 @@ export const BrowserRecordingActionChapterV1Schema = lazyZodSchema(() => z.stric
   })));
 export type BrowserRecordingActionChapterV1 = z.infer<typeof BrowserRecordingActionChapterV1Schema>;
 
-export const BrowserRecordingSessionV1Schema = lazyZodSchema(() => z.strictObject({
+// Shared capture lifecycle facts. Source identity and navigation belong to their adapters.
+export const RecordingSessionFieldsV1Schema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1),
     recordingId: IdSchema,
-    browserSessionId: IdSchema,
-    viewId: IdSchema,
-    profileId: IdSchema,
-    targetKind: BrowserViewTargetKindV1Schema,
-    adapterKind: BrowserSemanticAdapterKindV1Schema,
-    renderEngineKind: BrowserRenderEngineKindV1Schema,
     captureKind: BrowserRecordingCaptureKindV1Schema,
-    fidelity: BrowserDiagnosticFidelityV1Schema,
     startedAtMs: NonNegativeIntSchema,
     stoppedAtMs: z.optional(NonNegativeIntSchema),
     status: BrowserRecordingStatusV1Schema,
     outcomeReason: z.optional(BrowserRecordingOutcomeReasonV1Schema),
-    navigationGenerationStart: NonNegativeIntSchema,
-    navigationGenerationEnd: z.optional(NonNegativeIntSchema),
     durationMs: NonNegativeIntSchema,
     byteSize: NonNegativeIntSchema,
     frameCount: NonNegativeIntSchema,
@@ -190,22 +183,17 @@ export const BrowserRecordingSessionV1Schema = lazyZodSchema(() => z.strictObjec
     mediaRef: z.optional(BrowserEvidenceSessionMediaReferenceV1Schema),
     actionChapters: z._default(z.optional(z.array(BrowserRecordingActionChapterV1Schema)), []),
     relatedReferences: z._default(z.optional(z.array(BrowserEvidenceReferenceV1Schema)), []),
-  }).check(z.superRefine((session, context) => {
+}));
+export type RecordingSessionFieldsV1 = z.infer<typeof RecordingSessionFieldsV1Schema>;
+
+export function validateRecordingSessionV1(session: RecordingSessionFieldsV1, context: {
+  addIssue(issue: { code: 'custom'; path: string[]; message: string }): void;
+}): void {
     if (session.stoppedAtMs != null && session.stoppedAtMs < session.startedAtMs) {
       context.addIssue({
         code: "custom",
         path: ['stoppedAtMs'],
         message: 'Browser recording stoppedAtMs must not be before startedAtMs.',
-      });
-    }
-    if (
-      session.navigationGenerationEnd != null
-      && session.navigationGenerationEnd < session.navigationGenerationStart
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ['navigationGenerationEnd'],
-        message: 'Browser recording navigationGenerationEnd must not be before navigationGenerationStart.',
       });
     }
     if (
@@ -230,6 +218,31 @@ export const BrowserRecordingSessionV1Schema = lazyZodSchema(() => z.strictObjec
         code: "custom",
         path: ['mediaRef'],
         message: 'Discarded or expired browser recordings must not retain media references.',
+      });
+    }
+}
+
+export const BrowserRecordingSessionV1Schema = lazyZodSchema(() => z.strictObject({
+    ...RecordingSessionFieldsV1Schema.shape,
+    browserSessionId: IdSchema,
+    viewId: IdSchema,
+    profileId: IdSchema,
+    targetKind: BrowserViewTargetKindV1Schema,
+    adapterKind: BrowserSemanticAdapterKindV1Schema,
+    renderEngineKind: BrowserRenderEngineKindV1Schema,
+    fidelity: BrowserDiagnosticFidelityV1Schema,
+    navigationGenerationStart: NonNegativeIntSchema,
+    navigationGenerationEnd: z.optional(NonNegativeIntSchema),
+  }).check(z.superRefine((session, context) => {
+    validateRecordingSessionV1(session, context);
+    if (
+      session.navigationGenerationEnd != null
+      && session.navigationGenerationEnd < session.navigationGenerationStart
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ['navigationGenerationEnd'],
+        message: 'Browser recording navigationGenerationEnd must not be before navigationGenerationStart.',
       });
     }
   })));
@@ -324,16 +337,10 @@ export type DaemonBrowserRecordingStartInputV1 = z.infer<
   typeof DaemonBrowserRecordingStartInputV1Schema
 >;
 
-export const DaemonBrowserRecordingStartResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
-  z.strictObject({
-      status: z.literal('started'),
-      recording: BrowserRecordingSessionV1Schema,
-    }),
-  z.strictObject({
-      status: z.literal('unavailable'),
-      reason: DaemonBrowserRecordingUnavailableReasonV1Schema,
-    }),
-]));
+const browserRecordingResults = createRecordingResultSchemas(BrowserRecordingSessionV1Schema,
+  BrowserRecordingOutcomeReasonV1Schema, DaemonBrowserRecordingUnavailableReasonV1Schema);
+
+export const DaemonBrowserRecordingStartResultV1Schema = browserRecordingResults.start;
 export type DaemonBrowserRecordingStartResultV1 = z.infer<
   typeof DaemonBrowserRecordingStartResultV1Schema
 >;
@@ -348,21 +355,7 @@ export type DaemonBrowserRecordingStopInputV1 = z.infer<
   typeof DaemonBrowserRecordingStopInputV1Schema
 >;
 
-export const DaemonBrowserRecordingStopResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
-  z.strictObject({
-      status: z.literal('finalized'),
-      recording: BrowserRecordingSessionV1Schema,
-    }),
-  z.strictObject({
-      status: z.literal('failed'),
-      recording: BrowserRecordingSessionV1Schema,
-      reason: BrowserRecordingOutcomeReasonV1Schema,
-    }),
-  z.strictObject({
-      status: z.literal('unavailable'),
-      reason: DaemonBrowserRecordingUnavailableReasonV1Schema,
-    }),
-]));
+export const DaemonBrowserRecordingStopResultV1Schema = browserRecordingResults.stop;
 export type DaemonBrowserRecordingStopResultV1 = z.infer<
   typeof DaemonBrowserRecordingStopResultV1Schema
 >;
@@ -376,16 +369,7 @@ export type DaemonBrowserRecordingCancelInputV1 = z.infer<
   typeof DaemonBrowserRecordingCancelInputV1Schema
 >;
 
-export const DaemonBrowserRecordingTerminalResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
-  z.strictObject({
-      status: z.enum(['failed', 'canceled', 'discarded']),
-      recording: BrowserRecordingSessionV1Schema,
-    }),
-  z.strictObject({
-      status: z.literal('unavailable'),
-      reason: DaemonBrowserRecordingUnavailableReasonV1Schema,
-    }),
-]));
+export const DaemonBrowserRecordingTerminalResultV1Schema = browserRecordingResults.terminal;
 export type DaemonBrowserRecordingTerminalResultV1 = z.infer<
   typeof DaemonBrowserRecordingTerminalResultV1Schema
 >;

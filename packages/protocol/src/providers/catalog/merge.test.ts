@@ -4,7 +4,6 @@ import type { ProviderCatalogProbeModelV1 } from './merge.js';
 import type { ProviderModelDescriptorV1 } from '../../models/descriptor.js';
 
 import {
-  ProviderCatalogLimitError,
   ProviderCatalogTransitionStateV1Schema,
   applyProviderCatalogRefreshV1,
   mergeProviderCatalogV1,
@@ -450,13 +449,6 @@ describe('provider catalog merge', () => {
     });
   });
 
-  it('rejects over-limit unions atomically rather than truncating identity', () => {
-    expect(() => mergeProviderCatalogV1({
-      staticModels: [],
-      manualModels: Array.from({ length: 5_001 }, (_, index) => ({ id: `m-${index}`, addedAt: index })),
-      probeState: { snapshot: null, staleProbeModels: [] },
-    })).toThrow(ProviderCatalogLimitError);
-  });
 
   it('preserves reserved-looking vendor model ids because catalog rows are not record keys', () => {
     const merged = mergeProviderCatalogV1({
@@ -470,30 +462,6 @@ describe('provider catalog merge', () => {
     ]);
   });
 
-  it('rejects every over-bound source before reading any model element', () => {
-    const throwingModels = (length: number) => {
-      const models = Array.from({ length }, (_, index) => ({ id: `m-${index}` }));
-      Object.defineProperty(models, 0, { get: () => { throw new Error('element must not be read'); } });
-      return models;
-    };
-    const throwingManualModels = (length: number) => {
-      const models = Array.from({ length }, (_, index) => ({ id: `m-${index}`, addedAt: index }));
-      Object.defineProperty(models, 0, { get: () => { throw new Error('element must not be read'); } });
-      return models;
-    };
-    const cases = [
-      { staticModels: throwingModels(5_001), manualModels: [], probeState: { snapshot: null, staleProbeModels: [] } },
-      { staticModels: [], manualModels: throwingManualModels(501), probeState: { snapshot: null, staleProbeModels: [] } },
-      { staticModels: [], manualModels: [], probeState: { snapshot: { models: throwingModels(5_001), observedAt: 1, stale: false }, staleProbeModels: [] } },
-      { staticModels: [], manualModels: [], probeState: { snapshot: null, staleProbeModels: throwingModels(5_001) } },
-    ];
-    for (const input of cases) {
-      expect(() => mergeProviderCatalogV1(input)).toThrowError(ProviderCatalogLimitError);
-    }
-    expect(() => applyProviderCatalogRefreshV1({
-      snapshot: { models: throwingModels(5_001), observedAt: 1, stale: false }, staleProbeModels: [],
-    }, { status: 'failed', failedAt: 2 })).toThrowError(ProviderCatalogLimitError);
-  });
 
   it('bounds active and immediately-prior stale rows independently', () => {
     const merged = mergeProviderCatalogV1({
@@ -538,21 +506,6 @@ describe('provider catalog merge', () => {
     })).toThrowError(/cannot precede/u);
   });
 
-  it('accepts the exact manual bound and rejects an over-bound union', () => {
-    const merged = mergeProviderCatalogV1({
-      staticModels: [],
-      manualModels: Array.from({ length: 500 }, (_, index) => ({ id: `m-${index}`, addedAt: index })),
-      probeState: { snapshot: null, staleProbeModels: [] },
-    });
-    expect(merged.rows).toHaveLength(500);
-    expect(() => mergeProviderCatalogV1({
-      staticModels: Array.from({ length: 5_000 }, (_, index) => ({
-        id: `static-${index}`, name: `Static ${index}`,
-      })),
-      manualModels: [{ id: 'one-more', addedAt: 1 }],
-      probeState: { snapshot: null, staleProbeModels: [] },
-    })).toThrowError(ProviderCatalogLimitError);
-  });
 
   it('resolves active, stale, and fully pruned exact refs without any visibility input', () => {
     const merged = mergeProviderCatalogV1({

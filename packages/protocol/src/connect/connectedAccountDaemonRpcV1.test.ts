@@ -11,6 +11,15 @@ import {
 } from './connectedAccountDaemonRpcV1.js';
 
 describe('Connected Account daemon RPC v1', () => {
+  it('preserves a safe provider diagnostic when an uncertain attempt requires reconnecting', () => {
+    const response = { status: 'reconnectRequired', attemptId: 'attempt-1',
+      code: 'connected_account_authentication_outcome_unknown',
+      diagnostic: { code: 'claude_subscription_oauth_outcome_unknown', severity: 'error',
+        message: 'Claude did not return a conclusive OAuth result.' } };
+    expect(ConnectedAccountAttemptResponseSchema.parse(response)).toEqual(response);
+    const { diagnostic: _diagnostic, ...withoutDiagnostic } = response;
+    expect(ConnectedAccountAttemptResponseSchema.parse(withoutDiagnostic)).toEqual(withoutDiagnostic);
+  });
   it.each(['https://issuer.example', `https://issuer.example/${'issuer-path'.repeat(420)}`])('carries the returned issuer to the daemon completion owner (%#)', (iss) => {
     const request = { v: 1, machineId: 'machine-1', command: { operation: 'completeOAuth', attemptId: 'attempt',
       completion: { code: 'code', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback', state: 'attempt.random', iss } } };

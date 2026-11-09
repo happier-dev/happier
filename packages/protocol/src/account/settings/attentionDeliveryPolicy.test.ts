@@ -70,8 +70,9 @@ describe('attentionDeliveryPolicyV1 resolver', () => {
       for (let index = 0; index < 8; index += 1) operation();
       return performance.now() - started;
     };
-    const preview = () => resolveAttentionDeliveryPreviewBehavior(request);
-    const decide = () => resolveAttentionDeliveryPolicyDecision(request);
+    // A fresh object each run: one policy object is parsed once, and this measures that first pass.
+    const preview = () => resolveAttentionDeliveryPreviewBehavior({ ...request, policy: structuredClone(policy) });
+    const decide = () => resolveAttentionDeliveryPolicyDecision({ ...request, policy: structuredClone(policy) });
     // Compare against the same public boundary's one-pass preview, rather than a device-time budget.
     // Alternate warm runs and use minima so unrelated executor scheduling/GC cannot be the RED cause.
     preview(); decide();
@@ -103,12 +104,24 @@ describe('attentionDeliveryPolicyV1 resolver', () => {
       'user_action_request',
       'follow_update',
       'machine_offline',
+      'service_health',
     ]);
 
     for (const eventId of REMOTE_ALERT_ATTENTION_DELIVERY_EVENT_IDS) {
       expect(DEFAULT_ATTENTION_DELIVERY_POLICY_V1.events[eventId]).toEqual({ enabled: true });
       expect(DEFAULT_ATTENTION_DELIVERY_POLICY_V1.channels.expo_push.events[eventId]).toEqual({ enabled: true });
     }
+  });
+
+  it('admits production service-health attention without overriding disabled channels or quiet hours', () => {
+    const request = { event: 'service_health', inboxItemType: 'blocked' as const, channel: 'expo_push',
+      now: new Date('2026-05-03T00:30:00Z') };
+    expect(AttentionDeliveryEventIdSchema.safeParse(request.event).success).toBe(true);
+    expect(resolveAttentionDecision({ ...request, policy: {} }).delivery).toBe('deliver');
+    expect(resolveAttentionDecision({ ...request, policy: { channels: { expo_push: { enabled: false } } } }).delivery).toBe('suppress');
+    expect(resolveAttentionDecision({ ...request, policy: { quietHours: { enabled: true, timezone: 'UTC',
+      windows: [{ startLocalTime: '00:00', endLocalTime: '01:00' }] } } }).delivery).toBe('suppress');
+    expect(resolveAttentionDecision({ ...request, inboxItemType: 'update', policy: {} }).delivery).toBe('suppress');
   });
 
   it('shows remote request previews by default while preserving explicit policy overrides', () => {

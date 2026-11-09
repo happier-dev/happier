@@ -9,6 +9,7 @@ import {
   MarketplaceIndexEntryV1Schema,
   marketplaceNpmDiscoveryProjectionEqualV1,
   readMarketplaceNpmDiscoveryProjectionV1,
+  marketplaceNpmContributionKeywordV1,
   type MarketplaceIndexEntryV1,
 } from './marketplaceIndexV1.js';
 
@@ -23,10 +24,12 @@ function record(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 export function buildCommunityNpmSearchUrlV1(registryOrigin: string, query: Readonly<{
-  text: string; exactPackageName?: string; from?: number; size?: number;
+  text: string; exactPackageName?: string; contributionFamily?: string; from?: number; size?: number;
 }>): string {
   const url = new URL('/-/v1/search', registryOrigin);
-  url.searchParams.set('text', ['keywords:happier-plugin', query.exactPackageName ?? query.text.trim()].filter(Boolean).join(' '));
+  url.searchParams.set('text', ['keywords:happier-plugin',
+    ...(query.contributionFamily ? [`keywords:${marketplaceNpmContributionKeywordV1(query.contributionFamily)}`] : []),
+    query.exactPackageName ?? query.text.trim()].filter(Boolean).join(' '));
   url.searchParams.set('from', String(query.exactPackageName ? 0 : Math.max(0, query.from ?? 0)));
   // Reuse the marketplace processing page, not a new total-catalog bound.
   url.searchParams.set('size', String(query.exactPackageName ? MARKETPLACE_INDEX_PAGE_MAX_SIZE_V1

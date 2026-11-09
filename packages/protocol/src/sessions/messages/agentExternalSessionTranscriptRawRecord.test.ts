@@ -5,6 +5,15 @@ import { AgentExternalSessionTranscriptRawRecordSchema } from './agentExternalSe
 import * as agentExternalSessionTranscriptRawRecord from './agentExternalSessionTranscriptRawRecord';
 
 describe('AgentExternalSessionTranscriptRawRecordSchema', () => {
+  it('admits only closed transient inline images for Session-owned media import', () => {
+    const raw = { role: 'user', content: { type: 'text', text: '' }, media: [
+      { type: 'image', mimeType: 'image/png', data: 'encoded-image' },
+    ] };
+    expect(AgentExternalSessionTranscriptRawRecordSchema.safeParse(raw)).toMatchObject({ success: true, data: raw });
+    expect(AgentExternalSessionTranscriptRawRecordSchema.safeParse({ ...raw, media: [{ type: 'image', uri: '/private/file' }] }).success).toBe(false);
+    expect(AgentExternalSessionTranscriptRawRecordSchema.safeParse({ ...raw, media: [{ ...raw.media[0], uri: 'https://example.com' }] }).success).toBe(false);
+  });
+
   it('owns one closed user-projection classification beside the strict raw envelope', () => {
     const schema = Reflect.get(
       agentExternalSessionTranscriptRawRecord,

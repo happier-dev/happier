@@ -1,5 +1,6 @@
 import { z } from 'zod/mini';
 import { createServerHttpRequestBodyItemBudgetV1 } from '../server/http/requestBodyBoundsV1.js';
+import { ApprovalArtifactQueryHintsV1Schema } from '../approvals/approvalArtifactKindV1.js';
 
 /** Plaintext search hint only; access and content admission still open the private header. */
 export const ArtifactCoarseKindV1Schema = z.enum(['skill', 'prompt', 'plugin_ui', 'work_board', 'widget_area_layout', 'widget_definition', 'widget_layout_fragment', 'other']);
@@ -44,6 +45,8 @@ export const ArtifactStoredKindV1Schema = z.string().check(z.refine(value =>
 
 export const ArtifactKindWriteBatchInputV1Schema = z.strictObject({ items: z.array(z.strictObject({
   artifactId: z.string(), kind: ArtifactStoredKindV1Schema,
+  approvalState: z.optional(ApprovalArtifactQueryHintsV1Schema.shape.approvalState),
+  approvalSessionId: z.optional(ApprovalArtifactQueryHintsV1Schema.shape.approvalSessionId),
   expectedHeaderVersion: z.number().check(z.int(), z.minimum(0)),
 })) });
 export type ArtifactKindWriteBatchInputV1 = z.infer<typeof ArtifactKindWriteBatchInputV1Schema>;

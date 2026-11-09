@@ -6920,11 +6920,6 @@
       "types": "./dist/machines/peer/mediation/routeKind.d.ts",
       "default": "./dist/machines/peer/mediation/routeKind.js"
     },
-    "./machines/peer/mediation/rpc/commandReceiptV1": {
-      "happier-source": "./src/machines/peer/mediation/rpc/commandReceiptV1.ts",
-      "types": "./dist/machines/peer/mediation/rpc/commandReceiptV1.d.ts",
-      "default": "./dist/machines/peer/mediation/rpc/commandReceiptV1.js"
-    },
     "./machines/peer/mediation/rpc/directV1": {
       "happier-source": "./src/machines/peer/mediation/rpc/directV1.ts",
       "types": "./dist/machines/peer/mediation/rpc/directV1.d.ts",
@@ -9014,6 +9009,11 @@
       "happier-source": "./src/profiles/index.ts",
       "types": "./dist/profiles/index.d.ts",
       "default": "./dist/profiles/index.js"
+    },
+    "./profiles/launchPreferencesV1": {
+      "happier-source": "./src/profiles/launchPreferencesV1.ts",
+      "types": "./dist/profiles/launchPreferencesV1.d.ts",
+      "default": "./dist/profiles/launchPreferencesV1.js"
     },
     "./profiles/listProjection": {
       "happier-source": "./src/profiles/listProjection.ts",

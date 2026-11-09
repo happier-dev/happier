@@ -17,6 +17,9 @@ export type WidgetViewerPurposeResolutionV1 = Readonly<{
     fields: readonly WidgetInputIssueV1[];
 }>;
 
+/** Account facts consumed by widget viewer selection, independent of Profile clocks and presentation. */
+export type WidgetViewerProfileV1 = Pick<AccountProfile, 'id' | 'connectedAccountsV4' | 'connectedAccountGroupsV4'>;
+
 type PurposeDescriptor = WidgetInputDescriptorV1 & Readonly<{ resources?: readonly PluginContributionIdentityV1[] }>;
 const StoredQualifiedConnectedAccountRefSchema = createProtocolStoredReadSchema(QualifiedConnectedAccountRefSchema);
 
@@ -27,7 +30,7 @@ export function isWidgetConnectedAccountSelectionEligibleV1(input: Readonly<{
     surface: WidgetSurfaceRefV1;
     selection: QualifiedConnectedAccountRef;
     viewerValues: WidgetViewerPurposeResolutionV1['values'];
-    profile: AccountProfile | null;
+    profile: WidgetViewerProfileV1 | null;
     now: number;
 }>): boolean {
     if (input.binding?.kind === 'viewer') {
@@ -61,7 +64,7 @@ export function readWidgetConnectedAccountPurposeV1(input: Readonly<{ descriptor
 
 /** Credential-free personal pin candidates from the current viewer's existing inventory. */
 export function resolveWidgetConnectedAccountOptionsV1(input: Readonly<{ descriptor: PurposeDescriptor; resources: readonly PluginProjectedResourceV2[];
-    profile: AccountProfile; path: string; now: number }>): readonly InputOption[] | null {
+    profile: WidgetViewerProfileV1; path: string; now: number }>): readonly InputOption[] | null {
     const declared = readWidgetConnectedAccountPurposeV1(input);
     if (!declared) return null;
     return input.profile.connectedAccountsV4.filter(account => isQualifiedConnectedAccountProfileActiveV4(account, input.now)
@@ -74,7 +77,7 @@ export function resolveWidgetViewerPurposeValuesV1(input: Readonly<{
     instance: WidgetInstanceV1;
     descriptor: WidgetInputDescriptorV1 & Readonly<{ resources?: readonly PluginContributionIdentityV1[] }>;
     purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
-    profile: AccountProfile;
+    profile: WidgetViewerProfileV1;
     resources: readonly PluginProjectedResourceV2[];
     readAuthentication?(service: PluginContributionIdentityV1): PluginConnectedAccountAuthenticationV2 | null;
     now: number;

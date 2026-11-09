@@ -13,10 +13,11 @@ import { SessionBoardItemPlacementV1Schema } from '../sessions/board/layoutOpera
 import { SessionBoardTabIdSchema } from '../sessions/board/ids.js';
 import { UiSurfaceNetworkRequestV1Schema } from '../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
 import { SessionSystemRecordRevisionSchema } from '../sessions/system/records/sessionSystemRecordRevision.js';
-import { VoiceTrackedSessionAddressV1Schema } from '../sessions/follow/voiceTrackedTargetsCompatibilityV1.js';
+import { VoiceTrackedSessionAddressV1Schema } from '../sessions/follow/voiceTrackedSessionAddressV1.js';
 import type { ActionExecutorContext } from '../actions/executor/types.js';
 import type { ActionExecuteResult } from '../actions/actionExecutionResult.js';
 import type { WidgetInstanceActionIdV1 } from './actionIdsV1.js';
+import type { WidgetInputDescriptorV1 } from './widgetInputAdmissionV1.js';
 import { WidgetLayoutGroupV1Schema, WidgetLayoutItemV1Schema, WidgetLayoutItemsV1Schema, type WidgetLayoutItemIntentV1 } from './widgetLayoutItemV1.js';
 import { WidgetGroupWidthV1Schema, supportsWidgetGroupsV1, type WidgetGroupWidthV1 } from './widgetPresentationV1.js';
 import { WidgetProjectAreaV1Schema, WidgetExpectedPresentationV1Schema, WidgetSizeV1Schema, WidgetSizeDeclarationV1Schema, WidgetFrameStyleV1Schema, WidgetSurfacePresentationV1Schema, type WidgetProjectAreaV1, type WidgetExpectedPresentationV1, type WidgetSizeDeclarationV1 } from './widgetPresentationV1.js';
@@ -167,7 +168,7 @@ export const WidgetCatalogEntryV1Schema = lazyZodSchema(() => z.strictObject({
   instanceCount: z.number().check(z.int(), z.nonnegative(), z.int()),
 }));
 export type WidgetCatalogEntryV1 = z.infer<typeof WidgetCatalogEntryV1Schema>;
-export type WidgetCatalogSourceEntryV1 = Omit<WidgetCatalogEntryV1, 'presentation'>;
+export type WidgetCatalogSourceEntryV1 = Omit<WidgetCatalogEntryV1, 'presentation'> & Pick<WidgetInputDescriptorV1, 'target'>;
 export const WidgetBindingResolutionV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('ready'), input: z.record(z.string(), StrictJsonValueSchema) }),
   ...(['selection_required', 'invalid', 'unavailable', 'denied'] as const).map(status => z.strictObject({
@@ -232,7 +233,9 @@ export type WidgetActionSurfacePortV1 = Readonly<{
 }>;
 export type WidgetActionInputResolverV1 = Readonly<{
   resolve(args: Readonly<{ ref: WidgetInstanceRefV1; instance: WidgetInstanceV1; context: ActionExecutorContext; groupBindings?: WidgetInstanceV1['bindings']; admission?: 'configuration' | 'execution';
+    /** Internal host admission from this execution; never an Action input or persisted value. */
+    admittedSurfaceRead?: WidgetSurfaceReadV1;
     /** Owner-read bindings before an exact-path edit; absent mounted slots may retain only unchanged references. */
     configurationPatch?: Readonly<{ paths: readonly string[]; previousBindings: WidgetInstanceV1['bindings'] }>; signal?: AbortSignal }>): Promise<WidgetBindingResolutionV1>;
-  readSizeDeclaration(args: Readonly<{ ref: WidgetInstanceRefV1; instance: WidgetInstanceV1; context: ActionExecutorContext; groupBindings?: WidgetInstanceV1['bindings']; signal?: AbortSignal }>): Promise<WidgetSizeDeclarationV1 | null>;
+  readSizeDeclaration(args: Readonly<{ ref: WidgetInstanceRefV1; instance: WidgetInstanceV1; context: ActionExecutorContext; groupBindings?: WidgetInstanceV1['bindings']; admittedSurfaceRead?: WidgetSurfaceReadV1; signal?: AbortSignal }>): Promise<WidgetSizeDeclarationV1 | null>;
 }>;

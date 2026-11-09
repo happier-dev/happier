@@ -3,7 +3,7 @@ import { z } from 'zod/mini';
 import { PinnedArchivePlatformSchema, type PinnedArchiveInstallableAsset } from '../../../installables/sourceKind.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import type { AcpRegistryAgentV1, RegistryAgentDistributionV1 } from '../../../registries/registryItemsV1.js';
-import { mapAcpRegistryBinaryAssetsV1, selectAcpRegistryDistributionV1 } from './mapAcpRegistryAgentV1.js';
+import { isAcpRegistryArchiveUrlV1, mapAcpRegistryBinaryAssetsV1, selectAcpRegistryDistributionV1 } from './mapAcpRegistryAgentV1.js';
 import { resolveAcpPlatformTargetV1 } from './acpPlatformTargetsV1.js';
 type PinnedArchiveAssetsByPlatform = Extract<AcpBackendLaunchV1, { kind: 'archive' }>['assetsByPlatform'];
 
@@ -19,7 +19,7 @@ export const AcpPlatformFitV1Schema = lazyZodSchema(() => z.discriminatedUnion('
 ]));
 
 function archiveSupported(asset: PinnedArchiveInstallableAsset): boolean {
-  return asset.kind === 'executable' || /\.(?:zip|tar\.gz|tgz|tar\.xz)$/i.test(new URL(asset.archiveUrl).pathname);
+  return asset.kind === 'executable' || isAcpRegistryArchiveUrlV1(asset.archiveUrl);
 }
 
 /** List projection reuses admission's distribution selection and archive interpretation. */

@@ -1,12 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES } from '../../account/settings/catalog/accountSettingBounds.js';
 import { serializeModelVisibilityRefV1 } from '../selection/v1.js';
 import {
   SavedSecretSlotBindingsV1Schema,
   DEFAULT_PROVIDER_SETTINGS_V1,
-  PROVIDER_SETTINGS_LIMITS_V1,
-  ProviderSettingsLimitError,
   ProviderSettingsV1Schema,
   ProviderManualModelV1Schema,
   ProviderSettingsMigrationPendingConflictV1Schema,
@@ -68,6 +65,15 @@ describe('SavedSecretSlotBindingsV1Schema', () => {
 });
 
 describe('ProviderSettingsV1Schema', () => {
+  it('reads retained confirmations without reviving obsolete Team source revisions', () => {
+    const settings = validSettings();
+    const confirmation = settings.experimentalBindingConfirmations[0];
+    const retained = { ...settings, experimentalBindingConfirmations: [{ ...confirmation, sourceRevision: 'source-current' }] };
+    expect(parseProviderSettingsV1Narrow(retained)).toMatchObject({
+      settings: { experimentalBindingConfirmations: [confirmation] }, diagnostics: [],
+    });
+    expect(parseProviderSettingsV1Narrow(retained).settings.experimentalBindingConfirmations[0]).not.toHaveProperty('sourceRevision');
+  });
   it('admits explicit reasoning tiers and rejects malformed declarations while retaining undeclared records', () => {
     const model = { id: 'custom', addedAt: 1, reasoningEffortLevels: ['low', 'high', 'max'] };
     expect(ProviderManualModelV1Schema.parse(model)).toEqual(model);
@@ -140,31 +146,15 @@ describe('ProviderSettingsV1Schema', () => {
     expect(parsed.diagnostics.map((entry) => entry.path)).toContain('connections[1]');
   });
 
-  it('accepts valid connection records beyond the retired global count and advertises the Account-owned subtree budget', () => {
+  it('accepts valid connection records beyond the retired global count', () => {
     const oversized = structuredClone(validSettings()) as any;
     oversized.connections = Array.from({ length: 257 }, (_, index) => ({
       ...connection(`pc_${index}`, `plugin/provider-${index}`), id: `pc_${index}`,
     }));
     expect(() => assertProviderSettingsV1WithinLimits(oversized)).not.toThrow();
-
-    // The subtree is persisted inside the Account Settings document, so the advertised
-    // maximum must be exactly what that document can hold for this root. Any larger
-    // allowance produces writes this owner accepts and Account Settings then discards.
-    expect(PROVIDER_SETTINGS_LIMITS_V1.decodedJsonBytes)
-      .toBe(ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES);
-
-    // The byte gate runs before schema validation, so an oversized subtree is reported as a
-    // settings-limit refusal rather than an unrelated semantic failure.
-    const overBytes = structuredClone(validSettings()) as any;
-    overBytes.connections[0].displayName = 'x'.repeat(
-      ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES + 1,
-    );
-    expect(() => assertProviderSettingsV1WithinLimits(overBytes)).toThrow(ProviderSettingsLimitError);
   });
 
-  // Each nested cap is exercised on its own fixture: the caps are independent defensive
-  // bounds on one node, not a joint allowance, and the Account-owned byte ceiling is the
-  // outer bound every one of them shares.
+  // These fixtures exceed former local policy counts; all records must survive.
   const nestedCountCaps: ReadonlyArray<Readonly<{
     label: string;
     atBound: (value: any) => void;
@@ -232,42 +222,18 @@ describe('ProviderSettingsV1Schema', () => {
     },
   ];
 
-  it.each(nestedCountCaps)('maps the $label cap to the stable settings-limit error', ({ atBound, over }) => {
+  it.each(nestedCountCaps)('preserves every $label record beyond the retired policy count', ({ atBound, over }) => {
     const value = structuredClone(validSettings()) as any;
     atBound(value);
-    expect(new TextEncoder().encode(JSON.stringify(value)).byteLength)
-      .toBeLessThanOrEqual(PROVIDER_SETTINGS_LIMITS_V1.decodedJsonBytes);
-    expect(() => assertProviderSettingsV1WithinLimits(value)).not.toThrow();
-
-    const overValue = structuredClone(value);
-    over(overValue);
-    expect(() => assertProviderSettingsV1WithinLimits(overValue)).toThrowError(ProviderSettingsLimitError);
+    over(value);
+    const settings = assertProviderSettingsV1WithinLimits(value);
+    expect(parseProviderSettingsV1Narrow(value)).toEqual({ settings, diagnostics: [] });
   });
 
-  it('maps the total manual-model cap to the stable settings-limit error', () => {
-    const totalManualOver = structuredClone(DEFAULT_PROVIDER_SETTINGS_V1) as any;
-    totalManualOver.connections = Array.from({ length: 11 }, (_, index) =>
-      ({ ...connection(`pc_${index}`, `plugin/p-${index}`), role: 'named', displayNameMode: 'custom' }));
-    totalManualOver.manualModelsByConnectionId = Object.fromEntries(totalManualOver.connections.map((entry: { id: string }, index: number) => [
-      entry.id,
-      Array.from({ length: index === 10 ? 1 : 500 }, (_, modelIndex) => ({ id: `m-${index}-${modelIndex}`, addedAt: 1 })),
-    ]));
-    // The total cap, not the shared byte ceiling, must be the refusal reason here.
-    expect(new TextEncoder().encode(JSON.stringify(totalManualOver)).byteLength)
-      .toBeLessThanOrEqual(PROVIDER_SETTINGS_LIMITS_V1.decodedJsonBytes);
-    expect(() => assertProviderSettingsV1WithinLimits(totalManualOver))
-      .toThrowError(/total manual-model limit/u);
-  });
-
-  it('does not mislabel semantic schema failures as settings-limit errors', () => {
+  it('rejects a semantic reference to an unknown connection', () => {
     const invalid = structuredClone(validSettings()) as any;
     invalid.accountGrants[0].connectionId = 'missing';
-    try {
-      assertProviderSettingsV1WithinLimits(invalid);
-      throw new Error('Expected semantic validation to fail');
-    } catch (error) {
-      expect(error).not.toBeInstanceOf(ProviderSettingsLimitError);
-    }
+    expect(() => assertProviderSettingsV1WithinLimits(invalid)).toThrow();
   });
 
   it('accepts endpoint-override machine branches beyond the retired global count', () => {
@@ -282,7 +248,7 @@ describe('ProviderSettingsV1Schema', () => {
     expect(recovered.diagnostics).toEqual([]);
   });
 
-  it('accepts valid account and machine grants beyond the retired global counts, bounded only by the subtree budget', () => {
+  it('accepts valid account and machine grants beyond retired policy counts and the stale Settings budget', () => {
     const connections = Array.from({ length: 257 }, (_, index) => connection(`pc-${index}`, `plugin/provider-${index}`));
     const machineGrant = (index: number) => ({
       v: 1 as const,
@@ -303,22 +269,15 @@ describe('ProviderSettingsV1Schema', () => {
       })),
       machineGrants: Array.from({ length: 513 }, (_, index) => machineGrant(index)),
     };
-    expect(new TextEncoder().encode(JSON.stringify(value)).byteLength)
-      .toBeLessThanOrEqual(PROVIDER_SETTINGS_LIMITS_V1.decodedJsonBytes);
     expect(() => assertProviderSettingsV1WithinLimits(value)).not.toThrow();
     expect(ProviderSettingsV1Schema.parse(value).accountGrants).toHaveLength(257);
     expect(ProviderSettingsV1Schema.parse(value).machineGrants).toHaveLength(513);
 
-    // Grants carry no count cap of their own; the shared subtree budget is what bounds them,
-    // and it refuses before Account Settings can silently drop the persisted subtree.
     const overBudget = {
       ...value,
       machineGrants: Array.from({ length: 4_096 }, (_, index) => machineGrant(index)),
     };
-    expect(new TextEncoder().encode(JSON.stringify(overBudget)).byteLength)
-      .toBeGreaterThan(PROVIDER_SETTINGS_LIMITS_V1.decodedJsonBytes);
-    expect(() => assertProviderSettingsV1WithinLimits(overBudget))
-      .toThrowError(/decoded-size limit/u);
+    expect(assertProviderSettingsV1WithinLimits(overBudget).machineGrants).toHaveLength(4_096);
   });
 
   it('keeps account and per-machine secret binding precedence explicit', () => {
@@ -363,7 +322,7 @@ describe('ProviderSettingsV1Schema', () => {
     expect(parsed.diagnostics).toEqual([]);
   });
 
-  it('bounds default-selection recovery instead of throwing on an oversized sibling map', () => {
+  it('retains every valid default-selection entry beyond the retired recovery cap', () => {
     const raw = structuredClone(DEFAULT_PROVIDER_SETTINGS_V1) as any;
     raw.defaultsByAgentTargetKey = Object.fromEntries(
       Array.from({ length: 2_049 }, (_, index) => {
@@ -377,12 +336,9 @@ describe('ProviderSettingsV1Schema', () => {
     );
 
     const parsed = parseProviderSettingsV1Narrow(raw);
-    expect(Object.keys(parsed.settings.defaultsByAgentTargetKey)).toHaveLength(2_048);
-    expect(parsed.settings.defaultsByAgentTargetKey['agent:2048']).toBeUndefined();
-    expect(parsed.diagnostics).toContainEqual({
-      path: 'defaultsByAgentTargetKey',
-      reason: 'limit_exceeded',
-    });
+    expect(Object.keys(parsed.settings.defaultsByAgentTargetKey)).toHaveLength(2_049);
+    expect(parsed.settings.defaultsByAgentTargetKey['agent:2048']).toBeDefined();
+    expect(parsed.diagnostics).toEqual([]);
   });
 
   it('rejects non-canonical map keys before they can overwrite canonical bindings', () => {

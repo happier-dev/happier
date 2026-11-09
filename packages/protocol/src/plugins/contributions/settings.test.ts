@@ -7,9 +7,16 @@ import {
   PluginSettingsContributionV2Schema,
   PluginSettingsSubagentItemV2Schema,
   readPluginSettingSecretCustody,
+  PluginDirectSecretDeclarationV1Schema,
 } from './settings.js';
 
 describe('canonical settings contributions', () => {
+  it('admits shared-save only on opted-in Account direct-secret declarations', () => {
+    expect(PluginDirectSecretDeclarationV1Schema.parse({ id: 'database', saveShared: true }))
+      .toEqual({ id: 'database', custody: 'account', saveShared: true });
+    expect(PluginDirectSecretDeclarationV1Schema.safeParse({ id: 'local', custody: 'daemon', saveShared: true }).success).toBe(false);
+    expect(PluginDirectSecretDeclarationV1Schema.safeParse({ id: 'database', saveShared: false }).success).toBe(false);
+  });
   it('keeps schema enum and const values inside the canonical plugin JSON domain', () => {
     expectTypeOf<NonNullable<PluginSettingFieldSchemaV2['enum']>[number]>()
       .toEqualTypeOf<PluginJsonValueV2>();

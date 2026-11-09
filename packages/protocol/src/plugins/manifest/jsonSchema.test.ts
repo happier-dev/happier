@@ -98,35 +98,27 @@ function manifestForDestinationBindingSlot(slot: typeof PLUGIN_UI_DESTINATION_BI
 }
 
 describe('createPluginManifestJsonSchemaV2', () => {
-  it('rejects the removed tools contribution family at canonical and generated boundaries', () => {
-    const invalidTool = {
-      ...validManifest,
-      contributes: {
-        tools: [{
-          id: 'connected-account-tool',
-          name: 'connected_account_tool',
-          title: 'Connected Account tool',
-          action: 'run',
-          inputHints: {
-            fields: [{
-              path: 'credentialRef',
-              title: { fallback: 'Account' },
-              widget: 'select',
-              connectedAccountOptions: true,
-            }],
-          },
-        }],
-      },
-    };
-
-    expect(PluginManifestV2Schema.safeParse(invalidTool).success).toBe(false);
-    expect(validateExternalManifest(invalidTool)).toBe(false);
-  });
-
   it.each(['tools', 'commands'])('rejects the retired %s family even when empty at both authoring boundaries', (family) => {
     const manifest = { ...validManifest, contributes: { [family]: [] } };
     expect(PluginManifestV2Schema.safeParse(manifest).success).toBe(false);
     expect(validateExternalManifest(manifest)).toBe(false);
+  });
+
+  it('keeps catalog hook inputs closed at both canonical and external authoring boundaries', () => {
+    const hook = { id: 'spawned', on: 'session.spawned' };
+    const { runtime: _runtime, engines: _engines, ...authorManifest } = validManifest;
+    const withHook = (value: unknown) => ({ ...authorManifest, contributes: { hooks: [value] } });
+    expect(PluginManifestV2Schema.safeParse(withHook(hook)).success).toBe(true);
+    expect(validateExternalManifest(withHook(hook))).toBe(true);
+    for (const invalid of [
+      { ...hook, on: 'acme.unknown' },
+      { ...hook, hookApiVersion: 1 },
+      { ...hook, metadata: { arbitrary: true } },
+      { ...hook, priority: 'high' },
+    ]) {
+      expect(PluginManifestV2Schema.safeParse(withHook(invalid)).success).toBe(false);
+      expect(validateExternalManifest(withHook(invalid))).toBe(false);
+    }
   });
 
   it('publishes the supplied current source producer through the canonical website writer', async () => {
@@ -406,7 +398,30 @@ describe('createPluginManifestJsonSchemaV2', () => {
     expect(validateExternalManifest(invalid)).toBe(false);
   });
 
+  it('rejects the removed tools contribution family at canonical and generated boundaries', () => {
+    const invalidTool = {
+      ...validManifest,
+      contributes: {
+        tools: [{
+          id: 'connected-account-tool',
+          name: 'connected_account_tool',
+          title: 'Connected Account tool',
+          action: 'run',
+          inputHints: {
+            fields: [{
+              path: 'credentialRef',
+              title: { fallback: 'Account' },
+              widget: 'select',
+              connectedAccountOptions: true,
+            }],
+          },
+        }],
+      },
+    };
 
+    expect(PluginManifestV2Schema.safeParse(invalidTool).success).toBe(false);
+    expect(validateExternalManifest(invalidTool)).toBe(false);
+  });
 
   it('admits only direct V2 UI destinations at both the canonical and generated manifest boundaries', () => {
     const direct = {

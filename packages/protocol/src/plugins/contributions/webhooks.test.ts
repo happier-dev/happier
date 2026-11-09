@@ -81,6 +81,31 @@ describe('plugin webhook contributions', () => {
     }).success).toBe(false);
   });
 
+  it('admits the Sentry HMAC verifier for Account endpoints only', () => {
+    const base = {
+      schemaVersion: 2,
+      id: 'example.sentry-webhooks',
+      version: '1.0.0',
+      displayName: 'Sentry webhooks',
+      runtime: { apiVersion: 1 },
+      entrypoints: { daemon: './dist/index.js' },
+    } as const;
+    const contribution = {
+      id: 'sentry-events',
+      title: 'Sentry events',
+      verifier: { kind: 'sentry_hmac_sha256_v1', routing: 'accountEndpoint' },
+      handlerAction: { localId: 'receive-github' },
+    } as const;
+    const manifest = PluginManifestV2Schema.parse({ ...base, contributes: { actions: [webhookAction], webhooks: [contribution] } });
+    expect(manifest.contributes.webhooks).toEqual([contribution]);
+    for (const invalid of [
+      { ...contribution, verifier: { kind: 'sentry_hmac_sha256_v1', routing: 'providerInstallation' } },
+      { id: contribution.id, title: contribution.title, verifier: contribution.verifier, delivery: 'recordReceiptOnly' },
+    ]) {
+      expect(PluginManifestV2Schema.safeParse({ ...base, contributes: { actions: [webhookAction], webhooks: [invalid] } }).success).toBe(false);
+    }
+  });
+
   it('rejects a dangling or non-plugin-surface handler Action', () => {
     const base = {
       schemaVersion: 2,

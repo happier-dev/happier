@@ -11,7 +11,6 @@ import type {
   SessionChangeSet,
   SessionChangeSetFile,
   TurnChangeSet,
-  WorkspaceTouchedFileEvidence,
 } from './types.js';
 
 const SOURCE_PRECEDENCE: Record<ChangeEvidenceSource, number> = {
@@ -501,9 +500,9 @@ export function mergeTurnChangeSets(params: MergeTurnChangeSetsInput): SessionCh
 /**
  * Canonical Changed Files attribution entry point. Provider/tool/checkpoint observations are
  * resolved by the turn combiner first. Turn-source scope classification also stays here so mounted
- * hosts select a presentation without duplicating evidence categories. Workspace touched paths are
- * admitted only when no canonical file evidence exists, and their vocabulary is assigned here
- * rather than by a UI host.
+ * hosts select a presentation without duplicating evidence categories. Turn-end checkpoint
+ * evidence is the daemon-owned record of a Session's changes; no host infers authorship from
+ * repository snapshots.
  */
 type ChangedFilesAttributionInput = Readonly<{
   sessionId: string;
@@ -511,7 +510,6 @@ type ChangedFilesAttributionInput = Readonly<{
   evidenceScope?: ChangedFilesTurnEvidenceScope;
   canonicalChangeSet?: SessionChangeSet | null;
   rolledBackTurnIds?: readonly string[];
-  workspaceTouchedFiles?: readonly WorkspaceTouchedFileEvidence[];
   repoRootPath?: string | null;
 }>;
 
@@ -561,43 +559,9 @@ export function projectChangedFilesAttribution(params: ChangedFilesAttributionIn
     };
   }
 
-  const workspaceFiles = params.workspaceTouchedFiles ?? [];
-  if (workspaceFiles.length === 0) {
-    return projectTurnChangeSets({
-      sessionId: params.sessionId,
-      turns: [],
-      rolledBackTurnIds: params.rolledBackTurnIds,
-    });
-  }
-
-  const files = workspaceFiles
-    .map((file): SessionChangeSetFile => {
-      const evidence: FileChangeEvidence = {
-        ...normalizeFileEvidencePaths({ ...file, source: 'inferred', confidence: 'best_effort', provider: 'workspace' }, params.repoRootPath),
-        source: 'inferred',
-        confidence: 'best_effort',
-        provider: 'workspace',
-      };
-      return {
-        ...evidence,
-        turns: [],
-        attribution: deriveSessionChangeAttribution(evidence, 'unknown'),
-        checkpointOverlap: 'unknown',
-      };
-    })
-    .sort((left, right) => left.filePath.localeCompare(right.filePath));
-
-  const changeSet: SessionChangeSet = {
+  return projectTurnChangeSets({
     sessionId: params.sessionId,
     turns: [],
-    files,
-    rolledBackTurnIds: [...(params.rolledBackTurnIds ?? [])],
-    confidenceSummary: {
-      source: 'inferred',
-      confidence: 'best_effort',
-      attribution: files[0]?.attribution ?? UNAVAILABLE_ATTRIBUTION,
-      checkpointOverlap: 'unknown',
-    },
-  };
-  return { changeSet, evidenceByFilePath: new Map(files.map((file) => [file.filePath, [file]])) };
+    rolledBackTurnIds: params.rolledBackTurnIds,
+  });
 }

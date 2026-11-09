@@ -1,5 +1,9 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+export * from './loginsV1.js';
+export * from './importCookiesV1.js';
+export * from './importPasskeysV1.js';
+export * from './extensionsV1.js';
 
 export const BrowserProfileStorageModeV1Schema = lazyZodSchema(() => z.enum(['ephemeral', 'session', 'user', 'plugin']));
 export type BrowserProfileStorageModeV1 = z.infer<typeof BrowserProfileStorageModeV1Schema>;
@@ -66,8 +70,3 @@ export const BrowserProfileV1Schema = lazyZodSchema(() => z.strictObject({
     }
   })));
 export type BrowserProfileV1 = z.infer<typeof BrowserProfileV1Schema>;
-
-export * from './extensionsV1.js';
-export * from './loginsV1.js';
-export * from './importCookiesV1.js';
-export * from './importPasskeysV1.js';

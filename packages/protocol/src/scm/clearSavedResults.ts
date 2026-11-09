@@ -1,5 +1,4 @@
 import type { ScmComparison } from './comparison.js';
-import { isScmCommitPlanApplicationLocked } from './diffSummaryCommitPlan.js';
 import { buildScmReviewScopeId } from './comparisonOccurrences.js';
 import {
   ScmDiffSummaryResultClearInputSchema, ScmDiffSummaryResultDeleteResponseSchema,
@@ -53,16 +52,8 @@ export async function executeScmDiffSummaryClear(params: Readonly<{
         failures.push({ resultId: item.resultId, success: false, errorCode: 'invalid_edit', error: 'The listed comparison does not identify this saved result.' });
         continue;
       }
-      if (saved.revision !== item.expectedRevision) {
-        failures.push({ resultId: item.resultId, success: false, errorCode: 'revision_conflict', error: 'The saved result changed before Clear.', latestRevision: saved.revision });
-        continue;
-      }
-      if (isScmCommitPlanApplicationLocked(saved.application)) {
-        failures.push({ resultId: item.resultId, success: false, errorCode: 'application_locked', error: 'Resolve the accepted commit application before clearing its result.' });
-        continue;
-      }
       comparison = saved.output.comparison;
-      // The Machine still rechecks revision/application under its deletion lock.
+      // The Machine decides revision/application eligibility under its deletion lock.
       const receipt = ScmDiffSummaryResultDeleteResponseSchema.parse(await params.delete(item));
       if (!receipt.success) { failures.push({ ...receipt, resultId: item.resultId }); continue; }
       if (receipt.resultId !== item.resultId || receipt.comparisonId !== comparison.id) {

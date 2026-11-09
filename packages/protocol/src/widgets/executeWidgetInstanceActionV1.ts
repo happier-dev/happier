@@ -4,7 +4,7 @@ import {
   WidgetInstanceActionInputSchemasV1, WidgetSurfaceReadV1Schema,
   WidgetMoveCaptureV1Schema, WidgetMoveDestinationV1Schema, WidgetInstanceActionOutputSchemasV1,
   readWidgetActionSurfaceV1,
-  type WidgetInstanceActionIdV1, type WidgetSurfaceMutationV1, type WidgetActionSurfacePortV1, type WidgetProjectAreaV1,
+  type WidgetInstanceActionIdV1, type WidgetSurfaceMutationV1, type WidgetActionSurfacePortV1, type WidgetProjectAreaV1, type WidgetSurfaceReadV1,
 } from './actionsV1.js';
 import { WidgetInstanceRefV1Schema, WidgetSurfaceRefV1Schema, setWidgetInputBindingsV1, type WidgetSurfaceRefV1, type WidgetInstanceRefV1, type WidgetInstanceV1 } from './widgetInstanceV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
@@ -27,14 +27,23 @@ export const readWidgetActionSurfacePortV1 = (deps: Pick<ActionExecutorDeps, 'wi
   ?? (surface.owner.kind === 'sessionBoard' && deps.sessionBoardAction ? createSessionBoardWidgetActionPortV1(deps.sessionBoardAction) : undefined);
 const surfacePort = readWidgetActionSurfacePortV1;
 
+/** Shared Project writes may name an unnamed instance; every other captured field stays exact. */
+function matchesWidgetWriteAcknowledgement(surface: WidgetSurfaceRefV1, expected: WidgetInstanceV1, actual: WidgetInstanceV1 | null | undefined): boolean {
+  if (sameStrictJsonValue(actual, expected)) return true;
+  return surface.owner.kind === 'project' && expected.displayName === undefined && actual?.displayName !== undefined
+    && sameStrictJsonValue(actual, { ...expected, displayName: actual.displayName });
+}
+
 /** All configured-instance frontdoors admit saved values before invoking their owner writer. */
 export async function admitWidgetInstanceConfigurationV1(
   deps: ActionExecutorDeps, ref: WidgetInstanceRefV1, instance: WidgetInstanceV1, context: ActionExecutorContext,
   groupBindings?: WidgetInstanceV1['bindings'],
   configurationPatch?: Parameters<NonNullable<ActionExecutorDeps['widgetInputs']>['resolve']>[0]['configurationPatch'],
+  admittedSurfaceRead?: WidgetSurfaceReadV1,
 ): Promise<Extract<ActionExecuteResult, { ok: false }> | null> {
   if (!deps.widgetInputs) return failure('widget_inputs_unavailable');
   const validation = await deps.widgetInputs.resolve({ ref, instance, context, admission: 'configuration',
+    ...(admittedSurfaceRead ? { admittedSurfaceRead } : {}),
     ...(groupBindings ? { groupBindings } : {}),
     ...(configurationPatch ? { configurationPatch } : {}),
     ...(context.signal ? { signal: context.signal } : {}) });
@@ -61,17 +70,17 @@ const knownRefusal = (code: string) => SessionBoardErrorCodeSchema.safeParse(cod
   || code === 'widget_group_width_no_fit' || code === 'widget_group_not_found' || code === 'widget_group_nesting_forbidden'
   || /^(widget_(instance_(changed|already_exists|not_found)|placement_(changed|ambiguous|required|unsupported)|index_placement_unsupported|size_unsupported|edit_denied|view_not_found)|widgets_move_conflict|invalid_widget_shared_content|account_target_mismatch|server_target_mismatch)$/.test(code);
 
-async function readSizeChoices(deps: ActionExecutorDeps, ref: WidgetInstanceRefV1, instance: WidgetInstanceV1, context: ActionExecutorContext, groupBindings?: WidgetInstanceV1['bindings']) {
+async function readSizeChoices(deps: ActionExecutorDeps, ref: WidgetInstanceRefV1, instance: WidgetInstanceV1, context: ActionExecutorContext, groupBindings?: WidgetInstanceV1['bindings'], admittedSurfaceRead?: WidgetSurfaceReadV1) {
   if (!deps.widgetInputs) return null;
-  const declaration = await deps.widgetInputs.readSizeDeclaration({ ref, instance, context, ...(groupBindings ? { groupBindings } : {}), ...(context.signal ? { signal: context.signal } : {}) });
+  const declaration = await deps.widgetInputs.readSizeDeclaration({ ref, instance, context, ...(groupBindings ? { groupBindings } : {}), ...(admittedSurfaceRead ? { admittedSurfaceRead } : {}), ...(context.signal ? { signal: context.signal } : {}) });
   context.signal?.throwIfAborted();
   return declaration ? resolveWidgetSizeChoicesV1(ref.surface.owner.kind, declaration) : null;
 }
 
 /** Universal and native Action frontdoors share exact-definition presentation admission. */
 export async function admitWidgetInstanceSizeV1(deps: ActionExecutorDeps, ref: WidgetInstanceRefV1, instance: WidgetInstanceV1,
-  requested: WidgetSizeV1 | undefined, context: ActionExecutorContext, groupBindings?: WidgetInstanceV1['bindings']): Promise<Readonly<{ size: WidgetSizeV1 | undefined }> | Extract<ActionExecuteResult, { ok: false }>> {
-  const choices = await readSizeChoices(deps, ref, instance, context, groupBindings);
+  requested: WidgetSizeV1 | undefined, context: ActionExecutorContext, groupBindings?: WidgetInstanceV1['bindings'], admittedSurfaceRead?: WidgetSurfaceReadV1): Promise<Readonly<{ size: WidgetSizeV1 | undefined }> | Extract<ActionExecuteResult, { ok: false }>> {
+  const choices = await readSizeChoices(deps, ref, instance, context, groupBindings, admittedSurfaceRead);
   if (!choices) return failure('widget_type_unavailable');
   if (requested !== undefined && !choices.sizes.includes(requested)) return failure('widget_size_unsupported');
   return { size: requested ?? choices.defaultSize };
@@ -85,9 +94,10 @@ async function transferWidget(
   let phase: 'preflight' | 'destination_add' | 'source_remove' | 'compensation' = 'preflight';
   let destinationPresence: 'present' | 'absent' | 'unknown' = 'unknown';
   let destinationArea: WidgetProjectAreaV1 | undefined;
+  let destinationInstance = instance;
   const destinationPort = surfacePort(deps, to.surface);
   const refused = (reasonCode: string) => ({ ...failure('widget_transfer_refused'), details: { fromRef, toRef, phase, source: 'present', destination: destinationPresence, reasonCode } });
-  const moved = (area = destinationArea) => ({ ok: true as const, result: { ref: toRef, fromRef, instance, status: 'moved' as const, ...(area ? { area } : {}) } });
+  const moved = (area = destinationArea) => ({ ok: true as const, result: { ref: toRef, fromRef, instance: destinationInstance, status: 'moved' as const, ...(area ? { area } : {}) } });
   const read = async (port: WidgetActionSurfacePortV1 | undefined, surface: WidgetSurfaceRefV1) => {
       try {
         if (!port) return { state: 'unknown' as const, instance: undefined, area: undefined };
@@ -100,7 +110,10 @@ async function transferWidget(
   const readFacts = () => Promise.all([read(sourcePort, fromRef.surface), read(destinationPort, to.surface)]);
   const observedResult = (reasonCode: string, [source, destination]: Awaited<ReturnType<typeof readFacts>>, allowRefusal = false): ActionExecuteResult => {
     // One bounded observation per owner, never an unbounded recovery loop or an unsafe retry.
-    if (source.state === 'absent' && destination.state === 'present' && sameStrictJsonValue(destination.instance, instance)) return moved(destination.area);
+    if (source.state === 'absent' && destination.state === 'present' && matchesWidgetWriteAcknowledgement(to.surface, destinationInstance, destination.instance)) {
+      destinationInstance = destination.instance!;
+      return moved(destination.area);
+    }
     const code = allowRefusal && source.state === 'present' && destination.state === 'absent' ? 'widget_transfer_refused' : 'widget_transfer_unknown';
     return { ...failure(code), details: { fromRef, toRef, phase, source: source.state, destination: destination.state, reasonCode,
       ...(source.state === 'absent' && destination.state === 'absent' ? { instance } : {}) } };
@@ -128,9 +141,9 @@ async function transferWidget(
     if (!captured.success) return refused('widget_source_capture_unavailable');
     if (!sameStrictJsonValue(captured.data.expectedInstance, instance)) return refused('widget_instance_changed');
     if (!deps.widgetInputs) return refused('widget_inputs_unavailable');
-    const validation = await deps.widgetInputs.resolve({ ref: toRef, instance, context, admission: 'configuration', ...(groupBindings ? { groupBindings } : {}), ...(context.signal ? { signal: context.signal } : {}) });
+    const validation = await deps.widgetInputs.resolve({ ref: toRef, instance, context, admission: 'configuration', admittedSurfaceRead: target.data, ...(groupBindings ? { groupBindings } : {}), ...(context.signal ? { signal: context.signal } : {}) });
     if (validation.status !== 'ready') return refused(`widget_destination_${validation.status}`);
-    const choices = await readSizeChoices(deps, toRef, instance, context, groupBindings);
+    const choices = await readSizeChoices(deps, toRef, instance, context, groupBindings, target.data);
     if (!choices) return refused('widget_type_unavailable');
     context.signal?.throwIfAborted();
     phase = 'destination_add';
@@ -145,7 +158,8 @@ async function transferWidget(
     const payload = added.result && typeof added.result === 'object' ? added.result : {};
     const destinationCapture = WidgetMoveCaptureV1Schema.safeParse(Reflect.get(payload, 'moveCapture'));
     if (!sameStrictJsonValue(Reflect.get(payload, 'ref'), toRef) || !destinationCapture.success
-      || !sameStrictJsonValue(destinationCapture.data.expectedInstance, instance)) return await observe('widget_destination_ack_unknown');
+      || !matchesWidgetWriteAcknowledgement(to.surface, instance, destinationCapture.data.expectedInstance)) return await observe('widget_destination_ack_unknown');
+    destinationInstance = destinationCapture.data.expectedInstance;
     destinationArea = destinationCapture.data.expectedPresentation?.area;
     phase = 'source_remove';
     const removed = await sourcePort.apply(fromRef.surface, { kind: 'remove', instanceId: instance.id, ...captured.data }, context, context.signal);
@@ -168,6 +182,7 @@ async function transferWidget(
 
 export async function executeWidgetInstanceActionV1(
   deps: ActionExecutorDeps, actionId: WidgetInstanceActionIdV1, input: unknown, context: ActionExecutorContext,
+  admittedSurfaceRead?: WidgetSurfaceReadV1,
 ): Promise<ActionExecuteResult> {
   const args = WidgetInstanceActionInputSchemasV1[actionId].parse(input);
   const ref = 'ref' in args ? args.ref : undefined;
@@ -180,11 +195,10 @@ export async function executeWidgetInstanceActionV1(
     return deps.widgetAreaLayoutSelect ? deps.widgetAreaLayoutSelect(surface, context, context.signal)
       : failure('widget_area_layout_owner_unavailable');
   }
-  const admission = await readWidgetActionSurfaceAdmissionV1(deps, surface, context);
+  const admission = admittedSurfaceRead ? { ok: true as const, read: admittedSurfaceRead }
+    : await readWidgetActionSurfaceAdmissionV1(deps, surface, context);
   if (!admission.ok) return admission;
   if (actionId.startsWith('widgets.area.layout.')) {
-    if (actionId === 'widgets.area.layout.delete' && surface.owner.kind === 'project' && !surface.owner.layoutId)
-      return failure('widget_area_layout_default_protected');
     if (!deps.widgetAreaLayouts) return failure('widget_layouts_unavailable');
     try {
       let result: unknown;
@@ -228,8 +242,8 @@ export async function executeWidgetInstanceActionV1(
       const descriptor = projectWidgetPublicProfileDescriptorV1(entry.definition, { ...entry, inputs: { fields: entry.fields } });
       return descriptor ? [{ ...entry, fields: [...descriptor.inputs?.fields ?? []], inputSchema: descriptor.inputSchema }] : [];
     }) : source;
-    const entries = admittedSource.filter(entry => isWidgetTargetHostableV1({ inputs: { fields: entry.fields } }, surface.owner.kind))
-      .map(entry => ({ ...entry, presentation: resolveWidgetSizeChoicesV1(surface.owner.kind, entry.sizeDeclaration) }));
+    const entries = admittedSource.filter(entry => isWidgetTargetHostableV1({ target: entry.target, inputs: { fields: entry.fields } }, surface.owner.kind))
+      .map(({ target: _target, ...entry }) => ({ ...entry, presentation: resolveWidgetSizeChoicesV1(surface.owner.kind, entry.sizeDeclaration) }));
     return { ok: true, result: { surface, entries, presentation: resolveWidgetSizeChoicesV1(surface.owner.kind) } };
   }
   if (actionId === 'widgets.item.refresh') {
@@ -262,9 +276,9 @@ export async function executeWidgetInstanceActionV1(
         const add = WidgetInstanceActionInputSchemasV1[actionId].parse(args);
         for (const child of add.group.children) {
           const childRef = { surface, instanceId: child.instance.id };
-          const configuration = await admitWidgetInstanceConfigurationV1(deps, childRef, child.instance, context, add.group.context);
+          const configuration = await admitWidgetInstanceConfigurationV1(deps, childRef, child.instance, context, add.group.context, undefined, state);
           if (configuration) return configuration;
-          const size = await admitWidgetInstanceSizeV1(deps, childRef, child.instance, child.size, context, add.group.context);
+          const size = await admitWidgetInstanceSizeV1(deps, childRef, child.instance, child.size, context, add.group.context, state);
           if ('ok' in size) return size;
         }
         groupIntent = { kind: 'group_add', group: add.group, ...(add.toIndex === undefined ? {} : { toIndex: add.toIndex }) }; break;
@@ -309,7 +323,7 @@ export async function executeWidgetInstanceActionV1(
   if (actionId === 'widgets.item.inputs.validate') {
     if (!deps.widgetInputs || !ref || !existing || !('bindings' in args)) return failure('widget_inputs_unavailable');
     const { bindings } = WidgetInstanceActionInputSchemasV1[actionId].parse(args);
-    return { ok: true, result: await deps.widgetInputs.resolve({ ref, instance: { ...existing, bindings }, context, admission: 'configuration', ...(context.signal ? { signal: context.signal } : {}) }) };
+    return { ok: true, result: await deps.widgetInputs.resolve({ ref, instance: { ...existing, bindings }, context, admission: 'configuration', admittedSurfaceRead: state, ...(context.signal ? { signal: context.signal } : {}) }) };
   }
   if (!state.canEdit) return failure('widget_edit_denied');
   let intent: WidgetSurfaceMutationV1;
@@ -322,7 +336,7 @@ export async function executeWidgetInstanceActionV1(
       const native = readBuiltinWidgetDescriptorV1(add.instance.definition);
       if (native && !isWidgetTargetHostableV1(native, surface.owner.kind)) return failure('unsupported_widget_surface');
       if (state.instances.some(entry => entry.instance.id === add.instance.id)) return failure('widget_instance_already_exists');
-      const admitted = await admitWidgetInstanceSizeV1(deps, { surface, instanceId: add.instance.id }, add.instance, add.size, context);
+      const admitted = await admitWidgetInstanceSizeV1(deps, { surface, instanceId: add.instance.id }, add.instance, add.size, context, undefined, state);
       if ('ok' in admitted) return admitted;
       const { size } = admitted;
       intent = { kind: 'add', instance: add.instance, ...(add.area ? { area: add.area } : {}), ...(size ? { presentation: { size } } : {}), ...(add.toIndex === undefined ? {} : { toIndex: add.toIndex }), ...(add.placement ? { placement: add.placement } : {}), ...(add.groupId ? { groupId: add.groupId } : {}) };
@@ -369,7 +383,7 @@ export async function executeWidgetInstanceActionV1(
       const resize = WidgetInstanceActionInputSchemasV1[actionId].parse(args);
       if (!('size' in resize)) return failure('widget_size_required');
       const size = resize.size;
-      const admitted = await admitWidgetInstanceSizeV1(deps, ref!, existing!, size, context);
+      const admitted = await admitWidgetInstanceSizeV1(deps, ref!, existing!, size, context, undefined, state);
       if ('ok' in admitted) return admitted;
       intent = { kind: 'size', instanceId: ref!.instanceId, size };
       break;
@@ -388,7 +402,7 @@ export async function executeWidgetInstanceActionV1(
       const { bindings: selectedBindings, paths } = WidgetInstanceActionInputSchemasV1[actionId].parse(args);
       const bindings = setWidgetInputBindingsV1(existing!.bindings, selectedBindings, paths);
       const refusal = await admitWidgetInstanceConfigurationV1(deps, ref!, { ...existing!, bindings }, context, undefined,
-        paths ? { paths, previousBindings: existing!.bindings } : undefined);
+        paths ? { paths, previousBindings: existing!.bindings } : undefined, state);
       if (refusal) return refusal;
       intent = { kind: 'inputs', instanceId: ref!.instanceId, bindings: selectedBindings, ...(paths ? { paths } : {}) };
       break;
@@ -397,14 +411,14 @@ export async function executeWidgetInstanceActionV1(
   }
   if (intent.kind === 'add') {
     const instanceRef = WidgetInstanceRefV1Schema.parse({ surface, instanceId: intent.instance.id });
-    const refusal = await admitWidgetInstanceConfigurationV1(deps, instanceRef, intent.instance, context);
+    const refusal = await admitWidgetInstanceConfigurationV1(deps, instanceRef, intent.instance, context, undefined, undefined, state);
     if (refusal) return refusal;
     let added: ActionExecuteResult;
     try { added = await port.apply(surface, intent, context, context.signal); }
     catch { return { ...failure('widget_add_unknown'), details: { ref: instanceRef, reasonCode: context.signal?.aborted ? 'cancelled' : 'widget_write_ack_unknown' } }; }
     if (!added.ok) return knownRefusal(added.errorCode) ? added : { ...failure('widget_add_unknown'), details: { ref: instanceRef, reasonCode: added.errorCode } };
     const acknowledged = WidgetInstanceActionOutputSchemasV1['widgets.item.add'].safeParse(added.result);
-    if (!acknowledged.success || !sameStrictJsonValue(acknowledged.data.ref, instanceRef) || !sameStrictJsonValue(acknowledged.data.instance, intent.instance))
+    if (!acknowledged.success || !sameStrictJsonValue(acknowledged.data.ref, instanceRef) || !matchesWidgetWriteAcknowledgement(surface, intent.instance, acknowledged.data.instance))
       return { ...failure('widget_add_unknown'), details: { ref: instanceRef, reasonCode: 'widget_add_ack_unknown' } };
     return { ok: true, result: acknowledged.data };
   }

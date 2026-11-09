@@ -27,7 +27,7 @@ describe('Project preparation Action contracts', () => {
     expect(discovered.outputSchema !== undefined).toBe(includeOutputSchema);
   });
 
-  it('keeps remembered setup consent human-owned while exposing a retained request on agent, MCP and CLI', () => {
+  it('asks by default for remembered setup consent on agent, MCP and CLI, and honors a surface waiver', () => {
     const spec = getActionSpec('projects.prepare');
     const input = { workspace: { serverId: 'home', workspaceId: 'workspace', machineId: 'machine', rootPath: '/repo' },
       phase: 'setup', heldOperationId: 'held', expectedEffectDigest: 'reviewed', consentScope: 'untilChanged' };
@@ -39,8 +39,30 @@ describe('Project preparation Action contracts', () => {
     for (const surface of ['agent', 'mcp', 'cli'] as const) {
       expect(spec.surfaces[surface]).toBe(true);
       expect(resolveActionApprovalRouting({ actionId: spec.id, spec, input, context: { surface, authority: 'account_automation' },
-        settings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'projects.prepare': [surface] } }),
+        settings: ActionsSettingsV1Schema.parse({ v: 1 }),
       })).toMatchObject({ required: true, flow: 'deferred' });
+      expect(resolveActionApprovalRouting({ actionId: spec.id, spec, input, context: { surface, authority: 'account_automation' },
+        settings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'projects.prepare': [surface] } }),
+      }).required).toBe(false);
+    }
+  });
+  it('publishes Project page discovery as a closed client read with qualified plugin destinations', () => {
+    const spec = getActionSpec(ActionIdSchema.parse('projects.pages.list'));
+    expect(spec).toMatchObject({ safety: 'safe', sideEffectClass: 'read', executionPlacement: 'client',
+      surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true } });
+    expect(resolveActionApprovalRouting({ actionId: spec.id, spec, context: { surface: 'agent' } }).required).toBe(false);
+    const input = { workspaceRefId: 'checkout', serverId: 'home' };
+    expect(spec.inputSchema.parse(input)).toEqual(input);
+    expect(spec.inputSchema.safeParse({ workspaceRefId: 'checkout' }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ ...input, machineId: 'machine' }).success).toBe(false);
+    const builtin = { id: 'overview', kind: 'builtin', title: 'Overview', icon: 'info',
+      href: '/projects/checkout?serverId=home', disabledReason: null };
+    const plugin = { ...builtin, id: 'acme.builds:builds', kind: 'plugin', title: 'Builds', icon: 'action',
+      href: '/projects/checkout/plugins/acme.builds/builds?serverId=home', destination: { pluginId: 'acme.builds', localId: 'builds' } };
+    expect(spec.outputSchema.parse({ pages: [builtin, plugin] })).toEqual({ pages: [builtin, plugin] });
+    for (const page of [{ ...plugin, destination: undefined }, { ...builtin, destination: plugin.destination },
+      { ...plugin, placement: 'hidden' }, { ...plugin, destination: { ...plugin.destination, authority: true } }]) {
+      expect(spec.outputSchema.safeParse({ pages: [page] }).success).toBe(false);
     }
   });
   it.each([

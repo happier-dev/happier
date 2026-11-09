@@ -82,9 +82,9 @@ const WorkerUpdateFieldsV1Schema = lazyZodSchema(() => z.strictObject({
     modelId: z.optional(z.string().check(z.minLength(1))),
   })),
   headline: z.string().check(z.minLength(1)),
-  // Preserve the incumbent completion owner's 8,000-character result bound.
-  // Omitted when a proved send already delivered final text; status/pointer still wake the lead.
-  result: z.optional(ExecutionRunCompletionV1Schema.shape.summary._zod.def.innerType),
+  // Native final messages remain complete until the receiving host fits its
+  // optional context against the active Provider's actual allowance.
+  result: z.optional(z.string()),
   deliverables: z.optional(WorkerDeliverablesV1Schema),
   truncated: z.optional(z.boolean()),
   transcriptPointer: z.optional(WorkerUpdateTranscriptPointerV1Schema),
@@ -109,7 +109,6 @@ export const WorkerUpdateV1Schema = lazyZodSchema(() => z.discriminatedUnion('wo
     ownerState: WorkflowRunStateV1Schema,
   }),
 ]).check(z.superRefine((update, context) => {
-  refineWorkerDeliverableResultV1(update.result, update.deliverables, context, 'result');
   const sourceSessionId = update.workerKind === 'session' ? update.workerId
     : update.transcriptPointer?.kind === 'execution_run' ? update.transcriptPointer.sessionId : null;
   if (!workerDeliverablesBelongToSessionV1(update.deliverables, sourceSessionId)) {

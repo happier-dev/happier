@@ -29,11 +29,12 @@ async function readListing(ctx: RegistryFetchContextV1, source: RegistrySourceV1
 
 export const happierNpmRegistryAdapterV1: RegistryFormatAdapterV1 = {
   format: 'happier-npm', kinds: ['plugin', 'agent'], browserFetchable: () => true, supportsQuery: true,
+  supportsContributionFamily: true,
   async list(ctx, req) {
     const from = req.cursor ? Number(req.cursor) : 0;
     if (!Number.isSafeInteger(from) || from < 0 || req.cursor && !/^\d+$/.test(req.cursor)) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
     const response = await ctx.http.getJson(buildCommunityNpmSearchUrlV1(new URL(req.source.url).origin,
-      { text: req.query ?? '', from, size: MARKETPLACE_INDEX_PAGE_MAX_SIZE_V1 }), { source: req.source });
+      { text: req.query ?? '', contributionFamily: req.contributionFamily, from, size: MARKETPLACE_INDEX_PAGE_MAX_SIZE_V1 }), { source: req.source });
     if (!response.ok) return { sourceId: req.source.id, status: response.status, items: [], nextCursor: null };
     const search = readCommunityNpmSearchV1(response.value, { from, size: MARKETPLACE_INDEX_PAGE_MAX_SIZE_V1 });
     const outcomes = await Promise.allSettled(search.candidates.map(async candidate => {
@@ -46,8 +47,10 @@ export const happierNpmRegistryAdapterV1: RegistryFormatAdapterV1 = {
     const body = response.value;
     const returned = body !== null && typeof body === 'object' && 'objects' in body && Array.isArray(body.objects) ? body.objects.length : 0;
     return { sourceId: req.source.id, status: { state: 'ok', fetchedAt: response.fetchedAt },
-      items: entries.filter(entry => registryPluginSupportsKindV1(entry, req.kind)).map(entry => registryPluginSummaryV1(req.source, entry)),
-      ...(req.kind === 'plugin' ? { total: search.total } : {}),
+      items: entries.filter(entry => registryPluginSupportsKindV1(entry, req.kind)
+        && (!req.contributionFamily || entry.summary.contributions.includes(req.contributionFamily)))
+        .map(entry => registryPluginSummaryV1(req.source, entry)),
+      ...(req.kind === 'plugin' && !req.contributionFamily ? { total: search.total } : {}),
       nextCursor: returned > 0 && from + returned < search.total ? String(from + returned) : null };
   },
   async read(ctx, req) {

@@ -81,4 +81,32 @@ describe('notification contribution schemas', () => {
       }],
     }).success).toBe(false);
   });
+
+  it('retains plugin-chosen buttons with localized labels and closed open or Action effects', () => {
+    const category = {
+      id: 'review-ready', kind: 'plugin', title: 'Review ready', eventIds: [],
+      buttons: [
+        { id: 'See changes ✨', label: { key: 'review.open', fallback: 'See changes' },
+          effect: { kind: 'open', page: { pageId: 'reviews', subPath: 'changes/42' } } },
+        { id: 'merge-42', label: 'Merge', effect: { kind: 'action', invocation: {
+          action: { pluginId: 'com.acme.fixture', localId: 'merge' }, input: { reviewId: '42', nested: [null, true] },
+        } } },
+      ],
+    };
+    expect(PluginNotificationCategoryContributionV2Schema.parse(category)).toEqual(category);
+    const first = category.buttons[0]!;
+    for (const buttons of [
+      [first, first],
+      [{ ...first, id: '' }],
+      [{ ...first, effect: { kind: 'open', extra: true } }],
+      [{ ...first, effect: { kind: 'action', invocation: { action: { pluginId: 'com.acme.fixture', localId: 'merge' }, args: {} } } }],
+      [{ ...first, effect: { kind: 'action', invocation: { action: { pluginId: 'com.acme.fixture', localId: 'merge' }, input: {}, callback: 'merge' } } }],
+      [{ ...first, effect: { kind: 'action', invocation: { action: { pluginId: 'com.acme.fixture', localId: 'merge' }, input: new Date() } } }],
+    ]) expect(PluginNotificationCategoryContributionV2Schema.safeParse({ ...category, buttons }).success).toBe(false);
+    for (const input of [null, '42', [1, true], { item: '42' }]) expect(PluginNotificationCategoryContributionV2Schema.safeParse({
+      ...category, buttons: [{ id: 'Accept', label: 'Accept', effect: { kind: 'action', invocation: {
+        action: { pluginId: 'com.acme.fixture', localId: 'merge' }, input,
+      } } }],
+    }).success).toBe(true);
+  });
 });

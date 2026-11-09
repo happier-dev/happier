@@ -513,7 +513,7 @@ export function materializeRecipientOperationRequestV1FromOperation(input: Reado
   }
   const parameters = input.parameters as Readonly<Record<string, unknown>>;
   let path = operation.request.pathTemplate;
-  const query = new URLSearchParams(operation.request.queryTemplate.map((entry) => [entry.name, entry.value]));
+  const query = new URLSearchParams(operation.request.queryTemplate.map<[string, string]>((entry) => [entry.name, entry.value]));
   const headers: Record<string, string> = Object.fromEntries(
     operation.request.headerTemplate.map((entry) => [entry.name, entry.value]),
   );

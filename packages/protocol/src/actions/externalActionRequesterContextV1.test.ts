@@ -98,6 +98,11 @@ describe('private requester Account context on an external Action', () => {
     expect(open({ ...receive, purpose: { kind: 'managed_finite_wake', target: { ...target, expectedIntentRevision: 5 } } })).toBeNull();
     expect(open({ ...receive, authorization: { ...controllerCarrier, binding: { ...controllerCarrier.binding, requestId: 'other-request' } } })).toBeNull();
     expect(open({ ...receive, machineId: 'another-controller' })).toBeNull();
+    const { controller: _controller, ...portableTarget } = target;
+    expect(() => seal({ authorization: { ...guestCarrier, managedFiniteWake: { ...guestCarrier.managedFiniteWake,
+      target: portableTarget } }, credentials, purpose: { kind: 'managed_finite_wake', target: portableTarget },
+      installationPublicKey: controller.publicKey, randomBytes: tweetnacl.randomBytes }))
+      .toThrow('requester_account_controller_mismatch');
     expect(JSON.stringify(controllerCarrier)).not.toContain(credentials.token);
   });
   it('keeps private RPC custody bound to its exact existing method and payload', () => {

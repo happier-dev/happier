@@ -13,6 +13,21 @@ describe('managed intent transport admission', () => {
     expect(protocol.ManagedIntentResultSchema.safeParse({ ...completed, completed: true }).success).toBe(false);
   });
 
+  it('correlates Account-controlled activity and drains without inventing a native controller', () => {
+    const target = { homeId: 'home', managedId: 'managed', expectedRevision: 4 };
+    for (const [schema, request] of [
+      [protocol.ManagedActivityReadRequestV1Schema, target],
+      [protocol.ManagedAdmissionDrainConfirmRequestV1Schema, { ...target, action: 'begin' }],
+      [protocol.ManagedAdmissionDrainConfirmRequestV1Schema, { ...target, action: 'resume' }],
+    ] as const) {
+      expect(schema.parse(request)).toEqual(request);
+      const native = { ...request, controller: { machineId: 'controller', installationId: 'installation' } };
+      expect(schema.parse(native)).toEqual(native);
+      expect(schema.safeParse({ ...request, controller: { machineId: 'controller' } }).success).toBe(false);
+      expect(schema.safeParse({ ...request, actorAccountId: 'forged' }).success).toBe(false);
+    }
+  });
+
   it('requires the explicit reviewed rebuild specialization instead of a generic immediate native command', () => {
     const schema = Reflect.get(protocol, 'DevcontainerRebuildIntentV1Schema');
     const intent = { managedMachineId: 'managed', expectedRevision: 4, kind: 'rebuild', reviewedEffectDigest: 'reviewed-config' };

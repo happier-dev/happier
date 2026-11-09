@@ -57,4 +57,21 @@ describe('targeted Action RPC request', () => {
     expect(TargetedActionRpcRequestV1Schema.safeParse({ v: 1, kind: 'targeted_action_rpc', input, target, defaultSessionId: ' ' }).success)
       .toBe(false);
   });
+
+  it('carries only the host-stamped plugin identity for a Session target', () => {
+    const request = {
+      v: 1,
+      kind: 'targeted_action_rpc',
+      input: { sessionId: 'session-1', sourceRef: 'binding:ops', sourceRevisionOrEpoch: '1' },
+      target: { kind: 'session', sessionId: 'session-1' },
+      pluginCaller: { pluginId: 'happier.channels', contributionLocalId: 'outward-supervisor' },
+    };
+    expect(TargetedActionRpcRequestV1Schema.parse(request)).toEqual(request);
+    expect(TargetedActionRpcRequestV1Schema.safeParse({
+      ...request, pluginCaller: { ...request.pluginCaller, authority: 'present_user' },
+    }).success).toBe(false);
+    expect(TargetedActionRpcRequestV1Schema.safeParse({
+      ...request, target: { kind: 'machine', machineId: 'machine-1' },
+    }).success).toBe(false);
+  });
 });

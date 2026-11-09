@@ -29,6 +29,32 @@ function requestFor(actionId: Parameters<typeof getActionSpec>[0], input: unknow
 }
 
 describe('resolveApprovalExecutor', () => {
+  it.each(['cli', 'mcp', 'ui'] as const)('keeps the original Account Stop Ask distinct from signed Machine custody after %s public projection', surface => {
+    const actionId = 'localServices.actions.stopManaged';
+    const input = { requestId: 'stop-service', action: 'stop_managed',
+      target: { kind: 'managed_service', managedServiceId: 'service', machineId: 'machine' } };
+    const target = { kind: 'machine' as const, machineId: 'machine' };
+    const context = { surface, authority: 'account_automation' as const, actionCaller: { kind: 'host' as const },
+      serverId: 'home', serverIdentityId: 'stable-home', runtimeAccountId: 'account',
+      actionRequestId: 'request', externalActionTarget: target, defaultSessionMachineId: 'machine' };
+    const origin = buildApprovalExecutionOriginV1({ actionId, input, targetSessionId: null, context });
+    const unsigned = ApprovalRequestV2Schema.parse({ ...requestFor(actionId, input, surface), executionOriginV1: origin });
+    expect(resolveApprovalExecutor(unsigned)).toEqual({ kind: 'app', placement: 'machine' });
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(unsigned))))
+      .toEqual({ kind: 'app', placement: 'machine' });
+    const signedOrigin = buildApprovalExecutionOriginV1({ actionId, input, targetSessionId: null,
+      context: { ...context, signExternalActionApprovalInput: () => 'a'.repeat(86),
+        externalActionExecutionAuthorization: { v: 1, token: 'home-signed', binding: {
+          accountId: 'account', authentication: { kind: 'account', tokenEpoch: 1 },
+          serverIdentityId: 'stable-home', machineId: 'machine', custodianAccountId: 'host',
+          installationId: 'installation', actionId, requestId: 'request', requestEnvelopeDigest: 'a'.repeat(43), target,
+        } } } });
+    const signed = ApprovalRequestV2Schema.parse({ ...unsigned, requestedSurface: signedOrigin?.surface, executionOriginV1: signedOrigin });
+    expect(resolveApprovalExecutor(signed)).toEqual({ kind: 'daemon', machineId: 'machine' });
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(signed))))
+      .toEqual({ kind: 'daemon', machineId: 'machine' });
+  });
+
   it('replays a person\'s UI Ask on the app when no originating Machine exists', () => {
     const request = requestFor('session.stop', { sessionId: 'session' }, 'ui');
     const { machineId: _machineId, ...origin } = request.executionOriginV1;
@@ -182,7 +208,7 @@ describe('resolveApprovalExecutor', () => {
 
   it.each(surfaces)('routes placement and private custody independently of the %s surface', surface => {
     for (const row of cases) {
-      const expected = row.expected.kind === 'live_invocation' && (surface === 'agent' || surface === 'mcp' || surface === 'rpc' || surface === 'api')
+      const expected = row.expected.kind === 'live_invocation' && (surface === 'agent' || surface === 'rpc' || surface === 'api')
         ? { ...row.expected, daemonMachineId: 'machine' } : row.expected;
       expect(resolveApprovalExecutor(requestFor(row.actionId, row.input, surface)), row.actionId).toEqual(expected);
     }
