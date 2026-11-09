@@ -272,6 +272,7 @@ describe('registered GitHub REST → Triage source contract', () => {
         : { status: 200, body: { ...GITHUB_REPOSITORY_RESPONSE,
             ...(outcome === 'mismatch' ? { id: 999 } : {}) } };
       if (path === `/repos/${REPOSITORY_KEY}/pulls/1284`) return { status: 200, body: GITHUB_PULL_REQUEST_RESPONSE };
+      if (path === '/graphql') return { status: 403, body: {} };
       return undefined;
     } });
     const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
@@ -282,10 +283,14 @@ describe('registered GitHub REST → Triage source contract', () => {
       const result = TriageGetResultV1Schema.parse(await plugin.invokeAction(GITHUB_TRIAGE_ACTION_IDS_V1.get,
         { v: 1, instance: configuredInstance({ scope: 'account' }), localRef }, { surface: 'plugin' }));
       expect(result).toMatchObject({ kind: outcome === 'present' ? 'present' : 'unresolved', localRef });
-      if (outcome === 'present') expect(result).toMatchObject({ locator: { routingToken: REPOSITORY_KEY } });
+      if (outcome === 'present') expect(result).toMatchObject({
+        locator: { routingToken: REPOSITORY_KEY },
+        snapshot: { facts: expect.arrayContaining([{ id: 'github/checks', importance: 'primary',
+          value: { kind: 'status', value: 'Checks unavailable', tone: 'warning' } }]) },
+      });
       expect(transport.requests.map(request => new URL(request.url).pathname)).toEqual([
         `/repositories/${GITHUB_FIXTURE_REPOSITORY_ID}`,
-        ...(outcome === 'present' ? [`/repos/${REPOSITORY_KEY}/pulls/1284`] : []),
+        ...(outcome === 'present' ? [`/repos/${REPOSITORY_KEY}/pulls/1284`, '/graphql'] : []),
       ]);
       expect(transport.materializeCount()).toBe(1);
     } finally { await plugin.dispose(); }
@@ -1681,6 +1686,7 @@ describe('GitHub Triage source operations', () => {
   it('routes an account-wide get through the last-known locator the target observed', async () => {
     const stub = createStubGithubTransport({
       respond: (request): StubHttpResponse | undefined => {
+        if (request.url.endsWith('/graphql')) return { status: 403, body: {} };
         if (!request.url.endsWith(`/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`)) {
           return undefined;
         }
@@ -1711,7 +1717,12 @@ describe('GitHub Triage source operations', () => {
     expect(() => TriageGetResultV1Schema.parse(result)).not.toThrow();
     expect(result.kind).toBe('present');
     expect(result.localRef).toEqual(localRef);
-    expect(stub.requests).toHaveLength(1);
+    expect(stub.requests.map(request => new URL(request.url).pathname)).toEqual([
+      `/repos/${REPOSITORY_KEY}/pulls/1284`, '/graphql',
+    ]);
+    expect(result).toMatchObject({ snapshot: { facts: expect.arrayContaining([
+      { id: 'github/checks', importance: 'primary', value: { kind: 'status', value: 'Checks unavailable', tone: 'warning' } },
+    ]) } });
   });
 
   it('answers unresolved without an outbound call when the last-known locator carries no usable route', async () => {

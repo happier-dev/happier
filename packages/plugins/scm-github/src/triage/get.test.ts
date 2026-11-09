@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TriageSourceEntrySnapshotV1Schema } from '@happier-dev/triage-protocol/v1';
+import { TriageGetResultV1Schema, TriageSourceEntrySnapshotV1Schema } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 
 import {
@@ -13,6 +13,8 @@ import {
   createStubGithubTransport,
   createTestGithubApiClient,
   fixedClock,
+  githubChecksBatchResponse,
+  readRecordedJsonBody,
   type RecordedGithubRequest,
   type StubHttpResponse,
 } from './testkit/githubTriage.test-support.js';
@@ -75,6 +77,41 @@ async function runGet(input: Readonly<{
 }
 
 describe('GitHub triage get', () => {
+  it.each(['failing', 'running', 'passing', 'empty', 'partial', 'unavailable', 'superseded'] as const)('exposes %s checks through the exact detail result with one counts read', async (state) => {
+    const { observation, transport } = await runGet({ localRef: PULL_REQUEST_REF, respond: request => {
+      if (request.url.endsWith('/pulls/1284')) return { status: 200, body: {
+        ...GITHUB_PULL_REQUEST_RESPONSE,
+        head: { ...GITHUB_PULL_REQUEST_RESPONSE.head, sha: 'a'.repeat(40) },
+      } };
+      if (request.url.endsWith('/graphql')) {
+        if (state === 'unavailable') return { status: 403, body: {} };
+        return githubChecksBatchResponse(request, state === 'superseded' ? { pullRequest: {
+          headRefOid: 'b'.repeat(40), commits: { nodes: [] },
+        } } : { nodes: Array.from({ length: state === 'empty' ? 0 : 250 }, () => ({
+          __typename: 'CheckRun', status: state === 'running' ? 'IN_PROGRESS' : 'COMPLETED',
+          conclusion: state === 'passing' ? 'SUCCESS' : 'FAILURE',
+        })), ...(state === 'partial' ? { errors: [{ message: 'Partial checks response', path: ['row0'] }] } : {}) });
+      }
+      return undefined;
+    } });
+    const result = TriageGetResultV1Schema.parse(toTriageGetResult(observation, createTriageSourceV1Fixture().configuredInstance));
+    expect(result.kind).toBe('present');
+    if (result.kind !== 'present') return;
+    const checks = result.snapshot.facts.find(fact => fact.id === 'github/checks');
+    if (state === 'empty') expect(checks).toBeUndefined();
+    else expect(checks).toMatchObject({
+      value: state === 'failing' ? { value: '250 failing', tone: 'danger' }
+        : state === 'running' ? { value: 'Running', tone: 'info' }
+          : state === 'passing' ? { value: 'All passing', tone: 'success' }
+          : { value: 'Checks unavailable', tone: 'warning' },
+    });
+    const reads = transport.requests.filter(request => request.url.endsWith('/graphql'));
+    expect(reads).toHaveLength(1);
+    const body = readRecordedJsonBody(reads[0]!) as { query: string };
+    expect(body.query).toContain('checkRunCountsByState');
+    expect(body.query).not.toContain('contexts(first:');
+  });
+
   it('carries complete native issue opening data only through the exact get result', async () => {
     const body = '# Full issue\n' + 'Complete native Markdown.\n'.repeat(1_000);
     const { observation, transport } = await runGet({ localRef: ISSUE_REF,

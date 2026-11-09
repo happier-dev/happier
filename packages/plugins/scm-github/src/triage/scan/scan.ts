@@ -16,7 +16,7 @@ import {
 } from '../errors.js';
 import { decodeGithubSearchItem, projectGithubEntry } from '../mapping/entry.js';
 import { readGithubChecksConditionBatch, type GithubChecksBatchTargetV1 } from '../checksCondition.js';
-import type { GithubChecksSurfaceV1 } from '../checks.js';
+import { projectGithubChecksRowState, type GithubChecksSurfaceV1 } from '../checks.js';
 import {
   GITHUB_SEARCH_RESULT_CEILING_V1,
   GITHUB_SCAN_PARTIAL_REASON_PRIORITY_V1,
@@ -482,8 +482,7 @@ export async function runGithubTriageScan(
     const projection = projectGithubEntry(view, repositoryId, {
       additionsDeletions: view.kindId === 'pull-request' ? 'detailOnly' : null,
       reviewDecision: surface?.reviewDecision ?? null,
-      checks: checksFailure !== null || surface?.state === 'unknown' ? 'unavailable'
-        : surface?.rowState ?? null,
+      checks: surface === undefined ? null : projectGithubChecksRowState(surface),
     });
     if (projection === null) {
       health.omittedItemCount += 1;

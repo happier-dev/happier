@@ -25,6 +25,9 @@ import {
   type GithubRawEntityViewV1,
 } from './mapping/entry.js';
 import { mapGithubMergeability } from './mapping/state.js';
+import { buildGithubStateRowFactsV1 } from './mapping/facts.js';
+import { readGithubChecksConditionBatch } from './checksCondition.js';
+import { projectGithubChecksRowState } from './checks.js';
 import {
   readGithubEntryMetadataFields,
   projectGithubIssueOverview,
@@ -267,7 +270,21 @@ async function readGithubNonAlertTriageGet(
     ?? createGithubRepositoryReader({ client: dependencies.client, now: dependencies.now });
 
   if (input.localRef.kindId === 'pull-request') {
-    return (await readGithubPullRequest(input.localRef, route, repositories, dependencies)).observation;
+    const read = await readGithubPullRequest(input.localRef, route, repositories, dependencies);
+    if (read.observation.kind !== 'present' || read.facts?.headRevision == null) return read.observation;
+    // The opened detail needs the same head-qualified counts the list shows, not
+    // context pages. Keep this demand out of the shared PR read used by writes.
+    const [checks] = await readGithubChecksConditionBatch([{
+      route, pullRequestNumber: read.facts.number, headSha: read.facts.headRevision, depth: 'counts',
+    }], dependencies);
+    const surface = checks?.surface;
+    const facts = buildGithubStateRowFactsV1({
+      reviewDecision: null,
+      checks: surface == null ? 'unavailable' : projectGithubChecksRowState(surface),
+    });
+    return Object.freeze({ ...read.observation, snapshot: Object.freeze({
+      ...read.observation.snapshot, rowFacts: Object.freeze([...read.observation.snapshot.rowFacts, ...facts]),
+    }) });
   }
   if (input.localRef.kindId !== 'issue') return unresolved(input.localRef, { class: 'unsupportedContract', code: 'github_detail_kind_unsupported' });
   const read = await readGithubIssue(input.localRef, route, repositories, dependencies);

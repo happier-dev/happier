@@ -98,6 +98,12 @@ export type GithubChecksSurfaceV1 = Readonly<{
   rowState: GithubChecksRowStateV1 | null;
 }>;
 
+/** Both collection and exact-detail facts preserve an unreadable checks answer. */
+export function projectGithubChecksRowState(surface: GithubChecksSurfaceV1): GithubChecksRowStateV1 | 'unavailable' | null {
+  return surface.state === 'unknown' || surface.checkRunsFailure !== null || surface.commitStatusFailure !== null
+    ? 'unavailable' : surface.rowState;
+}
+
 /** Body-free native facts acquired alongside the current-head check rollup. */
 export type GithubNativePullRequestFactsV1 = Readonly<{
   /** Native viewer fact from the existing summary; absence remains unknown. */
