@@ -11,9 +11,10 @@ export function createFetchPluginHttpRuntime(fetch: Fetch): PluginHttpRuntimeAda
     const open = async (request: HttpRequest, signal?: AbortSignal) => {
         signal?.throwIfAborted();
         // Explicit reads revalidate even when a write changed a different URL.
-        const response = await fetch(request.url, { method: request.method ?? 'GET', headers: request.headers,
+        const init: FetchInit & { cache: 'no-cache' } = { method: request.method ?? 'GET', headers: request.headers,
             ...(request.body === undefined ? {} : { body: request.body as FetchInit['body'] }),
-            redirect: request.redirect, credentials: 'omit', cache: 'no-cache', ...(signal ? { signal } : {}) });
+            redirect: request.redirect, credentials: 'omit', cache: 'no-cache', ...(signal ? { signal } : {}) };
+        const response = await fetch(request.url, init);
         if (response.type === 'opaqueredirect' || response.status === 0
             || (response.redirected && request.redirect !== 'follow')) {
             await response.body?.cancel().catch(() => undefined);
