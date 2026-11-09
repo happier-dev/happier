@@ -3730,7 +3730,10 @@ replaces that whole span verbatim. The original comment retains the selected
 quote and offsets. Agent guidance preserves text outside that marked selection
 unless requested otherwise; the word diff shows every change and notes changes
 outside the selection when its original span can be located in the reviewed text.
-The replacement remains verbatim.
+The replacement remains verbatim. Discussion intake derives its marked paragraph
+and revision from one current Doc read through the shared passage owner, including
+replies asking to redo a historical suggestion. It never uses the old proposal’s
+replacement as the current paragraph.
 Explicit passage inputs retain their authored basis, and acceptance still
 verifies the reviewed source.
 

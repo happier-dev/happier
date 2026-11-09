@@ -55,10 +55,12 @@ An explicitly armed Replace mode accepts an empty replacement to delete the
 selected matches; an empty field alone does not arm replacement.
 
 Preview hashes cover raw bytes, including a UTF-8 BOM. Apply receives only
-reviewed files and their excluded match positions. The writer prepares every
-target before changing any file. If a target changed after preview or its edits
-cannot be applied, the whole set is refused: affected targets report their
-refusal and the others report `skipped` with `edit_set_aborted`. Invalid UTF-8, UTF-16 and binary
+reviewed files and their excluded match positions. Ordinary Replace and its Undo
+apply independently per file: a target changed after preview reports `changed`
+and stays untouched, while valid targets are written. Semantic `editSet`
+operations prepare every target before changing any file; a preflight refusal
+leaves all targets untouched, with otherwise valid targets reporting `skipped`
+and `edit_set_aborted`. Invalid UTF-8, UTF-16 and binary
 content are skipped; the transformation preserves a UTF-8 BOM and existing
 line endings. Every successful write uses the editor's guarded atomic writer.
 Returned inverse edits support hash-guarded Undo through the same replace Action
@@ -77,7 +79,12 @@ the JavaScript matcher alone decides matches. This includes JavaScript patterns
 that ripgrep cannot compile and avoids differing Unicode boundary semantics.
 Whole-file continuation pages expose only complete selectable files, with
 explicit incomplete coverage for an indivisible result beyond the existing
-transport boundary. Replace apply and Undo enter the canonical danger Action.
+transport boundary. FILES-DEL-A is replacing the borrowed 256 KiB tunnel-frame
+budget and 5,000-path discovery ceiling in development; that change remains
+pending until its implementation and validation land. The intended reply budget
+comes from Socket.IO's `maxHttpBufferSize` (supported floor 25,000,000 bytes),
+accounting for encrypted/base64 expansion. This does not promise unbounded replies.
+Replace apply and Undo enter the canonical danger Action.
 Its existing host operation owns cooperative cancellation between files and
 retains the terminal acknowledgement, including completed-file inverse edits,
 in the same in-memory operation result. Clients cancel and wait for that exact
@@ -295,9 +302,17 @@ lifecycle. The generic service bridge carries requests, cancellation and
 status; the child loads only daemon-admitted Agent readers. Query embeddings
 return vectors and native verification returns pages through that boundary.
 
-A run drains admitted work and continuations, closes its writer handles and
-exits. The daemon retains wake sources and starts a fresh child for later
-demand; hint idle/rate/backoff deadlines come from the existing hint admission
+A run drains admitted work and continuations, then Memory keeps it open for
+a child-owned 57-second idle grace derived from the measured 57.154-second
+birth-to-searchable-result cost. Requests arriving during that grace use the
+existing process bridge immediately, clear its timer, and start a fresh grace
+after draining. Request results do not await the grace. Status projects
+`worker.currentPhase: idle_grace` and `worker.idleGraceUntilMs`; these are
+volatile diagnostics, not persisted liveness or a version update. The shared
+lifecycle exits the child after the run and cleanup settle; the next demand
+starts a fresh child. Settings changes, disabling memory,
+plugin retirement and daemon shutdown join child exit. An unexpected exit fails
+visibly and is replaced only on the next real demand. The daemon retains wake sources; hint idle/rate/backoff deadlines come from the existing hint admission
 owner. The inventory freshness cadence observes Session metadata without
 starting a child when eligible transcript frontiers are unchanged. The work
 pump runs for real changes and the next scheduler deadline; unchanged settings
@@ -306,8 +321,18 @@ and hints that become due before settlement. Settings retirement and Clear index
 before deleting files. Daemon SQLite readers do no schema setup or migration;
 the indexer is the writer. A failed child remains visible as an error, and an
 absent child does not erase retained coverage. This describes development
-source wiring; the composed daemon RSS/latency and child-exit replay remains
+source wiring; the composed daemon RSS/latency and retirement replay remains
 an integration validation requirement, not a measured performance claim.
+
+Session removal is admitted by the daemon Memory owner from its retained index
+rows, progress cursors, pending observations and active writers. Never-indexed
+Sessions with none of those facts require no indexer connection or purge. An
+accepted removal still joins writer cancellation and purge before its Account
+change cursor advances; physical Stop results do not decide Memory admission.
+Archive updates use that same retained/admitted-work question before demanding
+the indexer. Unarchives and archive-inclusive policy have no purge to demand.
+The existing demand file diagnostics carry a closed operation origin at
+admission and service settlement/failure so an idle launch can be attributed.
 
 Restarting the daemon reuses retained summary, deep and native index data when
 its saved indexing policy is unchanged. The cursor database retains the policy
@@ -335,6 +360,12 @@ and findable. Content matching searches the original text even when a known
 prefix is hidden; a clean snippet is preferred only when it contains the query.
 Native `raw` records, persisted imports and Agent input retain their original
 bytes.
+
+An exchange preview carries its selected `sourceItemId` through the existing
+transcript page read. Codex can read a hit already present in a paginated local
+rollout without requiring its native control socket. This preview does not
+establish complete history: its pages are truncated and have no tail cursor;
+ordinary full-history linking, import and follow keep their existing reader.
 
 For historical bare Agent guidance, the native candidate invocation binds the
 reader derived from the same current Agent catalog used for injection
@@ -454,6 +485,16 @@ index partitions: a user home and a connected-account home can expose the same
 native conversation. Exact-source searches retain that scope; unified results
 deduplicate those aliases at `mergeConversationSearchHits`.
 
+In current 0.3 development, a native page or tail with required decoder
+diagnostics makes that conversation unavailable. The ingestion owner retires
+its searchable text and retains an unavailable frontier in the existing source
+state. Readiness projects the existing typed read failure, with the content-free
+`external_sessions_transcript_read_failed` reason, including after a worker
+restart. Readable siblings remain indexed. Automatic search exposes the
+non-retryable read failure instead of scanning with the same decoder again;
+normal worker retry or source observation can recover a repaired transcript.
+This is not a permanent partial-coverage bit.
+
 Memory requests native identities and activity without optional title enrichment.
 Claude and Codex apply the requested activity cutoff before transcript enrichment
 and candidate-page admission; Memory retains its eligibility filter for readers
@@ -520,6 +561,12 @@ malformed feature data fails the Home provider closed while the shell and
 unaffected sections stay usable. `useMemorySearchProvider` is the single
 Home-versus-daemon decision seam for both the universal surface and the
 session list; details in `feature-gating.md`.
+
+On the 0.3 development branch, a configured plaintext Home advertises search
+as available before its first use. The admitted search request awaits index
+preparation for its visible Sessions; an in-progress build still reports the
+existing `indexing` diagnostic, and a failed build remains unavailable until
+the existing repair path succeeds. Capability reads do not start indexing.
 
 ## Privacy and storage
 
@@ -701,7 +748,12 @@ xterm WebView fallback supports Find on native clients.
 
 The keyboard provider's mounted Find registry arbitrates focus and handled
 versus pass-through disposition. Mod+F opens the focused surface; session
-composer focus belongs to chat. Enter/Shift+Enter step in the Find input,
+composer focus belongs to chat. On web, pointer and focus interactions also
+identify the last interacted surface, so clicking non-focusable transcript or
+code text can leave BODY focused without losing Find ownership. Each registration
+supplies target containment; the registry retains only its mounted surface id,
+clears it on an outside interaction, and gives actual focus precedence. Hidden,
+unavailable and unmounted surfaces cannot receive that fallback. Enter/Shift+Enter step in the Find input,
 Mod+G/Shift+Mod+G step while that surface's Find is open, and Escape restores
 focus. Outside a findable surface, or on a second Mod+F from its open Find
 input, browser Find remains available. A handled terminal Find chord does
@@ -732,7 +784,7 @@ credential mutation retires authority through the shared credential-scope owner.
 | OpenCode | Decoded messages from its native client; requires an available endpoint. |
 | Gemini | CLI v0.64.0 JSONL recordings and legacy JSON; patches, checkpoints and inclusive rewinds select visible history. |
 | Qwen Code | CLI v0.25.3 JSONL, including archived chats; active-parent replay and streaming fragments preserve visible text across compression. |
-| Copilot | Event-v1 history; transient deltas and model-only compaction data are excluded. |
+| Copilot | Event-v1 history; transient deltas and model-only compaction data are excluded. Unknown or torn body content makes indexed conversation coverage unavailable, not partial. |
 | Droid | Schema-2 history characterized from CLI 0.170.0; follows the visible active parent chain. |
 | CodeBuddy | CLI 2.170.0 JSONL, including native replay and rewind. |
 | Grok | Paired summary and history files; producing CLI version unknown. |
@@ -769,7 +821,9 @@ The shared ripgrep prefilter can exclude files, and Claude also uses its
 candidate byte offsets to admit individual lines before decoding. Excluded
 files or rows cannot contain a match under those admission patterns; skipped
 malformed, undecodable or unsupported rows therefore do not make this query
-partial. Admitted damaged or unsupported rows still make coverage partial.
+partial. Admitted damaged or unsupported rows still make scan coverage partial;
+indexed required decoder diagnostics instead use the unavailable read state
+described above.
 Decoded hits go through Claude's full scan for branch ancestry, title and exact
 ordinal; unresolved ancestry remains partial. Unsafe or transformed queries
 retain exact decoded fallback when admission cannot prove exclusion. A yielded
@@ -879,9 +933,11 @@ uses the existing destination consumer and Find model, not a second seed path.
 Next uses summary-only candidate admission and distinct-other-session counts;
 it reads pending detail on invocation and selects by the session-core age
 comparator, with unknown creation times after known times. It routes to the
-exact Home/session address, revalidates access and pending state, and focuses
-the primary answer through existing prompt/permission landing owners. It
-does not resume a session or answer a request. Header, post-answer composer
+exact Home/session address using that admitted detail, without a second
+pre-route snapshot. Existing prompt/permission landing owners focus the primary
+answer or show that it was answered elsewhere while navigating; the actual
+answer operation still owns authorization. Next does not resume a session or
+answer a request. Header, post-answer composer
 and phone count pills all invoke the same mounted navigation port. Failed
 delivery, unread items and broad Inbox/operational badges remain separate.
 Confirmation answerability uses the shared protocol predicate at summary,
@@ -898,7 +954,16 @@ pending-request store is introduced. Loaded-runtime evidence remains separate
 from source integration.
 
 `ui.find`, `ui.prompts.picker.open` and `session.pending.next` are
-client-placed display/navigation Actions. The canonical `actionExecutor`
+client-placed display/navigation Actions. In unreleased 0.3 source,
+`ui.prompts.picker.select` and `ui.prompts.picker.apply` also reach the open
+picker's existing selection, insertion and submission controller. The
+`ui.prompts.history` read/page/stop/retry Action uses its Account-global
+Sent-before projection with the same explicit coverage. Stop releases this
+consumer's wait; Retry can replace a stalled page or Session hydration without
+waiting for the retired response. Transcript message
+pins use `session.messages.pins` on the answering device's exact Account/Session
+local pin owner. See [Actions](actions.md) for these client ownership contracts.
+The canonical `actionExecutor`
 delivers admitted client Actions after approval/prepare through
 `clientActionReverseDispatch`, using the existing authenticated machine-scoped
 reverse-RPC channel (`ui.actions.execute.v1`). The connected app executes them

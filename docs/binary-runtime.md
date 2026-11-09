@@ -507,8 +507,15 @@ In current 0.3 development source, `HAPPIER_FIRST_PARTY_INSTALL_HOME` selects th
 managed payload, shims, default-channel records and activation-lock home
 independently of private `HAPPIER_HOME_DIR` state. Dedicated enrollment uses this
 input for an Agent-readable, daemon-writable installation. The existing service
-installer retains it and `HAPPIER_MANAGED_TOOLS_ROOT` through service replacement
-and Updates; these are installation inputs rather than Account preferences.
+installer retains that install home through service replacement and Updates;
+it is an installation input rather than an Account preference.
+
+Personal Linux separate-user setup writes the tools-only location to the private
+`install-layout.json`. CLI configuration reads it at the next process startup
+into `HAPPIER_MANAGED_TOOLS_ROOT`; tools and installed plugin code consume that
+single selection. It does not move first-party CLI payloads, shims or private
+daemon state. The existing elevated setup recipe owns creation of the external
+directory; startup reuses the generation store to stage retained plugin code.
 
 In current 0.3 development source, managed runtime custody accepts filesystem
 aliases of the same install parent, including symlinked homes, Windows junctions

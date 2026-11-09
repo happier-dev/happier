@@ -24,6 +24,19 @@ Adjacent concepts with their own owners:
 | Session handoff | the owning Machine | `apps/cli/src/session/handoff/**` |
 | Model selection | the model on the current Agent | `docs/providers.md` |
 
+An armed Agent, model or source continuation is a submit intent even with a blank composer.
+The composer controller supplies the localized `common.continue` prompt through
+`resolveSessionComposerSend` when no authored text, attachment or review comment exists.
+The original draft remains the compare-clear snapshot, and transition retries retain their
+first resolved input. Active dictation keeps its finish/cancel action until it settles.
+
+In current development source, the start-only title preference belongs to the Happier Session,
+not each fresh Agent conversation. The shared Protocol title-guidance owner omits initial naming
+instructions when Session metadata already has a usable title or legacy name. Native Agent title
+initialization uses the same title-presence reader through the canonical `display.title` binding.
+Explicit rename tools and ongoing title guidance remain available; created-as-Bot Sessions retain
+their conditional persona-name policy.
+
 ## Wire contract
 
 The cutover HTTP serializer keeps `legacy_v0` requests compatible with the moving
@@ -161,6 +174,12 @@ server owner. It does two things in sequence, not one:
    transaction: neither the target view nor the witness commits (`400`, `effect: none`).
 2. the divider, appended through the canonical message owner `createSessionMessage` as an ordered
    idempotent write.
+
+Current development source also clears the departed Agent's current turn and runtime-issue
+projection in that transaction, advancing the previous observation timestamp in the runner's
+clock domain. The canonical current-view publisher carries that clear in the same event as the
+target metadata for both layouts. Historical turn rows retain their failures; late historical
+bookkeeping cannot restore them as current. An exact retry leaves the target's new state intact.
 
 The split is deliberate and must not be "fixed" by writing the divider inside the transaction.
 `writeSessionTranscriptMessageInTx` already exists with two in-transaction callers, so the argument
@@ -494,8 +513,10 @@ Pending owner whether that exact row reached provider-accepted resolution. Accep
 lost retirement; rejected, blocked or still-owed leaves the seed live for the next dispatch; an
 unreadable durable status withholds the seed for that one input rather than guessing either way.
 This is not a second acceptance fact: the association records only where the seed went, and
-`readDurableProviderInputAcceptanceV1` derives the outcome from the committed transcript row and the
-server's own pending projection. An input that is accepted after the dispatch-time refit dropped the
+`readDurableProviderInputAcceptanceV1` reads the exact transcript message's explicit
+`provider_accepted` delivery resolution and the server's Pending projection. Host admission
+already publishes the user row; that row's presence or a `manual_handled` resolution does
+not establish native acceptance. An input that is accepted after the dispatch-time refit dropped the
 seed releases the association first, so that acceptance cannot retire a seed it never carried.
 
 While a retirement keeps failing, no further provider input is admitted. The park wakes on queue

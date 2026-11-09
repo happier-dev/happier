@@ -64,16 +64,17 @@ output are read back the same way by session-core. Ordinary queue operations and
 copied human wrappers remain internal or human input. Native peer input cannot
 accept a queued human prompt or start a human turn.
 
-A hand-back from an async Agent launch the task projector has already correlated
-waits for Claude's terminal task notification or task-status evidence. That outcome
-puts the report on the Agent card while preserving success, failure or cancellation;
-the report alone does not settle the task. A stopped `SendMessage` response keeps
-its own tool result alongside the child's outcome. Native system and queued
-representations of that outcome settle the current execution once. A native task
-start reopens correlation when Claude resumes the same task and tool. Hand-backs without
-an active launch correlation
-(after a resume, a CLI restart, terminal settlement or in stateless history paging)
-stay standalone peer cards.
+A hand-back whose sender matches an async Agent launch already correlated by the task
+projector is retained until the native lifecycle supplies a terminal outcome (a task
+notification, task-status attachment, or authenticated stopped-agent SendMessage
+response). That outcome publishes the report on the Agent card with its actual
+success, failure or cancellation; report delivery alone cannot complete the task.
+Native system and queued representations of that outcome settle the current
+execution once. A native task start reopens the execution even when it reuses the
+same tool-use ID.
+Reports without an active correlated launch (including after settlement, resume or
+a CLI restart) stay standalone peer cards. Historical 0.2 peer rows retain this
+attribution even when nested in a sidechain.
 
 The remote SDK runtime applies permission configuration changes to its live
 queries through the existing native control transport. Normal sessions permit
@@ -82,6 +83,41 @@ remains authoritative. Claude still owns inbound delivery policy: its
 [non-interactive messaging contract](https://code.claude.com/docs/en/cross-session-messaging#non-interactive-sessions)
 does not expose the terminal approval dialog in `-p` sessions. Happier does not
 override that policy or automatically accept held messages.
+
+In development source, `normalizeAskUserQuestionInputForPublication` in the Claude
+plugin's `agent/permissions/askUserQuestion.ts` owns Claude's implicit freeform
+answer across the SDK, hook bridge and native startup owner. Native single-select
+questions with nonempty option previews publish only their choices
+(`freeform: false`); checkbox questions retain the ordinary freeform row. The
+native screen parser separates the preview column from option labels and records
+the actual freeform row. The existing answer driver refuses terminal notes or an
+active notes editor before navigation or submission; notes are annotations on a
+choice and are never converted into freeform answers.
+When the viewport clips a question's tabs and beginning, one shared resolver
+identifies its page from the complete visible question suffix and choice labels
+against the pending hook input. Publication and answer navigation use that same
+identity; missing choices or an ambiguous match remain unrecognized.
+If typing Happier's freeform answer scrolls the entire heading above the viewport,
+the same resolver retains the already identified page only while its complete
+choices and Happier-owned draft still match. A headingless preexisting draft
+does not establish a new question identity.
+The pending hook-correlated question retains Happier's own draft and identified
+page across an interrupted answer attempt. Publication and answer navigation
+consume that same context; a changed terminal draft still belongs to the terminal
+user. The driver waits within the existing terminal verification window for each
+rendered transition instead of treating the first stale capture as a failed write.
+After final Submit, it retains the submitted answers and waits for the exact
+provider result. A retry checks confirmation without typing or submitting again;
+delayed confirmation remains pending.
+Long reviews may clip earlier questions above the viewport. The same parser
+recognizes complete visible entries as a suffix of the hook-owned questions;
+the answer driver submits only after visiting every question page and matching
+the visible answers. Complete reviews still require every answer. A confirmation
+with no complete question visible remains unrecognized.
+The native answer owner preserves Claude's checkbox option order and JSON
+quoting of values containing `, ` or `"`, for review matching, submitted-result
+acknowledgement and observed answer history. Single-select values remain literal.
+Hook-injected answers retain their separate scalar wire projection.
 
 ## Session lifecycle surfaces
 

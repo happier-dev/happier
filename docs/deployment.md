@@ -507,8 +507,13 @@ The installed controller derives the exact provider id, credential
 principal and operation identity from retained content and calls the target's
 declared observe Action through the existing reviewed-child owner. Receipt content
 and terminal state use the same installation-signed transition and CAS as Deploy;
-no second work queue or observation scheduler is introduced. Own-server receipts
-are unsupported. Reassigned controllers cannot borrow an earlier accepted
+no second work queue or observation scheduler is introduced. On current development
+source, own-server calls to `deployments.receipts.observe` and
+`deployments.observation.get` return `unsupported_action` with
+`reason: target_not_supported`, the target kind and a `deployments.receipts.get`
+recovery hint. Read that receipt for its recorded result and use
+`deployments.health.read` or `deployments.logs.read` for native state; native
+settlement remains with the rollout owner. Reassigned controllers cannot borrow an earlier accepted
 installation's receipt custody; that retained-operation recovery boundary remains
 separate from future-controller selection.
 
@@ -2968,7 +2973,8 @@ For an explicitly configured Prisma pool with at least two connections, `inTx`
 admits at most the pool size minus one interactive transactions at a time.
 Read snapshots and writes share this process-local admission through the existing
 `AsyncLock`. Excess attempts queue before acquiring a connection, leaving capacity
-for direct Machine validation, RPC availability and presence queries. Queueing
+for direct Machine validation, RPC availability and presence queries (signed-credential
+Account reads and other single-statement reads also use that capacity). Queueing
 consumes the existing acquisition budget and respects the request deadline;
 retry backoff starts after the attempt releases its admission permit. This does
 not change pool size, Account lock ordering or isolation. An implicit pool size,

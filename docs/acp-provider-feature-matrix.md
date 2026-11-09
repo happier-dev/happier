@@ -16,7 +16,7 @@ Common cross-cutting files:
 - Catalog/runtime spine: `apps/cli/src/agent/acp/runtime/createCatalogProviderAcpRuntime.ts`, `apps/cli/src/agent/acp/createCatalogAcpBackend.ts`
 - Built-in catalog-defined ACP path: `apps/cli/src/agent/acp/catalog/createCatalogDefinedAcpEntry.ts`, `apps/cli/src/agent/acp/catalog/createCatalogDefinedAcpBackend.ts`, `apps/cli/src/agent/acp/catalog/runCatalogDefinedAcpAgent.ts`
 - Built-in ACP metadata: `packages/agents/src/acp.ts`, `packages/agents/src/manifest.ts`, `packages/agents/src/auth.ts`, `packages/agents/src/cli/runtime.ts`
-- Backend selection in UI: `apps/ui/sources/agents/backendCatalog/getResolvedBackendCatalogEntries.ts`, `apps/ui/sources/components/sessions/new/hooks/useNewSessionScreenModel.tsx`, `apps/ui/sources/__tests__/routes/(app)/session/[id]/runs/new.test.tsx`
+- Backend selection in UI: `apps/ui/sources/agents/backendCatalog/getResolvedBackendCatalogEntries.ts`, `apps/ui/sources/components/sessions/new/hooks/useNewSessionScreenModel.tsx`
 - Execution-run registry: `apps/cli/src/agent/executionRuns/registry/executionRunBackendRegistry.ts`
 - ACP catalog QA: `packages/tests/suites/ui-e2e/settings.acpCatalog.spec.ts`
 

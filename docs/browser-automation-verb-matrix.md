@@ -627,6 +627,12 @@ and delivery-time document, origin and focused-field verification remain require
 `computer.secret.fill` is deferred beyond 0.3: its retained Protocol/catalog shape is unavailable
 on all surfaces and has no daemon route or confidential target handler.
 
+In development source, an input query can publish the exact confidential field identity while that
+input is unfocused. At delivery, the Browser owner verifies that node, focuses it through isolated-world native DOM
+bindings, and verifies the current document, origin, node and focus immediately before native input.
+An unavailable focus or changed target refuses entry. Separate submit retains its own final proof
+and does not reacquire field focus.
+
 For confidential fill, the daemon's masked combined snapshot also carries the verified
 focused-field descriptor: tab, frame, document, navigation generation, origin and field identity.
 It uses the existing isolated-world field verifier; unavailable proof still refuses confidential

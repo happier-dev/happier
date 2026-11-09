@@ -1,5 +1,17 @@
 # Pending delivery architecture
 
+## Resumed Session input targets (0.3 development)
+
+UI Pending input and CLI Session input prefer the Session's observed Machine over
+the immutable Machine in its creation recipe. The creation recipe remains a
+fallback when no observed Machine is available; explicit conflicting targets
+still fail, and the server owns exact installation and input admission.
+Deferred approval outcomes use this same Session-input path and the stable
+`approval-result:<artifactId>` identity. Replaying a recorded outcome retries its
+publication without executing the approved Action again. A delivery refusal
+retains the execution receipt in the approval Artifact and returns its typed
+delivery code.
+
 ## Composer send choices (0.3 development)
 
 The existing-session composer's send button offers per-message choices on long

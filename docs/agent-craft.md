@@ -146,6 +146,19 @@ Each of these *reads* as skill from the outside. That's what makes them dangerou
 
 ---
 
+## 9. Tool batching, waiting and resuming (moved from root AGENTS.md)
+
+Root `AGENTS.md` "Efficient execution and uncertainty resolution" points here.
+
+- Independent tool calls whose inputs are already known, whose results are necessary, and which do not conflict belong in one bounded tool stage when the runtime supports batching. Use the runtime's native batching mechanism; use concurrency only when calls are genuinely independent.
+- Use a later tool stage when the next call depends on an earlier result, the investigation is adaptive, an approval or wait is pending, or operations conflict over shared mutable state. Writes are not automatically sequential, but approval-sensitive, interdependent, or potentially conflicting mutations are.
+- Keep bulky intermediate results inside the tool runtime when possible. Return one compact decision-relevant projection while preserving failures, exact evidence pointers, paths, IDs or handles, and output needed for verification.
+- Do not add speculative calls, broaden the investigation, or run unused work merely because batching makes additional calls cheap. Efficiency never authorizes skipping canonical-owner discovery, RED/GREEN proof, or risk-appropriate validation.
+- Reuse the existing process, run, or agent handle. Prefer completion notifications that actually reach the responsible agent; otherwise use an interruptible wait. Poll only when those mechanisms are unavailable or a concrete diagnostic question requires inspection. Do not add status checks alongside a working notification or wait mechanism.
+- Within the current task and its delegates, avoid independently monitoring an operation whose executor will deliver its result. This does not require cross-session discovery, ownership negotiation, registries, or messages; do not spawn an agent solely to poll. Existing build/runtime tooling owns shared resource locks.
+- Continue useful independent work while an operation is pending. An expired wait, empty output, or unchanged heartbeat leaves it pending; resume waiting on the same handle without automatically inspecting again or restarting the operation. Investigate evidence of failure, required intervention, or a material departure from expected behavior. Preserve cancellation, user steering, logs, and terminal-result verification; do not infer current health from an old observation.
+- Resume an interrupted or capacity-limited lane on its existing handle when the prerequisite changes and the runtime supports it. Preserve completed findings and applicable validation. Replace only an unavailable/unresumable agent or a materially changed assignment, carrying the unresolved scope and evidence rather than full history. Do not repeat equivalent retries while the same quota or outage persists. Distinguish review-service unavailability from an evaluated denial; neither supplies missing approval or closes a required review gate.
+
 ## The self-test — run on every substantive answer before sending
 
 1. **What is the user actually trying to achieve — and does this answer serve that, or just the words they used?**

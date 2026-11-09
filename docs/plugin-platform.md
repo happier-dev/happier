@@ -1731,6 +1731,15 @@ read observers retain their local dependency subscriptions; their finite Action
 reads follow the same placement rule. Authentication and established credential
 runtimes are separate from this Action placement contract.
 
+In 0.3 development, a person's settled Account Action confirmation travels with
+that relay in the existing private invocation context. It binds the exact
+`action.invoke` operand, approved target source and declaration, Account, Home,
+request and selected Machine. The receiving
+target consumes that consent while retaining the Plugin caller and its automation
+authority; placement does not ask the person again. This does not confer host
+authority or consent to another Action or changed input. Native execution and
+mounted daemon Actions retain their existing confirmation paths.
+
 The UI admits Account Action and Resource descriptors without acquiring or
 evaluating their executable artifact. The first invocation, Resource read or
 observation prepares that exact Account target through the existing executable
@@ -5368,7 +5377,9 @@ authority while backfilling that selector. Each outward wake selects only
 finalizing candidates; healthy rows have no due key and their bodies stay
 unopened by delete finalization. The finalizer still rereads current lifecycle
 and execution placement before cleanup, and resumes retained work after a
-conflict or restart through the existing outward wake.
+conflict or restart through the existing outward wake. A successful dependent
+cleanup page continues that runner immediately, including when only ingress or
+checkpoint rows changed and no structural binding notification will follow.
 
 In unreleased 0.3 source, Channels `channel-deliveries` V6 adds the
 `by-terminal-updated-at` index through an identity V5→V6 migration. Retention
@@ -8446,7 +8457,7 @@ empty first message alongside the attempt prompt and waits for the user; its
 Greeting row explains this through the contribution's `immediateRequiresLiteral`
 presentation fact. Local and model-driven realtime greetings retain their
 reply-language instructions when a literal is unavailable.
-ElevenLabs actual-configuration admission also requires the client-event
+ElevenLabs BYO actual-configuration admission also requires the client-event
 subscriptions authored by provisioning, including `agent_response`. A reused
 Agent missing these subscriptions needs the same update action before credential
 minting; receiving remote audio alone does not establish transcript delivery.

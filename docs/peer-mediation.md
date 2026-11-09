@@ -576,14 +576,23 @@ deployed method carries one row naming its **route class**:
 | Route class | Meaning |
 | --- | --- |
 | `server_required` | Must travel the server path. The row also carries a `serverRequiredReason` — durable or transcript writes, pending-queue and sequence assignment, reconnect catch-up, cross-device fanout, auth, sharing, billing, automation, account change, destructive or recovery mutations, or simply `unclassified`. |
-| `direct_ephemeral` | May go direct; nothing durable depends on it. |
-| `direct_medium_risk_receipted` | May go direct, but the command receipt is not optional. |
+| `direct_ephemeral` | May go direct under the signed method scope; the daemon consumes each grant once before dispatch. |
 
 `resolveMachineRpcRoutePolicy` **fails closed for an unknown method**: a method with no
 deployed row resolves to `server_required` with reason `unclassified`, so adding an RPC method
 without classifying it denies direct routing rather than inheriting a neighbour's answer.
 `isMachineRpcDirectRoutePolicy` is the one predicate callers use, and the relay fallback for
 `daemon_voice_audio` is declared on the row rather than negotiated per call.
+
+In unreleased 0.3, direct RPC has no command-receipt hashes, per-request replay-key
+cache, per-grant concurrency/idle limiter or latched verification quarantine.
+Every request still verifies its signed grant, ephemeral proof, Account, Machine,
+endpoint and method scope; invalid or expired proofs do not prevent a later valid
+request. The route's atomic grant reservation is the single one-use replay owner.
+The grant owner retains the `maxCalls` and `maxIdleMs` wire fields. A future reusable
+connection grant cannot rely on a per-request replay primitive here; it must design
+one at its own admission owner. Matching development Protocol, UI and daemon
+readers reload together for this direct cut.
 
 In 0.3 development, contribution-registry projection describes use the authenticated
 Home route. These reads admit Session creation and plugin surfaces on every client;
@@ -599,7 +608,7 @@ content type, invalid envelope or mismatched request/method instead uses the exi
 Home baseline with a typed local fallback reason. Cancellation and captured Account
 retirement still prevent that fallback. The daemon's
 `handler_unavailable` response is also ambiguous because it can follow a handler exception.
-Direct command receipts do not cover relay replay. A later unsent attempt cannot erase an
+A later unsent attempt cannot erase an
 earlier unresolved dispatch; a proven pre-effect refusal, including relay method unavailability,
 retains its no-effect meaning.
 

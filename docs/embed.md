@@ -25,6 +25,14 @@ Session child names one Session and drops creation and listing authority. A
 new-chat child only creates on the grant's bound machine and Agent, in a managed
 directory with the bound placement; it cannot read or send to existing Sessions.
 
+Managed Sessions stay folder-less in Project membership and lookup. Their physical
+workspace remains the address for Files, terminals and source-control state; that
+address does not establish Project membership for the Session.
+
+Send includes answering Agent questions. The grant owner also admits the exact
+`session.user_action.answer` id independently; that id never grants
+`session.message.send`, and a child cannot widen its parent's Actions.
+
 The backend parent has Account-wide Session targets for its granted Actions.
 Configured folder and tags are listing defaults, not access restrictions on that
 key. The backend's per-user authorization and the explicit Session child provide
@@ -124,6 +132,12 @@ the bounded composer-options projection. In the normal handoff, the host page
 transports opaque blobs without receiving the DEK or opened owner metadata. Session hydration
 and model/config options still use their existing canonical owners.
 
+The current permission mode is disclosed only when the child grant allows
+`session.permission_mode.set`; the current model is disclosed only when it allows
+`session.model.set`. These controls use a grant-filtered snapshot refreshed at
+credential minting. The frame shows its own validated, acknowledged changes;
+changes made by another client become visible at credential renewal or reload.
+
 Both the credential-serving backend and active host-page code are trusted. The
 backend's `hapc` content access can read every Session the Account can read. The
 opaque handoff avoids plaintext disclosure during ordinary pass-through, but the
@@ -141,6 +155,11 @@ through the normal encrypted message path. Missing or unopenable material fails
 closed with a typed embed state, without plaintext fallback or repair prompts.
 See [Encryption and data encoding](encryption.md#embed-key-handoff-development).
 
+The runner webhook acknowledges physical launch, not native Agent Session open.
+Managed startup keeps the original operation's review, cancellation and failure
+custody until the tracked runner attests native open; a committed Session row or
+webhook alone must not become a successful creation response.
+
 ## Presentation, lifecycle and styling
 
 The embed consumes the canonical chrome-less Session presentation and Session-scoped
@@ -148,6 +167,36 @@ app sync. It must not bootstrap Account settings, use a user-scoped socket, read
 stored app credentials, or compete with the Session transcript or capability owners.
 The Session detail response owns the frame's capability projection; shared room
 updates cannot replace it with another viewer's access.
+Model options come from the scoped credential's grant and `action.options.resolve`;
+the optional Account Team credential catalog is not discovered in the frame.
+
+Native resume identity stays in private owner metadata. Its absence from a scoped
+frame means eligibility is unknown, not that the Agent cannot restore context.
+An inactive frame with Send authority keeps the existing composer. Its first send
+requests resume through the existing `session.open` Action before submitting the
+message. That Action retains its own authority checks: a Send-only grant can be
+refused with `credential_scope_denied`, which preserves the draft through the
+existing error surface. The status line offers Resume only when the frame's grant
+also admits `session.open`. A granted resume reaches the daemon's private owner facts.
+The owner app still uses its readable metadata to reject a known unsupported
+continuation. API-token Action transport preserves validated HTTP refusal codes,
+including `invalid_token` after revocation, without retrying or acknowledging input.
+
+Home protocol discovery uses the public `/v1/features` projection through the
+frame's scoped transport, without credentials. Session-bound credentials do not
+grant access to the Account-only `/v1/features/authenticated` descriptor; a failed
+discovery must not be treated as pending-input protocol support.
+
+Approval inventory refresh belongs to the admitted Session scope and runs
+independently of transcript/composer readiness. The first turn does not wait for
+that inventory; approval decisions still require their own current authority.
+Session change pushes refresh the same inventory owner, and credential retirement
+stops it and aborts its requests. Refresh failures use the existing sync error and
+retry handling rather than withdrawing message admission.
+Exact-Session approval lists forward the Session-id selector to the existing
+indexed Artifact query and retain strict header/body correspondence checks.
+Account-wide lists omit that selector; legacy classification coverage handling
+remains with the Artifact store.
 
 The latest requested target controls credential admission. Superseded credential
 results are dropped, old Session scopes are disposed before replacement, and
@@ -162,6 +211,15 @@ saved configuration is overridden by host runtime style. Runtime style changes
 must repaint without remounting the Session subtree. HTTPS font files are supported
 by the contract (loopback in development); CSS stylesheet URLs are not. Failed
 font loading falls back to the Happier family.
+
+Saving presentation or appearance wakes open Session viewers through the parent
+token's existing socket room. Each frame refreshes its authenticated token-self
+configuration in place, preserving its Session, draft and host style overrides.
+Equivalent saves and label-only edits emit no configuration wake. Socket admission
+and reconnect send the same content-free wake to recover changes missed while
+disconnected; there is no presentation polling or credential re-mint for a save.
+The pre-Session new-chat page has no Session socket: host `configure()` is live,
+and saved defaults are read again at ordinary credential renewal.
 
 The wire style requires `v: 1`; the host package's `EmbedStyle` accepts an omitted
 version and adds it at the bridge boundary. For React, `style` configures the

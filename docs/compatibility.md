@@ -4,8 +4,9 @@
 
 The existing closed private Account invocation confirmation also carries settled
 UI consent for a Plugin-origin `action.invoke`, without changing the Plugin caller
-or its automation authority. The receiver binds the same exact operand, Account,
-Home, request and Machine before its target gate consumes the confirmation.
+or its automation authority. The receiver binds the same exact operand, approved
+target source and declaration, Account, Home, request and Machine before its target
+gate consumes the confirmation.
 Host confirmation and reviewed-parent admission keep their existing restrictions.
 
 The private record shape, public Action input and persisted approval formats do

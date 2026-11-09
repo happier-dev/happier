@@ -10009,7 +10009,10 @@ binds that text, range and full revision before approval. A missing or ambiguous
 passage returns `doc_passage_mismatch`. `after` replaces the entire paragraph span
 verbatim; the original comment keeps its selected quote and offsets. Tool guidance
 marks the selected span within the paragraph and asks the agent to preserve all
-other text verbatim unless the person requests otherwise. The preview tints changed
+other text verbatim unless the person requests otherwise. Discussion intake reads
+the current Doc once and recaptures that marked paragraph through the same passage
+owner, so redo guidance does not reuse the old attachment or proposed replacement.
+The original comment and reviewed suggestions retain their historical basis. The preview tints changed
 words and notes changes outside the selection when that original span can be located
 in the reviewed text. Approval replay keeps that reviewed basis
 without another anchor or Doc read. The explicit `target`, `baseRevision` and
@@ -10031,6 +10034,11 @@ retry, including an opposite decision, returns the settled result without a new
 revision. Decline never writes the Doc body. Whole-catalog SDK projections and
 the loaded cross-client journey remain integration-boundary validation; these
 contracts are not a released availability claim.
+
+The proposal card and accepted notice share the existing UI Doc edit operation
+owner. A successful Undo retains its acknowledged restored revision there, so
+the card and a reopened thread show the same completed result. This UI result is
+process-local; it adds no persisted proposal state or background Doc read.
 
 ## Request attribution and readiness (0.3 development)
 

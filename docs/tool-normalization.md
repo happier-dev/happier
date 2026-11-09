@@ -408,6 +408,13 @@ The canonical rule:
 
 ## Inline tool-result media in 0.3 development
 
+Tool-result previews and unavailable-media items mount inside the existing tool
+disclosure only while that call is expanded. Collapsed text summaries do not load
+media. Cards and activity-feed rows reuse their existing expansion state; user
+message attachments retain their inline presentation. Rendering and transcript
+search use the same display decision to retain the disclosure for structured
+results that also carry media.
+
 Claude SDK messages and accepted terminal transcript items use the Session media
 service to publish inline tool-result images. The Claude transcript owner reads
 raw image blocks before its bounded semantic projection removes image bytes and

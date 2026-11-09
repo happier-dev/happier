@@ -389,14 +389,15 @@ Investigate retains the configured handoff's existing create/send recovery.
 ### Operations failure investigation (0.3 development source)
 
 `TriageFailureSubjectV1` extends the same configured Investigate handoff with
-exact deployment receipt, managed Machine operation, backup operation, service
-or Domain addresses. The Account-scoped notice investigation owner accepts
+exact deployment receipt, managed Machine operation, backup operation, service,
+Domain or Workflow Run addresses. The Account-scoped notice investigation owner accepts
 these subjects too; `useInvestigateFailure(subject)` borrows that owner and its
 existing uncertain-create/send recovery from `AccountNoticeInvestigationBoundary`.
 The app shell mounts this small provider beside the Inbox summary, so receipts,
 managed setup and other failure pages do not mount the Inbox model. Inbox consumes
-the same owner. Mounting the provider issues no reads; choices are read only on a
-press. Pages do not create investigators or select replacement Machines.
+the same owner. Mounting the provider issues no reads; surfaces rendering
+configured agent-action buttons read their choices through its shared catalog
+reader. Pages do not create investigators or select replacement Machines.
 For receipts, Environment health and Domain attention, the handoff derives the
 controller from the exact receipt/current Environment. It matches accepted
 workspace `sourceId` on that controller to the Environment's Project Source;
@@ -406,6 +407,15 @@ Agent key through `agents.backends.list.defaultTargetKey`; Triage consumes it.
 An unambiguous press starts the Session without opening settings.
 Session creation owns current launch admission. Investigate does not wait for
 managed-service inventory or unrelated service establishment before starting it.
+
+Workflow Run failures reach this same handoff from the invocation recovery card
+in both Activity and Flow views. The Workflows owner declares its configurable
+`workflows.investigate-run` action in the shared subject-action catalog. The
+handoff reads the exact Run through `workflow.run.get` on its Home, retaining
+only its identity, state, revision and timestamps as evidence. Its accepted
+Machine and workspace reference supply placement; a person choosing another
+Machine does not inherit the original Machine's workspace. Run output and logs
+remain behind their existing read Actions.
 
 Missing controllers, unreachable Machines, ambiguous/incomplete folder facts or
 missing default Agents return `placement_choice_required` with `reason`,
@@ -1556,6 +1566,25 @@ Configured action Settings, launch inputs and settled drafts all admit profile
 references through the Launch Profile V2 id parser: trim, then 1–256 UTF-16 code
 units. The public SDK projection `ProtocolLaunchProfileIdV2Schema` delegates to
 that parser; Triage imposes no competing generic-id or UTF-8-byte restriction.
+
+In unreleased 0.3 development source, **Save as this action’s default** in a
+composer opened from a configured action saves its current name, instructions,
+launch mode and Profile launch preferences through the existing catalog owner.
+The action retains references to its own Prompt Library and Profile copies;
+copying leaves the selected source records unchanged. Later saves update those
+owned copies. These remain ordinary library records: explicitly reusing an
+owned copy elsewhere also shares its later edits.
+The Profile owner preserves reusable placement and checkout preferences in
+current and retained legacy Profile records. Fixed placement keeps its directory
+intent, including a managed folder. Pending acquisition or creation choices and
+unsupported reusable targets receive a visible refusal. Directory choices
+incompatible with the action’s workspace mode use the launch owner’s refusal
+before any default is written.
+
+Prompt, Profile and catalog mutations remain separate owner operations. A final
+catalog refusal can leave unreferenced new copies or updated owned content with
+the previous catalog name and launch mode. Shared originals remain intact; retry
+or editing the owned records is the existing recovery path.
 
 ## Refresh and provider settlement (0.3 development)
 

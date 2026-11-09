@@ -9,6 +9,26 @@ This repo uses a simple three-branch model:
 - `main` is the stable/production release branch.
 - `deploy/**` branches are managed by automation for deployments (do not push to these manually).
 
+Source-suite reuse is additive metadata in the existing CI lane summary: the successful suite must match the exact source SHA, validation profile, and embedded policy. Shared source validation consumes that proof and runs each missing selected policy once before publishers consume its result. A standalone publisher without admitted proof runs its source contracts even when `--run-contracts=false`. `HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT=success` is the trusted same-host/reusable-workflow admission result, not a cryptographic proof token; only controlled callers project the validator’s result, and manual dispatch exposes no proof override. Local candidate batches pass the result to later products only after the first immutable publisher succeeds for that same fixed source and channel. Source Binary Smoke currently proves preview policy only; production and missing/mismatched evidence retain Binary Smoke. Signed candidate checks, artifact verification, and publication approvals remain required.
+
+
+## Release-only source checks
+
+Development CI selects Windows schtasks self-host E2E, native packaged CLI builds
+and runtime smoke for every published target (including Linux ARM64), and local
+Android/iOS native compilation when their owning source paths change. The existing
+`tests.yml` workflow also selects all three checks nightly. Selection belongs to
+`resolve-source-validation-plan.mjs`, consumed by `ci_plan`; selected failures or
+skips fail the CI verdict. Explicit reusable release-verification inputs retain
+their existing scope.
+
+The mobile checks compile Android Debug and an unsigned iOS simulator app through
+the canonical preview profile and native patch hooks; signing, store credentials,
+and distribution checks remain with release automation. Scheduled checks use the
+line's development branch (`dev` for 0.2, `v0.3` for 0.3). GitHub runs schedules
+only when the workflow is present on the repository's default branch, so landing
+these edits on another branch alone does not activate its nightly schedule.
+
 ## Contributing flow (recommended)
 
 1. Create a feature branch from `dev`.
@@ -40,11 +60,16 @@ cd <absolute-0.3-checkout>
 Invoke the launcher from the intended repository-relative working directory;
 it projects that directory remotely and does not accept a launcher-level
 `--cwd` option. If the launcher, configured `mac-host` target, wrapper, or
-Mac-visible target checkout cannot be proved, fail closed. Do not guess another
+synchronized target Git root cannot be proved, fail closed. Do not guess another
 checkout, copy credentials into the VM, install a VM-local conductor, or use a
 personal GitHub login.
 
-### Preview release (dev → preview)
+### Preview release (v0.3 → preview)
+
+The 0.3 development source and hosted workflow-control ref are `v0.3`.
+Historical confirmation phrases such as `release dev to preview` name the
+promotion intent; they select `v0.3` on this line. Production promotion from
+preview still selects `preview`. The local checkout may be detached.
 
 When you want to publish/deploy a new preview build:
 
@@ -55,22 +80,26 @@ When you want to publish/deploy a new preview build:
    affected compatibility directions, migration/rollback implications, and
    risk-selected validation plan from that same diff. Run the affected
    source/contract evidence before committing release inputs.
-3. Human-review the proposed notes, versions, compatibility assessment, and
-   validation selection. For a changed public SDK surface, this is also the one
+3. Approve the proposed notes, versions, compatibility assessment, validation
+   selection, and ordinary publication scope once. That grant covers materialization
+   and dispatch while those approved inputs remain unchanged. For a changed public SDK surface, this is also the one
    editorial/version approval point that consumes the generated comparison;
    release dispatch carries that reviewed decision for the exact source it
    materializes. Required heavy checks are justified by an affected seam;
    optional or borderline deep certification is offered separately.
-4. Commit and push only the approved release notes and component versions.
-   Final release dispatch does not choose or create a patch/minor/major bump.
+4. Run `hmaint release run --repo <absolute checkout> --packet <absolute JSON path>`
+   with the approved packet. The public materialization owner writes the approved
+   canonical notes and exact component versions and commits only those paths;
+   the private conductor pushes that child and waits for its canonical CI run.
    The post-commit check confirms that the analyzed source remains applicable
    and that no unexpected runtime-reachable delta entered; it does not repeat
    the whole semantic review.
-5. After explicit approval, the conductor dispatches **RELEASE — Publish
+5. Under that same approval, the conductor admits the completed child once and dispatches **RELEASE — Publish
    (preview + production)** for that exact SHA. The workflow validates the
    candidate, proves the already-completed same-repository canonical CI for that
-   exact SHA instead of rerunning the general matrix, promotes `dev` →
-   `preview`, then deploys/publishes the verified immutable outputs.
+   exact SHA instead of rerunning the general matrix, and deploys/publishes the
+   verified immutable outputs. It promotes `dev` → `preview` only after every
+   selected product has succeeded.
 6. After post-promotion verification, the workflow advances its pre-promotion
    snapshots of open `stage:source` and `stage:dev` issues to `stage:preview`.
 
@@ -80,8 +109,9 @@ When you want to ship what’s currently in `preview` to production:
 
 1. Prepare the already-validated preview candidate through `hmaint`, including
    stable-only compatibility review and preview-equivalence evidence.
-2. After explicit approval of the preview source, the workflow promotes
-   `preview` → `main`, then deploys/publishes the verified immutable outputs.
+2. After explicit approval of the preview source, the workflow deploys/publishes
+   the verified immutable outputs, then promotes `preview` → `main` only after
+   every selected product has succeeded.
 3. After post-promotion verification, the workflow advances its pre-promotion
    snapshot of `stage:preview` issues to `stage:stable`.
 
@@ -116,6 +146,9 @@ the highest channel with successful post-publication verification and canonical
 terminal completion. Production completion advances eligible issues to
 `stage:stable`; preview completion alone advances source/dev issues to
 `stage:preview`. A failed sibling channel does not erase verified availability.
+
+Combined publication ships both channels concurrently from the reviewed source;
+it does not establish a period of preview soak before production.
 
 Use GitHub's failed-job rerun while workflow control is unchanged. After a
 control fix, resume from the prior combined run; each channel reads its own
@@ -157,6 +190,36 @@ without the other, and each has its own change decision, deploy job, status
 surface, and recovery evidence. Combined preview-and-production combines
 channels; it forwards the selected target set to both channels and does not
 couple website and docs publication.
+
+Each immutable product consumes its own artifact and applicable upgrade
+verification before promoting its rolling release. A failed sibling does not
+hold a verified product's promotion or an unrelated deployment. Products that
+consume CLI or server artifacts still wait for those inputs, and required
+platforms remain a single product's verification cohort. The channel summary
+retains every selected failure or pending result; one published product does
+not make the selected release complete. Resume reuses completed products
+through the existing resolver. Issue availability advances only after the
+whole required channel outcome is verified.
+Selected web deployment also waits for its own candidate's signature and source
+identity verification before promoting the UI deploy branch.
+
+Channel branches move last: a failed selected publication or deployment prevents
+`main`/`preview` promotion without rolling back successful sibling products.
+Immutable and rolling component releases explicitly suppress GitHub Latest during
+publication. After production channel promotion, the workflow marks the selected
+immutable component candidates Latest; GitHub has one repository-wide Latest pointer. Preview
+prereleases remain ineligible. Terminal status records channel and Latest failures
+separately while preserving each product's published, pending, or failed outcome.
+These workflow changes apply to the next release dispatch; they do not alter
+already-published releases.
+
+Linux Tauri jobs acquire prerequisites through
+`.github/actions/install-tauri-linux-dependencies`. Bundled WebKit restores only
+the exact SDK cache key. A valid hit skips the LLVM repository/toolchain setup
+and SDK compilation; the job still installs the native, packaging, and runtime
+libraries needed to build and execute its packages. A miss builds the pinned SDK
+before installing and validating it. Keep those runtime dependencies on warm
+jobs; restoring the SDK does not install its system dependencies.
 
 ### Performance regression evidence (development)
 
@@ -243,11 +306,44 @@ cd <absolute-0.3-checkout>
 ```
 
 The launcher's owning checkout and `hmaint --repo` target are independent.
-`--repo` may name a 0.2 checkout, but must use its independently verified absolute
-path on the Mac execution host, not an inferred translation of a VM path. If the
-launcher, configured `mac-host`, Mac wrapper, or target path cannot be proved,
+`--repo` names an independently verified Git root available to the conductor.
+The existing synchronized source mirror can supply that root; a separately
+maintained product checkout on the Mac is unnecessary. Keep authoritative source
+work in its owning checkout and verify the synchronized path rather than
+inferring a translation from a VM path. If the launcher, configured `mac-host`, Mac wrapper, or target path cannot be proved,
 fail closed; do not substitute a VM-local conductor or copy credentials into
 the VM.
+
+For preview/production, the public `happier.release-dispatch-plan.v3` dry-run
+response includes
+`hostedDispatch`: the repository, workflow, control ref, and complete string
+inputs for the approved source/control SHAs, operation/attempt, modes, profile,
+policy, and approvals. The private conductor submits that transport directly;
+local `gh` dispatch uses the same serialization. Planning needs no GitHub token,
+including when explicit source/control SHAs and a CI run ID are supplied. Hosted
+admission still checks trusted workflow refs, the approved control/source SHAs,
+and the release actor before privileged work.
+
+Approved-packet runs negotiate `approved-release-packet-v1` through the public
+release contract. The packet has kind `happier.approved-release-packet.v1`, the
+analyzed `baseSha`, `releaseId`, the complete approved canonical changelog in
+`notes.content`, an exact component `versions` map, and the reviewed public
+dispatch-plan v3 in `intent`. The public materializer owns the approved child;
+the final planner replays and compares the complete approved intent before
+private admission and dispatch, including nondefault policy and SDK approvals.
+Packets start at `attempt_1` without a resume origin. Existing failed-run resume
+preserves that grant and changes only the origin, next attempt, current control
+SHA and CI binding through the existing resume checks.
+Materialization refuses a `preview` source: production promotes that already
+validated candidate through its prepared operation and never writes a new
+notes/version child onto `preview`.
+`run --operation-id <id>` remains available for an already prepared operation.
+
+The `v0.3` control ref is admitted by workflow code but cannot publish yet.
+Before enabling publication, the release owner must first add a `v0.3` branch
+ruleset matching `dev`, then add `v0.3` to the `release-shared` environment's
+deployment branch policy. Preserve that order so an unprotected control ref
+never gains access to the release environment.
 
 For preview, the analyzed range starts at the currently promoted `preview`
 source; for production it starts at the current `main` source. This prevents
@@ -321,9 +417,20 @@ recorded reason. Release-specific artifact,
 upgrade, platform, database, and trust-root gates remain selected independently
 from the changed seams.
 
+For a notes/version-only child, the automatic CI selector compares content
+against an ancestor with successful canonical source gates and a matching lane
+summary. Only canonical notes and supported materializer JSON version fields
+qualify; dependency, script, native-content, runtime-version and unexpected
+generated-input changes retain ordinary source gates. The child validates notes
+projections and builds its own versioned artifacts. Missing or insufficient
+baseline evidence selects source gates; an earlier metadata child cannot serve
+as a full-source baseline. Release admission still consumes the final child's
+successful exact-SHA run.
+
 `stable` additionally selects the full source-check profile and requires the
-private release agent to review the actual stable diff, preview equivalence and
-soak evidence, breaking changes, reachable version-skew directions,
+private release agent to review the actual stable diff, preview equivalence
+when promoting an existing preview, any available preview observations,
+breaking changes, reachable version-skew directions,
 persistence, and accidental lockstep requirements. `deep` is manual-only: it
 owns broader cross-OS, provider, mobile, installer, and comprehensive
 certification. It dispatches no generic compatibility or upgrade verdict.
@@ -332,7 +439,7 @@ The workflow derives source-check depth from this public profile; callers do
 not select a second `checks_profile`. Integrated preview releases use the fast
 source gate plus risk-selected exact-candidate evidence. Stable promotion
 reuses evidence for the byte-identical preview candidate, adds the
-previous-stable semantic/soak review, and runs new heavy evidence only when a
+previous-stable semantic review, and runs new heavy evidence only when a
 post-preview change invalidated or expanded the earlier selection. `deep`
 remains explicit manual certification rather than a routine release tax.
 
@@ -342,9 +449,11 @@ Run individual suites through `release-validate --suite ...` with their
 suite-specific sources; `release-validate --profile <id> --dry-run` only prints
 the profile's dispatchable suite IDs.
 
-Passing preparation is not a release go-ahead. A human must explicitly
-authorize the exact candidate and confirmation phrase; the private conductor
-then owns the hosted dispatch. A Qualified V4 activation is
+Preparation alone does not authorize publication. The single release approval
+covers the reviewed source, notes, versions, profile, scope and ordinary dispatch;
+materializing those approved inputs does not require a second approval.
+Changed scope or unexpected source changes require a refreshed decision.
+The private conductor owns hosted dispatch. A Qualified V4 activation is
 an irreversible migration and requires its own explicit approval; the ordinary
 branch-promotion confirmation does not authorize it. The workflow resolves and
 records the release source SHA before it publishes or promotes release outputs;
@@ -400,6 +509,12 @@ producing it, rather than depending on what a build image happens to contain.
   requests do not enable this mode.
 
 ### Local execution and phase recovery
+
+Hosted workflows pin operating-system image versions, including runner labels
+provided by matrices, expressions, and output mappings. Image upgrades are
+deliberate workflow changes; run
+`node --test scripts/release/workflow_runner_images.contract.test.mjs` to check
+that floating runner labels have not returned.
 
 GitHub Actions supplies hosted runner matrices, protected environments,
 permissions, and secret delivery; release decisions and phase behavior remain

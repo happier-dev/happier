@@ -166,7 +166,8 @@ deployment execution.
 
 The daemon retains one admitted immutable Coolify catalog read per Account,
 source and resolved commit: its index and the selected YAMLs acquired so far.
-Separate preparations share in-flight and completed resource reads. A full
+Separate preparations share in-flight and completed resource reads. Cancelling a
+preparation stops its own wait while other preparations can finish the shared read. A full
 40-hex commit pin bypasses commit-API resolution; listing loads and explicit
 update checks retain their existing latest-revision resolution. Each source
 keeps its latest admitted resolved commit plus older commits still being consumed;

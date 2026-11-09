@@ -73,6 +73,16 @@ and `filesDiffTokenizationMaxLineLength` preferences still govern highlighting;
 `resolveEffectiveSyntaxHighlighting` protects code-line views. Over-budget
 content remains readable without adding another size limit.
 
+## PDF raster backing (0.3 development)
+
+The shared `components/ui/media/pdf/pdfZoom.ts` sizes raster backing separately
+from page layout and selectable text. It follows pinned pdf.js 6.4.299's private
+`AppOptions` defaults in `pdfjs-dist/web/pdf_viewer.mjs`: `maxCanvasPixels` is
+2^25 on desktop or 5,242,880 on iOS/Android, with `maxCanvasDim` 32767.
+Those options are not exported by this build. Web and the generated native
+WebView consume this same sizing owner; visible-page disposal remains with
+`pdfCanvasViewer.ts`. Zoom presets and page geometry do not change.
+
 ## Editing intelligence (0.3 development)
 
 `CodeEditorHandle.setLanguageIntelligence` binds the mounted editor to the existing
@@ -85,8 +95,13 @@ sync carries text changes. An incompatible engine edit aborts pending work and
 late results cannot enter the changed buffer.
 
 Completion snippets and additional edits use the engine's buffer transaction and
-undo history. Format, Format selection and Organize imports also edit only the
-buffer, using the shared semantic edit-set transform for validation. Saving stays
+undo history. In Edit, Format, Format selection and Organize imports edit only the
+buffer, using the shared semantic edit-set transform for validation. In View and
+Changes, the File menu opens the existing edit-set review through the same Action
+preview and apply operations agents use. Cancel leaves disk untouched; apply sends
+only the reviewed, hash-guarded files. Range formatting uses current-file selection
+endpoints, including UTF-16 offsets across syntax spans; removed diff text is refused.
+Saving stays
 with the existing hash-guarded writer. The Account setting
 `filesEditorFormatOnSave` is off by default; an enabled Save awaits the editor's
 format operation before reading the bytes it will write. Explicit conflict
@@ -97,6 +112,18 @@ replacement retains its reviewed comparison instead of formatting it again.
 range hints and semantic tokens only for the engine's visible range and retain
 syntax highlighting as the baseline. Capabilities and trigger characters come
 from the server initialization result, through the controller.
+
+View consumes that same controller and preference at its visible-line projection.
+Semantic spans overlay the syntax baseline without replacing Find or diagnostic
+paint; viewport changes, text changes and retirement discard pending results.
+View and Edit accept servers offering native ranges or full tokens with delta support.
+For a server without native ranges, `apps/cli/src/lsp/serverSession.ts` acquires a
+full baseline on first visible demand, retains it with the held document, and
+applies subsequent deltas using the server's result id. It returns only tokens
+inside the requested viewport. Cancelled or superseded responses cannot replace
+that baseline; closing the document or restarting the server discards it. Native
+range-capable servers keep their range requests. This follows the
+[LSP 3.17 semantic token contract](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_semanticTokens).
 
 The bundled TypeScript language plugin declares server-side inlay preferences
 under the native server's requested `js/ts`, `typescript` and `javascript`
@@ -150,8 +177,9 @@ source, downloads a model or enables billing automatically.
 
 Content-free request and quality counters use the existing device KV adapter
 through `sync/domains/state/filePaneUiState.ts`, with one record per Home/Account
-for the current local calendar day. Recently opened files likewise use one KV record per
-workspace. These frequently changing records are outside the settings document;
+for the current local calendar day. Recently opened files use `recentWorkspaceFilesState`
+at `recentWorkspaceFilesKey({serverId, accountId}, workspaceCacheKey)`, with an exact-key
+subscription. These frequently changing records are outside the settings document;
 the AI suggestion policy remains an Account setting. The settings row labels the counter scope as **On this device
 today**. Observed latency totals/counts and Provider-reported token and cost facts are retained when supplied;
 missing cost is not estimated. These counters do not contain source, paths,
@@ -159,6 +187,57 @@ prompts or suggestions and do not enable telemetry or training collection.
 `AiSuggestionStatus` renders the controller's quiet off, sign-in, rate-limit or
 model-unavailable reason and links back to these settings. Whole-page and live
 model validation belong to the integrated AI suggestion delivery.
+
+### Next-edit suggestions
+
+The separate `nextEditEnabled` preference defaults to false. The Account's
+`filesEditorAiSuggestionsV1.modelId` selects ghost text; nullable `nextEditModelId`
+selects next edit on the same connection. Eligibility is operation-specific:
+ghost text requires `inlineCompletion`, and next edit requires `nextEdit`.
+A null next-edit choice uses the inline-selected model only if that exact model
+declares next-edit support and admits its budget. An explicit unavailable choice
+never falls back to another model or source. Each Automatic pause, or explicit
+On-request trigger, first asks the eligible inline model for ghost text. A
+displayable insertion ends that pause. Only an empty/no-op or invalid inline
+answer lets the same pause continue with the eligible next-edit model; a
+next-edit-only setup goes directly to that operation. Keystrokes, caret moves
+and the existing cancellation triggers cancel the active request and its
+continuation. Both phases reuse one debounce and one physical request slot,
+without speculative prefetch. The shared controller
+owns recent changes to the active buffer and uses the same scheduler and physical
+request slot as ghost text. Its `nextEditSuggestions` external store exposes a
+validated candidate, then a preview after the first Tab jump. A second Tab repeats
+policy, source, captured text/version and range validation before invoking the
+engine's single undo transaction. The engine never saves from this operation.
+The existing editor-context stream supplies IME, selection and completion-list
+facts; the language-server list retains Tab while open.
+
+`ai.nextEdit` carries chronological recent edits and an explicit whole-file target.
+This reaches related call sites far from the caret. The declared model context
+budget governs how much recent history fits; the target is admitted in full or
+the request is declined. No other files or repository history are included.
+The selected dedicated rewrite-window codec returns replacement data. The Protocol
+decoder diffs the original window against that replacement, first by line and then
+within changed lines, and emits only the changed spans in source order. Unchanged
+lines between related renames are not part of the preview or transaction. Its wire
+decoder rejects an incomplete generation, and the shared Protocol validator
+rejects invalid framing, stale text/version, out-of-file or overlapping ranges
+and split UTF-16 scalars; valid no-ops disappear. CRLF and replacement whitespace
+are preserved.
+
+Rendering is engine-local and policy-free. Monaco (`surfaces/monacoNextEdit.ts`)
+and the CodeMirror factory (`bridge/codeMirrorInlineSuggestions.ts`, drawn from the
+native host's projection) both draw `ready` as an ink mark at each edit's range
+with a Tab hint at the caret line, and `preview` as the Replace word marks (removed
+struck, added beside it) with Tab/Esc hints. Both share
+`formatCodeEditorNextEditCss`. Tab and the phone key row's Accept/Dismiss commands
+reach `nextEditSuggestions.tab`/`dismiss`; Escape dismisses. Apply is one
+`isolateHistory`/`pushUndoStop` transaction bracketed by the surface's pending-change
+flush, so the document history records it as one step. The file page passes
+`nextEditKeys: false` on phones, where the key row replaces the hints, and a
+footer leaf announces offered and previewed edits through
+`announceAccessibilityMessage`. The real-model desktop/phone journey remains at the
+integrated UI boundary.
 
 ## State and rendering locality
 
@@ -184,7 +263,11 @@ never silently overwritten by refresh.
 Save keeps the edit session open. A successful write advances the base to the
 text actually sent and its returned hash; text typed during the write remains
 dirty. The loader receives that version before refresh so an older read cannot
-be presented as an external write. Saved is a short presentation state, not
+be presented as an external write. The write slot and Save result settle at
+the write receipt, including guarded Use mine and Undo writes. Display refresh
+runs independently through the loader's abort/request-identity owner. A new
+explicit Save or opt-in autosave can write newer bytes while that read is
+pending; concurrent writes remain single-flight. Saved is a short presentation state, not
 another persistence state. Autosave remains opt-in and is suspended by a
 conflict or refusal; reconnection alone does not save.
 
@@ -209,7 +292,12 @@ The canonical draft record is
 `{ accountId, isEditingFile, editorOriginalHash, editorText }`. It contains no
 copy of the original file. Readers qualify by Account, ignore unknown fields
 and reject records without the original-hash field; writers emit only this shape.
-Pane tab state persists through the existing device-local pane settings owner.
+Pane tab state persists as keyed records through the existing device KV adapter
+(`persistentUiState` / `filePaneUiState`), not the settings document. Recent-file
+history uses that same adapter, qualified by Home, Account and workspace address;
+unqualified development records are not assigned to the next Account that reads
+them. Refused device writes to optional Recent or AI-suggestion usage records
+are diagnosed without interrupting file viewing or suggestion requests.
 The original-text draft shape is an undeployed 0.3 intermediate, not a legacy
 format requiring a second reader.
 
