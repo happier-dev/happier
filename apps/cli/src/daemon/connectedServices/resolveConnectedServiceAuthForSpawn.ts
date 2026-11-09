@@ -1,3 +1,4 @@
+import type { AgentPluginAccountSettingsSource } from '@/plugins/runtime/agentPluginSettings';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { isQualifiedConnectedAccountProfileActiveV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
@@ -27,6 +28,7 @@ import {
 import { resolveConnectedServiceTargetMaterializedRoot } from './materialize/resolveConnectedServiceTargetMaterializedRoot';
 import { observeConnectedServiceMaterializationPhase, observeCurrentConnectedServiceMaterializationPhase } from './materialize/materializationPhase';
 import { verifySpawnResumeReachability } from './verifySpawnResumeReachability';
+import { getConnectedServiceStateSharingDescriptor } from './catalogHooks';
 import type {
   ConnectedServiceResolvedSelection,
   ConnectedServicesMaterializationAuthority,
@@ -52,6 +54,15 @@ import type {
 type ConnectedServiceAuthGroupMemberExclusions = Extract<
   ConnectedServiceAuthGroupSwitchResult, { status: 'no_eligible_member' }
 >['excluded'];
+type ConnectedServiceSpawnSwitchResult = Partial<Pick<
+  Extract<ConnectedServiceAuthGroupSwitchResult, { status: 'observed_generation' }>,
+  'activeProfileId' | 'generation' | 'credentialRevision'
+>> & (
+  | Pick<Extract<ConnectedServiceAuthGroupSwitchResult, { status: 'quota_proof_unavailable' }>, 'status' | 'retryAtMs'>
+  | Pick<Extract<ConnectedServiceAuthGroupSwitchResult, { status: 'no_eligible_member' }>, 'status' | 'excluded' | 'retryAtMs'>
+  | Pick<Exclude<ConnectedServiceAuthGroupSwitchResult, { status: 'quota_proof_unavailable' | 'no_eligible_member' }>, 'status'>
+  | Readonly<{ status: 'session_not_found' | 'qualified_connected_account_v4_unavailable' }>
+);
 type ConnectedServiceAuthGroupMemberRuntimeState =
   ConnectedServiceAuthGroupSwitchState['memberStatesByProfileId'] extends ReadonlyMap<string, infer T>
     ? T
@@ -107,14 +118,7 @@ type ConnectedServiceAuthGroupPreTurnSwitchCoordinator = Readonly<{
     providerLimitId?: string | null;
     memberStateOverridesByProfileId?: ReadonlyArray<ConnectedServiceAuthGroupMemberRuntimeStateOverride>;
     prepareCandidateForSwitch?: PrepareSpawnGroupCandidate;
-  }>): Promise<Readonly<{
-    status: string;
-    activeProfileId?: string | null;
-    generation?: number;
-    credentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
-    excluded?: ConnectedServiceAuthGroupMemberExclusions;
-    retryAtMs?: number;
-  }>>;
+  }>): Promise<ConnectedServiceSpawnSwitchResult>;
   switchAfterClassifiedFailure?(params: Readonly<{
     sessionId?: string;
     serviceId: ConnectedAccountServiceKey;
@@ -1156,6 +1160,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
   accountSettings: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv: NodeJS.ProcessEnv;
   allowNativeAccountState?: boolean;
+  accountPluginSettingsSource?: AgentPluginAccountSettingsSource;
   connectedAccountsOwner?: Parameters<typeof materializeConnectedServicesForSpawn>[0]['connectedAccountsOwner'];
   isAccountRuntimeCurrent?: () => Promise<boolean>;
   vendorResumeId: string | null;
@@ -1186,6 +1191,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
     accountSettings: params.accountSettings,
     processEnv: params.processEnv,
     allowNativeAccountState: params.allowNativeAccountState,
+    accountPluginSettingsSource: params.accountPluginSettingsSource,
     connectedAccountsOwner: params.connectedAccountsOwner,
     isAccountRuntimeCurrent: params.isAccountRuntimeCurrent,
     runtimeDescriptorV1: params.runtimeDescriptorV1,
@@ -1244,6 +1250,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
   allowNativeAccountState?: boolean;
+  accountPluginSettingsSource?: AgentPluginAccountSettingsSource;
   connectedAccountsOwner?: Parameters<typeof materializeConnectedServicesForSpawn>[0]['connectedAccountsOwner'];
   isAccountRuntimeCurrent?: () => Promise<boolean>;
   credentialRefreshService?: ConnectedServiceSpawnCredentialRefreshService | null;
@@ -1450,6 +1457,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
         accountSettings: params.accountSettings ?? null,
         processEnv: params.processEnv ?? process.env,
         allowNativeAccountState: params.allowNativeAccountState,
+        accountPluginSettingsSource: params.accountPluginSettingsSource,
         connectedAccountsOwner: params.connectedAccountsOwner,
         isAccountRuntimeCurrent: params.isAccountRuntimeCurrent,
         vendorResumeId: params.vendorResumeId ?? null,
@@ -1517,6 +1525,11 @@ async function assertSpawnResumeReachable(params: Readonly<{
   // No vendor resume reference => this is a fresh (non-resume) spawn; the continuity gate does not
   // apply (see the `vendorResumeId` param contract). A fresh spawn is never gated.
   if (!vendorResumeId) return;
+
+  const stateSharing = await getConnectedServiceStateSharingDescriptor(params.agentId);
+  // Credential-only launches leave native Session storage with the Agent runtime.
+  // File proof applies to a relocated native home, not the request-auth directory.
+  if (stateSharing?.authIsolation.mode === 'process_env' && !stateSharing.nativeHome) return;
 
   const reachability = await verifySpawnResumeReachability({
     agentId: params.agentId,

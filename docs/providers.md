@@ -1456,6 +1456,17 @@ request-auth capability and qualified purposes. A physical management bearer
 cannot authorize inference. Releasing one consumer withdraws only its access;
 the final consumer and its in-flight requests must settle before idle stop.
 
+In 0.3 development, finite managed startup admits policy once at the public
+runtime lifecycle owner before `runtime.start`; policy is not replayed after
+service startup or endpoint projection. Explicit Start, Session-demand startup
+and catalog startup share this owner. Runtime identity, local cancellation,
+resource cleanup and secret-acquisition boundaries remain enforced. Retained
+access and later requests keep their own admission boundaries.
+Account-connection broker open and admit prepare the actual Machine custodian
+and endpoint identities for presence discovery, then authorize once in the
+final transaction that signs or returns admission. A foreign initiator's
+custodian remains distinct from the requesting Account and its private hub.
+
 Connected Account/Pool Team sources have no Provider Connection gateway binding.
 In development source, they use the same consumer-access document and process
 supervisor under their exact admitted broker operation, not a fabricated
@@ -1817,6 +1828,15 @@ Agent on the broker does not change the available routes or models. A canonical
 model id stays listed when protocol presentations use different display names.
 Aliases that identify different canonical models remain ambiguous. Session and Run
 launches still carry their actual Agent target and apply its compatibility rules.
+
+In 0.3 development, the managed wrapper embeds CLIProxyAPI v8.0.61. Its
+Go module owns the SDK selection; catalog generation derives both the TypeScript
+compatibility rows and the wrapper SDK identity from that selection. The private
+wrapper contract remains v3. Connected Services remains the credential acquisition
+and refresh owner: SDK entries contain registration sentinels, skip Claude profile
+lookup, and treat upstream 401s as request-scoped failures so a later daemon lease
+is usable. The SDK key-value store is disabled; no SDK credential store is enabled.
+The catalog is compatibility evidence, not Account entitlement.
 
 The pinned CLIProxyAPI serving registry is also a route constraint. Managed
 custody passes the admitted projection's exact ids, purpose and source revision
@@ -2551,6 +2571,13 @@ After conversion, a person's current retained Profile preference takes precedenc
 Migration descriptors are plugin-owned provider facts. New writes use provider connections; compatibility readers are boundary-owned and narrowly preserve the deployed legacy shapes.
 
 In development 0.3, resume and respawn restore an omitted Launch Profile identity from the Session owner metadata. An explicit empty identity selects Default Environment. The daemon then uses its existing Account-scoped Profile defaults and saved-secret materialization owners; retained legacy Profile environments are restored through that same defaults owner. Missing, disabled, or migrated Profiles refuse the launch. Saved-secret materialization retains its canonical policy: required bindings and exact one-shot references fail closed when unavailable; optional defaults may be omitted. Persisted Provider resume selection remains authoritative over current Profile model defaults. This requires the updated CLI daemon and adds no new wire or persisted format.
+
+Connected Account resume admission verifies Session files when authentication relocates
+the Agent's native home. An Agent declaring process-environment authentication
+without a native home, including OpenCode and Gemini, retains its native Session
+storage; its runtime owns resume against that storage. The temporary credential
+directory is not evidence of a relocated Session store. Missing catalog facts
+continue to fail the existing reachability check.
 
 ## Adding a provider plugin
 

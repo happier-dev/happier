@@ -1301,7 +1301,7 @@ describe('resolveConnectedServiceAuthForSpawn V4 group ingress', () => {
 });
 
 describe('resolveConnectedServiceAuthForSpawn', () => {
-  it('projects the applied OpenCode request-auth purpose into fresh spawn materialization', async () => {
+  it.each([false, true])('projects OpenCode request-auth without relocating native state (resume: %s)', async (resume) => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-opencode-fresh-request-auth-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-opencode-fresh-request-auth-server-'));
     const record = buildConnectedServiceCredentialRecord({
@@ -1375,6 +1375,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       baseDir,
       credentials,
       api,
+      ...(resume ? {
+        vendorResumeId: 'ses_existing_opencode_server_session',
+        resumeReachabilityRequired: true,
+      } : {}),
     } as const;
 
     const withoutRequestAuth = await resolveConnectedServiceAuthForSpawn({
@@ -1552,7 +1556,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     expect(JSON.stringify(connectedServiceAuth?.env)).not.toContain(record.oauth.refreshToken);
   });
 
-  it('does not forward a revisioned Gemini token through the private materializer when its qualified purpose is not request-auth', async () => {
+  it.each([false, true])('does not forward a revisioned Gemini token through the private materializer (resume: %s)', async (resume) => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-gemini-qualified-materialization-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-gemini-qualified-materialization-server-'));
     const record = buildConnectedServiceCredentialRecord({
@@ -1685,6 +1689,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       baseDir,
       credentials,
       api,
+      ...(resume ? {
+        vendorResumeId: 'gemini-existing-native-session',
+        resumeReachabilityRequired: true,
+      } : {}),
       resolveQualifiedPurposeBindingSnapshot: (bindings) =>
         resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
           agentId: 'gemini',
