@@ -16,6 +16,7 @@ type SessionRuntimeStatusFields = Pick<
     Session,
     | 'active'
     | 'archivedAt'
+    | 'viewer'
     | 'presence'
     | 'thinking'
     | 'thinkingAt'
@@ -48,6 +49,7 @@ function selectSessionRuntimeStatusFields(
     return {
         active: session.active,
         archivedAt: session.archivedAt,
+        viewer: session.viewer,
         presence: session.presence,
         thinking: session.thinking,
         thinkingAt: session.thinkingAt,

@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import { act, renderHook, standardCleanup } from '@/dev/testkit';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
 import { buildUpdatedSessionFromSocketUpdate } from '@/sync/engine/sessions/syncSessions';
 import { useSessionStatus } from '@/utils/sessions/sessionUtils';
@@ -17,6 +17,8 @@ it.each(['zero', 'absent', 'retained'] as const)('settles the retained composer 
         active: true, activeAt: now, presence: 'online', metadataLayoutVersion: 1,
         ownerMetadataView: { path: '/workspace', host: 'qa' },
         agentStateVersion: 4, updatedAt: now, thinking: true, thinkingAt: now,
+        viewer: createSessionViewerFixture({ attention: { needsAttention: true,
+            presentation: 'full', primary: 'permission_required', reasons: ['permission_required'] } }),
         ...(counts === 'absent' ? {} : { pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0, pendingRequestObservedAt: now }),
         agentState: { requests: { shell: { tool: 'Bash', arguments: { command: 'sleep 92' }, createdAt: now } } } });
     storage.getState().applySessions([session]);
@@ -35,6 +37,7 @@ it.each(['zero', 'absent', 'retained'] as const)('settles the retained composer 
                 updateSeq: 2, updateCreatedAt: now + 1, sessionEncryption: null,
                 updateBody: {
                     thinking: false, latestTurnStatus: 'cancelled', latestTurnStatusObservedAt: now + 1,
+                    viewer: createSessionViewerFixture(),
                     ...(counts === 'zero' ? { pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0, pendingRequestObservedAt: null } : {}),
                     agentState: { version: 5, value: JSON.stringify({ requests: {}, completedRequests: { shell: {
                         tool: 'Bash', arguments: { command: 'sleep 92' }, createdAt: now,
