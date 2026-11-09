@@ -1,18 +1,7 @@
 import * as React from 'react';
-import { retryableLazy } from '@/components/ui/performance/retryableLazy';
 
 import { useVoiceProviderRuntimeDemand } from './useVoiceProviderRuntimeDemand';
 import { rejectVoiceSessionRuntimeRequest } from './voiceSessionLifecycleControllerStore';
-
-const Runtime = retryableLazy(async () => {
-    try {
-        const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
-        return { default: VoiceSessionRuntime };
-    } catch (error) {
-        rejectVoiceSessionRuntimeRequest(error);
-        throw error;
-    }
-});
 
 /** Discovery stays synchronous; the first Start admits executable adapter loading. */
 export function VoiceSessionRuntimeHost(): React.ReactElement | null {
@@ -22,5 +11,13 @@ export function VoiceSessionRuntimeHost(): React.ReactElement | null {
     // Keep the one lifecycle owner mounted after activation: turning Voice off or
     // switching Accounts still needs its existing retirement and media cleanup.
     if (!activated.current) return null;
-    return <React.Suspense fallback={null}><Runtime /></React.Suspense>;
+    try {
+        // The bundled module stays deferred until admission. A synchronous load
+        // keeps its first mount in the admitting update instead of a Suspense retry.
+        const { VoiceSessionRuntime } = require('./VoiceSessionRuntime') as typeof import('./VoiceSessionRuntime');
+        return <VoiceSessionRuntime />;
+    } catch (error) {
+        rejectVoiceSessionRuntimeRequest(error);
+        throw error;
+    }
 }

@@ -11,6 +11,8 @@ import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev
 import { createDeferred, createRootLayoutFeaturesResponse, renderScreen as renderRuntimeScreen, waitForTestEvent } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
+import { useVoiceProviderRuntimeDemand } from './useVoiceProviderRuntimeDemand';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import type { z } from 'zod/mini';
 import { SavedSecretResourceMaterialsResponseV1Schema, type SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
@@ -23,6 +25,7 @@ import { createExistingSessionDirectoryPreflightResult, createPlainSessionCurren
 import { answerVoiceRealtimePreparationHttpRequest } from '@/dev/testkit/harness/voiceRealtimePreparationHttpBoundary';
 import { writeVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceSettings';
 import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
+import { ELEVENLABS_AGENT_CLIENT_EVENTS } from '../../../../../packages/plugins/elevenlabs/src/ui/voice/operations';
 import type { PartialOptions as ElevenLabsStartOptions } from '@elevenlabs/client';
 import { VoiceLocalDirectSchema } from '@happier-dev/protocol/voice/settings/localDirect';
 import { VoiceLocalConversationSchema } from '@happier-dev/protocol/voice/settings/localConversation';
@@ -242,6 +245,14 @@ function LayoutCommitBoundary({
   return <>{children}</>;
 }
 
+function RuntimeDemandCommitBoundary({ onCommit }: Readonly<{ onCommit: () => void }>): null {
+  const demanded = useVoiceProviderRuntimeDemand().size > 0;
+  React.useLayoutEffect(() => {
+    if (demanded) onCommit();
+  });
+  return null;
+}
+
 // Load the shared graph once, outside per-case hooks; cold module transformation
 // is not part of the mounted runtime's lifecycle operation budget.
 await loadSyncSingletonForTests();
@@ -435,7 +446,9 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
       });
       if (input.coldSavedCredential && path === '/v1/account/saved-secrets/resources/materials') return Response.json(coldCredentialMaterials);
       if (input.coldSavedCredential && path === '/v1/convai/agents/agent-cold-start') return Response.json({
-        agent_id: 'agent-cold-start', tags: ['happier_voice_config_v1'], platform_settings: {
+        agent_id: 'agent-cold-start', tags: ['happier_voice_config_v1'],
+        conversation_config: { conversation: { client_events: ELEVENLABS_AGENT_CLIENT_EVENTS } },
+        platform_settings: {
           auth: { enable_auth: true }, overrides: { conversation_config_override: {
             agent: { first_message: true, language: true, prompt: { prompt: true } },
             conversation: { text_only: true }, tts: { voice_id: true },
@@ -560,10 +573,20 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
     return conversation;
   });
   const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
+  const { getVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
+  const demandCommitControllers: Array<ReturnType<typeof getVoiceSessionLifecycleController>> = [];
   let runtime: React.ReactElement = React.createElement(VoiceSessionRuntime);
   if (input.coldShell) {
+    // Adapt Metro's call-time require to the actual, successfully evaluated
+    // Vitest namespace; no runtime or lifecycle implementation is substituted.
+    const bridge = await loadVitestModuleForNodeRequire(new URL('./VoiceSessionRuntime.tsx', import.meta.url),
+      () => import('./VoiceSessionRuntime'));
+    actionLoaderDisposals.push(bridge.dispose);
     const { RealtimeProvider } = await import('@/realtime/RealtimeProvider');
-    runtime = React.createElement(RealtimeProvider, null, React.createElement('ShellContent'));
+    runtime = <RealtimeProvider>
+      {React.createElement('ShellContent')}
+      <RuntimeDemandCommitBoundary onCommit={() => demandCommitControllers.push(getVoiceSessionLifecycleController())} />
+    </RealtimeProvider>;
   }
   if (input.currentUi) {
     const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
@@ -581,12 +604,13 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   }
   const screen = await renderRuntimeScreen(runtime);
   generatedRuntimeScreens.push(screen);
-  const { getVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
   if (input.coldShell) {
     const { getVoiceAdapterRegistry } = await import('./voiceAdapterRegistry');
     expect(getVoiceSessionLifecycleController()).toBeNull();
     expect(getVoiceAdapterRegistry().list()).toHaveLength(0);
     expect(sdk.startSession).not.toHaveBeenCalled();
+    expect(demandCommitControllers).toEqual([]);
+    expect(nativeSpeech.getAudioSessionCoordinator().getSnapshot().leaseCount).toBe(0);
     expect(screen.findAllByType('ShellContent')).toHaveLength(1);
     const { getConnectedAccountCatalogValue } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
     expect(getConnectedAccountCatalogValue(storage.getState().settingsScope, 'purposes').value).toBeNull();
@@ -605,6 +629,9 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
       attemptId = getVoiceSessionPresentedAttemptId();
       expect(attemptId).not.toBeNull();
       await vi.waitFor(() => expect(getVoiceSessionLifecycleController()).not.toBeNull());
+      // A lazy/Suspense retry can eventually connect while leaving this first
+      // admitted commit without the owner that Start is waiting for.
+      expect(demandCommitControllers[0]).toBe(getVoiceSessionLifecycleController());
     } finally {
       coldStart?.resolve();
     }
@@ -835,7 +862,7 @@ describe('VoiceSessionRuntime', () => {
     nativeSpeech.disposeNativeSdkBridge();
   });
 
-  it.each([false, true])('keeps a configured Home shell cold until public Start with shared saved credential=%s, then starts and stops through the real runtime', async coldSavedCredential => {
+  it.each([false, true])('keeps a configured Home shell cold until public Start with shared saved credential=%s, then owns the first demand commit and supports Stop', async coldSavedCredential => {
     // A browser shell needs its physical media ports, as in the Codex recipe.
     browserBoundaries.push(installVoiceWebRtcBrowserBoundary());
     vi.stubGlobal('window', new EventTarget());
