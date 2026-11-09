@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, stat, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -26,7 +26,14 @@ describe.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_REAL_UID
         await execute('setfacl', ['--version']);
         await withTempDir('realuid-', async directory => {
             await chmod(directory, 0o755);
-            const child = join(directory, 'child.mjs');
+            // Preserve the runtime asset owner's package layout. RunAs members
+            // cannot load its process-tree owner from the private source tree.
+            await mkdir(join(directory, 'dist'), { mode: 0o755 });
+            await mkdir(join(directory, 'scripts'), { mode: 0o755 });
+            const processTree = join(directory, 'scripts', 'process_tree.cjs');
+            await copyFile(resolve('scripts/process_tree.cjs'), processTree);
+            await chmod(processTree, 0o644);
+            const child = join(directory, 'dist', 'child.mjs');
             await build({ entryPoints: [resolve('src/testkit/process/agentIsolationRealUidChild.ts')],
                 outfile: child, bundle: true, platform: 'node', format: 'esm', target: 'node22',
                 // Preserve ESM dependencies and Node's require boundary. Optional

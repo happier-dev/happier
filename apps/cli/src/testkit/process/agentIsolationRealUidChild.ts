@@ -42,6 +42,10 @@ async function main() {
 void main().catch(error => {
     // No exception message: MCP context and native payloads contain capabilities.
     const code: unknown = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
-    process.stderr.write(typeof code === 'string' ? code : 'real_uid_fixture_failed');
+    const cause: unknown = error && typeof error === 'object' ? Reflect.get(error, 'cause') : undefined;
+    process.stderr.write(JSON.stringify({ code: typeof code === 'string' ? code : 'real_uid_fixture_failed',
+        causeCode: cause && typeof cause === 'object' ? Reflect.get(cause, 'code') : undefined,
+        causePath: cause && typeof cause === 'object' ? Reflect.get(cause, 'path') : undefined,
+        causeSyscall: cause && typeof cause === 'object' ? Reflect.get(cause, 'syscall') : undefined }));
     process.exitCode = 1;
 });
