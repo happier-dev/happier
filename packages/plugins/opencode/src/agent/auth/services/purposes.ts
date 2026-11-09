@@ -1,4 +1,5 @@
 import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/protocol/agents/claude/connected-account-materialization';
+import type { ConnectedAccountRequestAuthUseV1 } from '@happier-dev/protocol/connect/connected-account-request-auth';
 
 export const OPEN_CODE_REQUEST_AUTH_CONSUMER = Object.freeze({
   pluginId: 'happier.agent.opencode',
@@ -90,7 +91,7 @@ export const OPEN_CODE_REQUEST_AUTH_USES = Object.freeze(
       origin: row.requestAuthOrigin,
       headerNames: [...row.requestAuthHeaderNames],
     },
-  }]),
+  }]) satisfies readonly ConnectedAccountRequestAuthUseV1[],
 );
 export const OPEN_CODE_NATIVE_PROVIDERS = Object.freeze([
   ...new Set(OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS.map(({ provider }) => provider)),
