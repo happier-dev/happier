@@ -20,7 +20,8 @@ describe("inTx", () => {
     afterEach(() => {
         restoreEnv(envSnapshot);
         vi.restoreAllMocks();
-        transaction.mockClear();
+        transaction.mockReset();
+        transaction.mockImplementation(async (fn: any, _opts?: any) => fn({} as any));
         delayMock.mockClear();
     });
 
@@ -96,6 +97,63 @@ describe("inTx", () => {
         expect(result).toBe(789);
         expect(transaction).toHaveBeenCalledTimes(2);
         expect(delayMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("gives up on P2034 after three retries by default", async () => {
+        restoreEnv(envSnapshot);
+        applyEnvValues({
+            HAPPY_DB_PROVIDER: undefined,
+            HAPPIER_DB_PROVIDER: undefined,
+            HAPPIER_DB_TX_MAX_RETRIES: undefined,
+            HAPPY_DB_TX_MAX_RETRIES: undefined,
+        });
+        const conflict = Object.assign(new Error("write conflict"), { code: "P2034" });
+        transaction.mockRejectedValue(conflict);
+
+        const { inTx } = await import("./inTx");
+        await expect(inTx(async () => 1)).rejects.toBe(conflict);
+
+        expect(transaction).toHaveBeenCalledTimes(4);
+        expect(delayMock).toHaveBeenCalledTimes(3);
+    });
+
+    it("reads the P2034 retry limit from HAPPIER_DB_TX_MAX_RETRIES on postgres", async () => {
+        restoreEnv(envSnapshot);
+        applyEnvValues({
+            HAPPY_DB_PROVIDER: undefined,
+            HAPPIER_DB_PROVIDER: undefined,
+            HAPPIER_DB_TX_MAX_RETRIES: "6",
+        });
+        const conflict = Object.assign(new Error("write conflict"), { code: "P2034" });
+        transaction.mockRejectedValue(conflict);
+
+        const { inTx } = await import("./inTx");
+        await expect(inTx(async () => 1)).rejects.toBe(conflict);
+
+        expect(transaction).toHaveBeenCalledTimes(7);
+        expect(delayMock).toHaveBeenCalledTimes(6);
+    });
+
+    it("backs off exponentially with jitter between P2034 retries on postgres", async () => {
+        restoreEnv(envSnapshot);
+        applyEnvValues({
+            HAPPY_DB_PROVIDER: undefined,
+            HAPPIER_DB_PROVIDER: undefined,
+            HAPPIER_DB_TX_MAX_RETRIES: "6",
+        });
+        const conflict = Object.assign(new Error("write conflict"), { code: "P2034" });
+        transaction.mockRejectedValue(conflict);
+        const random = vi.spyOn(Math, "random");
+
+        const { inTx } = await import("./inTx");
+        random.mockReturnValue(0.5); // jitter factor 1.0
+        await expect(inTx(async () => 1)).rejects.toBe(conflict);
+        expect((delayMock.mock.calls as unknown as number[][]).map(([ms]) => ms)).toEqual([100, 200, 400, 800, 1600, 1600]);
+
+        delayMock.mockClear();
+        random.mockReturnValue(0); // jitter factor 0.5
+        await expect(inTx(async () => 1)).rejects.toBe(conflict);
+        expect((delayMock.mock.calls as unknown as number[][]).map(([ms]) => ms)).toEqual([50, 100, 200, 400, 800, 800]);
     });
 
     it.each(["postgres", "mysql"])("retries an acquisition-shaped P2028 before the transaction callback starts on %s", async (provider) => {

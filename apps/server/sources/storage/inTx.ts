@@ -169,7 +169,14 @@ export function isTransactionDeadlineExceededError(error: unknown): error is Tra
 export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options: InTxOptions = {}): Promise<T> {
     const provider = getDbProviderFromEnv(process.env, "postgres");
     const sqliteTransactionConfig = provider === "sqlite" ? readSqliteTransactionConfigFromEnv(process.env) : null;
-    const maxRetries = sqliteTransactionConfig?.maxRetries ?? 3;
+    // Postgres serialization failures and deadlocks (P2034) clear on retry. The default of 3
+    // is too few when many transactions contend on one Account row (markAccountChanged bumps
+    // Account.seq), as when a server pod shuts down and drops every socket at once.
+    const maxRetries = sqliteTransactionConfig?.maxRetries ?? parseIntEnv(
+        process.env.HAPPIER_DB_TX_MAX_RETRIES ?? process.env.HAPPY_DB_TX_MAX_RETRIES,
+        3,
+        { min: 0, max: 100 },
+    );
     const startedAtMs = Date.now();
     let counter = 0;
     let transactionCallbackEntered = false;
@@ -226,7 +233,9 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options: InTxOptions =
                 const nextAttempt = counter + 1;
                 const retryDelayMs = sqliteTransactionConfig
                     ? resolveSqliteTransactionRetryDelayMs(nextAttempt, sqliteTransactionConfig)
-                    : nextAttempt * 100;
+                    // Exponential with jitter, so transactions that collided do not collide again
+                    // in lockstep: 100ms, 200ms, 400ms ... capped at 1.6s, each scaled by 0.5-1.5x.
+                    : Math.round(Math.min(1_600, 100 * 2 ** (nextAttempt - 1)) * (0.5 + Math.random()));
                 if (
                     sqliteTransactionConfig &&
                     !canStartAnotherSqliteTransactionAttempt({
