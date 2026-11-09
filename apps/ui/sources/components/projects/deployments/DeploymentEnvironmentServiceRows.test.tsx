@@ -136,7 +136,7 @@ function answerAction(
 }
 
 /** The daemon's Resource wire for one services snapshot; the production Resource store owns demand. */
-function answerServices(value: unknown) {
+function answerServices(value: unknown, forInput?: (input: unknown) => unknown) {
   const bytes = Buffer.from(JSON.stringify(value));
   const content = {
     contentType: 'application/json',
@@ -145,7 +145,7 @@ function answerServices(value: unknown) {
   };
   answerAction('machines.services.list', (envelope, request) => {
     const continuation = envelope.resourceContinuation;
-    if (!continuation) return value;
+    if (!continuation) return forInput ? forInput(envelope.input) : value;
     if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ)
       return { ok: true, resource: continuation.params.resource, ...content };
     if (
@@ -369,6 +369,37 @@ describe('Environment service row ⋯ (P1 §3)', () => {
         controller.retire();
       });
     }
+  });
+
+  it('shows Runtime logs for the row the Environment list knows, the same list the rows read (PAGE-ACCEPT-100 D6b)', async () => {
+    const { detail, serving, controller, scope } = environment();
+    const service = serving.content.ownServer?.approvedInputBasis.services[0] ?? serving.content.images[0]!.service;
+    const instance = 'instance-a';
+    const running = MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [MachineServiceRowV1Schema.parse({
+      serviceId: `${instance}/${service}`, name: service, authority: 'project', lifecyclePurpose: 'deployment',
+      generation: 'generation-7', state: 'running', environmentId: detail.environment.id,
+      deployment: { deploymentId: serving.deployment.id, installationId: 'installation-a', service: { kind: 'deployment', machineId,
+        environmentId: detail.environment.id, environmentInstanceId: instance, composeService: service, serviceId: `${instance}/${service}` } },
+      capabilities: { start: true, stop: true, restart: true, logs: true, accounting: false },
+    })] });
+    // Observed on #100: the service-scoped list came back empty while the Environment list named the running row.
+    answerServices(running, (input) => (input as { composeService?: string }).composeService
+      ? MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [] }) : running);
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const { ModalProvider } = await import('@/modal');
+    const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
+      environmentId={detail.environment.id} demand={{ mounted: true, visible: true, focused: true }} accountId={accountId}
+      serverId={serverId} phone={false} deploy={null} review={{ pendingId: null, request: () => {}, open: () => {} }}
+      onOpenReceipt={() => {}} lifetime={lifetime} /></ModalProvider>);
+    const menu = `project-deployments.environment.services.${service}.menu`;
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId(menu)).not.toBeNull());
+      await screen.pressByTestIdAsync(menu);
+      await waitForHomeGovernance(() => expect(screen.findByTestId(`project-deployments.environment.services.${service}.logs`)).not.toBeNull());
+      await screen.pressByTestIdAsync(`project-deployments.environment.services.${service}.logs`);
+      await waitForHomeGovernance(() => expect(screen.findByTestId('environment-logs.runtime')).not.toBeNull());
+      expect(screen.findByTestId('environment-logs.empty')).toBeNull();
+    } finally { await act(async () => { controller.retire(); }); }
   });
 
   it('opens the Logs companion on the row\'s service, and Build shows the serving receipt\'s own steps (P11)', async () => {

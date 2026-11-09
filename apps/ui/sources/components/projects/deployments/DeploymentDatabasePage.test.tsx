@@ -118,6 +118,7 @@ async function renderDatabase(
     answers?: Answers;
     database?: string;
     retainedBackup?: boolean;
+    noBackup?: boolean;
     restore?: React.ComponentProps<typeof DeploymentDatabasePage>['restore'];
     setBindings?: React.ComponentProps<typeof DeploymentDatabasePage>['setBindings'];
     /** The Environment shares the database on a private network (its saved export). */
@@ -161,7 +162,7 @@ async function renderDatabase(
   const authored = createDeploymentEnvironmentDetailV1({
     content: {
       ...base.content,
-      backup,
+      ...(input.noBackup ? { backup: undefined } : { backup }),
       ...(input.shared ? { ownServer: { rollout: 'recreate' as const, autoRestorePreviousRelease: true, serviceExports: [
         { key: 'database', service: 'postgres', containerPort: 5432, scheme: 'postgres', exposure: 'privateNetwork' as const,
           privateNetwork: 'shop-net' },
@@ -768,6 +769,25 @@ describe('Environment → Data → Database page (P9)', () => {
       expect(await view.settle('project-deployments.connect.needsShare')).not.toBeNull();
       expect(view.screen.findByTestId('project-deployments.connect.confirm')).toBeNull();
       await view.screen.pressByTestIdAsync('project-deployments.connect.openSettings');
+      expect(view.navigate).toHaveBeenCalledWith({ tab: 'settings', section: 'servers-build' });
+    } finally { await view.dispose(); }
+  });
+
+  it('says an unprotected database is not backed up and leads to Set up backups', async () => {
+    const view = await renderDatabase({ noBackup: true });
+    try {
+      expect(await view.settle(`${page}.backups.lastGood`)).not.toBeNull();
+      expect(view.screen.getTextContent()).toContain('None yet');
+      await view.screen.pressByTestIdAsync(`${page}.backups.setUp`);
+      expect(view.navigate).toHaveBeenCalledWith({ tab: 'settings', section: 'backups' });
+    } finally { await view.dispose(); }
+  });
+
+  it('leads a database nothing shares to Private sharing from its Private network row', async () => {
+    const view = await renderDatabase({});
+    try {
+      expect(await view.settle(`${page}.connection.private.share`)).not.toBeNull();
+      await view.screen.pressByTestIdAsync(`${page}.connection.private.share`);
       expect(view.navigate).toHaveBeenCalledWith({ tab: 'settings', section: 'servers-build' });
     } finally { await view.dispose(); }
   });

@@ -331,6 +331,41 @@ describe('Environment → Domains: add form (P6)', () => {
   });
 });
 
+describe('Environment → Domains: Service never starts on the database (PAGE-ACCEPT-100 D7)', () => {
+  const withDatabase = (definition: Detail['content']['definition']) => {
+    const base = createDeploymentEnvironmentDetailV1();
+    return { ...base, content: { ...base.content, ingress: undefined, definition,
+      template: { data: [{ service: 'database', engine: 'postgres' }] } as never } };
+  };
+
+  it('leaves Service to the person when Compose\'s primary service is the database and no other service is known', async () => {
+    const detail = withDatabase({ kind: 'repository', ref: 'main',
+      compose: { path: 'compose.yaml', profiles: [], services: [], primaryService: 'database' } });
+    const { screen, controller, settle } = await renderDomains(detail, [], domainActions(detail));
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      expect(screen.findByTestId(`${id}.service`)?.props.value).toBe('');
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('starts Service on the only app the definition selects, and prefills its one port', async () => {
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const base = withDatabase({ kind: 'repository', ref: 'main',
+      compose: { path: 'compose.yaml', profiles: [], services: ['database', 'web'], primaryService: 'database' } });
+    const detail = { ...base, content: { ...base.content, ownServer: { rollout: 'recreate' as const, autoRestorePreviousRelease: false,
+      serviceExports: [{ key: 'http', service: 'web', containerPort: 8080, scheme: 'http', exposure: 'public' as const }] } } };
+    const { screen, controller, settle } = await renderDomains(detail, [], domainActions(detail));
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      const select = (testID: string) => screen.findAllByType(DropdownMenu).find(node => node.props.testID === testID);
+      expect(select(`${id}.service`)?.props.selectedId).toBe('web');
+      expect(select(`${id}.port`)?.props.selectedId).toBe('8080');
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+});
+
 describe('Environment → Domains: credentials an address needs', () => {
   it('says a basic-auth address needs its password and binds the chosen Saved Secret through deployments.bindings.set', async () => {
     const { DropdownMenu } =
