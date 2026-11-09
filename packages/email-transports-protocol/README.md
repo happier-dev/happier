@@ -34,9 +34,10 @@ import mailbox history. A non-null checkpoint returns subsequent arrivals.
 `fetchRaw` returns `{ kind: 'raw', mimeBase64, receivedAtMs }`. The receipt time
 must come from immutable transport evidence for that message (IMAP
 `INTERNALDATE`, for example), and must remain identical when the reference is
-replayed. The email core uses a valid message `Date` header for occurrence time,
-falling back to this receipt time. A poll or fetch invocation time is not a
-receipt time.
+replayed. In current development source, the email core uses this receipt time
+for occurrence admission and retention. A valid message `Date` header remains
+the authored `message.providerTimestamp`, with receipt time as its fallback.
+A poll or fetch invocation time is not a receipt time.
 
 V1 keeps protocol identity `happier.channel.email/transports`, version `1`.
 Serialized protocol identity and executable validation establish interoperability
