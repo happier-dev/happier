@@ -17,6 +17,7 @@ import type {
 const LEGEND_LIST_WEB_FILL_STYLE = {
     flex: 1,
     minHeight: 0,
+    width: '100%',
 } as const;
 
 // RN-web's public StyleSheet is also its DOM resolver; React Native's type
