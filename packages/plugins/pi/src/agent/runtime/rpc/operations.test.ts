@@ -326,6 +326,75 @@ function configuration(options: Readonly<Record<string, string>>): AgentSessionC
 }
 
 describe('createPiRuntimeOperations', () => {
+  it('replays retained facts to a late watcher in their source order and preserves their sequences', async () => {
+    const capture: Capture = { specs: [], written: [] };
+    const runtime = await createRuntime(capture);
+    const first: AgentSessionRuntimeEvent[] = [];
+    const late: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => first.push(event));
+    await emit(capture, { type: 'runtime_event', event: { kind: 'available-commands', commands: [], emittedAtMs: 1 } });
+    await emit(capture, { type: 'runtime_event', event: { kind: 'provider-session-id', providerSessionId: 'late-native-session', emittedAtMs: 2 } });
+    runtime.watch((event) => late.push(event));
+    expect(first.map((event) => event.kind)).toEqual(['available-commands', 'provider-session-id']);
+    expect(late).toEqual(first);
+    expect(late[0]).toBe(first[0]);
+    expect(late[1]).toBe(first[1]);
+    expect(late[0]!.sequence).toBeLessThan(late[1]!.sequence);
+    await runtime.dispose();
+  });
+  it('keeps a selected Provider model on its source during initial configuration', async () => {
+    const capture: Capture = { specs: [], written: [] };
+    const runtime = await createPiRuntimeOperations({
+      ...createRuntimeContext(capture), cwd: '/tmp/pi-workspace', env: {},
+      sessionId: 'bound-session', initialSessionId: 'pi-provider-session-1', providerModelId: 'vendor/selected-model',
+    });
+    const update = runtime.updateConfiguration!({ ...configuration({}), model: { value: 'vendor/selected-model', updatedAtMs: 1 } });
+    await waitForWrittenCount(capture, 1);
+    expect(capture.written[0]).toMatchObject({ type: 'set_model', provider: 'happier-provider', modelId: 'vendor/selected-model' });
+    await ackLastCommand(capture);
+    await expect(update).resolves.toMatchObject({ status: 'applied' });
+    const prompt = sendPrompt(runtime, 'Use the selected model.');
+    await waitForWrittenCount(capture, 2);
+    expect(capture.written.map(command => isRecord(command) ? command.type : undefined)).toEqual(['set_model', 'prompt']);
+    await ackLastCommand(capture);
+    await expect(prompt).resolves.toMatchObject({ status: 'admitted' });
+    await emit(capture, { type: 'agent_end', willRetry: false });
+    await runtime.dispose();
+  });
+
+  it('fans out one validated event identity and sequence to real watchers through malformed input and ordered close', async () => {
+    const capture: Capture = { specs: [], written: [] };
+    const runtime = await createRuntime(capture);
+    const first: AgentSessionRuntimeEvent[] = [];
+    const second: AgentSessionRuntimeEvent[] = [];
+    const firstWatch = runtime.watch((event) => first.push(event));
+    runtime.watch((event) => second.push(event));
+    expect(capture.specs).toHaveLength(1);
+    // Pass-through instrumentation measures boundary validation without replacing the real parser.
+    const parse = vi.spyOn(AgentSessionRuntimeEventSchema, 'parse');
+    const safeParse = vi.spyOn(AgentSessionRuntimeEventSchema, 'safeParse');
+    let validations = 0;
+    try {
+      await emit(capture, { type: 'runtime_event', event: { kind: 'runtime-activity-snapshot', state: 'idle', activeCount: 0, emittedAtMs: 10 } });
+      validations = parse.mock.calls.length + safeParse.mock.calls.length;
+    } finally {
+      parse.mockRestore();
+      safeParse.mockRestore();
+    }
+    expect(validations).toBe(1);
+    expect(first.at(-1)).toMatchObject({ kind: 'runtime-activity-snapshot', state: 'idle' });
+    expect(first.at(-1)).toBe(second.at(-1));
+    expect(first.at(-1)?.sequence).toBe(second.at(-1)?.sequence);
+    firstWatch.dispose();
+    await emit(capture, { type: 'runtime_event', event: { kind: 'runtime-activity-snapshot', state: 'idle', activeCount: 0, emittedAtMs: -1 } });
+    expect(second.at(-1)).toMatchObject({ kind: 'runtime-ended', cause: 'protocolError' });
+    expect(second.every((event, index) => index === 0 || event.sequence > second[index - 1]!.sequence)).toBe(true);
+    const count = second.length;
+    await emitExit(capture, { exitCode: 17, signal: null, stdout: '', stderr: '' });
+    expect(second).toHaveLength(count);
+    expect(first.at(-1)?.kind).toBe('runtime-activity-snapshot');
+    await runtime.dispose();
+  });
   it.each(['dispose', 'exit'] as const)('settles idle compaction once on %s', async (boundary) => {
     const capture: Capture = { specs: [], written: [] };
     const runtime = await createRuntime(capture);

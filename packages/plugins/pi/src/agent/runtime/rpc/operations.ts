@@ -1,3 +1,4 @@
+import { PI_PROVIDER_ID } from '../../providerBinding.js';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { createSecureTempDirectorySync, writeAtomicTextFile } from '@happier-dev/plugin-sdk/fs';
@@ -181,6 +182,7 @@ type PiRuntimeOperationsParams = Readonly<{
   logger: PluginLoggerService;
   cwd: string;
   env: Readonly<Record<string, string>>;
+  providerModelId?: string;
   unsetEnvKeys?: readonly string[];
   permissionMode?: PiPermissionMode;
   initialSessionId?: string | null;
@@ -472,6 +474,7 @@ function createPiExecSpec(
         thinkingLevel,
         resumeSessionId: params.resumeSessionSelector,
         connectedServiceId: readPiConnectedServiceIdFromEnv(params.env),
+        providerModelId: params.providerModelId,
         env: params.env,
         happierToolsExtension: params.happierToolsExtension,
       }),
@@ -495,6 +498,7 @@ function createRuntimeOperations(params: Readonly<{
   rpc: PiJsonStreamRpcClient;
   logger: PluginLoggerService;
   initialSessionId: string | null;
+  providerModelId?: string;
   subscribeRuntimeEvents: (handler: PiConversationEventHandler, replayStartupEvents?: boolean) => () => void;
   publishRuntimeEvent: RuntimeEventPublisher;
   resolveProviderNativeCommand: (prompt: string) => Promise<boolean>;
@@ -1057,8 +1061,8 @@ function createRuntimeOperations(params: Readonly<{
         const [provider, ...modelParts] = modelId.split('/');
         await params.rpc.send({
           type: 'set_model',
-          provider: modelParts.length > 0 ? provider : 'default',
-          modelId: modelParts.length > 0 ? modelParts.join('/') : modelId,
+          provider: modelId === params.providerModelId ? PI_PROVIDER_ID : modelParts.length > 0 ? provider : 'default',
+          modelId: modelId === params.providerModelId ? modelId : modelParts.length > 0 ? modelParts.join('/') : modelId,
         }, 30_000);
         changed.push('model');
       }
@@ -1124,11 +1128,11 @@ export type PiSessionRuntime = AgentSessionRuntime;
 
 export type PiExecutionRunConversationParams = Omit<PiRuntimeOperationsParams, 'sessionId' | 'models'>;
 
-export type PiConversationRuntime = Pick<
+export type PiConversationRuntime<TEvent extends PiRuntimeEvent = PiRuntimeEvent> = Pick<
   AgentSessionRuntime,
   'send' | 'cancel' | 'updateConfiguration' | 'compact' | 'dispose'
 > & Readonly<{
-  watch(listener: PiConversationEventHandler): Readonly<{ dispose(): void }>;
+  watch(listener: (event: TEvent) => void): Readonly<{ dispose(): void }>;
 }>;
 
 function createPiConversationRuntime(params: Readonly<{
@@ -1349,10 +1353,17 @@ function createPiConversationRuntime(params: Readonly<{
   };
 }
 
+function createPiConversationRuntimeOperations(
+  params: Omit<PiRuntimeOperationsParams, 'sessionId'>,
+  happierSessionId: string,
+): Promise<PiConversationRuntime<AgentSessionRuntimeEvent>>;
+function createPiConversationRuntimeOperations(
+  params: Omit<PiRuntimeOperationsParams, 'sessionId'>,
+): Promise<PiConversationRuntime>;
 async function createPiConversationRuntimeOperations(
   params: Omit<PiRuntimeOperationsParams, 'sessionId'>,
   happierSessionId?: string,
-): Promise<PiConversationRuntime> {
+): Promise<PiConversationRuntime | PiConversationRuntime<AgentSessionRuntimeEvent>> {
   const ownedSessionOpenLifecycle = params.eagerStart === true && !params.sessionOpenLifecycle
     ? createPiSessionOpenLifecycle({
       onLateCleanupError: (error) => {
@@ -1433,16 +1444,17 @@ async function createPiConversationRuntimeOperations(
   // Internal observers still receive events immediately; only the first consumer drains this history.
   let pendingStartupEvents: PiRuntimeEvent[] | null = [];
   let replayingStartupSubscriber: PiConversationEventHandler | null = null;
-  let retainedAvailableCommandsEvent: PiRuntimeEvent | null = null;
-  let retainedProviderSessionIdEvent: PiRuntimeEvent | null = null;
+  let retainedRuntimeEvents: PiRuntimeEvent[] = [];
   let malformedRuntimeEventPublished = false;
   let terminalRuntimeEventPublished = false;
   let sequence = 0;
   const activeMcpCalls = new Map<string, Extract<PiRuntimeEvent, { kind: 'tool-call' }> | null>();
   const publishParsedRuntimeEvent = (event: PiRuntimeEvent): void => {
     if (terminalRuntimeEventPublished) return;
-    if (event.kind === 'available-commands') retainedAvailableCommandsEvent = event;
-    if (event.kind === 'provider-session-id') retainedProviderSessionIdEvent = event;
+    if (event.kind === 'available-commands' || event.kind === 'provider-session-id') {
+      retainedRuntimeEvents = retainedRuntimeEvents.filter((retained) => retained.kind !== event.kind);
+      retainedRuntimeEvents.push(event);
+    }
     if (event.kind === 'tool-call') {
       activeMcpCalls.set(event.toolCallId,
         activeMcpCalls.has(event.toolCallId) || !event.toolName.startsWith('mcp__') ? null : event);
@@ -1473,12 +1485,11 @@ async function createPiConversationRuntimeOperations(
     if (operations) {
       operations.handleRuntimeFailure(diagnosticEvent);
     } else {
-      sequence += 1;
-      publishParsedRuntimeEvent(diagnosticEvent);
+      publishRuntimeEvent(diagnosticEvent);
     }
   };
   const publishRuntimeEvent = (event: PiRuntimeEvent): void => {
-    const observedEvent = { ...event, emittedAtMs: event.emittedAtMs ?? Date.now() };
+    let observedEvent: PiRuntimeEvent = { ...event, emittedAtMs: event.emittedAtMs ?? Date.now() };
     if (happierSessionId) {
       const parsed = AgentSessionRuntimeEventSchema.safeParse({
         ...observedEvent,
@@ -1489,6 +1500,7 @@ async function createPiConversationRuntimeOperations(
         publishMalformedRuntimeEventDiagnostic();
         return;
       }
+      observedEvent = parsed.data;
     }
     sequence += 1;
     publishParsedRuntimeEvent(observedEvent);
@@ -1553,6 +1565,7 @@ async function createPiConversationRuntimeOperations(
   };
   const modelsSource = params.models
     ? createPiSessionModelsSource({
+        providerModelId: params.providerModelId,
         readState: async () => (await rpc.send({ type: 'get_state' }, 30_000)).data,
         onError: (error) => {
           params.logger.warn('[PiRuntime] Model catalog refresh failed', {
@@ -1652,6 +1665,7 @@ async function createPiConversationRuntimeOperations(
     rpc,
     logger: params.logger,
     initialSessionId: params.initialSessionId ?? null,
+    providerModelId: params.providerModelId,
     subscribeRuntimeEvents(handler, replayStartupEvents = true) {
       subscribers.add(handler);
       if (replayStartupEvents && pendingStartupEvents !== null && replayingStartupSubscriber === null) {
@@ -1669,8 +1683,7 @@ async function createPiConversationRuntimeOperations(
           replayingStartupSubscriber = null;
         }
       } else {
-        if (retainedProviderSessionIdEvent) handler(retainedProviderSessionIdEvent);
-        if (retainedAvailableCommandsEvent) handler(retainedAvailableCommandsEvent);
+        for (const event of retainedRuntimeEvents) handler(event);
       }
       return () => {
         subscribers.delete(handler);
@@ -1784,20 +1797,9 @@ export async function createPiExecutionRunConversation(
 export async function createPiRuntimeOperations(params: PiRuntimeOperationsParams): Promise<PiSessionRuntime> {
   const { sessionId, ...conversationParams } = params;
   const conversation = await createPiConversationRuntimeOperations(conversationParams, sessionId);
-  let sequence = 0;
   return {
     ...conversation,
     runtimeCapabilities: { sessionCapabilities: AGENT_DEFINITION.core.sessionCapabilities },
-    watch(listener) {
-      return conversation.watch((event) => {
-        listener(AgentSessionRuntimeEventSchema.parse({
-          ...event,
-          sequence: ++sequence,
-          sessionId,
-          emittedAtMs: event.emittedAtMs ?? Date.now(),
-        }));
-      });
-    },
     dispose: async () => await conversation.dispose(),
   };
 }

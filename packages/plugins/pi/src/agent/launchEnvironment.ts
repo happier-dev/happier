@@ -1,3 +1,4 @@
+import { PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES } from './auth/services/qualifiedPurposes.js';
 import { PI_THINKING_LEVEL_ENV } from '../protocol/thinking.js';
 import {
   PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
@@ -6,15 +7,17 @@ import {
 import { resolveSessionFileStoreLaunchEnvironment } from '@happier-dev/plugin-sdk/sessions/file-stores';
 import { PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from './sessionFileStoreDescriptor.js';
 
+export const PI_PROVIDER_SECRET_ENV_KEY = 'HAPPIER_PI_PROVIDER_API_KEY';
+
 export const PI_DIRECT_AUTH_ENV_KEYS = Object.freeze([
-  'OPENAI_API_KEY',
-  'ANTHROPIC_API_KEY',
+  ...PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.flatMap((row) => 'environmentKey' in row.native ? [row.native.environmentKey] : []),
   'GEMINI_API_KEY',
   'OPENROUTER_API_KEY',
   'KIMI_API_KEY',
 ] as const);
 
 const PI_INTERNAL_LAUNCH_ENV_KEYS = Object.freeze([
+  PI_PROVIDER_SECRET_ENV_KEY,
   PI_THINKING_LEVEL_ENV,
   'PI_OFFLINE',
   PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,

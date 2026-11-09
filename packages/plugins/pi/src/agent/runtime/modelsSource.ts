@@ -6,6 +6,7 @@ import type {
 import { buildPiRuntimeModelsSnapshot } from '../models/catalog.js';
 
 export function createPiSessionModelsSource(params: Readonly<{
+  providerModelId?: string;
   readState(): Promise<unknown>;
   onError(error: unknown): void;
 }>): AgentSessionModelsSource & Readonly<{
@@ -17,15 +18,15 @@ export function createPiSessionModelsSource(params: Readonly<{
   let refreshGeneration = 0;
   let snapshot: AgentSessionModelsSnapshot = Object.freeze({ models: null });
   let state: unknown;
-  let catalog: Readonly<{ models: unknown[]; observedAt: number }> | null = null;
   const listeners = new Set<(value: AgentSessionModelsSnapshot) => void>();
 
-  const publish = () => {
-    const next = buildPiRuntimeModelsSnapshot({ state, availableModels: catalog ?? { models: [] } });
-    if (!next) throw new Error('Pi returned an invalid model catalog');
-    snapshot = Object.freeze(catalog
-      ? { ...next, observedAt: catalog.observedAt }
-      : { ...next, models: null });
+  const publish = (next: AgentSessionModelsSnapshot | null) => {
+    if (!next) {
+      params.onError(new Error('Pi returned an invalid model catalog'));
+      return;
+    }
+    if (next === snapshot) return;
+    snapshot = Object.freeze(next);
     for (const listener of listeners) listener(snapshot);
   };
 
@@ -42,12 +43,7 @@ export function createPiSessionModelsSource(params: Readonly<{
         params.onError(new Error(`Pi model discovery failed: ${result.error}`));
         return;
       }
-      if (!buildPiRuntimeModelsSnapshot({ state, availableModels: result })) {
-        params.onError(new Error('Pi returned an invalid model catalog'));
-        return;
-      }
-      catalog = { models: result.models, observedAt: Date.now() };
-      publish();
+      publish(buildPiRuntimeModelsSnapshot({ providerModelId: params.providerModelId, state, availableModels: result, previous: snapshot, observedAt: Date.now() }));
     },
     async refresh() {
       if (disposed) return;
@@ -56,7 +52,7 @@ export function createPiSessionModelsSource(params: Readonly<{
         const nextState = await params.readState();
         if (disposed || generation !== refreshGeneration) return;
         state = nextState;
-        publish();
+        publish(buildPiRuntimeModelsSnapshot({ providerModelId: params.providerModelId, state, previous: snapshot }));
       } catch (error) {
         params.onError(error);
       }
