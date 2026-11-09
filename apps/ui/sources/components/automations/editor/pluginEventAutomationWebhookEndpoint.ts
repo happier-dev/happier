@@ -8,6 +8,7 @@ import {
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { resolvePluginEventAutomationObserverMaterialization } from './pluginEventAutomationObservationBinding';
 
 const executePluginWebhookEndpointAction = createFrontDoorUiActionExecutor();
 
@@ -133,8 +134,8 @@ export async function ensurePluginEventAutomationWebhookEndpoint(params: Readonl
     executeAction?: PluginWebhookEndpointUiActionExecutor;
 }>): Promise<PluginEventAutomationWebhookEndpointResult> {
     const webhookContribution = params.eligibleEvent.event.automation.source.webhookContributionRef;
-    if (!('materializationRef' in params.origin.origin)) return { kind: 'unavailable' };
-    const materializationRef = params.origin.origin.materializationRef;
+    const materializationRef = resolvePluginEventAutomationObserverMaterialization(params.eligibleEvent, params.origin.origin);
+    if (!materializationRef) return { kind: 'unavailable' };
     // Read through a call so the post-await recheck below observes the live
     // signal instead of the state narrowed by this first guard.
     const aborted = (): boolean => params.signal?.aborted === true;

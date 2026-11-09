@@ -913,6 +913,10 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             const configured = await configurePluginEventAutomationSetup({
                 commandBridge,
                 eligibleEvent: currentEvent,
+                ...(configuredSetup && arePluginContributionIdentitiesEqual(configuredSetup.draft.eventRef, currentEvent.event.identity)
+                    ? { initialSource: configuredSetup.draft.source }
+                    : initialEditSeed && arePluginContributionIdentitiesEqual(initialEditSeed.eventRef, currentEvent.event.identity)
+                        ? { initialSource: initialEditSeed.source } : {}),
                 ...(params.initialSetupSeed && arePluginContributionIdentitiesEqual(params.initialSetupSeed.eventRef, currentEvent.event.identity)
                     ? { initialSetupSeed: params.initialSetupSeed } : {}),
                 ...(params.guidedPreset ? { present: submitGuidedSetupForm } : {}),
@@ -958,6 +962,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         })();
     }, [
         accountLifetime,
+        configuredSetup,
+        initialEditSeed,
         effectiveObservationTransport,
         commandBridge,
         executeWebhookAction,

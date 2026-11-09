@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
-    PluginMachineMaterializationV1Schema,
     type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    PluginMachineMaterializationV1Schema} from '@happier-dev/protocol/plugins/availability/v1';
 
 import type {
     PluginProjectionAction,
@@ -23,6 +24,9 @@ import {
     configurePluginEventAutomationSetup,
     getPluginEventAutomationEligibleSetupPresentationKey,
 } from './pluginEventAutomationSetup';
+import { ensurePluginEventAutomationWebhookEndpoint } from './pluginEventAutomationWebhookEndpoint';
+import { readPluginEventAutomationWatcherFailure } from './pluginEventAutomationObservationBinding';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 
 const PLUGIN_ID = 'acme.github';
 const EVENT_LOCAL_ID = 'events/repository';
@@ -32,6 +36,9 @@ const SERVER_ID = 'server-a';
 const SERVER_IDENTITY_ID = 'srv_account_a';
 const MATERIALIZATION_ID = 'github-materialization-a';
 const GENERATION = 17;
+const setupSchemas = new Map<string, unknown>();
+
+beforeEach(() => setupSchemas.clear());
 
 // The daemon owns Action schemas; exercise the real schema reader below its RPC transport.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
@@ -44,7 +51,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
             const action = eligibleEvent().setupAction;
             return request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ
                 && request.payload.qualifiedActionId === action.id
-                ? { ok: true, inputSchema: action.inputSchema }
+                ? { ok: true, inputSchema: setupSchemas.get(action.id) ?? action.inputSchema }
                 : { ok: false, code: 'plugin_action_schemas_unavailable' };
         },
     };
@@ -271,8 +278,6 @@ function projectionInputs(
                     available: true,
                 },
             },
-
-
             resourcesById: {},
             settingsById: {},
             familiesById: {},
@@ -415,6 +420,194 @@ function durablePushSetupParams(
 }
 
 describe('Plugin Event Automation setup orchestration', () => {
+    it.each([
+        ['disabled', SETTINGS_ROUTES.plugins, false], ['revoked', SETTINGS_ROUTES.plugins, false], ['untrusted', SETTINGS_ROUTES.plugins, false],
+        ['non_portable', SETTINGS_ROUTES.plugins, false], ['machine_local', SETTINGS_ROUTES.plugins, false],
+        ['stale', SETTINGS_ROUTES.plugins, false],
+        ['offline', null, true], ['home_unreachable', null, true], ['daemon_unsupported', SETTINGS_ROUTES.machines, false],
+    ] as const)('reports truthful watcher recovery for %s', (reason, settingsPath, retryable) => {
+        const current = executionOrigin();
+        if (!current.materialization) throw new Error('Expected current materialization fixture');
+        const failure = readPluginEventAutomationWatcherFailure({
+            materialization: { ...current.materialization, portableRelease: reason !== 'machine_local',
+                sourceClass: reason === 'machine_local' ? 'localPath' : 'registryPackage' },
+            releaseContent: 'matched', validation: reason === 'machine_local' ? { kind: 'admitted' } : { kind: 'rejected', reason },
+        }, eligibleEvent());
+        expect(failure).toMatchObject({ code: 'event_observer_unavailable', reason, retryable,
+            remediation: settingsPath ? { kind: 'openSettings', path: settingsPath } : { kind: 'retry' } });
+    });
+    it('configures an admitted source origin and preserves its producer-bound observer assignment', async () => {
+        const base = eligibleEvent();
+        const origin = {
+            serverIdentityId: SERVER_IDENTITY_ID,
+            sourceRef: { machineId: MACHINE_ID, pluginId: PLUGIN_ID,
+                sourceCustody: { kind: 'development', registeredRootId: 'github-root-a' } },
+        } as const;
+        const materializationRef = { machineId: MACHINE_ID, pluginId: PLUGIN_ID, materializationId: MATERIALIZATION_ID };
+        // The daemon catalog is the process boundary. This is a real admitted
+        // observer binding, not a synthesized portable Availability candidate.
+        const event = { ...base, observationBinding: { executionOrigin: origin, materializationRef } };
+        const fresh: FreshPluginMachineExecutionOriginV1 = {
+            origin,
+            source: { origin, occurrenceId: event.event.occurrenceId, version: '1.0.0', serverId: SERVER_ID },
+            machineTarget: executionOrigin().machineTarget,
+        };
+        const result = await configurePluginEventAutomationSetup({ ...durablePushSetupParams(event),
+            observationTransport: 'checkpointedPull', resolveExecutionOrigin: () => fresh });
+        expect(result.kind).toBe('configured');
+        if (result.kind !== 'configured') throw new Error('Expected current source setup');
+        const trigger = buildPluginEventAutomationTriggerInput({ eligibleEvents: [event],
+            draft: result.draft.draft, watcherOrigin: fresh.origin });
+        expect(trigger?.observationTransport).toEqual({ kind: 'checkpointedPull', watcherMaterializationRef: materializationRef });
+        expect(result.draft.resolveFreshWatcherOrigin()?.origin).toEqual(origin);
+    });
+    it.each(['missing', 'source', 'host'] as const)('refuses a %s source observer binding before setup with typed recovery', async (mismatch) => {
+        const base = eligibleEvent();
+        const origin = { serverIdentityId: SERVER_IDENTITY_ID,
+            sourceRef: { machineId: MACHINE_ID, pluginId: PLUGIN_ID,
+                sourceCustody: { kind: 'development', registeredRootId: 'github-root-a' } } } as const;
+        const event = { ...base, ...(mismatch === 'missing' ? {} : { observationBinding: {
+            executionOrigin: mismatch === 'source' ? { ...origin, sourceRef: { ...origin.sourceRef,
+                sourceCustody: { kind: 'development' as const, registeredRootId: 'retired-root' } } } : origin,
+            materializationRef: { machineId: mismatch === 'host' ? 'other-machine' : MACHINE_ID,
+                pluginId: PLUGIN_ID, materializationId: MATERIALIZATION_ID },
+        } }) };
+        const fresh: FreshPluginMachineExecutionOriginV1 = { origin,
+            source: { origin, occurrenceId: base.event.occurrenceId, version: '1.0.0', serverId: SERVER_ID },
+            machineTarget: executionOrigin().machineTarget };
+        const dispatch = vi.fn<PluginContributedActionDispatch>();
+        const result = await configurePluginEventAutomationSetup({ ...durablePushSetupParams(event),
+            observationTransport: 'checkpointedPull', resolveExecutionOrigin: () => fresh, dispatch });
+        expect(result).toMatchObject({ kind: 'unavailable', code: 'event_observer_unavailable',
+            reason: 'observer_binding_unavailable', retryable: false,
+            remediation: { kind: 'openSettings', path: SETTINGS_ROUTES.machines } });
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+    it('carries observation-only setup intent through the canonical Event draft without execution inputs', async () => {
+        const event = eligibleEvent();
+        const params = durablePushSetupParams(event);
+        const result = await configurePluginEventAutomationSetup({ ...params, observationTransport: 'checkpointedPull',
+            dispatch: async () => ({ ok: true, result: { v: 1, sourceInstanceId: 'repository:42',
+                sourceContractVersion: 3, sourceConfig: { repositoryId: '42' }, displayLabel: 'acme/widgets',
+                observationOnly: { kind: 'observationOnly' } } }),
+        });
+        expect(result.kind).toBe('configured');
+        if (result.kind !== 'configured') throw new Error('Expected configured observation source');
+        expect(result.draft.draft.source.observationOnly).toEqual({ kind: 'observationOnly' });
+        expect(result.draft.draft).not.toHaveProperty('executionRecipe');
+        expect(result.webhookEndpoint).toBeNull();
+        const { completePluginEventAutomationEditor } = await import('./PluginEventAutomationEditor');
+        const completed = vi.fn();
+        await completePluginEventAutomationEditor({ eligibleEvents: [event], createDraft: result.draft,
+            invalidateConfiguredSource() { throw new Error('Current source was invalidated'); } }, completed);
+        expect(completed).toHaveBeenCalledWith(expect.objectContaining({ kind: 'pluginEvent' }),
+            { observationOnly: { kind: 'observationOnly' } });
+    });
+    it.each(['new', 'seeded'] as const)('uses the Event declaration for %s observation-only authoring without a setup-result marker', async (mode) => {
+        const baseEvent = eligibleEvent();
+        const event = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({ ...baseEvent,
+            event: { ...baseEvent.event, automation: { ...baseEvent.event.automation,
+                source: { ...baseEvent.event.automation.source, observationOnly: { kind: 'observationOnly' } } } } });
+        const params = durablePushSetupParams(event);
+        const result = await configurePluginEventAutomationSetup({ ...params, observationTransport: 'checkpointedPull',
+            ...(mode === 'seeded' ? { initialSetupSeed: { eventRef: event.event.identity,
+                setupInput: { repository: 'acme/widgets' } } } : {}),
+            dispatch: async () => ({ ok: true, result: { v: 1, sourceInstanceId: 'repository:42',
+                sourceContractVersion: 3, sourceConfig: { repositoryId: '42' }, displayLabel: 'acme/widgets' } }),
+        });
+        expect(result.kind).toBe('configured');
+        if (result.kind !== 'configured') throw new Error('Expected configured observation source');
+        const { completePluginEventAutomationEditor } = await import('./PluginEventAutomationEditor');
+        const completed = vi.fn();
+        await completePluginEventAutomationEditor({ eligibleEvents: [event], createDraft: result.draft,
+            invalidateConfiguredSource() { throw new Error('Current source was invalidated'); } }, completed);
+        expect(completed).toHaveBeenCalledWith(expect.objectContaining({ kind: 'pluginEvent' }),
+            { observationOnly: { kind: 'observationOnly' } });
+    });
+    it.each(['automatic', 'required'] as const)('persists the ensured endpoint through the existing durable-push arm for %s delivery', async (webhookDelivery) => {
+        const event = durablePushEligibleEvent();
+        const params = durablePushSetupParams(event);
+        const result = await configurePluginEventAutomationSetup({ ...params, observationTransport: 'checkpointedPull',
+            dispatch: async () => ({ ok: true, result: { v: 1, sourceInstanceId: 'repository:42',
+                sourceContractVersion: 3, sourceConfig: { repositoryId: '42' }, displayLabel: 'acme/widgets',
+                observationOnly: { kind: 'observationOnly' }, webhookDelivery } }),
+            // The endpoint Action is the remote boundary; its owner and admission remain real.
+            ensureWebhookEndpoint: input => ensurePluginEventAutomationWebhookEndpoint({ ...input, executeAction: async () => ({
+                webhookEndpointId: WEBHOOK_ENDPOINT_ID, revision: 1, publicUrl: 'https://home.example/webhook',
+                readiness: 'providerConfirmationRequired', oneTimeGeneratedSecret: 'one-time-secret' }) }),
+        });
+        expect(result.kind).toBe('configured');
+        if (result.kind !== 'configured') throw new Error('Expected configured observation source');
+        expect(result.draft.draft.observation).toEqual({ kind: 'durablePush', webhookEndpointId: WEBHOOK_ENDPOINT_ID });
+        expect(result.draft.draft.source.sourceConfig).toEqual({ repositoryId: '42' });
+        const watcherOrigin = result.draft.resolveFreshWatcherOrigin();
+        if (!watcherOrigin) throw new Error('Expected current monitoring origin');
+        const trigger = buildPluginEventAutomationTriggerInput({ eligibleEvents: [event],
+            draft: result.draft.draft, watcherOrigin: watcherOrigin.origin });
+        expect(trigger?.observationTransport).toMatchObject({ kind: 'durablePush', webhookEndpointId: WEBHOOK_ENDPOINT_ID,
+            endpointMaterializationRef: { machineId: MACHINE_ID, materializationId: MATERIALIZATION_ID, pluginId: PLUGIN_ID },
+            webhookRoutingSourceInstanceId: 'repository:42' });
+        expect(result.webhookEndpoint?.oneTimeGeneratedSecret).toBe('one-time-secret');
+    });
+    it.each(['automatic', 'required'] as const)('settles an unavailable %s endpoint without claiming webhook readiness', async (webhookDelivery) => {
+        const event = durablePushEligibleEvent();
+        const params = durablePushSetupParams(event);
+        const result = await configurePluginEventAutomationSetup({ ...params, observationTransport: 'checkpointedPull',
+            dispatch: async () => ({ ok: true, result: { v: 1, sourceInstanceId: 'repository:42',
+                sourceContractVersion: 3, sourceConfig: { repositoryId: '42' }, displayLabel: 'acme/widgets',
+                observationOnly: { kind: 'observationOnly' }, webhookDelivery } }),
+            ensureWebhookEndpoint: input => ensurePluginEventAutomationWebhookEndpoint({ ...input,
+                executeAction: async () => { throw new Error('route_unavailable'); } }),
+        });
+        expect(result).toMatchObject(webhookDelivery === 'automatic'
+            ? { kind: 'configured', webhookEndpoint: null, webhookEndpointUnavailable: true }
+            : { kind: 'unavailable', code: 'webhook_endpoint_unavailable' });
+    });
+    it.each([[true, true], [true, false], [false, true], [false, false]])('seeds the declared deployment setup Action without inventing an unseeded account: %s/%s', async (knownAccount, knownMachine) => {
+        const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
+        const { GITHUB_CONNECTED_ACCOUNT_SERVICE } = await import('../../../../../../packages/plugins/scm-github/src/observations/githubProviderContracts');
+        const deploymentAccount = { ...ACCOUNT, service: GITHUB_CONNECTED_ACCOUNT_SERVICE };
+        const declaration = PLUGIN_MANIFEST.contributes.actions?.find((action) => action.id === 'automation/setup-deployment-review-event-v1');
+        expect(declaration).toBeDefined();
+        const fixture = eligibleEvent();
+        // The daemon boundary transports the real provider declaration. The
+        // surrounding fixture retains an external plugin identity so selection
+        // cannot rely on a built-in GitHub branch in the generic host.
+        const event = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
+            ...fixture,
+            setupAction: { ...fixture.setupAction, inputHints: declaration?.inputHints ?? null, inputSchema: declaration?.inputSchema },
+        });
+        setupSchemas.set(event.setupAction.id, event.setupAction.inputSchema);
+        const base = durablePushSetupParams(event);
+        const dispatch = vi.fn<PluginContributedActionDispatch>(async () => ({ ok: false, code: 'unavailable', reason: 'unavailable' } as const));
+        let presentedInput: Readonly<Record<string, unknown>> | undefined;
+        const present = vi.fn<NonNullable<typeof base.present>>(({ form }) => {
+            presentedInput = form.getInput();
+            form.cancel();
+        });
+        const result = await configurePluginEventAutomationSetup({ ...base, observationTransport: 'checkpointedPull',
+            initialSetupSeed: { eventRef: event.event.identity, ...(knownMachine ? { monitoringMachineId: MACHINE_ID } : {}),
+                ...(knownAccount ? { connectedAccount: deploymentAccount } : {}), setupInput: { repository: 'acme/widgets',
+                    ...(knownMachine ? { deploymentReview: { monitoringMachineId: MACHINE_ID } } : {}) } }, present, dispatch });
+        expect(result.kind).toBe('unavailable');
+        expect(presentedInput).toEqual({ repository: 'acme/widgets', ...(knownAccount ? { credentialRef: deploymentAccount } : {}),
+            ...(knownMachine ? { deploymentReview: { monitoringMachineId: MACHINE_ID } } : {}) });
+        expect(present).toHaveBeenCalledTimes(1);
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it('rejects conflicting seeded accounts without opening or invoking setup', async () => {
+        const event = eligibleEvent();
+        const base = durablePushSetupParams(event);
+        const present = vi.fn<NonNullable<typeof base.present>>(({ form }) => form.cancel());
+        const dispatch = vi.fn<PluginContributedActionDispatch>();
+        const result = await configurePluginEventAutomationSetup({ ...base, observationTransport: 'checkpointedPull',
+            initialSetupSeed: { eventRef: event.event.identity, monitoringMachineId: MACHINE_ID, connectedAccount: ACCOUNT,
+                setupInput: { repository: 'acme/widgets', credentialRef: { ...ACCOUNT, accountId: 'other' } } }, present, dispatch });
+        expect(result.kind).toBe('unavailable');
+        expect(present).not.toHaveBeenCalled();
+        expect(dispatch).not.toHaveBeenCalled();
+    });
     it('keys equality on the exact optional renderer projection and execution origin', () => {
         const original = eligibleEventWithSetupSurface();
         const originalOrigin = original.setupSurface!.executionOrigin;
@@ -447,7 +640,8 @@ describe('Plugin Event Automation setup orchestration', () => {
             .not.toBe(getPluginEventAutomationEligibleSetupPresentationKey(replacement));
     });
 
-    it.each([false, true])('validates custom-surface input through the same setup Action form without opening generic fields (seeded: %s)', async (seeded) => {
+    it.each(['new', 'seeded', 'saved'] as const)('validates custom-surface input through the same setup Action form without opening generic fields (%s)', async (mode) => {
+        const seeded = mode === 'seeded';
         const event = eligibleEventWithSetupSurface();
         const genericPresenter = vi.fn();
         const presentSetupSurface = vi.fn(async () => ({
@@ -470,6 +664,8 @@ describe('Plugin Event Automation setup orchestration', () => {
 
         await expect(configurePluginEventAutomationSetup({
             eligibleEvent: event,
+            ...(mode === 'saved' ? { initialSource: { v: 1 as const, sourceInstanceId: 'repository:42',
+                sourceContractVersion: 3, sourceConfig: { repositoryId: '42' }, displayLabel: 'acme/widgets' } } : {}),
             ...(seeded ? { initialSetupSeed: { eventRef: event.event.identity,
                 connectedAccount: ACCOUNT, setupInput: { repository: 'initial/repository' } } } : {}),
             observationTransport: 'checkpointedPull',
@@ -492,7 +688,8 @@ describe('Plugin Event Automation setup orchestration', () => {
             eligibleEvent: event,
             accountLifetime: ACCOUNT_LIFETIME,
             launchInput: { observerMachineId: MACHINE_ID,
-                ...(seeded ? { initialInput: { repository: 'initial/repository', credentialRef: ACCOUNT } } : {}) },
+                ...(seeded ? { initialInput: { repository: 'initial/repository', credentialRef: ACCOUNT } }
+                    : mode === 'saved' ? { initialInput: { repositoryId: '42' } } : {}) },
         }));
         expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
             input: {
@@ -1059,6 +1256,6 @@ describe('Plugin Event Automation setup orchestration', () => {
             ensureWebhookEndpoint: vi.fn(async () => ({ kind: 'unavailable' as const })),
         });
 
-        expect(result).toEqual({ kind: 'unavailable' });
+        expect(result).toMatchObject({ kind: 'unavailable', code: 'webhook_endpoint_unavailable' });
     });
 });

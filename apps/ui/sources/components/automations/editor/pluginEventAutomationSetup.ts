@@ -1,5 +1,6 @@
 import { arePluginMachineExecutionOriginsEqual, arePluginMachineMaterializationRefsEqual, getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { AutomationEventFilterV1 } from '@happier-dev/protocol/automations/automationEventFilterV1';
+import type { PluginEventAutomationSetupResultV1 } from '@happier-dev/protocol/automations/event-setup-result';
 import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginDiagnosticRemediationV1 } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 import { PluginUiJsonValueV1Schema, reconstructPluginUiSelectedActionInput } from '@happier-dev/protocol/plugins/ui';
@@ -232,6 +233,8 @@ function resolveCurrentSetupSnapshot(params: Readonly<{
  */
 export async function configurePluginEventAutomationSetup(params: Readonly<{
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
+    /** The plugin's saved source configuration is input to its own setup renderer. */
+    initialSource?: PluginEventAutomationSetupResultV1;
     eligibleEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1;
     /**
      * The transport the author chose. Durable push additionally ensures the
@@ -322,7 +325,9 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
             ? await (async () => {
                 try {
                     if (initial.event.setupSurface?.selectedRenderer.availability.state === 'available') {
-                        const initialInput = seed ? PluginUiJsonValueV1Schema.safeParse(selection.form.getInput()) : null;
+                        const initialInput = params.initialSource
+                            ? PluginUiJsonValueV1Schema.safeParse(params.initialSource.sourceConfig)
+                            : seed ? PluginUiJsonValueV1Schema.safeParse(selection.form.getInput()) : null;
                         if (initialInput && !initialInput.success) {
                             selection.form.cancel();
                             return { kind: 'unavailable', reason: 'invalid_input' } as const;
