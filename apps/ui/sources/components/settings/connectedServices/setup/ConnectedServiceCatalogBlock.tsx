@@ -10,6 +10,8 @@ import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { t } from '@/text';
 import { Modal } from '@/modal';
+import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/resolvePluginDisplayString';
 
 import { ConnectedServiceMark } from '../ConnectedServiceMark';
 import type { ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
@@ -42,12 +44,17 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
     layout: 'card' | 'row';
     /** "3 connected" (the page's catalog); Home's first accounts have none to count. */
     showCount: boolean;
+    localizePluginText?: PluginLocalizedTextResolver;
     onConnect: (event?: GestureResponderEvent) => void;
 }>) {
     const { entry } = props;
     const card = props.layout === 'card';
-    const presentation = getConnectedServiceSetupPresentation(entry.service);
-    const signIn = presentation ? t(presentation.catalogDescriptionKey) : describeConnectedServiceSignIn(entry.entry);
+    const presentation = getConnectedServiceSetupPresentation(entry.service, entry.entry);
+    const localizePluginText = props.localizePluginText;
+    const signIn = resolveProjectedLocalizedText(presentation?.catalogDescription,
+        entry.service && localizePluginText
+            ? (value) => localizePluginText(entry.service!.pluginId, value)
+            : undefined) || describeConnectedServiceSignIn(entry.entry);
     const count = props.showCount && entry.connectedCount > 0
         ? t('connectedServicesSettings.setupConnectedCount', { count: entry.connectedCount })
         : null;

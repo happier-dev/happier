@@ -8,11 +8,11 @@ export function isConnectedServiceQuotaMeterVisible(
     nowMs: number,
     pinnedMeterIds: readonly string[] = [],
 ): boolean {
-    const { usedPct, used, limit } = deriveQuotaMeterValues(meter);
+    const { usedPct, used } = deriveQuotaMeterValues(meter);
     const resetsAt = meter.resetAtMs ?? meter.resetsAt;
     return usedPct !== null
-        || (typeof used === 'number' && Number.isFinite(used)
-            && typeof limit === 'number' && Number.isFinite(limit))
+        || (typeof used === 'number' && Number.isFinite(used))
+        || (meter.status !== 'unavailable' && typeof meter.remaining === 'number' && Number.isFinite(meter.remaining))
         || (resetsAt !== null && resetsAt > 0 && Number.isFinite(resetsAt) && resetsAt >= nowMs)
         || pinnedMeterIds.includes(meter.meterId);
 }

@@ -27,6 +27,17 @@ const fiveHour = (pct: number | null, resetsIn: number) => meter('5h', '5-hour',
 const weekly = (pct: number | null, resetsIn: number) => meter('wk', 'Weekly', pct, resetsIn, { windowDurationMs: 7 * 24 * 60 * MIN });
 
 describe('projectPoolUsage', () => {
+    it('keeps reported member amounts behind the selected pool limits without inventing comparable capacity', () => {
+        const spend = meter('spend', 'Today', null, null, { unit: 'usd', used: 4.2, currency: 'USD' });
+        const snapshot = { meters: [weekly(75, MIN), spend], fetchedAt: NOW, staleAfterMs: MIN };
+        const summary = projectPoolUsage({ now: NOW, quotaLimitSelection: { mode: 'selected', providerLimitIds: ['spend'] },
+            members: [{ accountId: 'work', enabled: true, credentialStatus: 'connected', snapshot }] });
+        expect(summary.usage.memberByAccountId.work.reportedMeters).toEqual([spend]);
+        expect(summary.usage.memberByAccountId.work.room).toBe('unknown');
+        expect(summary.usage.windows).toEqual([]);
+        expect(snapshot.meters).toHaveLength(2);
+    });
+
     it('counts selected limits and qualifies retained readings without changing their capacity', () => {
         const snapshot = { meters: [fiveHour(0, MIN), weekly(75, 10 * MIN)], fetchedAt: NOW - 2 * MIN, staleAfterMs: MIN };
         const summary = projectPoolUsage({ now: NOW, quotaLimitSelection: { mode: 'selected', providerLimitIds: ['wk'] },

@@ -109,6 +109,23 @@ async function mountedPools(fixture: Awaited<ReturnType<typeof poolHome>>) {
 }
 
 describe('useQualifiedConnectedAccountGroups', () => {
+    it('opens the selected pool with one Action read and merges it into the live profile', async () => {
+        const fixture = await poolHome();
+        const selected = { ...wireGroup(), displayName: 'Selected read', generation: 2 };
+        const encoded = encodeURIComponent(encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountGroupRefSchema, selected.ref));
+        const path = '/v4/connect/qualified/group?group=' + encoded;
+        fixture.home.answer(fixture.serverId, path, { body: { group: selected } });
+        const hook = await renderHook(() => fixture.useQualifiedConnectedAccountGroups({
+            serverId: fixture.serverId, service, selectedGroupId: selected.ref.groupId,
+        }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().groups[0]?.displayName).toBe('Selected read'));
+        expect(fixture.home.requestsFor(path)).toHaveLength(1);
+        expect(fixture.home.requestsFor(listPath)).toEqual([]);
+        await act(async () => fixture.publishGroups([{ ...selected, displayName: 'Pushed next', generation: 3 }]));
+        expect(hook.getCurrent().groups[0]?.displayName).toBe('Pushed next');
+        expect(fixture.home.requestsFor(path)).toHaveLength(1);
+        await hook.unmount();
+    });
     it('shows a remote profile push in an open pool without a private group list read', async () => {
         const fixture = await poolHome();
         const hook = await mountedPools(fixture);

@@ -1,9 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
-import { getAvatarUrl, getLinkedProvider, profileDefaults, tryParseProfile } from './profile';
+import { getAvatarUrl, getLinkedProvider, profileDefaults, tryParseProfile, upsertProfileConnectedAccountGroup } from './profile';
+import { ConnectedServiceAuthGroupPolicyV2Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 
 describe('profile helpers', () => {
+    it('merges a selected pool read into the current profile without replacing other qualified groups or fields', () => {
+        const group = { v: 1 as const, ref: { service: { pluginId: 'acme.one', localId: 'service' }, groupId: 'work' },
+            displayName: 'Work', incarnation: 'work-row', generation: 1, runtimeStateRevision: 1,
+            policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({}), activeConnectedAccountId: null,
+            state: {}, members: [], createdAt: 1, updatedAt: 1 };
+        const foreign = { ...group, ref: { ...group.ref, service: { ...group.ref.service, pluginId: 'acme.other' } } };
+        const profile = { ...profileDefaults, id: 'owner', name: 'Current name', connectedAccountGroupsV4: [foreign, group] };
+        const selected = { ...group, displayName: 'Renamed', generation: 2 };
+        const updated = upsertProfileConnectedAccountGroup(profile, selected);
+        expect(updated).toEqual({ ...profile, connectedAccountGroupsV4: [foreign, selected] });
+        expect(updated.connectedAccountGroupsV4[0]).toBe(foreign);
+        expect(upsertProfileConnectedAccountGroup({ ...profile, connectedAccountGroupsV4: [foreign] }, selected)
+            .connectedAccountGroupsV4).toEqual([foreign, selected]);
+    });
     it('restores stored profiles while dropping retired nested fields', () => {
         const profile = { ...profileDefaults, id: 'account-a', connectedServicesV2: [{ serviceId: 'anthropic',
             profiles: [{ profileId: 'work', status: 'connected', retired: true }], retired: true }], retired: true };

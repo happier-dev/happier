@@ -12,19 +12,15 @@ import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { resolveQuotaMeterTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
+import { formatConnectedServiceQuotaReportedAmount } from '@/sync/domains/connectedServices/accountUsage/formatProviderUsageAmount';
+import type { ConnectedAccountIndexMeter } from '../index/projectIndexMeters';
 import { t } from '@/text';
 import { presentConnectedAccountSignedOut } from '../account/connectedAccountCredentialStatusLabel';
 
 import { UsageMeterRow, UsageMeterStack } from '../usage/UsageMeterRow';
 
 /** One window on a member's row, as the summary-meter owner selects it. */
-export type PoolMemberMeter = Readonly<{
-    meterId: string;
-    label: string;
-    remainingPct: number | null;
-    resetsAt: number | null;
-    status: 'ok' | 'unavailable' | 'estimated';
-}>;
+export type PoolMemberMeter = ConnectedAccountIndexMeter;
 
 /** What the row shows beside the member: its limits, a quiet state, or nothing. */
 export type PoolMemberUsage =
@@ -91,6 +87,7 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
                     key={meter.meterId}
                     label={meter.label}
                     remainingPct={meter.remainingPct}
+                    amount={formatConnectedServiceQuotaReportedAmount(meter.reportedAmount)}
                     resetsAt={meter.resetsAt}
                     tone={resolveQuotaMeterTone(meter)}
                     estimated={meter.status === 'estimated'}

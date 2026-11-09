@@ -1,7 +1,7 @@
 import type { ActionId} from '@happier-dev/protocol/actions/actionIds';
 import type { RuntimeActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
-import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { HappyError } from '@/utils/errors/errors';
+import { requireActionSuccess } from './actionResult';
+export { requireActionSuccess, readActionApprovalRequestCreatedError } from './actionResult';
 
 import type { createDefaultActionExecutor, UiActionExecutorContext } from './defaultActionExecutor';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -27,20 +27,6 @@ export type UiActionOperation = Pick<UiActionExecutorContext,
   | 'executionRunTargetMachineId' | 'executionRunLaunchOrigin' | 'externalActionTarget' | 'openRoute' | 'voiceSpeechSource' | 'reviewPublicProfilePreparedAction' | 'capturePublicProfilePreview' | 'publicProfilePreviewAdmission'> & Readonly<{
     confirmed?: true;
   }>;
-
-/** Retain typed refusal and pending custody instead of exposing either as a completed effect. */
-export function requireActionSuccess(result: ActionExecuteResult): asserts result is Extract<ActionExecuteResult, { ok: true }> {
-  if (!result.ok) throw new HappyError(result.error, false, { code: result.errorCode, details: result.details, failureCause: result.failureCause });
-  const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
-  if (approval.success) throw new HappyError(approval.data.kind, false, { code: approval.data.kind, details: approval.data });
-}
-
-/** The deferred approval {@link requireActionSuccess} threw, so a caller can wait on it instead of failing. */
-export function readActionApprovalRequestCreatedError(error: unknown): Readonly<{ artifactId: string }> | null {
-  if (!(error instanceof HappyError) || error.code !== 'approval_request_created') return null;
-  const approval = ActionApprovalRequestCreatedResultSchema.safeParse(error.details);
-  return approval.success ? { artifactId: approval.data.artifactId } : null;
-}
 
 /**
  * The canonical `ActionExecutor.execute` front door, lazily resolved.
@@ -138,7 +124,7 @@ export function createFrontDoorUiActionExecutor(
       ...(options?.capturePublicProfilePreview ? { capturePublicProfilePreview: options.capturePublicProfilePreview } : {}),
       ...(options?.publicProfilePreviewAdmission ? { publicProfilePreviewAdmission: options.publicProfilePreviewAdmission } : {}),
     });
-    requireActionSuccess(result);
+    requireActionSuccess(result, actionId);
     return result.result;
   };
 }

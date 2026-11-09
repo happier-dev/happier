@@ -6,6 +6,21 @@ import { parseClaudeSubscriptionUsageMeters } from '@happier-dev/plugins-claude/
 import { buildSummaryMeters, computeConnectedServiceQuotaSummaryBadges, selectConnectedServiceQuotaSummaryMeters } from './connectedServiceQuotaBadges';
 
 describe('buildSummaryMeters', () => {
+  it('retains reported denomination and uncapped amounts for every summary consumer', () => {
+    const base = { used: null, limit: null, utilizationPct: null, resetsAt: null, status: 'ok', details: {} } as const;
+    const meters = [
+      { ...base, meterId: 'spent', label: 'Today', unit: 'usd', currency: 'USD', used: 4.2 },
+      { ...base, meterId: 'balance', label: 'Balance (CNY)', unit: 'unknown', currency: 'CNY', remaining: -0.0123 },
+      { ...base, meterId: 'count', label: 'Requests', unit: 'requests', used: 2, limit: 10 },
+    ] satisfies ConnectedServiceQuotaMeterV1[];
+    expect(buildSummaryMeters(meters, [], 'primary', 1_000)).toMatchObject([
+      { meterId: 'spent', remainingPct: null, reportedAmount: { amount: { kind: 'used', used: 4.2 }, unit: 'usd', currency: 'USD' } },
+      { meterId: 'balance', remainingPct: null, reportedAmount: { amount: { kind: 'remaining', remaining: -0.0123 }, unit: 'unknown', currency: 'CNY' } },
+      { meterId: 'count', remainingPct: 80 },
+    ]);
+    expect(buildSummaryMeters(meters, [], 'primary', 1_000)[2]).not.toHaveProperty('reportedAmount');
+  });
+
   it('uses the same canonical labels for current Claude producer snapshots and account summaries', () => {
     const ids = ['five_hour', 'seven_day', 'seven_day_all', 'seven_day_fable', 'spend', 'future_api_window'];
     const meters = parseClaudeSubscriptionUsageMeters(Object.fromEntries(ids.map((id) => [id, { utilization: 20 }])));

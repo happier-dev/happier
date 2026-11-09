@@ -167,6 +167,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
             // Every subscription reads by its email; a name someone gave it joins the plan (owner 10-31).
             title: presentation.listTitle,
             identityLabel: presentation.listName,
+            accessMode: presentation.accessMode,
             roles: indexRoles,
             signedOut: needsSignIn ? {
                 reason: resolveConnectedAccountCredentialStatusLabel('needs_reauth', account.kind === 'qualified' ? account.profile.statusReason : undefined),

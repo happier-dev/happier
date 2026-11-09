@@ -13,6 +13,16 @@ const ENTRY: ConnectedServiceRegistryEntry = {
     serviceId: SERVICE_ID, legacyServiceId: SERVICE_ID,
     service: { pluginId: 'happier.agent.claude', localId: SERVICE_ID },
     connectCommand: 'happier connect claude', supportsOauth: true, executable: true,
+    projectedDescriptor: {
+        id: SERVICE_ID, serviceId: SERVICE_ID, pluginId: 'happier.agent.claude', title: 'Example',
+        provenance: 'external', sourceKind: 'installed', availability: { state: 'available', reason: 'resolved' },
+        capabilities: [], diagnostics: [],
+        authentication: { defaultModeId: 'oauth', modes: [
+            { id: 'oauth', kind: 'oauthDeviceCode', outcomeReconciliation: 'none' },
+            { id: 'key', kind: 'manual', apiKey: true, outcomeReconciliation: 'none', fields: [] },
+            { id: 'import', kind: 'manual', credentialOrigin: 'native_import', outcomeReconciliation: 'none', fields: [] },
+        ] },
+    },
 };
 const PROFILES = [
     { profileId: 'profile-id-42', status: 'connected' },
@@ -158,10 +168,20 @@ describe('presentConnectedServicesIndexAccount list identity (Credentials rows: 
     it('keeps an unnamed subscription on its email with no name, and a key on its own name', () => {
         const shown = presentQualified([
             { ...base, providerIdentity: { email: 'ai1@example.com' } },
-            { ...base, ref: { ...base.ref, accountId: 'k' }, kind: 'token', displayName: 'Work key', providerIdentity: { email: 'billing@example.com' } },
+            { ...base, ref: { ...base.ref, accountId: 'k' }, authenticationModeId: 'key', kind: 'token', accessMode: 'apiKey', displayName: 'Work key', providerIdentity: { email: 'billing@example.com' } },
         ]);
         expect(shown.a).toMatchObject({ listTitle: 'ai1@example.com', listName: null });
-        expect(shown.k).toMatchObject({ listTitle: 'Work key', listName: null });
+        expect(shown.k).toMatchObject({ listTitle: 'Work key', listName: null, accessMode: { kind: 'apiKey', keySuffix: null } });
+    });
+
+    it('keeps device-issued and imported token accounts on their subscription identity', () => {
+        const shown = presentQualified([
+            { ...base, kind: 'token', accessMode: 'subscription', displayName: 'Personal', providerIdentity: { email: 'device@example.com' } },
+            { ...base, ref: { ...base.ref, accountId: 'imported' }, authenticationModeId: 'import', kind: 'token',
+                displayName: 'Work', providerIdentity: { email: 'imported@example.com' } },
+        ]);
+        expect(shown.a).toMatchObject({ listTitle: 'device@example.com', listName: 'Personal', accessMode: { kind: 'subscription' } });
+        expect(shown.imported).toMatchObject({ listTitle: 'imported@example.com', listName: 'Work', accessMode: null });
     });
 
     it('applies the privacy presenter to the email it promotes', () => {

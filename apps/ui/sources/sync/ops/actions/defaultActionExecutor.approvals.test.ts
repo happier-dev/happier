@@ -742,6 +742,25 @@ describe('createDefaultActionExecutor approvals', () => {
         else expect(persistedApproval(artifactId)).toMatchObject({ status: 'executed', execution: { ok: true } });
     });
 
+    it.each(['applied', 'refused'] as const)('forwards one opaque native permission choice without Account reads and preserves its $0 receipt', async outcome => {
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        await connectPermissionTransport();
+        const before = getStorage().getState().sessions.s1;
+        const nativeChoice = { requirementId: 'native-requirement', choiceId: 'vendor-choice', feedback: 'Use the offered option' };
+        rpcResult = outcome === 'applied' ? { ok: true, requestId: 'req-1' }
+            : { ok: false, errorCode: 'permission_request_not_found', requestId: 'req-1' };
+        const requestsBefore = homes.requests.length;
+        await expect(executor.execute('session.permission.respond', {
+            sessionId: 's1', requestId: 'req-1', turnId: 'turn-1', nativeChoice,
+        }, context())).resolves.toMatchObject(outcome === 'applied' ? { ok: true }
+            : { ok: false, errorCode: 'permission_request_not_found' });
+        expect(outgoing.filter(request => typeof request.method === 'string')).toEqual([
+            expect.objectContaining({ method: 's1:' + RPC_METHODS.SESSION_PERMISSION_RESPOND,
+                params: expect.objectContaining({ id: 'req-1', turnId: 'turn-1', nativeChoice }) }),
+        ]);
+        expect(homes.requests.slice(requestsBefore).filter(request => request.path.startsWith('/v1/account/'))).toEqual([]);
+        expect(getStorage().getState().sessions.s1).toBe(before);
+    });
     it.each([
         { decision: 'approve', remote: false, live: true }, { decision: 'reject', remote: false, live: false },
         { decision: 'approve', remote: true, live: false }, { decision: 'approve', remote: false, live: false },

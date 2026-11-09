@@ -69,6 +69,9 @@ import type { AgentDefaultChoice } from '../defaults/agentDefaultChoices';
 import { UsageMeterRow, UsageMeterStack } from '../usage/UsageMeterRow';
 import { PoolMembersSelectField, type PoolMembershipCandidate } from './PoolMembersSelectField';
 import { PoolMemberRow, type PoolMemberNote, type PoolMemberUsage } from './PoolMemberRow';
+import { projectIndexMeters } from '../index/projectIndexMeters';
+import { presentConnectedAccountAccessModeForAccount } from '../model/presentConnectedAccountAccessMode';
+import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { PoolQuotaLimitsSelectField, type PoolQuotaLimitCandidate } from './PoolQuotaLimitsSelectField';
 import { computePoolMembershipDiff } from './poolMembershipDiff';
 import { projectPoolUsage, resolvePoolManualSwitchSuggestion } from './derivePoolUsage';
@@ -101,7 +104,7 @@ const identityPresenter: ConnectedAccountIdentityPresenter = (input) => ({
 /** An account of this service, eligible for pool membership. */
 export type QualifiedPoolDetailAccount = QualifiedConnectedAccountPresentationAccount & Readonly<{
     status?: unknown;
-}>;
+}> & Pick<QualifiedConnectedAccountProfileV4, 'accessMode'>;
 
 /** One member's usage as the batched quota owner holds it. */
 export type PoolMemberQuota = Readonly<{
@@ -358,7 +361,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         // name is not already the email (an account nobody named is called by its email).
         const email = rawEmail && rawEmail !== presentation.primaryLabel ? rawEmail : null;
         const shown = present({ label: presentation.primaryLabel, labelKind: presentation.primaryLabelKind, email });
-        return { name: shown.label ?? presentation.primaryLabel, email: shown.email };
+        return { name: shown.label ?? presentation.primaryLabel, email: shown.email, accessMode: account?.accessMode };
     }, [accountLabels, accounts, group, labelsByKey, present, props.serviceLabel]);
 
     const sortedMembers = React.useMemo(() => sortMembersByPriority(group.members), [group.members]);
@@ -451,8 +454,8 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
     const membershipCandidates = React.useMemo<ReadonlyArray<PoolMembershipCandidate>>(
         () => accounts.map((account) => {
             const identity = identityOf(account.ref.accountId);
-            const plan = memberQuota[account.ref.accountId]?.snapshot?.planLabel;
-            const subtitle = [identity.email, plan].filter(Boolean).join(' · ');
+            const mode = presentConnectedAccountAccessModeForAccount(account, memberQuota[account.ref.accountId]?.snapshot?.planLabel);
+            const subtitle = [identity.email, mode].filter(Boolean).join(' · ');
             return {
                 accountId: account.ref.accountId,
                 title: identity.name,
@@ -818,7 +821,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                             const snapshot = quota?.snapshot ?? null;
                             const memberState = usage.memberByAccountId[accountId];
                             const isActive = accountId === group.activeAccountId;
-                            const plan = snapshot?.planLabel ?? null;
+                            const mode = presentConnectedAccountAccessModeForAccount(identity, snapshot?.planLabel);
                             const autoOff = member.state.autoDisabledReason === 'model_not_entitled';
                             const note: PoolMemberNote | null = autoOff
                                 ? { icon: 'info', text: t('connectedServicesPool.autoOffModel') }
@@ -828,7 +831,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                                 : isConnectedAccountSignedOut(memberState?.credentialStatus)
                                     ? { kind: 'signedOut' }
                                 : snapshot
-                                    ? { kind: 'meters', meters: memberState?.meters.slice(0, 2) ?? [] }
+                                    ? { kind: 'meters', meters: projectIndexMeters(memberState?.reportedMeters ?? [], now).slice(0, 2) }
                                     : quota?.loading ? { kind: 'loading' } : { kind: 'none' };
                             const actionId = (suffix: string) => `connected-services-pool:${group.ref.groupId}:member:${accountId}:action:${suffix}`;
                             const actions = (moveBy: (direction: -1 | 1) => void): ItemAction[] => [
@@ -859,7 +862,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                                     <PoolMemberRow
                                         testID={`${TEST_ID}:member:${accountId}`}
                                         title={identity.name}
-                                        identityLabel={[identity.email, plan].filter(Boolean).join(' · ') || null}
+                                        identityLabel={[identity.email, mode].filter(Boolean).join(' · ') || null}
                                         active={isActive}
                                         enabled={member.enabled}
                                         note={note}

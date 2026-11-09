@@ -38,7 +38,7 @@ import {
 } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import type { MeterTone } from '@/components/ui/lists/MeterBar';
 import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
-import type { ConnectedServiceQuotaRecoveryCreditsV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { ConnectedServiceQuotaMeterV1, ConnectedServiceQuotaRecoveryCreditsV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
 import { t } from '@/text';
 import {
@@ -48,6 +48,8 @@ import {
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { formatConnectedServiceQuotaReportedAmount } from '@/sync/domains/connectedServices/accountUsage/formatProviderUsageAmount';
+import type { ConnectedServiceQuotaReportedAmount } from '@/sync/domains/connectedServices/accountUsage/presentProviderConnectionUsage';
 
 import type { SidebarFooterPopoverContentProps } from './SidebarFooterPopoverButton';
 
@@ -93,6 +95,8 @@ export type UsagePopoverWindow = Readonly<{
     remainingPct: number | null;
     resetsAt: number | null;
     tone: MeterTone;
+    reportedAmount?: ConnectedServiceQuotaReportedAmount;
+    status?: ConnectedServiceQuotaMeterV1['status'];
 }>;
 
 /**
@@ -480,6 +484,8 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
                             key={window.meterId}
                             label={window.label}
                             remainingPct={window.remainingPct}
+                            amount={formatConnectedServiceQuotaReportedAmount(window.reportedAmount)}
+                            estimated={window.status === 'estimated'}
                             resetsAt={window.resetsAt}
                             tone={window.tone}
                             now={props.now}
@@ -514,6 +520,8 @@ function OwnSignInGroup(props: Readonly<{ group: NonNullable<UsagePopoverSession
                         key={window.meterId}
                         label={window.label}
                         remainingPct={window.remainingPct}
+                        amount={formatConnectedServiceQuotaReportedAmount(window.reportedAmount)}
+                        estimated={window.status === 'estimated'}
                         resetsAt={window.resetsAt}
                         tone={window.tone}
                         now={props.now}

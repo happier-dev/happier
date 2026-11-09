@@ -71,7 +71,7 @@ export function buildConnectedServiceSetupCatalog(
         })),
     ];
     return entries.map(entry => ({ ...entry, category: connectedServiceSetupCategory(entry) })).sort((left, right) =>
-        (getConnectedServiceSetupPresentation(left.service)?.order ?? Infinity)
-        - (getConnectedServiceSetupPresentation(right.service)?.order ?? Infinity)
+        (getConnectedServiceSetupPresentation(left.service, left.entry)?.order ?? Infinity)
+        - (getConnectedServiceSetupPresentation(right.service, right.entry)?.order ?? Infinity)
         || left.label.localeCompare(right.label));
 }

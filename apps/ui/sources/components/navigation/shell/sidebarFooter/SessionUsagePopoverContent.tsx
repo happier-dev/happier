@@ -129,6 +129,8 @@ export function buildUsagePopoverSession(params: Readonly<{
                 remainingPct: row.remainingPct,
                 resetsAt: row.resetsAt,
                 tone: resolveQuotaTone(row.remainingPct),
+                ...(row.reportedAmount ? { reportedAmount: row.reportedAmount } : {}),
+                ...(row.status ? { status: row.status } : {}),
             })),
         } : null,
         nextMove: null,

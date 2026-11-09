@@ -6,7 +6,6 @@ import { HubUsageCardGrid } from '@/components/hub/usage/HubUsageCardGrid';
 import { ConnectedAccountDeviceForm } from '@/components/settings/connectedServices/account/ConnectedAccountDeviceForm';
 import { ConnectedAccountManualForm } from '@/components/settings/connectedServices/account/ConnectedAccountManualForm';
 import { ConnectedAccountOAuthForm } from '@/components/settings/connectedServices/account/ConnectedAccountOAuthForm';
-import { getConnectedServiceSetupPresentation } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { buildConnectServicesSetupItem } from '@/components/settings/connectedServices/home/useConnectServicesSetupItem';
 import { selectHomeConnectInvitations } from '@/components/settings/connectedServices/home/selectHomeConnectInvitations';
 import {
@@ -145,8 +144,6 @@ function FixtureFlow(props: Readonly<{ entry: ConnectedServiceSetupCatalogEntry;
             />
         );
     }
-    const presentation = getConnectedServiceSetupPresentation(props.entry.service);
-    const guide = presentation && 'manual' in presentation ? presentation.manual : null;
     return (
         <ConnectedServiceSetupFlowBody
             state="ready"
@@ -155,8 +152,6 @@ function FixtureFlow(props: Readonly<{ entry: ConnectedServiceSetupCatalogEntry;
                     embedded
                     title={props.entry.label}
                     fields={[{ id: 'token', title: props.entry.label, secret: true, schema: { type: 'string', minLength: 1 } }]}
-                    guided={guide ? { consoleUrl: guide.consoleUrl, createKeyTitle: t(guide.createKeyTitleKey),
-                        billingNote: t(guide.billingNoteKey), shapeHint: t(guide.shapeHintKey) } : undefined}
                     submitting={false}
                     onCancel={noop}
                     onSubmit={noop}

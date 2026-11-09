@@ -1,3 +1,5 @@
+import { UsageSummaryCacheV1Schema, type UsageSummaryCacheV1 } from './usageSummaryCache';
+export { UsageSummaryCacheV1Schema, type UsageSummaryCacheV1 } from './usageSummaryCache';
 import { MMKV } from 'react-native-mmkv';
 import { ArtifactCoarseKindV1Schema } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
@@ -508,37 +510,6 @@ export const PluginUiProjectionCacheEntryV1Schema: z.ZodMiniType<PluginUiProject
         PluginUiTargetedContributionsV1Schema,
     )),
 });
-
-/**
- * The last usage summary this device saw for the Account (connected accounts' quota windows), with
- * the time it was read, so hubs show last-known usage and its "as of" on a cold start.
- */
-export const UsageSummaryCacheV1Schema = z.object({
-    v: z.literal(1),
-    entries: z.array(z.object({
-        key: z.string().check(z.minLength(1)),
-        /** Unknown when the producer has no reading time; never inferred from another account. */
-        fetchedAt: z.nullable(z.number().check(z.int(), z.nonnegative())),
-        serviceLabel: z.string(),
-        /** Added with per-provider grouping; absent in values saved before it (still readable). */
-        serviceGroupKey: z.optional(z.string().check(z.minLength(1))),
-        legacyServiceId: z.optional(z.nullable(z.string())),
-        accountLabel: z.optional(z.string()),
-        /** Added with "Hide account emails and IDs": the raw identity the one presenter formats. */
-        accountEmail: z.optional(z.nullable(z.string())),
-        accountId: z.optional(z.nullable(z.string())),
-        profileLabel: z.nullable(z.string()),
-        planLabel: z.nullable(z.string()),
-        meters: z.array(z.object({
-            meterId: z.string().check(z.minLength(1)),
-            label: z.string(),
-            remainingPct: z.nullable(z.number()),
-            resetsAt: z.nullable(z.number()),
-        })),
-    })),
-});
-
-export type UsageSummaryCacheV1 = z.infer<typeof UsageSummaryCacheV1Schema>;
 
 /** Kind-keyed Found metadata, never bytes or reachability authority. */
 export const FoundCacheEntryV1Schema = z.discriminatedUnion('kind', [z.strictObject({

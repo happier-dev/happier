@@ -69,6 +69,8 @@ export type PoolMemberUsageState = Readonly<{
     room: PoolMemberRoom;
     lowestRemainingPct: number | null;
     meters: readonly ComparableReading[];
+    /** Provider amounts after the pool's existing limit selection, including uncapped readings. */
+    reportedMeters: readonly ConnectedServiceQuotaMeterV1[];
 }>;
 
 /** One window of "Left across the pool": the members' average, the earliest reset. */
@@ -175,6 +177,7 @@ export function derivePoolUsage(input: Readonly<{
             room,
             lowestRemainingPct: room === 'unknown' ? null : lowestRemainingPct,
             meters: readings,
+            reportedMeters: member.meters ?? [],
         };
         memberByAccountId[member.accountId] = state;
         if (!member.enabled || !credentialUsable) continue;

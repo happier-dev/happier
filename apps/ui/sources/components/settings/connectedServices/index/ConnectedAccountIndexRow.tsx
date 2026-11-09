@@ -2,13 +2,11 @@ import * as React from 'react';
 import { readBuiltInLegacyConnectedServiceIdForQualifiedService } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { useSetting } from '@/sync/domains/state/storage';
 import { connectedServiceProfileKey, resolveQualifiedConnectedAccountProfilePreference } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
-import { isConnectedServiceQuotaMeterVisible } from '@/sync/domains/connectedServices/connectedServiceQuotaMeterVisibility';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
     ConnectedServiceId} from '@happier-dev/protocol/connect/connected-service-bindings';
 import type {
-    ConnectedServiceQuotaMeterV1,
     ConnectedServiceQuotaRecoveryCreditsV1} from '@happier-dev/protocol/connect/connected-service-schemas';
 import type {
     ProviderAccountSubscriptionV1} from '@happier-dev/protocol/connect/accountSubscription';
@@ -29,7 +27,6 @@ import { Typography } from '@/constants/Typography';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useConnectedServiceQuotaSnapshots } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots';
 import { useQualifiedConnectedAccountQuota } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountQuota';
-import { selectConnectedServiceQuotaSummaryMeters } from '@/sync/domains/connectedServices/connectedServiceQuotaBadges';
 import { resolveQuotaMeterTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
 import { shouldHideQuotaForCredentialStatus } from '@/sync/domains/connectedServices/shouldHideQuotaForCredentialStatus';
 import { t } from '@/text';
@@ -37,6 +34,11 @@ import { t } from '@/text';
 import { AccountSubscriptionLine, useConnectedAccountSubscription } from '../usage/AccountUsageFacts';
 import { UsageMeterRow, UsageMeterStack, type UsageMeterSize } from '../usage/UsageMeterRow';
 import { ConnectedServiceMark } from '../ConnectedServiceMark';
+import { presentConnectedAccountAccessMode, type ConnectedAccountAccessMode } from '../model/presentConnectedAccountAccessMode';
+import { resolveConnectedAccountAccessMode } from '../model/resolveConnectedAccountAccessMode';
+import { projectIndexMeters, type ConnectedAccountIndexMeter } from './projectIndexMeters';
+import { formatConnectedServiceQuotaReportedAmount } from '@/sync/domains/connectedServices/accountUsage/formatProviderUsageAmount';
+export { projectIndexMeters, type ConnectedAccountIndexMeter } from './projectIndexMeters';
 
 /** One role an account plays: a pool it belongs to (and whether that pool uses it now). */
 export type ConnectedAccountIndexRole = Readonly<{
@@ -45,14 +47,6 @@ export type ConnectedAccountIndexRole = Readonly<{
     label: string;
     /** The role is live now ("Work pool · in use"). */
     active: boolean;
-}>;
-
-export type ConnectedAccountIndexMeter = Readonly<{
-    meterId: string;
-    label: string;
-    remainingPct: number | null;
-    resetsAt: number | null;
-    status: ConnectedServiceQuotaMeterV1['status'];
 }>;
 
 /** What the account shows beside its identity: its limits, a quiet state, or nothing. */
@@ -92,6 +86,8 @@ export type ConnectedAccountIndexEntry = Readonly<{
     /** The service's owning plugin: its packaged brand is the row's mark when no built-in mark exists (as in the rail). */
     pluginId?: string | null;
     accountId: string;
+    /** Subscription or API key, from the account's record: said once, on line 2 (lab `muse-accounts` A1). */
+    accessMode?: ConnectedAccountAccessMode | null;
     /** ★: default for an agent (the per-agent default menu). */
     star: React.ReactNode;
     onOpen: () => void;
@@ -108,23 +104,6 @@ const EMPTY_FACTS: ConnectedAccountIndexFacts = {
     refreshing: false,
     refresh: null,
 };
-
-/** Useful and pinned windows, in the provider's order. */
-export function projectIndexMeters(
-    meters: readonly ConnectedServiceQuotaMeterV1[],
-    nowMs: number = Date.now(),
-    pinnedMeterIds: readonly string[] = [],
-): readonly ConnectedAccountIndexMeter[] {
-    return selectConnectedServiceQuotaSummaryMeters({ meters, meterIds: meters.map((meter) => meter.meterId), strategy: 'primary' })
-        .flatMap((selected) => selected.meter
-            && isConnectedServiceQuotaMeterVisible(selected.meter, nowMs, pinnedMeterIds) ? [{
-            meterId: selected.meterId,
-            label: selected.label,
-            remainingPct: selected.remainingPct,
-            resetsAt: selected.meter.resetAtMs ?? selected.meter.resetsAt ?? null,
-            status: selected.meter.status,
-        }] : []);
-}
 
 /** The account's limits as the one meter draws them, or its quiet state. */
 export const ConnectedAccountIndexUsageBlock = React.memo(function ConnectedAccountIndexUsageBlock(props: Readonly<{
@@ -143,6 +122,7 @@ export const ConnectedAccountIndexUsageBlock = React.memo(function ConnectedAcco
                         key={meter.meterId}
                         label={meter.label}
                         remainingPct={meter.remainingPct}
+                        amount={formatConnectedServiceQuotaReportedAmount(meter.reportedAmount)}
                         resetsAt={meter.resetsAt}
                         tone={resolveQuotaMeterTone(meter)}
                         estimated={meter.status === 'estimated'}
@@ -320,7 +300,11 @@ export const ConnectedAccountSignInRecovery = React.memo(function ConnectedAccou
  */
 export const ConnectedAccountIndexRowView = React.memo(function ConnectedAccountIndexRowView(props: ConnectedAccountIndexRowViewProps) {
     const { facts } = props;
-    const fact = [props.identityLabel, facts.planLabel ?? props.serviceFact ?? null].filter(Boolean).join(' · ');
+    const accessMode = props.accessMode ?? resolveConnectedAccountAccessMode(null, facts.subscription);
+    const fact = [
+        props.identityLabel,
+        accessMode ? presentConnectedAccountAccessMode(accessMode, facts.planLabel) : facts.planLabel ?? props.serviceFact ?? null,
+    ].filter(Boolean).join(' · ');
     const trailing = props.signedOut ? (
         <ConnectedAccountSignInRecovery testID={props.testID} signedOut={props.signedOut}
             onOpen={props.onOpen} compact={props.compact} prominence={props.fixProminence} />
@@ -394,7 +378,7 @@ function useQualifiedFacts(account: QualifiedConnectedAccountRef, billedPerUse: 
                 : billedPerUse && snapshot?.meters.length === 0 ? { kind: 'noLimits' } : { kind: 'none' };
     return {
         usage,
-        planLabel: snapshot?.planLabel ?? null,
+        planLabel: billedPerUse ? null : snapshot?.planLabel ?? null,
         subscription,
         recoveryCredits: snapshot?.recoveryCredits ?? null,
         fetchedAt: snapshot?.fetchedAt ?? null,

@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const store = new Map<string, string>();
-const getString = vi.fn((key: string) => store.get(key));
-const set = vi.fn((key: string, value: string) => {
-    store.set(key, value);
-});
-const deleteKey = vi.fn((key: string) => {
-    store.delete(key);
+const { store, getString, set, deleteKey } = vi.hoisted(() => {
+    const store = new Map<string, string>();
+    return {
+        store,
+        getString: vi.fn((key: string) => store.get(key)),
+        set: vi.fn((key: string, value: string) => { store.set(key, value); }),
+        deleteKey: vi.fn((key: string) => { store.delete(key); }),
+    };
 });
 
 vi.mock('react-native-mmkv', () => {
@@ -271,6 +272,17 @@ describe('warmCachePersistence', () => {
         expect(loadUsageSummaryWarmCache('server-a', 'account-a')).toEqual(usage);
         expect(loadUsageSummaryWarmCache('server-b', 'account-a')).toBeNull();
         expect(loadUsageSummaryWarmCache('server-a', 'account-b')).toBeNull();
+    });
+
+    it('retains denomination and uncapped amounts when restoring the scoped usage cache', () => {
+        const usage = { v: 1 as const, entries: [{
+            key: 'service:account', serviceLabel: 'Service', profileLabel: null, planLabel: null, fetchedAt: 1_000,
+            meters: [{ meterId: 'spent', label: 'Today', remainingPct: null, resetsAt: null,
+                reportedAmount: { amount: { kind: 'used' as const, used: 4.2 }, unit: 'usd' as const, currency: 'USD' } }],
+        }] };
+        saveUsageSummaryWarmCache('server-a', 'account-a', usage);
+        expect(loadUsageSummaryWarmCache('server-a', 'account-a')).toEqual(usage);
+        expect(loadUsageSummaryWarmCache('server-b', 'account-a')).toBeNull();
     });
 
     it('restores nested stored runtime facts with retired fields without deleting the cache', () => {

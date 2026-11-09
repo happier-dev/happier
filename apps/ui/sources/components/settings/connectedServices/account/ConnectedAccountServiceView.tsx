@@ -657,6 +657,7 @@ const ConnectedAccountServiceController = React.memo(
     const groups = useQualifiedConnectedAccountGroups({
         serverId,
         service,
+        selectedGroupId: route?.focus?.kind === 'group' ? route.focus.groupId : null,
     });
     const { present: presentAccountIdentity } = useConnectedAccountIdentityPrivacy();
     const focusedAccountId = route?.focus?.kind === 'account' ? route.focus.accountId : null;

@@ -3,14 +3,14 @@ import * as React from 'react';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
-import { getQualifiedConnectedAccountGroupV4 } from '@/sync/api/account/apiQualifiedConnectedAccountsV4';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { parseToken } from '@/utils/auth/parseToken';
 import { useActiveServerAccountScope, useProfile } from '@/sync/store/hooks';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { upsertProfileConnectedAccountGroup } from '@/sync/domains/profiles/profile';
+import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import {
     readConnectedServiceSettingsErrorCode,
@@ -100,6 +100,7 @@ function isGroupRevisionConflict(error: unknown): boolean {
 export function useQualifiedConnectedAccountGroups(params: Readonly<{
     serverId: string;
     service: PluginContributionIdentityV1 | null;
+    selectedGroupId?: string | null;
 }>): UseQualifiedConnectedAccountGroupsResult {
     const credentials = useAuth().credentials;
     const serverFeatures = useServerFeaturesSnapshotForServerId(params.serverId, { enabled: Boolean(credentials) });
@@ -173,25 +174,28 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
                         if (!result.ok) throw createActionExecuteFailureError(result);
                         return result.result;
                     },
-                    readGroup: async group => {
-                        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-                        const account = await captureLazyActionAccountContext(basis.serverId);
-                        try {
-                            if (currentBasisRef.current !== basis || resolveAuthCredentialsScopeKey(account.credentials)
-                                !== resolveAuthCredentialsScopeKey(basis.credentials)) {
-                                throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
-                            }
-                            const response = await getQualifiedConnectedAccountGroupV4(account.credentials, { group, request: account.request });
-                            account.assertCurrent();
-                            if (currentBasisRef.current !== basis) throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
-                            return response.group;
-                        } finally { account.dispose(); }
-                    },
                 },
             })
             : null,
         [basis, execution.execute],
     );
+
+    React.useEffect(() => {
+        if (!client || !basis || !actionScope || !profileCurrent || !execution.ready || !params.selectedGroupId) return;
+        let interested = true;
+        void client.get({ service: basis.service, groupId: params.selectedGroupId }).then(group => {
+            if (!interested || currentBasisRef.current !== basis) return;
+            const state = storage.getState();
+            if (!areServerAccountScopesEqual(state.profileScope, actionScope)) return;
+            state.applyProfileForScope(actionScope, upsertProfileConnectedAccountGroup(state.profile, group));
+            setFailure(null);
+        }).catch(error => {
+            if (interested && currentBasisRef.current === basis) {
+                setFailure({ basis, error: resolveConnectedServiceSettingsErrorMessage(error) });
+            }
+        });
+        return () => { interested = false; };
+    }, [actionScope, basis, client, execution.ready, params.selectedGroupId, profileCurrent]);
 
     const mutate = React.useCallback(async (
         operation: (

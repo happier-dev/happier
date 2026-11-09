@@ -1,4 +1,7 @@
 import * as React from 'react';
+import { resolveConnectedAccountAccessMode } from '../model/resolveConnectedAccountAccessMode';
+import { presentConnectedAccountAccessMode } from '../model/presentConnectedAccountAccessMode';
+import { useConnectedAccountSubscription } from '../usage/AccountUsageFacts';
 import { View, type GestureResponderEvent } from 'react-native';
 import { useGlobalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -626,7 +629,7 @@ const RailAccountRow = React.memo(function RailAccountRow(props: Readonly<{
     selected: boolean;
     onPress: () => void;
 }>) {
-    const live = props.meta === undefined && !isSignedOut(props.account) && props.account.kind === 'qualified' && props.account.profile.kind !== 'token';
+    const live = props.meta === undefined && !isSignedOut(props.account) && props.account.kind === 'qualified' && resolveConnectedAccountAccessMode(props.account.profile)?.kind !== 'apiKey';
     return live && props.account.kind === 'qualified'
         ? <QualifiedRailAccountRow {...props} account={props.account} />
         : <RailAccountRowView {...props} plan={null} status={props.meta !== undefined ? props.meta : <LiveAccountMeta sheet={props.sheet} account={props.account} />} />;
@@ -636,6 +639,8 @@ const QualifiedRailAccountRow = React.memo(function QualifiedRailAccountRow(prop
     account: Extract<ConnectedServicesIndexAccount, { kind: 'qualified' }>;
 }>) {
     const quota = useQualifiedConnectedAccountQuota(props.account.profile.ref);
+    const subscription = useConnectedAccountSubscription(quota.usageRecordId);
+    const accessMode = resolveConnectedAccountAccessMode(props.account.profile, subscription);
     const snapshot = quota.snapshot;
     const tightest = snapshot ? deriveAccountCapacityPct(snapshot.meters.flatMap((meter) => (
         meter.status === 'unavailable' || meter.remainingPct === null || meter.remainingPct === undefined
@@ -645,7 +650,7 @@ const QualifiedRailAccountRow = React.memo(function QualifiedRailAccountRow(prop
     const status = tightest !== null && snapshot
         ? <RailAccountMeta meta={{ kind: 'usage', tightestPct: tightest, stale: Date.now() - snapshot.fetchedAt > snapshot.staleAfterMs }} />
         : null;
-    return <RailAccountRowView {...props} plan={snapshot?.planLabel ?? null} status={status} />;
+    return <RailAccountRowView {...props} plan={accessMode ? presentConnectedAccountAccessMode(accessMode, snapshot?.planLabel) : snapshot?.planLabel ?? null} status={status} />;
 });
 
 function RailAccountRowView(props: Readonly<{
@@ -705,7 +710,7 @@ const LiveAccountMeta = React.memo(function LiveAccountMeta(props: Readonly<{
 }>) {
     if (isSignedOut(props.account)) return <RailAccountMeta meta={{ kind: 'signedOut', statusReason: props.account.kind === 'qualified' ? props.account.profile.statusReason : undefined }} />;
     if (props.account.kind !== 'qualified') return null;
-    if (props.account.profile.kind === 'token') return <RailAccountMeta meta={{ kind: 'key' }} />;
+    if (resolveConnectedAccountAccessMode(props.account.profile)?.kind === 'apiKey') return <RailAccountMeta meta={{ kind: 'key' }} />;
     return <QualifiedAccountMeta account={props.account} />;
 });
 

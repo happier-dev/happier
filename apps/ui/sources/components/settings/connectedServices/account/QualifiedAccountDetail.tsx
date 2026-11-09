@@ -13,6 +13,8 @@ import { useAgentDefaultChoices } from '../defaults/useAgentDefaultChoices';
 import { ConnectedAccountActionApprovalNotice } from '../ConnectedAccountActionApprovalNotice';
 import { AccountDetailFactsSections, AccountDetailUsedBySection, AccountDetailWorksOnSection } from './AccountDetailSections';
 import { QualifiedAccountDetailView, type QualifiedAccountDetailViewProps } from './QualifiedAccountDetailView';
+import { useConnectedAccountSubscription } from '../usage/AccountUsageFacts';
+import { projectConnectedAccountSubscriptionFacts, resolveConnectedAccountAccessMode } from '../model/resolveConnectedAccountAccessMode';
 
 /**
  * The name this Home gives the Machine an account last signed in on, or null when the Machine is not
@@ -44,6 +46,11 @@ export const QualifiedAccountDetail = React.memo(function QualifiedAccountDetail
 ) {
     const { present, hidden } = useConnectedAccountIdentityPrivacy();
     const quota = useQualifiedConnectedAccountQuota(props.account, { refreshMachineId: props.machineId });
+    const subscription = useConnectedAccountSubscription(quota.usageRecordId);
+    const accessMode = props.accessMode ?? resolveConnectedAccountAccessMode(null, subscription);
+    const subscriptionFacts = projectConnectedAccountSubscriptionFacts(accessMode, {
+        planLabel: quota.snapshot?.planLabel ?? null, subscription,
+    });
     const target = React.useMemo<QualifiedConnectedAccountPurposeBindingTargetV1>(
         () => ({ kind: 'account', account: props.account }),
         [props.account],
@@ -74,13 +81,15 @@ export const QualifiedAccountDetail = React.memo(function QualifiedAccountDetail
             providerEmail={shown.email}
             providerAccountId={shown.accountId}
             authenticationMachineName={authenticationMachineName}
-            planLabel={quota.snapshot?.planLabel ?? null}
+            accessMode={accessMode}
+            planLabel={subscriptionFacts.planLabel}
             agentDefaults={agentDefaults}
             onRefresh={props.machineId !== null && quota.supported !== false ? () => { void quota.refresh(); } : undefined}
             refreshing={quota.refreshing}
             usageSection={(
                 <AccountDetailFactsSections
                     account={props.account}
+                    accessMode={accessMode}
                     legacyServiceId={props.legacyServiceId}
                     serviceLabel={props.serviceLabel}
                     signedOut={signedOut}

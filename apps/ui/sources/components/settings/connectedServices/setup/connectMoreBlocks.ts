@@ -53,7 +53,7 @@ export function selectConnectMoreOffer(input: Readonly<{
     const agentServices = input.catalog.filter((entry) => entry.canAdd && entry.section === 'agents');
     const offered = input.layout === 'section'
         ? agentServices.filter((entry) => entry.usedBy.length > 0 && !input.hidden.has(homeConnectServiceStepId(entry.serviceKey)))
-        : agentServices.filter((entry) => getConnectedServiceSetupPresentation(entry.service)?.firstRun === true);
+        : agentServices.filter((entry) => getConnectedServiceSetupPresentation(entry.service, entry.entry)?.firstRun === true);
     return { offered, browse: input.catalog.length > offered.length };
 }
 

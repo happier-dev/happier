@@ -19,6 +19,7 @@ import {
 } from './resolveQuotaTone';
 import { formatResetCountdown } from './formatResetCountdown';
 import { isConnectedServiceQuotaMeterVisible } from './connectedServiceQuotaMeterVisibility';
+import { presentConnectedServiceQuotaReportedAmount, type ConnectedServiceQuotaReportedAmount } from './accountUsage/presentProviderConnectionUsage';
 
 import { resolveQuotaGaugeWindowModes, type ConnectedServiceQuotaGaugeWindowMode } from './quotaGaugeWindows';
 import { projectConnectedServiceQuotaSnapshotForLimitSelection } from './projectConnectedServiceQuotaSnapshotForLimitSelection';
@@ -58,6 +59,8 @@ export type ConnectedServiceQuotaGaugeMeterRow = Readonly<{
     /** When the window resets (epoch ms), when the provider reports it. */
     resetsAt: number | null;
     tone: ConnectedServiceQuotaGaugeTone;
+    reportedAmount?: ConnectedServiceQuotaReportedAmount;
+    status?: ConnectedServiceQuotaMeterV1['status'];
 }>;
 
 export type ConnectedServiceQuotaGaugeLabelFormatter = Readonly<{
@@ -317,6 +320,7 @@ function buildMeterRow(
     const { usedPct, remainingPct, used, limit } = deriveQuotaMeterValues(meter);
     const remainingLabel = remainingPct === null ? '—' : `${Math.round(remainingPct)}%`;
     const resetLabel = formatResetCountdown(nowMs, meter.resetAtMs ?? meter.resetsAt, formatter);
+    const reportedAmount = presentConnectedServiceQuotaReportedAmount(meter);
     return {
         meterId: meter.meterId,
         label: resolveConnectedServiceQuotaMeterLabel(meter.meterId, meter.label),
@@ -335,6 +339,8 @@ function buildMeterRow(
         resetLabel,
         resetsAt: meter.resetAtMs ?? meter.resetsAt ?? null,
         tone: resolveTone(remainingPct),
+        ...(reportedAmount === undefined ? {} : { reportedAmount }),
+        ...(meter.status === 'estimated' ? { status: meter.status } : {}),
     };
 }
 

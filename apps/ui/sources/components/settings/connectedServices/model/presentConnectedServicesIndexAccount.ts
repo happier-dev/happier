@@ -2,6 +2,8 @@ import { presentQualifiedConnectedAccountTarget } from '@/sync/domains/connected
 import { resolveConnectedServiceProfileLabel } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import type { QualifiedConnectedAccountPresentationAccount } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import type { ConnectedAccountIdentityPresenter } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
+import type { ConnectedAccountAccessMode } from './presentConnectedAccountAccessMode';
+import { resolveConnectedAccountAccessMode } from './resolveConnectedAccountAccessMode';
 
 import type {
     ConnectedServicesIndexAccount,
@@ -23,6 +25,8 @@ export type ConnectedServicesIndexAccountPresentation = Readonly<{
     listTitle: string;
     /** The name someone gave an account whose row leads with its email, said beside its plan; else null. */
     listName: string | null;
+    /** The producing account's mode; usage readers may fill unknown subscriptions. */
+    accessMode: ConnectedAccountAccessMode | null;
 }>;
 
 /**
@@ -77,7 +81,8 @@ export function presentConnectedServicesIndexAccount(
     const shown = present({ accountId: providerAccountId, email: providerEmail });
     const title = presentation.primaryLabel;
     const identityLabel = presentation.identityLabel ?? null;
-    const isKey = account.kind === 'qualified' && account.profile.kind === 'token';
+    const accessMode = account.kind === 'qualified' ? resolveConnectedAccountAccessMode(account.profile) : null;
+    const isKey = accessMode?.kind === 'apiKey';
     // The naming owner already put the shown email beside a name; a row turns that pair around.
     const leadsWithEmail = !isKey && shown.email !== null && identityLabel === shown.email;
     return {
@@ -86,6 +91,7 @@ export function presentConnectedServicesIndexAccount(
         accountIdLabel: account.kind === 'qualified' ? shown.accountId : null,
         listTitle: leadsWithEmail ? identityLabel : title,
         listName: leadsWithEmail ? title : null,
+        accessMode,
     };
 }
 

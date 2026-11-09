@@ -3,7 +3,6 @@ import type { ProviderUsageSourceV1 } from '@happier-dev/protocol/providers/cont
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { SavedSecretSlotBindingsV1 } from '@happier-dev/protocol/providers/settings/v1';
 import { resolveSavedSecretSlotBindingIdV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
-import { formatUsageCost } from '@happier-dev/protocol/usage/usageFormatting';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
@@ -27,50 +26,13 @@ import { useProviderConnectionUsage } from '@/providers/hooks/useProviderConnect
 import {
   presentProviderConnectionUsage,
   type ProviderConnectionUsagePresentation,
-  type ProviderUsageAmount,
   type ProviderUsageMeterPresentation,
   type ProviderUsageScope,
 } from '@/sync/domains/connectedServices/accountUsage/presentProviderConnectionUsage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
-
-function formatMoney(
-  value: number,
-  unit: ProviderUsageMeterPresentation['unit'],
-  currency?: string,
-): string {
-  const magnitude = Math.abs(value);
-  const text =
-    currency || unit === 'usd'
-      ? formatUsageCost(magnitude, currency ?? 'USD')
-      : new Intl.NumberFormat().format(magnitude);
-  // A reported negative balance is shown as the provider reports it, with a true minus sign.
-  return value < 0 ? `−${text}` : text;
-}
-
-/** What a provider reported as one figure: "$12.40 left", "$12.40 of $25.00 left", or the amount used. */
-export function formatProviderUsageAmount(
-  amount: ProviderUsageAmount | null,
-  unit: ProviderUsageMeterPresentation['unit'],
-  currency?: string,
-): string | null {
-  if (amount === null) return null;
-  switch (amount.kind) {
-    case 'used':
-      return formatMoney(amount.used, unit, currency);
-    case 'remaining':
-      return amount.remaining < 0
-        ? formatMoney(amount.remaining, unit, currency)
-        : t('settingsProvidersCollection.usage.amountLeft', {
-            amount: formatMoney(amount.remaining, unit, currency),
-          });
-    case 'remainingOfLimit':
-      return t('settingsProvidersCollection.usage.amountLeftOfLimit', {
-        amount: formatMoney(amount.remaining, unit, currency),
-        limit: formatMoney(amount.limit, unit, currency),
-      });
-  }
-}
+import { formatProviderUsageAmount } from '@/sync/domains/connectedServices/accountUsage/formatProviderUsageAmount';
+export { formatProviderUsageAmount } from '@/sync/domains/connectedServices/accountUsage/formatProviderUsageAmount';
 
 const SCOPE_TITLE_KEY = {
   key: 'settingsProvidersCollection.usage.scopeKey',

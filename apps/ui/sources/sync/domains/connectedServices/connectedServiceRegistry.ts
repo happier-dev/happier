@@ -35,22 +35,15 @@ type ConnectedServiceTokenKind =
   | 'personal-access-token'
   | 'api-token';
 
-// Built-in presentation follows the same exact qualified identity as the released compatibility
-// owner. A third-party contribution with a matching local id never borrows these instructions.
-const BUILT_IN_SETUP_PRESENTATION = {
-  'claude-subscription': { order: 0, firstRun: true, catalogDescriptionKey: 'connectedServicesSettings.catalogClaude' },
-  'openai-codex': { order: 1, firstRun: true, catalogDescriptionKey: 'connectedServicesSettings.catalogChatGpt' },
-  gemini: { order: 2, firstRun: true, catalogDescriptionKey: 'connectedServicesSettings.catalogGemini' },
-  anthropic: {
-    order: 3, firstRun: false, catalogDescriptionKey: 'connectedServicesSettings.catalogAnthropic',
-  },
-  openai: { order: 4, firstRun: false, catalogDescriptionKey: 'connectedServicesSettings.catalogOpenAi' },
-} as const;
-
-export function getConnectedServiceSetupPresentation(service: PluginContributionIdentityV1) {
-  const legacyServiceId = resolveLegacyServiceId(service);
-  if (!legacyServiceId || !(legacyServiceId in BUILT_IN_SETUP_PRESENTATION)) return null;
-  return BUILT_IN_SETUP_PRESENTATION[legacyServiceId as keyof typeof BUILT_IN_SETUP_PRESENTATION];
+export function getConnectedServiceSetupPresentation(
+  service: PluginContributionIdentityV1 | null,
+  entry?: Pick<ConnectedServiceRegistryEntry, 'projectedDescriptor'> | null,
+) {
+  if (!service) return null;
+  const descriptor = entry?.projectedDescriptor ?? BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS[
+    buildQualifiedPluginContributionKey(service)
+  ]?.descriptor;
+  return descriptor?.ui?.setup ?? null;
 }
 
 export type ConnectedServiceRegistryEntry = Readonly<{
@@ -387,6 +380,7 @@ export function projectConnectedServiceRegistryEntries(
       projectedDescriptor: descriptor,
       projectedDescriptorCandidates: candidates,
       projectedTitle: descriptor.title,
+      shortName: descriptor.ui?.shortName,
       projectedDescription: descriptor.description,
       provenance: descriptor.provenance,
       sourceKind: descriptor.sourceKind,
@@ -498,23 +492,6 @@ export function getAccountConnectedServiceConfigurationMode(
   return mode && 'configuration' in mode && mode.configuration?.scope === 'service' ? mode : null;
 }
 
-/**
- * The localized name of each released built-in service, for the one moment its
- * descriptor is not projected (no online machine publishes it). Each stored
- * account records its exact qualified service, and every released scalar id
- * maps to exactly one of them, so the name is known without the descriptor.
- * A projected descriptor title always wins over this.
- */
-const LEGACY_CONNECTED_SERVICE_DISPLAY_NAME_KEYS: Readonly<Record<ConnectedServiceId, ConnectedServiceDisplayNameKey>> = {
-  'openai-codex': 'connectedServices.serviceNames.openaiCodex',
-  openai: 'connectedServices.serviceNames.openai',
-  anthropic: 'connectedServices.serviceNames.anthropic',
-  'claude-subscription': 'connectedServices.serviceNames.claudeSubscription',
-  gemini: 'connectedServices.serviceNames.gemini',
-  github: 'connectedServices.serviceNames.github',
-  bitbucket: 'connectedServices.serviceNames.bitbucket',
-};
-
 function createLegacyConnectedServiceRegistryFallback(
   serviceId: string,
 ): ConnectedServiceRegistryEntry {
@@ -525,7 +502,9 @@ function createLegacyConnectedServiceRegistryFallback(
       ? {
           service: legacy.compatibility.service,
           legacyServiceId: legacy.serviceId,
-          displayNameKey: LEGACY_CONNECTED_SERVICE_DISPLAY_NAME_KEYS[legacy.serviceId],
+          projectedTitle: BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS[
+            buildQualifiedPluginContributionKey(legacy.compatibility.service)
+          ]?.descriptor.title,
         }
       : {}),
     connectCommand: `happier connect ${serviceId}`,
@@ -562,7 +541,9 @@ export function getGeneratedLegacyConnectedServiceRegistryFallback(
 export function getConnectedServiceRegistryIdentityFallback(
   service: PluginContributionIdentityV1,
 ): ConnectedServiceRegistryEntry {
-  const fallback = getGeneratedLegacyConnectedServiceRegistryFallback(service) ?? {
+  const legacy = getGeneratedLegacyConnectedServiceRegistryFallback(service);
+  if (legacy) return legacy;
+  const fallback = {
     serviceId: service.localId,
     service,
     connectCommand: '',

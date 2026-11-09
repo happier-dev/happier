@@ -1,6 +1,8 @@
 import type { MeterTone } from '@/components/ui/lists/MeterBar';
 import { resolveQuotaTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
 import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol/connect/connectedServiceQuotaMeterLabel';
+import type { ConnectedServiceQuotaReportedAmount } from '@/sync/domains/connectedServices/accountUsage/presentProviderConnectionUsage';
+import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 /**
  * The usage summary grouped the way people read limits: per provider (Claude, Codex…), then each
@@ -13,6 +15,8 @@ export type UsageWindowInput = Readonly<{
     label: string;
     remainingPct: number | null;
     resetsAt: number | null;
+    reportedAmount?: ConnectedServiceQuotaReportedAmount;
+    status?: ConnectedServiceQuotaMeterV1['status'];
 }>;
 
 export type UsageAccountInput = Readonly<{
@@ -41,6 +45,8 @@ export type UsageWindowRow = Readonly<{
     usedPct: number | null;
     remainingPct: number | null;
     resetsAt: number | null;
+    reportedAmount?: ConnectedServiceQuotaReportedAmount;
+    status?: ConnectedServiceQuotaMeterV1['status'];
     /** How healthy the window is, from what is left (`resolveQuotaTone`, the one threshold owner). */
     tone: MeterTone;
 }>;
@@ -99,6 +105,8 @@ export function groupUsageByProvider(accounts: readonly UsageAccountInput[]): Us
                             usedPct: remainingPct === null ? null : Math.round(100 - remainingPct),
                             remainingPct: remainingPct === null ? null : Math.round(remainingPct),
                             resetsAt: meter.resetsAt,
+                            ...(meter.reportedAmount ? { reportedAmount: meter.reportedAmount } : {}),
+                            ...(meter.status ? { status: meter.status } : {}),
                             tone: resolveQuotaTone(remainingPct),
                         };
                     });

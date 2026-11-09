@@ -33,6 +33,7 @@ import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 
 import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { ConnectedServiceQuotaRecoveryCreditsV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { resolveConnectedAccountAccessMode } from '@/components/settings/connectedServices/model/resolveConnectedAccountAccessMode';
 
 import {
     useConnectedServiceQuotaSnapshots,
@@ -322,6 +323,7 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
                     && account.ref.accountId === entry.ref.accountId
                 ))
                 : undefined;
+            const isApiKey = resolveConnectedAccountAccessMode(presentation)?.kind === 'apiKey';
             const legacyProfile = entry.kind === 'qualified'
                 ? undefined
                 : profile.connectedServicesV2
@@ -342,7 +344,7 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
                 // unavailable. A cache-only reader says nothing about an account it did not read.
                 const read = readByKey[entry.key] === true && loadingByKey[entry.key] !== true;
                 // A key that answered without limits reports none by design: counted, not "unavailable".
-                if (read && presentation?.kind === 'token') {
+                if (read && isApiKey) {
                     keysWithoutLimits += 1;
                     continue;
                 }
@@ -373,7 +375,7 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
                 key: entry.key,
                 ...summaryService,
                 ...identity,
-                planLabel: snapshot.planLabel,
+                planLabel: isApiKey ? null : snapshot.planLabel,
                 primaryMeter: meters[0] ?? null,
                 meters,
                 fetchedAt: snapshot.fetchedAt,

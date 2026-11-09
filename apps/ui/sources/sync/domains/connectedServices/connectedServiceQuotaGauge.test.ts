@@ -59,6 +59,21 @@ const formatter: ConnectedServiceQuotaGaugeLabelFormatter = {
 };
 
 describe('gauge tone boundaries derive from the canonical resolveQuotaTone owner', () => {
+    it('retains uncapped currency amounts in the detail windows beside a comparable ring', () => {
+        const view = computeConnectedServiceQuotaGaugeViewModel({
+            snapshot: snapshot([
+                meter({ meterId: 'daily', label: 'Daily', used: 2, limit: 10 }),
+                meter({ meterId: 'spent', label: 'Today', used: 4.2, unit: 'usd', currency: 'USD' }),
+            ]),
+            windowMode: 'most_constrained', nowMs: 2_000, formatter,
+        });
+        expect(view?.allMeterRows.find(row => row.meterId === 'spent')).toMatchObject({
+            remainingPct: null,
+            reportedAmount: { amount: { kind: 'used', used: 4.2 }, unit: 'usd', currency: 'USD' },
+        });
+        expect(view?.remainingPct).toBe(80);
+    });
+
     function toneAtRemaining(remainingPct: number) {
         const used = 100 - remainingPct;
         return computeConnectedServiceQuotaGaugeViewModel({

@@ -9,10 +9,6 @@ import {
     type ConnectedServiceRegistrySnapshot,
 } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 
-export function resolveConnectedServiceDisplayNameKey(serviceId: string): ConnectedServiceDisplayNameKey {
-    return getLegacyConnectedServiceRegistryEntry(serviceId).displayNameKey ?? 'connectedServices.fallbackName';
-}
-
 export function resolveConnectedServiceRegistryEntryDisplayName(
     entry: ConnectedServiceRegistryEntry,
     translate: (key: ConnectedServiceDisplayNameKey) => string,

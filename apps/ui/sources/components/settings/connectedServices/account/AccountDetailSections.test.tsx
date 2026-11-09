@@ -165,6 +165,25 @@ it('retains saved-reset facts when the detail has no live reset action', async (
     expect(screen.findByTestId('account-detail-resets:saved:use')).toBeNull();
 });
 
+it('keeps usage meters while hiding stale subscription facts for an explicit API-key account', async () => {
+    const facts: AccountDetailUsageFacts = { ...FACTS, planLabel: 'Old subscription', subscription: {
+        status: 'subscribed', renewal: 'on', observedAtMs: 1_000, staleAfterMs: 10_000,
+        currentPeriodEndAtMs: 86_402_000,
+    } };
+    const screen = await renderScreen(<AccountDetailFactsSectionsView
+        facts={facts} accessMode={{ kind: 'apiKey', keySuffix: null }} serviceLabel="Service" signedOut={false} now={2_000}
+    />);
+    expect(screen.findByTestId('account-detail-subscription')).toBeNull();
+    expect(screen.getTextContent()).not.toContain('Old subscription');
+    expect(screen.findByTestId('account-detail-usage:meter:five_hour')).toBeTruthy();
+    await screen.update(<AccountDetailFactsSectionsView
+        facts={facts} accessMode={{ kind: 'subscription' }} serviceLabel="Service" signedOut={false} now={2_000}
+    />);
+    expect(screen.findByTestId('account-detail-subscription')).toBeTruthy();
+    expect(screen.getTextContent()).toContain('Old subscription');
+    expect(screen.findByTestId('account-detail-usage:meter:five_hour')).toBeTruthy();
+});
+
 describe('projectAccountDetailMachines', () => {
     it('renders held display names with 139 hydrating bodies and no fetch or name work for unrelated arrivals', async () => {
         const previous = storage.getState();

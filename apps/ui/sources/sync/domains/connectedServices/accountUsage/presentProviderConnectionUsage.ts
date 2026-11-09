@@ -1,4 +1,5 @@
-import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { z } from 'zod/mini';
+import { ConnectedServiceQuotaMeterV1Schema, type ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { resolveQuotaMeterTone } from '@happier-dev/protocol/connect/accountHealth';
 import type { ProviderUsageSourceV1 } from '@happier-dev/protocol/providers/contributions';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
@@ -13,10 +14,12 @@ import type { ProviderConnectionUsageRefreshView } from './providerConnectionUsa
 export type ProviderUsageScope = 'key' | 'account';
 
 /** What the provider reported, never a figure the UI derived a cap or a balance for. */
-export type ProviderUsageAmount =
-  | Readonly<{ kind: 'remainingOfLimit'; remaining: number; limit: number }>
-  | Readonly<{ kind: 'remaining'; remaining: number }>
-  | Readonly<{ kind: 'used'; used: number }>;
+export const ProviderUsageAmountSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('remainingOfLimit'), remaining: z.number(), limit: z.number() }),
+  z.object({ kind: z.literal('remaining'), remaining: z.number() }),
+  z.object({ kind: z.literal('used'), used: z.number() }),
+]);
+export type ProviderUsageAmount = Readonly<z.infer<typeof ProviderUsageAmountSchema>>;
 
 export type ProviderUsageMeterPresentation = Readonly<{
   meterId: string;
@@ -30,6 +33,13 @@ export type ProviderUsageMeterPresentation = Readonly<{
   tone: 'neutral' | 'success' | 'warning' | 'danger';
   estimated: boolean;
 }>;
+
+export const ConnectedServiceQuotaReportedAmountSchema = z.object({
+  amount: z.nullable(ProviderUsageAmountSchema),
+  unit: ConnectedServiceQuotaMeterV1Schema.shape.unit,
+  currency: ConnectedServiceQuotaMeterV1Schema.shape.currency,
+});
+export type ConnectedServiceQuotaReportedAmount = Readonly<z.infer<typeof ConnectedServiceQuotaReportedAmountSchema>>;
 
 export type ProviderUsageGroupPresentation = Readonly<{
   scope: ProviderUsageScope;
@@ -101,6 +111,18 @@ function presentAmount(
   if (remaining !== null) return { kind: 'remaining', remaining };
   if (used !== null) return { kind: 'used', used };
   return null;
+}
+
+/** Connected-account windows retain percentages for capped counts and report money or uncapped amounts as amounts. */
+export function presentConnectedServiceQuotaReportedAmount(
+  meter: ConnectedServiceQuotaMeterV1,
+): ConnectedServiceQuotaReportedAmount | undefined {
+  if (!meter.currency && meter.unit !== 'usd' && deriveQuotaMeterValues(meter).remainingPct !== null) return undefined;
+  return {
+    amount: presentAmount(meter),
+    unit: meter.unit,
+    ...(meter.currency ? { currency: meter.currency } : {}),
+  };
 }
 
 function presentMeter(

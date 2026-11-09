@@ -212,6 +212,21 @@ describe('connectedServiceRegistry', () => {
       expect(parses).not.toHaveBeenCalled();
     } finally { parses.mockRestore(); }
   });
+  it('reads setup presentation from the exact qualified declaration instead of a built-in service map', () => {
+    const service = { pluginId: 'acme.external', localId: 'claude-subscription' };
+    const setup = { order: 12, firstRun: true, catalogDescription: 'Use an Acme account' };
+    const projectedDescriptor = projectConnectedAccountDescriptorV1({
+      descriptor: { id: service.localId, title: 'Acme', ui: { setup }, authentication: manualAuthentication([]) },
+      pluginId: service.pluginId, serviceId: service.localId, provenance: 'external', sourceKind: 'installed',
+      availability: { state: 'available', reason: 'resolved' }, diagnostics: [],
+    });
+    expect(getConnectedServiceSetupPresentation(service, { projectedDescriptor })).toEqual(setup);
+    expect(getConnectedServiceSetupPresentation(service)).toBeNull();
+    const builtIn = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
+    expect(getConnectedServiceSetupPresentation(builtIn, { projectedDescriptor: { ...projectedDescriptor,
+      pluginId: builtIn.pluginId, ui: { setup: { firstRun: false } },
+    } })).toEqual({ firstRun: false });
+  });
   it('selects usage services by their exact capability owner, including installed services', () => {
     const descriptor = (pluginId: string, capabilities: string[]) => ({
       id: 'account', serviceId: 'account', pluginId, title: 'Account', provenance: 'external' as const,
@@ -613,10 +628,10 @@ describe('connectedServiceRegistry', () => {
     // an offline machine must not collapse either into the generic title.
     expect(getGeneratedLegacyConnectedServiceRegistryFallback({
       pluginId: 'happier.agent.claude', localId: 'anthropic',
-    })).toMatchObject({ displayNameKey: 'connectedServices.serviceNames.anthropic', executable: false });
+    })).toMatchObject({ projectedTitle: BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS['happier.agent.claude/anthropic']!.descriptor.title, executable: false });
     expect(getGeneratedLegacyConnectedServiceRegistryFallback({
       pluginId: 'happier.agent.claude', localId: 'claude-subscription',
-    })).toMatchObject({ displayNameKey: 'connectedServices.serviceNames.claudeSubscription', executable: false });
+    })).toMatchObject({ projectedTitle: BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS['happier.agent.claude/claude-subscription']!.descriptor.title, executable: false });
     expect(getLegacyConnectedServiceRegistryEntry('openai-codex').projectedTitle)
       .toEqual(BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS['happier.agent.codex/openai-codex']!.descriptor.title);
     // A service with no released built-in identity has nothing to name it by.

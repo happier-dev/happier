@@ -1,11 +1,21 @@
 import { AccountProfileSchema, type AccountProfile } from '@happier-dev/protocol/account/profile';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 
 //
 // Types
 //
 
 export type Profile = AccountProfile;
+
+/** A selected pool read joins the same projection that subsequent Account pushes update. */
+export function upsertProfileConnectedAccountGroup(profile: Profile, group: Profile['connectedAccountGroupsV4'][number]): Profile {
+    const groups = [...profile.connectedAccountGroupsV4];
+    const index = groups.findIndex(current => sameQualifiedConnectedAccountGroupRef(current.ref, group.ref));
+    if (index === -1) groups.push(group);
+    else groups[index] = group;
+    return { ...profile, connectedAccountGroupsV4: groups };
+}
 
 //
 // Defaults

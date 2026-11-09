@@ -4,6 +4,7 @@ import { getLegacyConnectedServiceRegistryEntry } from '@/sync/domains/connected
 import { BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import { projectConnectedServiceRegistryEntries } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/resolvePluginDisplayString';
 
 import {
     resolveConnectedServiceDisplayName,
@@ -12,35 +13,30 @@ import {
 } from './resolveConnectedServiceDisplayName';
 
 describe('resolveConnectedServiceDisplayName', () => {
-    it('uses only the generated legacy adapter when no qualified descriptor is projected', () => {
-        const entry = getLegacyConnectedServiceRegistryEntry('claude-subscription');
-
-        expect(resolveConnectedServiceDisplayName('claude-subscription', (key) => key)).toBe(
-            entry.displayNameKey ?? 'connectedServices.fallbackName',
-        );
-    });
-
-    it('does not let a scalar built-in id manufacture descriptor presentation', () => {
-        const entry = getLegacyConnectedServiceRegistryEntry('github');
-
-        expect(resolveConnectedServiceDisplayName('github', (key) => key)).toBe(
-            entry.displayNameKey ?? 'connectedServices.fallbackName',
-        );
+    it.each(['claude-subscription', 'github'])('uses the exact admitted declaration title for released %s', serviceId => {
+        const entry = getLegacyConnectedServiceRegistryEntry(serviceId);
+        const declaration = BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS[`${entry.service!.pluginId}/${entry.service!.localId}`];
+        expect(resolveConnectedServiceDisplayName(serviceId, key => key))
+            .toBe(resolveProjectedLocalizedText(declaration!.descriptor.title));
+        expect(entry.displayNameKey).toBeUndefined();
     });
 });
 
 describe('resolveConnectedServiceShortName', () => {
     it('does not maintain an unprojected static short-name registry', () => {
         // No brand short name exists without a projection; the full localized name stands in.
-        expect(resolveConnectedServiceShortName('openai-codex', (key) => key)).toBe('connectedServices.serviceNames.openaiCodex');
-        expect(resolveConnectedServiceShortName('claude-subscription', (key) => key)).toBe('connectedServices.serviceNames.claudeSubscription');
+        for (const serviceId of ['openai-codex', 'claude-subscription']) {
+            expect(resolveConnectedServiceShortName(serviceId, key => key))
+                .toBe(resolveConnectedServiceDisplayName(serviceId, key => key));
+        }
     });
 
     it('falls back to the localized display name when the registry has no short name', () => {
         const entry = getLegacyConnectedServiceRegistryEntry('bitbucket');
 
         expect(entry.shortName).toBeUndefined();
-        expect(resolveConnectedServiceShortName('bitbucket', (key) => key)).toBe('connectedServices.serviceNames.bitbucket');
+        expect(resolveConnectedServiceShortName('bitbucket', (key) => key))
+            .toBe(resolveConnectedServiceDisplayName('bitbucket', key => key));
     });
 });
 

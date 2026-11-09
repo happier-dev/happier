@@ -18,6 +18,7 @@ import { Typography } from '@/constants/Typography';
 import type { ConnectedServiceAccountNeedingSignIn } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { resolveQuotaTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
+import { formatConnectedServiceQuotaReportedAmount } from '@/sync/domains/connectedServices/accountUsage/formatProviderUsageAmount';
 import {
     presentConnectedAccountNames,
     type ConnectedAccountNamePresentation,
@@ -126,6 +127,8 @@ const HubUsageCard = React.memo(function HubUsageCard(props: Readonly<{
                             layout="stacked"
                             label={meter.label}
                             remainingPct={meter.remainingPct}
+                            amount={formatConnectedServiceQuotaReportedAmount(meter.reportedAmount)}
+                            estimated={meter.status === 'estimated'}
                             resetsAt={meter.resetsAt}
                             tone={resolveQuotaTone(meter.remainingPct)}
                             now={now}

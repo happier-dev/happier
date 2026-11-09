@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { resolveConnectedAccountAccessMode } from './model/resolveConnectedAccountAccessMode';
 import { View } from 'react-native';
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet } from 'react-native-unistyles';
@@ -384,7 +385,7 @@ const ConnectedServicesSettingsBody = React.memo(function ConnectedServicesSetti
             ? { kind: 'qualified', account: account.profile.ref }
             : { kind: 'legacy', serviceId: account.legacyServiceId, profileId: account.accountId }}
           status={account.status}
-          billedPerUse={account.kind === 'qualified' && account.profile.kind === 'token'}
+          billedPerUse={account.kind === 'qualified' && resolveConnectedAccountAccessMode(account.profile)?.kind === 'apiKey'}
           showsUsage={sheet.section === 'agents'}
           signedOut={isConnectedAccountSignedOut(parseDisplayableCredentialHealthStatus(account.status))}
           refreshToken={refreshToken}

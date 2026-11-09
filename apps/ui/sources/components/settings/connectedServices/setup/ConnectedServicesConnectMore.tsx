@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { Pressable, View, type GestureResponderEvent } from 'react-native';
 import type { PopoverAnchor } from '@/components/ui/popover';
 import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
@@ -19,6 +20,7 @@ import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOp
 import { t } from '@/text';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { getConnectedServiceSetupPresentation } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { presentConnectSheet } from './ConnectedServiceSetupModal';
 
@@ -41,8 +43,6 @@ import {
 } from './ConnectedServiceSetupPanel';
 
 const CONNECTED_SERVICES_DOCS_URL = 'https://docs.happier.dev/accounts/connected-services';
-/** First-run marks: the subscriptions most people already pay for (built-in brand marks). */
-const FIRST_RUN_MARK_SERVICE_IDS = ['claude-subscription', 'openai-codex', 'gemini'] as const;
 
 export type ConnectedServicesConnectMoreProps = Readonly<{
     model: ConnectedServicesIndexModel;
@@ -72,6 +72,7 @@ export type ConnectedServicesConnectMoreProps = Readonly<{
  * "Not now" is the Home set-up dismissal (`connect:<service>`), so the page and Home agree.
  */
 export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMoreProps) {
+    const localizePluginText = useProjectedPluginLocalizedTextResolver();
     const phone = useDeviceType() === 'phone';
     const scope = useActiveServerAccountScope();
     const { hidden, dismiss } = useHomeSetupDismissals();
@@ -161,7 +162,7 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
                 open();
             };
             if (props.layout === 'firstRun') {
-                return <ConnectedServiceCatalogBlock entry={entry} layout={phone ? 'row' : 'card'} showCount={false} onConnect={start} />;
+                return <ConnectedServiceCatalogBlock entry={entry} localizePluginText={localizePluginText} layout={phone ? 'row' : 'card'} showCount={false} onConnect={start} />;
             }
             const agents = formatAgentNames(entry.usedBy);
             // A service you already use stays here for another account (owner #29): its count, and Add account.
@@ -280,8 +281,8 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
                     size="pane"
                     icon={(
                         <View style={styles.firstRunMarks}>
-                            {FIRST_RUN_MARK_SERVICE_IDS.map((serviceId) => (
-                                <ConnectedServiceMark key={serviceId} legacyServiceId={serviceId} size="page" />
+                            {catalog.filter(entry => getConnectedServiceSetupPresentation(entry.service, entry.entry)?.firstRun === true).slice(0, 3).map((entry) => (
+                                <ConnectedServiceMark key={entry.serviceKey} legacyServiceId={entry.legacyServiceId} pluginId={entry.service.pluginId} size="page" />
                             ))}
                         </View>
                     )}

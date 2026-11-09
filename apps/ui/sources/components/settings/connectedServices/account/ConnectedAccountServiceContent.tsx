@@ -42,6 +42,7 @@ import {
 } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
 import { getPreferredLanguage, t } from '@/text';
 import { resolveConnectedAccountModeTitle } from '../model/resolveConnectedAccountModeTitle';
+import { resolveConnectedAccountAccessMode } from '../model/resolveConnectedAccountAccessMode';
 import {
     isConnectedServiceRuntimeCooldownError,
     resolveConnectedServiceSettingsErrorMessage,
@@ -428,15 +429,9 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                 // RAW status: the view owns the recognized-status gate.
                 status={account.status}
                 statusReason={account.statusReason}
-                authenticationModeTitle={(() => {
-                    const mode = props.modes.find((candidate) => candidate.id === account.authenticationModeId);
-                    if (!mode) return null;
-                    return mode.kind === 'oauthDeviceCode'
-                        ? t('connectedServicesSettings.detailSignedInWithCode')
-                        : mode.kind === 'manual'
-                            ? t('connectedServicesSettings.detailAddedWithKey')
-                            : t('connectedServicesSettings.detailSignedInWithBrowser');
-                })()}
+                accessMode={resolveConnectedAccountAccessMode(account)}
+                includedApiKey={account.includesApiKey ? { keySuffix: null } : null}
+                authenticationModeTitle={authenticationMode ? resolveConnectedAccountModeTitle(authenticationMode, props.localize) : null}
                 lastUsedAt={account.lastUsedAt ?? null}
                 authenticationProvenance={account.authenticationProvenance}
                 lastRefreshSuccessAt={account.lastRefreshSuccessAt}

@@ -680,6 +680,25 @@ describe('QualifiedPoolDetailView', () => {
         expect(memberRow(unnamed.screen, 'backup').identityLabel ?? '').not.toContain('backup');
     });
 
+    it('shows each member mode and never lends an old subscription plan to an API key', async () => {
+        const { screen } = await renderPoolDetail({}, {
+            accounts: [
+                { ref: accountRef('work'), displayName: 'Work', providerIdentity: { email: 'work@example.com' }, accessMode: 'apiKey' },
+                { ref: accountRef('backup'), displayName: 'Backup', accessMode: 'subscription' },
+            ],
+            memberQuotaByAccountId: quota({
+                work: snapshot('work', [], { planLabel: 'Old subscription' }),
+                backup: snapshot('backup', [], { planLabel: 'Pro' }),
+            }),
+        });
+        expect(memberRow(screen, 'work').identityLabel).toBe('work@example.com · connectedServicesSettings.accessApiKey');
+        expect(memberRow(screen, 'backup').identityLabel).toBe('Pro');
+        const candidates = membersDropdown(screen).props.items;
+        expect(candidates.find((candidate: { id: string }) => candidate.id === 'work')?.subtitle)
+            .toBe('work@example.com · connectedServicesSettings.accessApiKey');
+        expect(candidates.find((candidate: { id: string }) => candidate.id === 'backup')?.subtitle).toBe('Pro');
+    });
+
     it('does not promote provider IDs into names across members, choices and Now while retaining user names', async () => {
         const { screen } = await renderPoolDetail({}, {
             accounts: [

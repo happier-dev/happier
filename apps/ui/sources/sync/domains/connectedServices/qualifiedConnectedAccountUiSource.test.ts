@@ -9,7 +9,6 @@ import { serverFetch } from '@/sync/http/client';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { executeConnectedServiceConfigurationActionV1, type ConnectedServiceConfigurationActionHostV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
-import { getQualifiedConnectedAccountGroupV4 } from '@/sync/api/account/apiQualifiedConnectedAccountsV4';
 import { buildQualifiedConnectedAccountGroupMutationRequestV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountGroupRequestsV4';
 import type { ConnectedServiceConfigurationActionIdV1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 
@@ -47,14 +46,13 @@ const host: ConnectedServiceConfigurationActionHostV1 = {
 };
 const executor = createActionExecutor(createActionExecutorBoundaryFixture({ connectedServiceAction: ({ actionId, input }) =>
     executeConnectedServiceConfigurationActionV1(host, actionId, input) }));
+const executedActions: ConnectedServiceConfigurationActionIdV1[] = [];
 const mutation = {
     async execute(actionId: ConnectedServiceConfigurationActionIdV1, input: unknown) {
+        executedActions.push(actionId);
         const result = await executor.execute(actionId, input, { surface: 'ui', authority: 'present_user', serverId: 'home', runtimeAccountId: 'account' });
         if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
         return result.result;
-    },
-    async readGroup(group: Parameters<typeof getQualifiedConnectedAccountGroupV4>[1]['group']) {
-        return (await getQualifiedConnectedAccountGroupV4(credentials, { group, request: serverFetch })).group;
     },
 };
 const policy = {
@@ -134,6 +132,7 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
     });
 
     it('retains exact qualified refs and threads only V4 revision semantics', async () => {
+        executedActions.length = 0;
         network.responses.push({
             group: {
                 ...qualifiedGroup,
@@ -177,6 +176,7 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             account: { service, accountId: 'account-a' },
             overrideRuntimeCooldown: true,
         });
+        expect(executedActions).toEqual(['connectedServices.pools.patch', 'connectedServices.pools.switchNow', 'connectedServices.pools.get']);
 
         expect(network.requests[0]).toEqual(buildQualifiedConnectedAccountGroupMutationRequestV4('patch', {
             service,

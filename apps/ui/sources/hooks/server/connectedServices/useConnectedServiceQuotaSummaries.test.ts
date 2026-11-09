@@ -37,7 +37,11 @@ describe('useConnectedServiceQuotaSummaries', () => {
         boundary.plainRead.mockImplementation(async () => plainQuotaResponse(null));
         setQualifiedResponse(null);
     });
-    afterEach(async () => { standardCleanup(); await boundary.dispose(); vi.restoreAllMocks(); });
+    afterEach(async () => {
+        standardCleanup();
+        await boundary.dispose();
+        vi.restoreAllMocks();
+    });
 
     function setProfile(profile: Pick<AccountProfile, 'connectedAccountsV4' | 'connectedServicesV2'>
         & Partial<Pick<AccountProfile, 'connectedAccountGroupsV4'>>) {
@@ -286,11 +290,13 @@ describe('useConnectedServiceQuotaSummaries', () => {
             ...fields,
         } as QualifiedConnectedAccountProfileV4);
         const signedOut = profile('work', { status: 'needs_reauth', providerIdentity: { email: 'leeroy@company.com' } });
-        const key = profile('build', { kind: 'token' });
+        const key = profile('build', { kind: 'token', authenticationModeId: 'key', accessMode: 'apiKey' });
         const personal = profile('personal', {});
+        const device = profile('device', { kind: 'token' });
+        const imported = profile('imported', { kind: 'token', authenticationModeId: 'import' });
         advertiseQualifiedAccounts();
         setProfile({
-            connectedAccountsV4: [signedOut, key, personal],
+            connectedAccountsV4: [signedOut, key, personal, device, imported],
             connectedServicesV2: [],
             connectedAccountGroupsV4: [{ ref: { service, groupId: 'pool' }, activeConnectedAccountId: 'personal', members: [] }],
         } as never);
@@ -305,7 +311,7 @@ describe('useConnectedServiceQuotaSummaries', () => {
         ]);
         // A key reports no limits: counted once, never listed as "unavailable".
         expect(last.keysWithoutLimits).toBe(1);
-        expect(last.accountsWithoutUsage.map((account) => account.accountId)).toEqual(['personal']);
+        expect(last.accountsWithoutUsage.map((account) => account.accountId)).toEqual(['personal', 'device', 'imported']);
         expect(last.inUseAccountKeys).toEqual(new Set(['acme.connected.accounts%2Fgateway/personal']));
     });
 

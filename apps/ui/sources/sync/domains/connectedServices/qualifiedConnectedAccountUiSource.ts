@@ -182,6 +182,7 @@ export function isQualifiedConnectedAccountLegacyOperationSupported(params: Read
 }
 
 export type QualifiedConnectedAccountGroupsClient = Readonly<{
+    get(ref: QualifiedConnectedAccountUiGroup['ref']): Promise<QualifiedConnectedAccountGroupV4>;
     create(params: Readonly<{
         groupId: string;
         displayName: string | null;
@@ -217,7 +218,6 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
     /** Edits never fall back to a raw writer when Action custody is absent. */
     mutation?: Readonly<{
         execute(actionId: ConnectedServiceConfigurationActionIdV1, input: unknown): Promise<unknown>;
-        readGroup(ref: QualifiedConnectedAccountUiGroup['ref']): Promise<QualifiedConnectedAccountGroupV4>;
     }>;
 }>): QualifiedConnectedAccountGroupsClient {
     const { service } = params;
@@ -256,8 +256,17 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
         }
         return normalized;
     };
+    const get = async (ref: QualifiedConnectedAccountUiGroup['ref']) => {
+        if (!sameService(ref.service, service)) {
+            throw new QualifiedConnectedAccountUiSourceError('qualified_connected_accounts_cross_source_ref');
+        }
+        const group = await mutateGroup('connectedServices.pools.get', { group: ref });
+        normalizeExpected(group, ref);
+        return group;
+    };
 
     return {
+        get,
         async create(input) {
             return normalizeExpected(await mutateGroup('connectedServices.pools.create',
                 {
@@ -362,7 +371,7 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
                         : {}),
                 },
             );
-            return normalizeExpected(await admitted.readGroup(input.group.ref), input.group.ref);
+            return normalizeExpected(await get(input.group.ref), input.group.ref);
         },
     };
 }

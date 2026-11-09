@@ -27,6 +27,17 @@ import { AccountSettingsV2UpdateRequestSchema} from '@happier-dev/protocol/accou
 import { type AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
+import { requireActionSuccess } from './frontDoorRuntimeActionExecutor';
+
+describe('native compact admission presentation', () => {
+    it('surfaces a native unsupported receipt instead of treating the request as admitted', () => {
+        expect(() => requireActionSuccess({ ok: true, result: { status: 'unsupported' } }, 'session.compact'))
+            .toThrow(expect.objectContaining({ code: 'unsupported_action', details: { status: 'unsupported' } }));
+        for (const status of ['admitted', 'already_pending'] as const) {
+            expect(() => requireActionSuccess({ ok: true, result: { status } }, 'session.compact')).not.toThrow();
+        }
+    });
+});
 
 const clipboard = vi.hoisted(() => vi.fn<(text: string) => Promise<boolean>>());
 const publicLinkModal = vi.hoisted(() => ({ confirm: vi.fn<IModal['confirm']>(), show: vi.fn<IModal['show']>() }));

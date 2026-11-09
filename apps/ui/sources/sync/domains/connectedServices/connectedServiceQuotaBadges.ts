@@ -4,6 +4,7 @@ import type {
 import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol/connect/connectedServiceQuotaMeterLabel';
 
 import { isConnectedServiceQuotaMeterVisible } from './connectedServiceQuotaMeterVisibility';
+import { presentConnectedServiceQuotaReportedAmount, type ConnectedServiceQuotaReportedAmount } from './accountUsage/presentProviderConnectionUsage';
 
 import { deriveQuotaMeterValues } from './deriveQuotaUtilizationPct';
 import { selectComparableConnectedServiceQuotaMeters } from './connectedServiceQuotaGauge';
@@ -26,6 +27,7 @@ export type ConnectedServiceQuotaSummaryMeter = Readonly<{
   utilizationPct: number | null;
   status: ConnectedServiceQuotaMeterV1['status'];
   resetsAt: number | null;
+  reportedAmount?: ConnectedServiceQuotaReportedAmount;
 }>;
 
 /** Both released V2/V3 and exact V4 quota snapshots carry this display fact. */
@@ -119,13 +121,17 @@ export function buildSummaryMeters(
     meters,
     meterIds: meterIds.filter((meterId) => !selectedIds.has(meterId)),
   });
-  return [...selected, ...remaining].flatMap((selected) => selected.meter
-    && isConnectedServiceQuotaMeterVisible(selected.meter, nowMs, pinnedMeterIds) ? [{
+  return [...selected, ...remaining].flatMap((selected) => {
+    if (!selected.meter || !isConnectedServiceQuotaMeterVisible(selected.meter, nowMs, pinnedMeterIds)) return [];
+    const reportedAmount = presentConnectedServiceQuotaReportedAmount(selected.meter);
+    return [{
     meterId: selected.meterId,
     label: selected.label,
     utilizationPct: selected.utilizationPct,
     remainingPct: selected.remainingPct,
     status: selected.meter.status,
     resetsAt: selected.meter.resetAtMs ?? selected.meter.resetsAt ?? null,
-  } satisfies ConnectedServiceQuotaSummaryMeter] : []);
+    ...(reportedAmount ? { reportedAmount } : {}),
+  } satisfies ConnectedServiceQuotaSummaryMeter];
+  });
 }

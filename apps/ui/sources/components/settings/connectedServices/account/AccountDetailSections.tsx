@@ -28,6 +28,7 @@ import { useQualifiedConnectedAccountQuota } from '@/hooks/server/connectedServi
 import { buildQuotaResetRows } from '@/sync/domains/connectedServices/buildQuotaResetRows';
 import { presentAccountSubscription } from '@/sync/domains/connectedServices/presentAccountSubscription';
 import { resolveQuotaMeterTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
+import { formatConnectedServiceQuotaReportedAmount } from '@/sync/domains/connectedServices/accountUsage/formatProviderUsageAmount';
 import { useActiveServerAccountScope, useMachineDisplayById, useActiveMachineFacts } from '@/sync/store/hooks';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
@@ -43,8 +44,10 @@ import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLin
 
 import { ACCOUNT_BLOCK_RESET_COUNTDOWN_DAYS_FORMATTER } from './accountBlockFormatters';
 import { formatAgentNames } from '../ConnectedServiceMark';
-import { projectIndexMeters, type ConnectedAccountIndexMeter } from '../index/ConnectedAccountIndexRow';
+import { projectIndexMeters, type ConnectedAccountIndexMeter } from '../index/projectIndexMeters';
 import { useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
+import type { ConnectedAccountAccessMode } from '../model/presentConnectedAccountAccessMode';
+import { projectConnectedAccountSubscriptionFacts } from '../model/resolveConnectedAccountAccessMode';
 import { useConnectedAccountSubscription } from '../usage/AccountUsageFacts';
 import { useAccountUsageResetAction } from '../usage/useAccountUsageResetAction';
 import { useConnectedAccountPinnedMeters } from '../usage/useConnectedAccountPinnedMeters';
@@ -112,6 +115,7 @@ export const AccountDetailUsageSectionView = React.memo(function AccountDetailUs
                                     testID={`${testID}:meter:${meter.meterId}`}
                                     label={meter.label}
                                     remainingPct={meter.remainingPct}
+                                    amount={formatConnectedServiceQuotaReportedAmount(meter.reportedAmount)}
                                     resetsAt={meter.resetsAt}
                                     tone={resolveQuotaMeterTone(meter)}
                                     estimated={meter.status === 'estimated'}
@@ -237,6 +241,7 @@ export const AccountDetailSubscriptionSectionView = React.memo(function AccountD
 /** The account facts' responsive composition, shared by live detail and the specimen fixture. */
 export const AccountDetailFactsSectionsView = React.memo(function AccountDetailFactsSectionsView(props: Readonly<{
     facts: AccountDetailUsageFacts;
+    accessMode?: ConnectedAccountAccessMode | null;
     serviceLabel: string;
     signedOut: boolean;
     now: number;
@@ -248,8 +253,9 @@ export const AccountDetailFactsSectionsView = React.memo(function AccountDetailF
         const width = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width);
         if (width !== null) setCompact(width < PAGE_LIST_METRICS.rowStackBelowWidthPx);
     }, []);
-    const subscription = <AccountDetailSubscriptionSectionView key="subscription" subscription={props.facts.subscription} serviceLabel={props.serviceLabel} planLabel={props.facts.planLabel} now={props.now} compact={compact} />;
-    const usage = <AccountDetailUsageSectionView key="usage" facts={props.facts} signedOut={props.signedOut} now={props.now} pins={props.pins} compact={compact} />;
+    const facts = { ...props.facts, ...projectConnectedAccountSubscriptionFacts(props.accessMode, props.facts) };
+    const subscription = <AccountDetailSubscriptionSectionView key="subscription" subscription={facts.subscription} serviceLabel={props.serviceLabel} planLabel={facts.planLabel} now={props.now} compact={compact} />;
+    const usage = <AccountDetailUsageSectionView key="usage" facts={facts} signedOut={props.signedOut} now={props.now} pins={props.pins} compact={compact} />;
     const resets = props.resetsSection ?? <AccountDetailResetsSectionView
         recoveryCredits={props.facts.recoveryCredits}
         recoveryCreditDetails={props.facts.recoveryCreditDetails}
@@ -328,6 +334,7 @@ export const AccountDetailResetsSectionView = React.memo(function AccountDetailR
 /** The live usage, subscription and resets of an account: one quota read, one usage-record read. */
 export const AccountDetailFactsSections = React.memo(function AccountDetailFactsSections(props: Readonly<{
     account: QualifiedConnectedAccountRef;
+    accessMode?: ConnectedAccountAccessMode | null;
     legacyServiceId: ConnectedServiceId | null;
     serviceLabel: string;
     signedOut: boolean;
@@ -353,7 +360,7 @@ export const AccountDetailFactsSections = React.memo(function AccountDetailFacts
         refresh: props.machineId === null || quota.supported === false ? null : retry,
     };
     return (
-        <AccountDetailFactsSectionsView facts={facts} serviceLabel={props.serviceLabel} signedOut={props.signedOut} now={now} pins={pins} resetsSection={props.legacyServiceId && !props.signedOut && props.machineId !== null ? (
+        <AccountDetailFactsSectionsView facts={facts} accessMode={props.accessMode} serviceLabel={props.serviceLabel} signedOut={props.signedOut} now={now} pins={pins} resetsSection={props.legacyServiceId && !props.signedOut && props.machineId !== null ? (
                 <LiveResetsSection
                     legacyServiceId={props.legacyServiceId}
                     accountId={props.account.accountId}

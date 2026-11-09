@@ -20,6 +20,36 @@ vi.mock('socket.io-client', async (importOriginal) =>
 installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
 afterEach(() => { vi.restoreAllMocks(); });
 
+it('reads the selected pool through the default Action executor on the captured Account without Machine work', async () => {
+  const bridge = await loadSyncSingletonForTests();
+  const previous = storage.getState();
+  const accountId = 'selected-pool-read';
+  const http = createHomeHubArtifactHttpBoundary(accountId);
+  const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'work' };
+  const group = { v: 1, ref, incarnation: 'work-incarnation', displayName: 'Work', policy: { strategy: 'manual' },
+    activeConnectedAccountId: 'selected', generation: 2, runtimeStateRevision: 1, state: {}, createdAt: 1, updatedAt: 2,
+    members: [{ v: 1, connectedAccountId: 'selected', priority: 100, enabled: true, state: {}, createdAt: 1, updatedAt: 1 }] };
+  const readPaths: string[] = [];
+  const connection = await restoreServerAccountForTest({ accountId, serverUrl: 'https://selected-pool.test', request: async (url, init) => {
+    const path = new URL(String(url)).pathname;
+    readPaths.push(path);
+    if (path === '/v4/connect/qualified/group') {
+      expect(init?.method ?? 'GET').toBe('GET');
+      return Response.json({ group });
+    }
+    return http.request(url, init);
+  } });
+  storage.setState({ profileScope: { serverId: connection.home.id, accountId }, profile: AccountProfileSchema.parse({ id: accountId }) });
+  try {
+    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+    const result = await createDefaultActionExecutor().execute('connectedServices.pools.get', { group: ref },
+      { surface: 'mcp', authority: 'account_automation', serverId: connection.home.id });
+    expect(result).toEqual({ ok: true, result: { group } });
+    expect(readPaths.filter(path => path.startsWith('/v4/connect/'))).toEqual(['/v4/connect/qualified/group']);
+    expect(readPaths.some(path => path.startsWith('/v1/machines'))).toBe(false);
+  } finally { storage.setState(previous, true); await connection.dispose(); bridge.dispose(); }
+});
+
 it('retries demanded connected-service projections through the same catalog Action on the captured Home', async () => {
   const bridge = await loadSyncSingletonForTests();
   const previous = storage.getState();

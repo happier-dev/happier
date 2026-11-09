@@ -204,7 +204,6 @@ describe('connected-service settings errors', () => {
         'connected_account_control_unavailable',
         'connected_account_authentication_mode_unavailable',
         'connected_account_authentication_operation_unavailable',
-        'connected_account_authentication_unavailable',
         'connected_account_attempt_internal_unavailable',
         'connected_account_attempt_unavailable',
         'connected_account_attempt_discovery_unavailable',
@@ -220,6 +219,10 @@ describe('connected-service settings errors', () => {
         'connected_account_launch_file_environment_purpose_unavailable',
         'connected_account_purpose_unavailable',
       ],
+    },
+    {
+      key: 'connectedServices.errors.accountAuthenticationUnavailable',
+      codes: ['connected_account_authentication_unavailable'],
     },
     {
       key: 'connectedServices.errors.accountOperationUnsupported',
