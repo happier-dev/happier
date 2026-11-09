@@ -16,7 +16,7 @@ import { ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { requesterAccountEncryptionMode } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
-import type { ActionExecutorDeps, ApprovalRequestV1 } from '@happier-dev/protocol';
+import type { ActionExecutorDeps, ApprovalRequestV1, ApprovalRequestV2 } from '@happier-dev/protocol';
 import * as persistence from '@/persistence';
 
 import { consumeDeferredCliApprovalResult, createCliActionExecutorHarness } from './createCliActionExecutorHarness';
@@ -99,6 +99,48 @@ async function expectPromiseStillPending(promise: Promise<unknown>): Promise<voi
 }
 
 describe('createCliActionExecutorHarness', () => {
+  it.each(['authenticated', 'public'] as const)('records only an authenticated Home learned after Session harness creation (%s)', async provenance => {
+    const serverId = 'stack_agent-qa-prs-issues__id_default';
+    const serverIdentityId = 'srv_approval-home';
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const settings = normalizeActionsSettingsV1({ v: 1, actions: {
+      'session.list': { approvalRequiredSurfaces: ['agent'] },
+    } });
+    const retained: ApprovalRequestV2[] = [];
+    let snapshot: import('@/features/serverFeaturesClient').CliServerFeaturesSnapshot | undefined;
+    let observations = 0;
+    const { executor } = createCliActionExecutorHarness({ token, credentials: { token, encryption: null },
+      sessionId: 'source', mode: 'plain', ctx: null, serverId, serverHttpBaseUrl: 'https://approval-home.test',
+      getCurrentSessionMetadata: () => ({ machineId: 'machine', path: '/work' }),
+      actionsSettingsProvider: { getActionsSettings: () => settings, getAccountSettings: () => accountSettingsParse({}) },
+      resolveServerFeaturesSnapshot: async () => { observations++; return snapshot; },
+    }, {
+      // Artifact persistence is the boundary; origin construction and policy stay real.
+      approvalsCreate: async ({ request }) => {
+        retained.push(ApprovalRequestV2Schema.parse(request));
+        return { artifactId: `review-${retained.length}` };
+      },
+    });
+    snapshot = { status: 'ready', provenance, features: FeaturesResponseSchema.parse({
+      features: {}, capabilities: { serverIdentity: { serverIdentityId } },
+    }) };
+    for (let index = 0; index < 20; index++) {
+      const result = await executor.execute('session.list', { limit: 10 }, {
+        surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+        defaultSessionId: 'source', defaultSessionMachineId: 'machine', actionRequestId: `request-${index}`,
+        sessionListAccess: 'current_session',
+      });
+      expect(result, result.ok ? 'ok' : result.errorCode).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    }
+    expect(retained).toHaveLength(20);
+    expect(retained.map(request => request.executionOriginV1.serverId)).toEqual(Array(20).fill(serverId));
+    expect(retained.map(request => request.executionOriginV1.serverIdentityId))
+      .toEqual(Array(20).fill(provenance === 'authenticated' ? serverIdentityId : undefined));
+    expect(retained.map(request => buildApprovalRequestArtifactHeaderV1(request).serverIdentityId))
+      .toEqual(Array(20).fill(provenance === 'authenticated' ? serverIdentityId : undefined));
+    expect(observations).toBe(20);
+  });
+
   it('returns the same-host live result when its recorded receipt arrives before the decision callback', async () => {
     const home = 'https://approval-home.example.test';
     const app = fastify();

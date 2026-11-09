@@ -43,6 +43,25 @@ async function storePluginApproval(request: ReturnType<typeof TargetActionApprov
     } finally { context.dispose(); }
 }
 
+it.each([undefined, 'srv_other_home'])('withholds plugin decisions when its replay Home is unresolved (%s)', async serverIdentityId => {
+    await account.restore({ serverIdentityId: 'srv_plugin_home', machines: [createMachineFixture({ id: 'machine-exact' })] });
+    const request = TargetActionApprovalRequestV1Schema.parse({
+        v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
+        createdBy: { surface: 'agent' }, requestedSurface: 'agent',
+        qualifiedActionId: 'acme.publisher/actions/releases/publish', input: { releaseTag: 'v1' }, secretInputPaths: [],
+        sourceCustody: { kind: 'development', registeredRootId: 'plugin-root' },
+        policyFingerprint: 'a'.repeat(64), subjectFingerprint: 'b'.repeat(64), summary: 'Publish release notes',
+        replayPlacement: { serverId: 'stack_agent-qa-prs-issues__id_default', machineId: 'machine-exact' },
+        executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', caller: { kind: 'host' },
+            serverId: 'stack_agent-qa-prs-issues__id_default', ...(serverIdentityId ? { serverIdentityId } : {}), accountId: 'account-a',
+            machineId: 'machine-exact', actionId: 'action.invoke', requestId: 'unresolved-plugin-home' },
+    });
+    const artifactId = await storePluginApproval(request);
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifactId} serverId={account.serverId} />);
+    expect(screen.findByTestId('approvals.approve')?.props.disabled).toBe(true);
+    expect(screen.findByTestId('approvals.reject')?.props.disabled).toBe(true);
+});
+
 it.each(['refused', 'lost', 'settled-success'] as const)('shows the settled plugin effect after a %s decision response without replaying it', async response => {
     let artifactId = '';
     let request: ReturnType<typeof TargetActionApprovalRequestV1Schema.parse>;
@@ -99,8 +118,13 @@ it.each(['refused', 'lost', 'settled-success'] as const)('shows the settled plug
         expect(Modal.alert).not.toHaveBeenCalled();
     } else {
         expect(screen.getTextContent()).toContain('approvals.status.failed');
-        // The recorded failure's code lives in the page's Details disclosure, never in the alert.
-        expect(Modal.alert).toHaveBeenCalledWith(expect.anything(), 'approvals.failureGeneric');
+        // RU2 R52: the failure alert must retain the recorded effect's typed cause.
+        expect(Modal.alert).toHaveBeenCalledWith(expect.anything(), 'approvals.failureGeneric', expect.any(Array));
+        const buttons = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2];
+        const details = buttons?.find(button => button.text === 'approvals.technicalDetails');
+        expect(details).toBeDefined();
+        details?.onPress?.();
+        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', 'plugin_action_outcome_unknown');
     }
 });
 
@@ -150,6 +174,7 @@ it.each(['approve', 'reject'] as const)('routes plugin %s from the creator profi
     const wrongArtifactId = await storePluginApproval(wrongRequest);
     const wrongHome = await renderScreen(<ApprovalDetailScreen artifactId={wrongArtifactId} />);
     expect(wrongHome.findByTestId(`approvals.${decision}`)).not.toBeNull();
+    expect(wrongHome.findByTestId(`approvals.${decision}`)?.props.disabled).toBe(true);
     await wrongHome.pressByTestIdAsync(`approvals.${decision}`);
     expect(outgoing).toHaveLength(1);
 });
@@ -200,9 +225,10 @@ it.each(['approve', 'reject'] as const)('updates plugin %s routing when the matc
     storage.getState().updateArtifact(artifact!);
     const cached = storage.getState().artifacts[artifactId];
     const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifactId} />);
+    expect(screen.findByTestId(`approvals.${decision}`)?.props.disabled).toBe(true);
     await screen.pressByTestIdAsync(`approvals.${decision}`);
     const { Modal } = await import('@/modal');
-    expect(Modal.alert).toHaveBeenCalledWith(expect.anything(), 'approvals.decisionError', expect.arrayContaining([expect.objectContaining({ text: 'approvals.technicalDetails' })]));
+    expect(Modal.alert).not.toHaveBeenCalled();
     expect(outgoing).toEqual([]);
     vi.mocked(Modal.alert).mockClear();
 
@@ -231,9 +257,10 @@ it.each(['approve', 'reject'] as const)('updates plugin %s routing when the matc
 
     await act(async () => { await profiles.removeServerProfile(replayServerId); });
     expect(storage.getState().artifacts[artifactId]).toBe(cached);
+    expect(screen.findByTestId(`approvals.${decision}`)?.props.disabled).toBe(true);
     await screen.pressByTestIdAsync(`approvals.${decision}`);
     expect(outgoing).toHaveLength(1);
-    expect(Modal.alert).toHaveBeenCalledWith(expect.anything(), 'approvals.decisionError', expect.arrayContaining([expect.objectContaining({ text: 'approvals.technicalDetails' })]));
+    expect(Modal.alert).not.toHaveBeenCalled();
 });
 
 it('presents a plugin Action by its retained human summary without exposing routing ids as copy', async () => {

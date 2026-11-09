@@ -287,7 +287,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         parsed.request.executionOriginV1.serverId.trim(),
       )
     : approvalServerId;
-  const approvalRouteUnavailable = homeUnavailable || (parsed?.kind === 'built_in'
+  const approvalRouteUnavailable = homeUnavailable || ((parsed?.kind === 'built_in' || parsed?.kind === 'target')
     && isApprovalReplayRouteUnavailable(parsed.request));
   // The Home is named as the person knows it. Its exact identity stays the fallback: when this
   // device has no profile for it, or the saved route no longer matches the Home that asked.

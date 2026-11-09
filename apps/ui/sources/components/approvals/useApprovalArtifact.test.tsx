@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import {
     ApprovalRequestV1Schema,
-    ApprovalRequestV2Schema,
+    ApprovalRequestV2Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import {
     buildApprovalRequestArtifactHeaderV1,
     type ApprovalArtifactHeaderV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 
 // Imported from their owning testkit modules, never the `@/dev/testkit` barrel:
 // the harness installs its network boundaries with `vi.doMock`, which only
@@ -208,6 +209,14 @@ describe('useApprovalArtifact', () => {
         const { storage } = await import('@/sync/domains/state/storage');
         const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
         const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        const [{ TokenStorage }, { getServerProfileById }] = await Promise.all([
+            import('@/auth/storage/tokenStorage'), import('@/sync/domains/server/serverProfiles'),
+        ]);
+        const serverUrl = getServerProfileById(serverId)!.serverUrl;
+        const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl');
+        const targetCredentialReads = () => credentials.mock.calls.filter(([url, options]) => (
+            url === serverUrl && options?.storageReadFailure === 'surface'
+        )).length;
         const previous = storage.getState();
         const applied = getAppliedActiveServerSnapshot();
         const available = isAppliedActiveServerRuntimeAvailable();
@@ -220,6 +229,8 @@ describe('useApprovalArtifact', () => {
         }, { initialProps: { artifactId: null } });
         try {
             await waitForHomeGovernance(() => expect(hook.getCurrent().homeUnavailable).toBe(false));
+            await flushHookEffects();
+            expect.soft(targetCredentialReads()).toBe(0);
             const rendersBefore = renders;
             await act(async () => { storage.setState({ endpointStatus: 'offline' }); });
             expect(renders).toBe(rendersBefore);
@@ -227,13 +238,24 @@ describe('useApprovalArtifact', () => {
             await act(async () => { storage.setState({ endpointStatus: 'online' }); });
             await hook.rerender({ artifactId });
             await waitForHomeGovernance(() => expect(hook.getCurrent().artifact?.id).toBe(artifactId));
+            expect(targetCredentialReads()).toBeGreaterThan(0);
             await act(async () => { storage.setState({ endpointStatus: 'offline' }); });
             expect(hook.getCurrent().homeUnavailable).toBe(true);
             expect(hook.getCurrent().artifact?.id).toBe(artifactId);
             await act(async () => { storage.setState({ endpointStatus: 'online' }); });
             expect(hook.getCurrent().homeUnavailable).toBe(false);
+            const readsWithApproval = targetCredentialReads();
+            const addressedServerId = hook.getCurrent().serverId;
+            await hook.rerender({ artifactId: null });
+            await flushHookEffects();
+            expect(hook.getCurrent()).toMatchObject({
+                artifact: null, accessGrants: null, isLoading: false, homeUnavailable: false, error: false,
+                serverId: addressedServerId,
+            });
+            expect(targetCredentialReads()).toBe(readsWithApproval);
         } finally {
             await hook.unmount();
+            credentials.mockRestore();
             storage.setState(previous, true);
             publishAppliedActiveServerSnapshot(applied, available);
         }
@@ -496,6 +518,33 @@ describe('useApprovalArtifact', () => {
         // and the active Home's row with the same id is not presented as its answer.
         expect(harness.requestsFor(`/v1/artifacts/${artifactId}`)).toHaveLength(readsBefore);
         expect(hook.getCurrent().artifact).toBeNull();
+    });
+
+    it('resolves a retained stack-scoped Review URL to the connected Home before reading its approval', async () => {
+        const serverId = await addHome(HOME_IDENTITY);
+        const stackServerId = 'stack_agent-qa-prs-issues__id_default';
+        const [{ MMKV }, { readStorageScopeFromEnv, scopedStorageId }, { getServerProfileById }] = await Promise.all([
+            import('react-native-mmkv'),
+            import('@/utils/system/storageScope'),
+            import('@/sync/domains/server/serverProfiles'),
+        ]);
+        const profile = getServerProfileById(serverId)!;
+        // Device persistence retains the pre-adoption Stack id after learning
+        // the Home identity. Exercise the real profile owner over that boundary.
+        new MMKV({ id: scopedStorageId('server-profiles', readStorageScopeFromEnv()) }).set('server-state-v1', JSON.stringify({
+            activeServerId: serverId,
+            servers: { [serverId]: { ...profile, legacyServerIds: [stackServerId] } },
+        }));
+        expect(getServerProfileById(stackServerId)?.id).toBe(serverId);
+        const request = homeSignedRequest(stackServerId, HOME_IDENTITY);
+        const artifactId = await storeApproval(serverId, buildApprovalRequestArtifactHeaderV1(request), request);
+
+        const hook = await renderReader(artifactId, stackServerId);
+
+        await settle(hook, artifactId, (state) => expect(state.artifact?.id).toBe(artifactId));
+        expect(hook.getCurrent()).toMatchObject({ serverId, homeUnavailable: false, invalidArtifact: false });
+        expect(harness.requestsFor(`/v1/artifacts/${artifactId}`).map((entry) => entry.serverId))
+            .toEqual(expect.arrayContaining([serverId]));
     });
 
     it('keeps an approval a 0.2 client created (V1, device-local Home id) readable on its Home', async () => {

@@ -1,13 +1,14 @@
+import { isAccountCurrentnessEntityIdV1 } from '@happier-dev/protocol/changes';
 import * as React from 'react';
-import { useIsFocused } from '@react-navigation/native';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import type { ArtifactAccessGrantsListResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { useArtifact } from '@/sync/domains/state/storage';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
     areServerProfileIdentifiersEquivalent,
-    listServerProfiles,
+    getServerProfileById,
     resolveServerProfileForPortableIdentity,
 } from '@/sync/domains/server/serverProfiles';
 import { captureActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -15,6 +16,8 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { useFailureExplainedByUnreachableHome } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
+import { createArtifactAccessApi } from '@/sync/api/artifacts/apiArtifacts';
+import { useDestinationFocus as useIsFocused } from '@/components/appShell/workspace/DestinationInstanceHost';
 
 function hasCompatibleApprovalArtifact(
     artifact: DecryptedArtifact | null,
@@ -51,6 +54,8 @@ export function useApprovalArtifact(input: Readonly<{
     scope?: ServerAccountScope;
     /** A mounted Action still owns its result while Inbox review has focus. */
     observeWhileUnfocused?: boolean;
+    /** The detail page names requester/decider Accounts from this Artifact's direct-grant roster. */
+    includeAccountActorRoster?: boolean;
 }>) {
     const requestedServerIdentifier = input.serverId?.trim() || null;
     const serverProfilesGeneration = useServerProfilesGeneration();
@@ -69,9 +74,9 @@ export function useApprovalArtifact(input: Readonly<{
             } as const;
         }
 
-        // Released V1 links carried a device-local profile id. Keep that path
-        // readable, but never promote the local id into a portable identity.
-        const local = listServerProfiles().find((profile) => profile.id === requestedServerIdentifier) ?? null;
+        // Retained links may carry a pre-adoption local id. The profile owner
+        // resolves its established aliases without treating unknown ids as Home identities.
+        const local = getServerProfileById(requestedServerIdentifier);
         if (!local) {
             return {
                 serverId: null,
@@ -96,7 +101,7 @@ export function useApprovalArtifact(input: Readonly<{
     const { artifactId } = input;
     const focused = useIsFocused();
     const observing = focused || input.observeWhileUnfocused === true;
-    const resolution = useServerCredentialAccountScopeResolution(serverId);
+    const resolution = useServerCredentialAccountScopeResolution(artifactId ? serverId : null);
     const scopeMatches = input.scope === undefined || (resolution.kind === 'bound'
         && areServerAccountScopesEqual(resolution.scope, input.scope));
     // Mounted Action writers have no approval until requested; they need no Home health projection.
@@ -122,6 +127,7 @@ export function useApprovalArtifact(input: Readonly<{
         serverId: string | null;
         resolution: typeof resolution;
         artifact: DecryptedArtifact | null;
+        accessGrants: ArtifactAccessGrantsListResponseV1 | null;
         invalidArtifact: boolean;
     }> | null>(null);
     const [loading, setLoading] = React.useState(false);
@@ -131,6 +137,8 @@ export function useApprovalArtifact(input: Readonly<{
         ? loaded.artifact : null;
     const fetchedInvalid = loaded?.artifactId === artifactId && loaded.serverId === serverId && loaded.resolution === resolution
         ? loaded.invalidArtifact : false;
+    const accessGrants = loaded?.artifactId === artifactId && loaded.serverId === serverId && loaded.resolution === resolution
+        ? loaded.accessGrants : null;
     // Socket updates are applied to the canonical artifact store while this
     // screen is open. Prefer a newer local projection so a terminal decision
     // cannot be hidden by the initial GET response.
@@ -166,6 +174,8 @@ export function useApprovalArtifact(input: Readonly<{
     // still loading. Only a completed exact-Home fetch can classify an Artifact
     // as structurally incompatible; absence and transport failure stay retryable.
     const invalidArtifact = fetchedInvalid;
+    const readNotCurrent = React.useRef(false);
+    readNotCurrent.current = error || artifact === null || (input.includeAccountActorRoster === true && accessGrants === null);
     const refresh = React.useCallback(async () => {
         pending.current?.abort();
         if (!artifactId || !serverId || unresolvedServer || !scopeMatches || resolution.kind !== 'bound') {
@@ -178,15 +188,28 @@ export function useApprovalArtifact(input: Readonly<{
         setLoading(true);
         setError(false);
         try {
-            const full = await (async () => {
+            const result = await (async () => {
                 const context = await captureActionAccountContext(serverId, controller.signal);
                 try {
                     if (resolution.kind !== 'bound' || context.accountId !== resolution.scope.accountId) return null;
                     if (input.scope && context.accountId !== input.scope.accountId) return null;
-                    return await context.fetchArtifact(artifactId);
+                    const accessApi = createArtifactAccessApi(context.credentials, {
+                        request: context.request,
+                        readTransport: context.readTransport,
+                        serverId: context.serverId,
+                    });
+                    const [full, grants] = await Promise.all([
+                        context.fetchArtifact(artifactId),
+                        input.includeAccountActorRoster
+                            ? accessApi.list({ artifactId }, controller.signal).catch(() => null)
+                            : Promise.resolve(null),
+                    ]);
+                    context.assertCurrent();
+                    return { full, grants };
                 } finally { context.dispose(); }
             })();
             if (controller.signal.aborted) return;
+            const full = result?.full ?? null;
             const compatible = hasCompatibleApprovalArtifact(
                 full,
                 requestedServerIdentityId,
@@ -197,6 +220,7 @@ export function useApprovalArtifact(input: Readonly<{
                 serverId,
                 resolution,
                 artifact: compatible ? full : null,
+                accessGrants: compatible ? result?.grants ?? null : null,
                 invalidArtifact: Boolean(full && !compatible),
             });
             setError(!full || !compatible);
@@ -211,7 +235,7 @@ export function useApprovalArtifact(input: Readonly<{
                 setLoading(false);
             }
         }
-    }, [artifactId, input.scope, requestedByPortableIdentity, requestedServerIdentityId, resolution, scopeMatches, serverId, unresolvedServer]);
+    }, [artifactId, input.includeAccountActorRoster, input.scope, requestedByPortableIdentity, requestedServerIdentityId, resolution, scopeMatches, serverId, unresolvedServer]);
     React.useEffect(() => {
         observedHeaderOnlyRevision.current = headerOnlyLocalRevision;
         // Binding the active Home must not create new demand for retained content,
@@ -235,19 +259,20 @@ export function useApprovalArtifact(input: Readonly<{
         // invalidates this mounted exact-Home reader through the same fetch owner.
         return subscribeHomeAccountChange(event => {
             if (!areServerProfileIdentifiersEquivalent(event.serverId, serverId)) return;
-            if (event.entityIds !== undefined && !event.entityIds.includes(artifactId) && !event.entityIds.includes('self')) return;
+            if (event.entityIds !== undefined && !event.entityIds.includes(artifactId) && !event.entityIds.some(isAccountCurrentnessEntityIdV1)) return;
             void refresh();
-        });
+        }, { reconnect: { readNotCurrent: () => readNotCurrent.current } });
     }, [artifactId, observing, refresh, resolution, serverId]);
-    const homeUnavailable = homeUnreachable || unresolvedServer || !scopeMatches
-        || Boolean(serverId && resolution.kind !== 'bound' && resolution.kind !== 'resolving');
+    const homeUnavailable = Boolean(artifactId) && (homeUnreachable || unresolvedServer || !scopeMatches
+        || Boolean(serverId && resolution.kind !== 'bound' && resolution.kind !== 'resolving'));
     return {
         artifact,
         serverId,
+        accessGrants,
         isLoading: observing && !homeUnavailable && !artifact && Boolean(artifactId) && (loading || (serverId !== null && resolution.kind === 'resolving')),
         homeUnavailable,
-        error: error || (homeUnreachable && !artifact) || unresolvedServer || !scopeMatches
-            || Boolean(serverId && resolution.kind !== 'bound' && resolution.kind !== 'resolving'),
+        error: Boolean(artifactId) && (error || (homeUnreachable && !artifact) || unresolvedServer || !scopeMatches
+            || Boolean(serverId && resolution.kind !== 'bound' && resolution.kind !== 'resolving')),
         invalidArtifact,
         refresh,
     };

@@ -21,6 +21,7 @@ import { createActionSettingsProvider, type RuntimeActionSettingsProvider } from
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 import { createCliActionDeps } from './createCliActionDeps';
+import { enrichCliActionApprovalContext } from './enrichCliActionApprovalContext';
 import { readControllerDeploymentDispatch } from './controllerDeploymentDispatch';
 import { createActionExecutionHookDeps } from './createActionExecutionHookDeps';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
@@ -153,6 +154,17 @@ export function createCliActionExecutorHarness(
     requiresOriginalCliFiniteAdmission(id, ctx) ? false : readApprovalRequired(id, ctx, input, defaultUiConfirmation, approvedOperation, approvalScope, defaultSafety);
   const rawDeps: MutableActionExecutorDeps = {
     ...baseDepsForRuntime,
+    prepareApprovalExecutionOriginContext: async () => {
+      // Session features can arrive after composition. Capture authenticated
+      // Home identity at the existing origin boundary, without changing caller custody.
+      const context = await enrichCliActionApprovalContext({
+        serverIdentityId: params.serverIdentityId,
+        machineId: params.runtimeActionMachineId ?? params.machineActionDirectTargetTransport?.machineId,
+        fixedServerId: params.serverId ?? null,
+        resolveServerFeaturesSnapshot: async () => params.resolveServerFeaturesSnapshot?.(),
+      });
+      return context.serverIdentityId ? { serverIdentityId: context.serverIdentityId } : {};
+    },
     projectAction: async args => {
       if (requiresOriginalCliFiniteAdmission(args.actionId, args.context)
         && readApprovalRequired(args.actionId, args.context, args.input)) {
