@@ -590,6 +590,60 @@ describe('registry item last-known reads through the Account and HTTP owners', (
         expect(acquisitions.has(disabledUrl)).toBe(false);
         expect(targetReads).toEqual([]);
     });
+    it.each([false, true])('settles curation after a cold source failure without losing healthy editorial order (all failed: %s)', async allFailed => {
+        const { projectStoreDiscover } = await import('@/components/store/discover/storeDiscoverModel');
+        const sourceUrl = `https://curation-settled-${allFailed}.test/catalog.json`;
+        const sourceId = deriveMarketplaceSourceId(sourceUrl);
+        const source = { id: sourceId, title: 'Editorial catalog', format: 'happier-catalog', kinds: ['plugin'],
+            url: sourceUrl, enabled: true, addedAt: 1 } satisfies RegistrySourceV1;
+        const catalog = MarketplaceIndexSourceSnapshotV1Schema.parse({ source: registryMarketplaceSourceV1(source),
+            freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], diagnostics: [], discovery: {
+                items: ['monitoring', 'publishing'].map(id => ({ id, title: id, reference: {
+                    type: 'registryItem', kind: 'app', sourceId, itemId: id } })),
+                categories: ['monitoring', 'publishing'].map(id => ({ id, title: id, items: [id] })), jobs: [],
+            } });
+        let release!: () => void;
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        let healthyReads = 0;
+        let unavailable = allFailed;
+        const fixture = await createPlainPromptLibraryCatalogHomeFixture(`https://curation-layout-${allFailed}.test`, {
+            key: 'registry-sources', value: { v: 2, sources: [source], disabledSourceIds: [] },
+        }, 'updated', { handleExternalRequest: async url => {
+            if (url === DEFAULT_CURATED_MARKETPLACE_SOURCE_URL) {
+                await pending;
+                return new Response(null, { status: 503 });
+            }
+            if (url === sourceUrl) {
+                healthyReads++;
+                return unavailable ? new Response(null, { status: 503 }) : Response.json(catalog);
+            }
+            throw new Error('Curation must not read target content');
+        } });
+        onTestFinished(async () => { release(); await standardCleanup(); await fixture.dispose(); });
+        const sourceIds = [HAPPIER_PICKS_SOURCE_ID, sourceId];
+        const hook = await renderHook(() => useRegistryCuration({ sourceIds }));
+        await waitForHomeGovernance(() => expect(healthyReads).toBe(1));
+        // A healthy sibling cannot expose sections before pending editorial positions are known.
+        expect(hook.getCurrent().layout.hasValue).toBe(false);
+        expect(hook.getCurrent().layout.loading).toBe(true);
+        await act(async () => { release(); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().layout.loading).toBe(false));
+        expect(hook.getCurrent().layout.hasValue).toBe(!allFailed);
+        expect(hook.getCurrent().layout.sourceFailures.map(failure => failure.sourceId)).toEqual(
+            allFailed ? sourceIds : [HAPPIER_PICKS_SOURCE_ID]);
+        if (allFailed) {
+            expect(hook.getCurrent().curation).toEqual([]);
+            return;
+        }
+        expect(projectStoreDiscover(hook.getCurrent().curation, []).sections.map(section => section.categoryId))
+            .toEqual(['monitoring', 'publishing']);
+        const retained = hook.getCurrent().curation;
+        unavailable = true;
+        await act(async () => { await hook.getCurrent().refresh(); });
+        expect(hook.getCurrent().layout.hasValue).toBe(true);
+        expect(hook.getCurrent().curation).toBe(retained);
+        expect(hook.getCurrent().layout.sourceFailures.map(failure => failure.sourceId)).toEqual(sourceIds);
+    });
     it('reconciles refresh by content: zero changed row identities for equal content and only one for one changed listing', async () => {
         const { sourceId, catalog } = await setupHome('row-identity', Array.from({ length: 100 }, (_, index) => ({
             pluginId: `sample.plugin${index}`, title: `Plugin ${index}`,

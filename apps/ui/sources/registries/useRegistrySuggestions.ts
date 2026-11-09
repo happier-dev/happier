@@ -23,10 +23,10 @@ export function useRegistryCuration(input: Readonly<{ sourceIds?: readonly strin
     // Presentation owns acquisition, not the admitted facts already held by a retained page.
     const admitted = sourceIds.length > 0 && !catalog.stale;
     const pages = React.useMemo(() => admitted ? catalog.pages : [], [admitted, catalog.pages]);
-    // A failed first page knows neither the editorial sections nor their positions. A refresh failure can
-    // still carry the previously admitted discovery, including an explicitly empty editorial layout.
+    // The catalog read settles all sources before publishing their editorial positions. Failed cold
+    // sources cannot block healthy pages; refresh failures can still carry admitted discovery.
     const hasValue = sources.hasValue && (sourceIds.length === 0 || admitted && catalog.hasValue
-        && catalog.pages.every(page => page.status.state === 'ok' || page.discovery !== undefined));
+        && catalog.pages.some(page => page.status.state === 'ok' || page.discovery !== undefined));
     const error = sources.error ?? catalog.error;
     const status = sources.error ? sources.failureStatus : catalog.status;
     const loading = presented && (sources.loading || sourceIds.length > 0 && catalog.loading);
