@@ -89,7 +89,7 @@ import type {
 } from '../../projects/sources/projectSourceV1.js';
 import type { SessionAuthoringOpenV1, SessionAuthoringOpenResultV1 } from '../../plugins/ui/hostApiRequests.js';
 import type { MachineAddSshActionId, MachinePageActionId, MachinePageActionInput } from '../specs/machineConnection.js';
-import type { MachineAccessActionId } from '../specs/machine/access.js';
+import type { MachineAccessHttpActionId } from '../specs/machine/access.js';
 import type { MachineVitalsActionId, MachineVitalsActionInput } from '../specs/machineVitals.js';
 import type { MachineTerminalActionId, MachineTerminalActionInput } from '../specs/machineTerminal.js';
 import type { HomeConnectInputSchema, HomeConnectOutputSchema, HomeReconnectInputSchema, HomeReconnectOutputSchema, MachineAddCommandInputSchema, MachineAddCommandOutputSchema, MachinePairingCreateInputSchema, MachinePairingCreateOutputSchema, MachineTerminalOpenInputSchema, MachineTerminalListInputSchema } from '../specs/machineConnection.js';
@@ -3481,7 +3481,7 @@ export type ActionExecutorDeps = Readonly<{
 
   /** Exact-Home Machine access transport and trusted key continuation; inputs stay key-free. */
   machineAccessAction?: (args: Readonly<{
-    actionId: MachineAccessActionId;
+    actionId: MachineAccessHttpActionId;
     input: unknown;
     context: ActionExecutorContext;
     signal?: AbortSignal;

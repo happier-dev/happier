@@ -27,6 +27,25 @@ let restore: (() => void) | undefined;
 afterEach(async () => { restore?.(); restore = undefined; await app?.close(); app = undefined; });
 
 describe('Machine access headless Action transport', () => {
+  it.each(['alice', 'bob'])('executes the presence setup dependency for owner/Manage requester %s', async accountId => {
+    app = fastify();
+    const transitions = { v: 1, revision: 2, offline: null, online: { revision: 2, occurredAt: 1000 } };
+    const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    app.get('/v1/machines/machine/presence', async request => {
+      expect(request.headers.authorization).toBe(`Bearer ${token}`);
+      expect(request.query).toEqual({});
+      return { kind: 'present', machineId: 'machine', transitions };
+    });
+    await app.ready();
+    restore = installAxiosFastifyAdapter({ app, origin: 'http://access.test' });
+    const executor = createActionExecutor({
+      ...createAccountServerActionDeps({ token, serverId: 'home', serverHttpBaseUrl: 'http://access.test' }),
+    } as unknown as ActionExecutorDeps);
+    expect(await executor.execute('machines.presence.read', { serverId: 'home', machineId: 'machine' }, {
+      surface: 'cli', authority: 'present_user', serverId: 'home', runtimeAccountId: accountId,
+    })).toEqual({ ok: true, result: { kind: 'present', machineId: 'machine', transitions } });
+  });
+
   it.each(['https', 'local-dial-alias'] as const)('admits a portable Home target after preparing a restored profile without a saved descriptor (%s)', async basis => {
     await withTempDir('requester-machine-access-home-', async home => {
       const scope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL']);

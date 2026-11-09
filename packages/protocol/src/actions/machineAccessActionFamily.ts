@@ -1,10 +1,10 @@
 import { getActionSpec } from './actionSpecs.js';
 import { bindHomeDomainHttpRequestV1 } from './homeDomainHttpBinding.js';
-import type { MachineAccessActionId } from './specs/machine/access.js';
+import type { MachineAccessHttpActionId } from './specs/machine/access.js';
 import { z } from 'zod/mini';
 
 /** Transport comes exclusively from the declared Action row, with Home consumed by the host. */
-export function bindMachineAccessActionHttpRequestV1(actionId: Exclude<MachineAccessActionId, 'machines.access.prepareKeys'>, input: unknown) {
+export function bindMachineAccessActionHttpRequestV1(actionId: Exclude<MachineAccessHttpActionId, 'machines.access.prepareKeys'>, input: unknown) {
   const spec = getActionSpec(actionId);
   if (!spec.serverTransport) throw new TypeError(`Machine access Action declares no transport: ${actionId}`);
   return bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: z.pipe(spec.inputSchema, z.transform((value: z.output<typeof spec.inputSchema>) => {

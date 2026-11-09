@@ -874,10 +874,9 @@ export function createAccountServerActionDeps(input: Readonly<{
         if ([404, 405, 501].includes(response.status)) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         throw createHttpStatusError(response.status, 'Machine access Action request failed');
       }
-      const output = actionId === 'machines.access.grants.list'
-        ? MachineAccessGrantsListResultV1Schema.parse(response.data)
-        : MachineAccessMutationResultV1Schema.parse(response.data);
-      if (actionId !== 'machines.access.grant.set' || !('kind' in output) || output.kind !== 'saved' || !output.canPrepareKeys) return output;
+      if (actionId !== 'machines.access.grant.set') return spec.outputSchema!.parse(response.data);
+      const output = MachineAccessMutationResultV1Schema.parse(response.data);
+      if (!('kind' in output) || output.kind !== 'saved' || !output.canPrepareKeys) return output;
       // Permission already committed. A private continuation failure is not a
       // permission failure and must not invite a second grant mutation.
       const prepared = await prepareKeys().catch(() => null);

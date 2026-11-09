@@ -1,11 +1,12 @@
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { bindMachineAccessActionHttpRequestV1, classifyHomeDomainHttpMutationFailureV1, MachineAccessActionIdSchema } from '@happier-dev/protocol/actions';
+import { bindMachineAccessActionHttpRequestV1, classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions';
 import { MachineTargetV1Schema, MachineAccessRefusalV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { ServerScopedTransportUnavailableError } from '@/sync/runtime/homeCarrier';
+import { MachineAccessHttpActionIdSchema } from '@happier-dev/protocol/actions/specs/machine/access';
 import { runWithServerAccountScopeRequestGuard } from '@/sync/runtime/orchestration/serverScopedRpc/serverAccountScopeRequestGuard';
 
 export class MachineAccessApiError extends Error {
@@ -20,11 +21,12 @@ export async function executeMachineAccessHttpAction(params: Readonly<{
     scope: ServerAccountScope; actionId: ActionId; input: unknown;
     isCurrent?: () => boolean; signal?: AbortSignal;
 }>): Promise<unknown> {
-    const family = MachineAccessActionIdSchema.safeParse(params.actionId);
+    const family = MachineAccessHttpActionIdSchema.safeParse(params.actionId);
     console.info('FIX30 access family', params.actionId, family.success);
     if (!family.success) throw new MachineAccessApiError('unsupported_action');
     const actionId = family.data;
     const spec = getActionSpec(actionId);
+    const isRead = spec.sideEffectClass === 'read';
     const input = spec.inputSchema.parse(params.input);
     // serverId is routing authority, not a field forwarded to the permission endpoint.
     const target = MachineTargetV1Schema.parse({
@@ -34,7 +36,7 @@ export async function executeMachineAccessHttpAction(params: Readonly<{
     if (!areServerProfileIdentifiersEquivalent(target.serverId, params.scope.serverId)) throw new MachineAccessApiError('machine_access_stale_scope');
     // A Home that is not answering (yet) fails the read before any request is issued. That is the read's
     // transport failure, the same code a failed request carries, never an unknown failure.
-    const readFailure = (error: unknown) => actionId === 'machines.access.grants.list' && error instanceof ServerScopedTransportUnavailableError
+    const readFailure = (error: unknown) => isRead && error instanceof ServerScopedTransportUnavailableError
         ? new MachineAccessApiError('machine_access_request_failed') : error;
     return runWithServerAccountScopeRequestGuard({
         scope: params.scope, isCurrent: params.isCurrent, signal: params.signal,
@@ -65,13 +67,13 @@ export async function executeMachineAccessHttpAction(params: Readonly<{
                 payload = await response.json().catch(() => null);
                 check();
             } catch (error) {
-                if (actionId !== 'machines.access.grants.list') {
+                if (!isRead) {
                     const failure = classifyHomeDomainHttpMutationFailureV1({ error, issued, aborted: signal.aborted });
                     if (failure !== 'not_dispatched') throw new MachineAccessApiError(failure);
                 }
                 if (signal.aborted) throw new MachineAccessApiError('cancelled');
                 if (error instanceof MachineAccessApiError) throw error;
-                if (actionId === 'machines.access.grants.list') throw new MachineAccessApiError('machine_access_request_failed');
+                if (isRead) throw new MachineAccessApiError('machine_access_request_failed');
                 throw error;
             }
             if (!response.ok) {
@@ -81,7 +83,7 @@ export async function executeMachineAccessHttpAction(params: Readonly<{
             }
             if (!spec.outputSchema) throw new MachineAccessApiError('unsupported_action');
             const parsed = spec.outputSchema.safeParse(payload);
-            if (!parsed.success) throw new MachineAccessApiError(actionId === 'machines.access.grants.list'
+            if (!parsed.success) throw new MachineAccessApiError(isRead
                 ? 'machine_access_invalid_response' : 'outcome_unknown');
             return parsed.data;
         });

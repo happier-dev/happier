@@ -14,7 +14,7 @@ import { MachineAgentIsolationActionIdSchema, MACHINE_AGENT_ISOLATION_ACTION_INP
 import { MachineGuardActionIdSchema, MACHINE_GUARD_ACTION_INPUT_SCHEMAS } from '../../specs/machineGuard.js';
 import { MACHINE_ADD_LOCAL_CANCEL_ACTION_ID_V1, type ActionId } from '../../actionIds.js';
 import { readRecord } from '../../../inputs/inputRecords.js';
-import { MachineAccessActionIdSchema } from '../../specs/machine/access.js';
+import { MachineAccessHttpActionIdSchema } from '../../specs/machine/access.js';
 import { MachinePoolViewV1Schema } from '../../../machines/pools/v1.js';
 import { resolveMachinePoolWorkerCandidateV1 } from '../../../machines/pools/machinePoolWorkerPlacement.js';
 import { MachinePoolActionIdV1Schema, MachinePoolActionInputSchemasV1 } from '../../../machines/pools/actionsV1.js';
@@ -164,7 +164,7 @@ export async function dispatchMachineControls1(inv: Pick<CoreInvocation, 'action
           ...(ctx.signal ? { signal: ctx.signal } : {}) });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
-      const machineAccessActionId = isActionFamilyId(actionId, MachineAccessActionIdSchema) ? actionId : null;
+      const machineAccessActionId = isActionFamilyId(actionId, MachineAccessHttpActionIdSchema) ? actionId : null;
       if (machineAccessActionId !== null) {
         if (!deps.machineAccessAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const machineTarget = readRecord(parsed.data);

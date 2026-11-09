@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
-import { MACHINE_ACCESS_ACTION_IDS } from './accessActionIdsV1.js';
+import { MACHINE_ACCESS_ACTION_IDS, MACHINE_ACCESS_HTTP_ACTION_IDS } from './accessActionIdsV1.js';
 export { MACHINE_ACCESS_ACTION_IDS, MACHINE_WORK_SUMMARY_ACTION_IDS } from './accessActionIdsV1.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
@@ -18,6 +18,8 @@ import { RPC_METHODS } from '../../../rpc/methods.js';
 import { presentMachineAuthorityV1 } from '../../../machines/machineAuthorityV1.js';
 export type MachineAccessActionId = typeof MACHINE_ACCESS_ACTION_IDS[number];
 export const MachineAccessActionIdSchema = lazyZodSchema(() => z.enum(MACHINE_ACCESS_ACTION_IDS));
+export type MachineAccessHttpActionId = typeof MACHINE_ACCESS_HTTP_ACTION_IDS[number];
+export const MachineAccessHttpActionIdSchema = lazyZodSchema(() => z.enum(MACHINE_ACCESS_HTTP_ACTION_IDS));
 
 export function machineAccessTrustedOsDisclosure(machineId: string): string {
   return `The owner of ${machineId} can inspect keys and selected credential material delivered there, including after members have separate operating-system users. Until member separation is observed effective, members and the owner's isolated Agent share an Agent user and can copy selected credentials, Direct-delivered keys and readable Session context. Enabled or pending setup is not proof of separation. Can manage includes trusted administration that can defeat isolation. Use a dedicated team machine and trust its administrators.`;
