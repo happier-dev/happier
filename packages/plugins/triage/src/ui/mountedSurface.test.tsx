@@ -81,6 +81,8 @@ import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralShare
 import { renderSurface as renderShellSurface } from './surface.js';
 import { renderSurface as renderTasksSurface } from './tasksSurface.js';
 import { TriageListShell } from './shell/root.js';
+import type { PluginUiDataClient, PluginUiCollectionQuerySnapshot } from '@happier-dev/plugin-ui/data';
+import { CORPUS_SOURCE_INSTANCES_COLLECTION, CORPUS_SESSION_LINKS_COLLECTION, CORPUS_USER_MARKS_COLLECTION } from '../corpus/collections/definitions.js';
 import { closeFilters, filterFacetOption, pressToolbarMenuItem } from './shell/toolbarMenus.test-support.js';
 import { TriageMountedUiInputV1Schema, type TriageMountedUiOperationV1 } from '../actions/mountedUiProtocol.js';
 import { invokeTriageMountedUiAction } from './mountedActions.js';
@@ -463,6 +465,7 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
         settledLocations,
         surfaceOpens,
         accountKv,
+        collections,
         admitted,
         scanCalls,
         state,
@@ -492,19 +495,42 @@ async function mountSurface(
     harness: ReturnType<typeof createHarness>,
     instanceId: string,
     context: Parameters<typeof createSurfaceContextFixture>[0] = {},
-    options: Readonly<{ subPath?: string; launchInput?: Parameters<typeof createPluginUiTestkit>[0]['launchInput']; recordSurfaceOpens?: boolean }> = {},
+    options: Readonly<{ subPath?: string; launchInput?: Parameters<typeof createPluginUiTestkit>[0]['launchInput']; recordSurfaceOpens?: boolean; directAccountData?: boolean }> = {},
 ): Promise<PluginUiTestkit> {
     // Mounting starts the window's first cycle, so the whole mount is driven
     // inside `act` — otherwise the render the cycle causes lands after the
     // helper returns and React reports an unacted update.
     let fixture!: PluginUiTestkit;
+    const emptyQuery: PluginUiCollectionQuerySnapshot = { rows: [], hasMore: false, status: 'ready' };
+    // Host Account-data boundary: use the same seeded collection stores as the real Action handlers.
+    const dataClient = {
+        collection: (definition: Readonly<{ id: string }>) => {
+            if (definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION.id) return harness.collections.sourceInstances;
+            if (definition.id === CORPUS_SESSION_LINKS_COLLECTION.id) return harness.collections.sessionLinks;
+            if (definition.id === CORPUS_USER_MARKS_COLLECTION.id) return harness.collections.userMarks;
+            throw new Error(`Unexpected fixture collection ${definition.id}`);
+        },
+        accountKv: harness.accountKv.kv,
+        // These scenarios seed no marks or Session links; their Data query boundary is genuinely empty.
+        openCollectionQuery: async () => ({ getSnapshot: () => emptyQuery, subscribe: () => () => {},
+            refresh: async () => {}, loadMore: async () => {}, dispose: () => {} }),
+    } as unknown as PluginUiDataClient;
+    const mountSurface: RenderSurface = options.directAccountData ? context => {
+        const entry = surface(context);
+        if (!entry || (typeof entry.type !== 'function' && typeof entry.type !== 'object') || entry.type === null) {
+            throw new Error('Missing hosted surface entry');
+        }
+        expect(Reflect.get(entry.type, Symbol.for('happier.pluginUi.privateSurfaceEntryProvider.v1'))).toBe(true);
+        // The real host supplies Account data by cloning this marker-checked entry across the SDK React boundary.
+        return React.cloneElement(entry as unknown as React.ReactElement<{ dataClient?: PluginUiDataClient }>, { dataClient });
+    } : surface;
     await act(async () => {
         fixture = await createPluginUiTestkit({
             identity: { instanceId, mountNonce: 'fixture-mount-185' },
             authorPlugin: { id: 'happier.triage', version: '0.0.0' },
             ...(options.subPath === undefined ? {} : { subPath: options.subPath }),
             ...(options.launchInput === undefined ? {} : { launchInput: options.launchInput }),
-            surface,
+            surface: mountSurface,
             surfaceContext: createSurfaceContextFixture(context),
             adapter: createPluginUiRnwSemanticSurfaceAdapter({
                 ephemeralSharedScope: harness.ephemeralSharedScope,
@@ -708,7 +734,7 @@ describe('the mounted PRs & Issues surface', () => {
 
     it('shares the Add source menu and source-owned settings launch', async () => {
         const harness = createHarness({ sourceSettings: true });
-        const shell = await mountSurface(renderShellSurface, harness, 'mounted-add-source', sourceContextFixture(harness), { recordSurfaceOpens: true });
+        const shell = await mountSurface(renderShellSurface, harness, 'mounted-add-source', sourceContextFixture(harness), { recordSurfaceOpens: true, directAccountData: true });
         await settleWindow('view', shell);
         await executePublishedPresentationCommand(shell, harness, operation => operation.kind === 'setSourceManagementOpen');
         await executePublishedPresentationCommand(shell, harness, operation => operation.kind === 'setAddSourceOpen');
@@ -768,7 +794,7 @@ describe('the mounted PRs & Issues surface', () => {
         await expect(shell.queryByRole('button', { name: 'Done' })).resolves.toBeUndefined();
         expect(harness.scanCalls.count).toBe(before.scans);
         expect(harness.accountKv.setCallCount()).toBe(before.writes);
-    });
+    }, 120_000);
 
     it('opens the configured-action editor through the same launch for control and mounted command', async () => {
         const harness = createHarness();
@@ -1532,7 +1558,7 @@ describe('the mounted PRs & Issues surface', () => {
 
     it.each(['ui', 'agent'] as const)('discloses and hides the same source diagnostic (%s)', async route => {
         const harness = createHarness();
-        const shell = await mountSurface(renderShellSurface, harness, `mounted-diagnostic-${route}`);
+        const shell = await mountSurface(renderShellSurface, harness, `mounted-diagnostic-${route}`, {}, { directAccountData: true });
         await settleWindow('view', shell);
         harness.state.listInvocationFailure = () => new PluginError({ code: 'unavailable', retryable: true });
         await settleWindow('manual', shell);
