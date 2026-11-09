@@ -5,6 +5,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   createEventsFixture,
@@ -72,6 +74,7 @@ function buildRuntime(params: Readonly<{
   controlPortCaptures?: readonly string[] | null;
   configDir: string;
   initialModelId?: string;
+  providerModel?: AgentSessionProviderBinding['model'];
   workspaceWrites?: 'allow' | 'deny';
   publishSessionEvent?: ReturnType<typeof vi.fn>;
   sessionWriteAgentState?: ReturnType<typeof vi.fn>;
@@ -100,9 +103,10 @@ function buildRuntime(params: Readonly<{
     permissionMode: 'default',
     workspaceWrites: params.workspaceWrites,
     ...(params.initialModelId ? { initialModelId: params.initialModelId } : {}),
+    ...(params.providerModel ? { providerModel: params.providerModel } : {}),
     tuiControl: { timings: FAST_TIMINGS },
   }));
-  return { envelope, runtime: envelope.operations, fakePort, terminalHost };
+  return { envelope, runtime: envelope.operations, fakePort, terminalHost, ctx };
 }
 
 type ComposerClearNativeRuntime = Readonly<{
@@ -118,10 +122,138 @@ type ComposerClearNativeRuntime = Readonly<{
 }>;
 
 type ConnectedServiceApplicationNativeRuntime = Readonly<{
-  releaseConnectedServiceUsageLimitDialog?: () => Promise<void>;
+  connectedServiceApplicationSettled?: () => Promise<void>;
+  setOnPromptDeliveryBlockerCleared?: (handler: () => void) => void;
 }>;
 
 describe('Claude Unified TUI runtime control integration (updateSessionRuntimeConfig)', () => {
+  it.each(['model', 'effort'])('restores the requested %s after an unverified command instead of retaining its pending override', async kind => {
+    const captures = [IDLE, IDLE, IDLE];
+    const { runtime, ctx, fakePort, terminalHost } = buildRuntime({
+      configDir: await makeConfigDir(), featureEnabled: true,
+      initialModelId: 'claude-sonnet-4-6', controlPortCaptures: captures,
+    });
+    try {
+      await runtime.startProviderSession();
+      const hookOptions = (ctx.agentRuntime.sessionHooks.startServer as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
+        onStatuslineUpdate(payload: Readonly<Record<string, unknown>>): Promise<void>;
+      };
+      await hookOptions.onStatuslineUpdate({ model: { id: 'claude-sonnet-4-6' }, effort: { level: 'high' } });
+      const changedUpdate = kind === 'model' ? { modelId: 'claude-opus-4-8' }
+        : { configOption: { id: 'reasoning_effort', value: 'medium' } };
+      const restoredUpdate = kind === 'model' ? { modelId: 'claude-sonnet-4-6' }
+        : { configOption: { id: 'reasoning_effort', value: 'high' } };
+      const expectedCommands = kind === 'model'
+        ? ['/model claude-opus-4-8', '/model claude-sonnet-4-6']
+        : ['/effort medium', '/effort high'];
+      await expect(runtime.updateSessionRuntimeConfig(changedUpdate))
+        .resolves.toMatchObject({ status: 'applied', timing: 'queued_until_safe_window' });
+      expect(fakePort?.sentLiteral).toEqual(expectedCommands.slice(0, 1));
+
+      captures.splice(0, captures.length, ...Array<string>(fakePort?.captureCount() ?? 0).fill(IDLE),
+        IDLE, IDLE, kind === 'model'
+          ? ['Set model to Sonnet 4.6', '╭─────╮', '│ >   │', '╰─────╯'].join('\n') : EFFORT_OK);
+      const restore = await runtime.updateSessionRuntimeConfig(restoredUpdate);
+      expect(restore).toMatchObject({ status: 'applied' });
+      expect(restore?.timing).not.toBe('skipped_already_effective');
+      await runtime.sendTurnPrompt('continue on the restored model');
+      expect(fakePort?.sentLiteral).toEqual(expectedCommands);
+      expect(terminalHost.service.injectUserPrompt).toHaveBeenCalledTimes(1);
+    } finally { await runtime.resetOrDisposeRuntime(); }
+  });
+
+  it.each(['model', 'effort', 'ultracode'])('does not reuse older statusline truth after repeated verified %s controls', async kind => {
+    const initialModelId = kind === 'ultracode' ? 'claude-opus-4-7' : 'claude-sonnet-4-6';
+    const firstConfirmation = kind === 'model'
+      ? ['Set model to Opus 4.8', '╭─────╮', '│ >   │', '╰─────╯'].join('\n')
+      : [kind === 'effort' ? 'Set reasoning effort to medium' : 'Set effort level to ultracode', '╭─────╮', '│ >   │', '╰─────╯'].join('\n');
+    const restoreConfirmation = kind === 'model'
+      ? ['Set model to Sonnet 4.6', '╭─────╮', '│ >   │', '╰─────╯'].join('\n')
+      : EFFORT_OK;
+    const { envelope, runtime, ctx, fakePort } = buildRuntime({ configDir: await makeConfigDir(), featureEnabled: true,
+      initialModelId, controlPortCaptures: [
+        IDLE, IDLE, firstConfirmation, IDLE, IDLE, restoreConfirmation,
+        IDLE, IDLE, firstConfirmation, IDLE, IDLE, restoreConfirmation,
+      ] });
+    const observations: unknown[] = [];
+    envelope.nativeRuntime.subscribeEffectiveModel(evidence => observations.push(evidence));
+    try {
+      if (kind === 'ultracode') {
+        await runtime.updateSessionRuntimeConfig({ configOption: { id: 'reasoning_effort', value: 'high' } });
+      }
+      await runtime.startProviderSession();
+      const hookOptions = (ctx.agentRuntime.sessionHooks.startServer as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
+        onStatuslineUpdate(payload: Readonly<Record<string, unknown>>): Promise<void>;
+      };
+      await hookOptions.onStatuslineUpdate({ model: { id: initialModelId }, effort: { level: 'high' } });
+      const firstUpdate = kind === 'model' ? { modelId: 'claude-opus-4-8' }
+        : { configOption: { id: kind === 'effort' ? 'reasoning_effort' : 'ultracode', value: kind === 'effort' ? 'medium' : true } };
+      const restoreUpdate = kind === 'model' ? { modelId: 'claude-sonnet-4-6' }
+        // Regular effort preserves selected ultracode; its off toggle restores the selected high effort.
+        : { configOption: { id: kind === 'effort' ? 'reasoning_effort' : 'ultracode', value: kind === 'effort' ? 'high' : false } };
+      await expect(runtime.updateSessionRuntimeConfig(firstUpdate)).resolves.toMatchObject({ status: 'applied' });
+      const firstObservation = observations.at(-1);
+      expect(firstObservation).toBeDefined();
+      const restore = await runtime.updateSessionRuntimeConfig(restoreUpdate);
+      expect(restore).toMatchObject({ status: 'applied' });
+      expect(restore?.timing).not.toBe('skipped_already_effective');
+      await expect(runtime.updateSessionRuntimeConfig(firstUpdate)).resolves.toMatchObject({ status: 'applied' });
+      expect(observations.at(-1)).toEqual(firstObservation);
+      const repeatedRestore = await runtime.updateSessionRuntimeConfig(restoreUpdate);
+      expect(repeatedRestore).toMatchObject({ status: 'applied' });
+      expect(repeatedRestore?.timing).not.toBe('skipped_already_effective');
+      const expectedCommands = kind === 'model'
+        ? ['/model claude-opus-4-8', '/model claude-sonnet-4-6']
+        : [kind === 'effort' ? '/effort medium' : '/effort ultracode', '/effort high'];
+      expect(fakePort?.sentLiteral).toEqual([...expectedCommands, ...expectedCommands]);
+    } finally { await runtime.resetOrDisposeRuntime(); }
+  });
+
+  it('keeps a launch-only model equality deferred until authenticated native evidence confirms it', async () => {
+    const { runtime, ctx } = buildRuntime({ configDir: await makeConfigDir(), featureEnabled: false, initialModelId: 'claude-opus-4-8' });
+    try {
+      await runtime.startProviderSession();
+      await expect(runtime.updateSessionRuntimeConfig({ modelId: 'claude-opus-4-8' }))
+        .resolves.toMatchObject({ status: 'applied', timing: 'before_next_prompt' });
+      const hookOptions = (ctx.agentRuntime.sessionHooks.startServer as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
+        onStatuslineUpdate(payload: Readonly<Record<string, unknown>>): Promise<void>;
+      };
+      await hookOptions.onStatuslineUpdate({ model: { id: 'claude-opus-4-8' } });
+      await expect(runtime.updateSessionRuntimeConfig({ modelId: 'claude-opus-4-8' }))
+        .resolves.toMatchObject({ status: 'applied', timing: 'skipped_already_effective' });
+    } finally { await runtime.resetOrDisposeRuntime(); }
+  });
+
+  it.each([
+    { providerBound: false, modelId: 'default', fallbackModel: 'default' },
+    { providerBound: true, modelId: 'default', fallbackModel: 'gateway-fallback' },
+    { providerBound: true, modelId: 'gateway-selected', fallbackModel: 'default' },
+  ])('preserves the native reset or opaque Provider default selector at terminal launch ($providerBound, $modelId, $fallbackModel)', async ({ providerBound, modelId, fallbackModel }) => {
+    const binding = { connectionId: ProviderConnectionIdSchema.parse('pc_terminal_default'),
+      model: { id: modelId, name: 'Opaque default' }, materialization: { v: 1 as const, kind: 'spawnEnv' as const } };
+    const { runtime, terminalHost } = buildRuntime({
+      configDir: await makeConfigDir(), featureEnabled: false, initialModelId: 'gateway-selected',
+      ...(providerBound ? { providerModel: { id: 'gateway-selected', name: 'Gateway model' } } : {}),
+    });
+    try {
+      await runtime.updateSessionRuntimeConfig({ fallbackModel: 'gateway-fallback' });
+      await runtime.updateSessionRuntimeConfig({ modelId, fallbackModel,
+        ...(providerBound ? { providerBinding: binding } : {}),
+      });
+      await runtime.startProviderSession();
+      const args = (terminalHost.service.createOrAttachHost as ReturnType<typeof vi.fn>).mock.calls[0]?.[0].launch.args ?? [];
+      if (providerBound) {
+        expect(args).toEqual(expect.arrayContaining(['--model', modelId, '--fallback-model', fallbackModel]));
+      } else {
+        expect(args).not.toContain('--model');
+        expect(args).not.toContain('--fallback-model');
+      }
+      await expect(runtime.updateSessionRuntimeConfig({ modelId, fallbackModel,
+        ...(providerBound ? { providerBinding: binding } : {}),
+      })).resolves.toMatchObject({ status: 'applied', timing: 'before_next_prompt' });
+    } finally { await runtime.resetOrDisposeRuntime(); }
+  });
+
   it.each([undefined, 'allow', 'deny'] as const)('keeps the effective workspace-write policy after terminal launch (%s)', async (workspaceWrites) => {
     const configDir = await makeConfigDir();
     const { runtime } = buildRuntime({ featureEnabled: true, configDir, workspaceWrites });
@@ -605,9 +737,9 @@ describe('Claude Unified terminal composer clear runtime control', () => {
 });
 
 describe('Claude Unified connected-service application settlement', () => {
-  it('dismisses only the stale usage-limit dialog after exact account application', async () => {
+  it.each([true, false])('releases a chooser only at prompt injection (exact application: %s)', async (exactApplication) => {
     const configDir = await makeConfigDir();
-    const { envelope, runtime, fakePort } = buildRuntime({
+    const { envelope, runtime, fakePort, terminalHost } = buildRuntime({
       featureEnabled: false,
       controlPortCaptures: [USAGE_LIMIT_DIALOG, IDLE],
       configDir,
@@ -616,28 +748,64 @@ describe('Claude Unified connected-service application settlement', () => {
       await runtime.startProviderSession();
       const nativeRuntime = envelope.nativeRuntime as ConnectedServiceApplicationNativeRuntime;
 
-      await nativeRuntime.releaseConnectedServiceUsageLimitDialog?.();
-
+      if (exactApplication) {
+        const capturesBeforeApplication = fakePort?.captureCount();
+        await Promise.all([
+          nativeRuntime.connectedServiceApplicationSettled?.(),
+          nativeRuntime.connectedServiceApplicationSettled?.(),
+        ]);
+        expect(fakePort?.captureCount()).toBe(capturesBeforeApplication);
+      }
+      expect(fakePort?.sentKeys).toEqual([]);
+      (terminalHost.service.captureInputState as ReturnType<typeof vi.fn>).mockResolvedValue({
+        stable: true, currentInput: USAGE_LIMIT_DIALOG, observedAt: 101,
+      });
+      vi.mocked(terminalHost.service.injectUserPrompt).mockImplementation(async (_handle, input) => {
+        expect(fakePort?.sentKeys).toEqual(['Escape']);
+        expect(fakePort?.captureCount()).toBeGreaterThanOrEqual(2);
+        return { status: 'injected', injectedAt: 102, bytesWritten: input.text.length,
+          hostKind: terminalHost.handle.kind, hostSessionName: terminalHost.handle.sessionName };
+      });
+      await runtime.sendTurnPrompt('continue after recovery');
       expect(fakePort?.sentKeys).toEqual(['Escape']);
+      expect(terminalHost.service.injectUserPrompt).toHaveBeenCalledOnce();
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
     }
   });
 
-  it('does not touch a healthy provider screen after exact account application', async () => {
+  it('defers prompt bytes when Escape does not close the chooser', async () => {
+    const { runtime, fakePort, terminalHost } = buildRuntime({
+      featureEnabled: false, controlPortCaptures: [USAGE_LIMIT_DIALOG], configDir: await makeConfigDir(),
+    });
+    try {
+      await runtime.startProviderSession();
+      (terminalHost.service.captureInputState as ReturnType<typeof vi.fn>).mockResolvedValue({
+        stable: true, currentInput: USAGE_LIMIT_DIALOG, observedAt: 101,
+      });
+      await runtime.sendTurnPrompt('must wait for closure');
+      expect(fakePort?.sentKeys).toEqual(['Escape']);
+      expect(terminalHost.service.injectUserPrompt).not.toHaveBeenCalled();
+    } finally { await runtime.resetOrDisposeRuntime(); }
+  });
+
+  it.each([[IDLE], null])('wakes Pending without terminal effects on a healthy screen (%j)', async (controlPortCaptures) => {
     const configDir = await makeConfigDir();
     const { envelope, runtime, fakePort } = buildRuntime({
       featureEnabled: true,
-      controlPortCaptures: [IDLE],
+      controlPortCaptures,
       configDir,
     });
     try {
       await runtime.startProviderSession();
       const nativeRuntime = envelope.nativeRuntime as ConnectedServiceApplicationNativeRuntime;
+      const wakePending = vi.fn();
+      nativeRuntime.setOnPromptDeliveryBlockerCleared?.(wakePending);
 
-      await nativeRuntime.releaseConnectedServiceUsageLimitDialog?.();
+      await nativeRuntime.connectedServiceApplicationSettled?.();
 
-      expect(fakePort?.sentKeys).toEqual([]);
+      expect(fakePort?.sentKeys ?? []).toEqual([]);
+      expect(wakePending).toHaveBeenCalledOnce();
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
     }
