@@ -35,10 +35,14 @@ export function useProjectSourceAddress(scope: ServerAccountScope, onResolved: (
         setState(outcome);
         if (outcome.resolution.kind === 'resolved') onResolvedRef.current(outcome.resolution.selector);
     }, [execute, scope]);
+    /** The person is correcting the address: the refusal for the last one no longer applies. */
+    const withdrawRefusal = React.useCallback(() => {
+        setState((previous) => previous.refusal && previous.refusal !== 'projects.sources.loading' ? { ...previous, refusal: null } : previous);
+    }, []);
     React.useEffect(() => {
         if (state.resolution.kind !== 'waiting_for_machines' || inventoryStatus === 'loading'
             || !lifetime?.isCurrent() || !areServerAccountScopesEqual(lifetime.scope, scope)) return;
         void resolve(state.resolution.address, state.resolution.preferredMachineId);
     }, [inventoryStatus, lifetime, resolve, scope, state.resolution]);
-    return { ...state, resolve };
+    return { ...state, resolve, withdrawRefusal };
 }

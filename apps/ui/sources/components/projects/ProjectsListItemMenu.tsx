@@ -115,9 +115,9 @@ function ProjectsListItemMenuPopover(props: ProjectsListItemMenuProps & Readonly
             subtitle: t('projects.identity.hideConsequence'),
             icon: <Icon name="eye-slash" size={16} color={theme.colors.text.secondary} />,
         } : null;
-        if (project) nextItems.push({ id: 'browse-store', title: t('capabilities.store.browseStore'),
-            icon: <Icon name="cube" size={16} color={theme.colors.text.secondary} /> });
-        if (!hasWorkspaceRef) return [...nextItems, ...groupItems, ...(hideItem ? [hideItem] : [])];
+        const browseStore: DropdownMenuItem[] = project ? [{ id: 'browse-store', title: t('capabilities.store.browseStore'),
+            icon: <Icon name="cube" size={16} color={theme.colors.text.secondary} /> }] : [];
+        if (!hasWorkspaceRef) return [...nextItems, ...browseStore, ...groupItems, ...(hideItem ? [hideItem] : [])];
         // Lab p-projects HIDE: start work here and keep the repository first, then the row's own edits.
         if (canStartSession) {
             nextItems.push({
@@ -140,7 +140,7 @@ function ProjectsListItemMenuPopover(props: ProjectsListItemMenuProps & Readonly
                 icon: <Icon name="push-pin" size={16} color={theme.colors.text.secondary} />,
             });
         }
-        nextItems.push(...groupItems);
+        nextItems.push(...browseStore, ...groupItems);
         nextItems.push(
             {
                 id: 'rename',

@@ -482,6 +482,9 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
               error: repositoryAddress.refusal && repositoryAddress.refusal !== 'projects.sources.loading'
                 ? presentProjectSourceAddressRefusal(repositoryAddress.resolution, repositoryAddress.refusal, sentenceMachineName) : null,
               onCommit: (text) => { void repositoryAddress.resolve(text, machineId); },
+              onDraftChange: (draft) => {
+                if (repositoryAddress.resolution.kind === 'idle' || draft !== repositoryAddress.resolution.address) repositoryAddress.withdrawRefusal();
+              },
             } : null}
           />
           <ProjectOpenWhereRow
@@ -639,7 +642,7 @@ function ProjectOpenSubjectSection(
     onChooseSource: () => void;
     onChangeRef: (ref: string | null) => void;
     /** A clone with no repository yet: the address to read. */
-    repositoryAddress: Readonly<{ value: string; error: string | null; onCommit: (text: string) => void }> | null;
+    repositoryAddress: Readonly<{ value: string; error: string | null; onCommit: (text: string) => void; onDraftChange: (draft: string) => void }> | null;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -659,6 +662,7 @@ function ProjectOpenSubjectSection(
           autoFocus
           error={address.error}
           onCommit={(text) => { address.onCommit(text); return text; }}
+          onDraftChange={address.onDraftChange}
         />
       </ItemGroup>
     );

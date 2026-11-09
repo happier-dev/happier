@@ -200,13 +200,14 @@ export const ConnectedAccountIndexStatusLines = React.memo(function ConnectedAcc
     const ownTime = facts.fetchedAt !== null && facts.staleSince === null && (facts.refreshing || failedRefresh);
     if (!facts.subscription && facts.staleSince === null && !ownTime && !facts.refreshing && !failedRefresh) return null;
     return (
-        // Facts, never a target: a press goes through to the card.
-        <View pointerEvents="none" style={styles.statusLines}>
+        // Facts, never a target: a press goes through to the card, except the failed refresh's own Retry.
+        <View pointerEvents="box-none" style={styles.statusLines}>
             {facts.refreshing ? (
                 <SurfaceStateCard testID={`${props.testID}:refresh-status`} size="line" kind="loading" title={t('connectedServices.quota.refreshing')} />
             ) : null}
             {facts.usage.kind === 'meters' && facts.usage.error ? (
-                <SurfaceFreshnessLine testID={`${props.testID}:refresh-error`} reason={t('connectedServicesSettings.usageReadFailed')} tone="warning" />
+                <SurfaceFreshnessLine testID={`${props.testID}:refresh-error`} reason={t('connectedServicesSettings.usageReadFailed')} tone="warning"
+                    {...(facts.refresh ? { action: { label: t('common.retry'), onPress: facts.refresh } } : {})} />
             ) : null}
             {ownTime ? <SurfaceAsOfLabel at={facts.fetchedAt!} testID={`${props.testID}:as-of`} /> : null}
             <AccountSubscriptionLine testID={`${props.testID}:subscription`} subscription={facts.subscription} now={props.now} />
@@ -357,7 +358,8 @@ export const ConnectedAccountUsageFreshnessLine = React.memo(function ConnectedA
     const { theme } = useUnistyles();
     const { facts } = props;
     if (facts.usage.kind === 'meters' && facts.usage.error) {
-        return <SurfaceFreshnessLine testID={`${props.testID}:refresh-error`} reason={t('connectedServicesSettings.usageReadFailed')} tone="warning" />;
+        return <SurfaceFreshnessLine testID={`${props.testID}:refresh-error`} reason={t('connectedServicesSettings.usageReadFailed')} tone="warning"
+                    {...(facts.refresh ? { action: { label: t('common.retry'), onPress: facts.refresh } } : {})} />;
     }
     if (facts.staleSince === null) return null;
     return (
