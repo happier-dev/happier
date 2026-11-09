@@ -13,10 +13,10 @@ import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAc
 import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { withActionAccountRequestSignal, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { randomUUID } from '@/platform/randomUUID';
-import { getActionOperation, listActionOperations } from '@/sync/ops/actionOperations';
+import { observeActionOperationByRequestId } from '@/sync/domains/actionOperations/observeActionOperationByRequestId';
 import { prepareUiDeploymentTargetLink } from './prepareUiDeploymentTargetLink';
 import { DeploymentInvalidV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
@@ -49,25 +49,20 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         // A lost HTTP response is not a failed teardown. Join this request's existing
         // runner; never resubmit the effect or infer success from Environment absence.
         try {
-            const transport = { serverId: account.serverId, accountId: account.accountId, machineId, signal: context.signal };
             const retainedRequestId = ('environmentId' in input && 'requestKey' in input
                 ? readDeploymentEnvironmentOperationRequestIdV1(input) : undefined) ?? requestId;
-            const matches = (operation: import('@happier-dev/protocol/actions/operations/v1').ActionOperationSnapshotV1) =>
-                operation.actionId === actionId && operation.requestId === retainedRequestId
-                && operation.scope.accountId === account.accountId && operation.scope.machineId === machineId;
-            const page = await listActionOperations({ ...transport, request: { requestIdentity: { actionId, requestId: retainedRequestId } } });
-            const retained = page.items.find(matches);
-            if (!retained) return result;
-            const read = await getActionOperation({ ...transport, operationId: retained.operationId, waitForTerminal: true });
+            const operation = await withActionAccountRequestSignal(account, context.signal, signal => observeActionOperationByRequestId({
+                serverId: account.serverId, accountId: account.accountId, machineId, signal,
+                requestIdentity: { actionId, requestId: retainedRequestId },
+            }));
             account.assertCurrent();
-            if (read.kind !== 'found' || !matches(read.operation) || read.operation.operationId !== retained.operationId
-                || read.operation.revision < retained.revision) return result;
-            if (read.operation.state === 'succeeded') {
-                const settled = DeploymentActionOutputSchemasV1[actionId].safeParse(read.operation.result);
+            if (!operation) return result;
+            if (operation.state === 'succeeded') {
+                const settled = DeploymentActionOutputSchemasV1[actionId].safeParse(operation.result);
                 if (settled.success && 'environmentId' in settled.data && 'environmentId' in input
                     && settled.data.environmentId === input.environmentId) return { ok: true as const, result: settled.data };
-            } else if (read.operation.state === 'failed' && read.operation.error) {
-                return { ok: false as const, ...read.operation.error };
+            } else if (operation.state === 'failed' && operation.error) {
+                return { ok: false as const, ...operation.error };
             }
         } catch {
             // Observation can also be unavailable; keep the original uncertainty.

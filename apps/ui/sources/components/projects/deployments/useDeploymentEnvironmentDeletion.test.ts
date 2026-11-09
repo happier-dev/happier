@@ -1,6 +1,12 @@
 import * as React from 'react';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { ACTION_OPERATION_RPC_METHODS_V2, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { consumeActionOperationSnapshotPush } from '@/sync/domains/actionOperations/consumeActionOperationSnapshotPush';
+import { getActionOperation } from '@/sync/ops/actionOperations';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { createRpcCallError } from '@/sync/runtime/rpcErrors';
 const operationRpc = vi.hoisted(() => vi.fn());
 // Daemon RPC is the observation transport boundary; all Action and outcome logic stays real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: operationRpc }));
@@ -254,6 +260,85 @@ describe('Environment deletion client over the Action owner', () => {
             presentUserConfirmation: { actionId: 'deployments.targets.unlink' },
         })).toMatchObject({ kind: 'refused', code: 'deployment_teardown_required' }); });
         expect(hook.getCurrent().outcome).toMatchObject({ kind: 'refused', code: 'deployment_teardown_required' });
+    });
+
+    it.each(['not-yet-listed', 'list-disconnected', 'join-disconnected', 'observer-cancelled'] as const)(
+        'follows the original teardown after response loss while observation is %s', async observation => {
+        const f = await setup();
+        actionOperationStore.reset();
+        const machineId = f.detail.environment.controllerMachineId!;
+        let retained: ActionOperationSnapshotV1 | undefined;
+        await answerExternalActionAccountForHome(homes, f.serverId, { actionId: 'deployments.teardown',
+            machineId, installationId: 'installation-controller', tokenEpoch: 0, requesterInvocation: 'required',
+            execute: raw => {
+                const input = DeploymentTeardownActionInputV1Schema.parse(raw);
+                retained = { version: 1, operationId: 'late-teardown', revision: 1, actionId: 'deployments.teardown',
+                    requestId: computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
+                        input.serverId, input.environmentId, input.requestKey,
+                    ]), state: 'running', scope: { accountId: 'owner', machineId }, title: 'Stop and remove',
+                    createdAt: 1, startedAt: 2, cancellation: 'supported' };
+                throw new TypeError('net::ERR_NETWORK_CHANGED');
+            } });
+        let available = false;
+        let observed = false;
+        operationRpc.mockImplementation(async (params: { method: string }) => {
+            if (!available && (params.method === ACTION_OPERATION_RPC_METHODS_V2.get || observation !== 'join-disconnected')) {
+                observed = true;
+                if (observation !== 'not-yet-listed') throw createRpcCallError({
+                    error: 'Socket disconnected', errorCode: 'MACHINE_RPC_UNREACHABLE' });
+                return { items: [], nextCursor: null };
+            }
+            if (params.method === ACTION_OPERATION_RPC_METHODS_V2.list) return { items: [retained], nextCursor: null };
+            return { kind: 'found', operation: { ...retained, revision: 2, state: 'succeeded', settledAt: 3,
+                result: { ok: true, environmentId: f.detail.environment.id, revision: f.detail.environment.revision + 1,
+                    deploymentId: 'late-receipt', deploymentRevision: 1, state: 'succeeded', environmentRemoved: true } } };
+        });
+        const hook = await renderHook(() => useDeploymentEnvironmentDeletion({ environmentId: f.detail.environment.id,
+            lifetime: f.lifetime, snapshot: { status: 'ready', value: f.detail, failure: null }, actions: f.actions,
+            controller: null, demand: shown }));
+        let completed = false;
+        let pending!: ReturnType<ReturnType<typeof hook.getCurrent>['stopAndRemove']>;
+        await act(async () => {
+            pending = hook.getCurrent().stopAndRemove(null).then(result => { completed = true; return result; });
+            await waitForHomeGovernance(() => expect(observed).toBe(true));
+            await flushHookEffects();
+        });
+        expect(completed).toBe(false);
+        expect(hook.getCurrent().busy).toBe(true);
+        if (observation === 'observer-cancelled') {
+            await act(async () => {
+                hook.getCurrent().cancel();
+                expect(await pending).toMatchObject({ kind: 'refused', code: 'cancelled' });
+            });
+            const callsAfterCancel = operationRpc.mock.calls.length;
+            publishHomeAccountChange(f.serverId, undefined, { source: 'connected' });
+            await flushHookEffects();
+            expect(operationRpc.mock.calls).toHaveLength(callsAfterCancel);
+            expect(homes.requestsFor('/v1/actions/deployments.teardown')).toHaveLength(1);
+            actionOperationStore.reset();
+            return;
+        }
+        available = true;
+        // Credential admission promotes the Home profile to its published identity.
+        const observationServerId = resolveServerProfileScopeIdForIdentifier(f.serverId);
+        await act(async () => {
+            if (observation === 'not-yet-listed') {
+                await consumeActionOperationSnapshotPush({
+                    update: { type: 'action-operation-updated', machineId, content: { t: 'plain', v: retained! } },
+                    accountId: 'owner', accountEncryptionMode: 'plain', sourceServerId: observationServerId,
+                    readSnapshot: operationId => getActionOperation({ serverId: observationServerId, accountId: 'owner', machineId, operationId }),
+                });
+            } else publishHomeAccountChange(f.serverId, undefined, { source: 'connected' });
+            if (observation === 'not-yet-listed') {
+                expect([...actionOperationStore.getSnapshot().operationsByKey.values()].map(operation => ({
+                    serverId: operation.serverId, requestId: operation.snapshot.requestId,
+                }))).toEqual([{ serverId: observationServerId, requestId: retained!.requestId }]);
+            }
+            await waitForHomeGovernance(() => expect(completed).toBe(true));
+            expect(await pending).toEqual({ kind: 'deleted', detached: false });
+        });
+        expect(homes.requestsFor('/v1/actions/deployments.teardown')).toHaveLength(1);
+        actionOperationStore.reset();
     });
 
     it.each(['succeeded', 'failed', 'unrelated'] as const)('settles a lost teardown response from its exact retained operation (%s)', async settlement => {
