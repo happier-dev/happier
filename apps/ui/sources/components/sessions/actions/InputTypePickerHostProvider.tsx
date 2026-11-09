@@ -20,6 +20,7 @@ import { createHostInputTypePickerForm } from './hostInputTypePickerForm';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 export type InputTypePickerHostContext = Readonly<{
     machineId?: string | null;
@@ -70,6 +71,7 @@ export function useInputTypePickerProjectionDemand(presented: boolean): void {
 
 /** A leaf-only adapter over the daemon's existing admitted input-type projection. */
 export function InputTypePickerHostProvider(props: HostProps): React.ReactElement {
+    const commandBridge = useCurrentUiContextCommandBridge();
     const inherited = useHappierInputPickerPort();
     const inheritedDemand = React.useContext(InputTypeProjectionDemandContext);
     const [projectionDemands, setProjectionDemands] = React.useState(0);
@@ -90,8 +92,8 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
         sections: INPUT_PICKER_SECTIONS,
         load: props.requiresPluginTypes !== false || projectionDemands > 0,
         enabled: props.enabled && !inherited && props.pluginUiProjection === undefined });
-    const current = React.useRef({ props, accountLifetime, machineId, serverId, state });
-    current.current = { props, accountLifetime, machineId, serverId, state };
+    const current = React.useRef({ props, accountLifetime, machineId, serverId, state, commandBridge });
+    current.current = { props, accountLifetime, machineId, serverId, state, commandBridge };
     const port = React.useMemo(() => {
         const readHost = () => {
             const now = current.current;
@@ -238,6 +240,7 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
                 const { presentPluginEphemeralInputSurface } = await import('@/components/automations/editor/presentPluginEventAutomationSetupSurface');
                 return presentPluginEphemeralInputSurface({
                     surface, title, presentation: 'picker',
+                    commandBridge: admitted.now.commandBridge,
                     launchInput: request.launchInput,
                     projection: admitted.now.inputs,
                     machineId: admitted.now.machineId!, serverId: admitted.now.serverId,

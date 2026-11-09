@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createPluginArtifactTransferBoundary, pluginArtifactTransferDaemonState } from '@/dev/testkit/harness/pluginArtifactTransferBoundary';
 import { readFile } from 'node:fs/promises';
 
 import { act } from 'react-test-renderer';
@@ -9,22 +10,33 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
 import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
+import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import {
+    DaemonPluginActionSchemasReadResponseSchema,
+    DaemonPluginStructuredMessageActionExecuteResponseSchema,
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
     PluginProjectionV2Schema,
     DaemonPluginUiComposerSurfaceCatalogEntryV1Schema,
-    PluginProjectionInstalledPackageV2Schema,
-    PluginProjectedActionV2Schema,
     DaemonPluginActionSchemasReadRequestSchema,
-    MACHINE_PLAIN_DATA_KEY_MARKER,
+    DaemonPluginUiArtifactBytesReadResponseSchema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    MACHINE_PLAIN_DATA_KEY_MARKER} from '@happier-dev/protocol/machines/machineStoredContent';
+import {
+    encodeBase64} from '@happier-dev/protocol/crypto/base64';
+import {
     type PluginMachineExecutionOriginV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import {
     computePluginUiArtifactSha256DigestV1,
+    computePluginUiArtifactFileSetSha256DigestV1,
     ComposerSnapshotV1Schema,
     CurrentUiContextSnapshotV1Schema,
     normalizePluginUiDestinationBindingV1,
     PluginUiArtifactsManifestEntryV2Schema,
+    PluginUiJsonObjectV1Schema,
     type CurrentUiContextSnapshotV1,
+    type PluginUiArtifactsManifestEntryV2,
     type PluginUiHostApiRequestEnvelopeV1,
     type PluginUiSurfaceContextV1,
 } from '@happier-dev/protocol/plugins/ui';
@@ -46,10 +58,15 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces/PluginSurfaceHost';
 import { Modal } from '@/modal';
 import { ModalProvider } from '@/modal/ModalProvider';
+import { useCurrentUiContextCommandBridge } from './CurrentUiContextCommands';
+import { presentPluginEphemeralInputSurface } from '@/components/automations/editor/presentPluginEventAutomationSetupSurface';
 import { useComposerScopePluginPresentation, type ComposerScopePluginPresentation } from '@/components/sessions/presentation/useComposerScopePluginPresentation';
 import { registerComposerPresentationTarget } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import type { PluginSurfaceHostApiV1 } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
+import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
+import { createPluginPageLocationOwner } from '@/components/plugins/pages/pluginPageLocation';
 import { createPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
+import { replacePluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
 import { createCanonicalPluginReactNativeHostApiAdapter } from '@/components/plugins/reactNative/hostApi';
 import {
     getInstalledPluginUiClientExecutableComposition,
@@ -65,10 +82,14 @@ import { loadPluginReactNativeBundleExport } from '@/components/plugins/reactNat
 import { createPluginUiCommonJsLoaderBackend } from '@/components/plugins/reactNative/commonJsLoaderBackend';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
+    isPluginUiDestinationSurfacePlacementProjection,
+    normalizePluginUiProjection,
     type PluginUiProjectionModel,
     type PluginUiSurfacePlacementProjection,
 } from '@/sync/domains/plugins/ui/projection';
-import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/projectionUnion';
+import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY, unionPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
+import { createPluginProjectContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
+import { evaluatePluginUiPolicy } from '@/sync/domains/plugins/ui/policy';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 import {
     clearTabActiveServerId,
@@ -84,14 +105,17 @@ import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAcco
 
 import {
     CurrentUiContextProvider,
+    usePublishCurrentUiContext,
     type CurrentUiContextReader,
     useOptionalCurrentUiContextReader,
 } from './CurrentUiContextProvider';
 import { createCurrentUiContextVoiceToolPort } from './currentUiContextVoiceToolPort';
+import { executeCurrentUiContextAction, registerCurrentUiContextActionPort } from './currentUiContextActionRuntime';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const daemonRpcBoundary = vi.hoisted(() => vi.fn<(method: string, payload: unknown) => Promise<unknown>>());
+const artifactTransfers = createPluginArtifactTransferBoundary(request => daemonRpcBoundary(request.method, request.payload));
 // Static surface imports reach Sync, so install the external Socket boundary before that graph loads.
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
@@ -113,7 +137,9 @@ installDisconnectedServerSocketBoundary((socket) => {
             throw new Error('Malformed daemon transport request');
         }
         const method = payload.method.slice(payload.method.indexOf(':') + 1);
-        return { ok: true, result: await daemonRpcBoundary(method, payload.params) };
+        const machineId = payload.method.slice(0, payload.method.indexOf(':'));
+        return { ok: true, result: await (artifactTransfers.handles(method)
+            ? artifactTransfers.request({ method, machineId, payload: payload.params }) : daemonRpcBoundary(method, payload.params)) };
     });
 });
 
@@ -127,16 +153,18 @@ const hostedRenderer = vi.hoisted(() => ({
     currentUiLabelBeforeBPublication: undefined as string | null | undefined,
     hostApi: null as PluginSurfaceHostApiV1 | null,
     focusEligible: false,
+    publishOnLocationChange: true,
     packedRenderSurface: null as ((context: RenderContext) => React.ReactElement | null) | null,
     surfaceContext: null as PluginUiSurfaceContextV1 | null,
     responses: [] as Array<Readonly<{ subPath: string; response: unknown }>>,
 }));
+const routeIdentity = vi.hoisted(() => ({ pluginId: 'acme.current-ui-composition', localId: 'notes' }));
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({
-        params: { pluginId: 'acme.current-ui-composition', localId: 'notes' },
-        pathname: '/plugins/acme.current-ui-composition/notes',
+        params: () => ({ ...routeIdentity }),
+        pathname: () => `/plugins/${routeIdentity.pluginId}/${routeIdentity.localId}`,
         segments: ['(app)', 'plugins', '[pluginId]', '[localId]'],
     }).module;
 });
@@ -192,7 +220,6 @@ vi.mock('@/components/plugins/hostedWeb/PluginHostedWebPane', async () => {
         const adapter = ReactModule.useMemo(() => createCanonicalPluginReactNativeHostApiAdapter({
             surface,
             requestSurface: props.surfaceContext,
-            requestIdPrefix: `packed-current-context:${props.subPath ?? ''}`,
             handleRequest: async (request, options) => {
                 const response = await props.hostApi.handleRequest(request, options);
                 if (request.method === 'publishCurrentUiContext') {
@@ -223,6 +250,7 @@ vi.mock('@/components/plugins/hostedWeb/PluginHostedWebPane', async () => {
             hostedRenderer.surfaceContext = props.surfaceContext;
             const subPath = props.subPath ?? '';
             if (hostedRenderer.packedRenderSurface) return;
+            if (!hostedRenderer.publishOnLocationChange) return;
             if (subPath === 'notes/b') {
                 hostedRenderer.currentUiLabelBeforeBPublication = (
                     hostedRenderer.currentUiReader?.readCurrentUiContext()?.entity?.label ?? null
@@ -361,6 +389,7 @@ if (projection.generation === null) {
 // Annotated at the declaration: a module-scope control-flow narrowing does not
 // reach the closures below, so the fixture's generation has to be `number` here.
 const projectionGeneration: number = projection.generation;
+let daemonProjection = PluginProjectionV2Schema.parse({ v: 2, generation: projectionGeneration, familiesById: {} });
 
 const CLIENT_ACTION_ID = 'read-current-ui-context';
 const CLIENT_ACTION_TARGET = Object.freeze({
@@ -368,34 +397,31 @@ const CLIENT_ACTION_TARGET = Object.freeze({
     exportName: 'execute',
     platform: 'ios' as const,
 });
-const CLIENT_ACTION_ORIGIN_PROJECTION = Object.freeze({
-    machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
-    generation: projectionGeneration,
-    interactionEnabled: true,
-    phase: 'current' as const,
-    executionOrigin: CLIENT_ACTION_ORIGIN,
-});
-const CLIENT_ACTION_AUTHORIZATION = Object.freeze({
-    generation: Object.freeze({
-        targetGeneration: PLUGIN_OCCURRENCE_ID,
-        desiredGeneration: PLUGIN_OCCURRENCE_ID,
-        appliedGeneration: PLUGIN_OCCURRENCE_ID,
-    }),
-    resourceSelections: Object.freeze([]),
-    scopedGrants: Object.freeze([]),
-    serviceAvailability: Object.freeze([]),
-    operatingSystemAuthorization: Object.freeze([]),
-});
-
-function createMountedClientActionFixture(handler: PluginClientActionHandler): Readonly<{
+async function createMountedClientActionFixture(handler: PluginClientActionHandler, options?: Readonly<{
+    pluginId: string;
+    actionId: string;
+    declaration: Readonly<Record<string, unknown>>;
+    artifactId: string;
+    occurrenceId: string;
+    manifest: unknown;
+    activate: (api: PluginClientApi) => void;
+}>): Promise<Readonly<{
     activation: PluginUiClientExecutableActivation;
     composition: PluginUiClientExecutableComposition;
     projection: PluginUiProjectionModel;
-}> {
-    const action = PluginProjectedActionV2Schema.parse({
-        id: CLIENT_ACTION_ID,
-        pluginId: placement.pluginId,
-        occurrenceId: PLUGIN_OCCURRENCE_ID,
+    artifact: PluginUiArtifactsManifestEntryV2;
+    bytes: Uint8Array;
+}>> {
+    const pluginId = options?.pluginId ?? placement.pluginId;
+    const actionId = options?.actionId ?? CLIENT_ACTION_ID;
+    const artifactId = options?.artifactId ?? CLIENT_ACTION_TARGET.artifactId;
+    const occurrenceId = options?.occurrenceId ?? PLUGIN_OCCURRENCE_ID;
+    const bytes = new Uint8Array([47, 47, 32, 99, 108, 105, 101, 110, 116]);
+    const artifactEntry = `react-native/${artifactId}/entry.cjs.bundle`;
+    const executionOrigin = options ? {
+        ...CLIENT_ACTION_ORIGIN, materializationRef: { ...CLIENT_ACTION_ORIGIN.materializationRef, pluginId },
+    } : CLIENT_ACTION_ORIGIN;
+    const declaration = options?.declaration ?? {
         title: 'Read current UI context',
         scopes: ['global'],
         surfaces: ['ui'],
@@ -409,84 +435,104 @@ function createMountedClientActionFixture(handler: PluginClientActionHandler): R
             platforms: [CLIENT_ACTION_TARGET.platform],
         },
         dangerLevel: 'safe',
-        available: true,
-        authorization: CLIENT_ACTION_AUTHORIZATION,
-    });
-    const projectedAction = Object.freeze({
-        ...action,
-        [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: { ...CLIENT_ACTION_ORIGIN_PROJECTION, serverId: connection!.home.id },
-    });
+        inputSchema: { type: 'null' },
+    };
     const artifactGraph = PluginUiArtifactsManifestEntryV2Schema.parse({
-        artifactId: CLIENT_ACTION_TARGET.artifactId,
+        artifactId,
         tier: 'reactNative',
-        entry: 'react-native/current-ui-context-client-action/entry.cjs.bundle',
+        entry: artifactEntry,
         files: [{
-            relativePath: 'react-native/current-ui-context-client-action/entry.cjs.bundle',
-            digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-            byteSize: 10,
+            relativePath: artifactEntry,
+            digest: computePluginUiArtifactSha256DigestV1(bytes),
+            byteSize: bytes.byteLength,
         }],
-        digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        digest: computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: artifactEntry, bytes }]),
         builtWith: { bundler: 'esbuild', version: '0.27.2' },
-        executable: { exports: [CLIENT_ACTION_TARGET.exportName] },
+        executable: { exports: options ? ['activate', 'renderSurface'] : [CLIENT_ACTION_TARGET.exportName] },
         hostUiApiRange: '^1.0.0',
     });
-    const cacheIdentity: PluginReactNativeBundleCacheIdentity = Object.freeze({
-        pluginId: placement.pluginId,
-        contributionId: CLIENT_ACTION_ID,
-        artifactId: CLIENT_ACTION_TARGET.artifactId,
-        artifactDigest: artifactGraph.digest,
-        platform: CLIENT_ACTION_TARGET.platform,
+    // The daemon is the external boundary. Its same manifest/current-policy/source
+    // facts feed the real registry, raw projection, union and mounted Action route.
+    // URL imports retain the CLI owner's compiler aliases (the inverse host
+    // composition uses the same pattern in projection/ui/projection.composed.test).
+    const { normalizePluginManifestV2 }: Readonly<{ normalizePluginManifestV2(input: unknown): Readonly<{ version: string }> }> =
+        await import(new URL('../../../../../cli/src/plugins/manifest/normalize.ts', import.meta.url).href);
+    const { projectLoadedPluginContributes }: Readonly<{ projectLoadedPluginContributes(input: unknown): Readonly<Record<string, unknown>> }> =
+        await import(new URL('../../../../../cli/src/plugins/projection/registry/resolvePluginContributions.ts', import.meta.url).href);
+    const { createResolvedContributionRegistry }: Readonly<{ createResolvedContributionRegistry(input: unknown): unknown }> =
+        await import(new URL('../../../../../cli/src/plugins/projection/registry/createResolvedContributionRegistry.ts', import.meta.url).href);
+    const { buildPluginProjectionV2 }: Readonly<{ buildPluginProjectionV2(input: unknown): unknown }> =
+        await import(new URL('../../../../../cli/src/plugins/projection/registry/projection/v2.ts', import.meta.url).href);
+    const { projectBundledPluginCatalogEntries }: Readonly<{ projectBundledPluginCatalogEntries(input: unknown): readonly unknown[] }> =
+        await import(new URL('../../../../../cli/src/plugins/projection/catalog/installed.ts', import.meta.url).href);
+    const { createManagedPluginSourceCustody }: Readonly<{ createManagedPluginSourceCustody(id: string): unknown }> =
+        await import(new URL('../../../../../cli/src/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit.ts', import.meta.url).href);
+    const { resolvePluginFinalPolicyAuthorizationFacts }: Readonly<{ resolvePluginFinalPolicyAuthorizationFacts(input: unknown): Readonly<Record<string, unknown>> }> =
+        await import(new URL('../../../../../cli/src/plugins/runtime/policy/facts.ts', import.meta.url).href);
+    const { loadCurrentBundledPluginLocatorResult }: Readonly<{ loadCurrentBundledPluginLocatorResult(): Readonly<{
+        loadedPlugins: readonly Readonly<{ pluginId: string; [key: string]: unknown }>[];
+    }> }> = await import(new URL('../../../../../cli/src/plugins/projection/registry/builtIn/locators.ts', import.meta.url).href);
+    const manifest = normalizePluginManifestV2(options?.manifest ?? { schemaVersion: 2, id: pluginId,
+        version: '1.2.3', displayName: 'Current UI composition', runtime: { apiVersion: 1 },
+        contributes: { actions: [{ ...declaration, id: actionId }] },
     });
-    const fixtureProjection = Object.freeze({
-        ...projection,
-        installedPackagesById: Object.freeze({
-            ...projection.installedPackagesById,
-            [placement.pluginId]: PluginProjectionInstalledPackageV2Schema.parse({
-                id: placement.pluginId,
-                displayName: 'Current UI composition',
-                version: '1.2.3',
-                enabled: true,
-                source: { kind: 'localPath', locator: placement.pluginId },
-                immutableGenerationId: 'current-ui-composition-artifact-generation-a',
-            }),
-        }),
-        actionsById: Object.freeze({
-            [`${placement.pluginId}/${CLIENT_ACTION_ID}`]: projectedAction,
-        }),
-        reactNativeBundlesById: Object.freeze({
-            [`reactNativeBundle:${placement.pluginId}:${CLIENT_ACTION_ID}`]: Object.freeze({
-                id: `reactNativeBundle:${placement.pluginId}:${CLIENT_ACTION_ID}`,
-                pluginId: placement.pluginId,
-                occurrenceId: PLUGIN_OCCURRENCE_ID,
-                contributionKind: 'reactNativeBundle' as const,
-                contributionId: CLIENT_ACTION_ID,
-                generatedOwnerKind: 'clientContribution' as const,
-                artifactGraph,
-                runtime: Object.freeze({
-                    decision: Object.freeze({ state: 'load' }),
-                    loadPolicy: Object.freeze({ source: 'installedArtifact' }),
-                    cacheIdentity: Object.freeze({ artifactDigest: artifactGraph.digest }),
-                }),
-                [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: { ...CLIENT_ACTION_ORIGIN_PROJECTION, serverId: connection!.home.id },
-            }),
-        }),
-    }) satisfies PluginUiProjectionModel;
+    const loadedPlugins = options ? loadCurrentBundledPluginLocatorResult().loadedPlugins.map(plugin => plugin.pluginId === pluginId
+        ? { ...plugin, manifest, generatedUiArtifactsManifest: { version: 2, entries: [artifactGraph] } } : plugin)
+        : [{ pluginId, pluginRootPath: '/plugins/current-ui-composition', manifestPath: '/plugins/current-ui-composition/.happier-plugin/plugin.json',
+            daemonEntryPath: null, devDaemonEntryPath: null, manifest,
+            sourceSpec: { kind: 'path', locator: '/plugins/current-ui-composition', trustPolicy: 'local_trusted', installPolicy: 'link',
+                resolvedVersion: manifest.version },
+            generatedUiArtifactsManifest: { version: 2, entries: [artifactGraph] } }];
+    const immutableGenerationId = 'current-ui-composition-artifact-generation-a';
+    const registry = createResolvedContributionRegistry({ ...projectLoadedPluginContributes({ provenance: options ? 'first_party' : 'external',
+        loadResult: { loadedPlugins, diagnosticsByPluginId: {} } }),
+        occurrenceIdsByPluginId: { [pluginId]: occurrenceId }, immutableGenerationIdsByPluginId: { [pluginId]: immutableGenerationId },
+    });
+    const current = { occurrenceId, sourceCustody: createManagedPluginSourceCustody(immutableGenerationId),
+        desiredOccurrenceId: occurrenceId, appliedOccurrenceId: occurrenceId, applied: true, selectedAccess: [] };
+    const authorization = resolvePluginFinalPolicyAuthorizationFacts({ pluginId, current });
+    daemonProjection = PluginProjectionV2Schema.parse(buildPluginProjectionV2({ registry, generation: projectionGeneration,
+        ...(options ? { installedPackages: projectBundledPluginCatalogEntries({ loadedPlugins }) } : {}),
+        pluginExecutionOriginsByPluginId: { [pluginId]: executionOrigin },
+        pluginFinalPolicyCurrentRuntimesById: new Map([[pluginId, current]]),
+        resolveActionPresentUserGatePolicy: (candidate: string, localId: string) => candidate === pluginId && localId === actionId
+            ? { qualifiedId: `${pluginId}/actions/${actionId}`, occurrenceId, ...declaration,
+                authorization: { ...authorization, serviceAvailability: [] } } : null,
+        pluginUiHostRuntime: { reactNativeBundles: { featureEnabled: true,
+            hostRuntime: { hostUiApiVersion: '1.0.0', platform: 'ios', channel: 'internal' } } }, requestedLocale: 'en',
+    }));
+    const union = unionPluginUiProjections([{ machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
+        serverId: connection!.home.id, serverIdentityId: CLIENT_ACTION_ORIGIN.serverIdentityId,
+        projection: normalizePluginUiProjection(daemonProjection, 'ios'), phase: 'current', interactionEnabled: true,
+        selectableExecutionOrigins: [executionOrigin] }], new Map([[pluginId, executionOrigin]])).pluginUiProjection;
+    if (!union) throw new Error('Expected the canonical client Action union');
+    const fixtureProjection: PluginUiProjectionModel = { ...union,
+        surfacePlacementsById: { ...projection.surfacePlacementsById, ...union.surfacePlacementsById },
+        hostedWebById: { ...projection.hostedWebById, ...union.hostedWebById },
+    };
     const resolved = resolveProjectedPluginUiClientExecutables({
         actionProjection: Object.freeze({ projection: fixtureProjection }),
         platform: CLIENT_ACTION_TARGET.platform,
     });
     const resolvedAction = resolved[0];
     if (!resolvedAction || resolved.length !== 1) {
-        throw new Error('Expected the real client executable projection to resolve one Action.');
+        throw new Error(`Canonical client executable setup did not resolve one target: ${JSON.stringify({
+            resolvedCount: resolved.length,
+            action: fixtureProjection.actionsById[`${pluginId}/${actionId}`],
+            bundle: fixtureProjection.reactNativeBundlesById[`reactNativeBundle:${pluginId}:${actionId}`],
+            installed: fixtureProjection.installedPackagesById[pluginId],
+            diagnostics: daemonProjection.diagnostics.filter(diagnostic => diagnostic.plugin.id === pluginId),
+        })}`);
     }
     const cache = createPluginReactNativeBundleCache();
     cache.putInstalledArtifact({
         identity: resolvedAction.cacheIdentity,
-        bytes: new Uint8Array([47, 47, 32, 99, 108, 105, 101, 110, 116]),
+        bytes,
         format: 'plainJs',
     });
     const activate = (api: PluginClientApi): void => {
-        api.actions.register(CLIENT_ACTION_ID, handler);
+        if (options) options.activate(api);
+        else api.actions.register(CLIENT_ACTION_ID, handler);
     };
     const backend: PluginReactNativeLoaderBackend = Object.freeze({
         backendId: 'commonJs',
@@ -500,7 +546,7 @@ function createMountedClientActionFixture(handler: PluginClientActionHandler): R
         contributes: resolvedAction.contributes,
         target: resolvedAction.target,
         executionOrigin: resolvedAction.executionOrigin,
-        occurrenceId: PLUGIN_OCCURRENCE_ID,
+        occurrenceId,
         cache,
         identity: resolvedAction.cacheIdentity,
         moduleReference: resolvedAction.moduleReference,
@@ -512,6 +558,8 @@ function createMountedClientActionFixture(handler: PluginClientActionHandler): R
         activation,
         composition: getInstalledPluginUiClientExecutableComposition(),
         projection: fixtureProjection,
+        artifact: artifactGraph,
+        bytes,
     });
 }
 
@@ -530,6 +578,9 @@ function renderComposedSurface(input: Readonly<{
     focusEligible?: boolean;
     showSurface?: boolean;
     pluginUiProjection?: PluginUiProjectionModel;
+    binding?: BoundPluginSurfaceBinding;
+    native?: Readonly<{ placement: PluginUiSurfacePlacementProjection; backend: PluginReactNativeLoaderBackend;
+        projectContext: React.ComponentProps<typeof PluginSurfacePlacementHost>['projectContext'] }>;
     onReader: (reader: CurrentUiContextReader | null) => void;
 }>): React.ReactElement {
     const focusEligible = input.focusEligible ?? true;
@@ -544,13 +595,16 @@ function renderComposedSurface(input: Readonly<{
                         >
                             {input.showSurface !== false ? (
                                 <PluginSurfacePlacementHost
-                                    placement={placement}
-                                    machineId="machine-current-ui-composition"
+                                    placement={input.native?.placement ?? placement}
+                                    machineId={input.native ? CLIENT_ACTION_ORIGIN.materializationRef.machineId : 'machine-current-ui-composition'}
                                     serverId={input.serverId}
                                     pluginUiProjection={input.pluginUiProjection ?? projection}
-                                    platform="web"
+                                    platform={input.native ? 'ios' : 'web'}
+                                    reactNativeLoaderBackend={input.native?.backend}
+                                    projectContext={input.native?.projectContext}
                                     projectionInteractionEnabled
                                     subPath={input.subPath}
+                                    binding={input.binding}
                                 />
                             ) : null}
                         </PluginSurfaceFocusEligibilityProvider>
@@ -562,7 +616,7 @@ function renderComposedSurface(input: Readonly<{
     );
 }
 
-async function establishActiveServer(serverId: string, accountId: string): Promise<void> {
+async function establishActiveServer(serverId: string, accountId: string, nativeBundles = false): Promise<void> {
     const profile = getServerProfileById(serverId);
     if (!profile) throw new Error('Expected the saved fixture Home.');
     connection = await restoreServerAccountForTest({
@@ -573,9 +627,12 @@ async function establishActiveServer(serverId: string, accountId: string): Promi
             if (path === '/health') return Response.json({ status: 'ok' });
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse(nativeBundles ? {
+                features: { machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: false }, serverRouted: { enabled: false } } }, plugins: { enabled: true, webhooks: { enabled: false }, ui: { enabled: true,
+                    hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } } } },
+            } : {}));
             if (path === '/v1/kv/bulk') return Response.json({ values: [] });
-            const machineRead = createPlainMachineReadHttpResponseFixture(path, init, accountId);
+            const machineRead = createPlainMachineReadHttpResponseFixture(path, init, accountId, { daemonState: pluginArtifactTransferDaemonState });
             if (machineRead) return machineRead;
             if (path.startsWith('/v1/machines/')) return Response.json({ machine: {
                 id: decodeURIComponent(path.slice('/v1/machines/'.length)),
@@ -588,6 +645,7 @@ async function establishActiveServer(serverId: string, accountId: string): Promi
     storage.getState().applyMachines([createMachineFixture({
         id: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
         activeAt: Date.now(),
+        daemonState: pluginArtifactTransferDaemonState,
     })], true, { sourceServerId: serverId });
 }
 
@@ -628,6 +686,9 @@ async function loadPackedExternalVoiceFixtureRenderSurface(): Promise<(
 }
 
 beforeEach(async () => {
+    routeIdentity.pluginId = 'acme.current-ui-composition';
+    routeIdentity.localId = 'notes';
+    daemonProjection = PluginProjectionV2Schema.parse({ v: 2, generation: projectionGeneration, familiesById: {} });
     await loadSyncSingletonForTests();
     await getInstalledPluginUiClientExecutableComposition().unload();
     nativeHostLifecycle.appState = 'active';
@@ -635,6 +696,7 @@ beforeEach(async () => {
     hostedRenderer.currentUiLabelBeforeBPublication = undefined;
     hostedRenderer.hostApi = null;
     hostedRenderer.focusEligible = false;
+    hostedRenderer.publishOnLocationChange = true;
     hostedRenderer.packedRenderSurface = null;
     hostedRenderer.surfaceContext = null;
     hostedRenderer.responses.length = 0;
@@ -648,19 +710,7 @@ beforeEach(async () => {
         }
         if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
             protocolVersion: 1,
-            projection: PluginProjectionV2Schema.parse({
-                v: 2,
-                generation: projectionGeneration,
-                installedPackagesById: {},
-                agentsById: {},
-                actionsById: {},
-
-
-                resourcesById: {},
-                settingsById: {},
-                familiesById: {},
-                diagnostics: [],
-            }),
+            projection: daemonProjection,
         };
         if (method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) return {
             status: 'current',
@@ -697,6 +747,7 @@ afterEach(async () => {
     hostedRenderer.currentUiLabelBeforeBPublication = undefined;
     hostedRenderer.hostApi = null;
     hostedRenderer.focusEligible = false;
+    hostedRenderer.publishOnLocationChange = true;
     hostedRenderer.packedRenderSurface = null;
     hostedRenderer.surfaceContext = null;
     hostedRenderer.responses.length = 0;
@@ -704,7 +755,162 @@ afterEach(async () => {
 });
 
 describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
-    it.each([false, true])('keeps the canonical current context Host API when a Composer picker is reparented into the modal host (installed artifact=%s)', async (packed) => {
+    it('executes the mounted release Preview through its real opaque current-context command and retires it', async () => {
+        const { activate: activateForgeClient, renderSurface: renderForgeSurface } = await import('../../../../../../packages/plugins/scm-github/src/ui/forge/renderForgeSurface');
+        const { GITHUB_RELEASE_ACTIONS_V1, GITHUB_RELEASE_ACTION_IDS_V1, GITHUB_RELEASE_MOUNTED_ACTION_ID_V1 } = await import('../../../../../../packages/plugins/scm-github/src/releases/contribution');
+        const { GITHUB_PLUGIN_ID } = await import('../../../../../../packages/plugins/scm-github/src/observations/githubProviderContracts');
+        const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
+        const { GITHUB_FORGE_RENDERER_ID_V1 } = await import('../../../../../../packages/plugins/scm-github/src/ui/forge/surfaceIds');
+        // As in the incumbent CLI→UI projection composition, URL imports retain each host's
+        // compiler aliases. Intermediate producer data stays unknown until the real strict schema.
+        const { createPluginRuntimeOccurrenceId }: Readonly<{ createPluginRuntimeOccurrenceId(pluginId: string): string }> =
+            await import(new URL('../../../../../cli/src/plugins/runtime/runtimeSlots.ts', import.meta.url).href);
+        const { ForgeReleaseActionInputSchemasV1, ForgeReleaseActionResultSchemasV1 } = await import('@happier-dev/triage-protocol/releases/v1');
+        routeIdentity.pluginId = GITHUB_PLUGIN_ID;
+        routeIdentity.localId = 'releases';
+        const profile = await upsertServerProfile({ serverUrl: 'https://mounted-release-current-context.test', name: 'Mounted release command' });
+        await establishActiveServer(profile.id, 'mounted-release-current-context-account', true);
+        storage.getState().activateProfileScope({ serverId: profile.id, accountId: 'mounted-release-current-context-account' });
+        const declaration = GITHUB_RELEASE_ACTIONS_V1[GITHUB_RELEASE_MOUNTED_ACTION_ID_V1];
+        const occurrenceId = createPluginRuntimeOccurrenceId(GITHUB_PLUGIN_ID);
+        // Projection carries declarations; the real daemon schema-read boundary below supplies schemas.
+        const { inputSchema: _inputSchema, resultSchema: _resultSchema, ...projectedDeclaration } = declaration;
+        const fixture = await createMountedClientActionFixture(async () => { throw new Error('Unused synthetic handler'); }, {
+            pluginId: GITHUB_PLUGIN_ID, actionId: GITHUB_RELEASE_MOUNTED_ACTION_ID_V1,
+            declaration: projectedDeclaration, artifactId: declaration.execution.client.artifactId, occurrenceId,
+            activate: activateForgeClient, manifest: PLUGIN_MANIFEST,
+        });
+        const renderer = PLUGIN_MANIFEST.contributes.ui?.renderers?.find(entry => entry.id === GITHUB_FORGE_RENDERER_ID_V1);
+        if (renderer?.kind !== 'reactNative') throw new Error('Expected the authored GitHub forge renderer');
+        const releaseProjection = fixture.projection;
+        const releasePlacement = releaseProjection.surfacePlacementsById[`surfacePlacement:${GITHUB_PLUGIN_ID}:releases`];
+        if (!releasePlacement || !isPluginUiDestinationSurfacePlacementProjection(releasePlacement))
+            throw new Error('Expected the real producer Releases destination placement');
+        replacePluginAccountAvailabilityProjection({ scope: captureActiveServerAccountScopeLifetime()!.scope,
+            snapshot: { availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [] } });
+        const repository = { kind: 'github', deployment: 'https://github.com', repository: 'acme/widgets' } as const;
+        // Module loading is the physical boundary. The real authored renderer owns
+        // the page, editor, mounted binder, context publication and visible Preview.
+        const backend: PluginReactNativeLoaderBackend = { backendId: 'commonJs', available: true,
+            loadInstalledBundle: async ({ moduleReference }) => moduleReference?.exportName === 'activate'
+                ? activateForgeClient as PluginReactNativeExecutableExport
+                : renderForgeSurface as PluginReactNativeExecutableExport };
+        const [target] = resolveProjectedPluginUiClientExecutables({ actionProjection: { projection: releaseProjection }, platform: 'ios' });
+        if (!target) throw new Error('Expected the canonical release client executable target');
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        if (!accountLifetime) throw new Error('Expected the actual admitted Account activation lifetime');
+        expect(accountLifetime.scope).toEqual({ serverId: profile.id, accountId: 'mounted-release-current-context-account' });
+        const [activation] = await fixture.composition.reconcile([{ ...fixture.activation, backend, accountLifetime,
+            contributes: target.contributes, target: target.target, executionOrigin: target.executionOrigin,
+            authority: target.authority, identity: target.cacheIdentity, moduleReference: target.moduleReference }]);
+        expect(activation?.result).toEqual({ ok: true });
+        const originalRpc = daemonRpcBoundary.getMockImplementation()!;
+        const actionDeclarations = new Map<string, typeof GITHUB_RELEASE_ACTIONS_V1[keyof typeof GITHUB_RELEASE_ACTIONS_V1]>(Object.entries(GITHUB_RELEASE_ACTIONS_V1)
+            .map(([localId, action]) => [`${GITHUB_PLUGIN_ID}/${localId}`, action] as const));
+        const releasePageResponse = DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({ ok: true,
+            result: ForgeReleaseActionResultSchemasV1.listReleases.parse({ kind: 'value', value: {
+                rows: [], omittedRowCount: 0, projectionTruncated: false, continuation: null, incomplete: null,
+            } }) });
+        const latestReleaseResponse = DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({ ok: true,
+            result: ForgeReleaseActionResultSchemasV1.readLatestRelease.parse({ kind: 'value', value: null }) });
+        const readInvocations: string[] = [];
+        daemonRpcBoundary.mockImplementation(async (method, payload) => {
+            if (method === RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE) return DaemonPluginUiArtifactBytesReadResponseSchema.parse({ ok: true, artifactFamily: 'reactNative',
+                cacheIdentity: { artifactDigest: fixture.artifact.digest }, artifact: { artifactKind: 'reactNativeBundle',
+                    digest: fixture.artifact.digest, format: 'plainJs', byteSize: fixture.bytes.byteLength },
+                files: fixture.artifact.files.map(file => ({ ...file, bytesBase64: encodeBase64(fixture.bytes, 'base64') })) });
+            if (method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) return { status: 'current',
+                targetedContributions: { target: { pluginId: GITHUB_PLUGIN_ID, occurrenceId,
+                    sourceCustody: daemonProjection.installedPackagesById[GITHUB_PLUGIN_ID]!.sourceCustody }, points: [] }, targetedSurfaceMounts: [] };
+            if (method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) {
+                const request = DaemonPluginActionSchemasReadRequestSchema.parse(payload);
+                expect(request.expectedOccurrenceId).toBe(occurrenceId);
+                const action = actionDeclarations.get(request.qualifiedActionId);
+                if (!action) throw new Error(`Unexpected release Action schema read: ${request.qualifiedActionId}`);
+                return DaemonPluginActionSchemasReadResponseSchema.parse({ ok: true,
+                    inputSchema: action.inputSchema, outputSchema: action.resultSchema });
+            }
+            if (method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) {
+                const request = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(payload);
+                expect(request.expectedContributorOccurrenceId).toBe(occurrenceId);
+                expect(request.executionSurface).toBe('ui');
+                readInvocations.push(request.qualifiedActionId);
+                if (request.qualifiedActionId === `${GITHUB_PLUGIN_ID}/${GITHUB_RELEASE_ACTION_IDS_V1.listReleases}`) {
+                    expect(ForgeReleaseActionInputSchemasV1.listReleases.parse(request.input)).toEqual({ repository });
+                    return releasePageResponse;
+                }
+                if (request.qualifiedActionId === `${GITHUB_PLUGIN_ID}/${GITHUB_RELEASE_ACTION_IDS_V1.readLatestRelease}`) {
+                    expect(ForgeReleaseActionInputSchemasV1.readLatestRelease.parse(request.input)).toEqual({ repository });
+                    return latestReleaseResponse;
+                }
+                throw new Error(`Unexpected release provider Action: ${request.qualifiedActionId}`);
+            }
+            return originalRpc(method, payload);
+        });
+        let reader: CurrentUiContextReader | null = null;
+        const projectContext = createPluginProjectContextFixture({ serverId: profile.id,
+            machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId, repositoryIdentity: repository });
+        expect(projectContext.target?.repository).toEqual(repository);
+        expect(evaluatePluginUiPolicy(releasePlacement, projectContext.policyContext)).toMatchObject({ visible: true, enabled: true });
+        const screen = await renderScreen(renderComposedSurface({ serverId: profile.id, subPath: 'compose',
+            pluginUiProjection: releaseProjection, native: { placement: releasePlacement, backend,
+                projectContext }, onReader: value => { reader = value; } }));
+        const currentReader = requireReader(reader);
+        const unregister = registerCurrentUiContextActionPort(invocationSurface => createCurrentUiContextVoiceToolPort({
+            reader: currentReader, invocationSurface, readProjection: () => releaseProjection, readNavigationBinding: () => null,
+        }));
+        try {
+            await vi.waitFor(() => expect(currentReader.readCurrentUiContext()?.commands, JSON.stringify({
+                phase: 'actual Releases page command publication',
+                diagnostics: screen.root.findAll(node => typeof node.props.testID === 'string'
+                    && node.props.testID.includes('diagnostic')).map(node => node.props.testID),
+                rpcMethods: daemonRpcBoundary.mock.calls.map(([method]) => method),
+            })).toHaveLength(1));
+            const read = await executeCurrentUiContextAction({ actionId: 'ui.current_context.read', input: {}, context: { surface: 'agent' } });
+            expect(read.ok).toBe(true);
+            if (!read.ok) throw new Error('Expected current-context read');
+            const snapshot = CurrentUiContextSnapshotV1Schema.parse(read.result);
+            const detail = PluginUiJsonObjectV1Schema.parse(snapshot.detail);
+            if (typeof detail.mountId !== 'string')
+                throw new Error('Expected the actual page to publish its public mountId');
+            const mountedId = detail.mountId;
+            expect(detail.preview).toBe(false);
+            const command = snapshot.commands[0]!;
+            expect(command.id).toMatch(/^current-ui-command:/);
+            expect(currentReader.resolveCurrentUiCommand(command.id)?.command).toEqual({ kind: 'executeAction',
+                action: { pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_RELEASE_MOUNTED_ACTION_ID_V1 },
+                input: { mountId: mountedId, operation: { kind: 'setPreview', value: true } } });
+            await vi.waitFor(() => expect(screen.root.findAll(node => typeof node.type === 'string'
+                && node.children.includes('Start the notes')).length).toBeGreaterThan(0));
+            const readsBeforePreview = [...readInvocations];
+            expect(readsBeforePreview).toEqual(expect.arrayContaining([
+                `${GITHUB_PLUGIN_ID}/${GITHUB_RELEASE_ACTION_IDS_V1.listReleases}`,
+                `${GITHUB_PLUGIN_ID}/${GITHUB_RELEASE_ACTION_IDS_V1.readLatestRelease}`,
+            ]));
+            await act(async () => {
+                expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: command.id },
+                    context: { surface: 'agent' } })).toEqual({ ok: true, result: { status: 'applied' } });
+            });
+            await vi.waitFor(() => {
+                expect(currentReader.readCurrentUiContext()?.detail).toMatchObject({ mountId: mountedId, preview: true });
+                expect(screen.root.findAll(node => typeof node.type === 'string'
+                    && node.children.includes('Nothing to preview yet.')).length).toBeGreaterThan(0);
+            });
+            expect(readInvocations).toEqual(readsBeforePreview);
+            const retirement = currentReader.resolveCurrentUiCommand(command.id)!.retirementSignal;
+            await screen.unmount();
+            expect(retirement.aborted).toBe(true);
+            expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: command.id },
+                context: { surface: 'agent' } })).toMatchObject({ ok: false });
+        } finally { unregister(); await screen.unmount(); }
+    });
+
+    it.each([
+        { packed: false, ephemeral: false, coreBackground: false },
+        { packed: true, ephemeral: false, coreBackground: false },
+        { packed: false, ephemeral: true, coreBackground: false },
+        { packed: false, ephemeral: true, coreBackground: true },
+    ])('publishes only the visible plugin picker through its real modal Host API (%j)', async ({ packed, ephemeral, coreBackground }) => {
         const profile = await upsertServerProfile({ serverUrl: 'https://composer-context-modal.test', name: 'Composer context modal' });
         await establishActiveServer(profile.id, 'composer-context-modal-account');
         storage.getState().activateProfileScope({ serverId: profile.id, accountId: 'composer-context-modal-account' });
@@ -738,17 +944,26 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
         });
         let presentation: ComposerScopePluginPresentation | null = null;
         let reader: CurrentUiContextReader | null = null;
+        let commandBridge: ReturnType<typeof useCurrentUiContextCommandBridge> | undefined;
         const isScopeCurrent = () => true;
         if (packed) hostedRenderer.packedRenderSurface = await loadPackedExternalVoiceFixtureRenderSurface();
         function ComposerScope(): null {
+            commandBridge = useCurrentUiContextCommandBridge();
             presentation = useComposerScopePluginPresentation({ composer, physicalTarget: { kind: 'app' }, resourceContext: { kind: 'global' },
                 machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId, serverId: profile.id, projectionPhase: 'ready', projectionInputs,
                 accountLifetime: captureActiveServerAccountScopeLifetime(), isScopeCurrent, attachmentsEnabled: true, includeSessionActions: false });
             return null;
         }
+        function CoreBackground(): null {
+            const enrichment = React.useMemo(() => ({ entity: { kind: 'issue', label: 'Issue A' } }), []);
+            usePublishCurrentUiContext(enrichment);
+            return null;
+        }
         const screen = await renderScreen(<InjectedAuthProvider credentials={connection?.credentials ?? null}>
             <MainAppTabStateProvider><AppPaneProvider><ModalProvider>
                 <CurrentUiContextProvider><PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+                    {coreBackground ? <CoreBackground /> : <PluginSurfacePlacementHost placement={placement} machineId="machine-current-ui-composition"
+                        serverId={profile.id} pluginUiProjection={projection} platform="web" projectionInteractionEnabled subPath="notes/a" />}
                     <ComposerScope /><CurrentUiReaderProbe onReader={next => { reader = next; }} />
                 </PluginSurfaceFocusEligibilityProvider></CurrentUiContextProvider>
             </ModalProvider></AppPaneProvider></MainAppTabStateProvider>
@@ -761,18 +976,45 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
                 catalog: { identity: contribution, occurrenceId: PLUGIN_OCCURRENCE_ID, picker: { renderer: 'panel' } },
             });
             expect(interaction?.onPress).toBeTypeOf('function');
-            await act(async () => { interaction?.onPress?.(); });
+            await act(async () => {
+                if (!ephemeral) return interaction?.onPress?.();
+                const facts = projectionInputs.composerSurfaceActionInputSelectionFacts.get(projectionInputs.composerSurfaceCatalog![0]);
+                if (!facts) throw new Error('Expected canonical input selection facts.');
+                // The daemon projection is the external boundary. Reuse its admitted renderer and input-facts fixture.
+                const openPicker = (bridge: typeof commandBridge) => void presentPluginEphemeralInputSurface({
+                    surface: catalogEntry, title: 'Choose comparison', presentation: 'picker', commandBridge: bridge,
+                    projection: { ...projectionInputs, pluginUiProjection: projection,
+                        pluginProjectionById: { [placement.pluginId]: {
+                            pluginId: placement.pluginId, title: 'Fixture', description: null, version: '1.0.0', enabled: true,
+                            generation: projectionGeneration, generationLabel: null, status: null, provenance: null,
+                            diagnostics: [], actions: [], resources: [], editableSettingsGroups: [],
+                        } },
+                        ephemeralInputSurfaceActionInputSelectionFacts: new Map([[catalogEntry, facts]]),
+                    }, machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId, serverId: profile.id,
+                    accountLifetime: captureActiveServerAccountScopeLifetime()!,
+                });
+                if (coreBackground) {
+                    function ParentDialog(): null {
+                        const bridge = useCurrentUiContextCommandBridge();
+                        React.useEffect(() => { openPicker(bridge); }, [bridge]);
+                        return null;
+                    }
+                    Modal.show({ component: ParentDialog, commandBridge });
+                } else openPicker(commandBridge);
+            });
             await vi.waitFor(() => expect(hostedRenderer.hostApi).not.toBeNull());
             expect(hostedRenderer.hostApi!.installedMethods).toContain('publishCurrentUiContext');
             expect(hostedRenderer.focusEligible).toBe(true);
             await vi.waitFor(() => expect(hostedRenderer.responses.at(-1)?.response).toBeNull());
-            // Modal precedence intentionally withholds enrichment from the
-            // public snapshot even though its real Host API accepts it.
             expect(requireReader(reader).readCurrentUiContext()?.navigation.area).toBe('modal');
-            expect(requireReader(reader).readCurrentUiContext()?.entity).toBeUndefined();
+            expect(requireReader(reader).readCurrentUiContext()?.entity?.label).toBe(packed ? 'Packed Voice current context' : 'Issue B');
+            expect(requireReader(reader).readCurrentUiContext()?.commands.length).toBeGreaterThan(0);
+            const pickerCommands = requireReader(reader).readCurrentUiContext()!.commands;
             expect(CurrentUiContextSnapshotV1Schema.safeParse(requireReader(reader).readCurrentUiContext()).success).toBe(true);
             await act(async () => { Modal.hideAll(); });
-            await vi.waitFor(() => expect(requireReader(reader).readCurrentUiContext()?.entity).toBeUndefined());
+            await vi.waitFor(() => expect(requireReader(reader).readCurrentUiContext()?.entity?.label)
+                .toBe(packed ? 'Packed Voice current context' : 'Issue A'));
+            for (const command of pickerCommands) expect(requireReader(reader).resolveCurrentUiCommand(command.id)).toBeNull();
         } finally {
             await screen.unmount();
             unregister();
@@ -794,7 +1036,7 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
 
         let handlerCalls = 0;
         let receivedContext: CurrentUiContextSnapshotV1 | undefined;
-        const fixture = createMountedClientActionFixture(async (_input, context) => {
+        const fixture = await createMountedClientActionFixture(async (_input, context) => {
             handlerCalls += 1;
             receivedContext = context.currentUiContext;
             return { currentEntityLabel: context.currentUiContext?.entity?.label ?? null };
@@ -1013,6 +1255,76 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
         expect(currentReader.resolveCurrentUiCommand(commandB)).toBeNull();
         expect(voicePort.readCurrentUiContext()).toBeNull();
         expect(voicePort.resolveCurrentUiCommand(commandB)).toBeNull();
+    });
+
+    it('keeps a page publication when its own settled location returns through the retained host', async () => {
+        const profile = await upsertServerProfile({
+            serverUrl: 'https://acme.current-ui-location-echo.test',
+            name: 'Current UI location echo',
+        });
+        await establishActiveServer(profile.id, 'acme.current-ui-location-echo-account');
+        storage.getState().activateProfileScope({ serverId: profile.id, accountId: 'acme.current-ui-location-echo-account' });
+
+        let renderedSubPath = 'notes/a';
+        let requestedSubPath: string | null = null;
+        const locationOwner = createPluginPageLocationOwner({
+            currentSubPath: () => renderedSubPath,
+            routePathFor: subPath => subPath,
+            replaceLocation: subPath => { requestedSubPath = subPath; },
+            isCurrent: () => true,
+        });
+        const binding: BoundPluginSurfaceBinding = {
+            mountedHostApiHandlers: { replacePageLocation: locationOwner.handleReplaceRequest },
+            isCurrentUiContextLocationOwned: locationOwner.ownsCurrentLocation,
+        };
+        let reader: CurrentUiContextReader | null = null;
+        const render = () => renderComposedSurface({ serverId: profile.id, subPath: renderedSubPath, binding,
+            onReader: next => { reader = next; } });
+        const screen = await renderScreen(render());
+        try {
+            const currentReader = requireReader(reader);
+            await vi.waitFor(() => expect(currentReader.readCurrentUiContext()?.entity?.label).toBe('Issue A'));
+            const commandA = currentReader.readCurrentUiContext()!.commands[0]!.id;
+            await act(async () => {
+                expect(await hostedRenderer.hostApi!.handleRequest({
+                    version: 1, requestId: 'local-page-selection', surface: hostedRenderer.surfaceContext!,
+                    method: 'replacePageLocation', payload: { subPath: 'notes/b', backLocation: 'notes/a' },
+                })).toEqual({ subPath: 'notes/b' });
+                // The mounted page applies the settled selection and publishes it
+                // before the router delivers that location back to its parent.
+                expect(await hostedRenderer.hostApi!.handleRequest({
+                    version: 1, requestId: 'local-page-selection-context', surface: hostedRenderer.surfaceContext!,
+                    method: 'publishCurrentUiContext', payload: { enrichment: {
+                        entity: { kind: 'issue', label: 'Issue B', reference: { number: 2 } },
+                        commands: [{ title: 'Close detail', command: { kind: 'openSurface', destination: 'notes', input: { issueNumber: null } } }],
+                    } },
+                })).toBeNull();
+            });
+            expect(requestedSubPath).toBe('notes/b');
+            const commandB = currentReader.readCurrentUiContext()!.commands[0]!.id;
+            expect(currentReader.resolveCurrentUiCommand(commandA)).toBeNull();
+            expect(currentReader.resolveCurrentUiCommand(commandB)).not.toBeNull();
+
+            // A location echo changes no semantic input in the author subtree.
+            // It must not require a duplicate author publication to keep B live.
+            hostedRenderer.publishOnLocationChange = false;
+            renderedSubPath = requestedSubPath!;
+            locationOwner.retireForeignLocationChange(renderedSubPath);
+            await screen.update(render());
+            expect(currentReader.readCurrentUiContext()?.entity?.label).toBe('Issue B');
+            expect(currentReader.readCurrentUiContext()?.commands[0]?.id).toBe(commandB);
+            expect(currentReader.resolveCurrentUiCommand(commandB)).not.toBeNull();
+
+            renderedSubPath = 'notes/c';
+            await screen.update(render());
+            expect(currentReader.readCurrentUiContext()?.entity).toBeUndefined();
+            expect(currentReader.readCurrentUiContext()?.commands).toEqual([]);
+            expect(currentReader.resolveCurrentUiCommand(commandB)).toBeNull();
+            locationOwner.retireForeignLocationChange(renderedSubPath);
+        } finally {
+            await screen.unmount();
+            locationOwner.dispose();
+        }
     });
 
     it('retires the exact mounted provider record on controller replacement and host removal without an insertion-effect update', async () => {

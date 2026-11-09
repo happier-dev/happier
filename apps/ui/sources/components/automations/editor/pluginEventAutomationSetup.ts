@@ -1,10 +1,10 @@
-import { PluginUiJsonValueV1Schema, type PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
-import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { arePluginMachineExecutionOriginsEqual, arePluginMachineMaterializationRefsEqual, getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { AutomationEventFilterV1 } from '@happier-dev/protocol/automations/automationEventFilterV1';
 import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginDiagnosticRemediationV1 } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
-import { reconstructPluginUiSelectedActionInput } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiJsonValueV1Schema, reconstructPluginUiSelectedActionInput } from '@happier-dev/protocol/plugins/ui';
 import type { MutableRefObject } from 'react';
+import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type {
     DaemonMergedProjectionInputs,
@@ -29,6 +29,7 @@ import {
 
 import {
     createPluginEventAutomationAuthoringDraft,
+    supportsPluginEventAutomationObservationTransport,
     type PluginEventAutomationCreateDraft,
     type PluginEventAutomationObservationDraft,
 } from './pluginEventAutomationDraft';
@@ -37,10 +38,8 @@ import {
     type PluginEventAutomationWebhookEndpoint,
 } from './pluginEventAutomationWebhookEndpoint';
 import { validatePluginEventAutomationSetupResult } from './pluginEventAutomationSetupResult';
-import {
-    presentPluginEventAutomationSetupSurface,
-    type PluginEventAutomationSetupSurfaceSettlement,
-} from './presentPluginEventAutomationSetupSurface';
+import { EVENT_OBSERVER_BINDING_UNAVAILABLE, resolvePluginEventAutomationObserverMaterialization } from './pluginEventAutomationObservationBinding';
+import { presentPluginEventAutomationSetupSurface } from './presentPluginEventAutomationSetupSurface';
 
 export type PluginEventAutomationSetupFailure = Readonly<{
     code: string;
@@ -59,6 +58,8 @@ type SetupOutcome =
          * public URL in the same pass that ensured the endpoint.
          */
         webhookEndpoint: PluginEventAutomationWebhookEndpoint | null;
+        /** Automatic delivery can enroll polling while exposing endpoint recovery. */
+        webhookEndpointUnavailable?: true;
     }>
     | (Readonly<{ kind: 'unavailable' }> & Partial<PluginEventAutomationSetupFailure>)
     | Readonly<{ kind: 'stale'; reason: 'event_retired' }>;
@@ -78,7 +79,17 @@ export function arePluginEventAutomationEligibleSetupPresentationsEqual(
         && left.event.occurrenceId === right.event.occurrenceId
         && arePluginContributionIdentitiesEqual(left.setupAction.identity, right.setupAction.identity)
         && left.setupAction.occurrenceId === right.setupAction.occurrenceId
+        && sameObservationBinding(left.observationBinding, right.observationBinding)
         && sameSetupSurface(left.setupSurface, right.setupSurface);
+}
+
+function sameObservationBinding(
+    left: DaemonContributionRegistryProjectionAutomationEligibleEventV1['observationBinding'],
+    right: DaemonContributionRegistryProjectionAutomationEligibleEventV1['observationBinding'],
+): boolean {
+    return left === undefined || right === undefined ? left === right
+        : arePluginMachineExecutionOriginsEqual(left.executionOrigin, right.executionOrigin)
+            && arePluginMachineMaterializationRefsEqual(left.materializationRef, right.materializationRef);
 }
 
 function sameSetupSurface(
@@ -107,6 +118,7 @@ export function getPluginEventAutomationEligibleSetupPresentationKey(
         event.setupAction.identity.pluginId,
         event.setupAction.identity.localId,
         event.setupAction.occurrenceId,
+        event.observationBinding ?? null,
         surface ? [
             surface.contribution.pluginId,
             surface.contribution.localId,
@@ -126,7 +138,8 @@ function hasExactCurrentSetupPresentation(
     if (
         event.event.identity.pluginId !== event.setupAction.identity.pluginId
         || event.event.occurrenceId !== event.setupAction.occurrenceId
-        || !('materializationRef' in origin.origin)
+        || !resolvePluginEventAutomationObserverMaterialization(event, origin.origin)
+        || (origin.source !== undefined && origin.source.occurrenceId !== event.event.occurrenceId)
     ) return false;
     const surface = event.setupSurface;
     return surface === undefined || (
@@ -156,7 +169,7 @@ function resolveCurrentSetupSnapshot(params: Readonly<{
 }>): CurrentSetupSnapshot | SetupOutcome {
     const inputs = params.inputs;
     const origin = params.origin;
-    if (!inputs || !origin || !origin.materialization || !('materializationRef' in origin.origin) || params.signal.aborted || !params.accountLifetime.isCurrent()) {
+    if (!inputs || !origin || params.signal.aborted || !params.accountLifetime.isCurrent()) {
         return { kind: 'unavailable' };
     }
     const event = inputs.automationEligibleEvents?.find((candidate) => (
@@ -238,15 +251,8 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
     }>) => Promise<DaemonMergedProjectionInputs | null>;
     resolveConnectedAccountOptions?: PluginContributedActionConnectedAccountOptionsTransport;
     present?: typeof presentActionInputForm;
-    presentSetupSurface?: (params: Readonly<{
-        eligibleEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1;
-        projection: DaemonMergedProjectionInputs;
-        machineId: string;
-        serverId: string | null;
-        accountLifetime: ActiveServerAccountScopeLifetime;
-        signal?: AbortSignal;
-        launchInput?: import('@happier-dev/protocol/plugins/ui').PluginUiLaunchInputV1;
-    }>) => Promise<PluginEventAutomationSetupSurfaceSettlement>;
+    presentSetupSurface?: typeof presentPluginEventAutomationSetupSurface;
+    commandBridge?: Parameters<typeof presentPluginEventAutomationSetupSurface>[0]['commandBridge'];
     dispatch?: PluginContributedActionDispatch;
 }>): Promise<SetupOutcome> {
     const operationScope = new AbortController();
@@ -260,15 +266,17 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
     const currentOrigin = params.resolveExecutionOrigin();
     if (
         !currentOrigin
-        || !currentOrigin.materialization
-        || !('materializationRef' in currentOrigin.origin)
         || !params.accountLifetime.isCurrent()
-        || currentOrigin.origin.materializationRef.pluginId !== params.eligibleEvent.event.identity.pluginId
-        || currentOrigin.materialization.pluginId !== params.eligibleEvent.event.identity.pluginId
+        || getPluginMachineExecutionOriginRef(currentOrigin.origin).pluginId !== params.eligibleEvent.event.identity.pluginId
     ) {
         params.signal?.removeEventListener('abort', onExternalAbort);
         retirement.dispose();
         return { kind: 'unavailable' };
+    }
+    if (!resolvePluginEventAutomationObserverMaterialization(params.eligibleEvent, currentOrigin.origin)) {
+        params.signal?.removeEventListener('abort', onExternalAbort);
+        retirement.dispose();
+        return { kind: 'unavailable', ...EVENT_OBSERVER_BINDING_UNAVAILABLE };
     }
     const load = async (origin: FreshPluginMachineExecutionOriginV1) => {
         const inputs = await params.loadCurrentProjection({
@@ -327,6 +335,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                             machineId: initial.origin.machineTarget.target.machineId,
                             serverId: initial.origin.machineTarget.serverId,
                             accountLifetime: params.accountLifetime,
+                            commandBridge: params.commandBridge,
                             launchInput: {
                                 observerMachineId: initial.origin.machineTarget.target.machineId,
                                 ...(initialInput?.success ? { initialInput: initialInput.data } : {}),
@@ -403,7 +412,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
             result: outcome.result,
         });
         if (source.kind !== 'available') return { kind: 'unavailable' };
-        const webhookEndpoint = params.observationTransport === 'durablePush'
+        const webhookEndpointResult = params.observationTransport === 'durablePush' || source.result.webhookDelivery !== undefined
             ? await (params.ensureWebhookEndpoint ?? ensurePluginEventAutomationWebhookEndpoint)({
                 eligibleEvent: current.event,
                 origin: current.origin,
@@ -412,15 +421,23 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                 signal: operationScope.signal,
             })
             : null;
-        if (webhookEndpoint?.kind === 'unavailable' || operationScope.signal.aborted) {
-            return { kind: 'unavailable' };
+        if (operationScope.signal.aborted) return { kind: 'unavailable' };
+        const webhookEndpointUnavailable = webhookEndpointResult?.kind === 'unavailable';
+        if (webhookEndpointUnavailable && (params.observationTransport === 'durablePush' || source.result.webhookDelivery === 'required')) {
+            return { kind: 'unavailable', code: 'webhook_endpoint_unavailable', reason: 'webhook_endpoint_unavailable' };
         }
+        const webhookEndpoint = webhookEndpointResult?.kind === 'available' ? webhookEndpointResult.endpoint : null;
+        // The setup Action's delivery intent selects the existing push arm,
+        // retaining the very same selected origin as its endpoint target.
+        const selectsDurablePush = params.observationTransport === 'durablePush'
+            || (source.result.webhookDelivery !== undefined
+                && supportsPluginEventAutomationObservationTransport(current.event, 'durablePush'));
         const draft = createPluginEventAutomationAuthoringDraft({
             eligibleEvent: current.event,
             setupResult: source.result,
             watcherOrigin: current.origin.origin,
-            observation: webhookEndpoint
-                ? { kind: 'durablePush', webhookEndpointId: webhookEndpoint.endpoint.webhookEndpointId }
+            observation: selectsDurablePush && webhookEndpoint
+                ? { kind: 'durablePush', webhookEndpointId: webhookEndpoint.webhookEndpointId }
                 : params.observationTransport === 'socket'
                     ? { kind: 'socket' }
                     : { kind: 'checkpointedPull' },
@@ -434,7 +451,8 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                 draft,
                 resolveFreshWatcherOrigin: params.resolveExecutionOrigin,
             }),
-            webhookEndpoint: webhookEndpoint?.endpoint ?? null,
+            webhookEndpoint,
+            ...(webhookEndpointUnavailable ? { webhookEndpointUnavailable: true as const } : {}),
         };
     } catch {
         return operationScope.signal.aborted || !params.accountLifetime.isCurrent()

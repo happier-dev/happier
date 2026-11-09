@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
@@ -274,6 +275,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     /** The guided caller has already bound every setup operand. */
     guidedPreset?: boolean;
 }>): PluginEventAutomationComposerModel {
+    const commandBridge = useCurrentUiContextCommandBridge();
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const { executeValue: executeWebhookAction } = useMountedActionExecution(accountLifetime?.scope);
     const availabilityReader = useActivePluginAccountAvailabilityReader();
@@ -909,6 +911,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             setSourceFailure(null);
             setWebhookEndpoint(null);
             const configured = await configurePluginEventAutomationSetup({
+                commandBridge,
                 eligibleEvent: currentEvent,
                 ...(params.initialSetupSeed && arePluginContributionIdentitiesEqual(params.initialSetupSeed.eventRef, currentEvent.event.identity)
                     ? { initialSetupSeed: params.initialSetupSeed } : {}),
@@ -956,6 +959,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     }, [
         accountLifetime,
         effectiveObservationTransport,
+        commandBridge,
         executeWebhookAction,
         eligibleEvents,
         filter.valid,

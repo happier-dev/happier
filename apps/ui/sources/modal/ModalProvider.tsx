@@ -369,7 +369,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                             return (
                                 <PluginSurfaceFocusEligibilityProvider
                                     active={active && modal.visible && index === topVisibleIndex}
-                                    currentUiContextActive={false}
+                                    currentUiContextActive={active && modal.visible && index === topVisibleIndex}
                                 >
                                 <HostedCustomModal
                                     key={modal.id}

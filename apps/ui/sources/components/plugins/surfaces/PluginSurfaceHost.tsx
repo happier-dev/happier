@@ -101,11 +101,12 @@ import {
 } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import {
     useLayoutPresentationActive,
-    usePluginSurfaceCurrentUiContextEligibility,
     usePluginSurfaceFocusEligibility,
 } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import {
+    readCurrentUiContextMountLifecycleActive,
     useCurrentUiContextMountLifecycleActive,
+    useCurrentUiContextMountEligibility,
     useCurrentUiContextMountPublisher,
     useOptionalCurrentUiContextReader,
 } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
@@ -2494,7 +2495,7 @@ function PluginSurfaceHostMount(props: Readonly<(
     // Read the surrounding route/tab eligibility exactly once at the generalized
     // physical mount, then lend the fact to every renderer interaction boundary.
     const presentationFocusEligible = usePluginSurfaceFocusEligibility();
-    const inheritedCurrentUiContextFocusEligible = usePluginSurfaceCurrentUiContextEligibility();
+    const inheritedCurrentUiContextFocusEligible = useCurrentUiContextMountEligibility();
     // A targeted B is a physical presentation child of its parent A. It may
     // inherit ordinary focus, but that inherited root fact must not make it a
     // second semantic-current publisher alongside the selected page mount.
@@ -3193,6 +3194,11 @@ function PluginSurfaceHostMount(props: Readonly<(
         // once through this controller's existing retained publication path.
         if (!currentUiContextMountLifecycleActive) return;
         controller.setCurrentUiContextEligibility?.(currentUiContextFocusEligible);
+        return () => {
+            // Withdraw the previous foreground before the next mount's layout
+            // publication. Native background retirement stays with its owner.
+            if (readCurrentUiContextMountLifecycleActive()) controller.setCurrentUiContextEligibility?.(false);
+        };
     }, [controller, currentUiContextFocusEligible, currentUiContextMountLifecycleActive]);
     React.useLayoutEffect(() => () => {
         // Controller replacement and physical unmount remain their existing

@@ -571,6 +571,7 @@ export type {
   HostReviewedChildPortV1,
   HostReviewedChildInvocationV1,
   HostReviewedChildrenPlanV1,
+  HostReviewedChildrenPreparationV1,
   ActionApprovedOperationAdmissionV1,
   ActionAutomationRunCaller,
   ActionCaller,
@@ -5006,6 +5007,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!effect || !deps.publicProfileActions) return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
         return await executePublicProfileAction(effect, deps.publicProfileActions, ctx);
       }
+      if (actionId === 'secrets.shared.repair') {
+        if (!deps.savedSecretRepairAction) return clientActionUnavailable(actionId);
+        const result = await deps.savedSecretRepairAction({ input: parsed.data as import('../account/settings/savedSecretResourceActionsV1.js').SharedSavedSecretRepairInputV1, context: ctx });
+        return readActionFailureEnvelope(result) ?? { ok: true, result };
+      }
       if (actionId === 'secrets.shared.reveal') {
         if (!deps.savedSecretRevealAction) return clientActionUnavailable(actionId);
         // The registered row already admitted this exact closed input.
@@ -7417,14 +7423,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     hostInternal = false,
   ): Promise<ActionExecuteResult> => {
     const reviewedChild = readHostReviewedChildOperationV1(context, actionId, input);
-    if (hostInternal && reviewedChild && actionId === 'action.invoke' && deps.routeHostChildAction) {
+    if (hostInternal && actionId === 'action.invoke' && deps.routeHostChildAction) {
       const routed = await deps.routeHostChildAction({ actionId, input, context: context! });
       if (routed) return settleActionOutput(actionId, routed, context?.actionRequestId ?? undefined);
     }
     hostInternal ||= reviewedChild !== null;
     const prepared = await prepareInvocation(actionId, input, context, hostInternal, true);
     if (hostInternal && prepared.kind === 'ready' && deps.routeHostChildAction
-      && !(reviewedChild && actionId === 'action.invoke')) {
+      && actionId !== 'action.invoke') {
       const spec = getActionSpec(actionId);
       const admitted = prepared.admission;
       if (resolveActionExecutionPlacementForInput(spec, admitted.input) === 'machine') {

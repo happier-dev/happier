@@ -156,7 +156,7 @@ function retiresCurrentUiContextMountWhenNotViewed(): boolean {
     return Platform.OS !== 'web' && !isDesktopHost();
 }
 
-function readCurrentUiContextMountLifecycleActive(): boolean {
+export function readCurrentUiContextMountLifecycleActive(): boolean {
     return !retiresCurrentUiContextMountWhenNotViewed() || readHostActivelyViewed();
 }
 

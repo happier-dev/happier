@@ -2,7 +2,7 @@ import * as React from 'react';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { canActivateCurrentUiContextMount, type CurrentUiContextMountedEnrichment, type CurrentUiContextMountedCommand } from './currentUiContextModel';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { CurrentUiContextBridge, useOptionalCurrentUiContextReader } from './CurrentUiContextProvider';
+import { CurrentUiContextBridge, useCurrentUiContextMountPublisher, useOptionalCurrentUiContextReader } from './CurrentUiContextProvider';
 import { useModalContentId } from '@/modal/ModalProvider';
 import type { ModalCommandBridgeProps } from '@/modal/types';
 import { executeMountedCurrentUiContextCommand } from './currentUiContextActionRuntime';
@@ -56,13 +56,14 @@ const CommandsContext = React.createContext<ComposedCommands>(EMPTY_COMMANDS);
 export function useCurrentUiContextCommandBridge() {
     const composition = React.useContext(CompositionContext);
     const reader = useOptionalCurrentUiContextReader();
+    const publisher = useCurrentUiContextMountPublisher();
     return React.useMemo(() => function CommandBridge(props: ModalCommandBridgeProps) {
         return <CompositionContext.Provider value={composition}>
-            <CurrentUiContextBridge publisher={null} reader={reader}>
+            <CurrentUiContextBridge publisher={publisher} reader={reader}>
                 {props.modalCommands ? <MountedModalCommands {...props.modalCommands} /> : props.children}
             </CurrentUiContextBridge>
         </CompositionContext.Provider>;
-    }, [composition, reader]);
+    }, [composition, publisher, reader]);
 }
 
 function MountedModalCommands(props: NonNullable<ModalCommandBridgeProps['modalCommands']>): React.ReactNode {

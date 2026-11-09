@@ -43,7 +43,6 @@ import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSetti
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { isManagedControllerCodecActionV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { readRetainedVerifiedExternalActionRequester, retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>[0]
@@ -234,8 +233,7 @@ export function createCliActionExecutor(
       ...(params.deploymentBackupAction ? { deploymentBackupAction: params.deploymentBackupAction } : {}),
       ...(params.projectReadinessRead ? { projectReadinessRead: params.projectReadinessRead } : {}),
       routeHostChildAction: async request => {
-        if (request.actionId === 'action.invoke'
-          && readHostReviewedChildOperationV1(request.context, request.actionId, request.input)) {
+        if (request.actionId === 'action.invoke') {
           const { executeAccountPluginAction } = await import('./executeAccountPluginAction');
           const account = await executeAccountPluginAction({ host: params, deps: harness.deps,
             actionId: request.actionId, input: request.input, context: request.context });

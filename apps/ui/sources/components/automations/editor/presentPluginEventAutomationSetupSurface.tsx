@@ -23,6 +23,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PluginMachineExecutionOriginPickerProvider } from '@/components/settings/machines/PluginMachineExecutionOriginSelector';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal';
+import type { BaseModalConfig } from '@/modal/types';
 import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -195,6 +196,7 @@ export async function presentPluginEphemeralInputSurface(params: Readonly<{
     serverId: string | null;
     accountLifetime: ActiveServerAccountScopeLifetime;
     signal?: AbortSignal;
+    commandBridge?: BaseModalConfig['commandBridge'];
 }>): Promise<PluginEventAutomationSetupSurfaceSettlement> {
     const setupSurface = params.surface;
     const plugin = params.projection.pluginProjectionById[
@@ -238,6 +240,7 @@ export async function presentPluginEphemeralInputSurface(params: Readonly<{
         }
         modalId = Modal.show({
             component: PluginEventAutomationSetupSurfaceModal,
+            commandBridge: params.commandBridge,
             props: {
                 surface: params.surface,
                 title: params.title,
@@ -265,6 +268,7 @@ export function presentPluginEventAutomationSetupSurface(params: Readonly<{
     serverId: string | null;
     accountLifetime: ActiveServerAccountScopeLifetime;
     signal?: AbortSignal;
+    commandBridge?: BaseModalConfig['commandBridge'];
     launchInput?: PluginUiLaunchInputV1;
 }>): Promise<PluginEventAutomationSetupSurfaceSettlement> {
     const surface = params.eligibleEvent.setupSurface;
