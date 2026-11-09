@@ -3,6 +3,7 @@ import { resolveApprovalRequestApproveAdmission } from '../actions/actionApprova
 import { ApprovalRequestV2Schema } from '../approvals/approvalRequestV1.js';
 import { describe, expect, it } from 'vitest';
 import { DeploymentEnvironmentListInputV1Schema, DeploymentEnvironmentUpdateInputV1Schema,
+  omitDeploymentEnvironmentPrivateContentPatchV1,
   DeploymentTargetLinkHeaderV1Schema, DeploymentTargetLinkInputV1Schema, DeploymentTargetLinkIntentInputV1Schema, DeploymentTargetLinkResultV1Schema,
   DeploymentTargetLinksListInputV1Schema, DeploymentTargetLinksListResultV1Schema,
   DeploymentReceiptResultV1Schema, DeploymentActionInputSchemasV1, DeploymentRollbackInputV1Schema, DeploymentTeardownInputV1Schema,
@@ -862,6 +863,27 @@ describe('deployment admission results', () => {
 });
 
 describe('deployment build placement update', () => {
+  it('authors exact private exports and stored source while refusing public exposure and invalid selections', () => {
+    const serviceExport = { key: 'database', service: 'db', containerPort: 5432, scheme: 'postgres',
+      exposure: 'privateNetwork', privateNetwork: 'network-a' };
+    const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 1,
+      contentArtifactId: 'environment-content', contentHeaderVersion: 1, contentBodyVersion: 1,
+      patch: { ownServer: { serviceExports: [serviceExport] }, definition: { from: 'compose',
+        document: 'services: {db: {image: "postgres:17"}}', profiles: [], services: ['db'] } } };
+    expect(DeploymentEnvironmentUpdateInputV1Schema.parse(input)).toEqual(input);
+    expect(omitDeploymentEnvironmentPrivateContentPatchV1(input.patch)).toEqual({});
+    expect(omitDeploymentEnvironmentPrivateContentPatchV1({ ...input.patch,
+      ownServer: { ...input.patch.ownServer, rollout: 'startFirst' } })).toEqual({ ownServer: { rollout: 'startFirst' } });
+    for (const serviceExports of [
+      [{ ...serviceExport, exposure: 'public', privateNetwork: undefined }],
+      [{ ...serviceExport, exposure: 'loopback', privateNetwork: undefined }],
+      [{ ...serviceExport, privateNetwork: undefined }],
+      [{ ...serviceExport, containerPort: 0 }],
+      [serviceExport, serviceExport],
+    ]) expect(DeploymentEnvironmentUpdateInputV1Schema.safeParse({ ...input,
+      patch: { ownServer: { serviceExports } } }).success).toBe(false);
+  });
+
   it('carries a build Machine patch through the existing strict content CAS transport', () => {
     const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 1,
       contentArtifactId: 'environment-content', contentHeaderVersion: 1, contentBodyVersion: 1,

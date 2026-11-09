@@ -1275,6 +1275,23 @@ export type MachineReachabilityActionInputById = {
                     port: number;
                     sourceCidrs: string[];
                 }[];
+                privateWorkloadBindings?: undefined | {
+                    environmentId: string;
+                    bindings: {
+                        exposure: {
+                            exposure: 'privateNetwork';
+                            providerId: string;
+                            networkIdentity: string;
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            containerPort?: number | undefined;
+                        };
+                        interfaceName: string;
+                        sourceRanges: string[];
+                    }[];
+                }[];
             } | {
                 status: 'unavailable';
                 requiredFact: string;
@@ -1334,6 +1351,23 @@ export type MachineReachabilityActionInputById = {
                         kind: 'open';
                         port: number;
                         sourceCidrs: string[];
+                    };
+                    privateWorkloadBindings?: undefined | {
+                        environmentId: string;
+                        bindings: {
+                            exposure: {
+                                exposure: 'privateNetwork';
+                                providerId: string;
+                                networkIdentity: string;
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            };
+                            interfaceName: string;
+                            sourceRanges: string[];
+                        }[];
                     };
                 };
                 setupRevision: number;
@@ -1541,6 +1575,23 @@ export type MachineReachabilityActionResultById = {
                     hostAddress: string;
                     port: number;
                     sourceCidrs: string[];
+                }[];
+                privateWorkloadBindings?: undefined | {
+                    environmentId: string;
+                    bindings: {
+                        exposure: {
+                            exposure: 'privateNetwork';
+                            providerId: string;
+                            networkIdentity: string;
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            containerPort?: number | undefined;
+                        };
+                        interfaceName: string;
+                        sourceRanges: string[];
+                    }[];
                 }[];
             } | {
                 status: 'unavailable';
@@ -2601,6 +2652,23 @@ export type MachineReachabilityActionResultById = {
                         port: number;
                         sourceCidrs: string[];
                     }[];
+                    privateWorkloadBindings?: undefined | {
+                        environmentId: string;
+                        bindings: {
+                            exposure: {
+                                exposure: 'privateNetwork';
+                                providerId: string;
+                                networkIdentity: string;
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            };
+                            interfaceName: string;
+                            sourceRanges: string[];
+                        }[];
+                    }[];
                 } | {
                     status: 'unavailable';
                     requiredFact: string;
@@ -2660,6 +2728,23 @@ export type MachineReachabilityActionResultById = {
                             kind: 'open';
                             port: number;
                             sourceCidrs: string[];
+                        };
+                        privateWorkloadBindings?: undefined | {
+                            environmentId: string;
+                            bindings: {
+                                exposure: {
+                                    exposure: 'privateNetwork';
+                                    providerId: string;
+                                    networkIdentity: string;
+                                    requirementId: string;
+                                    hostAddress: string;
+                                    hostPort: number;
+                                    protocol: 'tcp' | 'udp';
+                                    containerPort?: number | undefined;
+                                };
+                                interfaceName: string;
+                                sourceRanges: string[];
+                            }[];
                         };
                     };
                     setupRevision: number;
@@ -2865,6 +2950,23 @@ export type MachineReachabilityActionResultById = {
                     hostAddress: string;
                     port: number;
                     sourceCidrs: string[];
+                }[];
+                privateWorkloadBindings?: undefined | {
+                    environmentId: string;
+                    bindings: {
+                        exposure: {
+                            exposure: 'privateNetwork';
+                            providerId: string;
+                            networkIdentity: string;
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            containerPort?: number | undefined;
+                        };
+                        interfaceName: string;
+                        sourceRanges: string[];
+                    }[];
                 }[];
             } | {
                 status: 'unavailable';

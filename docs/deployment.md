@@ -868,8 +868,17 @@ cannot author public or loopback exports; existing declarations remain readable.
 the native source owner derives its digest and stored content revision. It edits
 an existing stored definition, rather than converting a repository source.
 Both operands stay in the private invocation and Account Artifact; Home receives
-the prepared content reference. Neither an export declaration nor a source save
-opens a firewall rule or deploys the change.
+the prepared content reference. Signed private authoring publishes its invocation's
+Artifact even when the selected content is unchanged. Neither an export
+declaration nor a source save opens a firewall rule or deploys the change.
+
+An explicit deployment supplies its exact private workload binding to the
+existing Machine firewall transition. The native writer retains the applied
+Environment declarations in the root-owned `rules.nft`; replacing one
+Environment's bindings preserves the others. Network and Domain transitions
+read and preserve that same applied policy through the existing writer, without
+a separate Machine desired-state record. Private sharing does not create public
+sharing or copy database credentials.
 
 Deployment approval observation uses the existing `approval.request.get` result's
 optional `deploymentReceipt` projection. An open request reports
@@ -1099,7 +1108,11 @@ Ordinary `deployments.environments.create` accepts the same `catalogApp`
 definition operand as a Stored App Preset and delegates preparation and apply
 to the existing template composition. Reviewed creation defaults retain their
 values and provenance through apply; generation and bindings stay with their
-existing owners. For a new repository-free Project, the Environment transaction
+existing owners. The first runtime Link remains optional: an explicit controller
+can create the catalog Environment without selecting a runtime or inferring a
+builder. Runtime variable bindings are saved as references without acquiring
+credentials until a destination is linked; selected Domains require that first
+runtime Link before creation. For a new repository-free Project, the Environment transaction
 calls the ordinary Source creator at apply time. A later Environment refusal
 rolls both records back; there is no early Project write or separate Store writer.
 
@@ -2920,6 +2933,8 @@ rollback ends each snapshot, and database shutdown drains and disconnects the re
 This preserves row/cursor and access snapshots without Prisma's SQLite
 `BEGIN IMMEDIATE` writer lock. Other database providers retain their existing
 transaction path. Write transactions continue to use `inTx` and `afterTx`.
+On PostgreSQL and MySQL, a read declared `singleStatementRead` runs without a
+transaction at all; SQLite still serves it from this read snapshot.
 
 Use this existing owner for genuine reads rather than the primary Prisma client:
 a pending writer on that client can queue unrelated reads behind SQLite's busy

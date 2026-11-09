@@ -13,6 +13,9 @@ import { MachineEffectInternalRecordSchema, MachineEffectInternalRequestSchema }
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { MachineFirewallTransitionIntentV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { inspectMachineReachabilityNativeFirewall } from '../reachability/inspectMachineReachabilityNativeFirewall';
+import { settleMachineCaddyFirewallForHost } from '../reachability/machineReachabilityHost';
+import { observeOwnDaemonReachability } from '../reachability/observeOwnDaemonReachability';
+import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 
 // Genuine OS boundary only. All file bytes, native backend, schema/digest,
 // elevation framing, root entry and undo execution remain real.
@@ -167,6 +170,49 @@ async function fixture(mode: 'ask' | 'preauthorized', delayProgress = false) {
 }
 
 describe('firewall through the same P10 installed root invocation', () => {
+    it('retains a workload through the Domain host and its real root CHECK/APPLY reconciliation', async () => {
+        const f = await fixture('preauthorized');
+        await f.setFirewallFacts({ interfaces: {
+            ens18: [{ address: '10.10.0.4', netmask: '255.255.255.0', family: 'IPv4',
+                mac: '00:00:00:00:00:01', internal: false, cidr: '10.10.0.4/24' }],
+            tun42: [{ address: '100.96.0.4', netmask: '255.255.0.0', family: 'IPv4',
+                mac: '00:00:00:00:00:02', internal: false, cidr: '100.96.0.4/16' }],
+        } });
+        const metadata = { reachabilityPosture: { revision: 0,
+            management: { providers: [], publicSsh: { kind: 'closed' } }, defaultServiceIngress: { kind: 'none' } } };
+        const bindings = { environmentId: 'database-environment', bindings: [{
+            exposure: { requirementId: 'postgres', exposure: 'privateNetwork', providerId: 'selected-provider',
+                networkIdentity: 'selected-network', hostAddress: '100.96.0.4', hostPort: 25432, containerPort: 5432, protocol: 'tcp' },
+            interfaceName: 'tun42', sourceRanges: ['100.96.0.0/16'],
+        }] };
+        const settle = (publication: boolean) => machineNativeEffectAdmission.run({
+            operation: { operationId: publication ? 'publish-database' : 'domain-reconcile', kind: 'deployments.domains.add' },
+            keys: [{ kind: 'machineSetup' }],
+        }, native => settleMachineCaddyFirewallForHost({
+            machineId: 'machine', installationId: 'installation', operationId: native.operation.operationId, native,
+            basis: { kind: 'setup', machineId: 'machine', desiredRevision: 0 },
+            port: { read: async () => ({ status: 'ready', metadata, metadataVersion: 1 }),
+                compareAndSwap: async () => { throw new Error('Unchanged Domain posture cannot write Machine metadata'); } },
+            elevation: f.deps,
+            readDaemonProof: () => observeOwnDaemonReachability({ client: {
+                isMachineControlRegistrationReady: () => true,
+                callConnectedClientRpc: async () => ({ ok: true, result: {} }),
+            } }),
+            caddy: { publicBindings: [{ requirementId: 'https', exposure: 'public', hostAddress: '0.0.0.0',
+                hostPort: 443, containerPort: 443, protocol: 'tcp' }] },
+            ...(publication ? { privateWorkloadBindings: MachineFirewallTransitionIntentV1Schema.parse({
+                v: 1, kind: 'preserveSsh', caddy: {}, publicSsh: { kind: 'closed' }, privateWorkloadBindings: bindings,
+            }).privateWorkloadBindings } : {}),
+        }));
+        await settle(true);
+        await settle(false);
+        expect(f.boundaryFailures).toEqual([]);
+        expect(f.readTable()).toContain('iifname "tun42" ip saddr 100.96.0.0/16 meta l4proto tcp ct original ip daddr 100.96.0.4 ct original proto-dst 25432 accept');
+        expect(f.readTable()).toContain('tcp dport 443 accept');
+        expect(f.readTable()).toContain('ct state new ct direction original ct status dnat drop');
+        expect(metadata.reachabilityPosture.management.publicSsh).toEqual({ kind: 'closed' });
+    });
+
     it('inspects native SSH endpoints without desired posture using only the installed root CHECK', async () => {
         const f = await fixture('preauthorized');
         await f.setFirewallFacts({ interfaces: {
@@ -253,6 +299,34 @@ describe('firewall through the same P10 installed root invocation', () => {
         if (final.kind !== 'firewall') throw new Error('Expected native firewall program');
         expect(f.readTable()).toBe(final.rules);
         expect(await f.fs.readFile(f.disk(rulesPath), 'utf8')).toBe(final.rules);
+    });
+
+    it('preserves the missing retained SSH policy as a CHECK refusal before any APPLY', async () => {
+        const f = await fixture('preauthorized');
+        const initial: MachineRecipeStepV1 = { id: 'existing-firewall', kind: 'firewall',
+            rules: 'table inet happier\ndelete table inet happier\ntable inet happier {\n chain input {\n type filter hook input priority -10; policy accept;\n ct state new drop\n }\n}\n' };
+        await f.backend.apply(initial);
+        await f.setFirewallFacts({ interfaces: {
+            ens18: [{ address: '10.10.0.4', netmask: '255.255.255.0', family: 'IPv4',
+                mac: '00:00:00:00:00:01', internal: false, cidr: '10.10.0.4/24' }],
+        }, ssh4: 'LISTEN 0 4096 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=412,fd=3))\n' });
+        // The OS command boundary cannot read the retained table's JSON policy.
+        // Keep the real native observer, root CHECK and elevation settlement.
+        const firewallIntent = MachineFirewallTransitionIntentV1Schema.parse({
+            v: 1, kind: 'retainSsh', publicSsh: { kind: 'open', port: 22, sourceCidrs: ['0.0.0.0/0'] }, caddy: {},
+        });
+        const onStage = vi.fn(async () => 'commit' as const);
+        const result = await runElevatedMachineFirewallPlans({ machineId: 'machine', operationId: 'missing-ssh-policy',
+            basis: { kind: 'setup', machineId: 'machine', desiredRevision: 1 }, firewallIntent, onStage,
+        }, f.deps);
+        expect(f.boundaryFailures).toEqual([]);
+        expect(result).toMatchObject({ outcome: 'not_applied', reasonCode: 'native_check_unavailable',
+            failure: { kind: 'native_check_unavailable', reason: 'required_fact_unavailable', requiredFact: 'retainedSshPolicy' } });
+        expect(MachineElevatedResultV1Schema.parse(result)).toEqual(result);
+        expect(onStage).not.toHaveBeenCalled();
+        expect(f.frames.filter(frame => frame && typeof frame === 'object' && 'mode' in frame)
+            .map(frame => Reflect.get(frame as object, 'mode'))).toEqual(['check']);
+        expect(f.readTable()).toBe(initial.rules);
     });
 
     it('requires a fresh review before APPLY when reviewed service ingress overlaps actual protected SSH', async () => {

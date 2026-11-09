@@ -4,6 +4,7 @@ import { MachineFirewallTransitionFactsV1Schema, type MachineFirewallTransitionI
 export type { MachineFirewallTransitionFactsV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { MachineRecipeStepV1, MachineSetupStepObservationV1 } from './index.js';
 import { readCaddyContainerFirewallExposures } from './nativeCaddy.js';
+import { nativeFirewallTransitionObservationStepId, renderNativeFirewallPrivateWorkloads, replaceNativeFirewallPrivateWorkloads } from './nativeFirewallWorkloads.js';
 
 type Firewall = Extract<MachineRecipeStepV1, { kind: 'firewall' }>;
 type NativeAvailable = Extract<MachineFirewallTransitionFactsV1, { status: 'available' }>;
@@ -33,9 +34,10 @@ export function readMachineFirewallTransitionFactsV1(observation: MachineSetupSt
 
 /** CHECK-only declaration to the existing native observer. This is never an
  * effect plan and must never be returned in the materialized APPLY list. */
-export function createMachineFirewallTransitionObservationStepV1(intent: Pick<MachineFirewallTransitionIntentV1, 'caddy'>): Firewall {
-  return { id: 'reachability-native-facts', kind: 'firewall', exposures: readCaddyContainerFirewallExposures(intent.caddy),
-    rules: 'table inet happier\ndelete table inet happier\ntable inet happier {\n  chain input {\n    type filter hook input priority filter - 10; policy accept;\n  }\n}\n' };
+export function createMachineFirewallTransitionObservationStepV1(intent: Pick<MachineFirewallTransitionIntentV1, 'caddy' | 'privateWorkloadBindings'>): Firewall {
+  return { id: nativeFirewallTransitionObservationStepId, kind: 'firewall', exposures: [...readCaddyContainerFirewallExposures(intent.caddy),
+    ...(intent.privateWorkloadBindings?.bindings.map(binding => binding.exposure) ?? [])],
+    rules: `table inet happier\ndelete table inet happier\ntable inet happier {\n${renderNativeFirewallPrivateWorkloads(intent.privateWorkloadBindings ? [intent.privateWorkloadBindings] : [])}  chain input {\n    type filter hook input priority filter - 10; policy accept;\n  }\n}\n` };
 }
 
 export type MachineFirewallTransitionMaterializationV1 =
@@ -51,11 +53,13 @@ export type MachineFirewallTransitionMaterializationV1 =
 export function materializeMachineFirewallTransitionV1(intent: MachineFirewallTransitionIntentV1,
   native: MachineFirewallTransitionFactsV1): MachineFirewallTransitionMaterializationV1 {
   if (native.status === 'unavailable') return { status: 'review_required', reason: 'required_fact_unavailable', requiredFact: native.requiredFact };
-  const exposures = readCaddyContainerFirewallExposures(intent.caddy);
+  const workloads = replaceNativeFirewallPrivateWorkloads(native.privateWorkloadBindings ?? [], intent.privateWorkloadBindings);
+  const privateBindings = [...(intent.caddy.privateBinding ? [intent.caddy.privateBinding] : []),
+    ...workloads.flatMap(item => item.bindings)];
+  const exposures = [...readCaddyContainerFirewallExposures(intent.caddy), ...workloads.flatMap(item => item.bindings.map(binding => binding.exposure))];
   if (intent.caddy.publicBindings?.some(exposure => exposure.exposure !== 'public'))
     return { status: 'review_required', reason: 'plan_changed' };
-  const privateBinding = intent.caddy.privateBinding;
-  if (privateBinding) {
+  for (const privateBinding of privateBindings) {
     const { exposure, interfaceName, sourceRanges } = privateBinding;
     if (exposure.exposure !== 'privateNetwork' || !sourceRanges.length
       || ['0.0.0.0', '::'].includes(exposure.hostAddress)
@@ -75,7 +79,7 @@ export function materializeMachineFirewallTransitionV1(intent: MachineFirewallTr
   };
   const bindings = [
     ...(intent.caddy.publicBindings ?? []).map(exposure => ({ exposure, interfaces: null })),
-    ...(privateBinding ? [{ exposure: privateBinding.exposure, interfaces: [privateBinding.interfaceName] }] : []),
+    ...privateBindings.map(binding => ({ exposure: binding.exposure, interfaces: [binding.interfaceName] })),
   ];
   const retained = native.retainedSshEndpoints;
   // Domain reconciliation is not approval to close a live management socket.
@@ -107,7 +111,7 @@ export function materializeMachineFirewallTransitionV1(intent: MachineFirewallTr
     // Public is already the reviewed exposure intent. The default-route NIC
     // cannot redefine a concrete declared secondary-address binding as closed.
     for (const exposure of intent.caddy.publicBindings ?? []) permit(exposure);
-    if (privateBinding) for (const source of privateBinding.sourceRanges) {
+    for (const privateBinding of privateBindings) for (const source of privateBinding.sourceRanges) {
       if (isIP(source.split('/')[0]!) === isIP(privateBinding.exposure.hostAddress))
         permit(privateBinding.exposure, privateBinding.interfaceName, source);
     }
@@ -129,7 +133,7 @@ export function materializeMachineFirewallTransitionV1(intent: MachineFirewallTr
     forward.push('ct state new ct direction original ct status dnat drop');
     const chain = (name: string, rules: readonly string[]) => `  chain ${name} {\n    type filter hook ${name} priority filter - 10; policy accept;\n${rules.map(rule => `    ${rule}\n`).join('')}  }\n`;
     return { id: 'owned-firewall', kind: 'firewall', exposures,
-      rules: `table inet happier\ndelete table inet happier\ntable inet happier {\n${chain('input', host)}${chain('forward', forward)}}\n` };
+      rules: `table inet happier\ndelete table inet happier\ntable inet happier {\n${renderNativeFirewallPrivateWorkloads(workloads)}${chain('input', host)}${chain('forward', forward)}}\n` };
   };
   return { status: 'ready', steps: [render(retained), render(final)] };
 }

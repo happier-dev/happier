@@ -21,6 +21,26 @@ export const DeploymentTextV1Schema = lazyZodSchema(() => z.string().check(z.tri
 export const OwnServerEnvironmentReleasePolicyV1Schema = z.strictObject({
     rollout: z.enum(['recreate', 'startFirst']), autoRestorePreviousRelease: z.boolean(),
 });
+function serviceExportNetworkMatchesExposure(value: Readonly<{ exposure: string; privateNetwork?: string }>): boolean {
+    return value.exposure === 'privateNetwork' ? value.privateNetwork !== undefined : value.privateNetwork === undefined;
+}
+function serviceExportKeysAreUnique(exports: ReadonlyArray<Readonly<{ key: string }>>): boolean {
+    return new Set(exports.map(value => value.key)).size === exports.length;
+}
+/** Stored declarations retain public exports; new authoring selects only an exact private endpoint. */
+export const DeploymentServiceExportV1Schema = lazyZodSchema(() => z.strictObject({
+    key: DeploymentTextV1Schema, service: DeploymentTextV1Schema,
+    containerPort: z.number().check(z.int(), z.minimum(1), z.maximum(65535)),
+    scheme: z.string().check(z.regex(/^[a-z][a-z0-9+.-]*$/iu)),
+    exposure: z.enum(['public', 'privateNetwork', 'loopback']), privateNetwork: z.optional(DeploymentTextV1Schema),
+}).check(z.refine(serviceExportNetworkMatchesExposure,
+    { message: 'Only a private export names its exact observed private network.' })));
+export const DeploymentServiceExportsV1Schema = lazyZodSchema(() => z.array(DeploymentServiceExportV1Schema)
+    .check(z.refine(serviceExportKeysAreUnique, { message: 'Service export keys must be unique.' })));
+export const DeploymentPrivateServiceExportsV1Schema = lazyZodSchema(() => z.array(z.strictObject({
+    ...DeploymentServiceExportV1Schema.shape, exposure: z.literal('privateNetwork'), privateNetwork: DeploymentTextV1Schema,
+}))
+    .check(z.refine(serviceExportKeysAreUnique, { message: 'Service export keys must be unique.' })));
 /** Multi-server ingress intent. Source/placement admission validates the referenced edge. */
 export const DeploymentIngressV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('cloudflareTunnel') }),

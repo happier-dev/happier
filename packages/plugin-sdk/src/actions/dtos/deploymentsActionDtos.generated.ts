@@ -290,6 +290,7 @@ export type DeploymentsActionInputById = {
                 teamId: string;
             };
         };
+        intent?: 'add' | undefined;
         managedRetention?: 'keep' | 'until-delete' | undefined;
         generatedSecretAudience?: undefined | {
             groupGrants?: string[] | undefined;
@@ -1112,8 +1113,27 @@ export type DeploymentsActionInputById = {
                 };
             };
             ownServer?: undefined | {
+                serviceExports?: undefined | {
+                    exposure: 'privateNetwork';
+                    privateNetwork: string;
+                    key: string;
+                    service: string;
+                    containerPort: number;
+                    scheme: string;
+                }[];
                 rollout?: 'recreate' | 'startFirst' | undefined;
                 autoRestorePreviousRelease?: boolean | undefined;
+            };
+            definition?: undefined | {
+                profiles: string[];
+                services: string[];
+                document: string;
+                from: 'compose';
+                primaryService?: string | undefined;
+                publicFiles?: undefined | {
+                    path: string;
+                    content: string;
+                }[];
             };
             retainPreviousDeployments?: number | undefined;
             previewTemplate?: null | undefined | {

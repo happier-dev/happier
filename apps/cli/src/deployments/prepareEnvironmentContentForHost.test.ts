@@ -12,12 +12,18 @@ import { createCliDeploymentActionDeps } from './createCliDeploymentActionDeps';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { ArtifactJsonCreateHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactMutationHttpV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { normalizeStoredComposeDefinitionInput } from '@/workspaces/projectSetup/nativeComposeSource';
+import { ExternalActionExecutionAuthorizationV1Schema, createDeploymentEnvironmentContentArtifactIdV1,
+    projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe('opened Environment content preparation', () => {
-    it.each(['plain', 'e2ee'] as const)('saves release settings through the %s Environment update without replacing unrelated content', async mode => {
+    it.each(['plain', 'e2ee'] as const)('saves release settings, private exports and explicit source through the %s Environment update', async mode => {
         const detail = createDeploymentEnvironmentDetailV1();
+        const originalDefinitionInput = { from: 'compose' as const,
+            document: 'services: {app: {image: "example/app:1"}}', profiles: [], services: ['app'] };
+        detail.content.definition = { ...await normalizeStoredComposeDefinitionInput(originalDefinitionInput), contentRevision: 4 };
         detail.content.ownServer = { rollout: 'recreate', autoRestorePreviousRelease: true,
             migration: { service: 'app', argv: ['migrate'], pendingCheck: { argv: ['pending'] } },
             migrationFailurePolicy: 'rollbackCodeOnly' };
@@ -81,11 +87,45 @@ describe('opened Environment content preparation', () => {
         expect(JSON.parse(partial!.body!)).toEqual({ ...detail.content,
             ownServer: { ...detail.content.ownServer, autoRestorePreviousRelease: false } });
         expect(created.size).toBe(2);
+        const serviceExports = [{ key: 'database', service: 'app', containerPort: 5432, scheme: 'postgres',
+            exposure: 'privateNetwork' as const, privateNetwork: 'network-a' }];
+        const definition = { from: 'compose' as const,
+            document: 'services: {app: {image: "example/app:1", ports: ["10.0.0.8:5432:5432"]}}',
+            profiles: [], services: ['app'] };
+        expect(await deps.deploymentAction!('deployments.environments.update', { ...input,
+            patch: { ownServer: { serviceExports }, definition } }, {})).toMatchObject({ ok: true });
+        const configured = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => artifacts.read([...created.keys()].at(-1)!, {
+            prepareRecipients: false, includeSharedAudience: false,
+        }));
+        expect(JSON.parse(configured!.body!)).toEqual({ ...detail.content,
+            definition: { ...await normalizeStoredComposeDefinitionInput(definition), contentRevision: 5 },
+            ownServer: { ...detail.content.ownServer, serviceExports } });
+        expect(updates.at(-1)).toMatchObject({ patch: {} });
+        expect(JSON.stringify(updates.at(-1))).not.toContain('10.0.0.8');
+        expect(JSON.stringify(updates.at(-1))).not.toContain('network-a');
+        expect(await deps.deploymentAction!('deployments.environments.update', { ...input,
+            patch: { ownServer: { serviceExports: [] } } }, {})).toMatchObject({ ok: true });
+        const cleared = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => artifacts.read([...created.keys()].at(-1)!, {
+            prepareRecipients: false, includeSharedAudience: false,
+        }));
+        expect(JSON.parse(cleared!.body!).ownServer).toEqual({ ...detail.content.ownServer, serviceExports: [] });
+        expect(created.size).toBe(4);
+        expect(await deps.deploymentAction!('deployments.environments.update', { ...input,
+            patch: { definition: originalDefinitionInput } }, {})).toMatchObject({ ok: true });
+        expect(created.size).toBe(4);
+        expect(updates.at(-1)).toMatchObject({ patch: {} });
+        const updatesBeforeRefusal = updates.length;
+        expect(await deps.deploymentAction!('deployments.environments.update', { ...input,
+            patch: { definition: { ...originalDefinitionInput,
+                document: 'services: {app: {image: "example/app:1", env_file: secrets.env}}' } } }, {}))
+            .toMatchObject({ ok: false, errorCode: 'needs_repository' });
+        expect(updates).toHaveLength(updatesBeforeRefusal);
+        expect(created.size).toBe(4);
         // An unchanged selected setting does not create another private Artifact.
         expect(await deps.deploymentAction!('deployments.environments.update', { ...input,
             patch: { ownServer: { rollout: 'recreate' }, retainPreviousDeployments: detail.content.retainPreviousDeployments } }, {}))
             .toMatchObject({ ok: true });
-        expect(created.size).toBe(2);
+        expect(created.size).toBe(4);
         delete detail.content.ownServer;
         expect(await deps.deploymentAction!('deployments.environments.update', { ...input,
             patch: { ownServer: { autoRestorePreviousRelease: false }, retainPreviousDeployments: 0 } }, {}))
@@ -95,12 +135,32 @@ describe('opened Environment content preparation', () => {
         }));
         expect(JSON.parse(initialized!.body!)).toEqual({ ...detail.content, retainPreviousDeployments: 0,
             ownServer: createOwnServerEnvironmentConfigurationV1({ autoRestorePreviousRelease: false }) });
-        expect(created.size).toBe(3);
-        expect(updates).toHaveLength(4);
+        expect(created.size).toBe(5);
+        const updatesBeforeInvalidCandidate = updates.length;
         expect(await deps.deploymentAction!('deployments.environments.update', { ...input, contentArtifactId: 'unprepared-candidate',
             patch: { ownServer: { rollout: 'startFirst' } } }, {})).toMatchObject({ ok: false, errorCode: 'deployment_invalid' });
-        expect(created.size).toBe(3);
-        expect(updates).toHaveLength(4);
+        expect(created.size).toBe(5);
+        expect(updates).toHaveLength(updatesBeforeInvalidCandidate);
+        detail.content.ownServer = createOwnServerEnvironmentConfigurationV1({ serviceExports: [] });
+        for (const [index, privatePatch] of [
+            { definition: originalDefinitionInput }, { ownServer: { serviceExports: [] } },
+        ].entries()) {
+            const authored = { ...input, patch: privatePatch };
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-private-update', binding: {
+                accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home',
+                machineId: 'controller', installationId: 'installed-controller', actionId: 'deployments.environments.update',
+                environmentId: input.environmentId,
+                requestId: `private-update-${index}`, requestEnvelopeDigest: 'A'.repeat(43),
+                target: { kind: 'machine', machineId: 'controller' }, accountEncryptionMode: mode,
+                deploymentNativeAdmission: projectDeploymentNativeAdmissionV1('deployments.environments.update', authored),
+            } });
+            const prepared = await createPrepareEnvironmentContentForHost(host)({ actionId: 'deployments.environments.update',
+                input: authored, context: { externalActionExecutionAuthorization: authorization } });
+            const id = createDeploymentEnvironmentContentArtifactIdV1({ ...authorization.binding, environmentId: input.environmentId });
+            expect(prepared).toMatchObject({ input: { patch: {}, contentArtifactId: id },
+                authoredInputDigest: expect.any(String) });
+            expect(created.has(id)).toBe(true);
+        }
     });
 
     it.each(['plain', 'e2ee'] as const)('admits only the current definition sub-revision before %s storage through requester custody', async mode => {
@@ -210,7 +270,7 @@ describe('opened Environment content preparation', () => {
             code: 'ERR_BAD_RESPONSE', response: { status: 503 },
         }));
         expect(await prepare(createRequest)).toMatchObject({ ok: false, errorCode: 'ERR_BAD_RESPONSE',
-            failureCause: { httpStatus: 503, errorClass: 'Error', errorCode: null } });
+            failureCause: { httpStatus: 503, errorClass: 'Error', errorCode: 'ERR_BAD_RESPONSE' } });
     });
     it.each(['plain', 'e2ee'] as const)('preserves preview provenance across a normal %s edit and refuses replacement or removal before storage', async mode => {
         const environment = createDeploymentEnvironmentDetailV1();

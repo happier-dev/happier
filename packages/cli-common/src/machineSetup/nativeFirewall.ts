@@ -6,6 +6,8 @@ import type { MachineFirewallRecoveryV1 } from '@happier-dev/protocol/machines/a
 import { MachineSetupEffectError, type MachineRecipeStepV1, type MachineSetupStepObservationV1, type MachineSetupNativeStageV1 } from './index.js';
 import type { NativeRun } from './nativeSystemBackend.js';
 import { nativeSocketSshReader } from './nativeFirewallSshSockets.js';
+import { nativeFirewallTransitionObservationStepId, readNativeFirewallPrivateWorkloads, replaceNativeFirewallPrivateWorkloads } from './nativeFirewallWorkloads.js';
+import type { MachineFirewallPrivateWorkloadBindingsV1 } from '@happier-dev/protocol/machines/setup/machineFirewallV1';
 import { activateNativeFile, assertProtectedNativeTarget, inspectNativeAncestors, inspectNativePath, isMissingNativeFile,
     nativeFileDigest, type NativeFileState } from './nativeFileSafety.js';
 
@@ -83,6 +85,7 @@ type SshEndpoint = { interfaceName: string; hostAddress: string; port: number; s
 /** An optional observation, not another native readiness or admission gate. */
 export type MachineSetupFirewallTransitionFactsV1 = Readonly<{
     status: 'available'; externalInterfaces: string[]; privateInterfaces: PrivateInterface[]; retainedSshEndpoints: SshEndpoint[];
+    privateWorkloadBindings?: MachineFirewallPrivateWorkloadBindingsV1[];
 }> | Readonly<{ status: 'unavailable'; requiredFact: string }>;
 function recoveryData(state: Snapshot): MachineFirewallRecoveryV1 {
     const file = (value: NativeFileState): MachineFirewallRecoveryV1['rules'] => {
@@ -121,7 +124,7 @@ function retainedSources(value: unknown, endpoint: Omit<SshEndpoint, 'sourceCidr
         const rule = record(record(item)?.rule);
         if (!rule || rule.chain !== chain.name) continue;
         if (rule.family !== 'inet' || rule.table !== 'happier' || !Array.isArray(rule.expr)) return null;
-        let applies = true, source: string | undefined, verdict: 'accept' | 'drop' | undefined;
+        let applies = true, destinationDependent = false, source: string | undefined, verdict: 'accept' | 'drop' | undefined;
         for (const raw of rule.expr) {
             const expr = record(raw);
             if (!expr || Object.keys(expr).length !== 1 || verdict) return null;
@@ -151,14 +154,16 @@ function retainedSources(value: unknown, endpoint: Omit<SshEndpoint, 'sourceCidr
                 } else {
                     // A wildcard socket's destination-dependent policy cannot
                     // be collapsed to one source scope without broadening it.
-                    if (endpoint.hostAddress === '0.0.0.0' || endpoint.hostAddress === '::') return null;
-                    matched = typeof match.right === 'string' ? normalizedIp(endpoint.hostAddress) === normalizedIp(match.right) : null;
+                    if (endpoint.hostAddress === '0.0.0.0' || endpoint.hostAddress === '::') {
+                        destinationDependent = true; matched = true;
+                    } else matched = typeof match.right === 'string' ? normalizedIp(endpoint.hostAddress) === normalizedIp(match.right) : null;
                 }
             }
             if (matched === null) return null;
             applies &&= matched;
         }
         if (!applies) continue;
+        if (destinationDependent) return null;
         if (!verdict) return null;
         if (verdict === 'drop') return source ? null : [...new Set(sources)];
         if (!source) return [anySource];
@@ -234,6 +239,19 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
             return result.stdout;
         };
         try {
+            requiredFact = 'privateWorkloadBindings';
+            const privateWorkloadBindings = state.rules.kind === 'file'
+                ? readNativeFirewallPrivateWorkloads(state.rules.bytes!.toString('utf8')) : [];
+            // Only the CHECK-only discovery step selects one Environment over
+            // retained policy. Materialized steps already declare their complete
+            // desired exposures; withdrawn addresses must not be resurrected.
+            const selectedWorkloads = step.id === nativeFirewallTransitionObservationStepId
+                ? readNativeFirewallPrivateWorkloads(step.rules).reduce(
+                    (retained, selected) => replaceNativeFirewallPrivateWorkloads(retained, selected), privateWorkloadBindings)
+                : [];
+            const exposures = [...(step.exposures ?? []), ...selectedWorkloads.flatMap(item => item.bindings.map(binding => binding.exposure))];
+            privateScopeAvailable = !exposures.some(exposure => exposure.exposure === 'privateNetwork');
+            requiredFact = 'kernelRoutes';
             const routes = await Promise.all(['-4', '-6'].map(async family => {
                 const value: unknown = JSON.parse(await output('ip', ['-j', family, 'route', 'show', 'default']));
                 if (!Array.isArray(value)) throw new MachineSetupEffectError('required_fact_unavailable');
@@ -253,7 +271,7 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
             if (externalInterfaces.some(name => !interfaces[name]?.length)) throw new MachineSetupEffectError('required_fact_unavailable');
             requiredFact = 'privateInterfaces';
             const privateInterfaces: PrivateInterface[] = [];
-            for (const exposure of step.exposures ?? []) {
+            for (const exposure of exposures) {
                 if (exposure.exposure !== 'privateNetwork') continue;
                 const address = normalizedIp(exposure.hostAddress);
                 const names = Object.entries(interfaces).filter(([, entries]) => entries?.some(entry =>
@@ -329,7 +347,8 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
                     endpoint.sourceCidrs = sources;
                 }
             }
-            return { fact: { status: 'available', externalInterfaces, privateInterfaces, retainedSshEndpoints }, privateScopeAvailable };
+            return { fact: { status: 'available', externalInterfaces, privateInterfaces, retainedSshEndpoints,
+                ...(privateWorkloadBindings.length ? { privateWorkloadBindings } : {}) }, privateScopeAvailable };
         } catch (error) {
             if (signal?.aborted) throw error;
             return { fact: { status: 'unavailable', requiredFact }, privateScopeAvailable };

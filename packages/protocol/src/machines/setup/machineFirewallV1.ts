@@ -1,19 +1,29 @@
+import '../../zodRuntimePolicy.js';
 import { z } from 'zod';
 import { z as mini } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
+import { PluginJsonSchemaV2Schema, type PluginJsonSchemaV2 } from '../../plugins/contributions/jsonSchema.js';
 
 /** Moved without validation changes from machineRecipeV1. This leaf has no
  * recipe, posture or provider dependency, so both callers share one schema. */
-export const MachineFirewallExposureV1Schema = lazyZodSchema(() => z.object({ requirementId: z.string().min(1), hostAddress: z.union([z.ipv4(), z.ipv6()]),
+const exposureFields = () => ({ requirementId: z.string().min(1), hostAddress: z.union([z.ipv4(), z.ipv6()]),
     hostPort: z.number().int().min(1).max(65535), protocol: z.enum(['tcp', 'udp']),
-    containerPort: z.number().int().min(1).max(65535).optional(), exposure: z.enum(['public', 'privateNetwork', 'loopback']),
-    providerId: z.string().min(1).optional(), networkIdentity: z.string().min(1).optional(),
-}).strict().superRefine((value, context) => {
-    if (value.exposure === 'privateNetwork' ? !value.providerId || !value.networkIdentity
-        : value.providerId !== undefined || value.networkIdentity !== undefined) {
-        context.addIssue({ code: 'custom', message: 'Only private exposure carries its exact provider/network identity' });
-    }
-}));
+    containerPort: z.number().int().min(1).max(65535).optional() });
+const privateExposure = () => z.object({ ...exposureFields(), exposure: z.literal('privateNetwork'),
+  providerId: z.string().min(1), networkIdentity: z.string().min(1) }).strict();
+export const MachineFirewallExposureV1Schema = lazyZodSchema(() => {
+  return z.union([
+    privateExposure(),
+    z.object({ ...exposureFields(), exposure: z.enum(['public', 'loopback']),
+      providerId: z.never().optional(), networkIdentity: z.never().optional() }).strict(),
+  ]);
+});
+
+/** The same closed exposure grammar for cold recipe input declarations. */
+export function getMachineFirewallExposureInputSchemaV1(): PluginJsonSchemaV2 {
+  return PluginJsonSchemaV2Schema.parse(zodSchemaToJsonSchemaObject(MachineFirewallExposureV1Schema, { target: 'draft-7' }));
+}
 
 /** Moved without validation changes from machineReachabilityPostureV1. */
 export const MachinePublicSshV1Schema = lazyZodSchema(() => mini.discriminatedUnion('kind', [
@@ -33,6 +43,17 @@ export const MachineFirewallTransitionBindingsV1Schema = lazyZodSchema(() => z.o
 }).strict());
 export type MachineFirewallTransitionBindingsV1 = z.infer<typeof MachineFirewallTransitionBindingsV1Schema>;
 
+/** An explicit private publication for one Environment. The native writer
+ * retains other Environments; an empty list withdraws this Environment's permits. */
+export const MachineFirewallPrivateWorkloadBindingsV1Schema = lazyZodSchema(() => z.object({
+  environmentId: z.string().min(1),
+  bindings: z.array(z.object({
+    exposure: privateExposure(),
+    interfaceName: z.string().min(1), sourceRanges: z.array(z.union([z.cidrv4(), z.cidrv6()])),
+  }).strict()),
+}).strict());
+export type MachineFirewallPrivateWorkloadBindingsV1 = z.infer<typeof MachineFirewallPrivateWorkloadBindingsV1Schema>;
+
 /** Reviewed SSH transition versus Domain reconciliation:
  * A retains every observed SSH endpoint exactly. preserveSsh keeps those same
  * scopes in FINAL, regardless of the declared posture. Only retainSsh
@@ -42,6 +63,7 @@ export type MachineFirewallTransitionBindingsV1 = z.infer<typeof MachineFirewall
 export const MachineFirewallTransitionIntentV1Schema = lazyZodSchema(() => mini.strictObject({
   v: mini.literal(1), kind: mini.enum(['retainSsh', 'preserveSsh']),
   caddy: MachineFirewallTransitionBindingsV1Schema,
+  privateWorkloadBindings: mini.optional(MachineFirewallPrivateWorkloadBindingsV1Schema),
   publicSsh: MachinePublicSshV1Schema,
 }));
 export type MachineFirewallTransitionIntentV1 = mini.infer<typeof MachineFirewallTransitionIntentV1Schema>;
@@ -58,6 +80,7 @@ export const MachineFirewallTransitionFactsV1Schema = lazyZodSchema(() => {
     z.object({ status: z.literal('available'), ownedTable: z.enum(['absent', 'present']), externalInterfaces: z.array(name),
       privateInterfaces: z.array(z.object({ providerId: name, networkIdentity: name, hostAddress: address, interfaceName: name }).strict()),
       retainedSshEndpoints: z.array(endpoint),
+      privateWorkloadBindings: z.array(MachineFirewallPrivateWorkloadBindingsV1Schema).optional(),
     }).strict(),
     z.object({ status: z.literal('unavailable'), requiredFact: name, remedy: name.optional() }).strict(),
   ]);

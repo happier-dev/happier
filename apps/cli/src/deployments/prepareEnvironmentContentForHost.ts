@@ -12,7 +12,7 @@ import { readDeploymentEnvironmentArtifactV1, resolveDeploymentStoredDefinitionR
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';
-import { admitStoredComposeDefinition } from '@/workspaces/projectSetup/nativeComposeSource';
+import { admitStoredComposeDefinition, normalizeStoredComposeDefinitionInput } from '@/workspaces/projectSetup/nativeComposeSource';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -100,7 +100,12 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                     }),
                 });
             }
+            const updateInput = request.actionId === 'deployments.environments.update' && 'environmentId' in request.input
+                ? request.input : undefined;
+            const storagePatch = updateInput ? omitDeploymentEnvironmentPrivateContentPatchV1(updateInput.patch ?? {}) : undefined;
+            const hasPrivatePatch = updateInput !== undefined && !isDeepStrictEqual(updateInput.patch ?? {}, storagePatch);
             let previousDefinition: DeploymentEnvironmentDefinitionV1 | undefined;
+            const definitionInput = updateInput?.patch?.definition;
             let preparedContent: Readonly<{ input: DeploymentEnvironmentUpdateInputV1;
                 owner: Awaited<ReturnType<typeof readMetadata>>['environment']['owner'] }> | undefined;
             if (request.actionId === 'deployments.environments.update' && 'environmentId' in request.input) {
@@ -123,6 +128,17 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                     candidate = { ...candidate, content: { ...previous.content, ingress: desiredIngress } };
                     preparedContent = { input: request.input, owner: loaded.environment.owner };
                 }
+                if (definitionInput !== undefined) {
+                    if (!currentReference) return { ok: false, errorCode: 'deployment_invalid', error: 'deployment_invalid' };
+                    const definition = await normalizeStoredComposeDefinitionInput(definitionInput);
+                    const contentRevision = resolveDeploymentStoredDefinitionRevisionV1(previousDefinition, definition);
+                    if (contentRevision === null) return { ok: false, errorCode: 'deployment_conflict', error: 'deployment_conflict' };
+                    const desiredDefinition = { ...definition, contentRevision };
+                    if (!isDeepStrictEqual(candidate.content.definition, desiredDefinition)) {
+                        candidate = { ...candidate, content: { ...candidate.content, definition: desiredDefinition } };
+                        preparedContent = { input: request.input, owner: loaded.environment.owner };
+                    }
+                }
                 const retention = request.input.patch?.backupRetention;
                 let desiredBackup = previous.content.backup;
                 const backup = request.input.patch?.backup;
@@ -141,11 +157,6 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                             bindings: previous.content.bindings });
                         if (!prepared.ok) return { ok: false, errorCode: prepared.code, error: prepared.code };
                         desiredBackup = prepared.configuration;
-                        // Signed authoring publishes the invocation's derived private Artifact,
-                        // even when its content matches the current configuration.
-                        if (request.context.externalActionExecutionAuthorization) {
-                            preparedContent = { input: request.input, owner: loaded.environment.owner };
-                        }
                     } finally { await lease.release(); }
                 }
                 if (retention) {
@@ -160,9 +171,9 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                         preparedContent = { input: request.input, owner: loaded.environment.owner };
                     }
                 }
-                const releasePolicy = request.input.patch?.ownServer;
-                if (releasePolicy) {
-                    const selectedPolicy = Object.fromEntries(Object.entries(releasePolicy).filter(([, value]) => value !== undefined));
+                const ownServerPatch = request.input.patch?.ownServer;
+                if (ownServerPatch) {
+                    const selectedPolicy = Object.fromEntries(Object.entries(ownServerPatch).filter(([, value]) => value !== undefined));
                     const desiredOwnServer = previous.content.ownServer
                         ? { ...previous.content.ownServer, ...selectedPolicy }
                         : Object.keys(selectedPolicy).length > 0 ? createOwnServerEnvironmentConfigurationV1(selectedPolicy) : undefined;
@@ -191,16 +202,21 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                     || !isDeepStrictEqual(desiredBackup, candidate.content.backup)
                     || !isDeepStrictEqual(previous.content.bindings, candidate.content.bindings))
                     return { ok: false, errorCode: 'deployment_invalid', error: 'deployment_invalid' };
+                // Signed private authoring must publish its invocation's Artifact,
+                // including when the selected content is already current.
+                if (request.context.externalActionExecutionAuthorization && hasPrivatePatch) {
+                    preparedContent = { input: request.input, owner: loaded.environment.owner };
+                }
             }
-            if (candidate.content.definition.kind === 'stored') {
+            // Authored source already passed the same admission and revision owners above.
+            if (candidate.content.definition.kind === 'stored' && definitionInput === undefined) {
                 if (candidate.content.definition.contentRevision !== resolveDeploymentStoredDefinitionRevisionV1(previousDefinition, candidate.content.definition)) {
                     return { ok: false, errorCode: 'deployment_conflict', error: 'deployment_conflict' };
                 }
                 await admitStoredComposeDefinition(candidate.content.definition);
             }
             request.context.signal?.throwIfAborted();
-            let preparedInput = request.actionId === 'deployments.environments.update' && 'environmentId' in request.input
-                && request.input.patch?.backup !== undefined ? request.input : undefined;
+            let preparedInput = hasPrivatePatch ? updateInput : undefined;
             const binding = request.context.externalActionExecutionAuthorization?.binding;
             const native = binding?.deploymentNativeAdmission;
             if (preparedContent) {
@@ -228,8 +244,7 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                     contentHeaderVersion: created.revision.headerVersion, contentBodyVersion: created.revision.bodyVersion };
             }
             if (preparedInput) {
-                const storagePatch = omitDeploymentEnvironmentPrivateContentPatchV1(preparedInput.patch ?? {});
-                return { input: { ...preparedInput, patch: storagePatch },
+                return { input: { ...preparedInput, patch: storagePatch ?? {} },
                     ...(isDeploymentEnvironmentUpdateNativeAdmissionV1(native) ? { authoredInputDigest: native.inputDigest } : {}) };
             }
             return null;

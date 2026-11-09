@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { DeploymentEnvironmentCapabilitiesV1Schema, DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentEnvironmentOwnerV1Schema, DeploymentIngressV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, DeploymentRepositoryComposeV1Schema, DeploymentPendingDeployV1Schema, OwnServerEnvironmentReleasePolicyV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, DeploymentRepositoryComposeV1Schema, DeploymentPendingDeployV1Schema, OwnServerEnvironmentReleasePolicyV1Schema, DeploymentServiceExportsV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
 import { hasCompleteDeploymentPreviewRelationV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
@@ -50,22 +50,13 @@ export function resolveDeploymentStoredDefinitionRevisionV1(
 
 const migrationArgv = z.array(z.string()).check(z.minLength(1),
     z.refine(argv => (argv[0]?.trim().length ?? 0) > 0, { message: 'A migration command requires an executable.' }));
-const serviceExport = z.strictObject({
-    key: text, service: text, containerPort: z.number().check(z.int(), z.minimum(1), z.maximum(65535)),
-    scheme: z.string().check(z.regex(/^[a-z][a-z0-9+.-]*$/iu)),
-    exposure: z.enum(['public', 'privateNetwork', 'loopback']), privateNetwork: z.optional(text),
-}).check(z.refine(value => value.exposure === 'privateNetwork'
-    ? value.privateNetwork !== undefined : value.privateNetwork === undefined,
-{ message: 'Only a private export names its exact observed private network.' }));
 export const OwnServerEnvironmentConfigurationV1Schema = z.strictObject({
     ...OwnServerEnvironmentReleasePolicyV1Schema.shape,
     migration: z.optional(z.strictObject({ service: text, argv: migrationArgv,
         pendingCheck: z.optional(z.strictObject({ argv: migrationArgv })) })),
     backupBeforeMigration: z.optional(z.boolean()),
     migrationFailurePolicy: z.optional(z.enum(['ask', 'restoreBackupAndRollbackCode', 'rollbackCodeOnly'])),
-    serviceExports: z.optional(z.array(serviceExport).check(z.refine(exports =>
-        new Set(exports.map(value => value.key)).size === exports.length,
-    { message: 'Service export keys must be unique.' }))),
+    serviceExports: z.optional(DeploymentServiceExportsV1Schema),
 });
 export type OwnServerEnvironmentConfigurationV1 = z.infer<typeof OwnServerEnvironmentConfigurationV1Schema>;
 

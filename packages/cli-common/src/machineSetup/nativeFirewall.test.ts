@@ -388,7 +388,10 @@ describe('native owned firewall', () => {
             await expect(f.fs.lstat(f.disk(rulesPath))).rejects.toMatchObject({ code: 'ENOENT' });
         });
 
-    it('retains the source restriction proved by the existing owned native policy, not a listener-derived global allow', async () => {
+    it.each([
+        { label: 'set expression', states: { set: ['established', 'related'] } },
+        { label: 'nft 1.1.6 list expression', states: ['established', 'related'] },
+    ])('retains the source restriction proved by the existing owned native policy with $label, not a listener-derived global allow', async ({ states }) => {
         const f = await fixture();
         const original = MachineRecipeStepV1Schema.parse({ ...f.step,
             rules: rules.replace('ct state new drop', 'iifname "ens18" ip saddr 198.51.100.0/24 tcp dport 2205 accept\n    ct state new drop') });
@@ -398,9 +401,17 @@ describe('native owned firewall', () => {
             { table: { family: 'inet', name: 'happier' } },
             { chain: { family: 'inet', table: 'happier', name: 'input', type: 'filter', hook: 'input', prio: -10, policy: 'accept' } },
             { rule: { family: 'inet', table: 'happier', chain: 'input', expr: [
-                { match: { op: 'in', left: { ct: { key: 'state' } }, right: { set: ['established', 'related'] } } }, { accept: null },
+                { match: { op: 'in', left: { ct: { key: 'state' } }, right: states } }, { accept: null },
             ] } },
             { rule: { family: 'inet', table: 'happier', chain: 'input', expr: [{ match: { op: '==', left: { meta: { key: 'iifname' } }, right: 'lo' } }, { accept: null }] } },
+            // A real published database INPUT permit precedes SSH. Its concrete
+            // destination must not make a different-port wildcard SSH policy unknowable.
+            { rule: { family: 'inet', table: 'happier', chain: 'input', expr: [
+                { match: { op: '==', left: { meta: { key: 'iifname' } }, right: 'tun42' } },
+                { match: { op: '==', left: { payload: { protocol: 'ip', field: 'saddr' } }, right: { prefix: { addr: '100.96.0.0', len: 16 } } } },
+                { match: { op: '==', left: { payload: { protocol: 'ip', field: 'daddr' } }, right: '100.96.0.4' } },
+                { match: { op: '==', left: { payload: { protocol: 'tcp', field: 'dport' } }, right: 25432 } }, { accept: null },
+            ] } },
             { rule: { family: 'inet', table: 'happier', chain: 'input', expr: [
                 { match: { op: '==', left: { meta: { key: 'iifname' } }, right: 'ens18' } },
                 { match: { op: '==', left: { payload: { protocol: 'ip', field: 'saddr' } }, right: { prefix: { addr: '198.51.100.0', len: 24 } } } },
@@ -677,6 +688,81 @@ function boundedTransitionIntent(publicSsh: { kind: 'closed' } | { kind: 'open';
 }
 
 describe('native firewall bounded transition owner', () => {
+  it('keeps reviewed private database publications alongside Caddy through a later Domain reconciliation', async () => {
+    const f = await fixture();
+    const base = boundedTransitionIntent({ kind: 'closed' });
+    const publication = { environmentId: 'data-environment', bindings: [{
+      exposure: { requirementId: 'database', hostAddress: '100.96.0.4', hostPort: 25432,
+        containerPort: 5432, protocol: 'tcp', exposure: 'privateNetwork',
+        providerId: 'selected-provider', networkIdentity: 'selected-network' },
+      interfaceName: 'tun42', sourceRanges: ['100.96.0.0/16'],
+    }] };
+    const publish = MachineFirewallTransitionIntentV1Schema.parse({ ...base, privateWorkloadBindings: publication });
+    const apply = async (intent: typeof base) => {
+      const facts = readMachineFirewallTransitionFactsV1(await f.backend.observe(createMachineFirewallTransitionObservationStepV1(intent)));
+      const lowered = materializeMachineFirewallTransitionV1(intent, facts);
+      if (lowered.status !== 'ready') throw new Error(`Unexpected publication transition ${lowered.reason}`);
+      const plans = await Promise.all(lowered.steps.map(async step => ({ plan: await checkMachineSetupEffectPlan({ basis, steps: [step], backend: f.backend }) })));
+      expect((await applyMachineSetupEffectPlans({ plans, backend: f.backend,
+        onStaged: async staged => staged.planIndex === 0 ? 'continue' : 'commit' })).status).toBe('applied');
+      return lowered;
+    };
+    await apply(publish);
+    const domain = MachineFirewallTransitionIntentV1Schema.parse({ ...base, kind: 'preserveSsh' });
+    const reconciled = await apply(domain);
+    const table = f.readEffectiveTable()!;
+    expect(table).toContain('iifname "tun42" ip saddr 100.96.0.0/16 ip daddr 100.96.0.4 tcp dport 25432 accept');
+    expect(table).toContain('iifname "tun42" ip saddr 100.96.0.0/16 meta l4proto tcp ct original ip daddr 100.96.0.4 ct original proto-dst 25432 accept');
+    expect(table).toContain('tcp dport 18080 accept');
+    expect(table).toContain('tcp dport 443 accept');
+    expect(table).toContain('ct state new ct direction original ct status dnat drop');
+    expect(reconciled.steps[1].exposures).toEqual(expect.arrayContaining([publication.bindings[0]!.exposure]));
+    await apply(MachineFirewallTransitionIntentV1Schema.parse({ ...base,
+      privateWorkloadBindings: { environmentId: 'another-data-environment', bindings: [{ ...publication.bindings[0],
+        exposure: { ...publication.bindings[0]!.exposure, requirementId: 'cache', hostPort: 26379, containerPort: 6379 } }] } }));
+    await apply(MachineFirewallTransitionIntentV1Schema.parse({ ...base,
+      privateWorkloadBindings: { environmentId: publication.environmentId, bindings: [] } }));
+    expect(f.readEffectiveTable()).not.toContain('tcp dport 25432 accept');
+    expect(f.readEffectiveTable()).toContain('tcp dport 26379 accept');
+  });
+
+  it('refuses public workload bindings at the privileged declaration boundary', () => {
+    const intent = boundedTransitionIntent({ kind: 'closed' });
+    expect(MachineFirewallTransitionIntentV1Schema.safeParse({ ...intent,
+      privateWorkloadBindings: { environmentId: 'data-environment', bindings: [{
+        exposure: intent.caddy.publicBindings![0], interfaceName: 'ens18', sourceRanges: ['0.0.0.0/0'],
+      }] } }).success).toBe(false);
+  });
+
+  it('can explicitly withdraw an Environment publication after its private address disappears', async () => {
+    const f = await fixture();
+    const base = boundedTransitionIntent({ kind: 'closed' });
+    const intent = MachineFirewallTransitionIntentV1Schema.parse({ ...base, caddy: {},
+      privateWorkloadBindings: { environmentId: 'data-environment', bindings: [{
+        exposure: { requirementId: 'database', hostAddress: '100.96.0.4', hostPort: 25432,
+          containerPort: 5432, protocol: 'tcp', exposure: 'privateNetwork',
+          providerId: 'selected-provider', networkIdentity: 'selected-network' },
+        interfaceName: 'tun42', sourceRanges: ['100.96.0.0/16'],
+      }] } });
+    const facts = readMachineFirewallTransitionFactsV1(await f.backend.observe(createMachineFirewallTransitionObservationStepV1(intent)));
+    const first = materializeMachineFirewallTransitionV1(intent, facts);
+    if (first.status !== 'ready') throw new Error('Missing initial publication');
+    await f.backend.apply(first.steps[1]);
+    f.setNetwork({ interfaces: { ens18: [nativeInterface('10.10.0.4')] } });
+    const withdrawal = MachineFirewallTransitionIntentV1Schema.parse({ ...intent,
+      privateWorkloadBindings: { environmentId: 'data-environment', bindings: [] } });
+    const afterDrift = readMachineFirewallTransitionFactsV1(await f.backend.observe(createMachineFirewallTransitionObservationStepV1(withdrawal)));
+    const withdrawn = materializeMachineFirewallTransitionV1(withdrawal, afterDrift);
+    expect(withdrawn.status).toBe('ready');
+    if (withdrawn.status !== 'ready') throw new Error('Explicit removal must not require the removed private interface');
+    const plans = await Promise.all(withdrawn.steps.map(async step => ({
+      plan: await checkMachineSetupEffectPlan({ basis, steps: [step], backend: f.backend }),
+    })));
+    expect((await applyMachineSetupEffectPlans({ plans, backend: f.backend,
+      onStaged: async staged => staged.planIndex === 0 ? 'continue' : 'commit' })).status).toBe('applied');
+    expect(f.readEffectiveTable()).not.toContain('25432');
+  });
+
   it.each([
     { family: 'IPv4', ip: 'ip', nfproto: 'ipv4', wildcard: '0.0.0.0', address: '100.96.0.4', source: '100.96.0.0/16' },
     { family: 'IPv6', ip: 'ip6', nfproto: 'ipv6', wildcard: '::', address: 'fd00::4', source: 'fd00::/64' },
