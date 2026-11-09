@@ -73,7 +73,11 @@ Profiles are opt-in in the app UI.
 2. Turn on **Profiles**
 3. Open **Settings → Profiles**
 
-If Profiles is turned off, the app falls back to the machine environment without profile selection.
+If Profiles is turned off, an ordinary new Session uses the machine environment
+and does not restore an implicitly remembered Profile. In **unreleased 0.3
+development source**, a Profile explicitly supplied by a configured action is
+still applied. That action’s composer also lets you choose or change its Profile
+without changing the general Profiles preference.
 
 ## Create a profile in the app
 
