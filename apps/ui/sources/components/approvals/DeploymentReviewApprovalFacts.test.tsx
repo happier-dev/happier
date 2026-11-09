@@ -61,6 +61,28 @@ describe('DeploymentReviewApprovalFacts', () => {
     expect(unchanged.findHostByTestId('unchanged.risks')).toBeNull();
   });
 
+  it('says a redeploy of the running version as that, not "replaces" itself (PAGE-ACCEPT-100 D10)', async () => {
+    const revision = { kind: 'stored' as const, contentRevision: 2 };
+    const screen = await renderScreen(
+      <DeploymentReviewApprovalFacts approval={{ review: { ...machineReview, risks: [], revision, replaces: { revision } } as never, promotion: null }}
+        serverId={getActiveServerSnapshot().serverId} testID="same" />,
+    );
+    const text = screen.getTextContent();
+    expect(text).toContain('projects.deployments.review.replacesSame');
+    expect(text).not.toContain('projects.deployments.review.replacesNote');
+  });
+
+  it('stops asking to check once the request is decided, and keeps what it flagged (PAGE-ACCEPT-100 D10)', async () => {
+    const screen = await renderScreen(
+      <DeploymentReviewApprovalFacts approval={{ review: machineReview, promotion: null }} decided
+        serverId={getActiveServerSnapshot().serverId} testID="decided" />,
+    );
+    const text = screen.getTextContent();
+    expect(text).toContain('projects.deployments.review.risksNotedTitle');
+    expect(text).not.toContain('projects.deployments.review.risksTitle');
+    expect(text).toContain('projects.deployments.review.risk.privileged');
+  });
+
   it('shows the selected deployment failure policy independently of migration recovery', async () => {
     const screen = await renderScreen(
       <DeploymentReviewApprovalFacts approval={{ review: { ...machineReview, onFailure: 'keepPartial',
