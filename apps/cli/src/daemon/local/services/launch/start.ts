@@ -110,6 +110,21 @@ function targetScopeDenial(
     return null;
 }
 
+/** Complete a published selection; declaration admission still reads authoritative workspace files. */
+export function completeLocalServiceLauncherStartRequest(
+    request: DaemonLocalServiceLauncherStartRequestV1,
+    snapshot: LocalServiceLauncherSnapshotV1,
+): DaemonLocalServiceLauncherStartRequestV1 {
+    if (request.workspace && request.declaration) return request;
+    if (snapshot.machineId !== request.machineId) return request;
+    const target = snapshot.targets.find(candidate => candidate.id === request.targetId);
+    if (!target || targetScopeDenial(target, request)) return request;
+    return { ...request,
+        ...(request.workspace === undefined && target.workspace ? { workspace: target.workspace } : {}),
+        ...(request.declaration === undefined && target.declaration ? { declaration: target.declaration } : {}),
+    };
+}
+
 async function readSnapshot(
     input: Pick<CreateLocalServiceLauncherStartTargetInput, 'feed' | 'now'>,
     request: DaemonLocalServiceLauncherStartRequestV1,
@@ -165,12 +180,17 @@ export function createLocalServiceLauncherStartTarget<TDeclaration = unknown>(
                 requestId: actionContext?.actionRequestId, machineId: request.machineId, targetId: request.targetId,
                 durationMs: Math.round(performance.now() - startedAt) }); }
         };
-        const exactDeclaration = request.workspace !== undefined && request.declaration !== undefined;
-        const snapshotResult = await phase('launcher_snapshot', () => readSnapshot({ feed: input.feed, now }, request, undefined, exactDeclaration));
+        const suppliedDeclaration = request.workspace !== undefined && request.declaration !== undefined;
+        // Start consumes the target already published by discovery. Re-discovering
+        // every Machine package here adds no execution authority; the declaration
+        // owner freshly admits the selected workspace and manifest below.
+        const snapshotResult = await phase('launcher_snapshot', () => readSnapshot({ feed: input.feed, now }, request, undefined, suppliedDeclaration, request.workspace === undefined));
         if (!snapshotResult.ok) {
             return snapshotResult.response;
         }
         const snapshot = snapshotResult.snapshot;
+        request = completeLocalServiceLauncherStartRequest(request, snapshot);
+        const exactDeclaration = request.workspace !== undefined && request.declaration !== undefined;
         const respond = async (value: Parameters<typeof response>[0]) => {
             if (!exactDeclaration) return response(value);
             // Action responses are published as complete launcher snapshots by

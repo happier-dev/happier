@@ -322,7 +322,7 @@ export async function prepareApprovalRequest(params: Readonly<{
       summary: buildApprovalSummary(spec, deployment.input, deployment.preview), deploymentReview: deployment.preview,
       ...(params.hostReviewedChildren ? { hostReviewedChildren: params.hostReviewedChildren } : {}) } };
   }
-  if (params.actionId === 'localServices.launcher.start' && readRecord(params.input).declaration !== undefined) {
+  if (params.actionId === 'localServices.launcher.start') {
     const input = DaemonLocalServiceLauncherStartRequestV1Schema.safeParse(params.input);
     if (!input.success || !params.deps.prepareLocalServiceStartApproval) return null;
     const prepared = await params.deps.prepareLocalServiceStartApproval({ input: input.data, context: params.context,
@@ -330,9 +330,12 @@ export async function prepareApprovalRequest(params: Readonly<{
     const failure = readActionFailureEnvelope(prepared);
     if (failure) return failure;
     const review = LocalServiceStartApprovalReviewV1Schema.safeParse(prepared);
-    if (!review.success || !sameStrictJsonValue(review.data.request, input.data)) return null;
-    return { actionArgs: params.actionArgs, preview: { actionId: params.actionId, actionArgs: params.input,
-      summary: buildApprovalPreviewSummary(spec, params.input), serviceStartReview: review.data } };
+    // The launcher may fill omitted workspace/declaration operands from its
+    // published target. It must preserve every operand supplied by the caller;
+    // approval and replay bind the completed request and the reviewed effect.
+    if (!review.success || !sameStrictJsonValue(review.data.request, { ...review.data.request, ...input.data })) return null;
+    return { actionArgs: review.data.request, preview: { actionId: params.actionId, actionArgs: review.data.request,
+      summary: buildApprovalPreviewSummary(spec, review.data.request), serviceStartReview: review.data } };
   }
   let computerApprovalDisplay = params.computerApprovalDisplay;
   if (!computerApprovalDisplay && (params.actionId === 'computer.target.select'

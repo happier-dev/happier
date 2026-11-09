@@ -5,6 +5,7 @@ import type { ActionOperationStore } from '@/daemon/actionOperations/actionOpera
 import type { LocalServiceLauncherFeed, LocalServiceLauncherFeedSnapshotRequest } from './feed';
 import type { LocalServiceLauncherLeafRoutes } from './leaves';
 import {
+    completeLocalServiceLauncherStartRequest,
     createLocalServiceLauncherStartTarget,
     type CreateLocalServiceLauncherStartTargetInput,
     type LocalServiceLauncherStartTarget,
@@ -37,12 +38,21 @@ export function createLocalServiceLauncherRoutes<TDeclaration = unknown>(input: 
         ...(input.startManagedDeclaration ? { startManagedDeclaration: input.startManagedDeclaration } : {}),
         ...(input.now ? { now: input.now } : {}),
     });
+    const prepareStartApproval: LocalServiceLauncherRoutes['prepareStartApproval'] = input.prepareStartApproval
+        ? async (request, ingress, context, executeCanonicalAction) => {
+            const complete = request.workspace && request.declaration ? request
+                : completeLocalServiceLauncherStartRequest(request, await input.feed.getSnapshot({
+                    ...(request.workspace ? { workspaceRoot: request.workspace.rootPath } : { discovery: 'cached' as const }),
+                    ...(request.sessionId ? { sessionId: request.sessionId } : {}),
+                }));
+            return input.prepareStartApproval!(complete, ingress, context, executeCanonicalAction);
+        } : undefined;
     return {
         async getSnapshot(request) {
             return await input.feed.getSnapshot(request);
         },
         startTarget,
-        ...(input.prepareStartApproval ? { prepareStartApproval: input.prepareStartApproval } : {}),
+        ...(prepareStartApproval ? { prepareStartApproval } : {}),
         ...(input.leaves ? { leaves: input.leaves } : {}),
         ...(input.bindStartOperations ? { bindStartOperations: input.bindStartOperations } : {}),
     };

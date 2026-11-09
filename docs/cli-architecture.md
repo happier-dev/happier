@@ -2361,6 +2361,14 @@ effect is not a setup-trust grant. Restart reviews the current declaration befor
 Stop and then uses the independent full Start Action; it never replays captured
 argv after a changed declaration or treats failed replacement as rollback.
 
+Launcher Start completes omitted Workspace address and declaration operands from
+the target already published by the launcher snapshot, through the same request
+completion owner for agent approval and direct execution. Caller-supplied operands
+are preserved. Approval binds the completed request and its reviewed effect. Start
+does not rediscover unrelated Machine packages; the declaration owner still reads
+the selected accepted workspace and current declaration. After daemon observation
+is lost, clients refresh the launcher snapshot before selecting a target again.
+
 Approval preparation and Start each admit the receiving requester once. The
 selected declaration carries that request's runtime through its finite preparation;
 passive reads and effect reviews keep local cancellation without repeating Machine

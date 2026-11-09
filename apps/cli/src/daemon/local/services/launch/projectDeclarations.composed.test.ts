@@ -11,6 +11,7 @@ import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/r
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { chmod, copyFile, cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import * as filesystem from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -827,6 +828,70 @@ describe('accepted Project Service declaration starter', () => {
             mintSourceEpoch(value: number) { mintedEpoch = value; },
             retireRegistryProjection() { projectionLifetime.abort(); } };
     }
+
+    it('starts a snapshot declaration from agent operands through reviewed approval and execution', async () => {
+        const f = await fixture();
+        await f.routes.getSnapshot({ workspaceRoot: f.root });
+        const request = { machineId: f.request.machineId, targetId: f.request.targetId, workspaceId: f.workspace.id };
+        const prepared = await f.routes.prepareStartApproval!(request, f.ingress, f.context);
+        expect(prepared).toMatchObject({ request: { ...request, workspace: f.request.workspace, declaration: f.request.declaration } });
+        const review = LocalServiceStartApprovalReviewV1Schema.parse(prepared);
+        const started = await f.routes.startTarget!(request, f.ingress, { ...f.context, nativeServiceStartApproval: review });
+        expect(started).toMatchObject({ status: 'succeeded', currentTarget: { workspaceId: f.workspace.id } });
+        expect(f.owner.listProjectServices()[0]?.snapshot().state).toBe('running');
+    });
+
+    it('prepares an agent-shaped Service Action with the resolved declaration in its approval', async () => {
+        const f = await fixture();
+        await f.routes.getSnapshot({ workspaceRoot: f.root });
+        let artifact: ReturnType<typeof ApprovalRequestV2Schema.parse> | undefined;
+        const executor = createActionExecutor({ ...createCliActionDeps({ token: f.runtime.credentials!.token,
+            credentials: f.runtime.credentials!, serverId: 'home', serverHttpBaseUrl: 'https://home.example',
+            sessionId: '', mode: 'plain', ctx: null }),
+            prepareLocalServiceStartApproval: ({ input, context, executeCanonicalAction }) =>
+                f.routes.prepareStartApproval!(input, f.ingress, context, executeCanonicalAction),
+            runtimeActionExecute: await f.createRuntimeActionExecutor(),
+            // Artifact persistence is the boundary; request completion and approval stay real.
+            approvalsCreate: async ({ request }) => { artifact = ApprovalRequestV2Schema.parse(request); return { artifactId: 'agent-service' }; },
+            approvalsGet: async () => artifact ?? null,
+            approvalsUpdate: async ({ request }) => { artifact = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+            isApprovalExecutionOriginCurrent: async () => true,
+        });
+        const request = { machineId: f.request.machineId, targetId: f.request.targetId, workspaceId: f.workspace.id };
+        const context = { surface: 'agent' as const, authority: 'account_automation' as const, serverId: 'home',
+            runtimeAccountId: 'owner', actionRequestId: 'agent-service-review', actionsSettings: f.context.actionsSettings };
+        expect(await executor.execute('localServices.launcher.start', request, context))
+            .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+        const complete = { ...request, workspace: f.request.workspace, declaration: f.request.declaration };
+        expect(artifact).toMatchObject({ actionArgs: complete, preview: { serviceStartReview: { request: complete } } });
+        expect(await executor.execute('approval.request.decide', { artifactId: 'agent-service', decision: 'approve' },
+            { ...context, surface: 'cli', authority: 'present_user' }))
+            .toMatchObject({ ok: true });
+        expect(artifact?.execution).toMatchObject({ ok: true, result: { status: 'succeeded' } });
+        expect(f.owner.listProjectServices()[0]?.snapshot().state).toBe('running');
+    });
+
+    it('starts a selected declaration without traversing unrelated package trees', async () => {
+        const f = await fixture();
+        const unrelated = await mkdtemp(join(tmpdir(), 'happier-unrelated-service-'));
+        cleanups.push(() => rm(unrelated, { recursive: true, force: true }));
+        await mkdir(join(unrelated, 'child'));
+        await writeFile(join(unrelated, 'child/package.json'), JSON.stringify({ name: 'unrelated', scripts: { dev: 'vite' } }));
+        const feed = createLocalServiceLauncherFeed({ machineId: f.request.machineId, history: f.history,
+            inventoryRegistry: createLocalServiceInventoryRegistry(), previewRegistry: createLocalServicePreviewRegistry(),
+            projectManagedServices: f.owner,
+            runTargets: (roots, options) => discoverLocalServiceRunTargets({ roots: roots ?? [f.root, unrelated],
+                acceptedWorkspaceRefs: [f.workspace], ...options }) });
+        const routes = createLocalServiceLauncherRoutes({ feed, history: f.history, ...f.starter });
+        await routes.getSnapshot({ workspaceRoot: f.root });
+        const review = await f.selectStart();
+        const reads = vi.spyOn(filesystem, 'readdir');
+        const started = await routes.startTarget!({ machineId: f.request.machineId, targetId: f.request.targetId,
+            workspaceId: f.workspace.id, expectedEffectDigest: review.reviewedEffectDigest }, f.ingress, f.context);
+        expect(reads.mock.calls.filter(([path]) => String(path).startsWith(unrelated))).toHaveLength(0);
+        expect(started.status).toBe('succeeded');
+        expect(f.owner.listProjectServices()[0]?.snapshot().state).toBe('running');
+    });
 
     it('retains admitted primary execution from the real starter through the installed Move route', async () => {
         const f = await fixture();
