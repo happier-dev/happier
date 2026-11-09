@@ -159,7 +159,8 @@ export function createPeerTcpTunnelSubstreamMuxSession(input: Readonly<{
             return { ok: false, reasonCode: 'substream_id_already_open', substreamId };
         }
         if (
-            activeSubstreams.size + pendingSubstreams.size >= input.caps.maxConcurrentSubstreams
+            (input.caps.maxConcurrentSubstreams !== undefined
+                && activeSubstreams.size + pendingSubstreams.size >= input.caps.maxConcurrentSubstreams)
             || (input.caps.maxTotalSubstreams !== undefined && totalOpenedSubstreams + pendingSubstreams.size >= input.caps.maxTotalSubstreams)
         ) {
             await sendSubstreamAbort(substreamId, 'substream_cap_exceeded');

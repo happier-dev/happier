@@ -29,7 +29,7 @@ export function createPeerTcpTunnelApplicationSubstreamSession(input: Readonly<{
     maxFrameBytes: number;
     maxBytesPerSubstream?: number;
     maxAggregateBytes?: number;
-    maxConcurrentSubstreams: number;
+    maxConcurrentSubstreams?: number;
     maxTotalSubstreams?: number;
     maxSubstreamIdleMs?: number;
     maxSessionIdleMs?: number;
@@ -232,7 +232,7 @@ export function createPeerTcpTunnelApplicationSubstreamSession(input: Readonly<{
             let active = activeSubstreams.get(substreamId);
             if (!active) {
                 if (
-                    activeSubstreams.size >= input.maxConcurrentSubstreams
+                    (input.maxConcurrentSubstreams !== undefined && activeSubstreams.size >= input.maxConcurrentSubstreams)
                     || (input.maxTotalSubstreams !== undefined && openedSubstreamIds.size >= input.maxTotalSubstreams)
                 ) {
                     return deny('substream_cap_exceeded', substreamId);
