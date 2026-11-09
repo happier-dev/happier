@@ -4,7 +4,7 @@ import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 
 export type ScmChangeOverflowMenuProps = Readonly<{
     title: string;
@@ -21,6 +21,7 @@ export type ScmChangeOverflowMenuProps = Readonly<{
 }>;
 
 export const ScmChangeOverflowMenu = React.memo((props: ScmChangeOverflowMenuProps) => {
+    const writeClipboard = useClipboardWrite();
     const actions = React.useMemo((): ItemAction[] => {
         const out: ItemAction[] = [
             {
@@ -29,7 +30,7 @@ export const ScmChangeOverflowMenu = React.memo((props: ScmChangeOverflowMenuPro
                 icon: 'copy',
                 onPress: () => {
                     void (async () => {
-                        const ok = await setClipboardStringSafe(props.filePath);
+                        const ok = await writeClipboard(props.filePath);
                         if (!ok) {
                             Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
                             return;
@@ -61,7 +62,7 @@ export const ScmChangeOverflowMenu = React.memo((props: ScmChangeOverflowMenuPro
         }
 
         return out;
-    }, [props.filePath, props.onRevealInTree, props.onCopyPathSuccess, props.onDiscard, props.discardDisabled]);
+    }, [props.filePath, props.onRevealInTree, props.onCopyPathSuccess, props.onDiscard, props.discardDisabled, writeClipboard]);
 
     return (
         <ItemRowActions

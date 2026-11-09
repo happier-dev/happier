@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import * as Clipboard from 'expo-clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
@@ -141,6 +141,7 @@ export function BlameCard({
   onClose: () => void;
 }>) {
   const { theme } = useUnistyles();
+  const writeClipboard = useClipboardWrite();
   const meta = [
     Typography.variant('meta'),
     { color: theme.colors.text.secondary },
@@ -251,7 +252,7 @@ export function BlameCard({
               size="meta"
               label={t('files.blame.copySha')}
               onPress={() => {
-                void Clipboard.setStringAsync(commit.sha);
+                void writeClipboard(commit.sha);
               }}
             />
           </>,

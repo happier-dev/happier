@@ -34,7 +34,7 @@ export type FileEditorPanelProps = CodeEditorWithFindProps &
   Readonly<{
     theme?: unknown;
     /** Phone composition: the key row sits on the keyboard with Save pinned (files lab ED1p). */
-    accessory?: Readonly<{ save: CodeEditorAccessoryBarProps['save'] }> | null;
+    accessory?: Pick<CodeEditorAccessoryBarProps, 'save' | 'languageIntelligence'> | null;
     peek?: FileEditorPeekProps;
     /** The selection Comment's open composer; it takes the peek's room under its lines. */
     inlineComment?: FileEditorInlineComment | null;
@@ -74,6 +74,7 @@ export const FileEditorPanel = React.memo(function FileEditorPanel(
         <CodeEditorAccessoryBar
           editor={handle}
           save={accessory.save}
+          languageIntelligence={accessory.languageIntelligence}
           onChanges={onChanges}
         />
       ) : null}
@@ -82,18 +83,24 @@ export const FileEditorPanel = React.memo(function FileEditorPanel(
 });
 
 /**
- * The raw Markdown editor on the File page with the same change gutter peek as code (P4-R9): its marker
- * controller and handle come from the raw source editor, so rich mode (no gutter) shows no peek.
+ * The Markdown editor on the File page. Its raw mode is the code editor's composition (P4-R9): the same change gutter
+ * peek and the selection's inline comment, hung from the raw source editor's marker controller and handle. Rich mode
+ * has neither (no gutter, no line geometry), so it shows no peek; `onEditorHandleChange` reports the raw handle, null
+ * in rich mode, so the page lets go of the replaced engine.
  */
 export const FileMarkdownEditorPanel = React.memo(function FileMarkdownEditorPanel(
-  props: MarkdownCodeEditorFieldProps & Readonly<{ peek?: FileEditorPeekProps }>,
+  props: MarkdownCodeEditorFieldProps & Readonly<{ peek?: FileEditorPeekProps; inlineComment?: FileEditorInlineComment | null }>,
 ) {
-  const { peek, ...fieldProps } = props;
+  const { peek, inlineComment, onEditorHandleChange, ...fieldProps } = props;
   const [markers, setMarkers] = React.useState<EditorChangeMarkersController | null>(null);
   const [handle, setHandle] = React.useState<TextEditorHandle | null>(null);
+  const onHandle = React.useCallback((next: TextEditorHandle | null) => {
+    setHandle(next);
+    onEditorHandleChange?.(next);
+  }, [onEditorHandleChange]);
   return (
-    <FileEditorPeekRegion markers={markers} handle={handle} peek={peek}>
-      <MarkdownCodeEditorField {...fieldProps} onChangeMarkersChange={setMarkers} onEditorHandleChange={setHandle} />
+    <FileEditorPeekRegion markers={markers} handle={handle} peek={peek} inlineComment={inlineComment}>
+      <MarkdownCodeEditorField {...fieldProps} onChangeMarkersChange={setMarkers} onEditorHandleChange={onHandle} />
     </FileEditorPeekRegion>
   );
 });

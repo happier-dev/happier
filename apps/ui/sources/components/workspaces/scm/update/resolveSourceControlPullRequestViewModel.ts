@@ -1,4 +1,4 @@
-import type { ScmFollowupAction } from '@happier-dev/protocol';
+import type { ScmFollowupAction } from '@happier-dev/protocol/scm/pullRequests';
 import { resolveScmHostingProviderFollowupAllowedBaseUrl } from '@happier-dev/protocol/scm/pullRequests';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
@@ -24,6 +24,8 @@ export type SourceControlPullRequestViewModel = Readonly<{
 export function resolveSourceControlPullRequestViewModel(input: Readonly<{
     snapshot: ScmWorkingSnapshot | null;
     disabled?: boolean;
+    /** The person's selection in the existing PR form overrides the detected default. */
+    baseBranch?: string | null;
 }>): SourceControlPullRequestViewModel {
     const snapshot = input.snapshot;
     if (!snapshot?.repo.isRepo) {
@@ -41,7 +43,7 @@ export function resolveSourceControlPullRequestViewModel(input: Readonly<{
 
     const prStatus = snapshot.pullRequestStatus ?? null;
     const openPullRequest = prStatus?.openPullRequest ?? null;
-    const baseBranch = prStatus?.baseBranch ?? snapshot.repo.defaultBranch ?? null;
+    const baseBranch = input.baseBranch ?? prStatus?.baseBranch ?? snapshot.repo.defaultBranch ?? null;
     const headBranch = prStatus?.headBranch ?? snapshot.branch.head ?? null;
     const disabled = input.disabled === true;
 
@@ -89,7 +91,7 @@ export function resolveSourceControlPullRequestViewModel(input: Readonly<{
     }
     if (!baseBranch) {
         return {
-            kind: 'unavailable',
+            kind: snapshot.capabilities?.writePullRequestCreate === true ? 'create' : 'unavailable',
             baseBranch: null,
             headBranch,
             title: null,

@@ -41,6 +41,19 @@ function snapshot(entries: any[]) {
 }
 
 describe('scmTreeBadges', () => {
+    it('keeps media file and directory change badges without counting media lines', () => {
+        const paths = ['media/a.pdf', 'media/b.png', 'media/c.mp4', 'media/d.mp3', 'media/e.dat', 'src/a.ts'];
+        const s = snapshot(paths.map(path => ({
+            path, previousPath: null, kind: 'modified', includeStatus: 'M', pendingStatus: 'M',
+            hasIncludedDelta: true, hasPendingDelta: true,
+            stats: { includedAdded: 2, includedRemoved: 1, pendingAdded: 3, pendingRemoved: 4, isBinary: path.endsWith('.dat') },
+        })));
+        const index = createScmTreeBadgeIndex(s);
+        for (const path of paths.slice(0, -1)) expect(index.getFileBadge(path)).toEqual({ kindLetter: 'M', added: 0, removed: 0, changedCount: 1 });
+        expect(index.getDirectoryBadge('media')).toEqual({ kindLetter: 'M', added: 0, removed: 0, changedCount: 5 });
+        expect(index.getDirectoryBadge('')).toEqual({ kindLetter: 'M', added: 5, removed: 5, changedCount: 6 });
+    });
+
     it('computes file badge using combined included+pending stats', () => {
         const s = snapshot([
             {

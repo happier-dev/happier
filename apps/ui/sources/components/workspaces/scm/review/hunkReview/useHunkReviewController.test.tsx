@@ -491,11 +491,9 @@ describe('hunk review through the shared keyboard and Account port', () => {
       filesLeft: 2,
     });
     expect(controller.hunksForPath('a.ts').currentIndex).toBe(0);
-    expect(controller.hunksForPath('b.ts')).toMatchObject({
-      currentIndex: null,
-      numberOffset: 2,
-      numberTotal: 4,
-    });
+    expect(controller.hunksForPath('b.ts').currentIndex).toBeNull();
+    expect(controller.hunksForPath('b.ts').numbering?.offset()).toBe(2);
+    expect(controller.hunksForPath('b.ts').numbering?.total()).toBe(4);
     await act(async () => {
       controller.next();
     });

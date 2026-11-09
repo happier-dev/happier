@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer from 'react-test-renderer';
-import { renderScreen } from '@/dev/testkit';
+import renderer, { act } from 'react-test-renderer';
+import { flushHookEffects, installBrowserClipboardBoundary, renderScreen } from '@/dev/testkit';
 import { installSourceControlChangesCommonModuleMocks } from './sourceControlChangesTestHelpers';
 
 
@@ -17,23 +17,18 @@ installSourceControlChangesCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/ui/lists/ItemRowActions', () => ({
-    ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
-}));
-
 vi.mock('expo-clipboard', () => ({
-    setStringAsync: vi.fn(async () => {}),
+    setStringAsync: (value: string) => setClipboardStringSafeSpy(value),
 }));
 
-vi.mock('@/utils/ui/clipboard', () => ({
-    setClipboardStringSafe: (value: string) => setClipboardStringSafeSpy(value),
-}));
+const { ItemRowActions } = await import('@/components/ui/lists/ItemRowActions');
 
 describe('ScmChangeOverflowMenu', () => {
     beforeEach(() => {
         modalAlertSpy.mockClear();
         setClipboardStringSafeSpy.mockClear();
         setClipboardStringSafeSpy.mockResolvedValue(true);
+        installBrowserClipboardBoundary(async text => { await setClipboardStringSafeSpy(text); });
     });
 
     it('includes copy-path action and optional reveal-in-tree action', async () => {
@@ -46,7 +41,7 @@ describe('ScmChangeOverflowMenu', () => {
                     onRevealInTree={() => {}}
                 />)).tree;
 
-        const node = tree!.findByType('ItemRowActions' as any);
+        const node = tree!.findByType(ItemRowActions);
         expect(node.props.title).toBe('a.ts');
         expect(node.props.compactThreshold).toBe(Number.POSITIVE_INFINITY);
         expect(Array.isArray(node.props.actions)).toBe(true);
@@ -67,7 +62,7 @@ describe('ScmChangeOverflowMenu', () => {
                     onDiscard={onDiscard}
                 />)).tree;
 
-        const node = tree!.findByType('ItemRowActions' as any);
+        const node = tree!.findByType(ItemRowActions);
         const discard = node.props.actions.find((a: any) => a.id === 'discard');
         expect(discard).toBeTruthy();
         expect(discard.destructive).toBe(true);
@@ -84,7 +79,7 @@ describe('ScmChangeOverflowMenu', () => {
                     title="a.ts"
                 />)).tree;
 
-        const node = tree!.findByType('ItemRowActions' as any);
+        const node = tree!.findByType(ItemRowActions);
         const ids = node.props.actions.map((a: any) => a.id);
         expect(ids).not.toContain('discard');
     });
@@ -99,10 +94,11 @@ describe('ScmChangeOverflowMenu', () => {
                     onCopyPathSuccess={onCopyPathSuccess}
                 />)).tree;
 
-        const node = tree!.findByType('ItemRowActions' as any);
+        const node = tree!.findByType(ItemRowActions);
         const copyPath = node.props.actions.find((a: any) => a.id === 'copy_path');
 
-        await copyPath.onPress();
+        await act(async () => { copyPath.onPress(); });
+        await flushHookEffects();
 
         expect(setClipboardStringSafeSpy).toHaveBeenCalledWith('src/a.ts');
         expect(onCopyPathSuccess).toHaveBeenCalledTimes(1);

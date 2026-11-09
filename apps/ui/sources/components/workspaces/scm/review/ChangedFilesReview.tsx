@@ -240,6 +240,7 @@ type ChangedFilesReviewProps = {
     rowDensity?: 'comfortable' | 'compact';
     initialCollapsedPaths?: readonly string[] | null;
     onCollapsedPathsChange?: (paths: string[]) => void;
+    /** Where Review resumes when shown. A change of this prop alone does not render Review (it echoes the reader's own scroll). */
     initialScrollTop?: number | null;
     onScrollTopChange?: (top: number) => void;
     diffAutoRefreshIntervalMs?: number;
@@ -286,6 +287,9 @@ export function areChangedFilesReviewPropsEqual(
             if (!areChangedFilesReviewThemesEqual(previous.theme, next.theme)) return false;
             continue;
         }
+        // The restore seed is read when Review shows (mount, or a retained body presented again with other props);
+        // alone it is the pane echoing the reader's own scroll back, which is no reason to render.
+        if (key === 'initialScrollTop') continue;
         if (!Object.is(previous[key], next[key])) return false;
     }
     return true;
@@ -622,10 +626,11 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     const onPhoneControlLayout = React.useCallback((event: Readonly<{ nativeEvent: Readonly<{ layout: Readonly<{ height: number }> }> }>) => {
         phoneControlHeight.value = event.nativeEvent.layout.height;
     }, [phoneControlHeight]);
-    const lastScrollTopRef = React.useRef<number>(typeof props.initialScrollTop === 'number' ? props.initialScrollTop : 0);
+    const initialScrollTop = typeof props.initialScrollTop === 'number' ? props.initialScrollTop : null;
+    const lastScrollTopRef = React.useRef<number>(initialScrollTop ?? 0);
     const [reviewListLoaded, setReviewListLoaded] = React.useState(Platform.OS !== 'web');
     const [viewableExpansionEnabled, setViewableExpansionEnabled] = React.useState(() => {
-        return typeof props.initialScrollTop === 'number' && props.initialScrollTop > 2;
+        return initialScrollTop !== null && initialScrollTop > 2;
     });
 
     const snapshotShapeSignature = React.useMemo(() => snapshot ? buildSnapshotSignature(snapshot) : null, [snapshot]);
@@ -875,7 +880,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     }, [props.onScroll, reportScrollTop, resolveWebScrollRoot, trackIndexScroll, phoneScrollTop, reviewListLoaded, pageAtScrollEnd]);
 
     const { cancelRestore: cancelInitialScrollRestore, requestRestore: requestInitialScrollRestore } = useInitialScrollRestore({
-        initialScrollTop: typeof props.initialScrollTop === 'number' ? props.initialScrollTop : null,
+        initialScrollTop,
         latestScrollTopRef: lastScrollTopRef,
         ready: reviewListLoaded,
         applyInitialScrollTop: React.useCallback((initial) => {
@@ -1127,9 +1132,9 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     });
     const { hunksForPath, reviewUnitsForPath } = controller;
     const capturedReview = capturedComparison !== null;
-    const getHunkReview = React.useMemo(() => reviewEnabled ? (path: string) => ({
-        hunks: hunksForPath(path), reviewUnits: capturedReview ? reviewUnitsForPath(path) : undefined,
-    }) : undefined, [reviewEnabled, capturedReview, hunksForPath, reviewUnitsForPath]);
+    const hunkReviewModels = React.useMemo(() => reviewEnabled
+        ? { hunksForPath, reviewUnitsForPath: capturedReview ? reviewUnitsForPath : undefined } : undefined,
+    [reviewEnabled, capturedReview, hunksForPath, reviewUnitsForPath]);
     const renderDiffBlock = useChangedFilesReviewDiffBlockRenderer({
         hunkNotes,
         evidenceOnly: props.evidenceOnly,
@@ -1149,7 +1154,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         onDeleteReviewCommentDraft: props.onDeleteReviewCommentDraft,
         onReviewCommentError: props.onReviewCommentError,
         flat: Boolean(props.comparisonChrome),
-        getHunkReview,
+        hunkReview: hunkReviewModels,
     });
 
     const onFilePressPinned = props.onFilePressPinned;

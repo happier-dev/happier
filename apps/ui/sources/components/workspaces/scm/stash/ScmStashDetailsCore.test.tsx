@@ -2,7 +2,7 @@ import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import type { ScmStashDetailsAdapter } from './scmStashAdapter';
-import type { ScmStashEntry } from '@happier-dev/protocol';
+import type { ScmStashEntry } from '@happier-dev/protocol/scm';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');

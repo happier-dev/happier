@@ -7,6 +7,8 @@ import { flushHookEffects, renderScreen as renderTestScreen, standardCleanup } f
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { storage } from '@/sync/domains/state/storageStore';
+import { sessionLastMobileSurfaceState } from '@/sync/domains/state/navigationUiState';
+import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { buildRealmQualifiedMobileSurfaceStorageKey } from '@/sync/domains/settings/mobileSurfacePersistence';
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
@@ -61,6 +63,7 @@ const navigatorState = vi.hoisted(() => ({
         snapshot: object;
     }>>,
     activeRouteName: 'chat',
+    sideActions: null as null | { current: null | { tabs: readonly string[]; selectTab: (tab: string) => void } },
 }));
 
 const BoardOwnerContext = React.createContext<Readonly<{
@@ -110,7 +113,7 @@ async function activatePersistenceRealm(serverId: string, accountId: string) {
 async function primeBoardFeature(enabled: boolean) {
     const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
     const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
-    const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol');
+    const { tryWriteServerEnabledBitInPlace} = await import('@happier-dev/protocol/features/serverEnabledBit');
     const features = createRootLayoutFeaturesResponse();
     if (!tryWriteServerEnabledBitInPlace(features, 'sessions.board', enabled)) {
         throw new Error('The sessions.board bit could not be written by its own writer');
@@ -252,9 +255,12 @@ vi.mock('@react-navigation/bottom-tabs', () => ({
 
 vi.mock('./SessionCockpitSurfaceScreen', async () => {
     const { useSessionCockpitSurfaceNavigation } = await import('./SessionCockpitSurfaceNavigation');
+    const { RightSidebarActionsContext } = await import('@/components/appShell/rightSidebar/rightSidebarActions');
     return {
     SessionCockpitSurfaceScreen: (props: Record<string, unknown>) => {
         const navigation = useSessionCockpitSurfaceNavigation();
+        const sideActions = React.useContext(RightSidebarActionsContext);
+        if (String(props.surface ?? '') === navigatorState.activeRouteName) navigatorState.sideActions = sideActions;
         const owner = React.useContext(BoardOwnerContext);
         const surface = String(props.surface ?? '');
         if (navigation && surface === navigatorState.activeRouteName) {
@@ -418,13 +424,17 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
         });
         await activatePersistenceRealm('server-session', 'account-a');
         await primeBoardFeature(false);
-        stopObservingPersistence = storage.subscribe((state, previousState) => {
-            const scope = state.profileScope;
+        replacePersistentUiStateForTest(sessionLastMobileSurfaceState, {});
+        let previousSurfaces = sessionLastMobileSurfaceState.readAll();
+        stopObservingPersistence = sessionLastMobileSurfaceState.subscribe(() => {
+            const previous = previousSurfaces;
+            previousSurfaces = sessionLastMobileSurfaceState.readAll();
+            const scope = storage.getState().profileScope;
             if (!scope) return;
             const key = buildRealmQualifiedMobileSurfaceStorageKey('session', scope, 's1');
             if (!key) return;
-            const surface = state.localSettings.sessionLastMobileSurfaceBySessionId[key];
-            if (!surface || surface === previousState.localSettings.sessionLastMobileSurfaceBySessionId[key]) return;
+            const surface = sessionLastMobileSurfaceState.read(key);
+            if (!surface || surface === previous[key]) return;
             navigatorState.persistedSurfaces.push({ sessionId: 's1', surface });
             navigatorState.persistedSurfaceRealms.push({ sessionId: 's1', surface, serverId: scope.serverId });
             navigatorState.persistedSurfaceAccountRealms.push({ sessionId: 's1', surface, accountId: scope.accountId });
@@ -445,6 +455,7 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
         navigatorState.canonicalPluginRuntimeAddresses = [];
         navigatorState.activeBoardOwnerObservations = [];
         navigatorState.activeRouteName = 'chat';
+        navigatorState.sideActions = null;
         navigationFocusState.setFocused(true);
     });
 
@@ -552,12 +563,7 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
         expect(navigatorState.persistedSurfaces).toEqual([{ sessionId: 's1', surface: 'git' }]);
         const rendersAfterSwitch = navigatorState.navigationContainerRenderCount;
         await act(async () => {
-            storage.getState().applyLocalSettings({
-                sessionLastMobileSurfaceBySessionId: {
-                    ...storage.getState().localSettings.sessionLastMobileSurfaceBySessionId,
-                    unrelated: 'browser',
-                },
-            });
+            sessionLastMobileSurfaceState.set('unrelated', 'browser');
         });
         expect(navigatorState.navigationContainerRenderCount).toBe(rendersAfterSwitch);
     });
@@ -778,6 +784,38 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
         expect(navigatorState.persistedSurfaces.at(-1)).toEqual({ sessionId: 's1', surface: 'browse' });
     });
 
+    it.each([
+        { startOnPhone: false, closeDetails: false },
+        { startOnPhone: true, closeDetails: false },
+        { startOnPhone: true, closeDetails: true },
+    ])('presents open Details ahead of retained Skills when returning to phone ($startOnPhone, closed=$closeDetails)', async ({ startOnPhone, closeDetails }) => {
+        const { SessionCockpitTabNavigator } = await import('./SessionCockpitTabNavigator');
+        const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+        const { createBotTemplateEditorDetailsTab } = await import('@/components/sessions/bots/templates/botTemplateEditorDestination');
+        let pane!: ReturnType<typeof useAppPaneScope>;
+        function PaneProbe() { pane = useAppPaneScope('session:s1'); return null; }
+        const body = (experience: 'classic' | 'cockpit') => <>
+            <PaneProbe />
+            <SessionCockpitTabNavigator experience={experience} initialSurface="skills" routeServerId="server-session"
+                scopeId="session:s1" sessionId="s1" terminalTabAvailable />
+        </>;
+        const screen = await renderScreen(body(startOnPhone ? 'cockpit' : 'classic'));
+        if (startOnPhone) {
+            expect(navigatorState.activeRouteName).toBe('skills');
+            await screen.update(body('classic'));
+        }
+        await act(async () => {
+            pane.openRight({ tabId: 'skills' });
+            pane.openDetailsTab(createBotTemplateEditorDetailsTab({ serverId: 'server-session', artifactId: 'draft-b' }),
+                { start: true, intent: 'pinned' });
+            if (closeDetails) pane.closeDetails();
+        });
+        expect(pane.scopeState?.right.activeTabId).toBe('skills');
+        expect(pane.scopeState?.details.isOpen).toBe(!closeDetails);
+        await screen.update(body('cockpit'));
+        expect(navigatorState.activeRouteName).toBe(closeDetails ? 'skills' : 'tabs');
+    });
+
     it('follows the selected nested navigation route rather than a stale parent route', async () => {
         const { resolveSessionCockpitSurfaceFromNavigationState } = await import('./SessionCockpitTabNavigator');
 
@@ -828,6 +866,29 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
             { sessionId: 's1', surface: 'browser' },
             { sessionId: 's1', surface: 'services' },
         ]);
+    });
+
+    it('gives a phone scene the Session chooser, so an ended preview\'s Go to Services opens the Services scene', async () => {
+        const { SessionCockpitTabNavigator } = await import('./SessionCockpitTabNavigator');
+
+        await renderScreen(
+            <SessionCockpitTabNavigator
+                initialSurface="browser"
+                routeServerId="server-session"
+                scopeId="session:s1"
+                sessionId="s1"
+                terminalTabAvailable={false}
+            />,
+        );
+
+        expect(navigatorState.activeRouteName).toBe('browser');
+        // Read at render by the Browser card (it decides whether Go to Services is offered).
+        expect(navigatorState.sideActions?.current?.tabs).toContain('services');
+        await act(async () => {
+            navigatorState.sideActions?.current?.selectTab('services');
+        });
+        expect(navigatorState.activeRouteName).toBe('services');
+        expect(navigatorState.persistedSurfaces).toEqual([{ sessionId: 's1', surface: 'services' }]);
     });
 
     it('registers validated plugin right-sidebar mobile tabs as host-owned screens', async () => {

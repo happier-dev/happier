@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { resolveFilesystemErrorReason } from '@/components/ui/filesystemBrowser/filesystemErrorReason';
+import { isFilesystemErrorRetryable, resolveFilesystemErrorReason } from '@/components/ui/filesystemBrowser/filesystemErrorReason';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { CheckoutUnreachableState, useAnnouncedCheckoutMachine, useCheckoutReachability, type CheckoutMachineScope } from '@/components/workspaces/reachability/checkoutReachability';
 import { t } from '@/text';
@@ -31,6 +31,7 @@ export function RepositoryTreeRootErrorState(props: Readonly<{
             : t('files.pane.rootErrorTitleUnnamed')}
         reason={reason}
         diagnosticCode={props.error}
-        action={props.onRetry ? { label: t('common.retry'), onPress: props.onRetry } : undefined}
+        action={props.onRetry && isFilesystemErrorRetryable(props.error)
+            ? { label: t('common.retry'), onPress: props.onRetry } : undefined}
     />;
 }

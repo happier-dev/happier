@@ -7,6 +7,7 @@ import {
   useHunkReviewController,
   type HunkReviewActionTarget,
 } from '@/components/workspaces/scm/review/hunkReview/useHunkReviewController';
+import { useCapturedFileByPath } from '@/components/sessions/files/comparison/useCapturedFileByPath';
 import type { ReviewKeyboardController } from '@/components/workspaces/scm/review/hunkReview/useReviewKeyboard';
 import { useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
@@ -26,6 +27,7 @@ import {
   useFileChangesScope,
   type FileChangesScopeView,
 } from './useFileChangesScope';
+import { fixedDiffHunkNumbering } from '@/components/ui/code/diff/hunks/diffHunkNumbering';
 
 export type FileChangesScopeKind = 'turn' | 'session' | 'workingTree';
 
@@ -114,8 +116,8 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
   const reviewPath = live ? filePath : capturedPath ?? filePath;
   const reviewRoot = fileBaseOfReviewSource(live ? null : captured, scope.rootPath);
   const reviewScope = React.useMemo(() => ({ ...scope, rootPath: reviewRoot }), [scope, reviewRoot]);
-  const capturedFile =
-    captured?.inventory.files.find((file) => file.path === capturedPath) ?? null;
+  const capturedFileByPath = useCapturedFileByPath(captured);
+  const capturedFile = capturedPath ? capturedFileByPath?.get(capturedPath) ?? null : null;
   const capturedDiff =
     capturedFile?.evidence.state === 'available'
       ? capturedFile.evidence.unifiedDiff
@@ -156,7 +158,8 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
   });
   const { target, refresh, sessionTarget, remember, retireUndo, undo, undoAvailable, discardDisabledReason } = hunkDiscard;
   const messages = React.useMemo(() => hunkDiscard.messagesFor(filePath), [hunkDiscard.messagesFor, filePath]);
-  React.useEffect(() => retireUndo, [retireUndo, target, filePath]);
+  // Refused/awaiting scope commands keep Undo; retire only when the applied comparison changes.
+  React.useEffect(() => retireUndo, [retireUndo, target, filePath, current.kind, current.kind === 'turn' ? current.turnId : null]);
   const onDiscard = hunkDiscard.discard;
 
   // Ask about this change (`/`, row): the one Ask owner builds an anchored draft over the change's lines.
@@ -181,6 +184,8 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
   const workspaceRefId = params.workspaceRefId?.trim() || null;
   const liveEntries = React.useMemo(() => live && params.liveEntry ? [params.liveEntry] : undefined, [live, params.liveEntry]);
   const controller = useHunkReviewController({
+    active: params.active,
+    capturedFileByPath,
     liveFiles,
     liveEntries,
     source:
@@ -193,6 +198,7 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
     host,
     serverId: scope.serverId,
     onDiscard,
+    writeUnavailableReason: reachability.unreachable ? t('walkthrough.notice.offlineA11y') : null,
     ...(sessionId || params.getAskTargetContext ? { onAsk } : {}),
     onOutOfDate: changes.refresh,
     discardDisabledReason,
@@ -211,7 +217,7 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
   });
   // The File page numbers changes within this file, as its review line counts them.
   const hunks = React.useMemo(
-    () => ({ ...controller.hunks, numberOffset: 0, numberTotal: controller.strip.total }),
+    () => ({ ...controller.hunks, numbering: fixedDiffHunkNumbering(0, controller.strip.total) }),
     [controller.hunks, controller.strip.total],
   );
 
@@ -271,14 +277,13 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
   }, [sessionId, turnId]);
   const selectScope = React.useCallback(
     (id: FileChangesScopeKind) => {
-      retireUndo();
       if (id === 'turn') {
         if (turnId) changes.setScope({ kind: 'turn', turnId });
         return;
       }
       changes.setScope({ kind: id });
     },
-    [changes.setScope, turnId, retireUndo],
+    [changes.setScope, turnId],
   );
 
   return {

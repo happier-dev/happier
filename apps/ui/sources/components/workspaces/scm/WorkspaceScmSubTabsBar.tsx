@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { SegmentedTabBar, type SegmentedTab } from '@/components/ui/navigation/SegmentedTabBar';
 
@@ -41,12 +42,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: theme.space.s12,
         paddingTop: theme.space.s4,
         paddingBottom: theme.space.s8,
-        backgroundColor: theme.colors.surface.base,
     },
 }));
 
 export const WorkspaceScmSubTabsBar = React.memo((props: WorkspaceScmSubTabsBarProps) => {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
 
     const rawPrefix = typeof props.testIDPrefix === 'string' && props.testIDPrefix.trim().length > 0
         ? props.testIDPrefix.trim()
@@ -60,7 +62,7 @@ export const WorkspaceScmSubTabsBar = React.memo((props: WorkspaceScmSubTabsBarP
     );
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]}>
             <SegmentedTabBar
                 tabs={tabs}
                 activeTabId={props.activeSubTabId}

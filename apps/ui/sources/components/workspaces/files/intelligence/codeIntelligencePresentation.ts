@@ -47,6 +47,14 @@ export function readCodeHoverContent(
   };
 }
 
+/** Semantic replies and fallback searches carry their own completeness facts. */
+export function isCodeReferenceResultPartial(result: CodeIntelligenceSnapshot['result']): boolean {
+  return Boolean(result && (
+    ('hasMore' in result && result.hasMore)
+    || ('coverage' in result && result.coverage === 'partial')
+  ));
+}
+
 /** The language server that speaks for this file, by its own label ("TypeScript"). */
 export function readLanguageServerLabel(
   servers: readonly LanguageIntelligenceServerStatus[] | undefined,

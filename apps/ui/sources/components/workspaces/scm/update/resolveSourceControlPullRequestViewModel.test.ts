@@ -72,6 +72,15 @@ function createCapabilities(
 }
 
 describe('resolveSourceControlPullRequestViewModel', () => {
+    it('opens the base picker when the provider default is unknown and uses the chosen base for creation', () => {
+        const snapshot = createSnapshot();
+        delete snapshot.repo.defaultBranch;
+        const model = resolveSourceControlPullRequestViewModel({ snapshot });
+        expect(model).toMatchObject({ kind: 'create', baseBranch: null, blockedReason: 'missing-base', primaryAction: null });
+        expect(resolveSourceControlPullRequestViewModel({ snapshot, baseBranch: 'release' })).toMatchObject({
+            kind: 'create', baseBranch: 'release', primaryAction: { kind: 'open-or-reuse', baseBranch: 'release' },
+        });
+    });
     it('projects an existing PR without offering duplicate creation', () => {
         const model = resolveSourceControlPullRequestViewModel({
             snapshot: createSnapshot({

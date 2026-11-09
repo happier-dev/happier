@@ -103,6 +103,14 @@ describe('file editor notice line', () => {
     ).toBeNull();
   });
 
+  it('says a save already pressed while the Machine is away goes through when it is back', () => {
+    const waiting = resolve(editor({ status: 'saving' }), offline);
+    expect(waiting?.key).toBe('offline');
+    // The pill reads Saving: the line must not still ask the person to save later.
+    expect(waiting?.reason).toBe('files.editing.offlineSaving(machine=MacBook Pro)');
+    expect(resolve(editor({ status: 'dirty' }), offline)?.reason).toBe('files.editing.offline(machine=MacBook Pro)');
+  });
+
   it('says a save waits for approval before anything about reachability', () => {
     expect(
       resolve(editor({ refusal: { kind: 'awaitingApproval' } }), offline)?.key,

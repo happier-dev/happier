@@ -1,6 +1,7 @@
 import { describeScmChangeKind } from '@/scm/scmChangeKind';
 import { selectScmChangedFiles } from '@/scm/scmStatusFiles';
 import type { ScmEntryKind, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { scmChangeHasLineDelta } from '@/scm/scmLineDelta';
 
 export type ScmTreeBadge = Readonly<{
     kindLetter: string;
@@ -83,8 +84,9 @@ export function createScmTreeBadgeIndex(snapshot: ScmWorkingSnapshot | null | un
     };
 
     for (const entry of entries) {
-        const added = sumEntryAdded(entry);
-        const removed = sumEntryRemoved(entry);
+        const counted = scmChangeHasLineDelta({ fullPath: entry.path, isBinary: entry.stats.isBinary });
+        const added = counted ? sumEntryAdded(entry) : 0;
+        const removed = counted ? sumEntryRemoved(entry) : 0;
         fileMap.set(entry.path, { kindLetter: describeScmChangeKind(entry.kind).code, added, removed, changedCount: 1, ...(entry.stats.isComplete === false ? { isComplete: false } : {}) });
 
         const { priority, letter } = kindToDirPriority(entry.kind);

@@ -23,12 +23,28 @@ export function buildEditSetPreviewDiff(
   }
 }
 
-/** "4 changes in 2 files": every text edit counts once, a move counts as one change. */
+/**
+ * One file's changes as its review shows them: edits that touch the same lines are one change (a
+ * formatter answers one reflowed line as many small whitespace edits), and a move counts once.
+ */
+export function countEditSetFileChanges(file: WorkspaceFileEditSetFile): number {
+  const spans = file.edits
+    .map((edit) => [edit.range.start.line, edit.range.end.line] as const)
+    .sort((left, right) => left[0] - right[0] || left[1] - right[1]);
+  let changes = 0;
+  let lastLine = -1;
+  for (const [start, end] of spans) {
+    if (changes === 0 || start > lastLine) changes += 1;
+    lastLine = Math.max(lastLine, end);
+  }
+  return changes + (file.renameTo ? 1 : 0);
+}
+
+/** "4 changes in 2 files", each file counted as `countEditSetFileChanges`. */
 export function countEditSetChanges(
   files: readonly WorkspaceFileEditSetFile[],
 ): Readonly<{ changes: number; files: number }> {
   let changes = 0;
-  for (const file of files)
-    changes += file.edits.length + (file.renameTo ? 1 : 0);
+  for (const file of files) changes += countEditSetFileChanges(file);
   return { changes, files: files.length };
 }

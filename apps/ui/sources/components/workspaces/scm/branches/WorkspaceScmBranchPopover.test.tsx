@@ -93,4 +93,24 @@ describe('WorkspaceScmBranchPopover', () => {
         expect(onCreateBranch).toHaveBeenCalledWith('feature/new');
         expect(onSelectItem).not.toHaveBeenCalled();
     });
+    it('scrolls a long branch list to the branch the keyboard moves to', async () => {
+        const { WorkspaceScmBranchPopover } = await import('./WorkspaceScmBranchPopover');
+        const scrollTo = vi.fn();
+        const branchItems = Array.from({ length: 300 }, (_, index) => ({ id: `branch:feature-${index}`, title: `feature-${index}` }));
+        const screen = await renderScreen(
+            <WorkspaceScmBranchPopover open onOpenChange={vi.fn()} currentBranch="feature-0" branchItems={branchItems} worktreeItems={[]} onSelectItem={vi.fn()} />,
+            { createNodeMock: (node) => node.props?.testID === 'workspace-scm-branch-popover-scroll' ? { scrollTo } : null },
+        );
+        const scroller = screen.tree.findByProps({ testID: 'workspace-scm-branch-popover-scroll' } as never);
+        await act(async () => {
+            scroller.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 360 } } });
+            scroller.props.onContentSizeChange(320, 300 * 36);
+        });
+        const search = screen.tree.findByProps({ testID: 'workspace-scm-branch-popover-search' } as never);
+        await act(async () => { search.props.onKeyPress({ nativeEvent: { key: 'End' } }); });
+        // The last branch is mounted wherever the window is; once it reports where it sits, the list scrolls to it.
+        const last = screen.tree.findByProps({ testID: 'dropdown-option-branch_feature-299:scroll-frame' } as never);
+        await act(async () => { last.props.onLayout({ nativeEvent: { layout: { y: 299 * 36, height: 36 } } }); });
+        expect(scrollTo).toHaveBeenCalled();
+    });
 });

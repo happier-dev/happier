@@ -82,4 +82,74 @@ describe('the mounted Project Code destination', () => {
         await screen.pressByTestIdAsync('workspace-code-bar-crumb-0');
         expect(new URL(navigations.at(-1)!, 'https://happier.test').searchParams.get('codePath')).toBe('');
     });
+
+    it('keeps the built Code tree when the Project returns to Code from another page', async () => {
+        const rootPath = '/project-code-retained';
+        fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
+            if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) {
+                const path = (request.payload as { path: string }).path;
+                return { ok: true, path, truncated: false, entries: [{ name: 'src', path: `${path}/src`, type: 'directory' }] };
+            }
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot: fileViewSnapshot({ rootPath }) };
+            return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
+        } });
+        const ref = { id: 'code-retained', ...fixture.scope, label: 'Code', createdAtMs: 1 };
+        const renderPage = (surface: 'code' | 'scripts') => <DestinationInstanceHost tabId="code-retained"
+            ref={{ kind: 'project', params: { workspaceRefId: ref.id, serverId: ref.serverId } }}
+            pathname={`/projects/${ref.id}/${surface}`} focused visible navigation={{ push: () => {},
+                replace: () => {}, back: () => {}, setParams: () => {} }}>
+            <ProjectCockpitShell workspaceRef={ref} scopeId="project-code-retained" activeRootPath={rootPath}
+                surface={surface} isFocused onSelectRootPath={() => {}} />
+        </DestinationInstanceHost>;
+        const row = `repository-tree-row-${toTestIdSafeValue('src')}`;
+        // A remounted tree creates new host nodes for its rows; a kept tree shows the ones it built.
+        const rowNode = () => (screen.findHostByTestId(row) as unknown as { _fiber: { stateNode: object } } | null)?._fiber.stateNode;
+        const screen = await fixture.render(renderPage('code'));
+        await vi.waitFor(() => expect(rowNode()).toBeTruthy());
+        const builtRows = new Set([rowNode()]);
+        // Secure credential storage is the boundary: a kept tree keeps its Home resolution too, instead of
+        // reading the credential again (and drawing its Machine as unknown meanwhile) on every return.
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentialReads = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl');
+        for (let visit = 0; visit < 2; visit += 1) {
+            await screen.update(fixture.wrap(renderPage('scripts')));
+            await screen.update(fixture.wrap(renderPage('code')));
+            await vi.waitFor(() => expect(rowNode()).toBeTruthy());
+            builtRows.add(rowNode());
+        }
+        const revisitCredentialReads = credentialReads.mock.calls.length;
+        credentialReads.mockRestore();
+        expect({ builtRows: builtRows.size, revisitCredentialReads }).toEqual({ builtRows: 1, revisitCredentialReads: 0 });
+    });
+    it('keeps the built Changes review when the Project returns to Changes from another page', async () => {
+        const rootPath = '/project-changes-retained';
+        const entries = Array.from({ length: 3 }, (_, index) => ({ path: `src/change-${index}.ts`,
+            previousPath: null, kind: 'modified' as const, includeStatus: '', pendingStatus: 'M',
+            hasIncludedDelta: false, hasPendingDelta: true,
+            stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 1, pendingRemoved: 1, isBinary: false } }));
+        fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot: fileViewSnapshot({ rootPath, entries }) };
+            return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
+        } });
+        const ref = { id: 'changes-retained', ...fixture.scope, label: 'Changes', createdAtMs: 1 };
+        const renderPage = (surface: 'changes' | 'scripts') => <DestinationInstanceHost tabId="changes-retained"
+            ref={{ kind: 'project', params: { workspaceRefId: ref.id, serverId: ref.serverId } }}
+            pathname={`/projects/${ref.id}/${surface}`} focused visible navigation={{ push: () => {},
+                replace: () => {}, back: () => {}, setParams: () => {} }}>
+            <ProjectCockpitShell workspaceRef={ref} scopeId="project-changes-retained" activeRootPath={rootPath}
+                surface={surface} isFocused onSelectRootPath={() => {}} />
+        </DestinationInstanceHost>;
+        // A rebuilt Review creates a new list host; a kept one shows the list (and its 59k-row model) it built.
+        const listNode = () => (screen.findHostByTestId('scm-review-list') as unknown as { _fiber: { stateNode: object } } | null)?._fiber.stateNode;
+        const screen = await fixture.render(renderPage('changes'));
+        await vi.waitFor(() => expect(listNode()).toBeTruthy());
+        const builtLists = new Set([listNode()]);
+        for (let visit = 0; visit < 2; visit += 1) {
+            await screen.update(fixture.wrap(renderPage('scripts')));
+            await screen.update(fixture.wrap(renderPage('changes')));
+            await vi.waitFor(() => expect(listNode()).toBeTruthy());
+            builtLists.add(listNode());
+        }
+        expect(builtLists.size).toBe(1);
+    });
 });

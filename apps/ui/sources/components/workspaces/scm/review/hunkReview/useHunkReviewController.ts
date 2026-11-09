@@ -8,7 +8,7 @@ import { useScmReviewedMarks, type ScmReviewedMarks } from '@/components/session
 import { useCapturedFileByPath, type CapturedFileByPath } from '@/components/sessions/files/comparison/useCapturedFileByPath';
 import { useScmFileViewed, useScmFileViewedFile, useScmFileViewedStatus } from '@/components/sessions/files/comparison/useScmFileViewed';
 import type { ScmFileViewedSource } from '@/sync/domains/scm/fileViewed';
-import type { DiffHunkAction, DiffHunkInfo, DiffHunkReviewState, DiffViewerHunks } from '@/components/ui/code/diff/diffViewerTypes';
+import type { DiffHunkAction, DiffHunkInfo, DiffHunkNumbering, DiffHunkReviewState, DiffViewerHunks } from '@/components/ui/code/diff/diffViewerTypes';
 import type { ScmDiffSummaryHost } from '@/sync/ops/scmDiffSummary/results';
 import { getLiveReviewBase, buildHunkReviewNavigation, buildHunkReviewSummary, moveHunkReviewCursor, resolveHunkReviewUnit, type HunkReviewCursor, type HunkReviewFile } from './hunkReviewModel';
 import { buildChangedFilesReviewFileIndex, type ChangedFilesReviewFileOrder } from '../changedFilesReviewFileIndex';
@@ -75,6 +75,39 @@ export type HunkReviewControllerParams = Readonly<{
     undo?: () => void;
     onReviewAction?: () => void;
 }>;
+
+const EMPTY_UNITS: readonly ReviewUnit[] = [];
+type PublishedHunks = Readonly<{ facts: readonly unknown[]; hunks: DiffViewerHunks }>;
+
+/**
+ * Change numbers for every file, read live by the change rows. Numbers move whenever any file's diff loads
+ * (the total) or a file before it loads (its offset); only rows whose numbers changed redraw.
+ */
+function createHunkNumberingSource() {
+    const listeners = new Set<() => void>();
+    let navigation: Readonly<{ indexById: ReadonlyMap<string, number>; numberOffsets: readonly number[] }> | null = null;
+    let total = 0;
+    const byPath = new Map<string, DiffHunkNumbering>();
+    const subscribe = (listener: () => void) => {
+        listeners.add(listener);
+        return () => { listeners.delete(listener); };
+    };
+    return {
+        read(next: NonNullable<typeof navigation>, nextTotal: number) { navigation = next; total = nextTotal; },
+        publish() { for (const listener of [...listeners]) listener(); },
+        forPath(path: string): DiffHunkNumbering {
+            let numbering = byPath.get(path);
+            if (!numbering) {
+                numbering = { subscribe, total: () => total, offset: () => {
+                    const index = navigation?.indexById.get(path);
+                    return index === undefined ? 0 : navigation?.numberOffsets[index] ?? 0;
+                } };
+                byPath.set(path, numbering);
+            }
+            return numbering;
+        },
+    };
+}
 
 /** Review navigation, content identity and Keep share one owner on all reading surfaces. */
 export function useHunkReviewController(params: HunkReviewControllerParams) {
@@ -262,34 +295,50 @@ export function useHunkReviewController(params: HunkReviewControllerParams) {
             } } : offersDiscard(key) ? { discard: () => discard(key) } : {}),
         };
     };
-    // Publish a per-file model only when its rendered facts change. Editor draft persistence
-    // rerenders the retained review too; fresh hunk objects would rebuild every Pierre row.
+    // Publish a per-file model only when its own drawn facts or its action authority change. Another file's
+    // diff landing, a Keep elsewhere or an editor draft render keeps every other file's model (and its body) as is.
     // Command changes republish; an old row retains its displayed hash/scope and action writer.
     const liveRoot = params.source.kind === 'live' ? params.source.root : null;
+    const [numbering] = React.useState(createHunkNumberingSource);
+    numbering.read(navigation, summary.total);
+    React.useLayoutEffect(() => { numbering.publish(); }, [numbering, navigation, summary.total]);
+    const publishedHunks = React.useRef<ReadonlyMap<string, PublishedHunks>>(new Map());
     const hunksForPath = React.useMemo(() => {
-        const published = new Map<string, DiffViewerHunks>();
+        const previous = publishedHunks.current;
+        const published = new Map<string, PublishedHunks>();
+        publishedHunks.current = published;
+        const authority: readonly unknown[] = [captured, liveRoot, scopeId, params.discardDisabledReason, writeUnavailableReason,
+            marks.setReviewedKeys, onHunks, params.onOutOfDate, params.onReviewAction, params.onDiscard, params.onAsk, writeClipboard];
         return (path: string): DiffViewerHunks => {
-            const previous = published.get(path);
-            if (previous) return previous;
-            const index = inventory.indexById.get(path);
-            const offset = index === undefined ? 0 : navigation.numberOffsets[index] ?? 0;
+            const current = published.get(path);
+            if (current) return current.hunks;
+            const open = path === params.path;
+            const pathUnits = unitsByPath.get(path) ?? EMPTY_UNITS;
+            const facts = [...authority, open, open ? currentIndex : null, open ? displayedHash : null,
+                offersDiscard(pathUnits[0]?.key ?? null, path),
+                pathUnits.map(unit => `${unit.key}\u0000${stateOfKey(unit.key)}\u0000${restrictionFor(unit.key, path)?.reason ?? ''}`).join('\u0001')];
+            const prior = previous.get(path);
+            if (prior && prior.facts.length === facts.length && prior.facts.every((fact, index) => Object.is(fact, facts[index]))) {
+                published.set(path, prior);
+                return prior.hunks;
+            }
             const next: DiffViewerHunks = {
-                ...(path === params.path ? { onHunks } : {}),
-                currentIndex: path === params.path && currentIndex >= 0 ? currentIndex : null, numberOffset: offset, numberTotal: summary.total,
+                ...(open ? { onHunks } : {}),
+                currentIndex: open && currentIndex >= 0 ? currentIndex : null, numbering: numbering.forPath(path),
                 stateOf: hunk => stateOfKey(hunk.key),
                 disabledReason: (hunk, action) => disabledReason(action, hunk.key, path),
                 actions: { keep: hunk => keep(hunk.key, path), copy: hunk => copy(hunk.key, path),
-                    ...(offersDiscard(unitsByPath.get(path)?.[0]?.key ?? null, path) ? { discard: (hunk: DiffHunkInfo) => { void discard(hunk.key, path); } } : {}),
+                    ...(offersDiscard(pathUnits[0]?.key ?? null, path) ? { discard: (hunk: DiffHunkInfo) => { void discard(hunk.key, path); } } : {}),
                     ...(params.onAsk ? { ask: (hunk: DiffHunkInfo) => ask(hunk.key, path) } : {}) },
             };
-            published.set(path, next);
+            published.set(path, { facts, hunks: next });
             return next;
         };
     }, [captured, liveRoot, scopeId, params.path, displayedHash, params.liveEntries,
         params.discardDisabledReason, writeUnavailableReason, marked, discardingKey,
-        currentIndex, inventory, navigation, summary.total, unitsByPath, marks.setReviewedKeys,
+        currentIndex, unitsByPath, marks.setReviewedKeys, numbering,
         onHunks, params.onOutOfDate, params.onReviewAction, params.onDiscard, params.onAsk, writeClipboard]);
-    const reviewUnitsForPath = React.useCallback((path: string) => unitsByPath.get(path) ?? [], [unitsByPath]);
+    const reviewUnitsForPath = React.useCallback((path: string) => unitsByPath.get(path) ?? EMPTY_UNITS, [unitsByPath]);
     const hunks = hunksForPath(params.path);
     return {
         fileViewed, fileViewedState, fileViewedStatus, reviewedPaths, setFileViewed,

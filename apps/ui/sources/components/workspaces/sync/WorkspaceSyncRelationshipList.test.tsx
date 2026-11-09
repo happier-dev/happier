@@ -65,6 +65,7 @@ vi.mock('@/components/ui/lists/Item', () => ({
         props,
         props.children,
         props.rightElement as React.ReactNode,
+        props.bottomElement as React.ReactNode,
     ),
 }));
 
@@ -142,10 +143,21 @@ function createSummary(
     };
 }
 
+const { WorkspaceSyncRelationshipRow, WorkspaceSyncRelationshipList } = await import('./WorkspaceSyncRelationshipList');
+
+type RenderedScreen = Awaited<ReturnType<typeof renderScreen>>;
+/** The row's secondary line: its folders (when machines lead the title) and its mode. */
+function metaLineOf(screen: RenderedScreen): string {
+    return screen.findByTestId('workspace-sync-relationship-relationship-1')?.props.subtitle as string;
+}
+/** The row's one status line, as presented. */
+function statusOf(screen: RenderedScreen): Readonly<{ text: string; tone: string; action: string | null }> {
+    return screen.findAll((node) => node.props.testID === 'workspace-sync-relationship-relationship-1-status' && 'model' in node.props)[0]?.props.model;
+}
+
 describe('WorkspaceSyncRelationshipRow', () => {
     it('routes termination through its Action even when a private modal would refuse', async () => {
         for (const spy of Object.values(relationshipActionSpies)) spy.mockClear();
-        const { WorkspaceSyncRelationshipRow } = await import('./WorkspaceSyncRelationshipList');
         const screen = await renderScreen(<WorkspaceSyncRelationshipRow summary={createSummary(0)} />);
         const menu = screen.findAllByType('DropdownMenu')[0];
 
@@ -159,7 +171,6 @@ describe('WorkspaceSyncRelationshipRow', () => {
     it('presents a refused lifecycle Action as its own refusal instead of a generic failure', async () => {
         const { Modal } = await import('@/modal');
         vi.mocked(Modal.alert).mockClear();
-        const { WorkspaceSyncRelationshipRow } = await import('./WorkspaceSyncRelationshipList');
         const screen = await renderScreen(<WorkspaceSyncRelationshipRow summary={createSummary(0)} />);
         const menu = screen.findAllByType('DropdownMenu')[0];
 
@@ -176,7 +187,6 @@ describe('WorkspaceSyncRelationshipRow', () => {
     it('presents nothing when the row left the list before its own Stop settled', async () => {
         const { Modal } = await import('@/modal');
         vi.mocked(Modal.alert).mockClear();
-        const { WorkspaceSyncRelationshipRow } = await import('./WorkspaceSyncRelationshipList');
         const screen = await renderScreen(<WorkspaceSyncRelationshipRow summary={createSummary(0)} />);
         const menu = screen.findAllByType('DropdownMenu')[0];
 
@@ -196,7 +206,6 @@ describe('WorkspaceSyncRelationshipRow', () => {
     });
 
     it('opens general details from every row while keeping conflict attention and actions row-scoped', async () => {
-        const { WorkspaceSyncRelationshipRow } = await import('./WorkspaceSyncRelationshipList');
         const openDetails = vi.fn();
         const openConflicts = vi.fn();
         const summary = createSummary(2);
@@ -215,12 +224,13 @@ describe('WorkspaceSyncRelationshipRow', () => {
         expect(openDetails).toHaveBeenCalledWith(summary);
         expect(openConflicts).not.toHaveBeenCalled();
 
-        await screen.pressByTestIdAsync('workspace-sync-relationship-relationship-1-conflicts');
+        // Conflicts are the row's status line, in tone, with Review as its one next step.
+        expect(statusOf(screen)).toMatchObject({ text: 'workspaceSync.conflictCount:{"count":2}', tone: 'warn', action: 'review' });
+        await act(async () => { screen.findAll((node) => node.props.testID === 'workspace-sync-relationship-relationship-1-status' && 'onReview' in node.props)[0]?.props.onReview(); });
         expect(openConflicts).toHaveBeenCalledWith(summary);
     });
 
     it('opens general details for a healthy relationship and does not invent conflict attention', async () => {
-        const { WorkspaceSyncRelationshipRow } = await import('./WorkspaceSyncRelationshipList');
         const openDetails = vi.fn();
         const summary = createSummary(0);
         const screen = await renderScreen(
@@ -229,38 +239,41 @@ describe('WorkspaceSyncRelationshipRow', () => {
 
         await screen.pressByTestIdAsync('workspace-sync-relationship-relationship-1');
         expect(openDetails).toHaveBeenCalledWith(summary);
-        expect(screen.findByTestId('workspace-sync-relationship-relationship-1-conflicts')).toBeNull();
+        expect(statusOf(screen)).toMatchObject({ tone: 'quiet', action: null });
+        expect(statusOf(screen).text).toContain('workspaceSync.state.watching');
     });
 
     it('omits Last checked when no cycle observation exists', async () => {
-        const { WorkspaceSyncRelationshipRow } = await import('./WorkspaceSyncRelationshipList');
         const summary = createSummary(0);
         if (!summary.status) throw new Error('expected relationship status fixture');
         summary.status.lastCycleObservedAtMs = null;
 
         const screen = await renderScreen(<WorkspaceSyncRelationshipRow summary={summary} />);
 
-        expect(screen.findByTestId('workspace-sync-relationship-relationship-1')?.props.subtitle)
-            .not.toContain('workspaceSync.lastChecked');
+        expect(statusOf(screen).text).not.toContain('workspaceSync.lastChecked');
     });
 
     it('uses one-way direction and machine display names for relationship and open actions', async () => {
-        const { WorkspaceSyncRelationshipRow } = await import('./WorkspaceSyncRelationshipList');
         const summary = createSummary(0, 'keep_synced');
         const screen = await renderScreen(<WorkspaceSyncRelationshipRow summary={summary} />);
 
-        expect(screen.findByTestId('workspace-sync-relationship-relationship-1')?.props.title).toBe('Alpha → Beta');
-        expect(screen.findByTestId('workspace-sync-relationship-relationship-1')?.props.subtitle).toContain('Alpha Mac → Beta workstation');
+        // Plan 02 §5.2: the machines lead; the folders are the secondary line.
+        expect(screen.findByTestId('workspace-sync-relationship-relationship-1')?.props.title).toBe('Alpha Mac → Beta workstation');
+        expect(metaLineOf(screen)).toContain('Alpha → Beta');
         const menu = screen.findAllByType('DropdownMenu')[0];
         expect(menu?.props.items).toEqual(expect.arrayContaining([
             expect.objectContaining({ id: 'open-alpha', title: 'workspaceSync.actions.openOnMachine:{"machine":"Alpha Mac"}' }),
             expect.objectContaining({ id: 'open-beta', title: 'workspaceSync.actions.openOnMachine:{"machine":"Beta workstation"}' }),
-            expect.objectContaining({ id: 'terminate', title: 'workspaceSync.actions.terminate' }),
+            expect.objectContaining({ id: 'terminate', title: 'workspaceSync.actions.terminate', destructive: true }),
         ]));
+        // Stopping the link is set apart from the routine actions.
+        expect(menu?.props.separateCategories).toBe(true);
+        const items = menu?.props.items as ReadonlyArray<{ id: string; category?: string }>;
+        expect(new Set(items.filter((item) => item.id !== 'terminate').map((item) => item.category))).toEqual(new Set(['link']));
+        expect(items.at(-1)).toMatchObject({ id: 'terminate', category: 'stop' });
     });
 
     it('tells two folders on the same machine apart in the open actions', async () => {
-        const { WorkspaceSyncRelationshipRow } = await import('./WorkspaceSyncRelationshipList');
         const summary = createSummary(0, 'keep_synced');
         const sameNameSummary = {
             ...summary,
@@ -276,7 +289,6 @@ describe('WorkspaceSyncRelationshipRow', () => {
     });
 
     it('names the machine once when both folders live on the same machine', async () => {
-        const { WorkspaceSyncRelationshipRow } = await import('./WorkspaceSyncRelationshipList');
         const summary = createSummary(0, 'keep_synced');
         const onOneMachine = {
             ...summary,
@@ -288,26 +300,22 @@ describe('WorkspaceSyncRelationshipRow', () => {
         };
         const screen = await renderScreen(<WorkspaceSyncRelationshipRow summary={onOneMachine} />);
 
-        const subtitle = screen.findByTestId('workspace-sync-relationship-relationship-1')?.props.subtitle as string;
-        expect(subtitle).toContain('Alpha Mac');
-        expect(subtitle).not.toContain('Alpha Mac → Alpha Mac');
-        expect(subtitle).not.toContain('Alpha Mac · Alpha Mac');
+        expect(screen.findByTestId('workspace-sync-relationship-relationship-1')?.props.title).toBe('Alpha Mac');
+        expect(metaLineOf(screen)).toContain('Alpha → Beta');
+        expect(metaLineOf(screen)).not.toContain('Alpha Mac');
     });
 
     it('keeps a generic attention message for an unmapped daemon error code', async () => {
-        const { WorkspaceSyncRelationshipRow } = await import('./WorkspaceSyncRelationshipList');
         const summary = createSummary(0);
         if (!summary.status) throw new Error('expected relationship status fixture');
         summary.status.errorCode = 'indeterminate';
 
         const screen = await renderScreen(<WorkspaceSyncRelationshipRow summary={summary} />);
 
-        expect(screen.findByTestId('workspace-sync-relationship-relationship-1')?.props.subtitle)
-            .toContain('workspaceSync.error.needsAttention');
+        expect(statusOf(screen)).toMatchObject({ text: 'workspaceSync.error.needsAttention', tone: 'bad', action: 'retry' });
     });
 
     it('uses the existing details destination when its host surface has no pane callback', async () => {
-        const { WorkspaceSyncRelationshipRow } = await import('./WorkspaceSyncRelationshipList');
         const summary = createSummary(0);
         const screen = await renderScreen(
             <WorkspaceSyncRelationshipRow summary={summary} localWorkspaceRefId="workspace-alpha" />,
@@ -320,7 +328,7 @@ describe('WorkspaceSyncRelationshipRow', () => {
     it('reveals only the endpoint rooted on this computer in the OS file manager', async () => {
         desktopHostState.isDesktop = true;
         invokeDesktopHostSpy.mockClear();
-        const { WorkspaceSyncRelationshipRow } = await import('./WorkspaceSyncRelationshipList');
+        mountedExecuteSpy.mockClear();
         const summary = createSummary(0);
         const screen = await renderScreen(
             <WorkspaceSyncRelationshipRow summary={summary} localMachineId="machine-alpha" />,
@@ -334,7 +342,8 @@ describe('WorkspaceSyncRelationshipRow', () => {
         expect(items.some((item) => item.id === 'reveal-beta')).toBe(false);
 
         menu?.props.onSelect('reveal-alpha');
-        expect(invokeDesktopHostSpy).toHaveBeenCalledWith('system_tasks_open_log_path', { path: '/alpha' });
+        expect(mountedExecuteSpy).toHaveBeenCalledWith('relay.runtime.open_path', { path: '/alpha' });
+        expect(invokeDesktopHostSpy).not.toHaveBeenCalled();
 
         desktopHostState.isDesktop = false;
     });
@@ -342,7 +351,6 @@ describe('WorkspaceSyncRelationshipRow', () => {
 
 describe('WorkspaceSyncRelationshipList', () => {
     it('opens Add machine from Project availability without creating a Session', async () => {
-        const { WorkspaceSyncRelationshipList } = await import('./WorkspaceSyncRelationshipList');
         const onAddMachine = vi.fn();
         const screen = await renderScreen(
             <WorkspaceSyncRelationshipList workspaceRefId="workspace-alpha" onAddMachine={onAddMachine} />,
@@ -353,7 +361,6 @@ describe('WorkspaceSyncRelationshipList', () => {
     });
 
     it('says what sync does and offers only its action when nothing is linked yet', async () => {
-        const { WorkspaceSyncRelationshipList } = await import('./WorkspaceSyncRelationshipList');
         const screen = await renderScreen(
             <WorkspaceSyncRelationshipList workspaceRefId="workspace-alpha" onAddMachine={vi.fn()} />,
         );
@@ -368,7 +375,6 @@ describe('WorkspaceSyncRelationshipList', () => {
     });
 
     it('keeps a quiet empty line where no action can be offered', async () => {
-        const { WorkspaceSyncRelationshipList } = await import('./WorkspaceSyncRelationshipList');
         const screen = await renderScreen(<WorkspaceSyncRelationshipList />);
 
         expect(screen.findByTestId('workspace-sync-none')).toBeTruthy();

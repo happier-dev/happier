@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { z } from 'zod/mini';
 import type { WorkspaceFileOpenInput, WorkspaceFileTarget, WorkspaceFindSeedSchema } from '@happier-dev/protocol/actions/workspaceActionFamily';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, isActionTurnedOffErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { executeWorkspaceUiAction, openWorkspaceHrefOrElse, resolveWorkspaceUiActionOutcome } from '@/components/appShell/workspace/workspaceActionRuntime';
 import { useWorkspaceFileNavigationCapabilities } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import type { Href } from 'expo-router';
@@ -10,6 +10,8 @@ import type { FocusReturnRef } from '@/keyboard/focusReturn';
 import { setTranscriptJumpHighlight, type TranscriptJumpHighlightRowIdentity } from '@/components/sessions/transcript/navigation/transcriptJumpHighlightStore';
 import { useOptionalAppPaneContext, useOptionalPaneFocusReturnOwner } from '@/components/appShell/panes/AppPaneContext';
 import { usePaneRegion } from '@/components/appShell/panes/paneRegion';
+import { useOptionalDetailsRegionTabOpener } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { createSessionFileDetailsTab } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { buildProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
 import { useDestinationInstanceFacts } from '@/components/appShell/workspace/destinationInstanceContext';
 import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
@@ -32,10 +34,13 @@ export type WorkspaceFileOpenOptions = Readonly<Pick<WorkspaceFileOpenInput, 'an
     /** Placement succeeded, not just a deferred approval: a caller may now reveal the retained pane. */
     onOpened?: () => void;
 }>;
-/** True accepts the request (including deferred approval); false refuses it; null cancels it. */
+/** True accepts (including deferred approval); false cannot open; null is cancelled or already presented. */
 export type WorkspaceFileOpen = (target: WorkspaceFileOpenTarget, options?: WorkspaceFileOpenOptions) => Promise<boolean | null>;
 
-/** Every file entry point enters the same Action policy and mounted navigation owner. */
+/**
+ * Every file entry point enters the same Action policy and mounted navigation owner, except a Details page's
+ * open of a file of its own Session, which the pane's Details admission places like the page's other links.
+ */
 export function useWorkspaceFileOpener() {
     const { canOpen, phone } = useWorkspaceFileNavigationCapabilities();
     const router = useDestinationRouter();
@@ -47,6 +52,7 @@ export function useWorkspaceFileOpener() {
     // names it first; the pane layout keeps Details off that column (details lab opener rule).
     const paneRegion = usePaneRegion();
     const paneDispatch = useOptionalAppPaneContext(value => ({ dispatch: value.dispatch }))?.dispatch;
+    const openInDetails = useOptionalDetailsRegionTabOpener();
     const openApproval = React.useCallback((href: Href) => {
         if (destinationNavigation) destinationNavigation.push(href);
         else fireAndForget(openWorkspaceHrefOrElse(resolveHref(href), () => router.push(href)), { tag: 'useWorkspaceFileOpener.openApproval' });
@@ -58,8 +64,27 @@ export function useWorkspaceFileOpener() {
                 : buildProjectPaneScopeId(target.workspaceRefId, target.serverId);
             options = { ...options, rootPath: resolveFileDetailsRootPath(options.rootPath, scopeId) };
         }
-        if (!canOpen) return false;
         const { path, ...address } = target;
+        // A file opened from a Details page of its own Session (go to definition, the next change) is a
+        // Details open like the page's other links: the pane's one Details admission places it, so a phone
+        // gives it its own Session tab and a wide layout keeps it in the pane.
+        if (paneRegion === 'details' && openInDetails && target.kind === 'session' && options?.present !== false
+            && options?.intent !== 'beside' && !options?.find) {
+            const tab = createSessionFileDetailsTab({ path,
+                ...(options?.rootPath ? { rootPath: options.rootPath } : {}),
+                ...(options?.anchor ? { anchor: options.anchor } : {}),
+                ...(options?.anchorSource ? { anchorSource: options.anchorSource } : {}),
+                ...(options?.view ? { view: options.view } : {}),
+                ...(options?.blame === undefined ? {} : { blame: options.blame }),
+                ...(options?.changesScope ? { changesScope: options.changesScope } : {}),
+            });
+            if (tab && openInDetails(createSessionPaneScopeId(target.sessionId, target.serverId, instanceKey), tab,
+                { intent: options?.intent ?? 'default' }, 'heldScopeOnly')) {
+                options?.onOpened?.();
+                return true;
+            }
+        }
+        if (!canOpen) return false;
         if (paneDispatch && options?.present !== false && (paneRegion === 'main' || paneRegion === 'side')) {
             const scopeId = target.kind === 'project'
                 ? buildProjectPaneScopeId(target.workspaceRefId, target.serverId, instanceKey)
@@ -94,7 +119,9 @@ export function useWorkspaceFileOpener() {
                 onReturn: kind => { if (kind === 'route') setTranscriptJumpHighlight(transcript); },
             }, phone ? 'route' : 'pane');
         }
-        return resolveWorkspaceUiActionOutcome(result);
-    }, [canOpen, focusReturnOwner, instanceKey, openApproval, paneDispatch, paneRegion, phone]);
+        // The Action owner has already explained Off. Settling quietly keeps
+        // Search from covering that typed refusal with a second generic error.
+        return !result.ok && isActionTurnedOffErrorCode(result.errorCode) ? null : resolveWorkspaceUiActionOutcome(result);
+    }, [canOpen, focusReturnOwner, instanceKey, openApproval, openInDetails, paneDispatch, paneRegion, phone]);
     return React.useMemo(() => ({ open, canOpen }), [open, canOpen]);
 }

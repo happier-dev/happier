@@ -13,6 +13,11 @@ import { SourceControlPublishRepositorySection } from './SourceControlPublishRep
 import { SourceControlUpdateDropdown } from './SourceControlUpdateDropdown';
 import { createAzureDevopsOperationsAdapter } from '../../../../../../../packages/plugins/scm-azure-devops/src/operations/azureDevopsAdapter';
 import { Modal } from '@/modal';
+import { installSignedOutAuthForTest } from '@/dev/testkit/fixtures/signedOutAuth';
+
+const platformOpen = vi.hoisted(() => vi.fn(async () => true));
+vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: platformOpen }));
+await import('@/sync/ops/actions/defaultActionExecutor');
 
 // Native/modal presentation is the boundary; provider discovery and remediation stay real.
 vi.mock('@/modal', async () => {
@@ -574,7 +579,9 @@ describe('SourceControlPublishRepositorySection', () => {
     });
 
     it('routes browser remediation through validated follow-up URL shape', async () => {
-        const openUrl = vi.fn(async () => {});
+        const restoreAuth = installSignedOutAuthForTest();
+        platformOpen.mockClear();
+        try {
         const screen = await renderScreen(
             <SourceControlPublishRepositorySection
                 theme={createSourceControlUpdateThemeFixture()}
@@ -599,18 +606,18 @@ describe('SourceControlPublishRepositorySection', () => {
                 onDescribePublishTargets={vi.fn()}
                 onPublishRepository={vi.fn()}
                 onRefresh={vi.fn()}
-                openUrl={openUrl}
             />,
         );
 
         expect(screen.findByTestId('scm-publish-remediation-open-browser')).toBeTruthy();
         await screen.pressByTestIdAsync('scm-publish-remediation-open-browser');
 
-        expect(openUrl).toHaveBeenCalledWith('https://github.com/login/oauth/authorize');
+        await vi.waitFor(() => expect(platformOpen).toHaveBeenCalledWith('https://github.com/login/oauth/authorize'));
+        } finally { restoreAuth(); }
     });
 
     it('rejects browser remediation when URL safety metadata is malformed', async () => {
-        const openUrl = vi.fn(async () => {});
+        platformOpen.mockClear();
         const malformedTargetsResponse = {
             success: false,
             error: 'Authentication required',
@@ -637,16 +644,15 @@ describe('SourceControlPublishRepositorySection', () => {
                 onDescribePublishTargets={vi.fn()}
                 onPublishRepository={vi.fn()}
                 onRefresh={vi.fn()}
-                openUrl={openUrl}
             />,
         );
 
         expect(screen.findByTestId('scm-publish-remediation-open-browser')).toBeNull();
-        expect(openUrl).not.toHaveBeenCalled();
+        expect(platformOpen).not.toHaveBeenCalled();
     });
 
     it('rejects browser remediation when the follow-up URL uses a disallowed scheme', async () => {
-        const openUrl = vi.fn(async () => {});
+        platformOpen.mockClear();
         const malformedTargetsResponse = {
             success: false,
             error: 'Authentication required',
@@ -673,12 +679,11 @@ describe('SourceControlPublishRepositorySection', () => {
                 onDescribePublishTargets={vi.fn()}
                 onPublishRepository={vi.fn()}
                 onRefresh={vi.fn()}
-                openUrl={openUrl}
             />,
         );
 
         expect(screen.findByTestId('scm-publish-remediation-open-browser')).toBeNull();
-        expect(openUrl).not.toHaveBeenCalled();
+        expect(platformOpen).not.toHaveBeenCalled();
     });
 
     it('routes existing-origin conflict choice through the publish request', async () => {

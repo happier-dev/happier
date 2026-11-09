@@ -3,10 +3,12 @@ import { compareOpenableContentViewerMatchesV1, matchOpenableContentViewerV1, no
 import type {
     OpenableContentMetadataV1,
     OpenableContentPreferenceSelectorV1,
-    OpenableContentViewerMatchV1,
-    PluginContributionIdentityV1,
+    OpenableContentViewerMatchV1} from '@happier-dev/protocol/plugins/openableContentViewerV1';
+import type {
+    PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type {
     WorkspaceFileViewerPreferencesV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/workspaceFileViewerPreferencesV1';
 import {
     isPluginUiDestinationBindingAdmittedAtRuntimeV1,
     type PluginUiDestinationRuntimeFormFactorV1,

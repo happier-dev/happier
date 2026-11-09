@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { usePaneContentInsetPx } from '@/components/ui/lists/listPresentation';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -11,7 +12,7 @@ import {
   type DropdownMenuItem,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
-import { KeyboardCommandHint } from '@/components/ui/keyboard/KeyHint';
+import { KeyboardCommandHint, useKeyboardCommandHintLabel } from '@/components/ui/keyboard/KeyHint';
 import {
   SegmentedTabBar,
   type SegmentedTab,
@@ -72,9 +73,14 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
 ) {
   const { theme } = useUnistyles();
   const styles = stylesheet;
+  // The field starts on the pane's text edge; the trailing ⋯ ends where the pane header's ⋯ does.
+  const contentInsetPx = usePaneContentInsetPx();
   const [viewMenuOpen, setViewMenuOpen] = React.useState(false);
   const iconColor = theme.colors.text.secondary;
   const prefix = props.testIDPrefix;
+  // The gap the toolbar leaves between its controls (the stylesheet's `row` and `inline` gaps): each
+  // control's hit area takes half of it.
+  const controlGap = props.layout === 'inline' ? theme.space.s4 : theme.space.s6;
   const {
     onChangedOnlyChange,
     onDetailsModeChange,
@@ -85,6 +91,8 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
     onQuickOpen,
     searchValue,
   } = props;
+  // The ⌘P control is its keycaps: where they are not drawn (a finger, no key bound) nothing is pressable.
+  const quickOpenHintDrawn = useKeyboardCommandHintLabel('search.files') !== null;
   const projectViewAvailable = visibility?.available === true;
   const showAllFiles = visibility
     ? !projectViewAvailable || visibility.mode === 'all'
@@ -174,6 +182,7 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
           testID={`${prefix}-view`}
           variant="plain"
           size={32}
+          interactiveTargetGapPx={controlGap}
           {...(props.refreshing
             ? {
                 icon: (
@@ -201,13 +210,15 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
       testID={`${prefix}-close`}
       variant="plain"
       size={32}
+      interactiveTargetGapPx={controlGap}
       iconName="x"
       accessibilityLabel={t('common.close')}
       onPress={props.onRequestClose}
     />
   ) : null;
 
-  // Two options, both always visible: a segmented view switch (lab FB1 "All | Changed 4").
+  // Two options, both always visible: a segmented view switch (lab FB1 "All | Changed 4"), at the
+  // toolbar's one control height so it stands level with Go to file and the View menu.
   const changedCount = props.changedCount;
   const showTabs = React.useMemo(
     (): ReadonlyArray<SegmentedTab<TreeShow>> | null =>
@@ -270,7 +281,7 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
         accessibilityLabel={t('files.clearSearchA11y')}
         onPress={() => props.onSearchValueChange('')}
       />
-    ) : onQuickOpen && Platform.OS === 'web' ? (
+    ) : onQuickOpen && Platform.OS === 'web' && quickOpenHintDrawn ? (
       <HappierPressable
         testID={`${prefix}-quick-open`}
         accessibilityRole="button"
@@ -282,7 +293,7 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
     ) : null;
 
   return (
-    <View testID={`${prefix}-toolbar`} style={styles.row}>
+    <View testID={`${prefix}-toolbar`} style={[styles.row, { paddingLeft: contentInsetPx, paddingRight: contentInsetPx / 2 }]}>
       <View style={styles.field}>
         <CompactSearchField
           testID={`${prefix}-search`}
@@ -306,7 +317,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.space.s6,
-    paddingHorizontal: theme.space.s12,
     paddingVertical: theme.space.s8,
   },
   field: {

@@ -22,6 +22,7 @@ import { DiffHorizontalScroll } from '@/components/ui/code/diff/happier/DiffHori
 import { buildCodeLinesFromFile } from '@/components/ui/code/model/buildCodeLinesFromFile';
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
+import { useNativeLineRangeState, type NativeLineRangeSelection } from '@/components/ui/code/selection/nativeLineRangeSelection';
 import { useCodeLinesReviewComments } from '@/components/ui/code/reviewComments/useCodeLinesReviewComments';
 import { Typography } from '@/constants/Typography';
 import type { ReviewCommentAnchor, ReviewCommentDraft, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
@@ -45,6 +46,7 @@ import { useMarkdownReadingAnchor } from './useMarkdownReadingAnchor';
 import { useFileContentScrollTarget } from './useFileContentScrollTarget';
 import type { FileDisplayMode } from './filePageModel';
 import type { FileViewerFindSnapshot } from '@/components/workspaces/files/details/useFileViewerFind';
+import type { CodeLinesSemanticBinding } from '@/components/ui/code/view/useCodeLinesSemanticTokens';
 
 const MARKDOWN_PREVIEW_WIDE_VIEWPORT_WIDTH = 768;
 /** Shared View → Edit geometry; review controls keep their existing activation policy. */
@@ -64,6 +66,7 @@ export type FileCodeIntelligenceBinding = Readonly<{
     /** This file's problems by 1-based line (stable until they change), for squiggles in View and Changes. */
     getDiagnosticsByLine: () => ReadonlyMap<number, readonly CodeLineDiagnosticRange[]> | undefined;
     subscribeDiagnostics: (listener: () => void) => () => void;
+    semantic?: CodeLinesSemanticBinding;
 }>;
 
 const NO_DIAGNOSTICS_SUBSCRIPTION = () => () => undefined;
@@ -100,7 +103,15 @@ type FileContentPanelProps = {
     onDeleteReviewCommentDraft?: (commentId: string) => void;
     onReviewCommentError?: (message: string) => void;
     rangeSelectionActive?: boolean;
+    /**
+     * Touch hosts: a long-press selects a row and taps extend the range, published for the page's Ask
+     * controls (web selects text in the DOM instead, so it passes none).
+     */
+    lineRangeAsk?: NativeLineRangeSelection;
     jumpToAnchor?: ReviewCommentAnchor | null;
+    /** Transient paint can expire while its line navigation still awaits browser measurement. */
+    highlightJumpToAnchor?: boolean;
+    jumpToAnchorRequestId?: number;
     find?: FileViewerFindSnapshot;
     readingMemory?: Readonly<{ identity: string; line?: number; active: boolean; remember(line: number): void }>;
     /** A lane before the line numbers (the Blame region's run column), in View and Changes. */
@@ -244,7 +255,10 @@ function FileContentPanelInner({
     onDeleteReviewCommentDraft,
     onReviewCommentError,
     rangeSelectionActive,
+    lineRangeAsk,
     jumpToAnchor,
+    highlightJumpToAnchor = true,
+    jumpToAnchorRequestId,
     find,
     readingMemory,
     renderLeadingLane,
@@ -267,10 +281,17 @@ function FileContentPanelInner({
     const codeScrollRef = React.useRef<ScrollView | null>(null);
     const codeScrollContentRef = React.useRef<View>(null);
     const codeScrollOffsetRef = React.useRef(0);
+    const codeScrollHeightRef = React.useRef(0);
+    const codeViewportListeners = React.useRef(new Set<() => void>());
     const externalCodeScrollView = React.useMemo(() => ({
         scrollRef: codeScrollRef,
         contentRef: codeScrollContentRef,
         offsetRef: codeScrollOffsetRef,
+        getViewport: () => ({ offset: codeScrollOffsetRef.current, height: codeScrollHeightRef.current }),
+        subscribeViewport: (listener: () => void) => {
+            codeViewportListeners.current.add(listener);
+            return () => { codeViewportListeners.current.delete(listener); };
+        },
     }), []);
     const intraLineDiff = useIntraLineWordDiffConfig();
     const { width: viewportWidth } = usePresentationWindowDimensions();
@@ -404,17 +425,18 @@ function FileContentPanelInner({
         return new Set(lines.filter((line) => typeof line.newLine === 'number'
             && line.newLine >= emphasizedLines.startLine && line.newLine < end).map((line) => line.id));
     }, [emphasizedLines, lines]);
-    const highlightLineIds = jumpHighlight?.highlightLineIds ?? emphasizedLineIds;
+    const activeJumpHighlight = highlightJumpToAnchor ? jumpHighlight : null;
+    const highlightLineIds = activeJumpHighlight?.highlightLineIds ?? emphasizedLineIds;
 
     const markdownHighlightRange = React.useMemo<MarkdownSourceRange | null>(() => {
-        if (displayMode !== 'markdown') return null;
+        if (displayMode !== 'markdown' || !highlightJumpToAnchor) return null;
         const anchor = jumpToAnchor ?? null;
         if (!anchor) return null;
         if (anchor.kind === 'fileLine') return { startLine: anchor.startLine, endLine: anchor.startLine };
         if (anchor.kind === 'line') return { startLine: anchor.line, endLine: anchor.line };
         if (anchor.kind === 'range') return { startLine: anchor.startLine, endLine: anchor.endLine };
         return null;
-    }, [displayMode, jumpToAnchor]);
+    }, [displayMode, highlightJumpToAnchor, jumpToAnchor]);
 
     const rememberedTarget = displayMode === 'file' ? lines.find(line => line.newLine === rememberedLine)?.id : undefined;
     const scrollToLineId = useFileContentScrollTarget(jumpHighlight?.scrollToLineId ?? reviewScrollToLineId, find, rememberedTarget, readingMemory?.identity);
@@ -556,11 +578,22 @@ function FileContentPanelInner({
         }
     }, [handlePressLine, lineSelectionEnabled, reviewCommentControls, reviewCommentLineActionsEnabled]);
 
+    const lineRangeAskEnabled = lineRangeAsk !== undefined && !lineSelectionEnabled && !reviewCommentLineActionsEnabled
+        && (displayMode === 'file' || displayMode === 'diff');
     const codeLineInteractionMode = lineSelectionEnabled
         ? 'commitSelection'
         : reviewCommentLineActionsEnabled
             ? 'comment'
-            : 'read';
+            : lineRangeAskEnabled ? 'selectRange' : 'read';
+    const askRange = useNativeLineRangeState(lineRangeAsk);
+    const askRangeActive = lineRangeAskEnabled && askRange.lineIds.size > 0;
+    // A selection belongs to the rows it was made on: another file, view or content, or another mode, drops it.
+    React.useEffect(() => {
+        lineRangeAsk?.clear();
+    }, [lineRangeAsk, lineRangeAskEnabled, filePath, displayMode, fileContent, diffContent]);
+    const onPressAskRange = React.useCallback((rangeLines: readonly CodeLine[]) => {
+        lineRangeAsk?.select(rangeLines, displayMode === 'diff' ? 'diff' : 'file');
+    }, [displayMode, lineRangeAsk]);
 
     const { lineThreshold, byteThreshold } = useInlineDiffVirtualizationThresholds();
     const virtualized = React.useMemo(() => {
@@ -602,18 +635,20 @@ function FileContentPanelInner({
                 return intelligence.onActivate(newLine, offset16, activation);
             },
             ...(diagnosticsByNewLine ? { diagnosticsByNewLine } : {}),
+            ...(displayMode === 'file' && intelligence.semantic ? { semantic: intelligence.semantic } : {}),
         };
-    }, [diagnosticsByNewLine, intelligence]);
+    }, [diagnosticsByNewLine, intelligence, displayMode]);
     const fileCodeView = fileContent && displayMode === 'file'
         ? (
             <CodeLinesView
                 {...codeGeometry}
                 lines={lines}
+                selectedLineIds={askRangeActive ? askRange.lineIds : undefined}
                 interactionMode={codeLineInteractionMode}
-                rangeSelectionActive={rangeSelectionActive}
+                rangeSelectionActive={rangeSelectionActive || askRangeActive}
                 onPressLine={reviewCommentLineActionsEnabled ? reviewCommentControls?.onPressAddComment : undefined}
-                onPressLineRange={reviewCommentLineActionsEnabled ? handlePressLineRange : undefined}
-                pressLineWhenNotSelectable={reviewCommentLineActionsEnabled}
+                onPressLineRange={reviewCommentLineActionsEnabled ? handlePressLineRange : lineRangeAskEnabled ? onPressAskRange : undefined}
+                pressLineWhenNotSelectable={reviewCommentLineActionsEnabled || lineRangeAskEnabled}
                 onPressAddComment={reviewCommentLineActionsEnabled ? reviewCommentControls?.onPressAddComment : undefined}
                 isCommentActive={reviewCommentControls?.isCommentActive}
                 renderAfterLine={reviewCommentControls?.renderAfterLine}
@@ -627,10 +662,11 @@ function FileContentPanelInner({
                 externalScrollView={!virtualized && Platform.OS !== 'web' ? externalCodeScrollView : undefined}
                 virtualized={virtualized}
                 scrollToLineId={scrollToLineId}
+                scrollToLineRequestId={jumpToAnchorRequestId}
                 scrollToLineAlignment={scrollToLineId && scrollToLineId === rememberedTarget && !jumpHighlight && !(find?.open && find.lineTarget) ? 'start' : undefined}
                 onRememberReadingLine={readingMemory?.active ? readingMemory.remember : undefined}
                 findRangesByLineId={find?.lineRanges}
-                highlightLineId={jumpHighlight?.scrollToLineId}
+                highlightLineId={activeJumpHighlight?.scrollToLineId}
                 highlightLineIds={highlightLineIds}
                 wrapLines={effectiveWrapLines}
                 showLineNumbers={effectiveShowLineNumbers}
@@ -645,7 +681,7 @@ function FileContentPanelInner({
         )
         : null;
     const effectiveDiffVirtualized = displayMode === 'diff'
-        ? (jumpHighlight ? false : virtualized)
+        ? (activeJumpHighlight ? false : virtualized)
         : virtualized;
     const diffViewer = displayMode === 'diff' && typeof diffContent === 'string'
         ? (
@@ -655,12 +691,12 @@ function FileContentPanelInner({
                 unifiedDiff={diffContent}
                 hunks={hunks}
                 reviewUnits={reviewUnits}
-                selectedLineIds={selectedLineIds}
+                selectedLineIds={askRangeActive ? askRange.lineIds : selectedLineIds}
                 interactionMode={codeLineInteractionMode}
-                rangeSelectionActive={rangeSelectionActive}
+                rangeSelectionActive={rangeSelectionActive || askRangeActive}
                 onPressLine={lineSelectionEnabled ? handlePressLine : reviewCommentLineActionsEnabled ? reviewCommentControls?.onPressAddComment : undefined}
-                onPressLineRange={lineSelectionEnabled || reviewCommentLineActionsEnabled ? handlePressLineRange : undefined}
-                pressLineWhenNotSelectable={!lineSelectionEnabled && reviewCommentLineActionsEnabled}
+                onPressLineRange={lineSelectionEnabled || reviewCommentLineActionsEnabled ? handlePressLineRange : lineRangeAskEnabled ? onPressAskRange : undefined}
+                pressLineWhenNotSelectable={!lineSelectionEnabled && (reviewCommentLineActionsEnabled || lineRangeAskEnabled)}
                 onPressAddComment={reviewCommentControls?.onPressAddComment}
                 isCommentActive={reviewCommentControls?.isCommentActive}
                 renderAfterLine={reviewCommentControls?.renderAfterLine}
@@ -671,10 +707,11 @@ function FileContentPanelInner({
                 externalScrollView={!effectiveDiffVirtualized && Platform.OS !== 'web' ? externalCodeScrollView : undefined}
                 virtualized={effectiveDiffVirtualized}
                 scrollToLineId={scrollToLineId}
+                scrollToLineRequestId={jumpToAnchorRequestId}
                 findActive={find?.open}
                 findRangesByLineId={find?.lineRanges}
                 intelligence={codeIntelligence}
-                highlightLineId={jumpHighlight?.scrollToLineId}
+                highlightLineId={activeJumpHighlight?.scrollToLineId}
                 highlightLineIds={highlightLineIds}
                 agentPresence={agentPresence}
                 wrapLines={effectiveWrapLines}
@@ -696,10 +733,18 @@ function FileContentPanelInner({
                         innerViewRef={codeScrollContentRef as React.RefObject<View>}
             style={{ flex: 1, minHeight: 0 }}
             testID={scrollTestID}
-            onLayout={onLayout}
-            onContentSizeChange={onContentSizeChange}
+            onLayout={(event) => {
+                codeScrollHeightRef.current = event.nativeEvent.layout.height;
+                for (const listener of codeViewportListeners.current) listener();
+                onLayout?.(event);
+            }}
+            onContentSizeChange={(width, height) => {
+                for (const listener of codeViewportListeners.current) listener();
+                onContentSizeChange?.(width, height);
+            }}
             onScroll={(event) => {
                 codeScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+                for (const listener of codeViewportListeners.current) listener();
                 onScroll?.(event);
             }}
             scrollEventThrottle={16}

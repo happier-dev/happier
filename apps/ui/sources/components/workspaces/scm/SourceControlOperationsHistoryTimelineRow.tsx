@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 
-import type { ScmLogEntry } from '@happier-dev/protocol';
+import type { ScmLogEntry } from '@happier-dev/protocol/scm';
 
 import { Text } from '@/components/ui/text/Text';
 import { Avatar } from '@/components/ui/avatar/Avatar';

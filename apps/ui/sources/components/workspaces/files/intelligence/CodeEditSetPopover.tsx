@@ -1,12 +1,13 @@
 import * as React from 'react';
 import { Platform, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { LanguageIntelligenceCodeAction } from '@happier-dev/protocol/machines/languageIntelligence';
+import type { LanguageIntelligenceCodeAction, LanguageIntelligenceRange } from '@happier-dev/protocol/machines/languageIntelligence';
 import type { WorkspaceFileEditSetFile } from '@happier-dev/protocol/machines/workspaceFiles';
 import { buildWorkspaceFileRestoreOperation } from '@happier-dev/protocol/machines/workspaceFilesReplace';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import type { Rect } from '@/components/ui/code/editor/codeEditorTypes';
+import { CODE_EDITOR_FORMATTING_OPTIONS } from '@/components/ui/code/editor/codeEditorFontMetrics';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
@@ -37,11 +38,13 @@ import { useFilePageBox } from './filePageBox';
 import {
   buildEditSetPreviewDiff,
   countEditSetChanges,
+  countEditSetFileChanges,
 } from './codeEditSetPreview';
 
-/** Rename (F2) or quick fixes (⌘.) for one name, asked from the File page. */
+/** The File page's semantic commands, reviewed through one edit-set surface. */
 export type CodeEditSetRequest = Readonly<{
-  op: 'rename' | 'fixes';
+  op: 'rename' | 'fixes' | 'format' | 'formatSelection' | 'organizeImports';
+  range?: LanguageIntelligenceRange;
   anchor: Rect | null;
   /** Zero-based line and UTF-16 column of the name. */
   line: number;
@@ -59,6 +62,11 @@ export type FileRenameEditSetRequest = Readonly<{
   files: readonly WorkspaceFileEditSetFile[];
 }>;
 type EditSetOp = CodeEditSetRequest['op'] | FileRenameEditSetRequest['op'];
+
+function transformTitle(op: EditSetOp): string | null {
+  return op === 'format' ? t('files.pane.menu.formatDocument') : op === 'formatSelection' ? t('files.pane.menu.formatSelection')
+    : op === 'organizeImports' ? t('files.pane.menu.organizeImports') : null;
+}
 
 export type CodeEditSetPopoverProps = Readonly<{
   request: CodeEditSetRequest;
@@ -112,6 +120,7 @@ type Stage =
   | Readonly<{
       kind: 'result';
       receipts: readonly Receipt[];
+      truncated?: boolean;
       target: Readonly<{ machineId: string; rootPath: string; options: EditSetOptions; scopeKey: string }>;
       undo:
         | 'idle'
@@ -208,7 +217,8 @@ function useEditSetCommit(params: Readonly<{
             action: stage.action,
             expectedHash: stage.fileHash,
           }
-        : { kind: op === 'fileRename' ? ('fileRename' as const) : ('rename' as const), files: [...stage.files] };
+        : { kind: op === 'fileRename' ? ('fileRename' as const) : op === 'organizeImports' ? ('organizeImports' as const)
+            : op === 'format' || op === 'formatSelection' ? ('format' as const) : ('rename' as const), files: [...stage.files] };
     let response: Awaited<
       ReturnType<typeof machineLanguageIntelligenceApplyAction>
     >;
@@ -236,7 +246,13 @@ function useEditSetCommit(params: Readonly<{
     }
     if (!alive.current || continuationSignal.aborted || !author.isCurrent() || currentScopeKey.current !== scopeKey) return;
     if ('ok' in response && response.ok) {
-      setStage({ kind: 'result', target, receipts: response.results, undo: 'idle' });
+      const answered = new Set(response.results.map(receipt => receipt.path));
+      const receipts: readonly Receipt[] = response.truncated ? [...response.results,
+        ...stage.files.filter(file => !answered.has(file.path)).map(file => ({
+          path: file.path, status: 'failed' as const, reason: 'transport_ceiling',
+        })),
+      ] : response.results;
+      setStage({ kind: 'result', target, receipts, truncated: response.truncated, undo: 'idle' });
       return;
     }
     if ('errorCode' in response && isDeclinedApproval(response.errorCode)) {
@@ -253,7 +269,7 @@ function useEditSetCommit(params: Readonly<{
     if (stage.kind !== 'result' || stage.undo !== 'idle' || stage.target.scopeKey !== scopeKey || !author.isCurrent()) return;
     const { receipts, target } = stage;
     const continuationSignal = author.getSignal();
-    setStage({ kind: 'result', target, receipts, undo: 'running' });
+    setStage({ ...stage, undo: 'running', undoDeclined: false });
     const operation = buildWorkspaceFileRestoreOperation(
       receipts as Parameters<typeof buildWorkspaceFileRestoreOperation>[0],
     );
@@ -264,27 +280,25 @@ function useEditSetCommit(params: Readonly<{
     ).catch(() => null);
     if (!alive.current || continuationSignal.aborted || !author.isCurrent() || currentScopeKey.current !== scopeKey) return;
     if (response && !response.ok && 'errorCode' in response && isDeclinedApproval(response.errorCode)) {
-      setStage({ kind: 'result', target, receipts, undo: 'idle', undoDeclined: true });
+      setStage({ ...stage, undo: 'idle', undoDeclined: true });
       return;
     }
     if (!response || !response.ok) {
       setStage({
-        kind: 'result',
-        target,
-        receipts,
+        ...stage,
         undo: { restored: 0, changed: 0, failed: true },
       });
       return;
     }
     let restored = 0,
       changed = 0,
-      failed = false;
+      failed = response.truncated === true;
     for (const result of response.results) {
       if (result.status === 'restored') restored += 1;
       else if (result.status === 'changed') changed += 1;
       else failed = true;
     }
-    setStage({ kind: 'result', target, receipts, undo: { restored, changed, failed } });
+    setStage({ ...stage, undo: { restored, changed, failed }, undoDeclined: false });
   }, [alive, author.approval.requestApproval, author.getSignal, author.isCurrent, scopeKey, setStage, stage]);
   // An apply or Undo the person's Settings › Actions ask about waits here: the review (or result) stays,
   // and its band names the wait with the way to the request (the Inbox owns the decision).
@@ -345,7 +359,7 @@ function refusalText(
     (result.reason === 'no_capable_server' ||
       result.reason === 'method_unavailable')
   )
-    return op === 'rename'
+    return transformTitle(op) ? t('common.unavailable') : op === 'rename'
       ? t('files.pane.intelligence.renameUnavailable')
       : t('files.pane.intelligence.fixesUnavailable');
   return t('files.pane.intelligence.editFailed');
@@ -399,6 +413,9 @@ export function CodeEditSetPopover(
     ],
   );
 
+  // The review reads each file it shows; the page's own clean text needs no read.
+  const { texts, loadTexts } = useEditSetTexts(latest, alive);
+
   const begin = React.useCallback(async () => {
     setStage({ kind: 'loading' });
     await latest.current.syncDocument().catch(() => null);
@@ -406,11 +423,20 @@ export function CodeEditSetPopover(
     const machineId = latest.current.scope.machineId;
     const result = await machineLanguageIntelligencePreviewAction(
       machineId,
-      request.op === 'rename' ? 'code.rename.preview' : 'code.codeActions.list',
-      address,
+      request.op === 'rename' ? 'code.rename.preview' : request.op === 'fixes' ? 'code.codeActions.list'
+        : request.op === 'organizeImports' ? 'code.imports.organize' : 'code.format.apply',
+      request.op !== 'rename' && request.op !== 'fixes' ? { rootPath: address.rootPath, path: address.path,
+        ...(props.languageId ? { languageId: props.languageId } : {}),
+        operation: { kind: 'preview', ...(request.op === 'organizeImports' ? {} : { formattingOptions: CODE_EDITOR_FORMATTING_OPTIONS }),
+          ...(request.range ? { range: request.range } : {}) } } : address,
       options,
     );
     if (!alive.current) return;
+    if (result.status === 'ok' && (result.kind === 'formatting' || result.kind === 'rangeFormatting' || result.kind === 'organizeImports')) {
+      loadTexts(result.files);
+      setStage({ kind: 'review', files: result.files, applying: false });
+      return;
+    }
     if (result.status === 'ok' && result.kind === 'prepareRename') {
       const target = result.targets[0];
       if (!target)
@@ -446,16 +472,13 @@ export function CodeEditSetPopover(
       return;
     }
     setStage({ kind: 'note', text: refusalText(result, request.op) });
-  }, [address, options, request.op, request.symbol]);
+  }, [address, loadTexts, options, props.languageId, request.op, request.range, request.symbol]);
 
   React.useEffect(() => {
     if (stage.kind === 'loading') void begin();
     // Runs once per opening; later stages are driven by the person.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // The review reads each file it shows; the page's own clean text needs no read.
-  const { texts, loadTexts } = useEditSetTexts(latest, alive);
 
   const preview = React.useCallback(
     async (value: string) => {
@@ -540,6 +563,8 @@ export function CodeEditSetPopover(
   const phone = useDeviceType() === 'phone';
   const pageBox = useFilePageBox();
   const anchor = request.anchor;
+  // A request from a name hangs from it; a command's (Format, Organize imports) from the page's seat.
+  const seat = pageBox.seat;
   const popoverAnchor = React.useMemo(
     () =>
       anchor
@@ -553,8 +578,8 @@ export function CodeEditSetPopover(
             },
             coordinateSpace: 'window' as const,
           }
-        : null,
-    [anchor?.x, anchor?.y, anchor?.width, anchor?.height],
+        : { kind: 'view' as const, ref: seat },
+    [anchor?.x, anchor?.y, anchor?.width, anchor?.height, seat],
   );
 
   const body = (
@@ -598,7 +623,7 @@ export function CodeEditSetPopover(
     {pageBox.box}
     <Popover
       open
-      anchor={popoverAnchor ?? undefined}
+      anchor={popoverAnchor}
       backdrop={false}
       boundaryRef={null}
       horizontalBoundaryRef={pageBox.ref}
@@ -607,15 +632,15 @@ export function CodeEditSetPopover(
       sheetHeader="none"
       sheetMaterial="solid"
       accessibilityLabel={
-        request.op === 'rename'
+        transformTitle(request.op) ?? (request.op === 'rename'
           ? t('files.pane.intelligence.renameTitle')
-          : t('files.pane.intelligence.fixesTitle')
+          : t('files.pane.intelligence.fixesTitle'))
       }
       portal={{
         web: true,
         native: true,
         matchAnchorWidth: false,
-        anchorAlign: 'start',
+        anchorAlign: anchor ? 'start' : 'center',
       }}
       placement="bottom"
       flip
@@ -756,7 +781,7 @@ function CodeEditSetPage(
     const leave = stage.back ? (
       <RoundButton size="small" display="secondary" title={t('common.back')} disabled={stage.applying}
         onPress={props.onBack} testID="code-edit-set-back" />
-    ) : fileRename ? (
+    ) : fileRename || transformTitle(request.op) ? (
       <RoundButton size="small" display="secondary" title={t('common.cancel')} disabled={stage.applying}
         onPress={props.onClose} testID="code-edit-set-cancel" />
     ) : null;
@@ -768,25 +793,26 @@ function CodeEditSetPage(
         ) : null}
         {empty ? null : (
           <RoundButton size="small"
-            title={stage.action ? t('files.pane.intelligence.applyFix')
+            title={transformTitle(request.op) ?? (stage.action ? t('files.pane.intelligence.applyFix')
               : fileRename ? t('files.pane.intelligence.renameAndUpdateImports')
-              : t('files.pane.intelligence.renameInFiles', { files: counts.files })}
+              : t('files.pane.intelligence.renameInFiles', { files: counts.files }))}
             loading={stage.applying} onPress={props.onApply} testID="code-edit-set-apply" />
         )}
       </>
     );
     return (
-      <View style={[styles.page, { backgroundColor: theme.colors.surface.base }]} testID="code-edit-set-page">
+      <View style={styles.page} testID="code-edit-set-page">
         <View style={styles.band}>
           <View style={styles.bandText}>
             {/* The primary names the verb ("Rename in 2 files"); the title is what changes. */}
-            <Text variant="label" emphasis={stage.action ? 'semiBold' : undefined} numberOfLines={2}
-              style={[styles.primaryText, stage.action ? null : styles.mono]}>
-              {stage.action
+            {/* Mono only for a rename's names; a server action or a transform ("Format document") is words. */}
+            <Text variant="label" emphasis={stage.action || transformTitle(request.op) ? 'semiBold' : undefined} numberOfLines={2}
+              style={[styles.primaryText, stage.action || transformTitle(request.op) ? null : styles.mono]}>
+              {transformTitle(request.op) ?? (stage.action
                 ? stage.action.title
                 : fileRename
                   ? t('files.pane.intelligence.renameTo', { from: props.filePath, to: fileRename.newPath })
-                  : t('files.pane.intelligence.renameTo', { from: request.op === 'fileRename' ? '' : request.symbol, to: stage.newName ?? '' })}
+                  : t('files.pane.intelligence.renameTo', { from: request.op === 'fileRename' ? '' : request.symbol, to: stage.newName ?? '' }))}
             </Text>
             {props.waiting ? <EditSetWaitingLine waiting={props.waiting} />
               : stage.declined ? <EditSetDeclinedLine text={t('files.pane.intelligence.applyDeclined')} />
@@ -823,7 +849,7 @@ function CodeEditSetPage(
   if (stage.kind === 'note') {
     // An apply that failed says why where its review was, with the one way out.
     return (
-      <View style={[styles.page, { backgroundColor: theme.colors.surface.base }]} testID="code-edit-set-page">
+      <View style={styles.page} testID="code-edit-set-page">
         <View style={styles.band} testID="code-edit-set-note">
           <Icon name="warning" size={ICON_SIZE.sm} color={theme.colors.state.warning.foreground} />
           <Text variant="label" numberOfLines={2} style={[styles.primaryText, styles.bandText]}>{stage.text}</Text>
@@ -839,16 +865,17 @@ function CodeEditSetPage(
   const moved = fileRename ? written.find((receipt) => receipt.renameTo) : undefined;
   const title = undone && undone.restored > 0
     ? t('files.pane.intelligence.undone', { files: undone.restored })
-    : written.length
+    : stage.truncated ? t('files.pane.intelligence.editFailed') : written.length
       ? moved?.renameTo
         ? t('files.pane.intelligence.fileRenamed', { name: moved.renameTo.slice(moved.renameTo.lastIndexOf('/') + 1) })
+        : transformTitle(request.op) ? t('common.done')
         : rename || fileRename ? t('files.pane.intelligence.renamed', { files: written.length }) : t('files.pane.intelligence.fixApplied')
       : t('files.pane.intelligence.nothingChanged');
   return (
-    <View style={[styles.page, { backgroundColor: theme.colors.surface.base }]} testID="code-edit-set-page">
+    <View style={styles.page} testID="code-edit-set-page">
       <View style={styles.band} testID="code-edit-set-result">
-        <Icon name={written.length ? 'check' : 'warning'} size={ICON_SIZE.sm}
-          color={written.length ? theme.colors.text.secondary : theme.colors.state.warning.foreground} />
+        <Icon name={written.length && !stage.truncated ? 'check' : 'warning'} size={ICON_SIZE.sm}
+          color={written.length && !stage.truncated ? theme.colors.text.secondary : theme.colors.state.warning.foreground} />
         <View style={styles.bandText}>
           <Text variant="label" emphasis="semiBold" numberOfLines={1} style={styles.primaryText}>
             {title}
@@ -953,9 +980,9 @@ function CodeEditSetBody(
         style={styles.primaryText}
         numberOfLines={1}
       >
-        {rename
+        {transformTitle(request.op) ?? (rename
           ? t('files.pane.intelligence.renameTitle')
-          : t('files.pane.intelligence.fixesTitle')}
+          : t('files.pane.intelligence.fixesTitle'))}
       </Text>
       <Text
         variant="meta"
@@ -1126,15 +1153,15 @@ function CodeEditSetBody(
           <Text
             variant="label"
             emphasis="semiBold"
-            style={[styles.primaryText, stage.action ? null : styles.mono]}
+            style={[styles.primaryText, stage.action || transformTitle(request.op) ? null : styles.mono]}
             numberOfLines={1}
           >
-            {stage.action
+            {transformTitle(request.op) ?? (stage.action
               ? stage.action.title
               : t('files.pane.intelligence.renameTo', {
                   from: request.symbol,
                   to: stage.newName ?? '',
-                })}
+                }))}
           </Text>
         </View>
         <ScrollView style={styles.scroll} testID="code-edit-set-review">
@@ -1186,15 +1213,16 @@ function CodeEditSetBody(
               onPress={props.onBack}
               testID="code-edit-set-back"
             />
-          ) : null}
+          ) : transformTitle(request.op) ? <RoundButton size="small" display="secondary" title={t('common.cancel')}
+            disabled={stage.applying} onPress={props.onClose} testID="code-edit-set-cancel" /> : null}
           {empty ? null : <RoundButton
             size="small"
             title={
-              stage.action
+              transformTitle(request.op) ?? (stage.action
                 ? t('files.pane.intelligence.applyFix')
                 : t('files.pane.intelligence.renameInFiles', {
                     files: counts.files,
-                  })
+                  }))
             }
             loading={stage.applying}
             onPress={props.onApply}
@@ -1213,19 +1241,19 @@ function CodeEditSetBody(
   const title =
     typeof undo === 'object' && undo.restored > 0
       ? t('files.pane.intelligence.undone', { files: undo.restored })
-      : written.length
+      : stage.truncated ? t('files.pane.intelligence.editFailed') : written.length
         ? rename
           ? t('files.pane.intelligence.renamed', { files: written.length })
-          : t('files.pane.intelligence.fixApplied')
+          : transformTitle(request.op) ? t('common.done') : t('files.pane.intelligence.fixApplied')
         : t('files.pane.intelligence.nothingChanged');
   return (
     <>
       <View style={styles.header} testID="code-edit-set-result">
         <Icon
-          name={written.length ? 'check' : 'warning'}
+          name={written.length && !stage.truncated ? 'check' : 'warning'}
           size={ICON_SIZE.sm}
           color={
-            written.length
+            written.length && !stage.truncated
               ? theme.colors.text.secondary
               : theme.colors.state.warning.foreground
           }
@@ -1305,7 +1333,7 @@ function EditSetFile(
         : null,
     [file, moveOnly, props.text],
   );
-  const count = file.edits.length + (file.renameTo ? 1 : 0);
+  const count = countEditSetFileChanges(file);
   const movedName = file.renameTo ? file.renameTo.slice(file.renameTo.lastIndexOf('/') + 1) : null;
   const movedDirectory = file.renameTo ? file.renameTo.slice(0, Math.max(0, file.renameTo.lastIndexOf('/'))) : '';
   return (

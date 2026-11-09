@@ -120,7 +120,7 @@ export function FilePartialFooter(props: Readonly<{
             </Text>
             {props.onDownload ? (
                 <HappierPressable testID="file-details-partial-download" accessibilityRole="button" accessibilityLabel={t('files.pane.page.downloadWholeFile')}
-                    hitSlop={6} onPress={props.onDownload}
+                    onPress={props.onDownload}
                     style={({ focused }) => [styles.partialLink, focusRingStyle({ focused, color: theme.colors.border.focus })]}>
                     <Text style={styles.partialLinkLabel}>{t('files.pane.page.downloadWholeFile')}</Text>
                 </HappierPressable>

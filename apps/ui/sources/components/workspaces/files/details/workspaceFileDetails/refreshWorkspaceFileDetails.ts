@@ -4,7 +4,7 @@ import { callDaemonWorkspaceStatFileRpc } from '@/sync/domains/transfers/runtime
 import { workspaceReadFile } from '@/sync/ops/workspaceFileSystem/fileReadWrite';
 import { isBinaryContent, resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { decodeBase64 } from '@/encryption/base64';
-import type { ScmDiffArea } from '@happier-dev/protocol';
+import type { ScmDiffArea } from '@happier-dev/protocol/scm/workingSnapshot';
 import type { FileDiffMode } from '@/components/workspaces/files/file/filePageModel';
 import type { ScmEntryKind } from '@/sync/domains/state/storageTypes';
 import { decodeWorkspaceFileText } from '@/sync/ops/workspaceFileSystem/workspaceFileTextDecoding';
@@ -100,8 +100,8 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                 if (input.signal?.aborted) throw new Error(t('files.fileReadFailed'));
                 const videoPreview = input.readAsText !== true && viewer.kind === 'video';
                 const wantsBinaryPreview = input.readAsText !== true && viewer.previewable && viewer.kind !== 'svg';
-                // Opaque binary classification performs no inline read and consumes no text budget; one stat names its
-                // size on the identity card (lab FV2b), and a stat that cannot answer only leaves the size out.
+                // Opaque binary classification performs no inline read and consumes no text budget; one stat verifies
+                // that the identity card names an existing file and exposes metadata-access failures.
                 if (viewer.kind === 'binary' && !input.readAsText) {
                     const stat = await callDaemonWorkspaceStatFileRpc({
                         machineId: input.scope.machineId,
@@ -109,9 +109,12 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                         rootPath: input.scope.rootPath,
                         request: { path: input.filePath },
                         signal: input.signal,
-                    }).catch(() => null);
+                    });
                     if (input.signal?.aborted) throw new Error(t('files.fileReadFailed'));
-                    const binarySizeBytes = stat?.success && stat.exists === true && typeof stat.sizeBytes === 'number'
+                    if (!stat.success || stat.exists !== true) {
+                        throw new Error(!stat.success ? stat.error : t('files.fileReadFailed'));
+                    }
+                    const binarySizeBytes = typeof stat.sizeBytes === 'number'
                         && Number.isFinite(stat.sizeBytes) && stat.sizeBytes >= 0 ? Math.floor(stat.sizeBytes) : null;
                     return {
                         status: 'ready', error: null, diffContent,
@@ -135,10 +138,10 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                         signal: input.signal,
                     });
                     if (input.signal?.aborted) throw new Error(t('files.fileReadFailed'));
-                    // Retain the last good player and expose the ordinary retry error when its revision cannot be refreshed.
-                    if (videoPreview && (!stat.success || !stat.exists
-                        || typeof stat.sizeBytes !== 'number' || !Number.isFinite(stat.sizeBytes) || stat.sizeBytes < 0
-                        || typeof stat.modifiedMs !== 'number' || !Number.isFinite(stat.modifiedMs))) {
+                    // Binary viewers need successful target metadata; video additionally needs a stable player revision.
+                    if (wantsBinaryPreview && (!stat.success || stat.exists !== true
+                        || (videoPreview && (typeof stat.sizeBytes !== 'number' || !Number.isFinite(stat.sizeBytes) || stat.sizeBytes < 0
+                            || typeof stat.modifiedMs !== 'number' || !Number.isFinite(stat.modifiedMs))))) {
                         throw new Error(!stat.success ? stat.error : t('files.fileReadFailed'));
                     }
                     if (

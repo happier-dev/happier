@@ -7,6 +7,7 @@ import type { LanguageIntelligenceDiagnostic } from '@happier-dev/protocol/machi
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { FileIcon } from '@/components/ui/media/FileIcon';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
@@ -23,6 +24,12 @@ export type CodeProblemsListProps = Readonly<{
   selected?: LanguageIntelligenceDiagnostic | null;
   onOpen: (item: LanguageIntelligenceDiagnostic) => void;
   onCheck: () => void;
+  scope?: 'open' | 'project';
+  onScopeChange?: (scope: 'open' | 'project') => void;
+  onCheckProject?: () => void;
+  onCancelProject?: () => void;
+  projectChecking?: boolean;
+  partial?: boolean;
   /** "Ask Claude to fix 3 problems" / "Save and ask…"; absent when no one can be asked. */
   ask: Readonly<{ label: string; busy: boolean; onPress: () => void }> | null;
   asked?: boolean;
@@ -46,14 +53,52 @@ export function CodeProblemsList(
         ? theme.colors.state.warning.foreground
         : theme.colors.text.tertiary;
   const sectioned = props.groups.length > 1;
-  const empty = props.count === 0 && props.state === 'ready';
+  const project = props.scope === 'project';
+  const empty = props.count === 0 && props.state === 'ready' && !props.partial;
   return (
     <View style={styles.container} testID="code-problems">
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-        <Text variant="meta" style={styles.caption}>
-          {t('files.pane.intelligence.problemsScope')}
-        </Text>
-        {props.state === 'idle' ? (
+        {props.onScopeChange ? (
+          <View style={styles.state}>
+            <SegmentedTabBar
+              compact
+              tabs={[
+                { id: 'open', label: t('files.pane.intelligence.openFiles') },
+                { id: 'project', label: t('files.pane.intelligence.wholeProject') },
+              ]}
+              activeTabId={props.scope ?? 'open'}
+              onSelectTab={props.onScopeChange}
+              testIDPrefix="code-problems-scope"
+            />
+          </View>
+        ) : (
+          <Text variant="meta" style={styles.caption}>
+            {t('files.pane.intelligence.problemsScope')}
+          </Text>
+        )}
+        {/* The project check belongs to its own scope: Open files never offers it, and before the first
+            check the scope says what it covers, the same way the open-files scope does. */}
+        {props.onCheckProject && project ? (
+          <View style={styles.state}>
+            {props.state === 'idle' ? (
+              <Text variant="body" style={styles.stateText}>{t('files.pane.intelligence.projectProblemsIdle')}</Text>
+            ) : null}
+            <View style={styles.stateAction}>
+              <RoundButton
+                size="small"
+                display="secondary"
+                title={props.projectChecking ? t('common.cancel') : t('files.pane.intelligence.checkWholeProject')}
+                onPress={props.projectChecking ? props.onCancelProject : props.onCheckProject}
+                testID={props.projectChecking ? 'code-project-problems-cancel' : 'code-project-problems-check'}
+              />
+            </View>
+          </View>
+        ) : null}
+        {props.state === 'unavailable' && project ? (
+          <View style={styles.state}>
+            <Text variant="body" style={styles.stateText}>{t('files.pane.intelligence.projectProblemsUnavailable')}</Text>
+          </View>
+        ) : props.state === 'idle' && !project ? (
           <View style={styles.state}>
             <Text variant="body" style={styles.stateText}>
               {t('files.pane.intelligence.problemsIdle')}
@@ -82,9 +127,12 @@ export function CodeProblemsList(
         ) : empty ? (
           <View style={styles.state} testID="code-problems-none">
             <Text variant="body" style={styles.stateText}>
-              {t('files.pane.intelligence.noProblems')}
+              {project ? t('files.pane.intelligence.projectNoProblems') : t('files.pane.intelligence.noProblems')}
             </Text>
           </View>
+        ) : null}
+        {props.partial && props.state === 'ready' ? (
+          <Text variant="meta" style={styles.caption}>{t('files.pane.intelligence.projectProblemsPartial')}</Text>
         ) : null}
         {props.groups.map((group) => (
           <View key={group.serverId}>

@@ -11,14 +11,20 @@ vi.mock('@/text', async () => (await import('@/dev/testkit')).createTextModuleMo
 // Only portal placement/window measurement is substituted; menu rows and selection stay real.
 vi.mock('@/components/ui/popover', async importOriginal => (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 
+const device = vi.hoisted(() => ({ current: 'tablet' as 'phone' | 'tablet' }));
+vi.mock('@/utils/platform/responsive', async importOriginal => ({ ...(await importOriginal<typeof import('@/utils/platform/responsive')>()), useDeviceType: () => device.current }));
+
+const { RepositoryTreeRowActionsMenu } = await import('./RepositoryTreeRowActionsMenu');
+const { ActionListSection } = await import('@/components/ui/lists/ActionListSection');
+
 describe('canonical repository row menu', () => {
     async function render(input: { kind: 'file' | 'directory'; downloadActionsEnabled: boolean; disableWriteActions?: boolean; fileMenuContext?: FileMenuContext;
-        share?: import('./RepositoryTreeRowActionsMenu').RepositoryTreeRowShareTarget }) {
-        const { RepositoryTreeRowActionsMenu } = await import('./RepositoryTreeRowActionsMenu');
+        share?: import('./RepositoryTreeRowActionsMenu').RepositoryTreeRowShareTarget;
+        folderCreation?: { newFolder: boolean; upload: boolean } }) {
         const selected: RepositoryTreeRowActionMenuItemId[] = [];
         const screen = await renderScreen(<RepositoryTreeRowActionsMenu path="folder.ts" kind={input.kind}
             downloadActionsEnabled={input.downloadActionsEnabled} disableWriteActions={input.disableWriteActions ?? false}
-            fileMenuContext={input.fileMenuContext} share={input.share}
+            fileMenuContext={input.fileMenuContext} share={input.share} folderCreation={input.folderCreation}
             control={{ open: true, onOpenChange: () => {}, triggerHidden: true }} onSelect={item => selected.push(item)} />);
         return { screen, selected };
     }
@@ -72,5 +78,30 @@ describe('canonical repository row menu', () => {
         const folder = await render({ kind: 'directory', downloadActionsEnabled: false, share });
         expect(folder.screen.findByTestId('repository-tree-menuitem-copyLink')).toBeNull();
         expect(folder.screen.findByTestId('repository-tree-menuitem-mentionInComposer')).toBeTruthy();
+    });
+    describe('Delete', () => {
+        async function sections(kind: 'file' | 'directory') {
+            const { screen } = await render({ kind, downloadActionsEnabled: true, folderCreation: { newFolder: true, upload: true } });
+            return screen.findAllByType(ActionListSection).map(section => section.props.actions as ReadonlyArray<{ id: string; subtitle?: string }>);
+        }
+
+        it.each(['file', 'directory'] as const)('closes a %s menu alone in its own section, set apart from the other actions', async kind => {
+            device.current = 'tablet';
+            const all = await sections(kind);
+            const last = all.at(-1)!;
+            expect(last.map(action => action.id)).toEqual(['repository-tree-menuitem-delete']);
+            expect(all.length).toBeGreaterThan(1);
+            expect(last[0]!.subtitle).toBeUndefined();
+        });
+
+        it.each(['file', 'directory'] as const)('says what deleting a %s removes in the phone sheet', async kind => {
+            device.current = 'phone';
+            try {
+                const last = (await sections(kind)).at(-1)!;
+                expect(last[0]!.subtitle).toBe(kind === 'file'
+                    ? 'files.repositoryTree.actions.deleteFileConsequence'
+                    : 'files.repositoryTree.actions.deleteFolderConsequence');
+            } finally { device.current = 'tablet'; }
+        });
     });
 });

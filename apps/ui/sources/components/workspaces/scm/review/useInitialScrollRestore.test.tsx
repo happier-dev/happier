@@ -22,27 +22,31 @@ import { renderHook } from '@/dev/testkit';
 afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();
+    vi.unstubAllGlobals();
 });
 
 beforeEach(() => {
     vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) =>
+        globalThis.setTimeout(() => callback(Date.now()), 0)));
+    vi.stubGlobal('cancelAnimationFrame', (handle: number) => globalThis.clearTimeout(handle));
 });
 
 type InitialScrollRestoreHarnessProps = Readonly<{
     initial: number | null;
     latestScrollTopRef: MutableRefObject<number>;
     applyInitialScrollTop: (top: number) => boolean;
+    ready?: boolean;
 }>;
 
 async function renderInitialScrollRestoreHarness(props: InitialScrollRestoreHarnessProps) {
-    return renderHook(({ initial, latestScrollTopRef, applyInitialScrollTop }: InitialScrollRestoreHarnessProps) => {
-        useInitialScrollRestore({
+    return renderHook(({ initial, latestScrollTopRef, applyInitialScrollTop, ready }: InitialScrollRestoreHarnessProps) => {
+        return useInitialScrollRestore({
             initialScrollTop: initial,
             latestScrollTopRef,
             applyInitialScrollTop,
-            maxAttempts: 3,
+            ready,
         });
-        return null;
     }, {
         initialProps: props,
         flushOptions: { cycles: 0 },
@@ -58,6 +62,35 @@ async function advanceRestoreTimers(times = 1): Promise<void> {
 }
 
 describe('useInitialScrollRestore', () => {
+    it('does not introduce web restoration frames or offset writes on native', async () => {
+        const { Platform } = await import('react-native');
+        Object.assign(Platform, { OS: 'ios' });
+        try {
+            const apply = vi.fn(() => true);
+            const hook = await renderInitialScrollRestoreHarness({
+                initial: 300, latestScrollTopRef: { current: 300 }, applyInitialScrollTop: apply, ready: true,
+            });
+            act(() => { hook.getCurrent().requestRestore(); });
+            expect(globalThis.requestAnimationFrame).not.toHaveBeenCalled();
+            expect(apply).not.toHaveBeenCalled();
+            await hook.unmount();
+        } finally {
+            Object.assign(Platform, { OS: 'web' });
+        }
+    });
+
+    it('waits for recycler readiness without losing reader movement before layout completes', async () => {
+        const scrollTopRef = { current: 300 };
+        const apply = vi.fn(() => true);
+        const hook = await renderInitialScrollRestoreHarness({ initial: 300, latestScrollTopRef: scrollTopRef,
+            applyInitialScrollTop: apply, ready: false });
+        await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+        expect(apply).not.toHaveBeenCalled();
+        scrollTopRef.current = 250;
+        await hook.rerender({ initial: 300, latestScrollTopRef: scrollTopRef, applyInitialScrollTop: apply, ready: true });
+        await advanceRestoreTimers();
+        expect(apply).not.toHaveBeenCalled();
+    });
     it('restores a saved position already retained by the scroll tracker on remount', async () => {
         const scrollTopRef = { current: 300 };
         const apply = vi.fn(() => true);
@@ -130,23 +163,57 @@ describe('useInitialScrollRestore', () => {
         expect(apply).not.toHaveBeenCalled();
     });
 
-    it('retries until apply succeeds or attempts exhausted', async () => {
+    it('waits for real readiness events beyond twelve failed layouts without autonomous retry frames', async () => {
         const scrollTopRef = { current: 0 };
-        const apply = vi.fn()
-            .mockReturnValueOnce(false)
-            .mockReturnValueOnce(false)
-            .mockReturnValueOnce(true);
+        let viewportReady = false;
+        const apply = vi.fn(() => viewportReady);
 
-        await renderInitialScrollRestoreHarness({
+        const hook = await renderInitialScrollRestoreHarness({
             initial: 1200,
             latestScrollTopRef: scrollTopRef,
             applyInitialScrollTop: apply,
         });
 
-        await advanceRestoreTimers(3);
+        await advanceRestoreTimers();
+        expect(apply).toHaveBeenCalledTimes(1);
+        expect(vi.getTimerCount()).toBe(0);
 
-        expect(apply).toHaveBeenCalledTimes(3);
+        for (let index = 0; index < 20; index += 1) {
+            act(() => {
+                hook.getCurrent().requestRestore();
+                hook.getCurrent().requestRestore();
+            });
+            await advanceRestoreTimers();
+            expect(vi.getTimerCount()).toBe(0);
+        }
+        expect(apply).toHaveBeenCalledTimes(21);
+        viewportReady = true;
+        act(() => { hook.getCurrent().requestRestore(); });
+        await advanceRestoreTimers();
+        expect(apply).toHaveBeenCalledTimes(22);
         expect(apply).toHaveBeenLastCalledWith(1200);
+        expect(globalThis.requestAnimationFrame).toHaveBeenCalledTimes(22);
+
+        act(() => { hook.getCurrent().requestRestore(); });
+        expect(vi.getTimerCount()).toBe(0);
+        expect(globalThis.requestAnimationFrame).toHaveBeenCalledTimes(22);
+    });
+
+    it('cancels scheduled and future readiness attempts on explicit navigation', async () => {
+        const apply = vi.fn(() => true);
+        const hook = await renderInitialScrollRestoreHarness({
+            initial: 300,
+            latestScrollTopRef: { current: 300 },
+            applyInitialScrollTop: apply,
+            ready: false,
+        });
+        expect(vi.getTimerCount()).toBe(0);
+        await hook.rerender({ initial: 300, latestScrollTopRef: { current: 300 }, applyInitialScrollTop: apply, ready: true });
+        act(() => { hook.getCurrent().cancelRestore(); });
+        expect(vi.getTimerCount()).toBe(0);
+        act(() => { hook.getCurrent().requestRestore(); });
+        expect(vi.getTimerCount()).toBe(0);
+        expect(apply).not.toHaveBeenCalled();
     });
 
     it('cancels pending restore timers on unmount', async () => {
@@ -163,5 +230,20 @@ describe('useInitialScrollRestore', () => {
         await hook.unmount();
 
         expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('cancels a timeout fallback with its matching timer boundary even when frame cancellation exists', async () => {
+        vi.stubGlobal('requestAnimationFrame', undefined);
+        const cancelFrame = vi.fn();
+        vi.stubGlobal('cancelAnimationFrame', cancelFrame);
+        const apply = vi.fn(() => true);
+        const hook = await renderInitialScrollRestoreHarness({
+            initial: 300, latestScrollTopRef: { current: 300 }, applyInitialScrollTop: apply,
+        });
+        expect(vi.getTimerCount()).toBe(1);
+        act(() => { hook.getCurrent().cancelRestore(); });
+        expect(vi.getTimerCount()).toBe(0);
+        expect(cancelFrame).not.toHaveBeenCalled();
+        expect(apply).not.toHaveBeenCalled();
     });
 });

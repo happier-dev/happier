@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
 import { RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { installSourceControlStateCommonModuleMocks } from './sourceControlStateTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;

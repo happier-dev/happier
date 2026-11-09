@@ -15,17 +15,23 @@ import { ScmWorkingEntrySchema } from '@happier-dev/protocol/scm/workingSnapshot
 import { ScmComparisonSchema, type ScmComparison } from '@happier-dev/protocol/scm';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
+import { resolveHref } from 'expo-router/build/link/href';
+import type { DestinationNavigation } from '@/components/appShell/workspace/destinationInstanceContext';
 
 const clipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async (_text: string) => true) }));
 const viewport = vi.hoisted(() => ({ width: 1440, height: 900, scale: 1, fontScale: 1 }));
 vi.mock('expo-clipboard', () => clipboard);
+vi.mock('@legendapp/list/react-native', async importOriginal => {
+    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+    return createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>() }).module;
+});
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     const { createCapturingFlatListMock } = await import('@/dev/testkit/mocks/virtualizedList');
     // The host renderer has no measured RN list viewport; real File code rows still render.
     return createReactNativeWebMock({ ...createCapturingFlatListMock({ renderItems: true }).module,
-        useWindowDimensions: () => viewport, Dimensions: { get: () => viewport } });
+        Dimensions: { get: () => viewport } });
 });
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -41,6 +47,7 @@ let readInputs: unknown[];
 let scmDiff = '';
 let capturedComparison: ScmComparison | null = null;
 let portalBoundary: ReturnType<typeof installReactDomPortalBoundaryForTests>;
+let restoreEngineLoader: () => void;
 // Compile and load the real runtime graph during collection, as the other composed File tests do.
 await prepareSessionFilesViewTestkit();
 const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
@@ -51,6 +58,13 @@ const { HunkContextMenu } = await import('@/components/ui/code/diff/hunks/HunkCo
 const { DiffViewer } = await import('@/components/ui/code/diff/DiffViewer');
 beforeEach(async () => {
     standardCleanup();
+    const previousRequire = window.require;
+    const previousMonaco = window.monaco;
+    // The renderer cannot execute AMD assets. Model a genuinely pending engine,
+    // rather than depending on a prior fixture's loader timeout or failed script.
+    window.monaco = undefined;
+    window.require = Object.assign((_dependencies: unknown) => {}, { config: () => {} });
+    restoreEngineLoader = () => { window.require = previousRequire; window.monaco = previousMonaco; };
     viewport.width = 1440;
     clipboard.setStringAsync.mockClear();
     // jsdom supplies the web modal DOM; Node supplies real, fetchable Blob URLs.
@@ -82,14 +96,291 @@ beforeEach(async () => {
             : request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE && capturedComparison ? { success: true, comparison: capturedComparison,
                 metadata: { sourceKey: capturedComparison.id, source: capturedComparison.source } }
             : transfer.rpc(request) });
+    // Each transport fixture reuses one workspace identity with different disk diffs.
+    const { invalidateWorkspaceUnifiedDiffPath } = await import('@/scm/diff/fetchWorkspaceUnifiedDiffForPath');
+    invalidateWorkspaceUnifiedDiffPath({ scope: fixture.scope, path: filePath });
     fixture.storage.getState().updateWorkspaceScmSnapshot(fixture.scope, fileViewSnapshot());
     // This page edits: the editor feature is on (the shared fixture leaves it off for read-only pages).
     fixture.storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'scm.writeOperations': true, 'files.reviewComments': false,
         'files.diffSyntaxHighlighting': false, 'files.editor': true } });
 });
-afterEach(async () => { standardCleanup(); await fixture?.dispose(); portalBoundary?.restore(); vi.unstubAllGlobals(); });
+afterEach(async () => { standardCleanup(); await fixture?.dispose(); portalBoundary?.restore(); restoreEngineLoader?.(); vi.unstubAllGlobals(); });
 
 describe('File page View → Edit swap', () => {
+    it.each(['session', 'project'] as const)('hands a cold %s edit launch seed to the native editor while its engine is warming', async host => {
+        const { FileEditorPanel } = await import('../file/editor/FileEditorPanel');
+        const { KeyboardShortcutProvider } = await import('@/keyboard/KeyboardShortcutProvider');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { FindBar } = await import('@/components/ui/find/FindBar');
+        let consumed = 0;
+        function SeededEditor() {
+            const [seed, setSeed] = React.useState<import('@/components/appShell/panes/fileFindSeedHandoff').FileFindSeed | null>({
+                query: 'retryLabel', options: { matchCase: true, regex: false },
+                target: { kind: 'file', path: filePath, anchor: { kind: 'fileLine', startLine: 2 } },
+            });
+            return <KeyboardShortcutProvider handlers={{}}><PluginSurfaceFocusEligibilityProvider active>
+                <WorkspaceFileDetailsView scopeId={`${host}:native-find-launch`} scope={fixture.scope} filePath={filePath}
+                    sessionIdForAugmentation={host === 'session' ? fixture.session.id : null} initialView={{ view: 'edit' }}
+                    findSeed={seed} onFindSeedConsumed={() => { consumed++; setSeed(null); }} />
+            </PluginSurfaceFocusEligibilityProvider></KeyboardShortcutProvider>;
+        }
+        const screen = await fixture.render(<SeededEditor />);
+        try {
+            await vi.waitFor(() => expect(screen.findAllByType(FileEditorPanel)).toHaveLength(1));
+            await flushHookEffects();
+            expect(screen.findByType(FileEditorPanel).props.editorRef.current?.find?.getSnapshot()).toMatchObject({
+                query: 'retryLabel', options: { matchCase: true, regex: false },
+            });
+            expect(consumed).toBe(1);
+            // The read view remains painted during boot, but native Find owns the launch.
+            expect(screen.findAllByType(FindBar)).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
+
+    it('carries the reader\'s open Find into the editor\'s own Find on Edit, at the current match', async () => {
+        const { FileEditorPanel } = await import('../file/editor/FileEditorPanel');
+        const { FilePageHeader } = await import('../file/FilePageHeader');
+        const { KeyboardShortcutProvider } = await import('@/keyboard/KeyboardShortcutProvider');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { FindBar } = await import('@/components/ui/find/FindBar');
+        let rendered: Awaited<ReturnType<typeof fixture.render>> | undefined;
+        let handedSeed: import('@/components/appShell/panes/fileFindSeedHandoff').FileFindSeed | null = null;
+        const observeHandoff = () => {
+            const panel = rendered?.findAllByType(FileEditorPanel)[0];
+            if (panel?.props.findSeed) handedSeed = panel.props.findSeed;
+        };
+        function ReadingWithFind() {
+            const [seed, setSeed] = React.useState<import('@/components/appShell/panes/fileFindSeedHandoff').FileFindSeed | null>({
+                query: 'retryLabel', options: { matchCase: false, regex: false }, target: { kind: 'file', path: filePath },
+            });
+            return <React.Profiler id="edit-find-handoff" onRender={observeHandoff}><ModalProvider><KeyboardShortcutProvider handlers={{}}><PluginSurfaceFocusEligibilityProvider active>
+                <WorkspaceFileDetailsView scopeId="project:find-into-edit" scope={fixture.scope} filePath={filePath}
+                    sessionIdForAugmentation={null} findSeed={seed} onFindSeedConsumed={() => setSeed(null)} />
+            </PluginSurfaceFocusEligibilityProvider></KeyboardShortcutProvider></ModalProvider></React.Profiler>;
+        }
+        const screen = await fixture.render(<ReadingWithFind />);
+        rendered = screen;
+        try {
+            // The reader's Find is open on the query, its one match on line 2.
+            await vi.waitFor(() => expect(screen.findAllByType(FindBar).map((bar) => bar.props.query)).toEqual(['retryLabel']));
+            await vi.waitFor(() => expect(screen.findByType(FilePageHeader).props.edit?.kind).toBe('edit'));
+            await act(async () => { screen.findByType(FilePageHeader).props.edit.onPress(); });
+            await vi.waitFor(() => expect(screen.findAllByType(FileEditorPanel)).toHaveLength(1));
+            await flushHookEffects({ cycles: 4 });
+            expect(handedSeed).toMatchObject({ query: 'retryLabel', target: { path: filePath,
+                anchor: { kind: 'fileLine', startLine: 2 } } });
+            // The editor's own Find takes the query over at that match; nothing else keeps a second copy.
+            expect(screen.findByType(FileEditorPanel).props.editorRef.current?.find?.getSnapshot()).toMatchObject({
+                query: 'retryLabel', options: { matchCase: false, regex: false },
+            });
+        } finally { await screen.unmount(); }
+    });
+
+    it.each(['view', 'changes'] as const)('reveals a changed same-file navigation anchor after %s → Edit without replacing its editor', async origin => {
+        const { FilePageHeader } = await import('../file/FilePageHeader');
+        const { FileEditorPanel } = await import('../file/editor/FileEditorPanel');
+        const { KeyboardShortcutProvider } = await import('@/keyboard/KeyboardShortcutProvider');
+        const { createWorkspaceActionAdapter } = await import('@/components/appShell/workspace/workspaceActions');
+        const { createWorkspaceNavigationAdapter } = await import('@/components/appShell/workspace/workspaceNavigationAdapter');
+        const { createWorkspaceState, reduceWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
+        const { resolveCompactAppDestinations } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
+        const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+        const { readFileTargetAnchorResource, readWorkspaceFileLinkView } = await import('@/utils/url/sessionFileDeepLink');
+        const text = Array.from({ length: 56 }, (_, index) => `export const line${index + 1} = ${index + 1};`).join('\n');
+        transfer = createSessionFileNativeTransferBoundary({ bytes: new TextEncoder().encode(text), name: filePath });
+        scmDiff = `--- a/${filePath}\n+++ b/${filePath}\n@@ -0,0 +1,56 @@\n${text.split('\n').map(line => `+${line}`).join('\n')}\n`;
+        fixture.storage.getState().updateWorkspaceScmSnapshot(fixture.scope, fileViewSnapshot({ entries: [
+            ScmWorkingEntrySchema.parse({ path: filePath, kind: 'untracked', includeStatus: ' ', pendingStatus: '?', hasPendingDelta: true }),
+        ] }));
+        const params = { workspaceRefId: 'editor-navigation', serverId: fixture.scope.serverId,
+            initialFile: filePath, source: 'file', anchor: 'fileLine', startLine: '52' };
+        // QA retained an older Code destination before opening Changes in another tab.
+        // Both address the same Project; navigation must keep the originating editor.
+        let state = createWorkspaceState({ id: origin === 'changes' ? 'older-code' : 'editing', pinned: false, preview: false,
+            target: { kind: 'project', params: { ...params, pageId: 'code' } } });
+        if (origin === 'changes') state = reduceWorkspaceState(state, { type: 'openTab', groupId: state.focusedGroupId,
+            tab: { id: 'editing', pinned: false, preview: false,
+                target: { kind: 'project', params: { ...params, pageId: 'changes', fileView: 'changes' } } } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: true, workflows: false, friends: false } });
+        const navigation = createWorkspaceNavigationAdapter({ getState: () => state, getCatalog: () => catalog,
+            dispatch: action => { state = reduceWorkspaceState(state, action); },
+            // Browser URL writes are the external boundary; admission and File state remain real.
+            transport: { commit: () => {} }, createId: () => 'new-tab', onChange: () => {} });
+        const execute = createWorkspaceActionAdapter({ getState: () => state, navigation, readCanvas: () => null, createId: () => 'new-tab' });
+        const destinationNavigation: DestinationNavigation = {
+            push: href => { navigation.openHref(resolveHref(href), { tabId: 'editing' }); },
+            replace: href => { navigation.openHref(resolveHref(href), { tabId: 'editing', replace: true }); },
+            back: () => navigation.step(-1),
+        };
+        const render = () => {
+            const target = state.tabs.editing.target;
+            return <KeyboardShortcutProvider handlers={{}}><DestinationInstanceHost tabId="editing" ref={target}
+                pathname={`/projects/editor-navigation/${target.params.pageId}`} visible
+                navigation={destinationNavigation}
+                focused={state.groups[state.focusedGroupId].activeTabId === 'editing'}>
+                <WorkspaceFileDetailsView scopeId={`project:editor-navigation:${origin}`} scope={fixture.scope} filePath={filePath}
+                    initialView={readWorkspaceFileLinkView(target.params)} sessionIdForAugmentation={null}
+                    deepLinkAnchor={readFileTargetAnchorResource({ path: filePath, anchor: { kind: 'fileLine', startLine: Number(target.params.startLine) } })} />
+            </DestinationInstanceHost></KeyboardShortcutProvider>;
+        };
+        const openLine = async (line: number) => {
+            expect(execute('workspace.tabs.open', { file: { target: { kind: 'project', workspaceRefId: 'editor-navigation',
+                ...fixture.scope }, path: filePath, anchor: { kind: 'fileLine', startLine: line } }, mode: 'preview' })).toEqual({ ok: true });
+            await screen.update(fixture.wrap(render()));
+            expect(state.groups[state.focusedGroupId].activeTabId).toBe('editing');
+        };
+        const screen = await fixture.render(render());
+        try {
+            await vi.waitFor(() => {
+                expect(screen.findByType(FilePageHeader).props.edit?.kind).toBe('edit');
+                expect(screen.findByType(FilePageHeader).props.displayMode).toBe(origin === 'changes' ? 'diff' : 'file');
+            });
+            await act(async () => { screen.findByType(FilePageHeader).props.edit.onPress(); });
+            await vi.waitFor(() => expect(screen.findAllByType(FileEditorPanel)).toHaveLength(1));
+            const editor = screen.findByType(FileEditorPanel);
+            const handle = editor.props.editorRef.current;
+            const reveal = vi.spyOn(handle, 'revealLine');
+            await act(async () => { editor.props.onReady(); });
+            reveal.mockClear();
+            const resetKey = editor.props.resetKey;
+            await openLine(18);
+            await vi.waitFor(() => expect(reveal).toHaveBeenCalledWith(18, expect.objectContaining({ focus: true })));
+            expect(screen.findByType(FileEditorPanel).props.editorRef.current).toBe(handle);
+            expect(screen.findByType(FileEditorPanel).props.resetKey).toBe(resetKey);
+            expect(handle.getValue()).toBe(text);
+            reveal.mockClear();
+            await screen.update(fixture.wrap(render()));
+            expect(reveal).not.toHaveBeenCalled();
+            await openLine(52);
+            await vi.waitFor(() => expect(reveal).toHaveBeenCalledWith(52, expect.objectContaining({ focus: true })));
+        } finally { await screen.unmount(); }
+    });
+
+    it.each(['file', 'diff', 'edit'] as const)('follows an agent write in %s, pauses on a browser wheel, and resumes to the same region', async mode => {
+        const { createReducer } = await import('@happier-dev/session-core/reducer');
+        const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+        const { createWorkspaceFileDetailsTab } = await import('@/components/appShell/panes/details/fileDetailsTab');
+        const { useSessionTrack, TrackInputBoundary, TrackCapsule } = await import('@/components/sessions/files/track/SessionTrack');
+        const { KeyboardShortcutProvider } = await import('@/keyboard/KeyboardShortcutProvider');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { FilePageHeader } = await import('../file/FilePageHeader');
+        const { FileEditorPanel } = await import('../file/editor/FileEditorPanel');
+        const { paneUiState } = await import('@/sync/domains/state/filePaneUiState');
+        const { replacePersistentUiStateForTest } = await import('@/dev/testkit/harness/persistentUiState');
+        const originalPanes = paneUiState.readAll();
+        const content = Array.from({ length: 120 }, (_, index) => `export const line${index + 1} = ${index + 1};`).join('\n');
+        transfer = createSessionFileNativeTransferBoundary({ bytes: new TextEncoder().encode(content), name: filePath });
+        scmDiff = `--- a/${filePath}\n+++ b/${filePath}\n@@ -0,0 +1,120 @@\n${content.split('\n').map(line => `+${line}`).join('\n')}\n`;
+        fixture.storage.getState().updateWorkspaceScmSnapshot(fixture.scope, fileViewSnapshot({ entries: [
+            ScmWorkingEntrySchema.parse({ path: filePath, kind: 'untracked', includeStatus: ' ', pendingStatus: '?', hasPendingDelta: true }),
+        ] }));
+        fixture.storage.setState({ localSettings: { ...fixture.storage.getState().localSettings, filesTrackAgentEdits: false } });
+        const root = document.createElement('div');
+        document.body.append(root);
+        const landings: number[] = [];
+        let track!: ReturnType<typeof useSessionTrack>;
+        let pane!: ReturnType<typeof useAppPaneScope>;
+        const scopeId = `session:track-follow-${mode}`;
+        function Scene() {
+            pane = useAppPaneScope(scopeId);
+            track = useSessionTrack({ scopeId, sessionAddress: { serverId: fixture.scope.serverId, sessionId: fixture.session.id },
+                workspaceRoot: fixture.scope.rootPath, active: true });
+            return <TrackInputBoundary track={track}><TrackCapsule track={track} />
+                <WorkspaceFileDetailsView scopeId={scopeId} scope={fixture.scope} filePath={filePath}
+                    sessionIdForAugmentation={null} />
+            </TrackInputBoundary>;
+        }
+        const screen = await fixture.render(<ModalProvider><KeyboardShortcutProvider handlers={{}}>
+            <PluginSurfaceFocusEligibilityProvider active><Scene /></PluginSurfaceFocusEligibilityProvider>
+        </KeyboardShortcutProvider></ModalProvider>, { createNodeMock: node => {
+            if (typeof node.props.nativeID === 'string') {
+                const row = document.createElement('div'); row.id = node.props.nativeID;
+                const dataSet = node.props.dataSet;
+                const newLine = typeof dataSet === 'object' && dataSet !== null && 'codeLineNew' in dataSet
+                    ? Number(dataSet.codeLineNew) : NaN;
+                row.scrollIntoView = () => { landings.push(newLine); row.dispatchEvent(new Event('scroll', { bubbles: true })); };
+                root.append(row);
+                return row;
+            }
+            return node.type === 'View' ? root : null;
+        } });
+        try {
+            await act(async () => { pane.openDetailsTab(createWorkspaceFileDetailsTab(filePath), { intent: 'pinned' }); });
+            await vi.waitFor(() => expect(screen.findByType(FilePageHeader).props.edit?.kind).toBe('edit'));
+            if (mode === 'edit') await act(async () => { screen.findByType(FilePageHeader).props.edit.onPress(); });
+            else await act(async () => { screen.findByType(FilePageHeader).props.onDisplayMode(mode); });
+            let editorReveal: ReturnType<typeof vi.spyOn> | undefined;
+            if (mode === 'edit') {
+                await vi.waitFor(() => expect(screen.findAllByType(FileEditorPanel)).toHaveLength(1));
+                // The embedded editor is an external engine boundary. Its pending handle is real;
+                // observe its reveal command while AMD remains pending in this host renderer.
+                const handle = screen.findByType(FileEditorPanel).props.editorRef.current;
+                editorReveal = vi.spyOn(handle, 'revealLine');
+                await act(async () => { screen.findByType(FileEditorPanel).props.onReady(); });
+                editorReveal.mockClear();
+            }
+            const message = createToolCallMessageFixture({ id: 'track-write', tool: { id: 'track-write', name: 'Edit',
+                input: { file_path: filePath, old_string: 'export const line89 = 89;', new_string: 'export const line89 = 890;' },
+                state: 'running', createdAt: 1, startedAt: 2, completedAt: null, description: null } });
+            await act(async () => {
+                fixture.storage.getState().applySessions([{ ...fixture.session, thinking: true, thinkingAt: Date.now(), latestTurnStatus: 'in_progress' }]);
+                fixture.storage.setState({ localSettings: { ...fixture.storage.getState().localSettings, filesTrackAgentEdits: true },
+                    sessionMessages: { [fixture.session.id]: { messageIdsOldestFirst: [message.id], messagesById: { [message.id]: message },
+                        messagesMap: { [message.id]: message }, reducerState: createReducer(), messagesVersion: 1, isLoaded: true,
+                        latestThinkingMessageId: null, latestThinkingMessageActivityAtMs: null } } });
+            });
+            if (mode === 'edit') await vi.waitFor(() => expect(editorReveal).toHaveBeenCalledWith(89, expect.objectContaining({ focus: false })));
+            else await vi.waitFor(() => expect(landings).toContain(89));
+            expect(track.paused).toBe(false);
+            const before = mode === 'edit' ? editorReveal!.mock.calls.length : landings.length;
+            await act(async () => { root.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 50 })); });
+            expect(track.paused).toBe(true);
+            await act(async () => { track.resume(); });
+            await vi.waitFor(() => expect(mode === 'edit' ? editorReveal!.mock.calls.length : landings.length).toBeGreaterThan(before));
+            expect(track.paused).toBe(false);
+        } finally {
+            await screen.unmount(); root.remove(); replacePersistentUiStateForTest(paneUiState, originalPanes);
+        }
+    });
+
+    it.each([1440, 390])('keeps one unsaved buffer through Changes and View at width %s', async (width) => {
+        viewport.width = width;
+        const { FilePageHeader } = await import('../file/FilePageHeader');
+        const { FileEditorPanel } = await import('../file/editor/FileEditorPanel');
+        const { SurfaceStateSizeProvider } = await import('@/components/ui/surfaces/surfaceStateSize');
+        const { SessionCockpitBottomChromeHeightContext } = await import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry');
+        scmDiff = '--- a/src/retry.ts\n+++ b/src/retry.ts\n@@ -1 +1 @@\n-export const attempts = 2;\n+export const attempts = 3;\n';
+        fixture.storage.getState().updateWorkspaceScmSnapshot(fixture.scope, fileViewSnapshot({ entries: [
+            ScmWorkingEntrySchema.parse({ path: filePath, kind: 'modified', includeStatus: ' ', pendingStatus: 'M', hasPendingDelta: true }),
+        ] }));
+        const screen = await fixture.render(<ModalProvider><SessionCockpitBottomChromeHeightContext.Provider value={width === 390 ? 84 : 0}>
+            <SurfaceStateSizeProvider size={width === 390 ? 'phone' : 'page'}>
+                <WorkspaceFileDetailsView scopeId={`project:buffer-${width}`} scope={fixture.scope} filePath={filePath}
+                    sessionIdForAugmentation={null} />
+            </SurfaceStateSizeProvider>
+        </SessionCockpitBottomChromeHeightContext.Provider></ModalProvider>);
+        try {
+            await vi.waitFor(() => expect(screen.findByType(FilePageHeader).props.edit?.kind).toBe('edit'));
+            await act(async () => { screen.findByType(FilePageHeader).props.edit.onPress(); });
+            await vi.waitFor(() => expect(screen.findAllByType(FileEditorPanel)).toHaveLength(1));
+            const draft = svg.replace('attempts = 3', 'attempts = 19');
+            await act(async () => { screen.findByType(FileEditorPanel).props.onChange(draft); });
+            for (const mode of ['diff', 'file'] as const) {
+                await act(async () => { await screen.findByType(FilePageHeader).props.onDisplayMode(mode); });
+                await flushHookEffects();
+                await act(async () => { screen.findByType(FilePageHeader).props.onStartEditingFile(); });
+                await vi.waitFor(() => expect(screen.findAllByType(FileEditorPanel)).toHaveLength(1));
+                expect(screen.findByType(FileEditorPanel).props.value).toBe(draft);
+                const handle = screen.findByType(FileEditorPanel).props.editorRef.current;
+                if (width === 390) await screen.pressByTestIdAsync('code-editor-accessory-undo');
+                else await act(async () => { handle.runCommand('undo'); });
+                expect(handle.getValue()).toBe(svg);
+                await act(async () => { handle.runCommand('redo'); });
+                expect(handle.getValue()).toBe(draft);
+            }
+        } finally { await screen.unmount(); }
+    });
+
     it('restores a clean retained Edit selection after the File scene remounts', async () => {
         const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
         const { createWorkspaceFileDetailsTab } = await import('@/components/appShell/panes/details/fileDetailsTab');
@@ -379,6 +670,45 @@ describe('File page View → Edit swap', () => {
             // The key row is in flow and cannot step aside; the selection's bar is the one that floats, so it rides above.
             const bottom = StyleSheet.flatten(screen.findByType(SelectionActionBar).parent?.props.style).bottom as number;
             expect(bottom).toBeGreaterThan(tabBarHeight + keyRowHeight);
+        } finally { await screen.unmount(); }
+    });
+
+    it('composes raw Markdown editing like code: Ask on ready, language binding, and the typed phone accessory', async () => {
+        viewport.width = 390;
+        const markdownPath = 'README.md';
+        const markdown = '# Retry\n\nThe attempts stay at three.\n';
+        transfer = createSessionFileNativeTransferBoundary({ bytes: new TextEncoder().encode(markdown), name: markdownPath });
+        fixture.storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'scm.writeOperations': true,
+            'files.reviewComments': false, 'files.diffSyntaxHighlighting': false, 'files.editor': true, 'files.markdownRichEditor': false } });
+        const { SurfaceStateSizeProvider } = await import('@/components/ui/surfaces/surfaceStateSize');
+        const { SelectionActionBar } = await import('@/components/ui/selection/SelectionActionBar');
+        const { FilePageHeader } = await import('../file/FilePageHeader');
+        const { FileMarkdownEditorPanel } = await import('../file/editor/FileEditorPanel');
+        const screen = await fixture.render(<ModalProvider><SurfaceStateSizeProvider size="phone">
+            <WorkspaceFileDetailsView scopeId="project:raw-markdown" scope={fixture.scope} filePath={markdownPath}
+                sessionIdForAugmentation={null} />
+        </SurfaceStateSizeProvider></ModalProvider>);
+        try {
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('attempts stay'));
+            await flushHookEffects({ cycles: 4 });
+            await vi.waitFor(() => expect(screen.findByType(FilePageHeader).props.edit?.kind).toBe('edit'));
+            await act(async () => { screen.findByType(FilePageHeader).props.edit.onPress(); });
+            await flushHookEffects({ cycles: 4 });
+            await vi.waitFor(() => expect(screen.findAllByType(FileMarkdownEditorPanel)).toHaveLength(1));
+            // The engine is the platform boundary: a ready raw handle with one selected line.
+            const onPointerPosition = vi.fn(() => () => {});
+            const selection = { startLine: 3, endLine: 3, text: 'The attempts stay at three.', rect: { x: 40, y: 60, width: 120, height: 18 } };
+            const panel = screen.findByType(FileMarkdownEditorPanel);
+            (panel.props.editorRef as { current: unknown }).current = { getValue: () => markdown, flushPendingChange: async () => {},
+                getSelection: () => selection, subscribeSelection: () => () => {}, onPointerPosition };
+            await act(async () => { panel.props.onReady?.(); });
+            await flushHookEffects({ cycles: 2 });
+            // Ask reaches the raw Markdown selection through the page's one control, and the page's one language
+            // controller bound this ready engine, as it does for code.
+            await vi.waitFor(() => expect(screen.findByType(SelectionActionBar).props.visible).toBe(true));
+            expect(onPointerPosition).toHaveBeenCalled();
+            // The phone key row is handed the page's language-intelligence port (Suggest / Expand / Shrink).
+            expect(screen.findByType(FileMarkdownEditorPanel).props.accessory?.languageIntelligence).toBeTruthy();
         } finally { await screen.unmount(); }
     });
 

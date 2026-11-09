@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import type {
     OpenableContentMetadataV1,
-    PluginOpenableContentViewerContributionV1,
+    PluginOpenableContentViewerContributionV1} from '@happier-dev/protocol/plugins/openableContentViewerV1';
+import type {
     WorkspaceFileViewerPreferencesV1,
-} from '@happier-dev/protocol';
-import { accountSettingsParse, serializeOpenableContentPreferenceSelectorV1 } from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/workspaceFileViewerPreferencesV1';
+import { accountSettingsParse} from '@happier-dev/protocol/account/settings/accountSettings';
+import { serializeOpenableContentPreferenceSelectorV1 } from '@happier-dev/protocol/plugins/openableContentViewerV1';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type {

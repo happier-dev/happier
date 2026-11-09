@@ -7,7 +7,11 @@ import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildC
 import { projectMarkdownFindText, type FindDisplayText } from '@/components/markdown/rendering/markdownFindProjection';
 
 /** What a file's Find keeps when its page is rebuilt (a resize between the desktop pane and the phone page). */
-export type FileViewerFindMemory = Readonly<{ query: string; open: boolean }>;
+/**
+ * What a file page's Find leaves behind when its surface steps away: the query and whether the bar was
+ * open (kept for the page), plus the options and the current match's line as they stood (handed to Edit).
+ */
+export type FileViewerFindMemory = Readonly<{ query: string; open: boolean; options?: FindOptions; line?: number | null }>;
 
 export type FileViewerFindContent = Readonly<{ path: string; mode: 'file' | 'diff' | 'markdown'; text: string | null }>;
 
@@ -123,6 +127,8 @@ export function createFileViewerFindModel(read: () => FileViewerFindContent, ini
     const model: FindController & {
         getSnapshot(): FileViewerFindSnapshot; subscribe(listener: () => void): () => void;
         open(): void; refresh(): void; applySeed(seed: FileFindSeed): boolean;
+        /** The file line of the current match, or null when none is current. */
+        currentLine(): number | null;
     } = {
         get query() { return snapshot.query; }, get options() { return snapshot.options; },
         get status() { return snapshot.status; }, capabilities: { regex: true, stop: false },
@@ -137,6 +143,7 @@ export function createFileViewerFindModel(read: () => FileViewerFindContent, ini
         open() { if (!snapshot.open) { publish({ open: true }); refresh(); } },
         refresh,
         getSnapshot: () => snapshot,
+        currentLine: () => matches[current]?.line ?? null,
         subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
         applySeed(seed) { settled = true; const destination = read();
             if (seed.target.path !== destination.path || destination.text === null) return false;

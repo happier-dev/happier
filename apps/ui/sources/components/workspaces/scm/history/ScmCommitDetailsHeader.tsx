@@ -12,7 +12,7 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import type { ScmCommitLogEntryState } from '@/scm/history/useScmCommitLogEntry';
 import { formatScmHistoryTimestamp } from '@/scm/history/historyPresentation';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 
 const SHORT_SHA_LENGTH = 7;
 
@@ -31,11 +31,12 @@ export const ScmCommitDetailsHeader = React.memo(function ScmCommitDetailsHeader
     testID?: string;
 }>) {
     const entry = props.commit.entry;
+    const writeClipboard = useClipboardWrite();
     const { theme } = useUnistyles();
     const shortSha = entry?.shortSha?.trim() || props.sha.slice(0, SHORT_SHA_LENGTH);
     const copySha = React.useCallback(() => {
-        void setClipboardStringSafe(entry?.sha ?? props.sha);
-    }, [entry?.sha, props.sha]);
+        void writeClipboard(entry?.sha ?? props.sha);
+    }, [entry?.sha, props.sha, writeClipboard]);
 
     const meta = React.useMemo((): DetailsTabHeaderMetaFact[] => {
         const facts: DetailsTabHeaderMetaFact[] = [];

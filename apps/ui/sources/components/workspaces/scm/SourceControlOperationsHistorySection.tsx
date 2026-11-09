@@ -3,7 +3,7 @@ import { View } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import type { ScmLogEntry } from '@happier-dev/protocol';
+import type { ScmLogEntry } from '@happier-dev/protocol/scm';
 import { t } from '@/text';
 
 import {

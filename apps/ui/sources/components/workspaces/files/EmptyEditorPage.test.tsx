@@ -32,7 +32,6 @@ vi.mock('@expo/vector-icons', async () => {
 vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
   createPartialStorageModuleMock(importOriginal, {
     useWorkspaceScmSnapshot: () => snapshot,
-    useWorkspaceScmTouchedPathsForSession: () => [],
   }),
 );
 

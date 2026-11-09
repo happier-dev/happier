@@ -4,7 +4,7 @@ import type {
     ScmStashListResponse,
     ScmStashPopResponse,
     ScmStashShowResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/scm';
 
 /** `onDispatched` fires when the Action really reaches the Machine, after any in-place confirmation. */
 export type ScmStashWriteCall = Readonly<{ onDispatched: () => void }>;

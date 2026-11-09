@@ -71,10 +71,10 @@ let currentScreen: Awaited<ReturnType<typeof renderScreen>> | null = null;
 async function waitForPlayer(screen: Awaited<ReturnType<typeof renderScreen>>) {
     await vi.waitFor(async () => { await flushHookEffects(); expect(screen.root.findAllByType('VideoView'), screen.getTextContent()).toHaveLength(1); });
 }
-function file(revision = '[12,123]', focused = true, isActive = true, onMediaInfo?: (info: unknown) => void) {
+function file(revision = '[12,123]', focused = true, isActive = true, onMediaInfo?: (info: unknown) => void, onVideoControls?: (controls: unknown) => void) {
     return <DestinationInstanceHost tabId="video" ref={{ kind: 'newTab', params: {} }} pathname="/" focused={focused} visible>
         <MediaPlayerBody kind="video" title="clip.mp4" source={videoSource(harness.scope, revision)} isActive={isActive}
-            {...(onMediaInfo ? { onMediaInfo } : {})} />
+            {...(onMediaInfo ? { onMediaInfo } : {})} {...(onVideoControls ? { onVideoControls } : {})} />
     </DestinationInstanceHost>;
 }
 // Keep retained-details publication, workspace stat routing and encrypted prepared transfer real.
@@ -99,6 +99,24 @@ beforeEach(async () => {
 });
 afterEach(async () => { await currentScreen?.unmount(); currentScreen = null; await harness.reset(); boundary.players.length = 0; await act(async () => { boundary.appState?.emit('active'); }); fileSystem.current?.files.clear(); fileSystem.current?.deleteFile.mockClear(); });
 describe('workspace file video', () => {
+    it('exposes controlled seek on the held player and retires controls when hidden without a playback clock', async () => {
+        const onVideoControls = vi.fn();
+        const screen = currentScreen = await renderScreen(file('[12,123]', true, true, undefined, onVideoControls));
+        await waitForPlayer(screen);
+        expect(onVideoControls).toHaveBeenCalledWith(expect.objectContaining({ seekTo: expect.any(Function), readFrame: expect.any(Function) }));
+        const controls = onVideoControls.mock.calls.at(-1)![0];
+        const player = screen.root.findAllByType('VideoView')[0]!.props.player;
+        await act(async () => { controls.seekTo(2); });
+        expect(player.currentTime).toBe(2);
+        expect(player.timeUpdateEventInterval).toBe(0);
+        await screen.update(file('[12,123]', true, true, undefined, onVideoControls));
+        await flushHookEffects();
+        expect(screen.root.findAllByType('VideoView')[0]!.props.player).toBe(player);
+        await screen.update(file('[12,123]', true, false, undefined, onVideoControls));
+        await flushHookEffects();
+        expect(onVideoControls).toHaveBeenLastCalledWith(null);
+        expect(() => controls.seekTo(3)).toThrowError(expect.objectContaining({ name: 'AbortError' }));
+    });
     it('reuses the mixed-gallery video body source for handoff and can continue onto the adjacent image', async () => {
         let execute!: ReturnType<typeof useKeyboardCommand>;
         function Controls() { execute = useKeyboardCommand(); return null; }

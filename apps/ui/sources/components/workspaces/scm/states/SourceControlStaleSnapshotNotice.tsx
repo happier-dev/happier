@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { useAnnouncedCheckoutMachine, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import { t } from '@/text';
 
 /**
@@ -45,7 +46,11 @@ export function SourceControlStaleSnapshotNotice(props: Readonly<{
      */
     testID: string;
 }>): React.ReactElement | null {
-    if (!props.error) return null;
+    // Under a page that announces its checkout machine, an unreachable machine is already said once with
+    // its Retry ("As of 10:42 · devbox isn't answering"); the refresh that failed because of it is the
+    // same cause, so the surface inherits that line instead of adding a second one.
+    const causeAnnounced = useCheckoutReachability(useAnnouncedCheckoutMachine()).announced;
+    if (!props.error || causeAnnounced) return null;
 
     const errorCode = typeof props.error.errorCode === 'string' && props.error.errorCode.length > 0
         ? props.error.errorCode

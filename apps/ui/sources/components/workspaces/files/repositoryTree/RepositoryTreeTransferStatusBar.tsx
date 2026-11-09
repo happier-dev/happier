@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -19,7 +20,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     container: {
         borderTopWidth: Platform.select({ ios: 0.33, default: 1 }),
         borderTopColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
         paddingHorizontal: theme.space.s12,
         paddingVertical: theme.space.s10,
         gap: theme.space.s10,
@@ -149,6 +149,8 @@ export function RepositoryTreeTransferStatusBar(props: Readonly<{
     onCancelDownload: () => void;
 }>): React.ReactElement | null {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const showUpload = props.uploadState.status === 'preflighting' || props.uploadState.status === 'uploading';
     const failedUpload = props.uploadState.status === 'error' ? props.uploadState : null;
     const showDownload = props.downloadState.status === 'downloading';
@@ -156,7 +158,7 @@ export function RepositoryTreeTransferStatusBar(props: Readonly<{
     if (!showUpload && !failedUpload && !showDownload) return null;
 
     return (
-        <View testID="repository-tree-transfer-status" style={styles.container}>
+        <View testID="repository-tree-transfer-status" style={[styles.container, { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]}>
             {failedUpload ? <UploadFailureRow state={failedUpload} machineName={props.machineName} onDismiss={props.onDismissUploadFailure} /> : null}
             {showUpload ? <UploadRow state={props.uploadState as any} onCancel={props.onCancelUploads} /> : null}
             {showDownload ? <DownloadRow state={props.downloadState as any} onCancel={props.onCancelDownload} /> : null}

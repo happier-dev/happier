@@ -1,7 +1,6 @@
-import { useWindowDimensions } from 'react-native';
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
-import type { LanguageIntelligenceDiagnostic } from '@happier-dev/protocol/machines/languageIntelligence';
+import type { LanguageIntelligenceDiagnostic, LanguageIntelligenceRange } from '@happier-dev/protocol/machines/languageIntelligence';
 
 import type { DetailsTabHeaderMetaFact } from '@/components/appShell/panes/details/header/DetailsTabHeader';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -12,6 +11,8 @@ import type { WorkspaceSymbolSearchInput } from '@/components/appShell/search/wo
 import type {
   Rect,
   TextEditorHandle,
+  CodeEditorLanguageCommand,
+  CodeEditorLanguageIntelligence,
 } from '@/components/ui/code/editor/codeEditorTypes';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import type { CodeLineDiagnosticRange } from '@/components/ui/code/view/CodeLineRow';
@@ -22,12 +23,15 @@ import {
 } from '@/components/workspaces/files/useWorkspaceFileOpener';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
 import { useWorkspaceRefs } from '@/sync/store/hooks';
-import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { useSetting } from '@/sync/store/settingsReadHooks';
+import { captureActiveServerAccountScopeLifetime, selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { readWorkspaceFileEditorHolder, subscribeFileEditorActionOwners } from '@/sync/ops/actions/scopeActionFamily';
+import { workspaceReadFile, workspaceStatFile } from '@/sync/ops/workspaceFileSystem/fileReadWrite';
+import { decodeWorkspaceFileText } from '@/sync/ops/workspaceFileSystem/workspaceFileTextDecoding';
 import { askCodeDiagnosticsToFix } from '@/sync/domains/workspaces/languageIntelligence/askCodeDiagnosticsToFix';
 import { useAskSelectionTargetContext } from '@/components/ui/code/selection/useAskSelection';
 import { selectCodeDiagnostics } from '@/sync/domains/workspaces/languageIntelligence/codeDiagnostics';
-import { resolveCodeIdentifier, type CodeIdentifier } from '@/sync/domains/workspaces/languageIntelligence/codeIdentifiers';
+import { resolveCodeIdentifier, type CodeIdentifier, type CodeIntelligencePosition } from '@/sync/domains/workspaces/languageIntelligence/codeIdentifiers';
 import type {
   CodeIntelligenceController,
   CodeIntelligenceSnapshot,
@@ -37,19 +41,30 @@ import {
   useCodeIntelligenceSnapshot,
 } from '@/sync/domains/workspaces/languageIntelligence/useCodeIntelligence';
 import { findWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
-import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { refreshWorkspaceFileDetails } from '../details/workspaceFileDetails/refreshWorkspaceFileDetails';
 import { t } from '@/text';
-import { useDeviceType } from '@/utils/platform/responsive';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { Modal } from '@/modal';
+import { useDeviceType, usePresentationWindowDimensions } from '@/utils/platform/responsive';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { useFileEditorAiSuggestionSource } from '@/providers/hooks/useFileEditorAiSuggestionSource';
+import { recordFileEditorAiSuggestionUsage } from '@/sync/store/files/fileEditorAiSuggestionUsage';
+import type { CodeInlineSuggestionPort } from '@/sync/domains/workspaces/languageIntelligence/codeInlineSuggestions';
+import { AiSuggestionStatus, resolveAiSuggestionFooterState, type AiSuggestionFooterState } from '@/components/workspaces/files/file/editor/AiSuggestionStatus';
+import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
+import { buildSettingHref } from '@/components/settings/catalog/settingDeclarations';
+import { SOURCE_CONTROL_SETTINGS } from '@/components/settings/sourceControl/sourceControlSettings';
 
 import {
   CodeIntelligenceCard,
   CodeProblemsSheet,
   type CodeIntelligenceCardModel,
 } from './CodeIntelligenceCard';
+import { CodeReferencesPanel } from './CodeReferencesPanel';
 import {
   formatProblemsFact,
+  isCodeReferenceResultPartial,
   readCodeHoverContent,
   readLanguageServerLabel,
   resolveLanguageStateNote,
@@ -189,12 +204,14 @@ export type UseFilePageCodeIntelligenceInput = Readonly<{
   /** A full-text outline can be available without server/pointer presentation (Markdown). */
   outlineEnabled?: boolean;
   active: boolean;
+  editing?: boolean;
   liveValue: Readonly<{
     get(): string;
     subscribe?(listener: () => void): () => void;
   }>;
   /** View/Changes coordinates address the displayed saved text, not a retained draft. */
   displayedText?: string;
+  getReadSelectionRange?: () => LanguageIntelligenceRange | null;
   getUnsaved: () => boolean;
   editorHandleRef: React.RefObject<TextEditorHandle | null>;
   sessionId: string | null;
@@ -252,12 +269,15 @@ export function useFilePageCodeIntelligence(
   input: UseFilePageCodeIntelligenceInput,
 ) {
   const { theme } = useUnistyles();
+  const inlayHints = useSetting('filesEditorInlayHints');
+  const semanticHighlighting = useSetting('filesEditorSemanticHighlighting');
   const latest = React.useRef(input);
   latest.current = input;
   const opener = useWorkspaceFileOpener();
   const router = useRouter();
   const workspaceRefs = useWorkspaceRefs();
-  const pane = useAppPaneScope(input.scopeId);
+  // Only pane commands are read here; no scope state, so pane patches do not re-render the page.
+  const pane = useAppPaneScope(input.scopeId, () => null);
   const revealSessionColumn = useAskSessionReveal();
   const phone = useDeviceType() === 'phone';
   const interaction = React.useMemo(() => createCardInteraction(), []);
@@ -319,6 +339,30 @@ export function useFilePageCodeIntelligence(
     [opener, input.scope?.rootPath],
   );
 
+  const previewLifetime = captureActiveServerAccountScopeLifetime();
+  const referencePreview = React.useMemo<CodeEditorLanguageIntelligence['referencePreview']>(() => {
+    const scope = input.scope;
+    const accountId = input.accountId;
+    if (!scope || !accountId || !previewLifetime || previewLifetime.scope.accountId !== accountId
+      || !selectActiveServerAccountScopeForServer(previewLifetime.scope, scope.serverId)) return undefined;
+    const scopeKey = tryBuildWorkspaceCacheKey(scope);
+    const current = () => previewLifetime.isCurrent() && latest.current.accountId === accountId
+      && scopeKey !== null && latest.current.scope !== null && tryBuildWorkspaceCacheKey(latest.current.scope) === scopeKey;
+    return {
+      async readText(path, signal) {
+        if (signal.aborted || !current()) return null;
+        const held = readWorkspaceFileEditorHolder(scope, accountId, path)?.file?.read();
+        if (held) return held.text ?? (held.unsaved ? null : held.savedText);
+        // Reuse the File owner's classification, transfer custody and preview budget.
+        const result = await refreshWorkspaceFileDetails({ scope, filePath: path, diffMode: 'both', includeDiff: false, signal });
+        const file = result.fileContent;
+        return signal.aborted || !current() || !file || file.isBinary || file.partial || file.encoding?.reason === 'notUtf8' ? null : file.content;
+      },
+      async openLocation(location) { if (current()) await openLocation(location); },
+    };
+  }, [input.scope?.serverId, input.scope?.machineId, input.scope?.rootPath, input.accountId, openLocation, previewLifetime]);
+  const editorIntelligencePreferences = React.useMemo(() => ({ inlayHints, semanticHighlighting, referencePreview, nextEditKeys: !phone }), [inlayHints, semanticHighlighting, referencePreview, phone]);
+
   const showProblems = React.useCallback(() => {
     if (phone)
       interaction.open({
@@ -330,11 +374,23 @@ export function useFilePageCodeIntelligence(
     else pane.openRight({ tabId: 'problems' });
   }, [interaction, pane, phone]);
 
+  const aiSettings = useSetting('filesEditorAiSuggestionsV1');
+  const aiSource = useFileEditorAiSuggestionSource({ settings: aiSettings, machineId: input.scope?.machineId ?? null,
+    serverId: input.scope?.serverId ?? null, active: input.active && input.editing === true });
+  const aiLifetime = captureActiveServerAccountScopeLifetime();
+  const aiPort = React.useMemo<Omit<CodeInlineSuggestionPort, 'query'>>(() => ({
+    getSettings: () => aiSettings,
+    getModel: operation => operation === 'nextEdit' ? aiSource.nextEditModel : aiSource.model,
+    onUsage: event => { if (aiLifetime?.isCurrent()) recordFileEditorAiSuggestionUsage(aiLifetime.scope, event); },
+  }), [aiSettings, aiSource.model, aiSource.nextEditModel, aiLifetime]);
   const { controller, bindEditor } = useCodeIntelligence({
-    scope: input.enabled ? input.scope : null,
+    scope: input.enabled || input.editing === true ? input.scope : null,
     path: input.filePath,
     languageId: input.language,
     active: input.active,
+    editorIntelligencePreferences,
+    editing: input.editing,
+    inlineSuggestions: aiPort,
     liveValue: input.liveValue,
     displayedText: input.displayedText,
     getUnsaved: input.getUnsaved,
@@ -429,6 +485,7 @@ export function useFilePageCodeIntelligence(
     () =>
       controller
         ? {
+            semantic: { controller, enabled: input.active && !input.editing && semanticHighlighting },
             getDiagnosticsByLine: createDiagnosticsByLineReader(
               controller,
               () => latest.current.filePath,
@@ -471,7 +528,7 @@ export function useFilePageCodeIntelligence(
             },
           }
         : null,
-    [controller, interaction],
+    [controller, interaction, input.active, input.editing, semanticHighlighting],
   );
 
   const snapshotForPage = useControllerSelector(
@@ -492,18 +549,23 @@ export function useFilePageCodeIntelligence(
           latest.current.filePath,
         );
         return JSON.stringify([
-          note?.kind === 'failure' ? note.text : null,
+          note?.kind ?? null,
+          note?.text ?? null,
+          note?.detail ?? null,
           note?.action ?? null,
           file.state,
           file.count,
           snapshot.diagnostics?.count ?? null,
           snapshot.diagnostics?.state ?? null,
+          snapshot.problemsScope ?? 'open',
+          snapshot.projectDiagnostics?.state ?? null,
+          snapshot.projectDiagnostics?.count ?? null,
         ]);
       },
       [controller],
     ),
   );
-  const failureNote = snapshotForPage
+  const languageNote = snapshotForPage
     ? resolveLanguageStateNote({
         snapshot: snapshotForPage,
         machineName: input.machineName,
@@ -549,6 +611,10 @@ export function useFilePageCodeIntelligence(
     showProblems();
     void controller?.checkProblems();
   }, [controller, showProblems]);
+  const checkProjectProblems = React.useCallback(() => {
+    showProblems();
+    void controller?.projectDiagnostics();
+  }, [controller, showProblems]);
   // A missing managed server installs where every Machine install lives (the Machine's installables).
   const machineId = input.scope?.machineId ?? null;
   const serverId = input.scope?.serverId;
@@ -563,19 +629,20 @@ export function useFilePageCodeIntelligence(
     );
   }, [machineId, router, serverId]);
   const notice =
-    failureNote?.kind === 'failure' ? (
+    languageNote ? (
       <SurfaceFreshnessLine
         testID="file-language-state-note"
-        tone="warning"
+        tone={languageNote.kind === 'failure' ? 'warning' : 'neutral'}
+        busy={languageNote.kind === 'progress'}
         reason={
-          failureNote.detail
-            ? `${failureNote.text} ${failureNote.detail}`
-            : failureNote.text
+          languageNote.detail
+            ? `${languageNote.text} ${languageNote.detail}`
+            : languageNote.text
         }
         action={
-          failureNote.action === 'restart'
+          languageNote.action === 'restart'
             ? { label: t('files.pane.intelligence.restart'), onPress: restart }
-            : failureNote.action === 'install' && machineId
+            : languageNote.action === 'install' && machineId
               ? { label: t('common.install'), onPress: openInstallables }
               : undefined
         }
@@ -583,12 +650,16 @@ export function useFilePageCodeIntelligence(
     ) : null;
 
   // Ask {agent} to fix N problems (P5's Ask owner, one batch); unsaved-only problems save first.
-  const allProblems = snapshotForPage?.diagnostics ?? null;
+  const projectScope = snapshotForPage?.problemsScope === 'project';
+  const allProblems = projectScope ? snapshotForPage?.projectDiagnostics : snapshotForPage?.diagnostics;
   const readUnsavedProblems = React.useCallback(() => {
     const current = latest.current;
     if (!controller || !current.scope || !current.accountId) return false;
     const { scope, accountId } = current;
-    return selectCodeDiagnostics(controller.getDiagnosticsProjection()).items.some(item =>
+    const snapshot = controller.getSnapshot();
+    const items = snapshot.problemsScope === 'project' ? snapshot.projectDiagnostics?.items ?? []
+      : selectCodeDiagnostics(controller.getDiagnosticsProjection()).items;
+    return items.some(item =>
       readWorkspaceFileEditorHolder(scope, accountId, item.path)?.file?.read().unsaved === true);
   }, [controller]);
   const unsaved = React.useSyncExternalStore(subscribeFileEditorActionOwners, readUnsavedProblems, () => false);
@@ -622,8 +693,14 @@ export function useFilePageCodeIntelligence(
     const workspaceScope = current.scope;
     const lifetime = captureActiveServerAccountScopeLifetime();
     const owner = controller;
+    const snapshot = owner.getSnapshot();
+    const project = snapshot.problemsScope === 'project';
+    const projection = project ? snapshot.projectDiagnostics : owner.getDiagnosticsProjection();
+    if (!projection) return false;
+    let failureMessage = t('errors.operationFailed');
+    const failedRead = () => { failureMessage = t('files.fileReadFailed'); return null; };
     const result = await askCodeDiagnosticsToFix({
-      projection: owner.getDiagnosticsProjection(),
+      projection,
       workspaceScope,
       sessionTarget: current.sessionId
         ? {
@@ -634,16 +711,35 @@ export function useFilePageCodeIntelligence(
       targetContext: askTargetContext(),
       isCurrent: () =>
         latestController.current === owner && (lifetime?.isCurrent() ?? true),
-      readFile: async (path) => current.accountId
-        ? readWorkspaceFileEditorHolder(workspaceScope, current.accountId, path)?.file?.read() ?? null
-        : null,
+      readFile: async (path) => {
+        if (!current.accountId) return failedRead();
+        const held = readWorkspaceFileEditorHolder(workspaceScope, current.accountId, path)?.file?.read();
+        if (held) return held;
+        // View already holds this file's saved bytes even when no editor commands are mounted.
+        if (path === current.filePath) {
+          if (current.getUnsaved()) { failureMessage = t('files.fileWriteFailed'); return null; }
+          return { savedText: current.displayedText ?? current.liveValue.get(), unsaved: false };
+        }
+        // Root diagnostics can include another read-only file with no editor-action holder.
+        // Read each unique target only when Ask needs its saved context.
+        const stat = await workspaceStatFile(workspaceScope, path);
+        if (!lifetime?.isCurrent() || !stat.success || !stat.exists || stat.kind !== 'file' || typeof stat.sizeBytes !== 'number') return failedRead();
+        const file = await workspaceReadFile(workspaceScope, path, { maxBytes: stat.sizeBytes, knownSizeBytes: stat.sizeBytes });
+        if (!file.success) return failedRead();
+        const decoded = await decodeWorkspaceFileText(file.content);
+        return decoded.kind === 'text' ? { savedText: decoded.text, unsaved: false } : failedRead();
+      },
       saveFileEdits: async (path) => {
         if (!current.accountId) return false;
         const holder = readWorkspaceFileEditorHolder(workspaceScope, current.accountId, path);
         const saved = await holder?.save();
-        return saved?.status === 'saved' || saved?.status === 'clean';
+        const succeeded = saved?.status === 'saved' || saved?.status === 'clean';
+        if (!succeeded) failureMessage = t('files.fileWriteFailed');
+        return succeeded;
       },
     });
+    if (result.created === 0 && latestController.current === owner && lifetime?.isCurrent())
+      Modal.alert(t('common.error'), failureMessage);
     return result.created > 0;
   }, [askTargetContext, controller, revealSessionColumn]);
   const latestController = React.useRef(controller);
@@ -673,7 +769,7 @@ export function useFilePageCodeIntelligence(
   // The page takes the tabs when it becomes active and keeps them while it stays open: choosing
   // Problems in the page's own column makes the page inactive, and the tab must not vanish with it.
 
-  // ⌘P / @ from this page lists this document's symbols (the Search owner's existing holder input).
+  // ⌘P / @ queries project symbols, retaining this holder's outline as the explicit local baseline.
   const symbols = React.useMemo<WorkspaceSymbolSearchInput | null>(() => {
     if (!input.scope || !input.accountId || !(input.outlineEnabled ?? input.enabled))
       return null;
@@ -699,12 +795,15 @@ export function useFilePageCodeIntelligence(
         await latest.current.editorHandleRef.current?.flushPendingChange();
       },
       ...(owner ? { getServerOutline: (signal: AbortSignal) => owner.outline(signal) } : {}),
+      ...(owner ? { getWorkspaceSymbols: (query: string, signal: AbortSignal) => owner.workspaceSymbol(query, signal) } : {}),
       isCurrent: () => latestController.current === owner && latest.current.liveValue === holder
         && latest.current.filePath === path && latest.current.scopeId === scopeId,
       accountLifetime: lifetime,
       language: input.language ?? 'text',
       isDark: theme.dark === true,
       unavailableHint: t('common.unavailable'),
+      loadingHint: t('files.pane.intelligence.checking'),
+      baselineHint: t('universalSearch.quickOpen.symbolsInFile', { file: input.filePath.split('/').at(-1) ?? input.filePath }),
     };
   }, [
     controller,
@@ -736,6 +835,7 @@ export function useFilePageCodeIntelligence(
       openReference,
       openProblem,
       checkProblems,
+      checkProjectProblems,
       ask: askModel,
     };
     const scopeId = input.scopeId;
@@ -752,6 +852,7 @@ export function useFilePageCodeIntelligence(
   }, [
     askModel,
     checkProblems,
+    checkProjectProblems,
     controller,
     input.active,
     input.filePath,
@@ -817,16 +918,63 @@ export function useFilePageCodeIntelligence(
           ? {
               'code.rename': () => openEditSet('rename'),
               'code.quickFix': () => openEditSet('fixes'),
+              'code.checkProjectProblems': () => { checkProjectProblems(); return 'handled' as const; },
             }
           : {},
-      [controller, input.active, openEditSet],
+      [controller, input.active, openEditSet, checkProjectProblems],
     ),
   );
+
+  const navigate = React.useCallback((kind: 'typeDefinition' | 'implementation', inspected?: CodeIntelligencePosition) => {
+    if (!controller) return 'pass' as const;
+    const cursor = latest.current.editorHandleRef.current?.getCursorPosition?.();
+    const position = inspected ?? (cursor ? { line: cursor.line - 1, character: cursor.character } : controller.getSnapshot().selection?.position);
+    if (!position) return 'pass' as const;
+    void controller.request(kind, { position }).then(result => {
+      if (result?.status !== 'ok' || (result.kind !== 'typeDefinition' && result.kind !== 'implementation')) return;
+      const target = result.locations.find(location => !location.outsideWorkspace);
+      if (target) void openLocation(target);
+    });
+    return 'handled' as const;
+  }, [controller, openLocation]);
+  const editorCommands = React.useMemo(() => {
+    const run = (command: CodeEditorLanguageCommand) => {
+      const editor = latest.current.editorHandleRef.current;
+      if (!latest.current.editing && ['format', 'formatSelection', 'organizeImports'].includes(command)) {
+        if (!controller) return 'pass' as const;
+        const range = command === 'formatSelection' ? latest.current.getReadSelectionRange?.() : undefined;
+        if (command === 'formatSelection' && !range) return 'pass' as const;
+        interaction.close();
+        editSets.open({ op: command as 'format' | 'formatSelection' | 'organizeImports', anchor: null,
+          line: 0, character: 0, symbol: '', ...(range ? { range } : {}) });
+        return 'handled' as const;
+      }
+      if (!latest.current.editing || !editor?.runCommand) return 'pass' as const;
+      if (command === 'peekReferences' && phone && controller) {
+        const at = editor.getCursorPosition?.();
+        if (at) void controller.references({ line: at.line - 1, character: at.character });
+      } else editor.runCommand(command);
+      return 'handled' as const;
+    };
+    return {
+      'code.goToTypeDefinition': () => navigate('typeDefinition'), 'code.goToImplementation': () => navigate('implementation'),
+      'code.format': () => run('format'), 'code.formatSelection': () => run('formatSelection'), 'code.organizeImports': () => run('organizeImports'),
+      ...(input.editing ? {
+        'code.suggest': () => run('suggest'), 'code.signatureHelp': () => run('signatureHelp'),
+        'code.expandSelection': () => run('expandSelection'), 'code.shrinkSelection': () => run('shrinkSelection'), 'code.peekReferences': () => run('peekReferences'),
+      } : {}),
+    };
+  }, [controller, editSets, input.editing, interaction, navigate, phone]);
+  useKeyboardShortcutHandlers(React.useMemo(() => input.active ? editorCommands : {}, [editorCommands, input.active]));
 
   const menuCommands = React.useMemo(
     () =>
       controller
         ? {
+            // Keyboard dispatch consumes handled/pass; menu invocation has no propagation result.
+            ...Object.fromEntries(Object.entries(editorCommands).map(([id, run]) => [id, () => { run(); }])) as {
+              [Key in keyof typeof editorCommands]: () => void;
+            },
             'code.rename': () => {
               openEditSet('rename');
             },
@@ -847,9 +995,10 @@ export function useFilePageCodeIntelligence(
             },
             'code.restart': restart,
             'code.showProblems': checkProblems,
+            'code.checkProjectProblems': checkProjectProblems,
           }
         : undefined,
-    [checkProblems, controller, input.editorHandleRef, interaction, openEditSet, restart],
+    [checkProblems, checkProjectProblems, controller, editorCommands, input.editorHandleRef, interaction, openEditSet, restart],
   );
 
   const saveThisFile = React.useCallback(async () => {
@@ -869,6 +1018,8 @@ export function useFilePageCodeIntelligence(
       onOpenReference={openReference}
       onQuickFix={() => openEditSet('fixes')}
       onRename={() => openEditSet('rename')}
+      onTypeDefinition={position => { navigate('typeDefinition', position); }}
+      onImplementation={position => { navigate('implementation', position); }}
     />
   ) : null;
   // The rename / quick-fix flow mounts inside the page body: its review takes that region like Changes do.
@@ -888,7 +1039,7 @@ export function useFilePageCodeIntelligence(
   ) : null;
 
   // Phones: while the name sheet is up, the code gets room beneath it so the tapped line can sit above it.
-  const { height: windowHeight } = useWindowDimensions();
+  const { height: windowHeight } = usePresentationWindowDimensions();
   const phoneSheetOpen = React.useSyncExternalStore(
     interaction.subscribe,
     () => phone && interaction.getState() !== null,
@@ -902,6 +1053,11 @@ export function useFilePageCodeIntelligence(
   const phoneSheetInset = phoneSheetOpen
     ? Math.round(windowHeight * PHONE_SHEET_RESERVE)
     : 0;
+  const openAiSettings = React.useCallback(() => {
+    router.push(buildSettingHref('/settings/source-control', SOURCE_CONTROL_SETTINGS.settings.aiSuggestionsEnabled) as never);
+  }, [router]);
+  const aiFooter = input.editing && controller
+    ? <><FileAiSuggestionStatus controller={controller} enabled={aiSettings.enabled} onOpenSettings={openAiSettings} /><FileNextEditAnnouncer controller={controller} /></> : null;
   return {
     controller,
     bindEditor,
@@ -909,6 +1065,7 @@ export function useFilePageCodeIntelligence(
     phoneSheetInset,
     headerFacts,
     notice,
+    aiFooter,
     layer,
     editSetLayer,
     menuCommands,
@@ -916,6 +1073,40 @@ export function useFilePageCodeIntelligence(
     search,
     showProblems,
   };
+}
+
+/**
+ * The predicted next edit is drawn inside the engine, so a screen reader hears it here: once when it is offered and
+ * once when its preview opens (P7 A3 accessibility). Renders nothing and never re-renders on keystrokes.
+ */
+function FileNextEditAnnouncer(props: Readonly<{ controller: CodeIntelligenceController }>) {
+  React.useEffect(() => {
+    const operation = props.controller.nextEditSuggestions;
+    let announced: string | null = null;
+    return operation.subscribe(() => {
+      const snapshot = operation.getSnapshot();
+      const first = snapshot.suggestion?.edits[0];
+      if (!snapshot.suggestion || !first || (snapshot.status !== 'ready' && snapshot.status !== 'preview')) { announced = null; return; }
+      const key = `${snapshot.suggestion.id}:${snapshot.status}`;
+      if (announced === key) return;
+      announced = key;
+      const line = first.range.start.line + 1;
+      const result = snapshot.suggestion.previewText.split(/\r\n|\r|\n/u)[first.range.start.line]?.trim() ?? first.newText;
+      announceAccessibilityMessage(snapshot.status === 'ready'
+        ? t('files.editing.aiSuggestions.nextEditAnnounceReady', { line })
+        : t('files.editing.aiSuggestions.nextEditAnnouncePreview', { line, text: result }));
+    });
+  }, [props.controller]);
+  return null;
+}
+
+/** Only this quiet footer leaf observes inference state; keystrokes never subscribe the File page. */
+function FileAiSuggestionStatus(props: Readonly<{ controller: CodeIntelligenceController; enabled: boolean; onOpenSettings(): void }>) {
+  const operation = props.controller.inlineSuggestions;
+  const enabled = props.enabled;
+  const read = React.useCallback((): AiSuggestionFooterState => resolveAiSuggestionFooterState(operation.getSnapshot(), { enabled }), [enabled, operation]);
+  const state = React.useSyncExternalStore(operation.subscribe, read, () => null);
+  return <AiSuggestionStatus state={state} onOpenSettings={props.onOpenSettings} />;
 }
 
 /**
@@ -984,9 +1175,12 @@ function FileCodeIntelligenceCardLayer(
     onOpenReference: (row: CodeReferenceRow) => void;
     onQuickFix: () => void;
     onRename: () => void;
+    onTypeDefinition: (position: CodeIntelligencePosition) => void;
+    onImplementation: (position: CodeIntelligencePosition) => void;
   }>,
 ) {
   const { controller, interaction } = props;
+  const writeClipboard = useClipboardWrite();
   const state = React.useSyncExternalStore(
     interaction.subscribe,
     interaction.getState,
@@ -1046,11 +1240,7 @@ function FileCodeIntelligenceCardLayer(
                   }))
                 : [],
             textMatches: snapshot.mode === 'fallback',
-            partial: Boolean(
-              snapshot.result &&
-              'coverage' in snapshot.result &&
-              snapshot.result.coverage === 'partial',
-            ),
+            partial: isCodeReferenceResultPartial(snapshot.result),
             searching:
               snapshot.status === 'searching' || snapshot.status === 'loading',
           }
@@ -1104,6 +1294,22 @@ function FileCodeIntelligenceCardLayer(
       open={open}
       anchor={state?.anchor ?? query?.anchor ?? null}
       model={model}
+      referencesContent={model.references ? (
+        <CodeReferencesPanel
+          key={props.filePath}
+          controller={controller}
+          position={position}
+          supportsCalls={snapshot.capabilities?.callHierarchy === true}
+          references={{
+            ...model.references,
+            progress: model.progress,
+            onOpen: row => {
+              interaction.close();
+              props.onOpenReference(row);
+            },
+          }}
+        />
+      ) : null}
       onRequestClose={close}
       onHoverChange={interaction.setCardHovered}
       onDefinition={() => {
@@ -1116,10 +1322,10 @@ function FileCodeIntelligenceCardLayer(
         if (position) void controller.references(position);
       }}
       onCopyName={() => {
-        if (model.name) void setClipboardStringSafe(model.name.symbol);
+        if (model.name) void writeClipboard(model.name.symbol);
       }}
       onCopyPath={(path) => {
-        void setClipboardStringSafe(path);
+        void writeClipboard(path);
       }}
       onChooseName={(name) => {
         if (!position) return;
@@ -1133,6 +1339,12 @@ function FileCodeIntelligenceCardLayer(
       }}
       onQuickFix={props.onQuickFix}
       onRename={props.onRename}
+      onTypeDefinition={snapshot.capabilities?.typeDefinition && position ? () => {
+        interaction.close(); props.onTypeDefinition(position);
+      } : undefined}
+      onImplementation={snapshot.capabilities?.implementation && position ? () => {
+        interaction.close(); props.onImplementation(position);
+      } : undefined}
     />
   );
 }

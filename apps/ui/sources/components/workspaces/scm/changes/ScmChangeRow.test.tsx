@@ -96,6 +96,16 @@ describe('ScmChangeRow', () => {
     expect(text).not.toContain('-0');
     expect(text).toContain('common.unavailable');
   });
+  it.each([
+    { fileName: 'manual.pdf', density: 'compact' as const },
+    { fileName: 'manual.pdf', density: undefined },
+    { fileName: 'clip.mp4', density: 'compact' as const },
+  ])('shows no line delta for a media file git counted as text ($fileName, $density)', async ({ fileName, density }) => {
+    const { ScmChangeRow } = await import('./ScmChangeRow');
+    const screen = await renderScreen(<ScmChangeRow theme={createScmChangeRowTheme()} onPress={() => {}} density={density}
+      file={{ fileName, filePath: 'docs', fullPath: `docs/${fileName}`, status: 'added', isIncluded: false, linesAdded: 175, linesRemoved: 0 }} />);
+    expect(screen.getTextContent()).not.toContain('175');
+  });
   it('renders change stats and calls onPress', async () => {
     const onPress = vi.fn();
     const { ScmChangeRow } = await import('./ScmChangeRow');

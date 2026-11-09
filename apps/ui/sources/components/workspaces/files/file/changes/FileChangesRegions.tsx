@@ -8,6 +8,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { ReviewBar } from '@/components/workspaces/scm/review/hunkReview/ReviewBar';
 import { ReviewStrip } from '@/components/workspaces/scm/review/hunkReview/ReviewStrip';
+import { ScmFileViewedMark } from '@/components/sessions/files/comparison/ScmFileViewedMark';
 import { useReviewKeyboard } from '@/components/workspaces/scm/review/hunkReview/useReviewKeyboard';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
@@ -42,10 +43,13 @@ export function FileChangesStrip(
     active: review.scopeKind,
     onSelect: review.selectScope,
   };
+  // A pull request's own Viewed (GitHub) is this file's mark; its files-left count waits for the source's answer.
+  const fileViewed = review.controller.fileViewed;
+  const sourceViewed = strip.fileReviewKind === 'sourceViewed' && fileViewed;
   const complete =
     strip.fileComplete && review.status === 'ready'
       ? {
-          filesLeft: strip.filesLeft,
+          filesLeft: strip.fileCountsKnown ? strip.filesLeft : 0,
           nextFileName: strip.nextFile ? baseName(strip.nextFile) : null,
           onNextFile: strip.nextFile ? review.controller.nextFile : undefined,
         }
@@ -61,11 +65,18 @@ export function FileChangesStrip(
       onNext={strip.total > 0 ? review.controller.next : undefined}
       onKeepAll={strip.canKeepAll ? review.controller.keepAll : undefined}
       complete={complete}
+      fileMark={sourceViewed && review.controller.cursor ? (
+        <ScmFileViewedMark source={sourceViewed} path={review.controller.cursor.path}
+          setFileViewed={review.controller.setFileViewed} />
+      ) : null}
     />
   );
 }
 
 export type FileChangesAsk = Readonly<{ scopeId: string; scope: WorkspaceScopeBase; filePath: string; sessionId: string | null; active: boolean;
+  rootRef?: React.RefObject<View | null>;
+  /** Touch hosts: the diff rows' own selection (web reads the DOM selection). */
+  lineRange?: React.ComponentProps<typeof FileReadAskControls>['lineRange'];
   onCommentRange?: React.ComponentProps<typeof FileReadAskControls>['onCommentRange'];
   onPhoneBarShownChange?: React.ComponentProps<typeof FileReadAskControls>['onPhoneBarShownChange'];
 }>;
@@ -100,7 +111,8 @@ export function FileChangesBody(
   }>,
 ) {
   const { review } = props;
-  const diffRootRef = React.useRef<View | null>(null);
+  const ownDiffRootRef = React.useRef<View | null>(null);
+  const diffRootRef = props.ask?.rootRef ?? ownDiffRootRef;
   const phone = useDeviceType() === 'phone';
   useReviewKeyboard(review.keyboard, {
     active: props.keyboardActive && review.status === 'ready',
@@ -138,10 +150,11 @@ export function FileChangesBody(
           ...(leadingContent ? { leadingContent } : {}),
         })}
       </DiffHunkRowRegistryContext.Provider>
-      {Platform.OS === 'web' && props.ask ? (
+      {props.ask && (Platform.OS === 'web' || props.ask.lineRange) ? (
         <FileReadAskControls rootRef={diffRootRef} mode="diff" scopeId={props.ask.scopeId} scope={props.ask.scope}
           filePath={props.ask.filePath} text={unifiedDiff} sessionId={props.ask.sessionId} active={props.ask.active}
-          onCommentRange={props.ask.onCommentRange} onPhoneBarShownChange={props.ask.onPhoneBarShownChange} />
+          onCommentRange={props.ask.onCommentRange} onPhoneBarShownChange={props.ask.onPhoneBarShownChange}
+          lineRange={props.ask.lineRange} />
       ) : null}
       {phone && strip.total > 0 ? (
         <ReviewBar
@@ -159,6 +172,7 @@ export function FileChangesBody(
           complete={
             strip.fileComplete
               ? {
+                  ...(strip.fileReviewKind === 'sourceViewed' ? { title: t('hunkReview.viewed') } : {}),
                   nextFileName: strip.nextFile
                     ? baseName(strip.nextFile)
                     : null,
@@ -266,7 +280,7 @@ export function FileChangesSection(props: Readonly<{
     containsFocus?: () => boolean;
     liveChangeKind?: string | null;
     /** Mounts the shared selection toolbar (Ask · Comment · Copy) over the diff; the page's pane scope and Session. */
-    ask?: Pick<FileChangesAsk, 'scopeId' | 'sessionId' | 'active' | 'onCommentRange' | 'onPhoneBarShownChange'>;
+    ask?: Pick<FileChangesAsk, 'scopeId' | 'sessionId' | 'active' | 'lineRange' | 'onCommentRange' | 'onPhoneBarShownChange' | 'rootRef'>;
     children: (surface: FileChangesDiffSurface) => React.ReactNode;
 }>) {
     const { review, keyboardActive, containsFocus, children, liveChangeKind } = props;

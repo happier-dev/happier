@@ -6,13 +6,15 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { desktopHostKind } from '@/utils/platform/desktopHost';
-import { buildFilePageMenuActions, FilePageHeader } from './FilePageHeader';
+import { buildFilePageMenuActions, FilePageHeader, useRetainedMenuActions } from './FilePageHeader';
 import { formatFilePageBytes } from './FilePageStates';
 import { useFilePageSharing } from './useFilePageSharing';
 import { useFilePageDetailsActions } from './useFilePageDetailsActions';
 import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { getFileLanguageFromPath } from '@/utils/code/fileLanguage';
 import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
+import { useFileViewCommands } from './useFileViewCommands';
+import type { FileViewActionOwner } from '@/sync/ops/actions/scopeActionFamily';
 
 const noop = () => {};
 
@@ -38,6 +40,22 @@ export function FilePagePluginViewerHeader(
   const accountScope = useActiveServerAccountScope(
     props.scope.serverId ?? null,
   );
+  // The plugin owns the body; this header retains only the existing built-in restoration leaf.
+  // It is not a global current-File candidate (the plugin header intentionally has no view modes).
+  const editOwner = React.useRef<FileViewActionOwner | null>(null);
+  editOwner.current = {
+    tabId: `file:${props.filePath}`, active: false,
+    serverId: props.scope.serverId, accountId: accountScope?.accountId ?? null,
+    mode: 'view', blame: false, availableModes: props.onEdit ? ['edit'] : [],
+    blameAvailable: false, changesScopeAvailable: false,
+    set: patch => {
+      if (patch.mode !== 'edit' || !props.onEdit) return false;
+      props.onEdit();
+      return true;
+    },
+  };
+  const { set: requestView } = useFileViewCommands({ scope: accountScope, owner: editOwner, modes: [] });
+  const requestEdit = React.useCallback(() => { void requestView({ mode: 'edit' }); }, [requestView]);
   const machineReachable = !reachability.unreachable;
   const unavailableReason = t('projects.checkouts.notAnswering', {
     machine: reachability.machineName,
@@ -58,7 +76,7 @@ export function FilePagePluginViewerHeader(
   const fileDetails = useFilePageDetailsActions({ path: props.filePath,
     kind: viewerKind.kind, kindLabel: t(viewerKind.labelKey as never) as string,
     language: getFileLanguageFromPath(props.filePath), sizeBytes: props.sizeBytes });
-  const menuActions = buildFilePageMenuActions(
+  const menuActions = useRetainedMenuActions(buildFilePageMenuActions(
     {
       machineReachable,
       unavailableReason,
@@ -85,7 +103,7 @@ export function FilePagePluginViewerHeader(
     },
     size === 'phone' ? 'phone' : 'page',
     { details: fileDetails, downloadBusy: share.busy },
-  );
+  ));
   const fileName = props.filePath.split('/').pop() ?? props.filePath;
   return (
     <FilePageHeader
@@ -101,7 +119,7 @@ export function FilePagePluginViewerHeader(
       displayMode="file"
       onDisplayMode={noop}
       find={null}
-      edit={props.onEdit ? { kind: 'edit', onPress: props.onEdit } : null}
+      edit={props.onEdit ? { kind: 'edit', onPress: requestEdit } : null}
       menuActions={menuActions}
       diffMode="pending"
       onDiffMode={noop}

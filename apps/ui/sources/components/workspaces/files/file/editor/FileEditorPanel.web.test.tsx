@@ -55,12 +55,23 @@ it.each(['code', 'markdown'])('passes focused Monaco shortcuts and reopens %s Fi
     widget.append(findInput);
     editorDom.append(bodyInput, widget);
     document.body.append(editorDom);
+    const languageDefaults = { modeConfiguration: {}, setModeConfiguration() {} };
     Object.defineProperty(window, 'require', { configurable: true, value: (_modules: string[], ready: () => void) => ready() });
     Object.defineProperty(window, 'monaco', { configurable: true, value: {
+        KeyCode: { Tab: 2, RightArrow: 17, Escape: 9, Backslash: 88 },
+        KeyMod: { CtrlCmd: 2048, WinCtrl: 256, Alt: 512 },
         typescript: { typescriptDefaults: { setModeConfiguration() {} }, javascriptDefaults: { setModeConfiguration() {} } },
+        json: { jsonDefaults: languageDefaults },
+        css: { cssDefaults: languageDefaults, scssDefaults: languageDefaults, lessDefaults: languageDefaults },
+        html: { htmlDefaults: languageDefaults, handlebarDefaults: languageDefaults, razorDefaults: languageDefaults },
+        languages: { registerInlineCompletionsProvider: () => ({ dispose() {} }) },
         editor: {
-        createModel: () => ({ getValue: () => 'first\\n', getLineCount: () => 1, setValue() {}, dispose() {} }),
+        createModel: () => ({ uri: { scheme: 'inmemory', path: '/find-test' }, getLanguageId: () => 'plaintext',
+            getValue: () => 'first\\n', getLineCount: () => 1, getVersionId: () => 1, getEOL: () => '\n', setValue() {}, dispose() {} }),
         create: (_node: unknown, options: { lineNumbersMinChars: number }) => { measureDigits(options.lineNumbersMinChars); return ({ trigger, getDomNode: () => editorDom, hasWidgetFocus: () => editorDom.contains(document.activeElement),
+            createContextKey: () => ({ set() {}, reset() {} }),
+            createDecorationsCollection: () => ({ set() {}, clear() {} }),
+            addAction: () => ({ dispose() {} }),
             onDidChangeModelContent: () => ({ dispose() {} }), onDidBlurEditorText: () => ({ dispose() {} }),
             getLayoutInfo: () => measuredLayout,
             updateOptions(next: { lineDecorationsWidth?: number; lineNumbersMinChars?: number }) {

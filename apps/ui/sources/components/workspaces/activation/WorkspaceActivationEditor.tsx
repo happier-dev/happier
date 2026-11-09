@@ -1,11 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
 import { computeWorkspaceSyncPolicyDigest, type HandoffWorkspaceActionV1, type WorkspaceContentPolicyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import { MachineSelector, type MachineSelectorProps } from '@/components/sessions/new/components/MachineSelector';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Icon } from '@/components/ui/icons/Icon';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PathSelectionList, type PathSelectionListProps } from '@/components/ui/pathPicker/PathSelectionList';
@@ -79,8 +78,7 @@ export function WorkspaceActivationModeField(props: Readonly<{
     />;
 }
 
-/** Raw comma-separated patterns remain a draft until the host submits its action. */
-export function WorkspaceActivationContentPolicyFields(props: Readonly<{
+type WorkspaceActivationContentPolicyProps = Readonly<{
     contentSelection: 'git_worktree' | 'all_files';
     onContentSelectionChange: (value: 'git_worktree' | 'all_files') => void;
     includeIgnoredMode: 'exclude' | 'include_selected';
@@ -89,17 +87,24 @@ export function WorkspaceActivationContentPolicyFields(props: Readonly<{
     onPatternsDraftChange: (value: string) => void;
     disabled?: boolean;
     testIdPrefix?: string;
-}>) {
-    const { theme } = useUnistyles();
+}>;
+
+/** Raw comma-separated patterns remain a draft until the host submits its action. */
+export function WorkspaceActivationContentPolicyFields(props: WorkspaceActivationContentPolicyProps) {
+    return <ItemGroup><WorkspaceActivationContentPolicyRows {...props} /></ItemGroup>;
+}
+
+/** The content-policy rows alone, for a host that places them inside a sheet it already owns. */
+export function WorkspaceActivationContentPolicyRows(props: WorkspaceActivationContentPolicyProps) {
     const [openMenu, setOpenMenu] = React.useState<'content' | 'ignored' | null>(null);
     const selectedContent = SESSION_HANDOFF_CONTENT_SELECTION_OPTIONS.find((option) => option.id === props.contentSelection)!;
-    return <ItemGroup>
+    // Preference rows carry no icon (anatomy: only navigation rows and identity marks do).
+    return <>
         <WorkspaceActivationModeField
             open={openMenu === 'content'} onOpenChange={(open) => setOpenMenu(open ? 'content' : null)}
             selectedId={props.contentSelection}
             title={t('settingsSession.handoff.contentSelection.title')}
             subtitle={t(selectedContent.subtitleKey)}
-            icon={<Icon name="files" size={16} color={theme.colors.text.secondary} />}
             testID={props.testIdPrefix ? `${props.testIdPrefix}-content-selection-trigger` : undefined}
             disabled={props.disabled}
             items={SESSION_HANDOFF_CONTENT_SELECTION_OPTIONS.map((option) => ({ id: option.id, title: t(option.titleKey), subtitle: t(option.subtitleKey) }))}
@@ -110,7 +115,6 @@ export function WorkspaceActivationContentPolicyFields(props: Readonly<{
             selectedId={props.includeIgnoredMode}
             title={t('settingsSession.handoff.includeIgnoredMode.title')}
             subtitle={t('settingsSession.handoff.includeIgnoredMode.subtitle')}
-            icon={<Icon name="funnel-simple" size={16} color={theme.colors.text.secondary} />}
             testID={props.testIdPrefix ? `${props.testIdPrefix}-ignored-mode-trigger` : undefined}
             disabled={props.disabled}
             items={SESSION_HANDOFF_INCLUDE_IGNORED_MODE_OPTIONS.map((option) => ({ id: option.id, title: t(option.titleKey), subtitle: t(option.subtitleKey) }))}
@@ -121,10 +125,14 @@ export function WorkspaceActivationContentPolicyFields(props: Readonly<{
             onChangeText={props.onPatternsDraftChange}
             editable={!props.disabled}
         /> : null}
-    </ItemGroup>;
+    </>;
 }
 
-/** Copy and relationship editing share the incumbent Sync action and content-policy fields. */
+/**
+ * Copy and relationship editing share the incumbent Sync action and content-policy fields. They are rows
+ * inside the host's own sheet (Open's "A copy of another checkout" row discloses them in place): the sync
+ * mode, then one Files row that keeps the content choices folded until the person asks for them.
+ */
 export function WorkspaceActivationSyncFields(props: Readonly<{
     action: HandoffWorkspaceActionV1;
     onChange: (action: HandoffWorkspaceActionV1) => void;
@@ -135,6 +143,7 @@ export function WorkspaceActivationSyncFields(props: Readonly<{
     const policy = action.kind === 'copy_once' || action.kind === 'create_relationship' ? action.contentPolicy : null;
     const hasIncludes = Boolean(policy?.extraIncludePatterns.length);
     const [open, setOpen] = React.useState(false);
+    const [filesExpanded, setFilesExpanded] = React.useState(false);
     const [includeIgnoredMode, setIncludeIgnoredMode] = React.useState<'exclude' | 'include_selected'>(hasIncludes ? 'include_selected' : 'exclude');
     const [patternsDraft, setPatternsDraft] = React.useState(() => policy?.extraIncludePatterns.join(', ') ?? '');
     const patterns = policy?.extraIncludePatterns;
@@ -155,34 +164,44 @@ export function WorkspaceActivationSyncFields(props: Readonly<{
         const next = { ...current, ...patch };
         props.onChange({ ...action, contentPolicy: { ...next, policyDigest: computeWorkspaceSyncPolicyDigest(next) } });
     };
+    const contentTitle = policy ? SESSION_HANDOFF_CONTENT_SELECTION_OPTIONS.find(option => option.id === policy.selection)?.titleKey : undefined;
+    const ignoredTitle = SESSION_HANDOFF_INCLUDE_IGNORED_MODE_OPTIONS.find(option => option.id === includeIgnoredMode)!.titleKey;
     return <>
-        <ItemGroup>
-            <WorkspaceActivationModeField
-                open={open} onOpenChange={setOpen}
-                selectedId={selectedId}
-                title={t('settingsSession.handoff.workspaceMode.title')}
-                subtitle={selected ? t(selected.subtitleKey) : t('settingsSession.handoff.workspaceMode.relationshipSelected')}
-                testID={props.testIdPrefix ? `${props.testIdPrefix}.sync-mode` : undefined}
-                disabled={props.disabled}
-                items={[
-                    ...(!selected ? [{ id: selectedId, title: t('settingsSession.handoff.workspaceMode.relationshipTitle'),
-                        subtitle: action.kind === 'relationship' ? action.relationshipId : t('settingsSession.handoff.workspaceMode.relationshipSelected') }] : []),
-                    ...options.map(option => ({ id: option.id, title: t(option.titleKey), subtitle: t(option.subtitleKey) })),
-                ]}
-                onSelect={id => {
-                    const option = options.find(candidate => candidate.id === id);
-                    if (!option) return;
-                    const next = buildSessionHandoffWorkspaceAction({ workspaceSyncMode: option.id,
-                        contentSelection: policy?.selection ?? 'git_worktree', includeIgnoredMode,
-                        ignoredIncludeGlobs: policy?.extraIncludePatterns ?? [] });
-                    if (next?.kind === 'copy_once' || next?.kind === 'create_relationship') {
-                        props.onChange(policy ? { ...next, contentPolicy: policy } : next);
-                    }
-                    setOpen(false);
-                }}
-            />
-        </ItemGroup>
-        {policy ? <WorkspaceActivationContentPolicyFields
+        <WorkspaceActivationModeField
+            open={open} onOpenChange={setOpen}
+            selectedId={selectedId}
+            title={t('sessionHandoff.targetApproval.modeLabel')}
+            subtitle={selected ? t(selected.subtitleKey) : t('settingsSession.handoff.workspaceMode.relationshipSelected')}
+            testID={props.testIdPrefix ? `${props.testIdPrefix}.sync-mode` : undefined}
+            disabled={props.disabled}
+            items={[
+                ...(!selected ? [{ id: selectedId, title: t('settingsSession.handoff.workspaceMode.relationshipTitle'),
+                    subtitle: action.kind === 'relationship' ? action.relationshipId : t('settingsSession.handoff.workspaceMode.relationshipSelected') }] : []),
+                ...options.map(option => ({ id: option.id, title: t(option.titleKey), subtitle: t(option.subtitleKey) })),
+            ]}
+            onSelect={id => {
+                const option = options.find(candidate => candidate.id === id);
+                if (!option) return;
+                const next = buildSessionHandoffWorkspaceAction({ workspaceSyncMode: option.id,
+                    contentSelection: policy?.selection ?? 'git_worktree', includeIgnoredMode,
+                    ignoredIncludeGlobs: policy?.extraIncludePatterns ?? [] });
+                if (next?.kind === 'copy_once' || next?.kind === 'create_relationship') {
+                    props.onChange(policy ? { ...next, contentPolicy: policy } : next);
+                }
+                setOpen(false);
+            }}
+        />
+        {policy ? <ExpandableItem
+            // The last row of its host's sheet: no hairline after it (the sheet's edge closes it).
+            showDivider={false}
+            expanded={filesExpanded}
+            onExpandedChange={setFilesExpanded}
+            header={(state) => <Item {...state.headerProps}
+                testID={props.testIdPrefix ? `${props.testIdPrefix}.files` : undefined}
+                title={t('projects.open.copyFiles')}
+                subtitle={[contentTitle ? t(contentTitle) : null, t(ignoredTitle)].filter(Boolean).join(' · ')}
+                showChevron />}
+        ><WorkspaceActivationContentPolicyRows
             contentSelection={policy.selection}
             onContentSelectionChange={selection => updatePolicy({ selection })}
             includeIgnoredMode={includeIgnoredMode}
@@ -197,6 +216,6 @@ export function WorkspaceActivationSyncFields(props: Readonly<{
             }}
             disabled={props.disabled}
             testIdPrefix={props.testIdPrefix}
-        /> : null}
+        /></ExpandableItem> : null}
     </>;
 }

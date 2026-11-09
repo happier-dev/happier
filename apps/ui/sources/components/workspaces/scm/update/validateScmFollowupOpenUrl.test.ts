@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ScmFollowupAction } from '@happier-dev/protocol';
+import type { ScmFollowupAction } from '@happier-dev/protocol/scm/pullRequests';
 
 import { validateScmFollowupOpenUrl } from './validateScmFollowupOpenUrl';
 

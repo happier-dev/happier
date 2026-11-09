@@ -4,12 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // The static storage graph reaches the Socket.IO transport; register its external boundary before any import.
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
-import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
+import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
-import { createWorkspaceSyncHarness } from '@/dev/testkit/harness/workspaceSyncHarness';
+import { createWorkspaceSyncHarness, createWorkspaceSyncRelationshipsListFixture } from '@/dev/testkit/harness/workspaceSyncHarness';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { resetWorkspaceSyncStatusStoreForTests, setWorkspaceSyncStatus } from '@/sync/domains/sessionHandoff/workspaceSyncStatusStore';
 
@@ -92,7 +92,7 @@ describe('Project cockpit workspace sync navigation', () => {
                     alpha: { kind: 'file', digest: 'a'.repeat(40), size: 3 },
                     beta: { kind: 'file', digest: 'b'.repeat(40), size: 3 } }],
             };
-            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST) return { statuses: [] };
+            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return createWorkspaceSyncRelationshipsListFixture([]);
             throw new Error(`Unexpected RPC ${input.method}`);
         });
         const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');

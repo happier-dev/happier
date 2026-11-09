@@ -1,11 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import {
-  useVideoPlayer,
-  VideoView,
-  type VideoPlayer as ExpoVideoPlayer,
-  type VideoPlayerStatus,
-} from 'expo-video';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { PrimaryCircleIconButton } from '@/components/ui/buttons/PrimaryCircleIconButton';
@@ -27,6 +21,8 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { formatPlaybackTime, type FilePageMediaInfo } from './filePageMediaFacts';
 import { useFileAudioPlayer } from './useFileAudioPlayer';
 import { useMediaPlaybackLifecycle } from './useMediaPlaybackLifecycle';
+import { HeldVideoPlayer, type HeldVideoPlayerSlot } from './HeldVideoPlayer';
+import type { MediaPlayerVideoControls } from './videoFrameAccess';
 
 /** Audio scrub step for the arrow keys (lab files FV6a: ←/→ seek 5 s). */
 const AUDIO_SEEK_STEP_SECONDS = 5;
@@ -42,6 +38,8 @@ export type MediaPlayerBodyProps = Readonly<{
   onOpenInDefaultApp?: () => void;
   /** The stage reuses the body's held bytes for handoff; it never starts another materializer. */
   onPreviewChange?: (preview: FilePreviewSourceState) => void;
+  /** Held-player access for controlled seek and canvas PNGs; retired on hide/source change. */
+  onVideoControls?: (controls: MediaPlayerVideoControls | null) => void;
   testID?: string;
 }>;
 
@@ -86,109 +84,7 @@ function CantPlayState(
   );
 }
 
-type PlayerSlot = React.MutableRefObject<Readonly<{
-  pause: () => void;
-}> | null>;
-
-function VideoPlayer(
-  props: Readonly<{
-    uri: string;
-    title: string;
-    isActive: boolean;
-    slot: PlayerSlot;
-    onFullscreenChange: (fullscreen: boolean) => void;
-    onError: (message: string) => void;
-    onMediaInfo?: (info: FilePageMediaInfo) => void;
-  }>,
-) {
-  const { theme } = useUnistyles();
-  const player = useVideoPlayer(props.uri, (instance) => {
-    instance.loop = false;
-    instance.muted = false;
-    instance.staysActiveInBackground = false;
-    instance.allowsExternalPlayback = false;
-    instance.timeUpdateEventInterval = 0;
-  });
-  const [status, setStatus] = React.useState<VideoPlayerStatus>(player.status);
-  const { onError, onMediaInfo, slot } = props;
-  React.useEffect(() => {
-    const subscription = player.addListener('statusChange', (event) => {
-      setStatus(event.status);
-      if (event.status === 'error')
-        onError(event.error?.message || 'video_decode_failed');
-    });
-    setStatus(player.status);
-    return () => subscription.remove();
-  }, [onError, player]);
-  // Once loaded, the player knows the length; the frame size only where the platform reports its track (not web).
-  React.useEffect(() => {
-    if (status !== 'readyToPlay' || !onMediaInfo) return;
-    const durationSeconds = player.duration;
-    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return;
-    const size = player.videoTrack?.size;
-    onMediaInfo(size && size.width > 0 && size.height > 0
-      ? { durationSeconds, width: size.width, height: size.height }
-      : { durationSeconds });
-  }, [onMediaInfo, player, status]);
-  const pause = React.useCallback(
-    (target: ExpoVideoPlayer = player) => {
-      try {
-        target.pause();
-      } catch {
-        /* The native handle may already be released. */
-      }
-    },
-    [player],
-  );
-  React.useLayoutEffect(() => {
-    slot.current = { pause: () => pause() };
-    // Stop before expo-video releases the native player on unmount.
-    return () => {
-      slot.current = null;
-      pause();
-    };
-  }, [pause, slot]);
-  useKeyboardShortcutHandlers(
-    props.isActive
-      ? {
-          'media.playPause': () => {
-            if (player.playing) pause();
-            else player.play();
-          },
-        }
-      : {},
-  );
-  return (
-    <>
-      <VideoView
-        testID="file-video-player"
-        player={player}
-        nativeControls
-        fullscreenOptions={FULLSCREEN_OPTIONS}
-        allowsPictureInPicture={false}
-        onFullscreenEnter={() => props.onFullscreenChange(true)}
-        onFullscreenExit={() => props.onFullscreenChange(false)}
-        contentFit="contain"
-        style={VIDEO_FILL}
-        accessibilityLabel={props.title}
-      />
-      {status === 'loading' || status === 'idle' ? (
-        <View
-          style={[StyleSheet.absoluteFill, styles.centre]}
-          pointerEvents="none"
-        >
-          <Icon
-            name="video-camera"
-            size={24}
-            color={theme.colors.text.tertiary}
-          />
-        </View>
-      ) : null}
-    </>
-  );
-}
-
-const FULLSCREEN_OPTIONS = { enable: true } as const;
+type PlayerSlot = HeldVideoPlayerSlot;
 
 function AudioRow(
   props: Readonly<{
@@ -380,7 +276,7 @@ export function MediaPlayerBody(props: MediaPlayerBodyProps) {
     />
   ) : preview.status === 'loaded' ? (
     props.kind === 'video' ? (
-      <VideoPlayer
+      <HeldVideoPlayer
         key={preview.uri}
         uri={preview.uri}
         title={props.title}
@@ -389,6 +285,7 @@ export function MediaPlayerBody(props: MediaPlayerBodyProps) {
         onFullscreenChange={setFullscreen}
         onError={setPlaybackError}
         onMediaInfo={props.onMediaInfo}
+        onVideoControls={props.onVideoControls}
       />
     ) : (
       <AudioRow
@@ -439,13 +336,6 @@ export function MediaPlayerBody(props: MediaPlayerBodyProps) {
     </View>
   );
 }
-
-/**
- * The player fills its well. A plain style on purpose: on web `VideoView` spreads `style` straight onto the
- * `<video>` element, where a Unistyles entry does not apply, so the element kept its natural 1280 × 720 and ran
- * past the well (its controls off-screen at 390).
- */
-const VIDEO_FILL = { width: '100%', height: '100%' } as const;
 
 const styles = StyleSheet.create((theme) => ({
   page: {

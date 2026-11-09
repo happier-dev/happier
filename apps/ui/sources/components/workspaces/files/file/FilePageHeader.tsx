@@ -84,6 +84,39 @@ export function buildFilePageMenuActions(context: FileMenuContext, surface: 'pag
     });
 }
 
+/**
+ * The `⋯` rows with one identity while what they show is unchanged. `buildFilePageMenuActions` rebuilds every row
+ * (and its handler closure) on each page render; the header memoizes on this list, so a render that changes no row
+ * must hand it the same array. Each retained row calls the latest row at the same position, so a handler never
+ * runs stale state.
+ */
+export function useRetainedMenuActions(actions: readonly PageHeaderMenuAction[]): readonly PageHeaderMenuAction[] {
+    const latest = React.useRef(actions);
+    React.useLayoutEffect(() => { latest.current = actions; });
+    const retained = React.useRef<Readonly<{ shape: string; actions: readonly PageHeaderMenuAction[] }> | null>(null);
+    const shape = JSON.stringify(actions, (_key, value: unknown) => typeof value === 'function' ? '[handler]' : value);
+    if (retained.current?.shape !== shape) {
+        const delegate = (rows: readonly PageHeaderMenuAction[], path: readonly number[]): readonly PageHeaderMenuAction[] => rows.map((row, index) => {
+            const at = [...path, index];
+            return {
+                ...row,
+                ...(row.children ? { children: delegate(row.children, at) } : {}),
+                onSelect: (intent) => {
+                    let current: readonly PageHeaderMenuAction[] | undefined = latest.current;
+                    let target: PageHeaderMenuAction | undefined;
+                    for (const position of at) {
+                        target = current?.[position];
+                        current = target?.children;
+                    }
+                    return target?.onSelect(intent);
+                },
+            };
+        });
+        retained.current = { shape, actions: delegate(actions, []) };
+    }
+    return retained.current.actions;
+}
+
 export type FilePageHeaderProps = Readonly<{
     fileName?: string;
     /** The file's workspace-relative path: its folders become the breadcrumb. */
@@ -159,9 +192,10 @@ export type FilePageHeaderProps = Readonly<{
  * The File page header (lab FV1, P3 §3.2), on the one Details header (`DetailsTabHeader`):
  * row 1 names the file (mark, name) and carries what it is for (`View | Changes`, Find, Edit, `⋯`);
  * row 2 says where it lives and what happened to it (breadcrumb · Modified +4 −2 · by Claude 2m).
- * View, Changes and Edit swap in place and the header never moves.
+ * View, Changes and Edit swap in place and the header never moves. Memoized: the page re-renders on every store,
+ * pane and parent commit, so a render that changes no header fact must not redraw the header's subtree.
  */
-export function FilePageHeader(props: FilePageHeaderProps) {
+export const FilePageHeader = React.memo(function FilePageHeader(props: FilePageHeaderProps) {
     const { theme } = useUnistyles();
     const toolbarBelow = props.toolbarBelow === true;
     const {
@@ -228,6 +262,7 @@ export function FilePageHeader(props: FilePageHeaderProps) {
             testID="file-header-find"
             variant="plain"
             size={30}
+            interactiveTargetGapPx={theme.space.s4}
             iconSize={iconSize}
             iconName="magnifying-glass"
             selected={props.find.active === true}
@@ -243,6 +278,7 @@ export function FilePageHeader(props: FilePageHeaderProps) {
             testID="file-header-expand"
             variant="plain"
             size={30}
+            interactiveTargetGapPx={theme.space.s4}
             iconSize={iconSize}
             iconName="arrows-out"
             accessibilityRole="button"
@@ -265,12 +301,13 @@ export function FilePageHeader(props: FilePageHeaderProps) {
             {!toolbarBelow ? modeSegment : null}
             {statusNode}
             {statusNode && (findButton || editControl) && !toolbarBelow ? <View style={styles.bandDivider} /> : null}
-            {diffPresentationToggle ? <DiffPresentationStyleToggleButton size={iconSize} /> : null}
+            {diffPresentationToggle ? <DiffPresentationStyleToggleButton size={iconSize} interactiveTargetGapPx={theme.space.s4} /> : null}
             {commentToggle && onToggleCommentMode ? (
                 <IconButton
                     testID="file-details-comment-mode"
                     variant="plain"
                     size={30}
+                    interactiveTargetGapPx={theme.space.s4}
                     iconSize={iconSize}
                     iconName="chat-circle"
                     selected={commentModeActive === true}
@@ -412,7 +449,7 @@ export function FilePageHeader(props: FilePageHeaderProps) {
             />
         </View>
     );
-}
+});
 
 /**
  * The phone File page's bottom toolbar (lab FV1p, delta 5), in thumb reach on the floating bar

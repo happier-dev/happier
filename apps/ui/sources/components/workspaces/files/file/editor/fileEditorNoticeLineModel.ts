@@ -83,7 +83,11 @@ export function resolveFileEditorNoticeLine(
       key: 'offline',
       tone: 'neutral',
       glyph: 'wifi-slash',
-      reason: t('files.editing.offline', { machine: reachability.machineName }),
+      // A save already pressed waits for the Machine and goes through when it answers (the pill reads
+      // Saving), so the line no longer asks the person to save later.
+      reason: editor.status === 'saving'
+        ? t('files.editing.offlineSaving', { machine: reachability.machineName })
+        : t('files.editing.offline', { machine: reachability.machineName }),
       actions: [
         {
           label: t('common.retry'),

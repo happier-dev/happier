@@ -32,7 +32,7 @@ import {
     shouldContinueManagedStashRetry,
 } from './scmStashRetry';
 
-import type { ScmStashEntry } from '@happier-dev/protocol';
+import type { ScmStashEntry } from '@happier-dev/protocol/scm';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { DetailsTabHeader, type DetailsTabHeaderMetaFact } from '@/components/appShell/panes/details/header/DetailsTabHeader';

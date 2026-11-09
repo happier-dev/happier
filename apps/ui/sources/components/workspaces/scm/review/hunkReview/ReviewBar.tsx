@@ -28,6 +28,8 @@ export type ReviewBarProps = Readonly<{
   keepDisabledReason?: string | null;
   keepLabel?: string;
   complete?: Readonly<{
+    /** What completed the file, when it is not every change kept (a pull request's Viewed). */
+    title?: string;
     nextFileName?: string | null;
     onNextFile?: () => void;
   }> | null;
@@ -60,7 +62,7 @@ export function ReviewBar(props: ReviewBarProps) {
         // Lab rvp P2: the completion says it once, quietly, and names where Next file leads ("Next · name").
         <View style={styles.message}>
           <Text variant="label" numberOfLines={1} style={{ color: theme.colors.text.secondary }}>
-            {t('hunkReview.fileReviewed')}
+            {props.complete.title ?? t('hunkReview.fileReviewed')}
           </Text>
           <Text testID="review-bar-next-file-name" variant="body" emphasis="semiBold" numberOfLines={1}
             ellipsizeMode="middle" style={{ color: theme.colors.text.primary }}>
@@ -74,7 +76,7 @@ export function ReviewBar(props: ReviewBarProps) {
           numberOfLines={2}
           style={[styles.message, { color: theme.colors.text.primary }]}
         >
-          {t('hunkReview.fileReviewed')}
+          {props.complete.title ?? t('hunkReview.fileReviewed')}
         </Text>
       )}
       {nextFileName && props.complete.onNextFile ? (

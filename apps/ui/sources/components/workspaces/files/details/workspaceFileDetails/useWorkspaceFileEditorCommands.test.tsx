@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FilesystemWriteFileInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { ScopeActionOutputSchemas } from '@happier-dev/protocol/actions/scopeActionFamily';
 
-import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { createAccountTokenForTests, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import {
@@ -106,24 +106,41 @@ describe('mounted file editor commands through the real editor, keyboard and Act
         browser.restore();
     });
 
+    it('refuses an Action save without writing or losing the draft when its engine snapshot is unconfirmed', async () => {
+        const screen = await renderScreen(<RetainedEditors focused="a" />);
+        try {
+            await act(async () => { editorFor('a').startEditingFile(); editorFor('a').onEditorChange('pending draft'); });
+            editorFor('a').editorHandleRef.current = { getValue: () => 'pending draft',
+                flushPendingChange: async () => { throw new Error('editor_document_snapshot_unconfirmed'); } };
+            await act(async () => {
+                await expect(invokeScopeAction('file.editor.save', { tabId: 'file:src/a.ts' },
+                    { serverId: scope.serverId, runtimeAccountId: 'account-a' })).resolves.toEqual({ status: 'unavailable' });
+            });
+            expect(writtenRequests()).toEqual([]);
+            expect(editorFor('a').getEditorText()).toBe('pending draft');
+            expect(editorFor('a').refusal?.kind).toBe('failed');
+            expect(editorFor('a').isEditingFile).toBe(true);
+        } finally { await screen.unmount(); }
+    });
+
     it('saves only the focused retained editor by keyboard, saves an addressed background tab with its current hash, and retires Account custody', async () => {
         const screen = await renderScreen(<RetainedEditors focused="a" />);
         expect(storage.getState().profileScope).toEqual({ serverId: scope.serverId, accountId: 'account-a' });
-        expect(readWorkspaceFileEditorHolder(scope, 'account-a', 'src/a.ts')?.file?.read()).toEqual({ savedText: 'base a', unsaved: false });
+        expect(readWorkspaceFileEditorHolder(scope, 'account-a', 'src/a.ts')?.file?.read()).toEqual({ savedText: 'base a', text: 'base a', unsaved: false });
         expect(readWorkspaceFileEditorHolder(scope, 'account-b', 'src/a.ts')).toBeNull();
         expect(readWorkspaceFileEditorHolder({ ...scope, rootPath: '/repo2' }, 'account-a', 'src/a.ts')).toBeNull();
         expect(readWorkspaceFileEditorHolder({ ...scope, machineId: 'another-machine' }, 'account-a', 'src/a.ts')).toBeNull();
         await act(async () => { editorFor('a').startEditingFile(); editorFor('b').startEditingFile(); });
         await act(async () => { editorFor('a').onEditorChange('Alice a'); editorFor('b').onEditorChange('Alice b'); });
-        // Home hydration owns initial settings; enable keyboard shortcuts after it settles.
+        // Seed through the settings owner so Account hydration retains this preference.
         await act(async () => {
-            storage.setState({ settings: { ...storage.getState().settings, keyboardShortcutsV2Enabled: true,
-                keyboardSingleKeyShortcutsEnabled: false, keyboardShortcutOverridesV1: {}, keyboardShortcutDisabledCommandIdsV1: [] } });
+            storage.getState().applySettingsLocal({ keyboardShortcutsV2Enabled: true,
+                keyboardSingleKeyShortcutsEnabled: false, keyboardShortcutOverridesV1: {}, keyboardShortcutDisabledCommandIdsV1: [] });
         });
         expect(Platform.OS).toBe('web');
         expect(editorFor('a').readSnapshot()).toMatchObject({ isEditingFile: true, dirty: true });
         expect(editorFor('b').readSnapshot()).toMatchObject({ isEditingFile: true, dirty: true });
-        expect(readWorkspaceFileEditorHolder(scope, 'account-a', 'src/b.ts')?.file?.read()).toEqual({ savedText: 'base b', unsaved: true });
+        expect(readWorkspaceFileEditorHolder(scope, 'account-a', 'src/b.ts')?.file?.read()).toEqual({ savedText: 'base b', text: 'Alice b', unsaved: true });
         expect({ enabled: storage.getState().settings.keyboardShortcutsV2Enabled,
             disabled: storage.getState().settings.keyboardShortcutDisabledCommandIdsV1,
             overrides: storage.getState().settings.keyboardShortcutOverridesV1 }).toEqual({ enabled: true, disabled: [], overrides: {} });
@@ -140,6 +157,14 @@ describe('mounted file editor commands through the real editor, keyboard and Act
             await waitForHomeGovernance(() => expect({ writes: actionBoundary.calls.length, refusal: editorFor(id).refusal },
                 `Keyboard Save for ${id} reaches the Machine without a refusal`).toEqual({ writes: expectedWrites, refusal: null }));
             await act(async () => { response.resolve({ success: true, hash }); });
+            await waitForHomeGovernance(async () => {
+                // The HTTP result updates refs first, then effects restore keyboard availability.
+                await flushHookEffects();
+                expect(editorFor(id).readSnapshot()).toMatchObject({ hash, dirty: false });
+            });
+            await flushHookEffects();
+            expect(editorFor(id).isSavingEdits).toBe(false);
+            expect(headers.get(id)?.shortcutLabel).toMatch(/S$/);
         };
         await keyboardSave('a', 'saved-a');
         expect(headers.get('a')?.shortcutLabel).toMatch(/S$/);
@@ -162,7 +187,7 @@ describe('mounted file editor commands through the real editor, keyboard and Act
                 { serverId: scope.serverId, runtimeAccountId: 'account-a' });
             // This assertion runs before React commits the new header snapshot.
             expect(ScopeActionOutputSchemas['file.editor.save'].parse(saved)).toEqual({ status: 'saved', hash: 'saved-background-a' });
-            expect(readWorkspaceFileEditorHolder(scope, 'account-a', 'src/a.ts')?.file?.read()).toEqual({ savedText: 'Alice a again', unsaved: false });
+            expect(readWorkspaceFileEditorHolder(scope, 'account-a', 'src/a.ts')?.file?.read()).toEqual({ savedText: 'Alice a again', text: 'Alice a again', unsaved: false });
         });
         expect(writtenRequests()[2]).toEqual({ path: '/repo/src/a.ts', content: 'Alice a again', expectedHash: 'saved-a' });
 
@@ -183,7 +208,7 @@ describe('mounted file editor commands through the real editor, keyboard and Act
         });
         expect(editorFor('a').readSnapshot()).toMatchObject({ isEditingFile: false, dirty: false, hash: 'base-a' });
         expect(readWorkspaceFileEditorHolder(scope, 'account-a', 'src/a.ts')).toBeNull();
-        expect(readWorkspaceFileEditorHolder(scope, 'account-b', 'src/a.ts')?.file?.read()).toEqual({ savedText: 'base a', unsaved: false });
+        expect(readWorkspaceFileEditorHolder(scope, 'account-b', 'src/a.ts')?.file?.read()).toEqual({ savedText: 'base a', text: 'base a', unsaved: false });
         await act(async () => { editorFor('a').startEditingFile(); });
         await act(async () => { editorFor('a').onEditorChange('Bob private draft'); });
         const writesBeforeStaleCalls = writtenRequests();
@@ -199,7 +224,8 @@ describe('mounted file editor commands through the real editor, keyboard and Act
         await act(async () => { storage.setState({ profileScope: { serverId: scope.serverId, accountId: 'account-a' } }); });
         await act(async () => { editorFor('a').startEditingFile(); });
         await act(async () => { editorFor('a').onEditorChange('Alice before the Account switch'); });
-        const beforeCommitSaveControl = headers.get('a')!.onSave;
+        // The header calls this canonical async Save; hold its completion across the pre-commit switch.
+        const beforeCommitSaveControl = editorFor('a').saveFileEdits;
         const writesBeforeAccountPublication = writtenRequests();
         accountReplacement = await TokenStorage.setCredentialsForServerUrlWithRollback('https://workspace-file-details.test',
             { serverId: scope.serverId }, { token: createAccountTokenForTests('account-b', { currentAccount: true }) });
@@ -208,8 +234,7 @@ describe('mounted file editor commands through the real editor, keyboard and Act
         await act(async () => {
             storage.setState({ profileScope: { serverId: scope.serverId, accountId: 'account-b' } });
             // The previous owner is invoked after Account publication, before React commits its replacement.
-            beforeCommitSaveControl();
-            await Promise.resolve();
+            expect(await beforeCommitSaveControl()).toBe(false);
         });
         expect(writtenRequests()).toEqual(writesBeforeAccountPublication);
         expect(editorFor('a').getEditorText()).toBe('base a');

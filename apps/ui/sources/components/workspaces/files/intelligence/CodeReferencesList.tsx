@@ -17,6 +17,7 @@ export type CodeReferenceRow = Readonly<{
   startCharacter: number;
   endCharacter: number;
   lineText: string;
+  outsideWorkspace?: boolean;
 }>;
 
 export type CodeReferencesListProps = Readonly<{
@@ -26,6 +27,7 @@ export type CodeReferencesListProps = Readonly<{
   partial: boolean;
   searching: boolean;
   progress: LanguageStateNote | null;
+  emptyMessage?: string;
   selected?: CodeReferenceRow | null;
   onOpen: (row: CodeReferenceRow) => void;
 }>;
@@ -44,14 +46,22 @@ export function CodeReferencesList(
     return [...byPath];
   }, [props.rows]);
   if (props.rows.length === 0) {
+    // A partial answer with no rows is not "none": it says the search stopped early.
+    const partialEmpty = !props.progress && !props.searching && props.partial;
     const line =
       props.progress?.text ??
       (props.searching
         ? t('files.pane.intelligence.lookingUp')
-        : t('files.pane.intelligence.noReferences'));
+        : partialEmpty
+          ? t('files.pane.intelligence.noReferencesPartial')
+          : props.emptyMessage ?? t('files.pane.intelligence.noReferences'));
     return (
       <View style={styles.state} testID="code-references-state">
-        <Text variant="body" style={styles.stateText}>
+        <Text
+          variant="body"
+          style={styles.stateText}
+          {...(partialEmpty ? { testID: 'code-references-partial' } : {})}
+        >
           {line}
         </Text>
         {props.progress?.detail ? (
@@ -73,6 +83,14 @@ export function CodeReferencesList(
           {props.partial
             ? t('files.pane.intelligence.textMatchesPartial')
             : t('files.pane.intelligence.textMatches')}
+        </Text>
+      ) : props.partial ? (
+        <Text
+          variant="meta"
+          style={[styles.meta, styles.caveat]}
+          testID="code-references-partial"
+        >
+          {t('files.pane.intelligence.referencesPartial')}
         </Text>
       ) : null}
       {groups.map(([path, rows]) => (
@@ -101,6 +119,7 @@ export function CodeReferencesList(
                 accessibilityRole="button"
                 testID={`code-reference-${row.path}:${row.line + 1}`}
                 selected={selected}
+                disabled={row.outsideWorkspace === true}
                 onPress={() => props.onOpen(row)}
                 style={({ hovered, pressed }) => [
                   styles.row,

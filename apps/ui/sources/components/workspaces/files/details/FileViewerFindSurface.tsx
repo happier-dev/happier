@@ -3,10 +3,11 @@ import { Platform, TextInput, View } from 'react-native';
 import type { FindController } from '@happier-dev/plugin-ui/presentation';
 import type { FileFindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 import { FindBar } from '@/components/ui/find/FindBar';
-import { FindBarPlacement, useFindBarPresence } from '@/components/ui/find/FindBarPlacement';
+import { FindBarBandContext, FindBarPlacement, useFindBarBand, useFindBarPresence } from '@/components/ui/find/FindBarPlacement';
 import { useFindSurfaceFocusReturn } from '@/components/ui/find/useFindSurfaceFocusReturn';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useFindSurfaceRegistration } from '@/keyboard/KeyboardShortcutProvider';
+import { isFindSurfaceTarget } from '@/keyboard/findSurfaceTarget';
 import { t } from '@/text';
 import { useFileViewerFind, type FileViewerFindContent, type FileViewerFindMemory, type FileViewerFindSnapshot } from './useFileViewerFind';
 
@@ -27,7 +28,8 @@ export function FileViewerFindSurface(props: Readonly<{
     const model = useFileViewerFind(props.content, props.active, props.initialFind);
     React.useLayoutEffect(() => {
         if (!props.active) return;
-        return () => props.onRememberFind?.({ query: model.query, open: model.getSnapshot().open });
+        return () => props.onRememberFind?.({ query: model.query, open: model.getSnapshot().open,
+            options: model.options, line: model.currentLine() });
     }, [model, props.active, props.onRememberFind]);
     const snapshot = React.useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
     const viewport = React.useRef<View | null>(null);
@@ -48,6 +50,7 @@ export function FileViewerFindSurface(props: Readonly<{
         setQuery: model.setQuery, setOptions: model.setOptions, step: model.step, stop: model.stop, close };
     useFindSurfaceRegistration(eligible ? {
         surfaceId: props.surfaceId,
+        containsTarget: target => isFindSurfaceTarget((props.focusRootRef?.current ?? viewport.current) as unknown as HTMLElement | null, target),
         containsFocus: () => {
             if (Platform.OS !== 'web') return true;
             const node = (props.focusRootRef?.current ?? viewport.current) as unknown as HTMLElement | null;
@@ -66,7 +69,9 @@ export function FileViewerFindSurface(props: Readonly<{
         onOpenChange?.(shown);
         return () => onOpenChange?.(false);
     }, [onOpenChange, shown]);
-    const bar = presence.present ? <FindBarPlacement visible={shown}>{(presentation) => <FindBar
+    // The floating bar's band: the code under it keeps line 1 clear of the bar while it is open.
+    const band = useFindBarBand(shown);
+    const bar = presence.present ? <FindBarPlacement visible={shown} onLayout={band.onLayout}>{(presentation) => <FindBar
         query={snapshot.query} options={snapshot.options} status={snapshot.status} capabilities={model.capabilities}
         surfaceLabel={t('find.surface.file')} presentation={presentation} autoFocus inputRef={input}
         onInputFocus={() => setInputFocused(true)} onInputBlur={() => setInputFocused(false)}
@@ -74,7 +79,7 @@ export function FileViewerFindSurface(props: Readonly<{
         note={snapshot.status.kind === 'searching' ? { icon: 'history', text: t('common.loading') } : undefined}
         onStop={model.stop} onClose={close} testID="file-viewer-find" />}</FindBarPlacement> : null;
     return <View ref={viewport} testID="file-viewer-find-surface" tabIndex={-1} style={{ flex: 1, minHeight: 0 }}>
-        {props.children(snapshot)}
+        <FindBarBandContext.Provider value={band.bandPx}>{props.children(snapshot)}</FindBarBandContext.Provider>
         {bar}
     </View>;
 }

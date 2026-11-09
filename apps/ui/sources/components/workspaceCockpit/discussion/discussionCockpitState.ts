@@ -8,14 +8,3 @@ export function normalizeDiscussionMobileSurface(value: string | null | undefine
     const normalized = typeof value === 'string' ? value.trim() : '';
     return normalized === 'chat' || normalized === 'participants' || normalized === 'agents' || normalized === 'details' ? normalized : null;
 }
-
-/** `/discussions/<id>` with its `mobileSurface` search param; a new Discussion has no surfaces yet. */
-export function resolveDiscussionCockpitRouteFromPathname(
-    pathname: string,
-    surfaceHint: string | null | undefined,
-): Readonly<{ discussionId: string; surface: DiscussionMobileSurface }> | null {
-    const match = /^\/discussions\/([^/?#]+)\/?$/.exec(pathname);
-    const discussionId = match ? decodeURIComponent(match[1] ?? '') : '';
-    if (!discussionId || discussionId === 'new') return null;
-    return { discussionId, surface: normalizeDiscussionMobileSurface(surfaceHint) ?? 'chat' };
-}

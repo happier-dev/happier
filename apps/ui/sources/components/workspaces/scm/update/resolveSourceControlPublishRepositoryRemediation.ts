@@ -1,8 +1,9 @@
 import type {
-    ScmFollowupAction,
+    ScmFollowupAction} from '@happier-dev/protocol/scm/pullRequests';
+import type {
     ScmHostingRepositoryDescribePublishTargetsResponse,
     ScmHostingRepositoryPublishResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/scm';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm';
 
 import { validateScmFollowupOpenUrl } from './validateScmFollowupOpenUrl';

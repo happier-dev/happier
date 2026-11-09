@@ -1,9 +1,9 @@
 import * as React from 'react';
-import type { ScmFollowupAction } from '@happier-dev/protocol';
+import type { ScmFollowupAction } from '@happier-dev/protocol/scm/pullRequests';
 
 import { t } from '@/text';
 import { Modal } from '@/modal';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import { SourceControlUpdateButton, type SourceControlUpdateTheme } from './SourceControlUpdateControls';
 import type { SourceControlPublishRemediationAction } from './resolveSourceControlPublishRepositoryRemediation';
@@ -37,7 +37,6 @@ export function PublishRemediationAction(props: Readonly<{
 
 export async function runPublishRemediationAction(input: Readonly<{
     action: SourceControlPublishRemediationAction;
-    openUrl?: (url: string) => Promise<void>;
     onConnectGitHub?: () => Promise<void> | void;
     onInstallGh?: () => Promise<void> | void;
     onUseManagedGh?: () => Promise<void> | void;
@@ -68,7 +67,7 @@ export async function runPublishRemediationAction(input: Readonly<{
         );
         return;
     }
-    await openValidatedPublishFollowup(input.action.followup, input.openUrl, input.setErrorCode);
+    await openValidatedPublishFollowup(input.action.followup, input.setErrorCode);
 }
 
 export function resolveRemediationHandlerAvailability(
@@ -102,7 +101,6 @@ function hasPublishRemediationHandler(
 
 async function openValidatedPublishFollowup(
     followup: Extract<ScmFollowupAction, { kind: 'openUrl' }>,
-    openUrl: ((url: string) => Promise<void>) | undefined,
     setErrorCode: (value: string | null) => void,
 ) {
     const safe = validateScmFollowupOpenUrl(followup);
@@ -110,7 +108,7 @@ async function openValidatedPublishFollowup(
         setErrorCode('UNSAFE_URL');
         return;
     }
-    await (openUrl ?? openExternalUrl)(safe.url);
+    await requestOpenExternalUrl(safe.url);
 }
 
 function getPublishRemediationActionTestId(action: SourceControlPublishRemediationAction): string {

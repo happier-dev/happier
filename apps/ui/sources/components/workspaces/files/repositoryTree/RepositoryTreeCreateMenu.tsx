@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
 import { createRepositoryTreeUploadMenuConfig } from './createRepositoryTreeUploadMenuConfig';
@@ -28,6 +29,8 @@ export const RepositoryTreeCreateMenu = React.memo(function RepositoryTreeCreate
     isWeb: boolean;
     /** Where uploads land ("Project root" until a folder is chosen). */
     uploadDestinationLabel: string;
+    /** Why its rows can't run now (the machine isn't answering): said once, above them (lab FB1o). */
+    unavailableReason?: string | null;
     onSelect: (itemId: RepositoryTreeCreateMenuItemId) => void;
 }>) {
     const { theme } = useUnistyles();
@@ -72,6 +75,14 @@ export const RepositoryTreeCreateMenu = React.memo(function RepositoryTreeCreate
             },
         ];
     }, [iconColor, props.createEnabled, props.isWeb, props.uploadDestinationLabel, props.uploadEnabled]);
+    const unavailableNote = React.useMemo(() => (props.unavailableReason ? <SurfaceStateCard
+        testID="repository-tree-create-unavailable"
+        size="line"
+        lineDensity="menu"
+        kind="unavailable"
+        iconName="wifi-slash"
+        title={props.unavailableReason}
+    /> : undefined), [props.unavailableReason]);
 
     const select = React.useCallback((itemId: string) => {
         setOpen(false);
@@ -83,6 +94,7 @@ export const RepositoryTreeCreateMenu = React.memo(function RepositoryTreeCreate
             testID="repository-tree-create-menu"
             open={open}
             onOpenChange={setOpen}
+            header={unavailableNote}
             items={items}
             onSelect={select}
             matchTriggerWidth={false}

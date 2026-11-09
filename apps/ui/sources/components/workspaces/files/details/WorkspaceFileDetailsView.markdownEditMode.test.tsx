@@ -39,6 +39,12 @@ installWorkspaceFileDetailsCommonModuleMocks({
         });
     },
 });
+// The static AppPaneProvider import reaches WorkspaceFileDetailsView (via the plugin widget host)
+// before the helper's runtime registration, so hoist the same key-identity text boundary here.
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -63,7 +69,6 @@ const openableContentViewerState = vi.hoisted(() => ({
     stat: vi.fn(),
     read: vi.fn(),
     replaceTab: vi.fn(),
-    mutateSettings: vi.fn(),
     settings: {} as Record<string, unknown>,
     settingsVersion: 7,
 }));
@@ -92,10 +97,6 @@ vi.mock('@/components/plugins/surfaces/pluginSurfaceOpenableContent', async (imp
     },
 }));
 
-vi.mock('@/sync/runtime/getSyncSingleton', () => ({
-    getSyncSingleton: () => ({ mutateAccountSettingsOnce: openableContentViewerState.mutateSettings }),
-}));
-
 vi.mock('@/components/workspaces/files/file/FileContentPanel', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/components/workspaces/files/file/FileContentPanel')>(),
     FileContentPanel: (props: any) => React.createElement('FileContentPanel', props),
@@ -103,12 +104,23 @@ vi.mock('@/components/workspaces/files/file/FileContentPanel', async (importOrig
 
 // Metro's platform projection and the native WebView are the genuine engine boundary.
 vi.mock('@/components/ui/code/editor/CodeEditor', async () => import('@/components/ui/code/editor/CodeEditor.native'));
-const webViewBoundary = vi.hoisted(() => ({ onMessage: null as null | ((event: { nativeEvent: { data: string } }) => void) }));
+const webViewBoundary = vi.hoisted(() => ({ doc: '', onMessage: null as null | ((event: { nativeEvent: { data: string } }) => void) }));
 vi.mock('react-native-webview', async () => {
     const React = await import('react');
     return { WebView: React.forwardRef((props: { onMessage: typeof webViewBoundary.onMessage }, ref) => {
         webViewBoundary.onMessage = props.onMessage;
-        React.useImperativeHandle(ref, () => ({ postMessage() {}, requestFocus() {} }));
+        React.useImperativeHandle(ref, () => ({
+            postMessage(raw: string) {
+                const message = JSON.parse(raw) as { type: string; payload?: { doc?: string; requestId?: string } };
+                if ((message.type === 'init' || message.type === 'setDoc') && typeof message.payload?.doc === 'string') {
+                    webViewBoundary.doc = message.payload.doc;
+                }
+                if (message.type === 'requestDoc') props.onMessage?.({ nativeEvent: { data: JSON.stringify({
+                    v: 1, type: 'docSnapshot', payload: { requestId: message.payload?.requestId, doc: webViewBoundary.doc },
+                }) } });
+            },
+            requestFocus() {},
+        }));
         return React.createElement('WebView');
     }) };
 });
@@ -259,10 +271,11 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         },
         useSession: () => null,
         useProjectForSession: () => null,
-        useSetting: () => null,
+        useSetting: (name: string) => openableContentViewerState.settings[name] ?? null,
         useSettings: () => openableContentViewerState.settings,
         useSettingsSelector: (selector: (settings: typeof openableContentViewerState.settings) => unknown) => selector(openableContentViewerState.settings),
         useSettingsVersion: () => openableContentViewerState.settingsVersion,
+        useSettingsReady: () => openableContentViewerState.settingsVersion !== null,
         useWorkspaceScmSnapshot: () => workspaceSnapshot,
         useWorkspaceScmCommitSelectionPaths: () => [],
         useWorkspaceScmCommitSelectionPatches: () => [],
@@ -300,8 +313,6 @@ beforeEach(() => {
     });
     openableContentViewerState.read.mockReset();
     openableContentViewerState.replaceTab.mockReset();
-    openableContentViewerState.mutateSettings.mockReset();
-    openableContentViewerState.mutateSettings.mockResolvedValue({ status: 'applied', value: undefined });
     openableContentViewerState.settings = {};
     openableContentViewerState.settingsVersion = 7;
 });
@@ -390,103 +401,6 @@ function createOpenableContentViewerHost(): WorkspaceFileOpenableContentViewerHo
     };
 }
 
-function createTwoViewerOpenableContentViewerHost(): WorkspaceFileOpenableContentViewerHost {
-    const host = createOpenableContentViewerHost();
-    const projection = host.projection;
-    if (!projection) throw new Error('test viewer projection must be available');
-    const binding = normalizePluginUiDestinationBindingV1({
-        pluginId: 'plugin.preview',
-        destinationId: 'markdown-viewer',
-        rendererId: 'markdown-renderer',
-        container: 'detailsTab',
-        target: { kind: 'project' },
-        instancePolicy: 'singleton',
-    });
-    if (!binding) throw new Error('second test viewer binding must be admitted');
-    const entry = {
-        id: 'openableContentViewer:plugin.preview:markdown',
-        pluginId: 'plugin.preview',
-        contributionKind: 'openableContentViewer',
-        descriptorId: 'markdown',
-        identity: { pluginId: 'plugin.preview', localId: 'markdown' },
-        viewer: { contentClasses: ['text'], mimeTypes: ['text/plain'] },
-        destination: { pluginId: 'plugin.preview', localId: 'markdown-viewer' },
-    } satisfies PluginUiOpenableContentViewerProjection;
-    const placement = {
-        id: 'surfacePlacement:plugin.preview:markdown-viewer',
-        pluginId: 'plugin.preview',
-        occurrenceId: 'plugin-preview-occurrence',
-        contributionKind: 'surfacePlacement',
-        descriptorId: 'markdown-viewer',
-        binding,
-        target: binding.target,
-        renderer: { kind: 'declarative', contributionId: 'markdown-renderer' },
-        display: { developerFallback: 'Markdown preview' },
-        availability: { state: 'available', reason: 'available', diagnostics: [] },
-        headerActions: [],
-    } satisfies PluginUiSurfacePlacementProjection;
-    return {
-        ...host,
-        projection: {
-            ...projection,
-            surfacePlacementsById: {
-                ...projection.surfacePlacementsById,
-                [placement.id]: placement,
-            },
-            openableContentViewersById: {
-                ...projection.openableContentViewersById,
-                [entry.id]: entry,
-            },
-        },
-    };
-}
-
-type OneShotSettingsMutation = Readonly<{
-    expectedSettingsVersion: number;
-    mutate: (raw: Readonly<Record<string, unknown>>) => Readonly<{
-        settings: Record<string, unknown>;
-        value: undefined;
-    }>;
-}>;
-
-function useAdvancingSettingsMutationFake(): void {
-    openableContentViewerState.mutateSettings.mockImplementation(async (input: OneShotSettingsMutation) => {
-        if (input.expectedSettingsVersion !== openableContentViewerState.settingsVersion) {
-            return { status: 'conflict' };
-        }
-        const result = input.mutate(openableContentViewerState.settings);
-        openableContentViewerState.settings = result.settings;
-        openableContentViewerState.settingsVersion += 1;
-        return { status: 'applied', value: result.value };
-    });
-}
-
-function createDeliveredPluginViewerDetails(
-    host: WorkspaceFileOpenableContentViewerHost,
-    destination: Readonly<{ pluginId: string; localId: string }>,
-): DetailsSurfaceRenderInputV1 {
-    return {
-        ...host.details,
-        tab: {
-            key: `plugin-details:${destination.pluginId}:${destination.localId}`,
-            kind: 'pluginDetailsDestination',
-            title: destination.localId,
-            resource: { kind: 'pluginDetailsDestination', destination },
-            isPreview: true,
-            isPinned: false,
-        },
-    };
-}
-
-function installDestinationAwareViewerStage(): void {
-    openableContentViewerState.stage.mockImplementation((input: Readonly<{
-        placement: Readonly<{ binding: Readonly<{ destination: Readonly<{ pluginId: string; localId: string }> }> }>;
-    }>) => ({
-        resource: { destination: input.placement.binding.destination },
-        tabKey: `plugin-details:${input.placement.binding.destination.pluginId}:${input.placement.binding.destination.localId}`,
-    }));
-}
-
 function selectTextViewerInSettings(): void {
     openableContentViewerState.settings = {
         workspaceFileViewerPreferencesV1: {
@@ -533,7 +447,8 @@ describe('WorkspaceFileDetailsView (markdown edit mode)', () => {
         </HappierMaterialRoleProvider>);
         mountedScreens.push(screen);
         const root = screen.findAll(node => typeof node.type === 'string' && String(node.type) === 'View')[0]!;
-        expect(StyleSheet.flatten(root.props.style).backgroundColor).toBe('transparent');
+        // The page paints no surface of its own; its containing plane owns the material.
+        expect(StyleSheet.flatten(root.props.style).backgroundColor ?? 'transparent').toBe('transparent');
         expect(screen.findAll(node => typeof node.type === 'string' && String(node.type) === 'FilePageHeader')).toHaveLength(1);
     });
     it('loads the built-in preview without openable-content I/O for empty candidates and preferences', async () => {
@@ -734,232 +649,6 @@ describe('WorkspaceFileDetailsView (markdown edit mode)', () => {
         }
     });
 
-    it('uses the Settings one-shot mutation before returning a delivered plugin viewer to the built-in tab', async () => {
-        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
-        const host = createOpenableContentViewerHost();
-        editorState.isEditingFile = false;
-        selectTextViewerInSettings();
-        const screen = await renderScreen(
-            <WorkspaceFileDetailsView
-                scopeId="workspace:srv1:m1:/workspace"
-                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/workspace' }}
-                filePath="README.txt"
-                sessionIdForAugmentation={null}
-                openableContentViewer={host}
-            />,
-        );
-        try {
-            await act(async () => {
-                await Promise.resolve();
-                await Promise.resolve();
-            });
-
-            const stageInput = openableContentViewerState.stage.mock.calls[0]?.[0];
-            const viewerChoice = stageInput.viewerChoice({ details: host.details });
-            if (!viewerChoice) throw new Error('test viewer choice must be available after staging');
-
-            openableContentViewerState.replaceTab.mockClear();
-            await act(async () => {
-                await viewerChoice.selectCandidate('builtin');
-            });
-
-            expect(openableContentViewerState.mutateSettings).toHaveBeenCalledWith(expect.objectContaining({
-                expectedSettingsVersion: 7,
-            }));
-            const mutation = openableContentViewerState.mutateSettings.mock.calls[0]?.[0]?.mutate({});
-            expect(mutation.settings.workspaceFileViewerPreferencesV1).toEqual({
-                v: 1,
-                selections: {
-                    'mime:text/plain': { kind: 'builtin' },
-                },
-            });
-            expect(openableContentViewerState.replaceTab).toHaveBeenCalledWith(
-                'file:README.txt',
-                expect.objectContaining({
-                    kind: 'workspace-file',
-                    resource: { filePath: 'README.txt' },
-                }),
-                { intent: 'preview' },
-            );
-        } finally {
-            await screen.unmount();
-        }
-    });
-
-    it('keeps the built-in view stable when a viewer preference CAS conflicts', async () => {
-        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
-        const host = createOpenableContentViewerHost();
-        editorState.isEditingFile = false;
-        openableContentViewerState.mutateSettings.mockResolvedValue({ status: 'conflict' });
-        const screen = await renderScreen(
-            <WorkspaceFileDetailsView
-                scopeId="workspace:srv1:m1:/workspace"
-                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/workspace' }}
-                filePath="README.txt"
-                sessionIdForAugmentation={null}
-                openableContentViewer={host}
-            />,
-        );
-        try {
-            await act(async () => {
-                await Promise.resolve();
-                await Promise.resolve();
-            });
-
-            const viewerChoice = screen.findByType('PluginDetailsViewerChoiceChrome' as never).props.model;
-            await act(async () => {
-                await viewerChoice.selectCandidate('openableContentViewer:plugin.preview:text');
-            });
-
-            expect(openableContentViewerState.mutateSettings).toHaveBeenCalledWith(expect.objectContaining({
-                expectedSettingsVersion: 7,
-            }));
-            expect(openableContentViewerState.stage).not.toHaveBeenCalled();
-            expect(openableContentViewerState.replaceTab).not.toHaveBeenCalled();
-            expect(viewerChoice.candidates.find((candidate: { id: string }) => candidate.id === 'builtin'))
-                .toEqual(expect.objectContaining({ selected: true }));
-        } finally {
-            await screen.unmount();
-        }
-    });
-
-    it('keeps a delivered viewer chooser current across built-in → viewer A → viewer B', async () => {
-        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
-        const host = createTwoViewerOpenableContentViewerHost();
-        editorState.isEditingFile = false;
-        useAdvancingSettingsMutationFake();
-        installDestinationAwareViewerStage();
-        const screen = await renderScreen(
-            <WorkspaceFileDetailsView
-                scopeId="workspace:srv1:m1:/workspace"
-                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/workspace' }}
-                filePath="README.txt"
-                sessionIdForAugmentation={null}
-                openableContentViewer={host}
-            />,
-        );
-        try {
-            await act(async () => {
-                await Promise.resolve();
-                await Promise.resolve();
-            });
-
-            const initialChoice = screen.findByType('PluginDetailsViewerChoiceChrome' as never).props.model;
-            await act(async () => {
-                await initialChoice.selectCandidate('openableContentViewer:plugin.preview:text');
-            });
-
-            const firstStage = openableContentViewerState.stage.mock.calls[0]?.[0];
-            const viewerChoice = firstStage?.viewerChoice({
-                details: createDeliveredPluginViewerDetails(host, {
-                    pluginId: 'plugin.preview',
-                    localId: 'text-viewer',
-                }),
-            });
-            if (!viewerChoice) throw new Error('test viewer choice must be available after selecting viewer A');
-
-            openableContentViewerState.replaceTab.mockClear();
-            await act(async () => {
-                await viewerChoice.selectCandidate('openableContentViewer:plugin.preview:markdown');
-            });
-
-            expect(openableContentViewerState.mutateSettings.mock.calls.map(([input]) => (
-                input.expectedSettingsVersion
-            ))).toEqual([7, 8]);
-            // The real pane patch rerenders this retained page; replacement is a port fixture,
-            // so assert the selected destination, not an incidental number of staging renders.
-            expect(openableContentViewerState.stage).toHaveBeenLastCalledWith(expect.objectContaining({
-                placement: expect.objectContaining({
-                    binding: expect.objectContaining({
-                        destination: { pluginId: 'plugin.preview', localId: 'markdown-viewer' },
-                    }),
-                }),
-            }));
-            expect(openableContentViewerState.replaceTab).toHaveBeenCalledWith(
-                'plugin-details:plugin.preview:text-viewer',
-                expect.objectContaining({
-                    kind: 'plugin-details-destination',
-                    resource: { pluginId: 'plugin.preview', localId: 'markdown-viewer' },
-                }),
-                { intent: 'preview', restoreSourceOnRehydrate: true },
-            );
-            expect(openableContentViewerState.settings.workspaceFileViewerPreferencesV1).toEqual({
-                v: 1,
-                selections: {
-                    'mime:text/plain': {
-                        kind: 'plugin',
-                        pluginId: 'plugin.preview',
-                        contributionLocalId: 'markdown',
-                    },
-                },
-            });
-        } finally {
-            await screen.unmount();
-        }
-    });
-
-    it('keeps a delivered viewer chooser current across built-in → viewer A → built-in', async () => {
-        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
-        const host = createTwoViewerOpenableContentViewerHost();
-        editorState.isEditingFile = false;
-        useAdvancingSettingsMutationFake();
-        installDestinationAwareViewerStage();
-        const screen = await renderScreen(
-            <WorkspaceFileDetailsView
-                scopeId="workspace:srv1:m1:/workspace"
-                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/workspace' }}
-                filePath="README.txt"
-                sessionIdForAugmentation={null}
-                openableContentViewer={host}
-            />,
-        );
-        try {
-            await act(async () => {
-                await Promise.resolve();
-                await Promise.resolve();
-            });
-
-            const initialChoice = screen.findByType('PluginDetailsViewerChoiceChrome' as never).props.model;
-            await act(async () => {
-                await initialChoice.selectCandidate('openableContentViewer:plugin.preview:text');
-            });
-
-            const firstStage = openableContentViewerState.stage.mock.calls[0]?.[0];
-            const viewerChoice = firstStage?.viewerChoice({
-                details: createDeliveredPluginViewerDetails(host, {
-                    pluginId: 'plugin.preview',
-                    localId: 'text-viewer',
-                }),
-            });
-            if (!viewerChoice) throw new Error('test viewer choice must be available after selecting viewer A');
-
-            openableContentViewerState.replaceTab.mockClear();
-            await act(async () => {
-                await viewerChoice.selectCandidate('builtin');
-            });
-
-            expect(openableContentViewerState.mutateSettings.mock.calls.map(([input]) => (
-                input.expectedSettingsVersion
-            ))).toEqual([7, 8]);
-            expect(openableContentViewerState.replaceTab).toHaveBeenCalledWith(
-                'plugin-details:plugin.preview:text-viewer',
-                expect.objectContaining({
-                    kind: 'workspace-file',
-                    resource: { filePath: 'README.txt' },
-                }),
-                { intent: 'preview' },
-            );
-            expect(openableContentViewerState.settings.workspaceFileViewerPreferencesV1).toEqual({
-                v: 1,
-                selections: {
-                    'mime:text/plain': { kind: 'builtin' },
-                },
-            });
-        } finally {
-            await screen.unmount();
-        }
-    });
-
     it('renders the RichMarkdownEditorPanel when mode is rich and the file is eligible', async () => {
         const tree = await mountView();
         expect(tree.findAllByType(MarkdownCodeEditorField).length).toBe(1);
@@ -996,8 +685,12 @@ describe('WorkspaceFileDetailsView (markdown edit mode)', () => {
             editorState.editorSeedText = 'A note[^1]\n\n[^1]: unsupported\n';
             markdownBuffer.text = editorState.editorSeedText;
             const tree = await mountView();
+            await act(async () => {
+                webViewBoundary.onMessage!({ nativeEvent: { data: JSON.stringify({ v: 1, type: 'ready', payload: { ok: true } }) } });
+            });
             const edited = '# Clean draft typed in raw';
             await act(async () => {
+                webViewBoundary.doc = edited;
                 webViewBoundary.onMessage!({ nativeEvent: { data: JSON.stringify({ v: 1, type: 'docChanged', payload: { doc: edited } }) } });
                 // The native editor's existing default change debounce is 250 ms.
                 await vi.advanceTimersByTimeAsync(250);
@@ -1005,7 +698,7 @@ describe('WorkspaceFileDetailsView (markdown edit mode)', () => {
             expect(tree.findAllByType(CodeEditorWithFind)).toHaveLength(1);
             expect(tree.findByType(MarkdownEditModeMenu).props.mode).toBe('raw');
             expect(editorState.editorHandleRef.current?.getValue()).toBe(edited);
-            await act(async () => { tree.findByType(MarkdownEditModeMenu).props.onChange('rich'); });
+            await act(async () => { await tree.findByType(MarkdownEditModeMenu).props.onChange('rich'); });
             expect(tree.findByType(RichMarkdownEditorPanel).props.value).toBe(edited);
         } finally { vi.useRealTimers(); }
     });

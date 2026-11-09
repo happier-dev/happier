@@ -67,17 +67,17 @@ export async function answerWorkspaceFileDetailsAccountActions(
     }
 }
 
-export async function prepareWorkspaceFileDetailsActionBoundary(machineId = 'm1'): Promise<string> {
+export async function prepareWorkspaceFileDetailsActionBoundary(machineId = 'm1', accountId = 'account-a'): Promise<string> {
     await workspaceFileDetailsHomes.reset();
     await loadSyncSingletonForTests();
     const serverId = await workspaceFileDetailsHomes.addHome({
         name: 'File details Home',
         serverUrl: 'https://workspace-file-details.test',
-        accountId: 'account-a',
+        accountId,
         serverIdentityId: 'srv_workspace_file_details',
         currentAccount: true,
     });
-    await answerWorkspaceFileDetailsAccountActions(serverId, 'account-a', machineId);
+    await answerWorkspaceFileDetailsAccountActions(serverId, accountId, machineId);
     const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
     await restoreConnectionToActiveServer({
         token: workspaceFileDetailsHomes.findByServerUrl('https://workspace-file-details.test')!.token!,

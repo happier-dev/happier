@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import type { ScmPullRequestOpenComposeResponse, ScmPullRequestOpenOrReuseResponse } from '@happier-dev/protocol';
+import type { ScmPullRequestOpenComposeResponse, ScmPullRequestOpenOrReuseResponse } from '@happier-dev/protocol/scm/pullRequests';
 
 import { createModalModuleMock, createThemeFixture, renderScreen } from '@/dev/testkit';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';

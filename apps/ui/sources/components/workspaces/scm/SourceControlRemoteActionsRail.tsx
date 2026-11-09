@@ -23,6 +23,9 @@ export type SourceControlRemoteActionsRailProps = Readonly<{
     hint?: string | null;
 }>;
 
+/** The gap between the rail's buttons: the layout and the buttons' hit areas share it. */
+const ACTIONS_GAP = 2;
+
 /**
  * Four glyph-only buttons sat in a row, each in its own bordered box, so the chrome outweighed the
  * icons and the rail read as heavier than the file list it sits above. They use the canonical
@@ -37,6 +40,7 @@ const RemoteActionButton = React.memo((props: Readonly<{
     <IconButton
         variant="plain"
         size={34}
+        interactiveTargetGapPx={ACTIONS_GAP}
         testID={props.action.testID}
         accessibilityLabel={props.action.label}
         tooltip={props.action.label}
@@ -67,7 +71,7 @@ export const SourceControlRemoteActionsRail = React.memo((props: SourceControlRe
                 <Text style={{ ...Typography.variant('meta', 'semiBold'), color: props.theme.colors.text.secondary,  }}>
                     {t('files.sourceControlOperations.title')}
                 </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: ACTIONS_GAP }}>
                     {props.actions.map((action) => (
                         <RemoteActionButton
                             key={action.key}

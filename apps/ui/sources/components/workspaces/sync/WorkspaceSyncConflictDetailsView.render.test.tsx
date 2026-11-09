@@ -1,11 +1,12 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WorkspaceSyncConflictInspectRpcResultV1Schema } from '@happier-dev/protocol';
+import { WorkspaceSyncConflictInspectRpcResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createCapturingLegendListMock, pressTestInstance, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
-import { createWorkspaceSyncHarness } from '@/dev/testkit/harness/workspaceSyncHarness';
+import { createWorkspaceSyncHarness, createWorkspaceSyncRelationshipsListFixture } from '@/dev/testkit/harness/workspaceSyncHarness';
 import { createWorkspaceSyncStatusWatchBoundary } from '@/dev/testkit/harness/workspaceSyncStatusWatchBoundary';
 
 const statusWatches = createWorkspaceSyncStatusWatchBoundary();
@@ -32,7 +33,9 @@ vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({ spies: { confirm: confirmResolution } }).module;
 });
-vi.mock('@legendapp/list/react-native', () => capturedLegendList);
+vi.mock('@legendapp/list/react-native', async importOriginal => ({
+    ...await importOriginal<typeof import('@legendapp/list/react-native')>(), ...capturedLegendList,
+}));
 const workspace = createWorkspaceSyncHarness(request => request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_WATCH
     ? statusWatches.watch({ ...(request.payload as Readonly<{ sinceRevision?: number }>), signal: request.signal })
     : machineRpc(request));
@@ -93,7 +96,7 @@ describe('workspace conflict comparison', () => {
             endpointStates: { alpha: null, beta: null }, conflictCount: 1, lastCycleObservedAtMs: cycle,
         }];
         machineRpc.mockImplementation(async (input: { method: string; payload: { path?: string; preview?: { workspaceRefId: string } } }) => {
-            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST) return { statuses: currentStatuses() };
+            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return createWorkspaceSyncRelationshipsListFixture(currentStatuses(), input.machineId);
             if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST) return {
                 status: 'page', relationshipId: 'link-1', totalCount: 1, nextCursor: null, conflicts: [conflict(currentPath)],
             };
@@ -118,13 +121,13 @@ describe('workspace conflict comparison', () => {
                 visibility = 'hidden';
                 document.dispatchEvent(new Event('visibilitychange'));
             });
-            const readsWhileVisible = machineRpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST).length;
+            const readsWhileVisible = machineRpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST).length;
             expect(statusWatches.parkedCount()).toBe(0);
             currentPath = 'returned.txt';
             cycle = 3;
             statusWatches.publish(currentStatuses());
             await act(async () => { await vi.advanceTimersByTimeAsync(600_000); });
-            expect(machineRpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST)).toHaveLength(readsWhileVisible);
+            expect(machineRpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST)).toHaveLength(readsWhileVisible);
             await act(async () => {
                 visibility = 'visible';
                 document.dispatchEvent(new Event('visibilitychange'));
@@ -140,7 +143,7 @@ describe('workspace conflict comparison', () => {
         let resolutionSignal: AbortSignal | undefined;
         machineRpc.mockImplementation(async (input: { method: string; signal: AbortSignal;
             payload: { path?: string; preview?: { workspaceRefId: string } } }) => {
-            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST) return { statuses: [] };
+            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return createWorkspaceSyncRelationshipsListFixture([]);
             if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST) return {
                 status: 'page', relationshipId: 'link-1', totalCount: 1, nextCursor: null, conflicts: [conflict('first.txt')],
             };
@@ -170,7 +173,7 @@ describe('workspace conflict comparison', () => {
         includeThirdEndpoint = true;
         await workspace.seedProject({ includeThirdEndpoint });
         machineRpc.mockImplementation(async (input: { method: string; payload: { path?: string; relationshipId?: string; preview?: { workspaceRefId: string } } }) => {
-            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST) return { statuses: [] };
+            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return createWorkspaceSyncRelationshipsListFixture([]);
             if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST) {
                 const relationshipId = input.payload.relationshipId ?? 'link-1';
                 return { status: 'page', relationshipId, totalCount: 1, nextCursor: null, conflicts: [conflict('first.txt', relationshipId)] };
@@ -230,7 +233,7 @@ describe('workspace conflict comparison', () => {
         await workspace.seedProject({ machineDisplayNames });
         let refreshed = false;
         machineRpc.mockImplementation(async (input: { method: string; payload: { cursor?: string; path?: string; preview?: { workspaceRefId: string } } }) => {
-            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST) return { statuses: [] };
+            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return createWorkspaceSyncRelationshipsListFixture([]);
             if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST) {
                 return input.payload.cursor
                     ? { status: 'page', relationshipId: 'link-1', totalCount: 2, nextCursor: null, conflicts: [conflict('second.txt')] }
@@ -273,12 +276,12 @@ describe('workspace conflict comparison', () => {
 
         const pane = screen.find((node) => typeof node.props.onLayout === 'function');
         await act(async () => { pane.props.onLayout({ nativeEvent: { layout: { width: 1000 } } }); });
-        expect(Object.assign({}, ...legendListState.props.style)).toMatchObject({ width: 320 });
+        expect(StyleSheet.flatten(legendListState.props.style)).toMatchObject({ width: 320 });
         expect(screen.getTextContent()).toContain('first.txt');
         expect(screen.getTextContent()).toContain('second.txt');
         expect(screen.getTextContent()).toContain('workspaceSync.review.comparison');
         await act(async () => { pane.props.onLayout({ nativeEvent: { layout: { width: 600 } } }); });
-        expect(Object.assign({}, ...legendListState.props.style)).toMatchObject({ display: 'none' });
+        expect(StyleSheet.flatten(legendListState.props.style)).toMatchObject({ display: 'none' });
         const useVersion = screen.find((node) => node.props.title === 'workspaceSync.review.useNamedVersion');
         expect(screen.getTextContent()).toContain(machineDisplayNames['machine-a']);
         expect(useVersion.props.accessibilityLabel).toBe('workspaceSync.review.useNamedVersion');
@@ -307,7 +310,7 @@ describe('workspace conflict comparison', () => {
         vi.stubGlobal('cancelAnimationFrame', vi.fn());
         const back = screen.find((node) => node.props.accessibilityLabel === 'common.back' && typeof node.props.onPress === 'function');
         act(() => { pressTestInstance(back, 'return to conflict paths'); });
-        expect(Object.assign({}, ...legendListState.props.style)).not.toMatchObject({ display: 'none' });
+        expect(StyleSheet.flatten(legendListState.props.style)).not.toMatchObject({ display: 'none' });
         expect(legendListState.refHandle.scrollToOffset).toHaveBeenCalledWith({ offset: 200, animated: false });
         expect(requestFrame).not.toHaveBeenCalled();
         await act(async () => { scrollCompletion.current?.(); });
@@ -315,9 +318,26 @@ describe('workspace conflict comparison', () => {
         await screen.unmount();
     });
 
+    it('names a link whose status read failed the way its row does, never as still checking', async () => {
+        machineRpc.mockImplementation(async (input: { method: string }) => {
+            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) throw new Error('controller unreachable');
+            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST) {
+                return { status: 'page', relationshipId: 'link-1', totalCount: 0, nextCursor: null, conflicts: [] };
+            }
+            throw new Error(`Unexpected RPC ${input.method}`);
+        });
+        const screen = await renderScreen(<WorkspaceSyncConflictDetailsView resource={{
+            kind: 'workspaceSyncConflicts', hubWorkspaceRefId: 'hub', workspaceRefId: 'spoke',
+            controllerMachineId: 'machine-a', serverId: workspace.serverId,
+        }} />);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('workspaceSync.state.controllerUnavailable'));
+        expect(screen.getTextContent()).not.toContain('workspaceSync.state.loading');
+        await screen.unmount();
+    });
+
     it('does not present observations from the previous controller when the active scope changes', async () => {
         machineRpc.mockImplementation(async (input: { method: string; machineId: string; payload: { path?: string; preview?: { workspaceRefId: string } } }) => {
-            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST) return { statuses: [] };
+            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return createWorkspaceSyncRelationshipsListFixture([]);
             if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST) {
                 return { status: 'page', relationshipId: 'link-1', totalCount: 1, nextCursor: null, conflicts: [conflict('first.txt')] };
             }
@@ -343,7 +363,7 @@ describe('workspace conflict comparison', () => {
         let pageReads = 0;
         const refreshCompletion: { current?: (value: unknown) => void } = {};
         machineRpc.mockImplementation(async (input: { method: string }) => {
-            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST) return { statuses: [] };
+            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return createWorkspaceSyncRelationshipsListFixture([]);
             if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST) {
                 pageReads += 1;
                 return pageReads === 1
@@ -375,7 +395,7 @@ describe('workspace conflict comparison', () => {
         includeThirdEndpoint = true;
         await workspace.seedProject({ includeThirdEndpoint });
         machineRpc.mockImplementation(async (input: { method: string; payload: { relationshipId?: string; path?: string; preview?: { workspaceRefId: string } } }) => {
-            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST) return { statuses: [] };
+            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return createWorkspaceSyncRelationshipsListFixture([]);
             if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST) {
                 const relationshipId = input.payload.relationshipId ?? 'link-1';
                 return { status: 'page', relationshipId, totalCount: 1, nextCursor: null, conflicts: [conflict('first.txt', relationshipId)] };
@@ -451,7 +471,7 @@ describe('workspace conflict comparison', () => {
         let holdReinspection = false;
         const reinspectionCompletion: { current?: (value: unknown) => void } = {};
         machineRpc.mockImplementation(async (input: { method: string; payload: { path?: string; preview?: { workspaceRefId: string } } }) => {
-            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST) return { statuses: [] };
+            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return createWorkspaceSyncRelationshipsListFixture([]);
             if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST) {
                 return { status: 'page', relationshipId: 'link-1', totalCount: 1, nextCursor: null, conflicts: [conflict('first.txt')] };
             }

@@ -8,7 +8,6 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { Modal } from '@/modal';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
 function normalizeWorkspaceScope(scope: WorkspaceScopeBase | null): WorkspaceScopeBase | null {
     if (!scope) return null;
@@ -27,8 +26,6 @@ export const WorkspaceFileDownloadButton = React.memo((props: Readonly<{
 }>) => {
     const [menuOpen, setMenuOpen] = React.useState(false);
     const normalizedScope = React.useMemo(() => normalizeWorkspaceScope(props.workspaceScope), [props.workspaceScope]);
-    const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
-
     const transfers = useWorkspaceFileTransfers({
         workspaceScope: normalizedScope,
     });
@@ -55,7 +52,6 @@ export const WorkspaceFileDownloadButton = React.memo((props: Readonly<{
             {...(busy ? { icon: <ActivitySpinner size={iconMatchedSpinnerSize(14)} /> } : { iconName: 'download' as const })}
             iconSize={14}
             size={28}
-            minimumInteractiveTargetSize={minimumInteractiveTargetSize}
             interactiveTargetGapPx={20}
             disabled={disabled}
             onPress={(event) => {

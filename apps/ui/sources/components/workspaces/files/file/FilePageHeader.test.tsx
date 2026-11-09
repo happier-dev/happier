@@ -1222,4 +1222,32 @@ describe('FilePageHeader', () => {
       findChildByTestId(viewActions, 'file-details-stage-file'),
     ).toBeNull();
   });
+
+  // The band's 30 px controls sit 4 px apart (the toggle is 28): unbounded, each reaches 7 px sideways and neighbours overlap.
+  it('splits the identity band gap between its Comment, Find and Expand controls so their hit areas never overlap', async () => {
+    const { FilePageHeader } = await import('./FilePageHeader');
+    const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
+    const { hitAreaOverlap, readHitArea } = await import('@/dev/testkit/harness/hitFrameReach');
+    const screen = await renderScreen(
+      React.createElement(HappierUiPlatformProvider as any, { platform: { platform: 'ios', colorScheme: 'light' } },
+        React.createElement(FilePageHeader as any, {
+          displayMode: 'diff', onDisplayMode: () => {}, diffMode: 'pending', onDiffMode: () => {},
+          hasPendingDelta: true, hasIncludedDelta: false, scmWriteEnabled: false, includeExcludeEnabled: false,
+          virtualSelectionEnabled: false, isSelectedForCommit: false, lineSelectionEnabled: false, selectedLineCount: 0,
+          isApplyingStage: false, inFlightScmOperation: null, onStageFile: () => {}, onUnstageFile: () => {},
+          onApplySelectedLines: () => {}, onClearSelection: () => {},
+          modes: [{ id: 'view', displayMode: 'file' }, { id: 'changes', displayMode: 'diff' }],
+          find: { onOpen: () => {} }, expand: { onOpen: () => {} },
+          reviewCommentsEnabled: true, onToggleCommentMode: () => {},
+        }),
+      ),
+    );
+    const drawn = { width: 30, height: 30 };
+    const comment = readHitArea(screen.findByTestId('file-details-comment-mode')!, drawn);
+    const find = readHitArea(screen.findByTestId('file-header-find')!, drawn);
+    const expand = readHitArea(screen.findByTestId('file-header-expand')!, drawn);
+    expect(hitAreaOverlap(comment, find, { axis: 'horizontal', gap: 4 })).toBe(0);
+    expect(hitAreaOverlap(find, expand, { axis: 'horizontal', gap: 4 })).toBe(0);
+    expect(find.drawn).toEqual(drawn);
+  });
 });

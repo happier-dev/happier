@@ -14,8 +14,12 @@ import {
 import type { WorkspaceFileEditorDraft } from './workspaceFileEditorDraft';
 import { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { Modal } from '@/modal';
-import { buildApprovalRequestArtifactHeaderV1, type ApprovalRequestV2 } from '@happier-dev/protocol';
+import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { projectApprovalReviewInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionApprovalContinuation, ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
+import { publishPresentationNotice, readPresentationNotice, retirePresentationNotice, subscribePresentationNotices } from '@/components/sessions/presentation/presentationNotices';
 
 const editorPlatform = vi.hoisted(() => ({ os: 'web' as 'web' | 'ios' }));
 installWorkspaceFileDetailsCommonModuleMocks({ reactNative: async () => {
@@ -66,6 +70,7 @@ async function createHarness(options: Readonly<{
     persistedDraft?: WorkspaceFileEditorDraft | null;
     deriveAccountFromSelectedHome?: boolean;
     autoSave?: boolean;
+    formatOnSave?: boolean;
     unreachable?: boolean;
     persistDraft?: (draft: import('./workspaceFileEditorDraft').WorkspaceFileEditorDraft | null) => void;
     requestApproval?: (registration: ActionApprovalRegistration) => void;
@@ -74,14 +79,16 @@ async function createHarness(options: Readonly<{
     // This is the device-persistence boundary. Its Account slots replace the removed module cache.
     const persisted = new Map<string, WorkspaceFileEditorDraft | null>();
     if (options.persistedDraft) persisted.set(options.persistedDraft.accountId, options.persistedDraft);
-    let activeAccount: string | null = options.accountId === undefined ? 'alice' : options.accountId;
+    let activeAccount: string | null = options.accountId === undefined ? 'account-a' : options.accountId;
     const persistDraft = vi.fn((draft: WorkspaceFileEditorDraft | null) => {
         options.persistDraft?.(draft);
-        if (activeAccount) persisted.set(activeAccount, draft);
+        if (draft) persisted.set(draft.accountId, draft);
+        else if (activeAccount) persisted.set(activeAccount, draft);
     });
     const disk = { text: options.fileText ?? 'hello', hash: options.fileHash ?? 'h1', unreachable: options.unreachable ?? false, encoding: options.encoding,
         displayMode: 'file' as 'file' | 'diff' | 'markdown' };
-    const accountIdRef = { current: options.accountId === undefined ? 'alice' : options.accountId };
+    const accountIdRef = { current: options.accountId === undefined ? 'account-a' : options.accountId };
+    const mountedRef = { current: true };
     const hook = await renderHook(() => {
         const selectedAccount = useActiveServerAccountScope(scope.serverId);
         activeAccount = options.deriveAccountFromSelectedHome ? selectedAccount?.accountId ?? null : accountIdRef.current;
@@ -100,8 +107,9 @@ async function createHarness(options: Readonly<{
         filesEditorWebMonacoEnabled: true,
         filesEditorNativeCodeMirrorEnabled: true,
         filesEditorAutoSave: options.autoSave ?? true,
+        filesEditorFormatOnSave: options.formatOnSave,
         filesEditorChangeDebounceMs: 100,
-        mountedRef: { current: true },
+        mountedRef,
         refreshAll,
         persistedDraft: activeAccount ? persisted.get(activeAccount) ?? null : null,
         persistDraft,
@@ -109,7 +117,7 @@ async function createHarness(options: Readonly<{
         });
     });
     if (options.startEditing !== false) await act(async () => hook.getCurrent().startEditingFile());
-    return { ...hook, persistDraft, accountIdRef, disk };
+    return { ...hook, persistDraft, accountIdRef, mountedRef, disk };
 }
 
 function writtenRequests() {
@@ -124,11 +132,15 @@ function writtenRequests() {
 }
 
 function executedWriteApproval(artifactId: string, input: unknown, hash: string) {
+    const actionArgs = FilesystemWriteFileInputSchema.parse(input);
     const request: ApprovalRequestV2 = {
         v: 2, status: 'executed', createdAtMs: 1, updatedAtMs: 2, createdBy: { surface: 'system' }, requestedSurface: 'ui',
         executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
             serverId: scope.serverId, accountId: 'account-a', actionId: 'daemon.filesystem.writeFile', requestId: 'file-save' },
-        actionId: 'daemon.filesystem.writeFile', actionArgs: FilesystemWriteFileInputSchema.parse(input),
+        actionId: 'daemon.filesystem.writeFile', actionArgs,
+        // The Action producer records its declared private review projection beside the raw operand.
+        preview: { actionId: 'daemon.filesystem.writeFile',
+            actionArgs: projectApprovalReviewInput(getActionSpec('daemon.filesystem.writeFile'), actionArgs) },
         summary: 'Write the file', decision: { kind: 'approve', decidedAtMs: 2 },
         execution: { executedAtMs: 2, ok: true, result: { success: true, hash } },
     };
@@ -137,6 +149,21 @@ function executedWriteApproval(artifactId: string, input: unknown, hash: string)
 }
 
 describe('useWorkspaceFileEditorState autosave', () => {
+    it('awaits opt-in formatting before the guarded save reads the buffer', async () => {
+        const hook = await createHarness({ autoSave: false, formatOnSave: true });
+        let value = 'const x={a:1};';
+        await act(async () => hook.getCurrent().onEditorChange(value));
+        const formatted = createDeferred<void>();
+        const formatDocument = vi.fn(async () => { await formatted.promise; value = 'const x = { a: 1 };'; });
+        hook.getCurrent().editorHandleRef.current = { getValue: () => value, flushPendingChange: async () => {}, formatDocument };
+        writeRpcSpy.mockResolvedValueOnce({ success: true, hash: 'formatted' });
+        let saving: Promise<boolean> | undefined;
+        await act(async () => { saving = hook.getCurrent().saveFileEdits(); await Promise.resolve(); });
+        expect(formatDocument).toHaveBeenCalledOnce();
+        expect(writtenRequests()).toEqual([]);
+        await act(async () => { formatted.resolve(); expect(await saving).toBe(true); });
+        expect(writtenRequests()[0].content).toBe('const x = { a: 1 };');
+    });
     it('retains a dirty draft across View and Changes and seeds the editor from it on return', async () => {
         const hook = await createHarness({ autoSave: false });
         await act(async () => hook.getCurrent().onEditorChange('my unsaved draft'));
@@ -267,28 +294,6 @@ describe('useWorkspaceFileEditorState autosave', () => {
         expect(hook.getCurrent().isEditingFile).toBe(false);
     });
 
-    it('ends Saving when the write lands, so Saved shows while the slow re-read still runs', async () => {
-        const reread = createDeferred<void>();
-        const hook = await createHarness({ autoSave: false, refreshAll: () => reread.promise });
-        await act(async () => hook.getCurrent().onEditorChange('edited'));
-        hook.getCurrent().editorHandleRef.current = { getValue: () => 'edited', flushPendingChange: async () => {} };
-        writeRpcSpy.mockResolvedValueOnce({ success: true, hash: 'h2' });
-        let saved: Promise<boolean> | undefined;
-        await act(async () => { saved = hook.getCurrent().saveFileEdits(); await Promise.resolve(); });
-        await act(async () => { for (let i = 0; i < 20 && hook.getCurrent().savedAtMs === null; i += 1) await Promise.resolve(); });
-        expect(hook.getCurrent()).toMatchObject({ editorStatus: 'clean', editorDirty: false });
-        expect(hook.getCurrent().savedAtMs).not.toBeNull();
-        // A Save pressed during the re-read waits for it rather than being dropped.
-        await act(async () => hook.getCurrent().onEditorChange('edited again'));
-        hook.getCurrent().editorHandleRef.current = { getValue: () => 'edited again', flushPendingChange: async () => {} };
-        writeRpcSpy.mockResolvedValueOnce({ success: true, hash: 'h3' });
-        let second: Promise<boolean> | undefined;
-        await act(async () => { second = hook.getCurrent().saveFileEdits(); await Promise.resolve(); });
-        expect(writtenRequests()).toHaveLength(1);
-        await act(async () => { reread.resolve(); expect(await saved).toBe(true); expect(await second).toBe(true); });
-        expect(writtenRequests().map(request => request.content)).toEqual(['edited', 'edited again']);
-    });
-
     it('normalizes saved bytes without replacing the admitted editor text or undo seed', async () => {
         const hook = await createHarness({ autoSave: false, fileText: 'base\r\n',
             encoding: { hasBom: true, editable: true, eol: 'crlf', mixedEol: true } });
@@ -312,11 +317,11 @@ describe('useWorkspaceFileEditorState autosave', () => {
     it('clears a persisted dirty draft when the refreshed disk adopts that exact text', async () => {
         const hook = await createHarness({ autoSave: false });
         await act(async () => hook.getCurrent().onEditorChange('matching external write'));
-        expect(hook.persistDraft).toHaveBeenLastCalledWith(expect.objectContaining({ editorText: 'matching external write' }));
+        expect(hook.persistDraft).toHaveBeenLastCalledWith(expect.objectContaining({ editorText: 'matching external write' }), { persist: false });
         hook.disk.text = 'matching external write'; hook.disk.hash = 'external';
         await hook.rerender();
         expect(hook.getCurrent().editorDirty).toBe(false);
-        expect(hook.persistDraft).toHaveBeenLastCalledWith(null);
+        expect(hook.persistDraft).toHaveBeenLastCalledWith(null, { persist: true });
     });
 
     it('saves per-place Compare choices through the guarded write against the disk version shown', async () => {
@@ -395,6 +400,7 @@ describe('useWorkspaceFileEditorState autosave', () => {
         });
         vi.useRealTimers();
         await standardCleanup();
+        retirePresentationNotice();
         await cleanupWorkspaceFileDetailsActionBoundary();
     });
 
@@ -410,6 +416,37 @@ describe('useWorkspaceFileEditorState autosave', () => {
         await hook.rerender();
         expect(hook.getCurrent().conflict).toBeNull();
         expect(hook.getCurrent().getEditorText()).toBe('newer draft');
+    });
+
+    it('admits a newer explicit Save while only the previous receipt’s display refresh is pending', async () => {
+        const refreshed = createDeferred<void>();
+        const refreshing = createDeferred<void>();
+        const secondReceipt = createDeferred<WriteResponse>();
+        const hook = await createHarness({ autoSave: false, refreshAll: async () => {
+            refreshing.resolve(); await refreshed.promise;
+        } });
+        writeRpcSpy.mockResolvedValueOnce({ success: true, hash: 'h2' }).mockReturnValueOnce(secondReceipt.promise);
+        let first: Promise<boolean> | undefined;
+        let second: Promise<boolean> | undefined;
+        try {
+            await act(async () => hook.getCurrent().onEditorChange('first saved bytes'));
+            await act(async () => { first = hook.getCurrent().saveFileEdits(); await refreshing.promise; });
+            expect(hook.getCurrent().isSavingEdits).toBe(false);
+            await act(async () => hook.getCurrent().onEditorChange('newer saved bytes'));
+            await act(async () => { second = hook.getCurrent().saveFileEdits(); });
+            await vi.waitFor(() => expect(writtenRequests()).toHaveLength(2));
+            expect(writtenRequests()[1]).toMatchObject({ content: 'newer saved bytes', expectedHash: 'h2' });
+            // The pending write, unlike its display refresh, still owns the single-flight slot.
+            await act(async () => { expect(await hook.getCurrent().saveFileEdits()).toBe(false); });
+            expect(writtenRequests()).toHaveLength(2);
+            await act(async () => { secondReceipt.resolve({ success: true, hash: 'h3' }); });
+            expect(await first).toBe(true);
+            expect(await second).toBe(true);
+            expect(hook.getCurrent()).toMatchObject({ editorDirty: false, editorOriginalHash: 'h3' });
+        } finally {
+            refreshed.resolve(); secondReceipt.resolve({ success: true, hash: 'h3' });
+            await act(async () => { await first; await second; });
+        }
     });
 
     it('derives conflict, clears when disk reverts, and adopts a disk echo of the draft', async () => {
@@ -430,13 +467,14 @@ describe('useWorkspaceFileEditorState autosave', () => {
     it('starts and persists offline editing, never autosaves on reconnect, and saves against the start hash', async () => {
         const hook = await createHarness({ unreachable: true });
         await act(async () => hook.getCurrent().onEditorChange('offline draft'));
-        await act(async () => { vi.advanceTimersByTime(500); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(500); });
         expect(hook.getCurrent()).toMatchObject({ isEditingFile: true, editorDirty: true, refusal: { kind: 'unreachable' } });
-        expect(hook.persistDraft).toHaveBeenLastCalledWith(expect.objectContaining({ editorText: 'offline draft', editorOriginalHash: 'h1' }));
+        await act(async () => { await hook.getCurrent().prepareEditorTransition(); });
+        expect(hook.persistDraft).toHaveBeenLastCalledWith(expect.objectContaining({ editorText: 'offline draft', editorOriginalHash: 'h1' }), { persist: true });
         expect(writtenRequests()).toHaveLength(0);
         hook.disk.unreachable = false;
         await hook.rerender();
-        await act(async () => { vi.advanceTimersByTime(500); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(500); });
         expect(writtenRequests()).toHaveLength(0);
         writeRpcSpy.mockResolvedValueOnce({ success: true, hash: 'back' });
         await act(async () => { await hook.getCurrent().saveFileEdits(); });
@@ -444,16 +482,92 @@ describe('useWorkspaceFileEditorState autosave', () => {
         expect(hook.getCurrent().refusal).toBeNull();
     });
 
+    it('holds explicit offline Save until reachability returns, then writes the latest buffer once', async () => {
+        const hook = await createHarness({ autoSave: false, unreachable: true });
+        await act(async () => hook.getCurrent().onEditorChange('first offline edit'));
+        writeRpcSpy.mockResolvedValue({ success: true, hash: 'reconnected' });
+        let pending!: Promise<boolean>;
+        await act(async () => { pending = hook.getCurrent().saveFileEdits(); });
+        expect(writtenRequests()).toEqual([]);
+        expect(hook.getCurrent()).toMatchObject({ isSavingEdits: true, editorDirty: true, refusal: { kind: 'unreachable' } });
+        await act(async () => hook.getCurrent().onEditorChange('latest offline edit'));
+        // Re-renders and elapsed time while offline cannot deliver a write.
+        await hook.rerender();
+        await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+        expect(writtenRequests()).toEqual([]);
+        await act(async () => { expect(await hook.getCurrent().saveFileEdits()).toBe(false); });
+        hook.disk.unreachable = false;
+        await hook.rerender();
+        await act(async () => { expect(await pending).toBe(true); });
+        expect(writtenRequests()).toEqual([expect.objectContaining({ content: 'latest offline edit', expectedHash: 'h1' })]);
+        expect(hook.getCurrent()).toMatchObject({ isSavingEdits: false, editorDirty: false, refusal: null, editorOriginalHash: 'reconnected' });
+        expect(hook.getCurrent().savedAtMs).not.toBeNull();
+        await hook.rerender();
+        expect(writtenRequests()).toHaveLength(1);
+    });
+
+    it('settles a real write refusal after offline Save resumes without retrying or dropping edits', async () => {
+        const hook = await createHarness({ autoSave: false, unreachable: true });
+        await act(async () => hook.getCurrent().onEditorChange('kept draft'));
+        writeRpcSpy.mockResolvedValue({ success: false, error: 'Permission denied', errorCode: 'EACCES' });
+        let pending!: Promise<boolean>;
+        await act(async () => { pending = hook.getCurrent().saveFileEdits(); });
+        expect(writtenRequests()).toEqual([]);
+        hook.disk.unreachable = false;
+        await hook.rerender();
+        await act(async () => { expect(await pending).toBe(false); });
+        expect(hook.getCurrent()).toMatchObject({ isSavingEdits: false, editorDirty: true, refusal: { kind: 'failed' } });
+        expect(hook.getCurrent().getEditorText()).toBe('kept draft');
+        await hook.rerender();
+        await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+        expect(writtenRequests()).toHaveLength(1);
+    });
+
+    it('cancels the offline Save when its Account owner changes before reachability returns', async () => {
+        const hook = await createHarness({ autoSave: false, unreachable: true });
+        await act(async () => hook.getCurrent().onEditorChange('Account A draft'));
+        let pending!: Promise<boolean>;
+        await act(async () => { pending = hook.getCurrent().saveFileEdits(); });
+        expect(writtenRequests()).toEqual([]);
+        hook.accountIdRef.current = 'account-b';
+        await hook.rerender();
+        await act(async () => { expect(await pending).toBe(false); });
+        hook.disk.unreachable = false;
+        await hook.rerender();
+        expect(writtenRequests()).toEqual([]);
+        expect(hook.getCurrent().getEditorText()).toBe('hello');
+    });
+
+    it.each(['cancel', 'unmount'] as const)('settles the waiting Save on %s without reaching the write boundary', async retirement => {
+        const hook = await createHarness({ autoSave: false, unreachable: true });
+        await act(async () => hook.getCurrent().onEditorChange('offline draft'));
+        let pending!: Promise<boolean>;
+        await act(async () => { pending = hook.getCurrent().saveFileEdits(); });
+        if (retirement === 'unmount') await hook.unmount();
+        else await act(async () => hook.getCurrent().cancelEditingFile());
+        await act(async () => { expect(await pending).toBe(false); });
+        if (retirement === 'cancel') {
+            hook.disk.unreachable = false;
+            await hook.rerender();
+            expect(hook.getCurrent()).toMatchObject({ isSavingEdits: false, isEditingFile: false });
+        }
+        expect(writtenRequests()).toEqual([]);
+    });
+
     it('keeps editing in memory when device draft persistence throws', async () => {
         const hook = await createHarness({ autoSave: false, persistDraft: () => { throw new Error('quota'); } });
         await act(async () => hook.getCurrent().onEditorChange('kept in memory'));
-        await act(async () => { vi.advanceTimersByTime(100); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
         expect(hook.getCurrent().getEditorText()).toBe('kept in memory');
         expect(hook.getCurrent()).toMatchObject({ editorDirty: true, draftPersistenceFailed: true });
     });
 
     it('uses the shown disk hash for Use mine and restores that disk version with a guarded Undo', async () => {
-        const hook = await createHarness({ autoSave: false });
+        const refreshed = createDeferred<void>();
+        let refreshCount = 0;
+        const hook = await createHarness({ autoSave: false, refreshAll: async () => {
+            if (++refreshCount === 2) await refreshed.promise;
+        } });
         await act(async () => hook.getCurrent().onEditorChange('mine'));
         hook.disk.text = 'theirs'; hook.disk.hash = 'theirs-hash';
         await hook.rerender();
@@ -461,8 +575,96 @@ describe('useWorkspaceFileEditorState autosave', () => {
         await act(async () => { await hook.getCurrent().resolveConflict('useMine'); });
         expect(writtenRequests()[0]).toMatchObject({ content: 'mine', expectedHash: 'theirs-hash' });
         writeRpcSpy.mockResolvedValueOnce({ success: true, hash: 'restored-hash' });
-        await act(async () => { await hook.getCurrent().undoSetAside(); });
+        const undo = readPresentationNotice()?.undo;
+        expect(undo).toBeDefined();
+        await act(async () => {
+            undo?.run();
+            await vi.waitFor(() => expect(hook.getCurrent().readSnapshot().hash).toBe('restored-hash'));
+        });
         expect(writtenRequests()[1]).toMatchObject({ content: 'theirs', expectedHash: 'mine-hash' });
+        try {
+            await act(async () => hook.getCurrent().onEditorChange('edited after Undo'));
+            writeRpcSpy.mockResolvedValueOnce({ success: true, hash: 'after-undo-hash' });
+            await act(async () => { expect(await hook.getCurrent().saveFileEdits()).toBe(true); });
+            expect(writtenRequests()[2]).toMatchObject({ content: 'edited after Undo', expectedHash: 'restored-hash' });
+        } finally { await act(async () => refreshed.resolve()); }
+    });
+
+    it('guards Use mine Undo with its write receipt after a later version arrives during refresh', async () => {
+        const refreshing = createDeferred<void>();
+        const refreshed = createDeferred<void>();
+        let firstRefresh = true;
+        const hook = await createHarness({ autoSave: false, refreshAll: async () => {
+            if (!firstRefresh) return;
+            firstRefresh = false; refreshing.resolve(); await refreshed.promise;
+        } });
+        await act(async () => hook.getCurrent().onEditorChange('mine'));
+        hook.disk.text = 'theirs'; hook.disk.hash = 'theirs-hash';
+        await hook.rerender();
+        // Model the Machine's guarded filesystem boundary; Action admission and the editor remain real.
+        const remote = { text: 'theirs', hash: 'theirs-hash' };
+        writeRpcSpy.mockImplementation(async request => {
+            const write = FilesystemWriteFileInputSchema.parse(request.payload);
+            if (write.expectedHash !== remote.hash) return { success: false, error: 'changed', errorCode: 'hash_mismatch' };
+            remote.text = Buffer.from(write.content, 'base64').toString('utf8');
+            remote.hash = remote.text === 'mine' ? 'mine-hash' : 'restored-hash';
+            return { success: true, hash: remote.hash };
+        });
+        let resolving!: Promise<void>;
+        await act(async () => { resolving = hook.getCurrent().resolveConflict('useMine'); await refreshing.promise; });
+        remote.text = 'later external version'; remote.hash = 'later-hash';
+        hook.disk.text = remote.text; hook.disk.hash = remote.hash;
+        await hook.rerender();
+        expect(hook.getCurrent().editorOriginalHash).toBe('later-hash');
+        await act(async () => { refreshed.resolve(); await resolving; });
+        await act(async () => hook.getCurrent().undoSetAside());
+        expect(remote).toEqual({ text: 'later external version', hash: 'later-hash' });
+        expect(writtenRequests()[1]).toMatchObject({ content: 'theirs', expectedHash: 'mine-hash' });
+        expect(hook.getCurrent().getEditorText()).toBe('later external version');
+    });
+
+    it.each(['unmount', 'mounted-ref', 'edit', 'notice'] as const)('does not revive Use mine Undo after %s retires it before the write receipt', async retirement => {
+        const dispatched = createDeferred<void>();
+        const receipt = createDeferred<WriteResponse>();
+        const hook = await createHarness({ autoSave: false });
+        await act(async () => hook.getCurrent().onEditorChange('mine'));
+        hook.disk.text = 'theirs'; hook.disk.hash = 'theirs-hash';
+        await hook.rerender();
+        writeRpcSpy.mockImplementationOnce(async () => { dispatched.resolve(); return receipt.promise; });
+        let resolving!: Promise<void>;
+        await act(async () => { resolving = hook.getCurrent().resolveConflict('useMine'); await dispatched.promise; });
+        const undoPublications: string[] = [];
+        const unsubscribe = subscribePresentationNotices(() => {
+            const notice = readPresentationNotice();
+            if (notice?.undo) undoPublications.push(notice.key);
+        });
+        try {
+            if (retirement === 'unmount') await hook.unmount();
+            else if (retirement === 'mounted-ref') hook.mountedRef.current = false;
+            else if (retirement === 'edit') await act(async () => hook.getCurrent().onEditorChange('new draft'));
+            else publishPresentationNotice({ key: 'newer-review-action', severity: 'info', message: 'newer review action' });
+            await act(async () => { receipt.resolve({ success: true, hash: 'mine-hash' }); await resolving; });
+            expect(undoPublications).toEqual([]);
+            expect(readPresentationNotice()?.key).toBe(retirement === 'notice' ? 'newer-review-action' : undefined);
+            expect(writtenRequests()).toHaveLength(1);
+            if (retirement === 'edit') expect(hook.getCurrent().getEditorText()).toBe('new draft');
+        } finally { unsubscribe(); }
+    });
+
+    it.each(['unmount', 'mounted-ref'] as const)('does not dispatch a retained Undo callback after %s retires its tab', async retirement => {
+        const hook = await createHarness({ autoSave: false });
+        await act(async () => hook.getCurrent().onEditorChange('mine'));
+        hook.disk.text = 'theirs'; hook.disk.hash = 'theirs-hash';
+        await hook.rerender();
+        writeRpcSpy.mockResolvedValueOnce({ success: true, hash: 'mine-hash' });
+        await act(async () => hook.getCurrent().resolveConflict('useMine'));
+        const undo = readPresentationNotice()?.undo;
+        const retainedUndo = hook.getCurrent().undoSetAside;
+        expect(undo).toBeDefined();
+        if (retirement === 'unmount') await hook.unmount();
+        else hook.mountedRef.current = false;
+        await act(async () => { await retainedUndo(); undo?.run(); });
+        expect(writtenRequests()).toHaveLength(1);
     });
 
     it('Use theirs keeps the displaced draft recoverable and Undo restores its conflict', async () => {
@@ -486,7 +688,7 @@ describe('useWorkspaceFileEditorState autosave', () => {
         const unsubscribe = store.subscribe(() => seen.push(store.get()));
         await act(async () => hook.getCurrent().onEditorChange('one'));
         await act(async () => hook.getCurrent().onEditorChange('two'));
-        await act(async () => { vi.advanceTimersByTime(100); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
         expect(store.get()).toBe('two');
         expect(seen.at(-1)).toBe('two');
         expect(hook.getCurrent().liveValue).toBe(store);
@@ -518,44 +720,58 @@ describe('useWorkspaceFileEditorState autosave', () => {
 
     it('does not restore or persist a private draft without captured Account authority', async () => {
         const hook = await createHarness({ accountId: null, startEditing: false,
-            persistedDraft: { accountId: 'alice', isEditingFile: true, editorOriginalHash: 'h1', editorText: 'private draft' } });
+            persistedDraft: { accountId: 'account-a', isEditingFile: true, editorOriginalHash: 'h1', editorText: 'private draft' } });
         expect(hook.getCurrent().isEditingFile).toBe(false);
         expect(hook.getCurrent().getEditorText()).toBe('hello');
         await act(async () => hook.getCurrent().startEditingFile());
         await act(async () => hook.getCurrent().onEditorChange('new private draft'));
-        await act(async () => { vi.advanceTimersByTime(100); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
         expect(hook.persistDraft).not.toHaveBeenCalled();
     });
 
     it('resets local editing state on Account changes without losing the first Account’s cached draft', async () => {
         const hook = await createHarness();
         await act(async () => hook.getCurrent().onEditorChange('Alice draft'));
-        hook.accountIdRef.current = 'bob';
+        hook.accountIdRef.current = 'account-b';
         await hook.rerender();
         expect(hook.getCurrent()).toMatchObject({ isEditingFile: false, editorDirty: false });
         expect(hook.getCurrent().getEditorText()).toBe('hello');
-        hook.accountIdRef.current = 'alice';
+        hook.accountIdRef.current = 'account-a';
         await hook.rerender();
         expect(hook.getCurrent().getEditorText()).toBe('Alice draft');
         expect(hook.getCurrent()).toMatchObject({ isEditingFile: true, editorDirty: true });
     });
 
+    it('checkpoints the latest unpublished text to its previous Account before replacing the editor owner', async () => {
+        const hook = await createHarness({ autoSave: false });
+        await act(async () => hook.getCurrent().onEditorChange('Alice first edit'));
+        await act(async () => hook.getCurrent().onEditorChange('Alice second edit'));
+        await act(async () => hook.getCurrent().onEditorChange('Alice latest pending edit'));
+        hook.accountIdRef.current = 'account-b';
+        await hook.rerender();
+        expect(hook.getCurrent().getEditorText()).toBe('hello');
+        hook.accountIdRef.current = 'account-a';
+        await hook.rerender();
+        expect(hook.getCurrent().getEditorText()).toBe('Alice latest pending edit');
+        expect(hook.getCurrent().editorDirty).toBe(true);
+    });
+
     it('does not restore another Account’s persisted pane draft', async () => {
-        const hook = await createHarness({ accountId: 'bob', startEditing: false,
-            persistedDraft: { accountId: 'alice', isEditingFile: true, editorOriginalHash: 'h1', editorText: 'Alice pane draft' } });
+        const hook = await createHarness({ accountId: 'account-b', startEditing: false,
+            persistedDraft: { accountId: 'account-a', isEditingFile: true, editorOriginalHash: 'h1', editorText: 'Alice pane draft' } });
         expect(hook.getCurrent().isEditingFile).toBe(false);
         expect(hook.getCurrent().getEditorText()).toBe('hello');
     });
 
     it('reacts to the selected Home’s actual Account publication and fails closed for another Home', async () => {
         publishAppliedActiveServerSnapshot({ serverId: scope.serverId, serverUrl: 'https://draft.test', generation: 1 });
-        storage.setState({ profileScope: { serverId: scope.serverId, accountId: 'alice' } });
+        storage.setState({ profileScope: { serverId: scope.serverId, accountId: 'account-a' } });
         const hook = await createHarness({ deriveAccountFromSelectedHome: true });
         await act(async () => hook.getCurrent().onEditorChange('Alice draft'));
-        await act(async () => storage.setState({ profileScope: { serverId: scope.serverId, accountId: 'bob' } }));
+        await act(async () => storage.setState({ profileScope: { serverId: scope.serverId, accountId: 'account-b' } }));
         expect(hook.getCurrent()).toMatchObject({ isEditingFile: false, editorDirty: false });
         expect(hook.getCurrent().getEditorText()).toBe('hello');
-        await act(async () => storage.setState({ profileScope: { serverId: scope.serverId, accountId: 'alice' } }));
+        await act(async () => storage.setState({ profileScope: { serverId: scope.serverId, accountId: 'account-a' } }));
         expect(hook.getCurrent().getEditorText()).toBe('Alice draft');
         await act(async () => publishAppliedActiveServerSnapshot({ serverId: 'another-home', serverUrl: 'https://another.test', generation: 2 }));
         expect(hook.getCurrent()).toMatchObject({ isEditingFile: false, editorDirty: false });
@@ -567,15 +783,15 @@ describe('useWorkspaceFileEditorState autosave', () => {
         const oldEditorChange = hook.getCurrent().onEditorChange;
         const oldLiveValue = hook.getCurrent().liveValue;
         await act(async () => oldEditorChange('Alice pending write'));
-        hook.accountIdRef.current = 'bob';
+        hook.accountIdRef.current = 'account-b';
         await hook.rerender();
         await act(async () => oldEditorChange('Alice delayed callback'));
-        await act(async () => { vi.advanceTimersByTime(100); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
         expect(writeRpcSpy).not.toHaveBeenCalled();
         expect(hook.getCurrent().getEditorText()).toBe('hello');
         expect(oldLiveValue.get()).toBe('');
         expect(hook.getCurrent().liveValue.get()).toBe('hello');
-        expect(hook.persistDraft).not.toHaveBeenCalledWith(expect.objectContaining({ accountId: 'bob' }));
+        expect(hook.persistDraft).not.toHaveBeenCalledWith(expect.objectContaining({ accountId: 'account-b' }));
     });
 
     it('does not apply an old Account’s completed write to the new editor owner', async () => {
@@ -584,14 +800,16 @@ describe('useWorkspaceFileEditorState autosave', () => {
         writeRpcSpy.mockReturnValueOnce(pending.promise).mockReturnValueOnce(bobPending.promise);
         const hook = await createHarness();
         await act(async () => hook.getCurrent().onEditorChange('Alice writing'));
-        await act(async () => { vi.advanceTimersByTime(100); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
         expect(writeRpcSpy, JSON.stringify(vi.mocked(Modal.alert).mock.calls)).toHaveBeenCalled();
-        hook.accountIdRef.current = 'bob';
+        // A positive write for the replacement owner needs that Account's real credentials too.
+        scope.serverId = await prepareWorkspaceFileDetailsActionBoundary(scope.machineId, 'account-b');
+        hook.accountIdRef.current = 'account-b';
         await hook.rerender();
         expect(hook.getCurrent().isSavingEdits).toBe(false);
         await act(async () => hook.getCurrent().startEditingFile());
         await act(async () => hook.getCurrent().onEditorChange('Bob writing'));
-        await act(async () => { vi.advanceTimersByTime(100); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
         expect(writtenRequests().map(request => request.content)).toEqual(['Alice writing', 'Bob writing']);
         await act(async () => pending.resolve({ success: true, hash: 'Alice saved basis' }));
         expect(hook.getCurrent()).toMatchObject({ isEditingFile: true, editorDirty: true, isSavingEdits: true, editorOriginalHash: 'h1' });
@@ -604,7 +822,7 @@ describe('useWorkspaceFileEditorState autosave', () => {
         const hook = await createHarness();
         const oldCompare = hook.getCurrent().startComparison;
         const oldGetText = hook.getCurrent().getEditorText;
-        hook.accountIdRef.current = 'bob';
+        hook.accountIdRef.current = 'account-b';
         await hook.rerender();
         await act(async () => hook.getCurrent().startEditingFile());
         await act(async () => hook.getCurrent().onEditorChange('Bob private draft'));
@@ -623,13 +841,13 @@ describe('useWorkspaceFileEditorState autosave', () => {
         writeRpcSpy.mockReturnValueOnce(first.promise).mockReturnValueOnce(returned.promise);
         const hook = await createHarness();
         await act(async () => hook.getCurrent().onEditorChange('Alice first invocation'));
-        await act(async () => { vi.advanceTimersByTime(100); });
-        hook.accountIdRef.current = 'bob';
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+        hook.accountIdRef.current = 'account-b';
         await hook.rerender();
-        hook.accountIdRef.current = 'alice';
+        hook.accountIdRef.current = 'account-a';
         await hook.rerender();
         await act(async () => hook.getCurrent().onEditorChange('Alice returned invocation'));
-        await act(async () => { vi.advanceTimersByTime(100); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
         expect(writtenRequests().map(request => request.content)).toEqual(['Alice first invocation', 'Alice returned invocation']);
         await act(async () => first.resolve({ success: true, hash: 'first' }));
         expect(hook.getCurrent()).toMatchObject({ isSavingEdits: true, editorDirty: true });
@@ -644,14 +862,14 @@ describe('useWorkspaceFileEditorState autosave', () => {
         writeRpcSpy.mockReturnValueOnce(firstWrite.promise).mockReturnValueOnce(secondWrite.promise);
         const hook = await createHarness();
         await act(async () => hook.getCurrent().onEditorChange('hello changed'));
-        await act(async () => { vi.advanceTimersByTime(100); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
         expect(hook.getCurrent().isSavingEdits).toBe(true);
         await act(async () => hook.getCurrent().onEditorChange('hello changed more'));
-        await act(async () => { vi.advanceTimersByTime(100); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
         expect(writtenRequests()).toEqual([{ path: 'src/a.ts', content: 'hello changed', expectedHash: 'h1' }]);
 
         await act(async () => firstWrite.resolve({ success: true, hash: 'h2' }));
-        await act(async () => { vi.advanceTimersByTime(100); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
         expect(writtenRequests()).toEqual([
             { path: 'src/a.ts', content: 'hello changed', expectedHash: 'h1' },
             { path: 'src/a.ts', content: 'hello changed more', expectedHash: 'h2' },
@@ -682,38 +900,36 @@ describe('useWorkspaceFileEditorState autosave', () => {
         writeRpcSpy.mockResolvedValueOnce({ success: true, hash: 'h2' });
         const hook = await createHarness();
         await act(async () => hook.getCurrent().onEditorChange('hello changed'));
-        await act(async () => { vi.advanceTimersByTime(100); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
         expect(hook.getCurrent().isEditingFile).toBe(true);
         expect(hook.getCurrent().editorDirty).toBe(false);
         expect(hook.getCurrent().getEditorText()).toBe('hello changed');
 
         writeRpcSpy.mockResolvedValueOnce({ success: true, hash: 'h3' });
         await act(async () => hook.getCurrent().onEditorChange('hello again'));
-        await act(async () => { vi.advanceTimersByTime(90); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(90); });
         await act(async () => hook.getCurrent().onEditorChange('hello again!'));
-        await act(async () => { vi.advanceTimersByTime(90); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(90); });
         expect(writtenRequests()).toHaveLength(1);
-        await act(async () => { vi.advanceTimersByTime(10); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(10); });
         expect(writtenRequests()[1]).toEqual({ path: 'src/a.ts', content: 'hello again!', expectedHash: 'h2' });
         expect(hook.getCurrent().isEditingFile).toBe(true);
     });
 
     it('saves text entered while the successful write is refreshing the file', async () => {
         const refresh = createDeferred<void>();
-        writeRpcSpy.mockResolvedValueOnce({ success: true, hash: 'h2' });
+        writeRpcSpy.mockResolvedValueOnce({ success: true, hash: 'h2' }).mockResolvedValueOnce({ success: true, hash: 'h3' });
         const hook = await createHarness({ refreshAll: () => refresh.promise });
         await act(async () => hook.getCurrent().onEditorChange('hello changed'));
-        await act(async () => { vi.advanceTimersByTime(100); });
-        // The write landed: Saved shows while the re-read runs, which still holds the one-write-at-a-time lock.
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+        // A display refresh does not delay the next opt-in autosave.
         expect(hook.getCurrent().editorStatus).toBe('clean');
         expect(hook.getCurrent().editorOriginalHash).toBe('h2');
         await act(async () => hook.getCurrent().onEditorChange('hello changed during refresh'));
-        await act(async () => { vi.advanceTimersByTime(100); });
-        expect(writtenRequests()).toHaveLength(1);
-
-        writeRpcSpy.mockResolvedValueOnce({ success: true, hash: 'h3' });
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+        expect(writtenRequests()).toHaveLength(2);
         await act(async () => refresh.resolve());
-        await act(async () => { vi.advanceTimersByTime(100); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
         expect(writtenRequests()[1]).toEqual({ path: 'src/a.ts', content: 'hello changed during refresh', expectedHash: 'h2' });
         expect(hook.getCurrent().isEditingFile).toBe(true);
         expect(hook.getCurrent().editorDirty).toBe(false);
@@ -724,15 +940,15 @@ describe('useWorkspaceFileEditorState autosave', () => {
         writeRpcSpy.mockReturnValueOnce(firstWrite.promise);
         const hook = await createHarness();
         await act(async () => hook.getCurrent().onEditorChange('hello changed'));
-        await act(async () => { vi.advanceTimersByTime(100); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
         await act(async () => hook.getCurrent().onEditorChange('hello changed more'));
         await act(async () => firstWrite.resolve({ success: true, hash: 'h2' }));
         expect(hook.persistDraft).toHaveBeenLastCalledWith({
-            accountId: 'alice',
+            accountId: 'account-a',
             isEditingFile: true,
             editorOriginalHash: 'h2',
             editorText: 'hello changed more',
-        });
+        }, { persist: true });
         await hook.unmount();
 
         writeRpcSpy.mockResolvedValueOnce({ success: true, hash: 'h3' });
@@ -741,7 +957,7 @@ describe('useWorkspaceFileEditorState autosave', () => {
         expect(restored.getCurrent().isEditingFile).toBe(true);
         expect(restored.getCurrent().getEditorText()).toBe('hello changed more');
         expect(restored.getCurrent().conflict).toBeNull();
-        await act(async () => { vi.advanceTimersByTime(100); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
         expect(writtenRequests()[1]).toEqual({ path: 'src/a.ts', content: 'hello changed more', expectedHash: 'h2' });
     });
 
@@ -749,16 +965,16 @@ describe('useWorkspaceFileEditorState autosave', () => {
         writeRpcSpy.mockResolvedValueOnce({ success: false, error: 'Disk unavailable', errorCode: 'FILE_WRITE_FAILED' });
         const hook = await createHarness();
         await act(async () => hook.getCurrent().onEditorChange('hello changed'));
-        await act(async () => { vi.advanceTimersByTime(100); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
         expect(hook.getCurrent().isEditingFile).toBe(true);
         expect(hook.getCurrent().editorDirty).toBe(true);
         expect(hook.getCurrent().getEditorText()).toBe('hello changed');
-        await act(async () => { vi.advanceTimersByTime(500); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(500); });
         expect(writtenRequests()).toHaveLength(1);
 
         writeRpcSpy.mockResolvedValueOnce({ success: true, hash: 'h2' });
         await act(async () => hook.getCurrent().onEditorChange('hello recovered'));
-        await act(async () => { vi.advanceTimersByTime(100); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
         expect(writtenRequests()).toHaveLength(1);
         await act(async () => { await hook.getCurrent().saveFileEdits(); });
         expect(writtenRequests()[1]).toEqual({ path: 'src/a.ts', content: 'hello recovered', expectedHash: 'h1' });
@@ -768,8 +984,19 @@ describe('useWorkspaceFileEditorState autosave', () => {
     it('keeps dirty typing local to the Markdown leaf across the real document publication cadence', async () => {
         const { MarkdownCodeEditorField } = await import('@/components/ui/markdown/editor/MarkdownCodeEditorField');
         const { MarkdownEditModeMenu } = await import('@/components/ui/markdown/editorChrome/MarkdownEditModeMenu');
+        const { loadAccountSettings, saveAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
+        const { settingsParse } = await import('@/sync/domains/settings/settings');
         const originalSettings = storage.getState().settings;
         editorPlatform.os = 'ios';
+        // The connected Account's settings owner re-applies its persisted envelope after
+        // activation; enable the rich-editor controls there, not only in the live store.
+        const settingsScope = { serverId: scope.serverId, accountId: 'account-a' };
+        const persistedSettings = loadAccountSettings(settingsScope);
+        const enabledSettings = { ...settingsParse(persistedSettings.settings), experiments: true,
+            featureToggles: { ...settingsParse(persistedSettings.settings).featureToggles, 'files.editor': true, 'files.markdownRichEditor': true },
+            markdownDefaultEditMode: 'raw' as const,
+        };
+        saveAccountSettings(settingsScope, enabledSettings, persistedSettings.version ?? 0);
         storage.setState({ settings: { ...originalSettings, experiments: true,
             featureToggles: { ...originalSettings.featureToggles, 'files.editor': true, 'files.markdownRichEditor': true },
             markdownDefaultEditMode: 'raw',
@@ -783,7 +1010,7 @@ describe('useWorkspaceFileEditorState autosave', () => {
         // owner render, distinguishing it from React's no-op render attempts.
         function OwnerHeader() { headerRenders += 1; return null; }
         function EditorPageOwner() {
-            editor = useWorkspaceFileEditorState({ scope, accountId: 'alice', filePath: 'README.md', displayMode: 'file',
+            editor = useWorkspaceFileEditorState({ scope, accountId: 'account-a', filePath: 'README.md', displayMode: 'file',
                 fileText: '# Original', fileHash: 'h1', fileWriteSupported: true, setFileWriteSupported() {},
                 fileEditorFeatureEnabled: true, filesEditorWebMonacoEnabled: true, filesEditorNativeCodeMirrorEnabled: true,
                 filesEditorAutoSave: false, filesEditorChangeDebounceMs: 100, mountedRef: { current: true },
@@ -806,17 +1033,17 @@ describe('useWorkspaceFileEditorState autosave', () => {
             const afterDirty = { headerRenders, leafCommits, persisted: persistDraft.mock.calls.length };
             // docChanged is already debounced inside the native WebView. The
             // state owner's established cadence admits its first two events
-            // immediately, then debounces later publications and persistence.
+            // immediately, then debounces later leaf publications only.
             await act(async () => { emit('docChanged', { doc: '# Second dirty edit' }); });
             expect(editor.liveValue.get()).toBe('# Second dirty edit');
             expect(headerRenders).toBe(afterDirty.headerRenders);
             expect(leafCommits).toBeGreaterThan(afterDirty.leafCommits);
-            expect(persistDraft.mock.calls).toHaveLength(afterDirty.persisted + 1);
+            expect(persistDraft.mock.calls).toHaveLength(afterDirty.persisted);
             const afterImmediate = { headerRenders, leafCommits, persisted: persistDraft.mock.calls.length };
             const next = 'A note[^1]\n\n[^1]: newly unsupported\n';
             await act(async () => { emit('docChanged', { doc: next }); await vi.advanceTimersByTimeAsync(99); });
             // The native surface and subscribed Markdown leaf see current text
-            // while persistence remains on the state owner's publication cadence.
+            // while recovery remains at lifecycle checkpoints.
             expect(editor.editorHandleRef.current?.getValue()).toBe(next);
             expect(editor.liveValue.get()).toBe(next);
             expect(headerRenders).toBe(afterImmediate.headerRenders);
@@ -826,7 +1053,10 @@ describe('useWorkspaceFileEditorState autosave', () => {
             expect(screen.findByType(MarkdownEditModeMenu).props.richDisabledReason).toBe('footnotes');
             expect(leafCommits).toBeGreaterThan(afterImmediate.leafCommits);
             expect(headerRenders).toBe(afterImmediate.headerRenders);
-            expect(persistDraft).toHaveBeenLastCalledWith(expect.objectContaining({ editorText: next }));
+            expect(persistDraft.mock.calls).toHaveLength(afterImmediate.persisted);
+            await screen.unmount();
+            screen = undefined;
+            expect(persistDraft).toHaveBeenLastCalledWith(expect.objectContaining({ editorText: next }), { persist: true });
             expect(writtenRequests()).toHaveLength(0);
         } finally {
             await screen?.unmount();

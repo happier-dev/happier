@@ -685,55 +685,6 @@ vi.mock('@/components/ui/scroll/resolveWebScrollableElement', () => ({
     resolveWebScrollableElement: (rootCandidate: any) => resolveWebScrollableElementMock(rootCandidate),
 }));
 
-vi.mock('@/components/workspaces/scm/review/scmEntryDelta', () => ({
-    totalsChangedLines: (snapshot: any, area: string) => {
-        const totals = snapshot?.totals;
-        if (!totals) return 0;
-        if (area === 'included') return Number(totals.includedAdded ?? 0) + Number(totals.includedRemoved ?? 0);
-        if (area === 'pending') return Number(totals.pendingAdded ?? 0) + Number(totals.pendingRemoved ?? 0);
-        return Number(totals.includedAdded ?? 0) + Number(totals.includedRemoved ?? 0)
-            + Number(totals.pendingAdded ?? 0) + Number(totals.pendingRemoved ?? 0);
-    },
-    entryToDelta: (entry: any) => ({
-        hasIncludedDelta: Boolean(entry?.hasIncludedDelta),
-        hasPendingDelta: Boolean(entry?.hasPendingDelta),
-        includedAdded: Number(entry?.stats?.includedAdded ?? 0),
-        includedRemoved: Number(entry?.stats?.includedRemoved ?? 0),
-        pendingAdded: Number(entry?.stats?.pendingAdded ?? 0),
-        pendingRemoved: Number(entry?.stats?.pendingRemoved ?? 0),
-    }),
-    fileHasDeltaForArea: (file: any, delta: any, area: string) => {
-        if (delta) {
-            if (area === 'included') return delta.hasIncludedDelta;
-            if (area === 'pending') return delta.hasPendingDelta;
-            return delta.hasIncludedDelta || delta.hasPendingDelta;
-        }
-        if (area === 'included') return file.isIncluded === true;
-        if (area === 'pending') return file.isIncluded !== true;
-        return true;
-    },
-    toAreaFileStatus: (file: any, delta: any, area: string) => {
-        if (!delta) {
-            return area === 'included'
-                ? { ...file, isIncluded: true }
-                : area === 'pending'
-                    ? { ...file, isIncluded: false }
-                    : file;
-        }
-        if (area === 'included') {
-            return { ...file, isIncluded: true, linesAdded: delta.includedAdded, linesRemoved: delta.includedRemoved };
-        }
-        if (area === 'pending') {
-            return { ...file, isIncluded: false, linesAdded: delta.pendingAdded, linesRemoved: delta.pendingRemoved };
-        }
-        return {
-            ...file,
-            linesAdded: delta.includedAdded + delta.pendingAdded,
-            linesRemoved: delta.includedRemoved + delta.pendingRemoved,
-        };
-    },
-}));
-
 vi.mock('@/scm/diff/defaultMode', () => ({
     resolveDefaultDiffModeForFile: ({ snapshot, hasIncludedDelta, hasPendingDelta }: any) => {
         const supportsIncludeExclude = snapshot?.capabilities?.writeInclude === true
@@ -819,6 +770,9 @@ vi.mock('@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting', () =
         ),
 }));
 
+// Cold module transformation belongs to collection, outside behavior timing.
+const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
 describe('ChangedFilesReview', () => {
     beforeEach(() => {
         sessionScmDiffFileSpy.mockReset();
@@ -876,7 +830,6 @@ describe('ChangedFilesReview', () => {
     const fileC = { fileName: 'c.ts', filePath: 'src', fullPath: 'src/c.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
 
     async function buildChangedFilesReviewElement(overrides: Record<string, unknown> = {}) {
-        const { ChangedFilesReview } = await import('./ChangedFilesReview');
         return (
             <ChangedFilesReview
                 theme={theme}

@@ -22,7 +22,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
-import type { ImageCompareSide } from './imageCompareModel';
+import { formatBytesDelta, type ImageCompareSide } from './imageCompareModel';
 
 type Mode = 'sideBySide' | 'swipe' | 'onion';
 
@@ -43,16 +43,6 @@ export type ImageCompareProps = Readonly<{
   onOpenStage?: (side: 'before' | 'after') => void;
   testID?: string;
 }>;
-
-function formatBytesDelta(
-  before: number | null,
-  after: number | null,
-): string | null {
-  if (before === null || after === null) return null;
-  const delta = after - before;
-  const kb = Math.round(Math.abs(delta) / 1024);
-  return `${delta < 0 ? '−' : '+'}${kb} KB`;
-}
 
 function sideReason(side: ImageCompareSide): string | null {
   if (side.kind !== 'noPreview') return null;
@@ -416,6 +406,7 @@ function LayeredCompare(
           max={100}
           step={1}
           onValueChange={setOpacity}
+          onValuePreview={(next) => { if (next !== undefined) setOpacity(next); }}
           accessibilityLabel={t('hunkReview.imageBlend')}
           formatValueText={(value) => `${Math.round(value)}%`}
           leading={

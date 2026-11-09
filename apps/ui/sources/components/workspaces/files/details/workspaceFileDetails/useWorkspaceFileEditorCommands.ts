@@ -42,14 +42,16 @@ export function useWorkspaceFileEditorCommands(input: Readonly<{
             accountId: input.accountId,
             editing: latest.current.editor.isEditingFile,
             ...(input.file ? { file: { ...input.file, read: () => {
-                const snapshot = latest.current.editor.readSnapshot();
-                return { savedText: snapshot.savedText, unsaved: snapshot.dirty };
+                const editor = latest.current.editor;
+                const snapshot = editor.readSnapshot();
+                return { savedText: snapshot.savedText, unsaved: snapshot.dirty,
+                    text: snapshot.isEditingFile ? editor.editorHandleRef.current?.getValue() ?? editor.getEditorText() : snapshot.savedText };
             } } } : {}),
             save: async () => {
                 const editor = latest.current.editor;
                 if (!editor.isEditingFile) return { status: 'unavailable' };
                 if (editor.conflict) return { status: 'conflict' };
-                await editor.editorHandleRef.current?.flushPendingChange();
+                if (!await editor.prepareEditorTransition()) return { status: 'unavailable' };
                 const text = editor.editorHandleRef.current?.getValue() ?? editor.getEditorText();
                 if (text === editor.editorOriginalText) return { status: 'clean' };
                 const saved = await editor.saveFileEdits();

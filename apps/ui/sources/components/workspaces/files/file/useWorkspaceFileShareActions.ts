@@ -17,6 +17,7 @@ import { buildFileShareClipboardRequest, resolveFileShareActionScope, type FileS
 import { canOpenFileInDefaultApp } from '@/sync/runtime/files/saveFileBytes';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { writeClipboardStringFromUi } from '@/utils/ui/clipboard';
 
 type FileShareCallback = () => void | Promise<void>;
 
@@ -54,7 +55,7 @@ export function useWorkspaceFileShareActions(input: WorkspaceFileShareActionsInp
             link: intent.kind === 'link' && input.linkInput ? buildWorkspaceFileLink(input.linkInput) : null,
         }, intent);
         if (!request) throw new Error(t('common.unavailable'));
-        const result = await execution.execute(request.actionId, request.input);
+        const result = await writeClipboardStringFromUi(request.input.text, execution.execute);
         if (!execution.isCurrent()) return;
         if (!result.ok) throw new Error(result.error);
     });

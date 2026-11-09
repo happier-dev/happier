@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
-import type { RepositoryCheckpointTurnMetadata } from '@happier-dev/protocol';
+import type { RepositoryCheckpointTurnMetadata } from '@happier-dev/protocol/sessions/changes/types';
 import type { SessionAttributedFile } from '@/scm/scmAttribution';
 import { installSourceControlChangesCommonModuleMocks } from './sourceControlChangesTestHelpers';
 

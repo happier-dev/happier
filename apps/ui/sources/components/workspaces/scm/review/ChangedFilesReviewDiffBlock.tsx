@@ -41,7 +41,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import type { ChangedFilesReviewFindModel } from './useChangedFilesReviewFind';
 import type { HunkReviewControllerParams } from './hunkReview/useHunkReviewController';
-import type { ReviewUnit } from '@happier-dev/protocol/scm/comparisonOccurrences';
+import { useChangedFilesReviewPathHunkReview, type ChangedFilesReviewHunkReviewSource } from './changedFilesReviewHunkReviewSource';
 
 /** Keep / Discard on a Review file's changes (P5): the list's checkout and its one discard owner. */
 export type ReviewBlockHunkReview = Readonly<Pick<HunkReviewControllerParams, 'source' | 'host' | 'serverId' | 'onDiscard'
@@ -90,9 +90,8 @@ export type ChangedFilesReviewDiffBlockProps = Readonly<{
         columnWidth: number;
         render: (path: string, hunkIndex: number, placement: 'column' | 'inline') => React.ReactNode;
     }> | null;
-    /** Hunk rows with Keep / Discard (absent: notes and navigation only). */
-    hunkReview?: DiffViewerHunks | null;
-    reviewUnits?: readonly ReviewUnit[];
+    /** Hunk rows with Keep / Discard, read for this file only (absent: notes and navigation only). */
+    hunkReviewSource?: ChangedFilesReviewHunkReviewSource;
 }>;
 
 function buildDiffDraftsSignature(filePath: string, drafts: readonly ReviewCommentDraft[]): string {
@@ -137,8 +136,7 @@ function areChangedFilesReviewDiffBlockPropsEqual(
         || prev.imageCompare !== next.imageCompare
         || prev.onOpenFile !== next.onOpenFile
         || prev.hunkNotes !== next.hunkNotes
-        || prev.hunkReview !== next.hunkReview
-        || prev.reviewUnits !== next.reviewUnits
+        || prev.hunkReviewSource !== next.hunkReviewSource
     ) {
         return false;
     }
@@ -230,6 +228,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
         React.useCallback(() => props.diffStateSource.getDiffState(filePath), [filePath, props.diffStateSource]),
         React.useCallback(() => props.diffStateSource.getDiffState(filePath), [filePath, props.diffStateSource]),
     );
+    const { hunks: hunkReview, reviewUnits } = useChangedFilesReviewPathHunkReview(props.hunkReviewSource, filePath);
     const noOverflowAnchor = Platform.OS === 'web' ? ({ overflowAnchor: 'none' } as any) : null;
     const testIdSafePath = React.useMemo(() => toTestIdSafeValue(filePath), [filePath]);
     const blockTestId = `scm-review-diff-${testIdSafePath}`;
@@ -263,9 +262,9 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
         const currentIndex = hunkTable.hunks.findIndex((hunk) => hunk.revealLineId === props.scrollToLineId);
         return { currentIndex: currentIndex < 0 ? null : currentIndex, renderNote: props.hunkNotes ? renderNote : undefined };
     }, [hunkTable.hunks, props.hunkNotes, props.scrollToLineId, renderNote]);
-    const reviewHunks = React.useMemo(() => props.hunkReview
-        ? props.hunkNotes ? { ...props.hunkReview, renderNote } : props.hunkReview
-        : hunks, [props.hunkReview, props.hunkNotes, renderNote, hunks]);
+    const reviewHunks = React.useMemo(() => hunkReview
+        ? props.hunkNotes ? { ...hunkReview, renderNote } : hunkReview
+        : hunks, [hunkReview, props.hunkNotes, renderNote, hunks]);
     const notesColumn = useHunkNotesColumn({ filePath, hunkNotes: columnNotes ?? EMPTY_COLUMN_NOTES, tops: columnNotes ? noteTops : EMPTY_NOTE_TOPS,
         borderColor: theme.colors.border.default });
     const noteColumnStyle = columnNotes ? { paddingRight: columnNotes.columnWidth, minHeight: notesColumn.minHeight } : null;
@@ -454,7 +453,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
                     registerFindRefold={registerFindRefold}
                     findRangesByLineId={findRangesByLineId}
                     hunks={reviewHunks}
-                    reviewUnits={props.reviewUnits}
+                    reviewUnits={reviewUnits}
                     scrollToLineId={props.scrollToLineId}
                     highlightLineId={reviewHighlightLineId}
                     onScrollToLine={props.onScrollToLine}
@@ -486,7 +485,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
                     registerFindRefold={registerFindRefold}
                     findRangesByLineId={findRangesByLineId}
                     hunks={reviewHunks}
-                    reviewUnits={props.reviewUnits}
+                    reviewUnits={reviewUnits}
                     scrollToLineId={props.scrollToLineId}
                     highlightLineId={reviewHighlightLineId}
                     onScrollToLine={props.onScrollToLine}

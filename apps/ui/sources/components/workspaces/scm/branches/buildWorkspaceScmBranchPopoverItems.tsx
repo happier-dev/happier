@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import type { ScmBranchListEntry, ScmStashEntry } from '@happier-dev/protocol';
+import type { ScmBranchListEntry} from '@happier-dev/protocol/scm/branches';
+import type { ScmStashEntry } from '@happier-dev/protocol/scm';
 
 import type { SelectableMenuItem } from '@/components/ui/forms/dropdown/selectableMenuTypes';
 import { t } from '@/text';

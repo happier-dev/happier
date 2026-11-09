@@ -14,6 +14,13 @@ import {
 } from './sessionCockpitState';
 
 describe('sessionCockpitState', () => {
+    it('opens the same Skills destination from retained pane state and an exact Home route', () => {
+        expect(resolveSessionMobileSurfaceIntent({ routeKind: 'index', activeRightTabId: 'skills' })).toBe('skills');
+        expect(resolveSessionMobileSurfaceIntent({ routeKind: 'index', persistedSurface: 'skills' })).toBe('skills');
+        expect(resolveSessionRightTabIdForSurface('skills', false)).toBe('skills');
+        expect(resolveSessionRoutePathForSurface('s1', 'skills', { serverId: 'home-a' }))
+            .toBe('/session/s1?mobileSurface=skills&serverId=home-a');
+    });
     it('lands a cockpit that mounts with the Session viewer presented on Chat, where it docks, whatever projection was retained', () => {
         expect(resolveSessionCockpitLandingSurface('browser', true)).toBe('chat');
         expect(resolveSessionCockpitLandingSurface('tabs', true)).toBe('chat');

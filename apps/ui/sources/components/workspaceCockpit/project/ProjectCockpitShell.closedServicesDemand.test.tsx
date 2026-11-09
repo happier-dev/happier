@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { RPC_METHODS } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { installSessionDetailsPanelNonRnModuleMocks } from '@/components/sessions/panes/sessionDetailsPanelNonRnModuleMocks';

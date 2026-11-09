@@ -7,6 +7,7 @@ import { ChangedFilesReviewDiffBlock, type ChangedFilesReviewDiffBlockProps } fr
 import type { ChangedFilesReviewDiffStateSource } from '@/components/workspaces/scm/review/ChangedFilesReviewDiffStore';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { ChangedFilesReviewFindModel } from './useChangedFilesReviewFind';
+import { useHunkReviewSource, type ChangedFilesReviewHunkReviewModels } from './changedFilesReviewHunkReviewSource';
 
 const EMPTY_REVIEW_COMMENT_DRAFTS: readonly ReviewCommentDraft[] = [];
 const EMPTY_REVIEW_COMMENT_DRAFTS_BY_FILE_PATH: ReadonlyMap<string, readonly ReviewCommentDraft[]> = new Map();
@@ -34,8 +35,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
     evidenceOnly?: boolean;
     hunkNotes?: ChangedFilesReviewDiffBlockProps['hunkNotes'];
     /** Keep / Discard rows on every file's changes (one checkout, one discard owner). */
-    getHunkReview?: (path: string) => Readonly<{ hunks: NonNullable<ChangedFilesReviewDiffBlockProps['hunkReview']>;
-        reviewUnits: ChangedFilesReviewDiffBlockProps['reviewUnits'] }>;
+    hunkReview?: ChangedFilesReviewHunkReviewModels;
 }>): (path: string, fileFacts: DiffFileFacts) => React.ReactNode {
     const {
         theme,
@@ -52,6 +52,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
         lineTarget,
     } = input;
     const flat = input.flat === true;
+    const hunkReviewSource = useHunkReviewSource(input.hunkReview);
 
     const reviewCommentDraftsByDiffFilePath = React.useMemo(() => {
         if (reviewCommentsEnabled !== true || !reviewCommentDrafts || reviewCommentDrafts.length === 0) {
@@ -77,7 +78,6 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
     return React.useCallback((path: string, fileFacts: DiffFileFacts) => {
         const fileReviewCommentDrafts = reviewCommentDraftsByDiffFilePath.get(path)
             ?? EMPTY_REVIEW_COMMENT_DRAFTS;
-        const review = input.getHunkReview?.(path);
         const imageCompare = fileFacts.imageCompare ?? null;
         return (
             <ChangedFilesReviewDiffBlock
@@ -105,8 +105,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
                 hunkNotes={input.hunkNotes}
                 imageCompare={imageCompare}
                 onOpenFile={fileFacts.onOpenFile}
-                hunkReview={review?.hunks ?? null}
-                reviewUnits={review?.reviewUnits}
+                hunkReviewSource={hunkReviewSource}
             />
         );
     }, [
@@ -114,7 +113,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
         flat,
         input.evidenceOnly,
         input.hunkNotes,
-        input.getHunkReview,
+        hunkReviewSource,
         input.findModel,
         input.findActive,
         input.onRetryDiff,

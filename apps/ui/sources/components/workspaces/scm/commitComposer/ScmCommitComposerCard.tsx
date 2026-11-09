@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { usePaneContentInsetPx } from '@/components/ui/lists/listPresentation';
 import { View } from 'react-native';
 
 import { Text, TextInput } from '@/components/ui/text/Text';
@@ -89,6 +90,8 @@ export function normalizeGeneratedCommitMessageSuggestion(value: string): string
 }
 
 export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardProps) => {
+    // The message box stands on the pane's text edge, with the change rows above it.
+    const contentInsetPx = usePaneContentInsetPx();
     const trimmedMessage = String(props.draftMessage ?? '').trim();
     const commitDisabled = props.busy || !props.commitAllowed || trimmedMessage.length === 0;
     const variant = props.variant ?? 'card';
@@ -131,8 +134,8 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
     return (
         <View
             style={variant === 'card'
-                ? { paddingHorizontal: 12, paddingVertical: 8 }
-                : { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 12 }}
+                ? { paddingHorizontal: contentInsetPx, paddingVertical: 8 }
+                : { paddingHorizontal: contentInsetPx, paddingTop: 10, paddingBottom: 12 }}
         >
             {props.commitSelectionAvailable ? (
                 props.selectionModeActive ? (

@@ -8,6 +8,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Text } from '@/components/ui/text/Text';
 import { useUnistyles } from 'react-native-unistyles';
 import { useFindSurfaceRegistration, useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
+import { isFindSurfaceTarget } from '@/keyboard/findSurfaceTarget';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
@@ -59,6 +60,7 @@ export function ChangedFilesReviewFindSurface(props: Readonly<{
         model.open(); input.current?.focus();
     };
     useFindSurfaceRegistration(eligible ? { surfaceId: props.surfaceId, open, controller,
+        containsTarget: target => isFindSurfaceTarget(props.surfaceRef.current as unknown as HTMLElement | null, target),
         isOpen: () => snapshot.open, isInputFocused: () => inputFocused,
         containsFocus: () => {
             if (!eligible) return false;

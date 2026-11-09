@@ -1,6 +1,6 @@
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WorkspaceSyncConflictInspectRpcResultV1Schema } from '@happier-dev/protocol';
+import { WorkspaceSyncConflictInspectRpcResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';

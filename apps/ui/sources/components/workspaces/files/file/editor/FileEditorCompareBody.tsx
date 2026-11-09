@@ -164,7 +164,6 @@ const stylesheet = StyleSheet.create((theme) => ({
   root: {
     flex: 1,
     minHeight: 0,
-    backgroundColor: theme.colors.surface.base,
   },
   body: {
     flex: 1,

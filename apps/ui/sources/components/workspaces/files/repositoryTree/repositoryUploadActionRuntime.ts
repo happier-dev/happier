@@ -1,4 +1,4 @@
-import type { RepositoryUploadPickInputV1, RepositoryUploadPickResultV1 } from '@happier-dev/protocol';
+import type { RepositoryUploadPickInputV1, RepositoryUploadPickResultV1 } from '@happier-dev/protocol/actions/composerIngressAction';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { normalizeWorkspaceScopeBase, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 

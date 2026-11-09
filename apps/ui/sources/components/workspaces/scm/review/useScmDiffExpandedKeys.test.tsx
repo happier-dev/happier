@@ -142,6 +142,44 @@ describe('useScmDiffExpandedKeys', () => {
         await hook.unmount();
     });
 
+    it('never grows the files shown above a revealed file in a 55,919-file review, until it is first on screen or gone', async () => {
+        const allKeys = Array.from({ length: 55_919 }, (_, index) => `file-${index}`);
+        const range = (start: number, end: number) => Array.from({ length: end - start }, (_, offset) => start + offset);
+        const expandedIndices = (keys: ReadonlySet<string>, indices: readonly number[]) => indices.filter((index) => keys.has(allKeys[index]!));
+        type Props = { viewableIndices: readonly number[]; reveal: Readonly<{ key: string; index: number }> | null };
+        const initialProps: Props = { viewableIndices: range(0, 10), reveal: null };
+        const hook = await renderHook((props: Props) => useScmDiffExpandedKeys({
+            allKeys, viewableIndices: props.viewableIndices, tooLarge: true, aheadCount: 14, behindCount: 8, resetKey: 'r', reveal: props.reveal,
+        }), { initialProps });
+        const show = async (props: Props) => { await hook.rerender(props); await flushHookEffects({ cycles: 2, turns: 2 }); };
+        const last = allKeys.length - 1;
+
+        // The list cannot bring the final file to the top: it lands at the bottom, under nine others.
+        const finalReveal = { key: allKeys[last]!, index: last };
+        await show({ viewableIndices: range(0, 10), reveal: finalReveal });
+        await show({ viewableIndices: range(last - 9, last + 1), reveal: finalReveal });
+        expect(hook.getCurrent().expandedKeys.has(allKeys[last]!)).toBe(true);
+        expect(expandedIndices(hook.getCurrent().expandedKeys, range(last - 9, last))).toEqual([]);
+        // Reading upward while it is still on screen grows nothing above it.
+        await show({ viewableIndices: range(last - 12, last - 2 + 1).concat(last), reveal: finalReveal });
+        expect(expandedIndices(hook.getCurrent().expandedKeys, range(last - 12, last))).toEqual([]);
+        // Once it is gone, the ordinary window follows the screen again.
+        await show({ viewableIndices: range(last - 20, last - 10), reveal: finalReveal });
+        expect(expandedIndices(hook.getCurrent().expandedKeys, range(last - 20, last - 10))).toEqual(range(last - 20, last - 10));
+        await show({ viewableIndices: range(last - 9, last + 1), reveal: finalReveal });
+        expect(expandedIndices(hook.getCurrent().expandedKeys, range(last - 9, last + 1))).toEqual(range(last - 9, last + 1));
+
+        // A file the list brings to the top keeps the ordinary window, including the files just above it.
+        const middle = Math.floor(allKeys.length / 2);
+        const middleReveal = { key: allKeys[middle]!, index: middle };
+        await show({ viewableIndices: range(middle, middle + 10), reveal: middleReveal });
+        expect(expandedIndices(hook.getCurrent().expandedKeys, range(middle - 8, middle + 24))).toEqual(range(middle - 8, middle + 24));
+        // Scrolling up from it afterwards also stays ordinary.
+        await show({ viewableIndices: range(middle - 3, middle + 7), reveal: middleReveal });
+        expect(expandedIndices(hook.getCurrent().expandedKeys, range(middle - 3, middle))).toEqual(range(middle - 3, middle));
+        await hook.unmount();
+    });
+
     it('keeps manually expanded rows outside the automatic large-review window', async () => {
         const hook = await renderHook(() => useScmDiffExpandedKeys({
             allKeys: largeReviewKeys,

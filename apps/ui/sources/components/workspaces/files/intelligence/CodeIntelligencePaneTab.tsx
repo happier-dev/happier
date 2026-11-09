@@ -7,12 +7,11 @@ import { useCodeIntelligenceSnapshot } from '@/sync/domains/workspaces/languageI
 import { t } from '@/text';
 
 import { CodeProblemsList } from './CodeProblemsList';
-import {
-  CodeReferencesList,
-  type CodeReferenceRow,
-} from './CodeReferencesList';
+import type { CodeReferenceRow } from './CodeReferencesList';
+import { CodeReferencesPanel } from './CodeReferencesPanel';
 import {
   groupCodeProblems,
+  isCodeReferenceResultPartial,
   resolveLanguageStateNote,
 } from './codeIntelligencePresentation';
 import { useCodeIntelligencePaneProducer } from './codeIntelligencePaneStore';
@@ -46,10 +45,11 @@ export function CodeIntelligencePaneTab(
     lastReferences.current?.controller === producer?.controller
       ? (lastReferences.current?.snapshot ?? null)
       : null;
-  const diagnosticsKey = snapshot.diagnostics?.items;
+  const project = snapshot.problemsScope === 'project';
+  const diagnosticsKey = project ? snapshot.projectDiagnostics?.items : snapshot.diagnostics?.items;
   React.useEffect(() => {
     setAsked(false);
-  }, [diagnosticsKey]);
+  }, [diagnosticsKey, project]);
   if (!producer) {
     return (
       <View style={styles.empty}>
@@ -102,27 +102,28 @@ export function CodeIntelligencePaneTab(
         contentContainerStyle={styles.content}
         testID="code-references-pane"
       >
-        <CodeReferencesList
-          rows={rows}
-          textMatches={answer.mode === 'fallback'}
-          partial={Boolean(
-            result && 'coverage' in result && result.coverage === 'partial',
-          )}
-          searching={
-            snapshot.kind === 'references' &&
-            (snapshot.status === 'searching' || snapshot.status === 'loading')
-          }
-          progress={progressLine}
-          selected={selectedReference}
-          onOpen={(row) => {
-            setSelectedReference(row);
-            producer.openReference(row);
+        <CodeReferencesPanel
+          key={producer.path}
+          controller={producer.controller}
+          position={answer.querySelection?.position ?? null}
+          supportsCalls={props.active && snapshot.capabilities?.callHierarchy === true}
+          references={{
+            rows,
+            textMatches: answer.mode === 'fallback',
+            partial: isCodeReferenceResultPartial(result),
+            searching: snapshot.kind === 'references' && (snapshot.status === 'searching' || snapshot.status === 'loading'),
+            progress: progressLine,
+            selected: selectedReference,
+            onOpen: (row) => {
+              setSelectedReference(row);
+              producer.openReference(row);
+            },
           }}
         />
       </ScrollView>
     );
   }
-  const diagnostics = snapshot.diagnostics;
+  const diagnostics = project ? snapshot.projectDiagnostics : snapshot.diagnostics;
   const groups = diagnostics
     ? groupCodeProblems(diagnostics.items, snapshot.servers)
     : [];
@@ -133,7 +134,14 @@ export function CodeIntelligencePaneTab(
         groups={groups}
         state={diagnostics?.state ?? 'idle'}
         count={diagnostics?.count ?? null}
-        progress={progressLine}
+        progress={project && snapshot.projectDiagnosticsReason === 'loading'
+          ? { kind: 'progress', text: t('files.pane.intelligence.checking') } : progressLine}
+        scope={snapshot.problemsScope ?? 'open'}
+        onScopeChange={producer.controller.setProblemsScope}
+        onCheckProject={producer.checkProjectProblems}
+        onCancelProject={producer.controller.cancelProjectDiagnostics}
+        projectChecking={snapshot.projectDiagnostics?.state === 'checking'}
+        partial={project && snapshot.projectDiagnosticsPartial === true}
         onOpen={producer.openProblem}
         onCheck={producer.checkProblems}
         asked={asked}

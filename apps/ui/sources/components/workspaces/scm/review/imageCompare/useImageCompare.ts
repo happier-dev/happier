@@ -14,7 +14,12 @@ export type ImageCompareSource =
     | Readonly<{ kind: 'captured'; file: ScmComparisonFile; comparisonId: string }>
     | Readonly<{ kind: 'workingTree'; changeKind: string; area: ScmDiffArea; signature?: string | null; sizeBytes?: number | null }>;
 
-/** Review and File Changes share pinned revision bytes and the normal live-after preview owner. */
+/** A changed picture or PDF opens in the Media stage as itself. */
+function stageItemKind(kind: ReturnType<typeof resolveFileViewerKind>['kind']): MediaStageItem['kind'] {
+    return kind === 'svg' || kind === 'pdf' ? kind : 'image';
+}
+
+/** Review and File Changes share pinned revision bytes and the normal live-after preview owner (pictures and PDFs). */
 export function useImageCompare(input: Readonly<{
     enabled: boolean;
     scope: WorkspaceScopeBase;
@@ -50,13 +55,14 @@ export function useImageCompare(input: Readonly<{
     });
     const { serverId, machineId, rootPath } = input.scope;
     const liveAfterInput = React.useMemo<UseFilePreviewSourceInput>(() => {
-        const identity = buildWorkspacePreviewIdentity(input.scope, input.filePath, live?.sizeBytes, live?.signature);
+        const enabled = input.enabled && !afterAbsent && Boolean(live);
+        const identity = enabled ? buildWorkspacePreviewIdentity(input.scope, input.filePath, live?.sizeBytes, live?.signature) : null;
         return {
-            enabled: input.enabled && !afterAbsent && Boolean(live),
+            enabled,
             source: { kind: 'workspace', scope: { serverId, machineId, rootPath }, filePath: input.filePath },
             mimeType: viewer.mimeType, sizeBytes: live?.sizeBytes, ...identity,
             // This mounted comparison owns one live read; wells, modes and stage borrow that read.
-            ...(!identity.cacheKey ? { acquisitionKey: createImagePreviewAcquisition() } : {}),
+            ...(enabled && !identity?.cacheKey ? { acquisitionKey: createImagePreviewAcquisition() } : {}),
             // The preview owner retries keyed and unkeyed reads without inventing a version for either.
             retryCount: attempts.after,
         };
@@ -71,11 +77,10 @@ export function useImageCompare(input: Readonly<{
         // An over-budget live after says its size; the working-tree listing knows it.
         : projectImageComparePreview(captured ? capturedAfter
             : liveAfter.status === 'error' ? { ...liveAfter, sizeBytes: live?.sizeBytes ?? null } : liveAfter);
-    const kind = viewer.kind === 'svg' ? 'svg' as const : 'image' as const;
-    const beforeItem: MediaStageItem = { kind: beforeViewer.kind === 'svg' ? 'svg' : 'image', title: input.beforeTitle ?? input.filePath, source: before.previewInput, alphaCapable: beforeViewer.alphaCapable,
+    const beforeItem: MediaStageItem = { kind: stageItemKind(beforeViewer.kind), title: input.beforeTitle ?? input.filePath, source: before.previewInput, alphaCapable: beforeViewer.alphaCapable,
         ...('sizeBytes' in before ? { sizeBytes: before.sizeBytes } : {}), ...(input.openFile ? { openFile: input.openFile } : {}) };
     const afterInput = captured ? capturedAfter.previewInput : liveAfterInput;
-    const afterItem: MediaStageItem = { kind, title: input.afterTitle ?? input.filePath, source: afterInput, alphaCapable: viewer.alphaCapable,
+    const afterItem: MediaStageItem = { kind: stageItemKind(viewer.kind), title: input.afterTitle ?? input.filePath, source: afterInput, alphaCapable: viewer.alphaCapable,
         ...(afterPreview.status === 'loaded' ? { sizeBytes: afterPreview.sizeBytes } : {}), ...(input.openFile ? { openFile: input.openFile } : {}) };
     const model = buildImageCompareModel({ changeKind, before: beforePreview, after: afterPreview, beforeItem, afterItem });
     return { ...model, retry, beforePreviewInput: before.previewInput, afterPreviewInput: afterInput,

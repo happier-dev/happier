@@ -23,7 +23,7 @@ export function FileEditorAskControls(
     onCommentSelection?: AskSelectionControlsProps['onCommentSelection'];
   }>,
 ): React.ReactElement | null {
-  const pane = useAppPaneScope(props.scopeId);
+  const pane = useAppPaneScope(props.scopeId, () => null);
   const revealSessionColumn = useAskSessionReveal();
   const handle = props.handle;
   const getSelection = React.useCallback(

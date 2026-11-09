@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushHookEffects, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, installBrowserClipboardBoundary, standardCleanup } from '@/dev/testkit';
 import { createSessionFilesViewFixture, fileViewSnapshot, prepareSessionFilesViewTestkit } from '@/components/sessions/files/views/sessionFilesViewTestkit';
 import { createSessionFileNativeTransferBoundary } from '@/components/sessions/files/sessionFileNativeTransferTestkit';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
@@ -12,6 +12,7 @@ import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
 import { installReactDomPortalBoundaryForTests } from '@/dev/testkit/mocks/reactDom';
 import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createAccountSettingsHttpBoundary } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { createPluginDeclarativeModelFixture } from '@/dev/testkit/fixtures/pluginDeclarativeModelFixture';
 import { OpenableContentStatResultV1Schema } from '@happier-dev/protocol/plugins/openableContent';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
@@ -20,11 +21,15 @@ import type { DetailsSurfaceRenderInputV1 } from '@/components/appShell/panes/de
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
-import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 
 const clipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async (_text: string) => true) }));
 const viewerViewport = vi.hoisted(() => ({ width: 1280 }));
 vi.mock('expo-clipboard', () => clipboard);
+vi.mock('@legendapp/list/react-native', async importOriginal => {
+    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+    // The host renderer has no measured recycler viewport; keep the real File rows.
+    return createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>() }).module;
+});
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -48,8 +53,11 @@ let scmDiff = '';
 let portalBoundary: ReturnType<typeof installReactDomPortalBoundaryForTests>;
 let viewerStatBytes: Uint8Array | null;
 let settingsRequests: Array<{ method: string; status: number }>;
+let accountSettings: ReturnType<typeof createAccountSettingsHttpBoundary>;
+let settingsWrites: Array<{ expectedVersion: number; viewer: unknown }>;
 // Compile and load the real runtime graph during collection, as the other composed File tests do.
 await prepareSessionFilesViewTestkit();
+const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
 const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
 const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
 const { ImageWell } = await import('@/components/ui/media/ImageWell');
@@ -116,6 +124,7 @@ beforeEach(async () => {
     standardCleanup();
     viewerViewport.width = 1280;
     clipboard.setStringAsync.mockClear();
+    installBrowserClipboardBoundary(async text => { await clipboard.setStringAsync(text); });
     // jsdom supplies the web modal DOM; Node supplies real, fetchable Blob URLs.
     vi.stubGlobal('Blob', getVitestNodeBuiltin<typeof import('node:buffer')>('node:buffer').Blob);
     vi.stubGlobal('URL', getVitestNodeBuiltin<typeof import('node:url')>('node:url').URL);
@@ -125,9 +134,11 @@ beforeEach(async () => {
     scmDiff = '';
     viewerStatBytes = null;
     settingsRequests = [];
+    settingsWrites = [];
     transfer = createSessionFileNativeTransferBoundary({ bytes: new TextEncoder().encode(svg), name: filePath });
     const settings = createAccountSettingsHttpBoundary({ serverUrl: 'https://session-file-views.test',
         initialAccounts: [{ accountId: 'alice', snapshot: { content: { t: 'plain', v: {} }, version: 0 } }] });
+    accountSettings = settings;
     const read = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://session-file-views.test',
         serverIdentityId: 'srv_svg_preview', accountId: 'alice', machineId: 'm1', tokenEpoch: 0,
         actionId: 'daemon.filesystem.readFile', execute: input => {
@@ -142,6 +153,11 @@ beforeEach(async () => {
             const settingsResponse = settings.handle(url, init);
             if (settingsResponse) {
                 settingsRequests.push({ method: init?.method ?? 'GET', status: settingsResponse.status });
+                if (init?.method === 'POST') {
+                    const body = AccountSettingsV2UpdateRequestSchema.parse(JSON.parse(String(init.body)));
+                    settingsWrites.push({ expectedVersion: body.expectedVersion,
+                        viewer: body.content?.t === 'plain' ? body.content.v.workspaceFileViewerPreferencesV1 : null });
+                }
                 return settingsResponse;
             }
             const parsed = new URL(String(url));
@@ -159,6 +175,175 @@ beforeEach(async () => {
 afterEach(async () => { standardCleanup(); await fixture?.dispose(); portalBoundary?.restore(); vi.unstubAllGlobals(); });
 
 describe('SVG File page preview dispatch', () => {
+    it('selects, clears and refuses stale viewer preferences through the real Account Action CAS', async () => {
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { WorkspaceFileViewerPreferencesV1Schema } = await import('@happier-dev/protocol/account/settings/workspaceFileViewerPreferencesV1');
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'ui' as const, authority: 'present_user' as const,
+            serverId: fixture.scope.serverId, expectedAccountId: 'alice' };
+        const selector = { kind: 'mime', value: ' Text/Plain ' };
+        expect(await executor.execute('file.view.preference.set', {
+            mutation: { kind: 'select', selector, viewer: { kind: 'builtin' } }, expectedSettingsVersion: 0,
+        }, context)).toEqual({ ok: true, result: { status: 'applied', settingsVersion: 1 } });
+        expect(WorkspaceFileViewerPreferencesV1Schema.parse(settingsWrites.at(-1)?.viewer)).toEqual({
+            v: 1, selections: { 'mime:text/plain': { kind: 'builtin' } },
+        });
+        expect(await executor.execute('file.view.preference.set', {
+            mutation: { kind: 'clear', selector }, expectedSettingsVersion: 0,
+        }, context)).toMatchObject({ ok: false, errorCode: 'account_settings_mutation_conflict' });
+        expect(settingsWrites).toHaveLength(1);
+        expect(await executor.execute('file.view.preference.set', {
+            mutation: { kind: 'clear', selector }, expectedSettingsVersion: 1,
+        }, context)).toEqual({ ok: true, result: { status: 'applied', settingsVersion: 2 } });
+        expect(WorkspaceFileViewerPreferencesV1Schema.parse(settingsWrites.at(-1)?.viewer)).toEqual({ v: 1, selections: {} });
+    });
+
+    it.each(['disabled', 'conflict'] as const)('leaves preferences and the delivered viewer unchanged when its preference Action is refused (%s)', async (refusal) => {
+        const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { settingsParse } = await import('@/sync/domains/settings/settings');
+        const accountScope = getActiveServerAccountScope();
+        if (!accountScope) throw new Error('Viewer admission requires the restored Account');
+        const raw = {
+            actionsSettingsV1: { v: 1, actions: refusal === 'disabled' ? { 'file.view.preference.set': { enabled: false } } : {} },
+            workspaceFileViewerPreferencesV1: { v: 1, selections: {
+                'mime:text/plain': { kind: 'plugin', pluginId: 'com.external.viewer-11', contributionLocalId: 'text' },
+            } },
+        };
+        await fixture.storage.getState().activateSettingsScope(accountScope);
+        fixture.storage.getState().applySettingsForScope(accountScope, settingsParse({}), 0);
+        viewerStatBytes = new TextEncoder().encode('plain notes\n');
+        transfer.setPayload(viewerStatBytes, 'notes.txt');
+        applyProjectAccountRowsFixture(fixture.storage, { workspaceRefs: [{ ...fixture.scope,
+            id: 'project:installed-viewers', label: null, createdAtMs: 1, lastOpenedAtMs: null }] });
+        const screen = await fixture.render(<ModalProvider><InstalledViewerFileHost projection={installedViewerProjection()} platform="web" formFactor="tablet" /></ModalProvider>);
+        try {
+            await vi.waitFor(() => expect(screen.findByTestId('plugin-details-viewer-choice:openableContentViewer:com.external.viewer-11:text')?.props.disabled).not.toBe(true));
+            accountSettings.replaceAccountSettings('alice', { content: { t: 'plain', v: raw }, version: refusal === 'conflict' ? 18 : 17 });
+            await act(async () => fixture.storage.getState().applySettingsForScope(accountScope, settingsParse(raw), 17));
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('External viewer 11 mounted'));
+            await screen.pressByTestIdAsync('plugin-details-viewer-choice:builtin');
+            await flushHookEffects({ cycles: 4 });
+            expect(settingsWrites).toEqual([]);
+            expect(fixture.storage.getState().settings.workspaceFileViewerPreferencesV1).toEqual(raw.workspaceFileViewerPreferencesV1);
+            expect(screen.getTextContent()).toContain('External viewer 11 mounted');
+        } finally { await screen.unmount(); }
+    });
+
+    it('ignores unrelated accepted settings revisions while keeping viewer readiness and preferences fresh', async () => {
+        const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { settingsParse } = await import('@/sync/domains/settings/settings');
+        const { paneUiState } = await import('@/sync/domains/state/filePaneUiState');
+        const { PluginSurfacePlacementHost } = await import('@/components/plugins/surfaces');
+        const accountScope = getActiveServerAccountScope();
+        if (!accountScope) throw new Error('Viewer locality requires the restored Account');
+        await fixture.storage.getState().activateSettingsScope(accountScope);
+        fixture.storage.getState().applySettingsForScope(accountScope, settingsParse({}), 0);
+        viewerStatBytes = new TextEncoder().encode('plain notes\n');
+        transfer.setPayload(viewerStatBytes, 'notes.txt');
+        applyProjectAccountRowsFixture(fixture.storage, { workspaceRefs: [{ ...fixture.scope,
+            id: 'project:installed-viewers', label: null, createdAtMs: 1, lastOpenedAtMs: null }] });
+        let commits = 0;
+        let panePublications = 0;
+        const projection = installedViewerProjection();
+        const screen = await fixture.render(<ModalProvider><React.Profiler id="file-viewer" onRender={() => { commits += 1; }}>
+            <InstalledViewerFileHost projection={projection} platform="web" formFactor="tablet" />
+        </React.Profiler></ModalProvider>);
+        const unsubscribe = paneUiState.subscribe(() => { panePublications += 1; });
+        const choiceId = 'plugin-details-viewer-choice:openableContentViewer:com.external.viewer-11:text';
+        try {
+            await vi.waitFor(() => expect(screen.findByTestId(choiceId), screen.getTextContent()).not.toBeNull());
+            await vi.waitFor(() => expect(screen.findByTestId(choiceId)?.props.disabled).not.toBe(true));
+            await flushHookEffects({ cycles: 4 });
+            commits = 0;
+            panePublications = 0;
+            for (let version = 1; version <= 16; version += 1) {
+                await act(async () => fixture.storage.getState().applySettingsForScope(accountScope, settingsParse({
+                    ...fixture.storage.getState().settings, analyticsOptOut: version % 2 === 1,
+                }), version));
+            }
+            expect(fixture.storage.getState().settingsVersion).toBe(16);
+            expect({ commits, panePublications }).toEqual({ commits: 0, panePublications: 0 });
+
+            await act(async () => fixture.storage.getState().clearSettingsScope());
+            await vi.waitFor(() => expect(screen.findByTestId(choiceId)?.props.disabled).toBe(true));
+            await act(async () => fixture.storage.getState().activateSettingsScope(accountScope));
+            await vi.waitFor(() => expect(screen.findByTestId(choiceId)?.props.disabled).not.toBe(true));
+            const viewerSettings = {
+                analyticsOptOut: false,
+                workspaceFileViewerPreferencesV1: { v: 1, selections: {
+                    'mime:text/plain': { kind: 'plugin', pluginId: 'com.external.viewer-11', contributionLocalId: 'text' },
+                } },
+            };
+            await act(async () => fixture.storage.getState().applySettingsForScope(accountScope, settingsParse({
+                ...fixture.storage.getState().settings, ...viewerSettings,
+            }), 17));
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('External viewer 11 mounted'));
+            expect(screen.findByType(PluginSurfacePlacementHost).props.placement.binding.destination).toEqual({
+                pluginId: 'com.external.viewer-11', localId: 'text-viewer',
+            });
+            // The staged command outlives many revisions. Its CAS must use the latest admitted version,
+            // not the version from the render that originally supplied the choice callback.
+            // Serve the raw server snapshot, not its parsed runtime projection: the latter includes
+            // derived/legacy settings that Sync must clean up before the one-shot viewer mutation.
+            accountSettings.replaceAccountSettings('alice', { content: { t: 'plain', v: viewerSettings }, version: 17 });
+            await screen.pressByTestIdAsync('plugin-details-viewer-choice:builtin');
+            await vi.waitFor(() => expect(fixture.storage.getState().settingsVersion).toBe(18));
+            expect(settingsRequests).toContainEqual({ method: 'POST', status: 200 });
+            const builtinPreferences = {
+                v: 1, selections: { 'mime:text/plain': { kind: 'builtin' } },
+            };
+            expect(settingsWrites).toEqual([{ expectedVersion: 17, viewer: builtinPreferences }]);
+            expect(fixture.storage.getState().settings.workspaceFileViewerPreferencesV1).toEqual(builtinPreferences);
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('plain notes'));
+            expect(screen.getTextContent()).not.toContain('External viewer 11 mounted');
+        } finally { unsubscribe(); await screen.unmount(); }
+    });
+
+    it('keeps the real File page usable when recent-history KV writes are refused and records its next activation after recovery', async () => {
+        const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
+        const { recentWorkspaceFilesState } = await import('@/sync/domains/state/filePaneUiState');
+        const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { recentWorkspaceFilesKey } = await import('@/sync/domains/workspaces/files/recentWorkspaceFiles');
+        const { tryBuildWorkspaceCacheKey } = await import('@/sync/domains/workspaces/workspaceScope');
+        const accountScope = getActiveServerAccountScope();
+        const workspaceKey = tryBuildWorkspaceCacheKey(fixture.scope);
+        if (!accountScope || !workspaceKey) throw new Error('File history requires an exact Account/workspace fixture');
+        const recordKey = recentWorkspaceFilesKey(accountScope, workspaceKey);
+        recentWorkspaceFilesState.set(workspaceKey, ['legacy-only.txt']);
+        const deviceStorage = getPersistenceStorage();
+        const set = deviceStorage.set.bind(deviceStorage);
+        let refused = 0;
+        let refuse = true;
+        // MMKV is the physical persistence boundary; the File page, recorder and keyed owner stay real.
+        const write = vi.spyOn(deviceStorage, 'set').mockImplementation((key, value) => {
+            if (refuse && key.startsWith('ui-state:recent-workspace-files-v1:')) {
+                refused += 1;
+                throw new Error('Device history storage refused');
+            }
+            set(key, value);
+        });
+        const file = (path: string) => <ModalProvider><WorkspaceFileDetailsView scopeId="project:history-refusal"
+            scope={fixture.scope} filePath={path} sessionIdForAugmentation={null} presentation="screen" /></ModalProvider>;
+        let screen: Awaited<ReturnType<typeof fixture.render>> | undefined;
+        try {
+            screen = await fixture.render(file(filePath));
+            await vi.waitFor(() => expect(refused).toBeGreaterThan(0));
+            await screen.pressByTestIdAsync('file-details-view-mode:file');
+            expect(screen.getTextContent()).toContain(svg);
+            expect(recentWorkspaceFilesState.read(recordKey)).toBeUndefined();
+            expect(recentWorkspaceFilesState.read(workspaceKey)).toEqual(['legacy-only.txt']);
+
+            refuse = false;
+            const recoveredPath = 'assets/recovered.svg';
+            transfer.setPayload(new TextEncoder().encode(svg), recoveredPath);
+            await screen.update(fixture.wrap(file(recoveredPath)));
+            await vi.waitFor(() => expect(recentWorkspaceFilesState.read(recordKey)).toEqual([recoveredPath]));
+            await screen.pressByTestIdAsync('file-details-view-mode:file');
+            expect(screen.getTextContent()).toContain(svg);
+            expect(recentWorkspaceFilesState.read(workspaceKey)).toEqual(['legacy-only.txt']);
+        } finally { write.mockRestore(); await screen?.unmount(); }
+    });
+
     it.each([
         { platform: 'web', formFactor: 'tablet' },
         { platform: 'web', formFactor: 'phone' },
@@ -242,9 +427,12 @@ describe('SVG File page preview dispatch', () => {
             await act(async () => { screen.findByType(FilePageHeader).props.edit.onPress(); });
             await vi.waitFor(() => expect(screen.getTextContent()).toContain('External viewer 11 mounted'));
             expect(await readSelectedFile(true)).toMatchObject({ status: 'ready', content: { kind: 'utf8', text: 'plain notes\n' } });
+            await screen.pressByTestIdAsync('plugin-details-viewer-choice:openableContentViewer:com.external.viewer-10:text');
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('External viewer 10 mounted'));
             await screen.pressByTestIdAsync('plugin-details-viewer-choice:builtin');
             await vi.waitFor(() => expect(screen.getTextContent()).toContain('plain notes'));
             expect(screen.getTextContent()).not.toContain('External viewer 11 mounted');
+            expect(settingsWrites.map(write => write.expectedVersion)).toEqual([0, 1, 2]);
         } finally { await screen.unmount(); }
     });
 

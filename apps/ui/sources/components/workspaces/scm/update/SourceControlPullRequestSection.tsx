@@ -1,14 +1,15 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import type {
-    ScmBranchCreateResponse,
+    ScmBranchCreateResponse} from '@happier-dev/protocol/scm/branches';
+import type {
     ScmFollowupAction,
     ScmPullRequestOpenComposeResponse,
     ScmPullRequestOpenOrReuseResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/scm/pullRequests';
 
 import { Modal } from '@/modal';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { useOpenResource } from '@/utils/url/openResource';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -29,6 +30,7 @@ export function SourceControlPullRequestSection(props: Readonly<{
     onRefresh: () => Promise<void>;
     openUrl?: (url: string) => Promise<void>;
 }>) {
+    const { openResourceUrl } = useOpenResource();
     const model = resolveSourceControlPullRequestViewModel({
         snapshot: props.snapshot,
         disabled: props.disabled,
@@ -42,8 +44,9 @@ export function SourceControlPullRequestSection(props: Readonly<{
             setError(t('files.sourceControlOperations.update.pullRequest.unsafeUrl'));
             return;
         }
-        await (props.openUrl ?? openExternalUrl)(safe.url);
-    }, [props.openUrl]);
+        if (props.openUrl) await props.openUrl(safe.url);
+        else await openResourceUrl(safe.url);
+    }, [openResourceUrl, props.openUrl]);
 
     const handleDefaultBranchRemediation = React.useCallback(async (
         action: Extract<NonNullable<typeof model.primaryAction>, { kind: 'open-or-reuse' }>,
@@ -152,7 +155,8 @@ export function SourceControlPullRequestSection(props: Readonly<{
         })();
     }, [busy, handleDefaultBranchRemediation, model.primaryAction, openFollowup, props]);
 
-    if (model.kind === 'unavailable') return null;
+    // This workspace section has no base picker; Session's PR form owns that recovery.
+    if (model.kind === 'unavailable' || !model.primaryAction) return null;
 
     return (
         <SourceControlUpdateSection

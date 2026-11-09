@@ -6,6 +6,7 @@ import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/e
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import type { TrackPresence } from '@/components/sessions/files/track/TrackPauseSignal';
+import { ScmWorkingEntrySchema } from '@happier-dev/protocol/scm/workingSnapshot';
 
 installSessionFilesViewBoundaries({ platformOS: 'android' });
 await prepareSessionFilesViewTestkit();
@@ -54,8 +55,12 @@ beforeEach(async () => {
             if (parsed.pathname === '/v1/machines/m1') return Response.json({ machine: read.machine });
             return await read.handle(parsed, init) ?? new Response('{}', { status: 404 });
         },
-        rpc: () => ({ success: true, exists: true, kind: 'file', sizeBytes: Buffer.byteLength(text) }) });
-    fixture.storage.getState().updateWorkspaceScmSnapshot(fixture.scope, fileViewSnapshot());
+        rpc: request => request.method === 'scm.diff.file'
+            ? { success: true, diff: `--- a/${filePath}\n+++ b/${filePath}\n@@ -0,0 +1,24 @@\n${text.split('\n').map(line => `+${line}`).join('\n')}\n` }
+            : ({ success: true, exists: true, kind: 'file', sizeBytes: Buffer.byteLength(text) }) });
+    fixture.storage.getState().updateWorkspaceScmSnapshot(fixture.scope, fileViewSnapshot({ entries: [
+        ScmWorkingEntrySchema.parse({ path: filePath, kind: 'untracked', includeStatus: ' ', pendingStatus: '?', hasPendingDelta: true }),
+    ] }));
 });
 afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
 
@@ -78,11 +83,16 @@ it('places the caret on the text an Edit replaces when the call names no lines',
     } finally { await screen.unmount(); }
 });
 
-it('scrolls to the region Track asks for, resolved by the same owner that places the caret', async () => {
+it.each(['file', 'diff'] as const)('scrolls the %s body to the region Track asks for, resolved by the caret owner', async (mode) => {
   const { FileContentPanel } = await import('../file/FileContentPanel');
+  const { act } = await import('@/dev/testkit');
+  const { FilePageHeader } = await import('../file/FilePageHeader');
   const presence: TrackPresence = { path: filePath, anchorText: 'const line19 = 19;', agentId: 'claude', agentName: 'Claude', reveal: { seq: 1 } };
   const screen = await fixture.render(<TrackedFilePane presence={presence} />);
   try {
-    await vi.waitFor(() => expect(screen.findAllByType(FileContentPanel)[0]?.props.jumpToAnchor).toMatchObject({ kind: 'fileLine', startLine: 19 }));
+    if (mode === 'diff') await act(async () => { screen.findByType(FilePageHeader).props.onDisplayMode('diff'); });
+    await vi.waitFor(() => expect(screen.findAllByType(FileContentPanel)[0]?.props.jumpToAnchor).toMatchObject({ kind: 'line', line: 19 }));
+    const target = screen.findAllByType(CodeLinesViewCore)[0]?.props.scrollToLineId;
+    expect(target).toBeDefined();
   } finally { await screen.unmount(); }
 });

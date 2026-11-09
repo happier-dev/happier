@@ -1,4 +1,4 @@
-import type { ScmFollowupAction } from '@happier-dev/protocol';
+import type { ScmFollowupAction } from '@happier-dev/protocol/scm/pullRequests';
 
 export type ScmFollowupOpenUrlValidationResult =
     | Readonly<{ ok: true; url: string }>

@@ -61,4 +61,17 @@ describe('buildEditSetPreviewDiff', () => {
       ]),
     ).toEqual({ changes: 3, files: 2 });
   });
+
+  it('counts the lines a formatter rewrites, not its many small edits on them', () => {
+    const edit = (line: number, start: number, end: number, value: string) => ({
+      range: { start: { line, character: start }, end: { line, character: end } }, text: value,
+    });
+    // A formatter answers one reflowed line as many whitespace edits; the review shows one changed line.
+    const format = {
+      path: 'src/cart.ts',
+      expectedHash: HASH,
+      edits: [edit(12, 6, 9, ' '), edit(12, 30, 31, ''), edit(12, 40, 40, ' '), edit(12, 52, 53, ' '), edit(20, 0, 4, '  ')],
+    };
+    expect(countEditSetChanges([format])).toEqual({ changes: 2, files: 1 });
+  });
 });

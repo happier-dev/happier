@@ -7,7 +7,7 @@ import type {
     ScmHostingRepositoryRemoteConflictStrategy,
     ScmHostingRepositoryRemoteUrlKind,
     ScmHostingRepositoryVisibility,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/scm';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm';
 
 import { Text } from '@/components/ui/text/Text';
@@ -68,7 +68,6 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
     onInstallGh?: () => Promise<void> | void;
     onUseManagedGh?: () => Promise<void> | void;
     onAuthenticateGh?: () => Promise<void> | void;
-    openUrl?: (url: string) => Promise<void>;
 }>) {
     const snapshot = props.snapshot;
     const repoScopeKey = snapshot?.repo.isRepo === true
@@ -253,7 +252,6 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
     const runRemediationAction = (action: SourceControlPublishRemediationAction) => {
         void runPublishRemediationAction({
             action,
-            openUrl: props.openUrl,
             onConnectGitHub: props.onConnectGitHub,
             onInstallGh: props.onInstallGh,
             onUseManagedGh: props.onUseManagedGh,

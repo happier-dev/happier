@@ -110,10 +110,14 @@ export type CodeIntelligenceCardProps = Readonly<{
   onRequestClose: () => void;
   onDefinition: () => void;
   onReferences: () => void;
+  onTypeDefinition?: () => void;
+  onImplementation?: () => void;
   onCopyName: () => void;
   onCopyPath: (path: string) => void;
   onChooseName: (name: CodeIdentifier) => void;
   onOpenReference: (row: CodeReferenceRow) => void;
+  /** The shared References / Calls view, mounted only in the phone sheet. */
+  referencesContent?: React.ReactNode;
   /** Quick fixes for the problem the card leads with (Alt+Enter). */
   onQuickFix?: () => void;
   /** Phones: rename the name from the sheet (desktop uses F2 and the ⋯ menu). */
@@ -164,6 +168,8 @@ export function CodeIntelligenceCard(
         ? []
         : [{ label: t('files.pane.intelligence.goToDefinition'), ...(webKeys && definitionKey ? { shortcut: definitionKey } : {}) }]),
       { label: t('files.pane.intelligence.findReferences'), ...(webKeys && referencesKey ? { shortcut: referencesKey } : {}) },
+      ...(props.onTypeDefinition ? [{ label: t('files.pane.menu.goToTypeDefinition') }] : []),
+      ...(props.onImplementation ? [{ label: t('files.pane.menu.goToImplementation') }] : []),
     ],
     sourceLabel: props.model.sourceLabel,
     space: theme.space,
@@ -229,6 +235,8 @@ export function CodeIntelligenceCard(
                 model={props.model}
                 onDefinition={props.onDefinition}
                 onReferences={props.onReferences}
+                onTypeDefinition={props.onTypeDefinition}
+                onImplementation={props.onImplementation}
                 {...(props.onQuickFix ? { onQuickFix: props.onQuickFix } : {})}
               />
             </View>
@@ -382,6 +390,8 @@ function CodeIntelligenceFooter(
     model: CodeIntelligenceCardModel;
     onDefinition: () => void;
     onReferences: () => void;
+    onTypeDefinition?: () => void;
+    onImplementation?: () => void;
     onQuickFix?: () => void;
   }>,
 ) {
@@ -425,6 +435,8 @@ function CodeIntelligenceFooter(
           testID="code-hover-card-references"
         />
       ) : null}
+      {named && props.onTypeDefinition ? <FooterAction label={t('files.pane.menu.goToTypeDefinition')} onPress={props.onTypeDefinition} testID="code-hover-card-type-definition" /> : null}
+      {named && props.onImplementation ? <FooterAction label={t('files.pane.menu.goToImplementation')} onPress={props.onImplementation} testID="code-hover-card-implementation" /> : null}
       <View style={styles.footerSpacer} />
       {props.model.sourceLabel ? (
         <Text variant="meta" numberOfLines={1} style={styles.tertiaryText}>
@@ -511,14 +523,16 @@ function CodeIntelligenceSheetContent(props: CodeIntelligenceCardProps) {
         </View>
       ) : null}
       {model.references ? (
-        <CodeReferencesList
-          rows={model.references.rows}
-          textMatches={model.references.textMatches}
-          partial={model.references.partial}
-          searching={model.references.searching}
-          progress={model.progress}
-          onOpen={props.onOpenReference}
-        />
+        props.referencesContent ?? (
+          <CodeReferencesList
+            rows={model.references.rows}
+            textMatches={model.references.textMatches}
+            partial={model.references.partial}
+            searching={model.references.searching}
+            progress={model.progress}
+            onOpen={props.onOpenReference}
+          />
+        )
       ) : (
         <>
           <CodeIntelligenceAnswer
@@ -547,12 +561,14 @@ function CodeIntelligenceSheetContent(props: CodeIntelligenceCardProps) {
                 icon: 'list',
               },
               { id: 'copy', title: t('files.pane.intelligence.copy'), icon: 'copy' },
+              ...(props.onTypeDefinition ? [{ id: 'typeDefinition', title: t('files.pane.menu.goToTypeDefinition'), icon: 'arrow-right' as const }] : []),
+              ...(props.onImplementation ? [{ id: 'implementation', title: t('files.pane.menu.goToImplementation'), icon: 'arrow-right' as const }] : []),
               ...(props.onRename && model.name
                 ? [{ id: 'rename', title: t('files.pane.intelligence.renameTitle'), icon: 'pencil-simple' as const }]
                 : []),
             ]}
             onPress={(id) =>
-              id === 'fix'
+              id === 'typeDefinition' ? props.onTypeDefinition?.() : id === 'implementation' ? props.onImplementation?.() : id === 'fix'
                 ? props.onQuickFix?.()
                 : id === 'rename'
                   ? props.onRename?.()
@@ -634,8 +650,11 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     color: theme.colors.text.secondary,
   },
+  // The actions read left to right, the answering server sits at the end; a card held narrower than its
+  // actions (a File page beside other panes) wraps them onto a second line instead of cutting the last.
   footer: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: theme.space.s4,
     paddingHorizontal: theme.space.s6,

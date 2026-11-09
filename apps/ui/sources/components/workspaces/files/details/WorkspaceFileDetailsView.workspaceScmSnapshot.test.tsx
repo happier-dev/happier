@@ -59,13 +59,16 @@ vi.mock('@/components/workspaces/files/file/WorkspaceFileDownloadButton', () => 
     WorkspaceFileDownloadButton: (props: any) => React.createElement('WorkspaceFileDownloadButton', props),
 }));
 
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        // The pane owner always publishes its Details tabs beside their per-tab state.
-        scopeState: { details: { tabs: [], tabState: {} } },
-        setDetailsTabState: vi.fn(),
-        patchDetailsTabState: vi.fn(),
-    }),
+// The pane owner publishes one stable scope object until its state changes.
+const paneScope = vi.hoisted(() => ({
+    // The pane owner always publishes its Details tabs beside their per-tab state.
+    scopeState: { details: { tabs: [], tabState: {} } },
+    setDetailsTabState: () => {},
+    patchDetailsTabState: () => {},
+}));
+vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/components/appShell/panes/hooks/useAppPaneScope')>(),
+    useAppPaneScope: () => paneScope,
 }));
 
 const featureEnabledMock = vi.hoisted(() => vi.fn((_featureId: string) => false));
@@ -127,12 +130,14 @@ const workspaceStageActionsMock = vi.hoisted(() => ({
     applySelectedLines: vi.fn(async () => true),
     handleStage: vi.fn(),
 }));
+// The real stage-actions owner publishes stable handlers; a fresh object per call would hide header-prop stability.
+const workspaceStageActions = vi.hoisted(() => ({
+    isApplyingStage: false,
+    handleStage: (included: boolean) => workspaceStageActionsMock.handleStage(included),
+    applySelectedLines: () => workspaceStageActionsMock.applySelectedLines(),
+}));
 vi.mock('@/hooks/workspaces/scm/useWorkspaceFileScmStageActions', () => ({
-    useWorkspaceFileScmStageActions: () => ({
-        isApplyingStage: false,
-        handleStage: (included: boolean) => workspaceStageActionsMock.handleStage(included),
-        applySelectedLines: () => workspaceStageActionsMock.applySelectedLines(),
-    }),
+    useWorkspaceFileScmStageActions: () => workspaceStageActions,
 }));
 
 const fileEditorState = vi.hoisted(() => ({
@@ -941,5 +946,36 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
         expect(request.entries).toEqual([expect.objectContaining({
             kind: 'comparison', path: 'src/a.txt', against: { source: { kind: 'workingTree' } }, expectedHash: 'a'.repeat(64),
         })]);
+    });
+    it('keeps the header props stable when the page re-renders with unchanged facts', async () => {
+        // One open re-renders this page about twenty times (store, pane and parent commits); the header is
+        // expensive, so a render that changes no header fact must hand it identical props and let it bail out.
+        refreshSpy.mockResolvedValue({
+            status: 'ready' as const,
+            error: null,
+            diffContent: 'diff --git a/src/a.txt b/src/a.txt\n@@ -1 +1 @@\n-old\n+new\n',
+            fileContent: { content: 'new', isBinary: false },
+            fileWriteSupported: true,
+        } as any);
+        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
+        // The parent memoizes its scope; only handler props are fresh closures on each parent render.
+        const scope = { serverId: 'srv1', machineId: 'm1', rootPath: '/repo' };
+        const element = () => (
+            <WorkspaceFileDetailsView
+                scopeId="workspace:srv1:m1:/repo"
+                scope={scope}
+                filePath="src/a.txt"
+                sessionIdForAugmentation={null}
+                onRevealInFilesTree={() => {}}
+            />
+        );
+        const screen = await renderScreen(element());
+        await act(async () => {});
+        const before = screen.findAllByType(FilePageHeader)[0]!.props as Record<string, unknown>;
+        await act(async () => { screen.update(element()); });
+        await act(async () => {});
+        const after = screen.findAllByType(FilePageHeader)[0]!.props as Record<string, unknown>;
+        const changed = Object.keys({ ...before, ...after }).filter(key => !Object.is(before[key], after[key]));
+        expect(changed.join(',')).toBe('');
     });
 });

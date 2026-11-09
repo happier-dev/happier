@@ -8,6 +8,7 @@ import { createWorkspaceFileDownloadHarness } from '@/dev/testkit/harness/worksp
 import type { createExpoFileSystemFileMock } from '@/dev/testkit/mocks/expoFileSystem';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Modal } from '@/modal';
+import { layoutHitArea } from '@/dev/testkit/harness/hitFrameReach';
 
 const alert = vi.mocked(Modal.alert);
 const nativeActions = vi.hoisted(() => ({
@@ -70,17 +71,23 @@ describe('WorkspaceFileDownloadButton', () => {
     it.each([
         ['ios', 44],
         ['android', 48],
-    ] as const)('uses the shared %s minimum interactive target', async (platform, expectedTarget) => {
+    ] as const)('draws the %s download control at its design square and reaches the platform target by hit area', async (platform, expectedTarget) => {
         Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
+        const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
         const { WorkspaceFileDownloadButton } = await import('./WorkspaceFileDownloadButton');
         const screen = await renderScreen(
-            <WorkspaceFileDownloadButton testID="workspace-file-download" workspaceScope={scope} path="notes.txt" />,
+            <HappierUiPlatformProvider platform={{ platform, colorScheme: 'light' }}>
+                <WorkspaceFileDownloadButton testID="workspace-file-download" workspaceScope={scope} path="notes.txt" />
+            </HappierUiPlatformProvider>,
         );
 
-        expect(screen.findByType(IconButton).props).toEqual(expect.objectContaining({
-            minimumInteractiveTargetSize: expectedTarget,
-            interactiveTargetGapPx: 20,
-        }));
+        const size = screen.findByType(IconButton).props.size ?? 28;
+        const area = await layoutHitArea(() => screen.findHostByTestId('workspace-file-download'), { width: size, height: size });
+        expect(area.drawn).toEqual({ width: size, height: size });
+        expect(area.height).toBe(expectedTarget);
+        // The row leaves a 20 px gap to its neighbour: the reach sideways is half of it at most.
+        expect(area.insets.left).toBeLessThanOrEqual(10);
+        expect(area.insets.right).toBeLessThanOrEqual(10);
     });
 
     it('opens the Android save, open, and share action menu from the download button', async () => {

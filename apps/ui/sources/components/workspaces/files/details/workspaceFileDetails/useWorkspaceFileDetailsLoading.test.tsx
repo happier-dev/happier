@@ -3,6 +3,7 @@ import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { FilesystemWriteFileInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { acknowledgeWorkspaceFileWrites } from '@/sync/domains/workspaces/files/workspaceFileAcknowledgements';
 import { resolveWorkspaceFileViewerChoiceModel } from './resolveWorkspaceFileViewer';
@@ -79,7 +80,10 @@ it.each(['matching bytes', 'changed bytes', 'failed read'] as const)('keeps a re
         await act(async () => { tree = renderer.create(<RestoredDraft />); });
         expect(editor.editorSurfaceEnabled).toBe(true);
         expect(editor.getEditorText()).toBe('edited\n');
+        await waitForHomeGovernance(() => expect(workspaceFileDetailsActionBoundary.read).toHaveBeenCalledTimes(1));
         await act(async () => { save = editor.saveFileEdits(); await Promise.resolve(); });
+        // Hold both the initial read and Save's metadata refresh before choosing their outcome.
+        await waitForHomeGovernance(() => expect(workspaceFileDetailsActionBoundary.read).toHaveBeenCalledTimes(2));
         expect(writes).toEqual([]);
         expect(editor.isEditingFile).toBe(true);
         expect(editor.getEditorText()).toBe('edited\n');
@@ -131,11 +135,12 @@ it('switches the viewer read identity without reusing opaque binary bytes or pub
     let finish!: (value: { success: true; content: string }) => void;
     workspaceFileDetailsActionBoundary.read.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
     await act(async () => { tree.update(<Harness {...props} readAsText={selection.kind === 'text'} />); });
-    expect(workspaceFileDetailsActionBoundary.read).toHaveBeenCalledTimes(1);
+    await waitForHomeGovernance(() => expect(workspaceFileDetailsActionBoundary.read).toHaveBeenCalledTimes(1));
     await act(async () => { tree.update(<Harness {...props} />); });
     await act(async () => { finish({ success: true, content: Buffer.from('late text').toString('base64') }); });
     expect(current.fileContent).toMatchObject({ isBinary: true, content: '' });
     await act(async () => { tree.update(<Harness {...props} readAsText />); });
+    await waitForHomeGovernance(() => expect(current.fileContent?.content).toBe('new\n'));
     expect(current.fileContent).toMatchObject({ isBinary: false, content: 'new\n', encoding: { editable: false } });
     await act(async () => { tree.unmount(); });
 });
@@ -150,6 +155,7 @@ it('rereads acknowledged saved bytes without a snapshot change and rejects pre-w
     });
     let oldRefresh!: Promise<void>;
     await act(async () => { oldRefresh = current.refreshAll(); });
+    await waitForHomeGovernance(() => expect(finishOld).toEqual(expect.any(Function)));
     let finishReplacement!: (value: { success: true; content: string }) => void;
     workspaceFileDetailsActionBoundary.read.mockImplementationOnce(() => new Promise(resolve => { finishReplacement = resolve; }));
     workspaceFileDetailsActionBoundary.replace.mockResolvedValueOnce({ ok: true, results: [{ path: '/repo/file.txt', status: 'replaced', hash: 'replace-ack' }] });
@@ -162,8 +168,9 @@ it('rereads acknowledged saved bytes without a snapshot change and rejects pre-w
     // Acknowledgement identity is available while its reread is still pending.
     expect(current.lastOwnWriteHash).toBe('replace-ack');
     expect(oldSignal?.aborted).toBe(true);
+    await waitForHomeGovernance(() => expect(finishReplacement).toEqual(expect.any(Function)));
     await act(async () => { finishReplacement({ success: true, content: Buffer.from('replaced').toString('base64') }); });
-    expect(current.fileContent?.content).toBe('replaced');
+    await waitForHomeGovernance(() => expect(current.fileContent?.content).toBe('replaced'));
     await act(async () => { finishOld({ success: true, content: Buffer.from('obsolete').toString('base64') }); await oldRefresh; });
     expect(current.fileContent?.content).toBe('replaced');
     workspaceFileDetailsActionBoundary.read.mockResolvedValue({ success: false, error: 'unreadable' });
@@ -175,6 +182,7 @@ it('rereads acknowledged saved bytes without a snapshot change and rejects pre-w
                 expectedHash: 'b'.repeat(64), edits: [{ startUtf16: 0, deleteLength: 8, insertText: 'new', originalText: 'replaced' }] }] },
         }, { serverId: input.scope.serverId, accountId: 'account-a' })).toMatchObject({ ok: true });
     });
+    await waitForHomeGovernance(() => expect(current.error).not.toBe(null));
     expect(current.fileContent).toBe(retained);
     expect(current.staleSince).toEqual(expect.any(Number));
     expect(current.lastOwnWriteHash).toBe('undo-ack');
@@ -185,6 +193,7 @@ it('invalidates hidden saved bytes only for the selected Account and path, then 
     let tree!: renderer.ReactTestRenderer;
     const props = { ...input, accountId: 'account-a', includeFile: true, includeDiff: false };
     await act(async () => { tree = renderer.create(<Harness {...props} />); });
+    await waitForHomeGovernance(() => expect(current.fileContent?.content).toBe('new\n'));
     await act(async () => { tree.update(<Harness {...props} isActive={false} />); });
     await act(async () => {
         acknowledgeWorkspaceFileWrites({ ...input.scope, accountId: 'account-b' }, [{ path: input.filePath, hash: 'wrong-account' }]);
@@ -199,10 +208,12 @@ it('invalidates hidden saved bytes only for the selected Account and path, then 
     expect(workspaceFileDetailsActionBoundary.read).toHaveBeenCalledTimes(1);
     expect(current.lastOwnWriteHash).toBe('hidden-ack');
     await act(async () => { tree.update(<Harness {...props} />); });
+    await waitForHomeGovernance(() => expect(current.fileContent?.content).toBe('undone'));
     expect(workspaceFileDetailsActionBoundary.read).toHaveBeenCalledTimes(2);
-    expect(current.fileContent?.content).toBe('undone');
     await act(async () => { tree.update(<Harness {...props} accountId={null} />); });
     expect(current.lastOwnWriteHash).toBe(null);
+    // Changing the resource Account starts its own read; settle it before measuring acknowledgement work.
+    await waitForHomeGovernance(() => expect(current.isLoading).toBe(false));
     const reads = workspaceFileDetailsActionBoundary.read.mock.calls.length;
     await act(async () => { acknowledgeWorkspaceFileWrites({ ...input.scope, accountId: 'account-a' }, [{ path: input.filePath, hash: 'must-not-capture' }]); });
     expect(workspaceFileDetailsActionBoundary.read).toHaveBeenCalledTimes(reads);
@@ -216,7 +227,9 @@ it('shows progressive diff and ignores an obsolete mode result', async () => {
     workspaceFileDetailsActionBoundary.read.mockImplementationOnce(() => new Promise(resolve => { finishRead = resolve; }));
     let tree!: renderer.ReactTestRenderer;
     await act(async () => { tree = renderer.create(<Harness {...input} />); });
+    await waitForHomeGovernance(() => expect(finishRead).toEqual(expect.any(Function)));
     await act(async () => { tree.update(<Harness {...input} diffMode="included" />); });
+    await waitForHomeGovernance(() => expect(current.fileContent?.content).toBe('new\n'));
     expect(current.diffContent).toBe(patch('new'));
     expect(current.isLoading).toBe(false);
     await act(async () => { finishOld({ success: true, diff: patch('obsolete') }); finishRead({ success: true, content: 'b2xkCg==' }); });
@@ -317,12 +330,14 @@ it('uses the selected slice in read identity and never reuses head bytes for tai
     expect(current.tooLarge).toEqual({ sizeBytes: 1000002, maxPreviewBytes: 1000000 });
     expect(workspaceFileDetailsActionBoundary.read).not.toHaveBeenCalled();
     await act(async () => { tree.update(<Harness {...input} includeFile previewSlice="head" />); });
+    await waitForHomeGovernance(() => expect(current.fileContent?.partial?.slice).toBe('head'));
     expect(current.fileContent?.partial).toEqual({ slice: 'head', offset: 0, length: 1000000, totalBytes: 1000002 });
     expect(current.fileWriteSupported).toBe(false);
     expect(current.tooLarge).toBe(null);
     expect(current.diffContent).toBe(null);
     expect(transport.diff).not.toHaveBeenCalled();
     await act(async () => { tree.update(<Harness {...input} includeDiff={false} includeFile previewSlice="tail" />); });
+    await waitForHomeGovernance(() => expect(current.fileContent?.partial?.slice).toBe('tail'));
     expect(current.fileContent?.partial?.slice).toBe('tail');
     expect(current.fileContent?.content.startsWith('t')).toBe(true);
     expect(workspaceFileDetailsActionBoundary.read).toHaveBeenCalledTimes(2);
@@ -331,6 +346,10 @@ it('uses the selected slice in read identity and never reuses head bytes for tai
 it('retains useful content on refresh failure but never carries it into another file', async () => {
     let tree!: renderer.ReactTestRenderer;
     await act(async () => { tree = renderer.create(<Harness {...input} />); });
+    await waitForHomeGovernance(() => {
+        expect(current.fileContent?.content).toBe('new\n');
+        expect(current.diffContent).toBe(patch('new'));
+    });
     const content = current.fileContent;
     transport.diff.mockRejectedValue(new Error('offline'));
     workspaceFileDetailsActionBoundary.read.mockResolvedValue({ success: false, error: 'offline' });
@@ -360,9 +379,10 @@ it('drops the old comparison as soon as a slice is selected, including when that
     await act(async () => { tree.update(<Harness {...input} previewSlice="head" />); });
     expect(current.diffContent).toBe(null);
     expect(current.isDiffLoading).toBe(false);
+    await waitForHomeGovernance(() => expect(failRead).toEqual(expect.any(Function)));
     await act(async () => { failRead({ success: false, error: 'offline' }); });
+    await waitForHomeGovernance(() => expect(current.error).toBe('offline'));
     expect(current.diffContent).toBe(null);
-    expect(current.error).toBe('offline');
     await act(async () => { tree.unmount(); });
 });
 

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { ArtifactActionInputV1, ArtifactActionResultV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
-import { createArtifactActionsClient, type ArtifactActionFailure } from '@/components/artifacts/artifactActionsClient';
+import { createArtifactActionsClient, createMountedArtifactActionExecute, type ArtifactActionFailure } from '@/components/artifacts/artifactActionsClient';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
@@ -52,10 +52,8 @@ export function useSaveWorkspaceFileAsArtifact(input: Readonly<{
         setDialog(previous => ({ ...previous, visibility: 'private', selectedTeamId: null }));
     }
     const mounted = useMountedActionExecution(dialog.isOpen && dialog.identity === identity ? scope : null);
-    const client = React.useMemo(() => scope ? createArtifactActionsClient(scope, (actionId, actionInput, context) => mounted.execute(actionId, actionInput, {
-        ...(context?.defaultSessionId ? { defaultSessionId: context.defaultSessionId } : {}),
-        ...(context?.presentUserConfirmation ? { presentUserConfirmation: context.presentUserConfirmation } : {}),
-    })) : null, [scope, mounted.execute]);
+    const client = React.useMemo(() => scope ? createArtifactActionsClient(scope,
+        createMountedArtifactActionExecute(mounted.execute)) : null, [scope, mounted.execute]);
     const busy = dialog.status.kind === 'publishing' || dialog.status.kind === 'sharing';
     const receipt = 'receipt' in dialog.status ? dialog.status.receipt : undefined;
     const available = Boolean(scope && (input.sourceWorkspace || input.sourceSessionId));

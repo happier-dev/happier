@@ -38,6 +38,12 @@ export type ReviewStripProps<T extends string = string> = Readonly<{
     nextFileName?: string | null;
     onNextFile?: () => void;
   }> | null;
+  /**
+   * The source's own file-level mark (GitHub Viewed): it stays at the strip's end in every state, so the
+   * control never moves under the pointer. With it, completion is said beside it (files left, Next file)
+   * rather than by replacing the strip. Phones keep it beside the scope.
+   */
+  fileMark?: React.ReactNode;
   /** Phones keep the scope only; the review bar carries the counter and actions. */
   compact?: boolean;
   testID?: string;
@@ -69,6 +75,15 @@ export function ReviewStrip<T extends string>(props: ReviewStripProps<T>) {
     ) : null;
 
   if (props.compact) {
+    if (props.fileMark) {
+      return (
+        <View testID={props.testID} style={[styles.compact, styles.compactRow]}>
+          {scope}
+          <View style={styles.grow} />
+          {props.fileMark}
+        </View>
+      );
+    }
     return scope ? (
       <View testID={props.testID} style={styles.compact}>
         {scope}
@@ -76,7 +91,36 @@ export function ReviewStrip<T extends string>(props: ReviewStripProps<T>) {
     ) : null;
   }
 
-  if (props.complete) {
+  const nextFile = props.complete?.nextFileName && props.complete.onNextFile ? (
+    <View style={styles.next}>
+      <Text
+        variant="meta"
+        numberOfLines={1}
+        style={{ color: theme.colors.text.secondary }}
+      >
+        {t('hunkReview.nextFile')}
+      </Text>
+      <TextLinkButton
+        testID="review-strip-next-file"
+        label={props.complete.nextFileName}
+        onPress={props.complete.onNextFile}
+      />
+      <IconButton
+        testID="review-strip-next-file-arrow"
+        accessibilityLabel={withKey(t('hunkReview.nextFile'), nextFileLabel)}
+        tooltip={withKey(t('hunkReview.nextFile'), nextFileLabel)}
+        iconName="caret-down"
+        variant="plain"
+        size={26}
+        iconSize={ICON_SIZE.xs}
+        // The link beside it never reaches sideways; the arrow takes half of the gap between them.
+        interactiveTargetEdgesPx={{ leading: theme.space.s6 / 2 }}
+        onPress={props.complete.onNextFile}
+      />
+    </View>
+  ) : null;
+
+  if (props.complete && !props.fileMark) {
     return (
       <View
         testID={props.testID}
@@ -107,35 +151,7 @@ export function ReviewStrip<T extends string>(props: ReviewStripProps<T>) {
           </Text>
         ) : null}
         <View style={styles.grow} />
-        {props.complete.nextFileName && props.complete.onNextFile ? (
-          <View style={styles.next}>
-            <Text
-              variant="meta"
-              numberOfLines={1}
-              style={{ color: theme.colors.text.secondary }}
-            >
-              {t('hunkReview.nextFile')}
-            </Text>
-            <TextLinkButton
-              testID="review-strip-next-file"
-              label={props.complete.nextFileName}
-              onPress={props.complete.onNextFile}
-            />
-            <IconButton
-              testID="review-strip-next-file-arrow"
-              accessibilityLabel={withKey(
-                t('hunkReview.nextFile'),
-                nextFileLabel,
-              )}
-              tooltip={withKey(t('hunkReview.nextFile'), nextFileLabel)}
-              iconName="caret-down"
-              variant="plain"
-              size={26}
-              iconSize={ICON_SIZE.xs}
-              onPress={props.complete.onNextFile}
-            />
-          </View>
-        ) : null}
+        {nextFile}
       </View>
     );
   }
@@ -195,6 +211,7 @@ export function ReviewStrip<T extends string>(props: ReviewStripProps<T>) {
             variant="plain"
             size={26}
             iconSize={ICON_SIZE.xs}
+            interactiveTargetGapPx={theme.space.s2}
             disabled={!props.onPrevious}
             onPress={() => props.onPrevious?.()}
           />
@@ -206,12 +223,29 @@ export function ReviewStrip<T extends string>(props: ReviewStripProps<T>) {
             variant="plain"
             size={26}
             iconSize={ICON_SIZE.xs}
+            interactiveTargetGapPx={theme.space.s2}
             disabled={!props.onNext}
             onPress={() => props.onNext?.()}
           />
         </View>
       ) : null}
       <View style={styles.grow} />
+      {props.fileMark && props.complete ? (
+        <>
+          {props.complete.filesLeft > 0 ? (
+            <Text
+              testID="review-strip-files-left"
+              variant="meta"
+              numberOfLines={1}
+              style={[styles.tabular, { color: theme.colors.text.tertiary }]}
+            >
+              {t('hunkReview.filesLeft', { count: props.complete.filesLeft })}
+            </Text>
+          ) : null}
+          {nextFile}
+        </>
+      ) : null}
+      {props.fileMark ?? null}
       {props.onKeepAll && props.total > 0 ? (
         <RoundButton
           testID="review-strip-keep-all"
@@ -241,6 +275,11 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.space.s16,
     paddingVertical: theme.space.s8,
     alignItems: 'flex-start',
+  },
+  compactRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s8,
   },
   counter: {
     flexDirection: 'row',

@@ -104,7 +104,7 @@ export const FilePageDeletionFact = React.memo(function FilePageDeletionFact(pro
             {text && props.onRestore ? separator : null}
             {props.onRestore ? (
                 <HappierPressable testID="file-page-restore" accessibilityRole="button" accessibilityLabel={t('common.restore')}
-                    hitSlop={8} onPress={() => { void props.onRestore?.(); }}
+                    onPress={() => { void props.onRestore?.(); }}
                     style={({ focused }) => [styles.link, focusRingStyle({ focused, color: theme.colors.border.focus })]}>
                     <Text style={[textStyle, { color: theme.colors.text.link }]}>{t('common.restore')}</Text>
                 </HappierPressable>

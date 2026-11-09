@@ -12,6 +12,7 @@ import { formatHunk } from '@happier-dev/protocol/diff/hunks';
 import { rangeOfReviewUnit } from './useHunkDiscard';
 import { usePaneMainColumn } from '@/components/appShell/panes/mainColumn/usePaneMainColumn';
 import type { HunkReviewActionTarget } from './useHunkReviewController';
+import { t } from '@/text';
 
 /**
  * Review effects for one admitted checkout and captured or live source. The list supplies its one
@@ -20,6 +21,7 @@ import type { HunkReviewActionTarget } from './useHunkReviewController';
 export function useReviewListHunkReview(
   input: Readonly<{
     scope: WorkspaceScopeBase;
+    active?: boolean;
     sessionId?: string | null;
     agentName?: string | null;
     discard: boolean;
@@ -62,7 +64,9 @@ export function useReviewListHunkReview(
       source: input.comparison ? { kind: 'captured' as const, comparison: input.comparison }
         : { kind: 'live' as const, root: input.scope.rootPath },
       host,
+      active: input.active,
       marks: input.marks,
+      writeUnavailableReason: reachability.unreachable ? t('walkthrough.notice.offlineA11y') : null,
       serverId: input.scope.serverId ?? null,
       ...(input.discard ? { onDiscard: discard, discardDisabledReason } : {}),
       ...(undoAvailable ? { undo } : {}),
@@ -72,9 +76,11 @@ export function useReviewListHunkReview(
     }),
     [
       input.scope.rootPath,
+      input.active,
       input.scope.serverId,
       input.comparison,
       input.marks,
+      reachability.unreachable,
       input.refresh,
       sessionId,
       onAsk,

@@ -12,6 +12,7 @@ import { readWorkspaceFileEditorDraft, type WorkspaceFileEditorDraft } from './w
 import { applyMoveDetailsTabToGroup, applyOpenDetailsTab, applySetDetailsTabState, applySplitDetailsGroup, createEmptyPaneDetailsState } from '@/components/appShell/panes/details/workspace/detailsWorkspaceReducer';
 import { migrateLegacyDetailsWorkspaceState, serializeDetailsWorkspaceState } from '@/components/appShell/panes/details/workspace/migrateLegacyDetailsWorkspaceState';
 import { ScmChangeDiscardResponseSchema } from '@happier-dev/protocol/scm';
+import type { EditorDocumentHistory } from '@/components/ui/code/editor/codeEditorTypes';
 
 const discardBoundary = vi.hoisted(() => vi.fn());
 // Remote transport is the boundary; Action admission, the discard facade and dirty-editor owner stay real.
@@ -53,6 +54,61 @@ describe('file editor entry and persisted restoration', () => {
     afterEach(async () => {
         await standardCleanup();
         await cleanupWorkspaceFileDetailsActionBoundary();
+    });
+
+    it('undoes the same document after leaving Edit for Changes and View, including successive engine edits', async () => {
+        const original = '# Title\r\nhello 🌍\r\n';
+        const raw = original.replace('hello', 'hello there');
+        const rich = raw.replace('# Title', '## Title');
+        const hook = await harness({ displayMode: 'file', fileText: original, fileHash: 'base-hash' });
+        await act(async () => { hook.getCurrent().startEditingFile(); hook.getCurrent().onEditorChange(raw); });
+        await hook.rerender({ displayMode: 'diff', fileText: original, fileHash: 'base-hash' });
+        await hook.rerender({ displayMode: 'file', fileText: original, fileHash: 'base-hash' });
+        await act(async () => { hook.getCurrent().startEditingFile(); hook.getCurrent().onEditorChange(rich); });
+        // The File's owner must retain history when the outgoing engine has been destroyed.
+        const history: EditorDocumentHistory | undefined = Reflect.get(hook.getCurrent(), 'history');
+        expect(history?.undo(rich)).toBe(raw);
+        await act(async () => { hook.getCurrent().onEditorChange(raw, { history: 'undo' }); });
+        expect(hook.getCurrent().getEditorText()).toBe(raw);
+        expect(history?.undo(raw)).toBe(original);
+        await act(async () => { hook.getCurrent().onEditorChange(original, { history: 'undo' }); });
+        expect(history?.redo(original)).toBe(raw);
+        await act(async () => { hook.getCurrent().onEditorChange(raw, { history: 'redo' }); });
+        expect(history?.redo(raw)).toBe(rich);
+        await act(async () => { hook.getCurrent().onEditorChange(rich, { history: 'redo' }); });
+        expect(hook.getCurrent().getEditorText()).toBe(rich);
+    });
+
+    it('records an owner-applied document replacement once when the engine publishes synchronously', async () => {
+        const hook = await harness({ displayMode: 'file', fileText: 'base', fileHash: 'base-hash' });
+        await act(async () => { hook.getCurrent().startEditingFile(); hook.getCurrent().onEditorChange('base edited'); });
+        let pending = true;
+        hook.getCurrent().editorHandleRef.current = {
+            getValue: () => hook.getCurrent().getEditorText(),
+            flushPendingChange: async () => { if (pending) { pending = false; hook.getCurrent().onEditorChange('base pending'); } },
+            runCommand: (command) => {
+                if (typeof command === 'object' && 'replaceDocument' in command) hook.getCurrent().onEditorChange(command.replaceDocument);
+            },
+        };
+        await act(async () => { await hook.getCurrent().rebaseMergedDraft('merged', { baseText: 'disk', baseHash: 'disk-hash' }); });
+        const history = hook.getCurrent().history;
+        expect(history.undo('merged')).toBe('base pending');
+        expect(history.undo('base pending')).toBe('base edited');
+        expect(history.undo('base edited')).toBe('base');
+        expect(history.getSnapshot().canUndo).toBe(false);
+    });
+
+    it('keeps the active draft and reports failure when the engine cannot confirm pending text', async () => {
+        const hook = await harness({ displayMode: 'file', fileText: 'base', fileHash: 'base-hash' });
+        await act(async () => { hook.getCurrent().startEditingFile(); hook.getCurrent().onEditorChange('draft'); });
+        hook.getCurrent().editorHandleRef.current = { getValue: () => 'draft',
+            flushPendingChange: async () => { throw new Error('snapshot_unavailable'); } };
+        await act(async () => { await expect(hook.getCurrent().doneEditingFile()).resolves.toBeUndefined(); });
+        expect(hook.getCurrent().isEditingFile).toBe(true);
+        expect(hook.getCurrent().getEditorText()).toBe('draft');
+        expect(hook.getCurrent().refusal?.kind).toBe('failed');
+        await act(async () => { expect(await hook.getCurrent().saveFileEdits()).toBe(false); });
+        expect(hook.getCurrent().getEditorText()).toBe('draft');
     });
 
     it('persists the final engine snapshot with its original base without saving the file during transfer', async () => {

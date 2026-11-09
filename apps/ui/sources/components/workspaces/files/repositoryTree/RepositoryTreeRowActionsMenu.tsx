@@ -52,7 +52,7 @@ const FILE_MENU_ITEM_ICONS: Readonly<Record<string, ItemAction['icon']>> = {
     saveAsArtifact: 'file-arrow-up',
     download: 'download',
     shareFile: 'share-network',
-    rename: 'pencil',
+    rename: 'pencil-simple',
     openInDefaultApp: 'arrow-square-out',
     restoreBeforeTurn: 'clock-counter-clockwise',
     discard: 'arrow-arc-left',
@@ -148,7 +148,7 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
         // Delete is last and reads as destructive (lab p-code ACTIONS); it still asks first.
         const deleteItem: RepositoryTreeRowActionItem = {
             id: 'repository-tree-menuitem-delete',
-            title: t('common.delete'),
+            title: t('files.repositoryTree.actions.deleteEllipsis'),
             icon: 'trash',
             destructive: true,
             disabled: props.disableWriteActions,
@@ -161,7 +161,7 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
                         {
                             id: 'repository-tree-menuitem-zip',
                             title: t('files.repositoryTree.actions.downloadAsZip'),
-                            icon: 'archive',
+                            icon: 'download',
                             color: theme.colors.text.secondary,
                         },
                     ] satisfies RepositoryTreeRowActionItem[])
@@ -176,21 +176,21 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
                     {
                         id: 'repository-tree-menuitem-zip',
                         title: t('files.repositoryTree.actions.downloadAsZip'),
-                        icon: 'archive',
+                        icon: 'download',
                         color: theme.colors.text.secondary,
                     },
                 ] satisfies RepositoryTreeRowActionItem[])
                 : []),
             ...(props.folderCreation?.newFolder ? [{
                 id: 'repository-tree-menuitem-new-folder',
-                title: t('files.pane.newFolder'),
+                title: t('files.repositoryTree.actions.newFolderEllipsis'),
                 icon: 'folder-plus',
                 color: theme.colors.text.secondary,
                 disabled: props.disableWriteActions,
             } satisfies RepositoryTreeRowActionItem] : []),
             ...(props.folderCreation?.upload ? [{
                 id: 'repository-tree-menuitem-upload',
-                title: t('files.toolbar.uploadFiles'),
+                title: t('files.repositoryTree.actions.uploadFilesEllipsis'),
                 icon: 'upload',
                 color: theme.colors.text.secondary,
             } satisfies RepositoryTreeRowActionItem] : []),
@@ -210,10 +210,16 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
             ...workspaceOpen.items.filter(item => item.id !== 'workspace.open.right' || !sharedItems.some(shared => shared.id === 'openBeside'))
                 .map(item => inGroup('open', openTitle)({ id: item.id, title: item.title, icon: item.icon, onPress: () => { workspaceOpen.select(item.id); } })),
             ...sharedActions.filter((_, index) => sharedItems[index].group !== 'open' && sharedItems[index].group !== 'change').map(inGroup('share')),
-            ...items.map(item => inGroup('file')({ ...item, onPress: () => props.onSelect(item.id as RepositoryTreeRowActionMenuItemId) })),
+            ...items.filter(item => !item.destructive).map(item => inGroup('file')({ ...item, onPress: () => props.onSelect(item.id as RepositoryTreeRowActionMenuItemId) })),
             ...sharedActions.filter((_, index) => sharedItems[index].group === 'change').map(inGroup('change')),
+            // Delete closes the menu, set apart with the other changes that drop work; a phone sheet says what it removes.
+            ...items.filter(item => item.destructive).map(item => inGroup('change')({
+                ...item,
+                ...(phone ? { subtitle: t(file ? 'files.repositoryTree.actions.deleteFileConsequence' : 'files.repositoryTree.actions.deleteFolderConsequence') } : {}),
+                onPress: () => props.onSelect(item.id as RepositoryTreeRowActionMenuItemId),
+            })),
         ];
-    }, [items, menuTitle, phone, props.onSelect, sharedActions, sharedItems, workspaceOpen]);
+    }, [file, items, menuTitle, phone, props.onSelect, sharedActions, sharedItems, workspaceOpen]);
 
     // Room for the whole menu (its title row, every item, each group's padding), so no item is cut at the
     // menu's foot on a desktop window (lab FB1k); the popover still shrinks to a shorter window and scrolls.
