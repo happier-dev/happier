@@ -211,10 +211,10 @@ describe('pre-migration receipt capture and ID-only restore admission', () => {
     const capture = receipt.content.ownServer?.preMigrationBackup;
     expect(capture).toEqual({ source: result.manifests[0], sourceFormat: 'postgresCustom',
       target: { service: 'db', adapter: 'postgres-v1', database: destination.database }, configuration,
-      repository: { repository: access.repository } });
+      repository: { repository: access.repository, s3: access.s3 } });
     expect(owners.resolveDeploymentRestoreCaptureV1({ environmentId, restoreBackupId: snapshotId, receipt, destination }))
       .toEqual({ kind: 'resolved', capture: { source: result.manifests[0], sourceFormat: 'postgresCustom',
-        destination, configuration, repository: { repository: access.repository } } });
+        destination, configuration, repository: { repository: access.repository, s3: access.s3 } } });
     expect(JSON.stringify(capture)).not.toContain('passwordFilePath');
     expect(JSON.stringify(capture)).not.toContain('/private/operation-password');
     expect(DeploymentContentV1Schema.safeParse({ ...receipt.content, ownServer: { ...receipt.content.ownServer,
