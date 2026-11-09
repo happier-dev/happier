@@ -17,6 +17,13 @@ import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import { isUntitledSessionName } from '@/utils/sessions/sessionUtils';
+import { buildInboxWorkflowReasonFacts } from '@/components/inbox/workGroups/inboxWorkflowReason';
+import { formatAutomationRunCauseLabel, formatAutomationRunStateLabel } from '@/components/automations/list/automationListFormatting';
+import { automationRunTone } from '@/components/automations/home/latestAutomationRuns';
+import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
+import { isWorkStatusNeedsYou, resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { presentExecutionRunFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { resolveVoiceSessionAuthoredLabel } from './resolveVoiceSessionLabel';
 
 export type VoiceBriefSource = Pick<InboxModel, 'sessionPresentation' | 'workGroups' | 'automationAttentionItems'
     | 'workflowAttention' | 'automationAttention' | 'isLoading' | 'showCaughtUp'> & Readonly<{
@@ -28,6 +35,7 @@ export type VoiceBriefItem = Readonly<{
     title: string;
     /** Why this row is here (the request it asks, else the Inbox's own reason), drawn only; never where it runs. */
     subtitle?: string;
+    hasRequestControls?: boolean;
     destination: Readonly<{ kind: 'session'; address: SessionAddress }>
         | Readonly<{ kind: 'workflow'; runId: string }>
         | Readonly<{ kind: 'automation'; route: AutomationInboxItem['route'] }>;
@@ -56,8 +64,10 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
     // Inbox already admits readable request details. Notification-preview policy
     // does not hide those details in the app; speech has its own disclosure below.
     const requestReason = (entry: VoiceBriefSource['sessionPresentation']['sessionsNeedingAttention'][number]): string | null => {
-        const kind = entry.pendingPermissions[0] ? 'permission' : entry.pendingUserActions[0] ? 'user_action' : null;
-        const request = entry.pendingPermissions[0] ?? entry.pendingUserActions[0];
+        const permissions = entry.requestDetails?.permissions ?? entry.pendingPermissions;
+        const userActions = entry.requestDetails?.userActions ?? entry.pendingUserActions;
+        const kind = permissions[0] ? 'permission' : userActions[0] ? 'user_action' : null;
+        const request = permissions[0] ?? userActions[0];
         if (!kind || !request) return null;
         const semantic = buildAgentRequestSemanticSummary({ kind, toolName: request.tool, toolInput: request.arguments });
         if (kind === 'user_action') return semantic.firstQuestionText;
@@ -72,7 +82,7 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
     const sessionSubtitle = (candidate: VoiceBriefSource['sessionPresentation']['readySessions'][number], request: string | null = null) => {
         if (!isSessionAwarenessContentReadableV1(candidate.awareness.encryption)) return {};
         const subtitle = joinHappierFacts(request, buildInboxSessionReasonLine(candidate, { showNeed: request === null }));
-        return subtitle ? { subtitle } : {};
+        return { subtitle: subtitle || t('common.unavailable') };
     };
     const projectSessionSpeech = (candidate: VoiceBriefSource['sessionPresentation']['readySessions'][number], requests: readonly (readonly [AgentRequestKind, string, string, unknown])[] = []) => {
         const address = normalizeSessionAddress(candidate.address?.serverId ?? candidate.serverId, candidate.sessionId);
@@ -82,9 +92,10 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
         if (resolveVoiceSessionUpdatePolicyV1({ accountSettings: input.settings, includeInVoice, isCurrentAttemptTarget }).level === 'none') return;
         const prefs = getVoiceContextFormatterPrefs({ settings: input.settings, sessionId: address.sessionId, sessionAddress: address,
             includeInVoice, isCurrentAttemptTarget });
+        const label = resolveVoiceSessionAuthoredLabel(candidate.presentationSource?.baseSession ?? candidate.session, prefs);
         speechByKey.set(sessionAddressKey(address), {
-            ...(prefs.voiceShareSessionSummary ? { title: safeTitle(candidate.title) } : {}),
-            ...(prefs.voiceSharePermissionRequests ? { requests: requests.map(([kind, id, tool, args]) => summarizeAgentRequestForVoiceHuman(kind, id, tool, args, prefs, candidate.title)).filter((value): value is string => Boolean(value)) } : {}),
+            ...(label ? { title: label } : {}),
+            ...(prefs.voiceSharePermissionRequests ? { requests: requests.map(([kind, id, tool, args]) => summarizeAgentRequestForVoiceHuman(kind, id, tool, args, prefs, label ?? undefined)).filter((value): value is string => Boolean(value)) } : {}),
         });
     };
     for (const entry of inbox.sessionPresentation.sessionsNeedingAttention) {
@@ -94,9 +105,11 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
         if (!address || !title) continue;
         const requiresPerson = candidate.personalAttention.reasons.some((reason) => reason === 'permission_required' || reason === 'user_action_required');
         items.push({ key: sessionAddressKey(address), category: !requiresPerson && candidate.personalAttention.reasons.includes('failed') ? 'failed' : 'needs_you',
-            title, ...sessionSubtitle(candidate, requestReason(entry)), destination: { kind: 'session', address }, ...(candidate.route ? { route: candidate.route } : {}) });
-        projectSessionSpeech(candidate, [...entry.pendingPermissions.map((request) => ['permission', request.id, request.tool, request.arguments] as const),
-            ...entry.pendingUserActions.map((request) => ['user_action', request.id, request.tool, request.arguments] as const)]);
+            title, ...sessionSubtitle(candidate, requestReason(entry)),
+            hasRequestControls: entry.pendingPermissions.length + entry.pendingUserActions.length > 0,
+            destination: { kind: 'session', address }, ...(candidate.route ? { route: candidate.route } : {}) });
+        projectSessionSpeech(candidate, [...(entry.requestDetails?.permissions ?? entry.pendingPermissions).map((request) => ['permission', request.id, request.tool, request.arguments] as const),
+            ...(entry.requestDetails?.userActions ?? entry.pendingUserActions).map((request) => ['user_action', request.id, request.tool, request.arguments] as const)]);
     }
     for (const candidate of inbox.sessionPresentation.readySessions) {
         const address = normalizeSessionAddress(candidate.address?.serverId ?? candidate.serverId, candidate.sessionId);
@@ -113,13 +126,20 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
             const name = resolveWorkflowRunDisplayName(item.row.metadata);
             if (name.kind !== 'name' || !name.value.trim()) continue;
             const title = name.value;
-            items.push({ key: item.key, category: 'needs_you', title, destination: { kind: 'workflow', runId: item.runId }, route: createWorkflowRunRoute(item.runId, inbox.workflowAttention.serverId) });
+            const status = item.row.summary ? resolveWorkStatusTone({ kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(item.row.summary) }) : null;
+            const category = status?.tone === 'danger' && !isWorkStatusNeedsYou(status) ? 'failed' : 'needs_you';
+            const failure = category === 'failed' && item.row.summary?.errorCode
+                ? presentExecutionRunFailure({ code: item.row.summary.errorCode })?.message : null;
+            const subtitle = joinHappierFacts(...buildInboxWorkflowReasonFacts(item)) || failure || t('common.unavailable');
+            items.push({ key: item.key, category, title, subtitle, destination: { kind: 'workflow', runId: item.runId }, route: createWorkflowRunRoute(item.runId, inbox.workflowAttention.serverId) });
             if (privacy.shareSessionSummary && title) speechByKey.set(item.key, { title: safeTitle(title) });
         }
     }
     for (const item of inbox.automationAttentionItems) {
         if (!item.title?.trim()) continue;
-        items.push({ key: item.key, category: 'needs_you', title: item.title, destination: { kind: 'automation', route: item.route }, route: item.route });
+        const subtitle = joinHappierFacts(formatAutomationRunStateLabel(item.run), formatAutomationRunCauseLabel(item.run.cause));
+        const category = automationRunTone(item.run.workflowRunState ?? item.run.state) === 'failed' ? 'failed' : 'needs_you';
+        items.push({ key: item.key, category, title: item.title, subtitle, destination: { kind: 'automation', route: item.route }, route: item.route });
         if (privacy.shareSessionSummary) speechByKey.set(item.key, { title: safeTitle(item.title) });
     }
     const rank = { needs_you: 0, failed: 1, ready: 2 } as const;
@@ -133,7 +153,17 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
     // Provider context is not the navigation model: never serialize route/identity,
     // callbacks or private records from Inbox. Decisions stay with canonical request tools/UI.
     const approval = formatVoiceApprovalGuidance(getVoiceContextFormatterPrefs({ settings: input.settings }).voiceCanApproveRequests);
-    const context = JSON.stringify({ incomplete, caughtUp, items: items.map((item) => ({ category: item.category, ...speechByKey.get(item.key) })), approval });
+    const counts = { needs_you: 0, failed: 0, ready: 0 };
+    const speechGroups = new Map<string, Readonly<{ category: VoiceBriefItem['category']; title?: string; requests?: readonly string[] }> & { count: number }>();
+    for (const item of items) {
+        counts[item.category] += 1;
+        const speech = { category: item.category, ...speechByKey.get(item.key) };
+        const key = JSON.stringify(speech);
+        const existing = speechGroups.get(key);
+        if (existing) existing.count += 1;
+        else speechGroups.set(key, { ...speech, count: 1 });
+    }
+    const context = JSON.stringify({ incomplete, caughtUp, counts, items: [...speechGroups.values()], approval });
     return { items, freshness, incomplete, caughtUp, context };
 }
 

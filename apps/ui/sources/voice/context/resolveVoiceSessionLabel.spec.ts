@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storage';
 
-import { resolveVoiceSessionLabel } from './resolveVoiceSessionLabel';
+import { resolveVoiceSessionAuthoredLabel, resolveVoiceSessionLabel } from './resolveVoiceSessionLabel';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
 describe('resolveVoiceSessionLabel', () => {
   it('does not use another Home raw metadata when the qualified target is unavailable', () => {
@@ -24,6 +26,25 @@ describe('resolveVoiceSessionLabel', () => {
       sessionListIndexByServerId: {},
       concurrentSessionListCacheByServerId: {},
     }));
+  });
+
+  it('names raw authored metadata while rejecting transient list and display-only projections', () => {
+    const prefs = { voiceShareSessionSummary: true, voiceShareFilePaths: false };
+    const session = createSessionFixture({ metadata: { path: '/project' } });
+    const row = buildSessionListRenderableFromSession(session, undefined, [
+      { id: 'dictated', kind: 'user-text', localId: null, createdAt: 1, text: 'A transient request' },
+    ]);
+    expect(resolveVoiceSessionAuthoredLabel(session, prefs)).toBeNull();
+    expect(resolveVoiceSessionAuthoredLabel(row, prefs)).toBeNull();
+    expect(resolveVoiceSessionAuthoredLabel({ ...session, metadataProjection: 'displayOnly',
+      metadata: { summaryText: 'A transient request' } }, prefs)).toBeNull();
+    expect(resolveVoiceSessionAuthoredLabel({ ...session,
+      metadata: { summary: { text: 'Release /home/alice/project', updatedAt: 2 } } }, prefs))
+      .toBe('Release <path_redacted>');
+    expect(resolveVoiceSessionAuthoredLabel({ ...session, metadata: { name: 'Release planning' } }, prefs))
+      .toBe('Release planning');
+    expect(resolveVoiceSessionAuthoredLabel({ ...session, metadata: { summaryText: 'Saved title' } },
+      { ...prefs, voiceShareSessionSummary: false })).toBeNull();
   });
 
   it('prefers the visible lookup session metadata over stale raw session metadata', () => {

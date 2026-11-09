@@ -113,9 +113,12 @@ describe('buildInboxSessionPresentation', () => {
     it('does not offer an inactive native dialog as an answerable Inbox request', () => {
         const inactive = candidate('inactive', ['user_action_required'], 'server-a', { active: false,
             agentState: { requests: { dialog: { tool: 'AskUserQuestion', kind: 'user_action',
-                source: 'claude_unified_terminal_dialog_choice', arguments: {}, createdAt: 950 } } } });
+                source: 'claude_unified_terminal_dialog_choice', arguments: { questions: [{ question: 'How should this resume?' }] }, createdAt: 950 } } } });
         const result = buildInboxSessionPresentation({ overview: buildActivityOverviewFromCandidates([inactive]) });
         expect(result.sessionsNeedingAttention[0]?.pendingUserActions).toEqual([]);
+        expect(result.sessionsNeedingAttention[0]?.requestDetails?.userActions).toMatchObject([
+            { id: 'dialog', arguments: { questions: [{ question: 'How should this resume?' }] } },
+        ]);
         expect(result.pendingRequestHydrationTargets).toEqual([]);
     });
     it('does not recover a missing exact-Home transcript from the ambient same-id session', () => {

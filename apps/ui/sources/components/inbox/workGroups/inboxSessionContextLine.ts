@@ -4,6 +4,8 @@ import { resolveSessionContextLine } from '@/sync/domains/session/presentation/s
 import { readSessionAwarenessPresentationV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import { t } from '@/text';
 import { sessionFollowSourceRuntimeStateLabel } from '@/components/sessions/follow/sessionFollowSourcePresentation';
+import { presentSessionRuntimeIssue } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { readSessionListPresentationRuntime } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 
 /**
  * What an Inbox session row says under its title: what the session needs from the person first (the
@@ -67,7 +69,16 @@ export function buildInboxSessionReasonLine(
   candidate: InboxSessionAttentionEntry['candidate'],
   options: Readonly<{ showNeed?: boolean }> = {},
 ): string | undefined {
-  const reason = options.showNeed === false ? null : readInboxSessionNeed(candidate);
+  let reason: string | null = null;
+  if (options.showNeed !== false) {
+    reason = candidate.awareness.statusReason?.trim() || null;
+    if (!reason && candidate.personalAttention.reasons.includes('failed')) {
+      const issue = candidate.presentationSource ? readSessionListPresentationRuntime(candidate.presentationSource).lastRuntimeIssue : candidate.session.lastRuntimeIssue;
+      reason = presentSessionRuntimeIssue(issue).summary;
+    }
+    if (!reason && candidate.reasons.hasBlockedPendingDelivery) reason = t('session.pendingMessages.deliveryBlockedReasons.unknown');
+    reason ??= readInboxSessionNeed(candidate);
+  }
   return joinHappierFacts(reason, readWorkingReports(candidate)) || undefined;
 }
 

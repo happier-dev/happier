@@ -360,7 +360,7 @@ export const voiceHooks = {
     // This is one explicit user request, not an ambient Session/Follow update.
     // Local Agent channels deliberately discard ambient session_context, so
     // keep the privacy-projected facts with the request that consumes them.
-    sink.sendTextMessage(controlSessionId, `INBOX BRIEF\n\n${brief.context}\n\nBrief me on this known Account Inbox work, regardless of the bound Session. Answer directly from this snapshot without discovery or more reads: needs-you, failures, then ready work. Lead with the known outcome and briefly mention incomplete coverage. Do not claim caught up unless caughtUp is true. Follow the approval guidance in this Brief.`);
+    sink.sendTextMessage(controlSessionId, `INBOX BRIEF\n\n${brief.context}\n\nBrief me on this known Account Inbox work, regardless of the bound Session. Answer directly from this snapshot without discovery or more reads: needs-you, failures, then ready work. The counts are exact totals for this snapshot; each item groups count occurrences with the same disclosed details. Use the totals even when individual details are unavailable. Lead with the known outcome and briefly mention incomplete coverage. Do not claim caught up unless caughtUp is true. Follow the approval guidance in this Brief.`);
     return true;
   },
 

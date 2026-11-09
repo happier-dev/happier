@@ -24,6 +24,11 @@ export type InboxSessionAttentionEntry = Readonly<{
     candidate: SessionActivityAttention;
     pendingPermissions: readonly PendingPermissionRequest[];
     pendingUserActions: readonly PendingPermissionRequest[];
+    /** Readable current requests can explain attention even when this client cannot answer them. */
+    requestDetails?: Readonly<{
+        permissions: readonly PendingPermissionRequest[];
+        userActions: readonly PendingPermissionRequest[];
+    }>;
 }>;
 
 export type InboxSessionPresentation = Readonly<{
@@ -87,19 +92,20 @@ export function buildInboxSessionPresentation(params: Readonly<{
             const mayShowDetails = isSessionAwarenessContentReadableV1(candidate.awareness.encryption);
             // Missing exact-Home data must not fall back to the ambient same-id transcript.
             const messages = mayShowDetails ? params.resolveMessages?.(candidate) ?? [] : [];
+            const permissions = mayShowDetails && reasons.includes('permission_required')
+                ? (candidate.presentationSource ? listSessionListPresentationPermissionRequests(candidate.presentationSource, messages)
+                    : 'agentState' in candidate.session ? listPendingPermissionRequests(candidate.session, messages) : []).sort(comparePendingRequestsByAge)
+                : [];
+            const userActions = mayShowDetails && reasons.includes('user_action_required')
+                ? (candidate.presentationSource ? listSessionListPresentationUserActionRequests(candidate.presentationSource, messages)
+                    : 'agentState' in candidate.session ? listPendingUserActionRequests(candidate.session, messages) : []).sort(comparePendingRequestsByAge)
+                : [];
             const entry: InboxSessionAttentionEntry = {
                 appearanceColor,
                 candidate,
-                pendingPermissions: mayShowDetails && reasons.includes('permission_required')
-                    ? (candidate.presentationSource ? listSessionListPresentationPermissionRequests(candidate.presentationSource, messages)
-                        : 'agentState' in candidate.session ? listPendingPermissionRequests(candidate.session, messages) : [])
-                        .filter(request => isTranscriptPendingRequestAnswerable(interaction, request)).sort(comparePendingRequestsByAge)
-                    : [],
-                pendingUserActions: mayShowDetails && reasons.includes('user_action_required')
-                    ? (candidate.presentationSource ? listSessionListPresentationUserActionRequests(candidate.presentationSource, messages)
-                        : 'agentState' in candidate.session ? listPendingUserActionRequests(candidate.session, messages) : [])
-                        .filter(request => isTranscriptPendingRequestAnswerable(interaction, request)).sort(comparePendingRequestsByAge)
-                    : [],
+                requestDetails: { permissions, userActions },
+                pendingPermissions: permissions.filter(request => isTranscriptPendingRequestAnswerable(interaction, request)),
+                pendingUserActions: userActions.filter(request => isTranscriptPendingRequestAnswerable(interaction, request)),
             };
             sessionsNeedingAttention.push(entry);
             // A retained row cannot decide request entitlement before its full Session state is acquired.

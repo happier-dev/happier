@@ -1,3 +1,6 @@
+import { CountedDisclosureItem } from '@/components/ui/lists/CountedDisclosureItem';
+import { VoiceNeedsYouPrompts } from '@/components/voice/presence/VoiceNeedsYouPrompts';
+import type { VoiceBriefItem } from '@/voice/context/buildVoiceBrief';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createAccountSettingsHttpBoundary, installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -511,6 +514,43 @@ describe('mounted Voice Brief request', () => {
             expect(opened.mock.lastCall?.[0].destination).toEqual({ kind: 'session', address });
         }
     });
+    it('shows repeated occurrences once until expanded, retaining every exact destination', async () => {
+        const items: VoiceBriefItem[] = Array.from({ length: 300 }, (_, index) => ({
+            key: `run-${index}`, category: 'needs_you', title: 'Do an action',
+            subtitle: 'Choose a deployment target', destination: { kind: 'workflow', runId: `run-${index}` },
+        }));
+        const opened = vi.fn();
+        const screen = await renderScreen(<VoiceBriefList brief={{ items, incomplete: false, caughtUp: false }} onOpen={opened} />);
+        const disclosure = screen.findAllByType(CountedDisclosureItem);
+        expect(disclosure).toHaveLength(1);
+        expect(disclosure[0].props.count).toBe(300);
+        expect(screen.findByTestId('voice-brief.item.run-299')).toBeNull();
+        const header = screen.findAllByTestId('voice-brief.occurrences.run-0.header')
+            .find(node => typeof node.type === 'string' && typeof node.props.onPress === 'function')!;
+        await screen.pressByTestIdAsync(header.props.testID);
+        await screen.pressByTestIdAsync('voice-brief.item.run-299');
+        expect(opened).toHaveBeenLastCalledWith(items[299]);
+        await screen.unmount();
+    });
+
+    it('keeps different reasons separate even when their action titles match', async () => {
+        const items: VoiceBriefItem[] = ['Choose a region', 'Choose an account'].flatMap((subtitle, group) =>
+            Array.from({ length: 2 }, (_, index) => ({ key: `${group}-${index}`, category: 'needs_you' as const,
+                title: 'Do an action', subtitle, destination: { kind: 'workflow' as const, runId: `${group}-${index}` } })));
+        const screen = await renderScreen(<VoiceBriefList brief={{ items, incomplete: false, caughtUp: false }} onOpen={() => {}} />);
+        expect(screen.findAllByType(CountedDisclosureItem).map(node => node.props.subtitle)).toEqual(['Choose a region', 'Choose an account']);
+        await screen.unmount();
+    });
+
+    it('does not mount request controllers for rows without an answerable request', async () => {
+        const item: VoiceBriefItem = { key: 'inactive', category: 'needs_you', title: 'Review the changes',
+            destination: { kind: 'session', address: { serverId: 'home-a', sessionId: 'inactive' } } };
+        const screen = await renderScreen(<VoiceBriefList brief={{ items: [item], incomplete: false, caughtUp: false }} onOpen={() => {}} />);
+        expect(screen.findAllByType(VoiceNeedsYouPrompts)).toHaveLength(0);
+        expect(screen.findByTestId('voice-brief.item.inactive')).toBeTruthy();
+        await screen.unmount();
+    });
+
     it('opens and closes the mounted glance explicitly without changing its live conversation', async () => {
         const speech = await installTransport();
         await selectService();

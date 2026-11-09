@@ -7,6 +7,8 @@ import {
 import type { ResolvedVoiceContextFormatterPrefs } from '@/voice/context/contextFormatters';
 import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import type { SessionPresentationRecord } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 
 import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 
@@ -54,6 +56,18 @@ function ownerLabelFromMetadata(
   if (!path) return null;
   const lastSegment = path.split('/').filter(Boolean).at(-1);
   return normalizeNonEmptyString(lastSegment);
+}
+
+/** Speech names authored Sessions, never a list row's transient first-message title. */
+export function resolveVoiceSessionAuthoredLabel(
+  session: SessionPresentationRecord | null | undefined,
+  prefs: VoiceSessionLabelPrefs,
+): string | null {
+  if (!session || !('agentState' in session) || session.metadataProjection === 'displayOnly') return null;
+  if (prefs.voiceShareSessionSummary !== true) return null;
+  const metadata = readSessionOwnerMetadataView(session);
+  const name = normalizeNonEmptyString(metadata?.name);
+  return summaryLabelFromMetadata(metadata, prefs) ?? (name ? redactIfNeeded(name, prefs) : null);
 }
 
 export function resolveVoiceSessionLabel(

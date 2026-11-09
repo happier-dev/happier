@@ -8,6 +8,7 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { CountedDisclosureItem } from '@/components/ui/lists/CountedDisclosureItem';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
 import { useVoiceAttemptControl, VOICE_ATTEMPT_IDLE_TARGET_GLOBAL } from '@/components/voice/attempt/useVoiceAttemptControl';
@@ -179,7 +180,18 @@ export const VoiceBriefList = React.memo(function VoiceBriefList(props: Readonly
         category,
         title,
         items: brief.items.filter((item) => item.category === category),
-    })).filter((group) => group.items.length > 0), [brief.items]);
+    })).filter((group) => group.items.length > 0).map((group) => {
+        // Occurrences keep their individual destinations. Identical presentation
+        // belongs in one counted fold, using the list owner's lazy disclosure.
+        const occurrences = new Map<string, VoiceBriefItem[]>();
+        for (const item of group.items) {
+            const key = JSON.stringify([item.destination.kind, item.title, item.subtitle ?? null]);
+            const rows = occurrences.get(key);
+            if (rows) rows.push(item);
+            else occurrences.set(key, [item]);
+        }
+        return { ...group, occurrences: [...occurrences.values()] };
+    }), [brief.items]);
     return (
         <>
             {/* The head and its notes read in Home's column, on the same edge as the sheet below (lab B1). */}
@@ -201,8 +213,14 @@ export const VoiceBriefList = React.memo(function VoiceBriefList(props: Readonly
                             <Text testID={`voice-brief.group.${group.category}`} accessibilityRole="header" style={styles.groupTitle}>
                                 {group.title}
                             </Text>
-                            {group.items.map((item) => (
-                                <VoiceBriefRow key={item.key} item={item} fallbackTitle={group.title} onOpen={props.onOpen} />
+                            {group.occurrences.map((items) => items.length === 1 ? (
+                                <VoiceBriefRow key={items[0].key} item={items[0]} fallbackTitle={group.title} onOpen={props.onOpen} />
+                            ) : (
+                                <CountedDisclosureItem key={items[0].key}
+                                    testID={`voice-brief.occurrences.${items[0].key}`}
+                                    title={items[0].title} subtitle={items[0].subtitle} count={items.length}>
+                                    {items.map(item => <VoiceBriefRow key={item.key} item={item} fallbackTitle={group.title} onOpen={props.onOpen} />)}
+                                </CountedDisclosureItem>
                             ))}
                         </React.Fragment>
                     ))}
@@ -239,7 +257,7 @@ const VoiceBriefRow = React.memo(function VoiceBriefRow(props: Readonly<{
                 icon={glyph}
                 onPress={() => props.onOpen(item)}
             />
-            {item.category === 'needs_you' && item.destination.kind === 'session' ? (
+            {item.hasRequestControls === true && item.destination.kind === 'session' ? (
                 <View style={stylesheet.prompts}>
                     <VoiceNeedsYouPrompts address={item.destination.address} testID={`voice-brief.prompts.${item.key}`} />
                 </View>

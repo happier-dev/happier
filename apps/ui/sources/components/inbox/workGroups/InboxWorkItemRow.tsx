@@ -49,6 +49,7 @@ import { readInboxApprovalServerId, resolveInboxItemPageRoute } from '../inboxIt
 import type { InboxItemFocus } from '../inboxItemFocus';
 import { InboxSessionRowMenu } from './InboxSessionRowMenu';
 import { buildInboxSessionContextLine } from './inboxSessionContextLine';
+import { buildInboxWorkflowReasonFacts } from './inboxWorkflowReason';
 import { useOpenResource } from '@/utils/url/openResource';
 import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { type SessionListPresentationSource, type SessionPresentationRecord } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
@@ -127,24 +128,16 @@ function InboxWorkflowRunRow(props: Readonly<{
     // `inbox-I2`) keeps the kind on its line beneath, with its age.
     // A held Run names what waits and where (lab `inbox-I1`, DESIGN-15 R5): "Write changelog is
     // waiting for you · Changelog", the same sentence the Run page's Needs-you rows use.
-    const heldStep = !settled && item.heldStepLabel ? item.heldStepLabel : null;
-    // Several holds read as the first and how many more (DESIGN-17 R4), from the server's held count.
-    const moreHeld = Math.max(0, (summary?.heldCount ?? 1) - 1);
-    // A step held for approval says so in its own words; a review or Wait-for-you hold keeps the generic sentence.
-    const heldSentence = heldStep === null ? null : moreHeld > 0
-        ? t('workflows.run.attentionWaitRowMore', { step: heldStep, count: moreHeld })
-        : item.heldStepNeed === 'approval'
-            ? t('workflows.run.attentionApprovalRow', { step: heldStep })
-            : t('workflows.run.attentionWaitRow', { step: heldStep });
-    const facts = heldSentence !== null
-        ? [heldSentence, ...(item.heldStepLaneLabel ? [item.heldStepLaneLabel] : [])]
+    const holdFacts = buildInboxWorkflowReasonFacts(item);
+    const facts = holdFacts.length > 0
+        ? holdFacts
         // Under the "Workflow runs" header the kind is already said; a narrow row says its state instead.
         : props.statusColumn ? [] : props.kindInHeader === true ? status ? [status.word] : [] : [t('inbox.work.rows.workflowRun')];
     return <InboxWorkRow testID={`inbox.run.${item.runId}`} selected={props.focused === true} showDivider={props.showDivider}
         title={formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(item.row.metadata))}
         facts={facts}
         // A held line already says it waits for you, so the state column does not say it again (DESIGN-16 D8).
-        time={<InboxRelativeTime timestamp={item.row.updatedAt} />} status={heldStep !== null ? null : status} narrow={!props.statusColumn}
+        time={<InboxRelativeTime timestamp={item.row.updatedAt} />} status={holdFacts.length > 0 ? null : status} narrow={!props.statusColumn}
         // A failed run says so by the calm rose dot, like a failed session (owner ruling 2026-11-01); a hold keeps the hand.
         mark={status?.tone === 'danger'
             ? <WorkStatusRowMark status={status} testIDSuffix={`inbox.run.${item.runId}`} />
