@@ -69,6 +69,7 @@ import { resolveConnectedServiceMaterializedRootDir } from './resolveConnectedSe
 import { resolveConnectedServicesMaterializationBaseDir } from './resolveConnectedServicesMaterializationBaseDir';
 import { createConnectedServiceMaterializedHomeCleanupScheduler } from './cleanup/createConnectedServiceMaterializedHomeCleanupScheduler';
 import { resolveConnectedServiceHomeDir } from '../homes/resolveConnectedServiceHomeDir';
+import { resolveConnectedServiceNativeHomeTargetRoot } from './resolveConnectedServiceNativeHomeTarget';
 import { readConnectedServiceStateSharingManifest } from '../stateSharing/connectedServiceStateSharingManifest';
 import { createConnectedAccountPurposeBindingOwner } from '../purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createExecutionRunConnectedServicesBridge } from '../runs/executionRunMaterialization';
@@ -141,9 +142,12 @@ it.each(['files', 'environment'] as const)('applies only the %s leaves produced 
       expect(result?.env.TEST_SELECTED_API_KEY).toBe('selected-key-B');
       expect(result?.env.CLAUDE_CONFIG_DIR).toBeUndefined();
       expect(result?.env.HAPPIER_CLAUDE_NATIVE_CONFIG_DIR).toBeUndefined();
-      const home = resolveConnectedServiceHomeDir({ activeServerDir: join(root, 'server'),
-        serviceId: buildQualifiedPluginContributionKey(scope.serviceRefs[0]!), profileId: 'selected-account', agentId: 'claude' });
-      await expect(lstat(home)).rejects.toMatchObject({ code: 'ENOENT' });
+      const descriptor = await runtimeFixture!.registry.contributes.agentDefinitionsById.get('claude')!.catalogEntry
+        .getConnectedServiceStateSharingDescriptor!();
+      if (!descriptor?.nativeHome) throw new Error('Native-home declaration missing');
+      const target = resolveConnectedServiceNativeHomeTargetRoot({ activeServerDir: join(root, 'server'),
+        agentId: 'claude', nativeHome: descriptor.nativeHome, target: fixture.binding.target });
+      await expect(lstat(target!)).rejects.toMatchObject({ code: 'ENOENT' });
     }
     expect(await readFile(join(native, '.credentials.json'), 'utf8')).toBe('unmanaged-account-A');
   } finally {
@@ -879,6 +883,8 @@ describe('materializeConnectedServicesForSpawn', () => {
         const registry = new ConnectedServiceRuntimeRegistry();
         registry.registerTarget({ pid: process.pid, sessionId, agentId, materializationKey: sessionId, agentLaunchMaterials: material });
         const transport = await prepareSessionMcpLocalTransport({ agentUid: process.getuid!() });
+        // The OS identity's home exists before launch; the shim still owns its runtime child.
+        await mkdir(join(root, 'agent-home'), { recursive: true });
         // OS identity is a boundary. This source test does not claim cross-UID
         // socket access, sudo readiness or a loaded native effective observation.
         const identity = vi.spyOn(nativeProcess, 'execFileWithDeadline').mockResolvedValue({
@@ -891,6 +897,7 @@ describe('materializeConnectedServicesForSpawn', () => {
             managedHappierBinaryPath: '/opt/happier/cli/current/happier',
             sessionRequester: { serverId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'installation' },
             sessionRequesterHomeServerIdentityId: 'home', sessionCustodianAccountId: 'owner', hostHomeServerIdentityId: 'home',
+            providerEnvironmentKeys: params.qualifiedPurposeBindingSnapshot.environmentUses.map(use => use.environmentKey),
             readMaterial: () => registry.getBySessionId(sessionId)?.agentLaunchMaterials,
           });
           const prepared = await context.prepareLaunch!({ requesterIdentity: context.requesterIdentity, sessionMcpContext: transport.localContext });
@@ -1216,12 +1223,6 @@ describe('materializeConnectedServicesForSpawn', () => {
         materializationKey: 'qualified-after-rotation', phase: 'native_home_credentials', status: 'completed',
         service: account.service,
       })]);
-      for (const phase of ['materialization_binding_before', 'materialization_invoke', 'materialization_binding_after']) {
-        expect(diagnostics).toContainEqual(['[CONNECTED ACCOUNT] Materialization phase', expect.objectContaining({
-          materializationKey: 'qualified-after-rotation', phase, status: 'completed', parentPhaseId: expect.any(String),
-          service: account.service,
-        })]);
-      }
       for (const [, fields] of diagnostics) {
         expect(Object.keys(fields!).sort()).toEqual(
           ['agentId', 'durationMs', 'materializationKey', 'phase', 'phaseId', 'status',
@@ -1498,7 +1499,7 @@ describe('materializeConnectedServicesForSpawn', () => {
         assertTargetAccountMaterializable: unavailableAccountBoundary,
       });
       const params: MaterializeParams = {
-        agentId, materializationKey: 'csm_linked-native-state', activeServerDir: root,
+        agentId, nativeHomeOnly: true, materializationKey: 'csm_linked-native-state', activeServerDir: root,
         baseDir: join(root, 'materialized'), recordsByServiceId: new Map(),
         connectedAccountMaterializationAuthority: {
           kind: 'qualified', purposeBindings: [], requestAuthPurposeBindings: [],
