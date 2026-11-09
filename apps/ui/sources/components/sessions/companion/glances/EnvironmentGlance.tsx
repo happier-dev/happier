@@ -2,6 +2,8 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useSessionMachineName } from '@/components/sessions/agents/presentation/useSessionMachineName';
+import { GitBranchButton } from '@/components/sessions/panes/git/branches/GitBranchButton';
+import { useSessionBranchWritesBlocked } from '@/components/sessions/panes/git/branches/useSessionBranchWritesBlocked';
 import { buildSessionScmSummary } from '@/components/sessions/sourceControl/status/statusSummary';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -27,18 +29,18 @@ const ROW_ICON: Readonly<Record<EnvironmentSectionRow['kind'], IconName>> = {
   branch: 'git-branch',
   commit: 'git-commit',
 };
-/** Where each row leads: the pane that owns the fact (Git owns changes, the branch and the commit composer). */
-const ROW_PANE: Readonly<Record<EnvironmentSectionRow['kind'], string>> = {
+/** Where each row leads: the pane that owns the fact (Git owns changes and the commit composer). The branch row switches in place. */
+const ROW_PANE: Readonly<Record<Exclude<EnvironmentSectionRow['kind'], 'branch'>, string>> = {
   changes: 'git',
   place: 'files',
-  branch: 'git',
   commit: 'git',
 };
 
 /**
  * The Environment section (lab crows B): what changed, where the Session runs, its branch, and Commit
  * while there is something to commit. It reads the counts snapshot (no file-list demand), the Session's
- * Machine label and its folder; each row opens the pane that owns its fact.
+ * Machine label and its folder. Each row opens the pane that owns its fact; the branch row opens the Git
+ * pane's own branch list in place.
  */
 export function EnvironmentGlance(
   props: Readonly<{
@@ -78,6 +80,10 @@ export function EnvironmentGlance(
   const openPane = props.measurementOnly
     ? undefined
     : (props.onOpenPane ?? openSessionPane);
+  const branchWrites = useSessionBranchWritesBlocked(
+    props.sessionId,
+    props.serverId,
+  );
   if (rows.length === 0) return null;
   const icon = (kind: EnvironmentSectionRow['kind']) => (
     <Icon
@@ -98,9 +104,9 @@ export function EnvironmentGlance(
       body={{
         kind: 'content',
         children: rows.map((row) => {
-          const onPress = openPane
-            ? () => openPane(ROW_PANE[row.kind])
-            : undefined;
+          const pane = row.kind === 'branch' ? null : ROW_PANE[row.kind];
+          const onPress =
+            openPane && pane ? () => openPane(pane) : undefined;
           const common = {
             testID: `${props.testID}.${row.kind}`,
             density: 'compact' as const,
@@ -152,8 +158,37 @@ export function EnvironmentGlance(
                 />
               );
             case 'branch':
-              return <Item key={row.kind}
-                  {...common} title={row.name} />;
+              return openPane ? (
+                <GitBranchButton
+                  key={row.kind}
+                  sessionId={props.sessionId}
+                  serverId={props.serverId ?? undefined}
+                  snapshot={snapshot}
+                  disabled={branchWrites.blocked}
+                  onOpenStashDetails={() => openPane('git')}
+                  renderTrigger={(trigger) => (
+                    <Item
+                      testID={common.testID}
+                      density="compact"
+                      icon={common.icon}
+                      title={row.name}
+                      rightElement={
+                        <Icon
+                          name={trigger.open ? 'caret-up' : 'caret-down'}
+                          size={ICON_SIZE.xs}
+                          color={theme.colors.text.tertiary}
+                        />
+                      }
+                      accessibilityLabel={trigger.accessibilityLabel}
+                      accessibilityExpanded={trigger.open}
+                      disabled={trigger.disabled}
+                      onPress={trigger.onToggle}
+                    />
+                  )}
+                />
+              ) : (
+                <Item key={row.kind} {...common} title={row.name} />
+              );
             case 'commit':
               return (
                 <Item

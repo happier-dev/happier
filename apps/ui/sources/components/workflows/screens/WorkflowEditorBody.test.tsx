@@ -1229,6 +1229,36 @@ describe('workflow editor body', () => {
                 React.isValidElement(child) && (child.props as { sessionId?: string }).sessionId === 'author-session');
         expect(hidden?.props.active).toBe(false);
     });
+    it('keeps a closed Agent pane closed across a phone-sized viewport, and still opens for a new conversation', async () => {
+        const harness = await loadHarness();
+        const resize = async (wide: boolean) => {
+            paneState.detailsAvailable = wide;
+            viewport.window = wide ? { width: 1440, height: 1000 } : { width: 390, height: 844 };
+            await act(async () => { getStorage().setState({ localSettings: { ...getStorage().getState().localSettings, uiMultiPanePanelsEnabled: wide } }); });
+        };
+        const draft = buildDraft(harness);
+        const base = { draft, onSave: () => {}, triggersSummary: 'Manual', authoringServerId: 'server-a' };
+        let setSessionId: (id: string) => void = () => {};
+        function Host() {
+            const [authoringSessionId, set] = React.useState('author-session');
+            setSessionId = set;
+            return React.createElement(harness.WorkflowEditorBody, { ...base, authoringSessionId, onChange: () => {}, machineName: 'Mac Studio',
+                composerScope: MACHINE_COMPOSER_SCOPE, selectedBlockId: null, onSelectBlock: () => {}, onCustomizeBlock: () => {},
+                view: 'steps', onChangeView: () => {} } as never);
+        }
+        const screen = await renderScreen(<Host />);
+        const companion = () => screen.findByType(AppPaneScopeHost).props.destinationDetails;
+        expect(companion()?.pane.props.testID).toBe('workflow-editor-agent-pane');
+        await act(async () => { companion()?.onClose(); });
+        expect(companion()).toBeNull();
+
+        await resize(false);
+        await resize(true);
+        expect(companion()).toBeNull();
+
+        await act(async () => { setSessionId('author-session-2'); });
+        expect(companion()?.pane.props.testID).toBe('workflow-editor-agent-pane');
+    });
     it('offers Edit with an agent in the header and shows its seeded composer in the Agent tab (04 §4.7; DESIGN-1 B8)', async () => {
         const harness = await loadHarness();
         const onEditWithAgent = vi.fn();
@@ -1299,7 +1329,7 @@ describe('workflow editor body', () => {
 
         // The editable name is the page's identity, in the page.
         expect(screen.findByTestId('workflow-editor-name')?.props.value).toBe('Review');
-        // One primary (Save until saved); Schedule is not a page action (triggers are the Triggers section).
+        // One primary, Run now; Schedule is not a page action (triggers are the Triggers section).
         expect(screen.findByTestId('workflow-editor-run-now')).not.toBeNull();
         expect(screen.findByTestId('workflow-editor-schedule')).toBeNull();
         expect(screen.findByTestId('workflow-editor-export-json')).toBeNull();
@@ -2130,6 +2160,9 @@ describe('workflow editor body', () => {
         const bar = screen.findHostByTestId('workflow-editor-phone-bar');
         expect(bar?.findAll((node) => node.props?.testID === 'workflow-editor-run-now').length).toBeGreaterThan(0);
         expect(bar?.findAll((node) => node.props?.testID === 'workflow-editor-phone-save').length).toBeGreaterThan(0);
+        // The bar is Add · Save · Run now (07 item 21); Run now stays its one primary.
+        expect(bar?.findAll((node) => node.props?.testID === 'workflow-editor-phone-save').some((node) => node.props.display === 'secondary')).toBe(true);
+        expect(bar?.findAll((node) => node.props?.testID === 'workflow-editor-run-now').some((node) => node.props.display === 'secondary')).toBe(false);
         await screen.pressByTestIdAsync('workflow-editor-where-row');
         expect(screen.visibleModals()).toHaveLength(1);
         // One Add: the bar's. The document ends without a second, identical Add (lab P1).
@@ -3800,16 +3833,15 @@ describe('workflow editor prompt pictures', () => {
 });
 
 describe('WorkflowEditorBody unsaved draft commands', () => {
-    it('makes Save the primary until the draft is saved, with one Save on the page', async () => {
+    it('keeps Run now the one primary through an edit, with one Save on the status line (07 "One primary per view")', async () => {
         const harness = await loadHarness();
         const commands = { onRunNow: () => {}, onSave: () => {} };
         const unsaved = await renderBody(harness, { ...commands, saveStatus: { kind: 'unsaved' } });
         const buttonProps = (screen: typeof unsaved, testID: string) =>
             screen.tree.findAll((node) => node.props?.testID === testID && node.props?.title !== undefined)[0]?.props;
-        expect(buttonProps(unsaved, 'workflow-editor-save')?.title).toBe('workflows.page.save');
-        expect(buttonProps(unsaved, 'workflow-editor-save')?.display).toBeUndefined();
-        expect(buttonProps(unsaved, 'workflow-editor-run-now')?.display).toBe('secondary');
-        expect(unsaved.findHostByTestId('workflow-editor-save-status')?.findAll((node) => node.props?.testID === 'workflow-editor-save')).toHaveLength(0);
+        expect(buttonProps(unsaved, 'workflow-editor-save')).toBeUndefined();
+        expect(buttonProps(unsaved, 'workflow-editor-run-now')?.display).toBeUndefined();
+        expect(unsaved.findHostByTestId('workflow-editor-save-status')?.findAll((node) => node.props?.testID === 'workflow-editor-save').length).toBeGreaterThan(0);
         const saved = await renderBody(harness, { ...commands, saveStatus: { kind: 'saved', savedAtMs: 1 } });
         expect(saved.findByTestId('workflow-editor-save')).toBeNull();
         expect(buttonProps(saved, 'workflow-editor-run-now')?.display).toBeUndefined();

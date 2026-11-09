@@ -23,6 +23,7 @@ import {
 import { SessionElapsedClock } from '../summary/SessionSummaryStatusLine';
 import { useSessionSummaryAwareness } from '../summary/useSessionSummaryAwareness';
 import {
+  formatRunningSectionCount,
   resolveRunningSectionRows,
   type RunningSectionAgentInput,
 } from './glanceModels';
@@ -131,6 +132,10 @@ function RunningLiveGlance(props: RunningGlanceProps) {
       placement="companion"
       mark="play"
       title={t('sessionCompanion.sections.running')}
+      meta={formatRunningSectionCount({
+        agents: rows.agents.length + rows.moreAgents,
+        services: rows.services.length + rows.moreServices,
+      })}
       menu={props.menu}
       body={{
         kind: 'content',

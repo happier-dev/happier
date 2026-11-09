@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_ICON_BUTTON_SIZE, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { PaneHeader, PaneHeaderLineView, type PaneHeaderLineSegment } from '@/components/appShell/panes/PaneHeader';
-import { useClaimedStackHeaderActions } from '@/components/navigation/stackHeaderActions';
+import { useClaimedStackHeaderActions, useLentHeaderMenuRows } from '@/components/navigation/stackHeaderActions';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
@@ -14,6 +14,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
 import { DETAILS_TAB_HEADER_METRICS } from './detailsTabHeaderMetrics';
+import { PhoneDetailsStartContext } from '../PhoneDetailsStartSheet';
 import { PaneHeaderShade } from '@/components/appShell/panes/paneHeaderScroll';
 import { resolvePaneHeaderColumnMaxWidthPx } from '@/components/appShell/panes/paneHeaderColumn';
 
@@ -58,7 +59,7 @@ export type DetailsTabHeaderProps = Readonly<{
     /** The thing this tab shows, in its own words: the file name, the commit subject, the stash as a place. */
     title: string;
     leading?: React.ReactNode;
-    titleControl?: React.ReactNode;
+    titleControl?: React.ComponentProps<typeof PaneHeader>['titleControl'];
     titleTextStyle?: React.ComponentProps<typeof PaneHeader>['titleTextStyle'];
     meta?: readonly DetailsTabHeaderMetaFact[];
     /** A live status or presence leaf; its own subscription keeps ticking out of the header owner. */
@@ -135,10 +136,20 @@ export const DetailsTabHeader = React.memo(function DetailsTabHeader(props: Deta
     const testID = props.testID ?? 'details-tab-header';
     const columnRootPx = props.columnMaxWidthPx === undefined ? null
         : resolvePaneHeaderColumnMaxWidthPx(props.columnMaxWidthPx) + metrics.paddingStartPx + metrics.paddingEndPx;
+    // Everything beneath the band stands on the band's column too.
+    const belowColumn = columnRootPx === null || !Number.isFinite(columnRootPx) ? null
+        : { alignSelf: 'center' as const, width: '100%' as const, maxWidth: columnRootPx };
     const segments = React.useMemo(() => toLineSegments(props.meta), [props.meta]);
 
     // The pane's own controls (⤢, close), when the pane showing this tab has no bar of its own.
-    const paneControls = useClaimedStackHeaderActions({ scopeOnly: true });
+    // The rows the pane lends with them (a phone group's other pages, pin, close) go in this header's own `⋯`, or in the
+    // page's own `menu` when it brings one (that page draws them, `useLentHeaderMenuRows`): never a second `⋯`.
+    const paneControls = useClaimedStackHeaderActions({ scopeOnly: true, drawsMenuRows: true });
+    // The phone Start sheet is a floating layer: its close sits beside the title (lab flows `askP`),
+    // not on a row of its own beneath the band.
+    const inStartSheet = React.useContext(PhoneDetailsStartContext) !== null;
+    const sheetBand = phone && inStartSheet;
+    const stripMenu = useLentHeaderMenuRows();
     // On the navigation plane (a side panel standing on the canvas) the header takes the plane's paint.
     const onNavigationPlane = useContainingGlassSurfaceGroup() === 'sidebar';
     // An entity page's navigation band on a phone stays a band; elsewhere a phone takes the large title.
@@ -176,7 +187,7 @@ export const DetailsTabHeader = React.memo(function DetailsTabHeader(props: Deta
     // `⋯` and the pane's own controls stay in the band beside the title, so the title never has their room.
     // The trailing group is measured with or without a `⋯`; the fit below counts it explicitly either way.
     const menuSlot = HAPPIER_ICON_BUTTON_SIZE + theme.space.s4;
-    const menuForced = props.menu !== undefined || (props.menuActions?.length ?? 0) > 0;
+    const menuForced = props.menu !== undefined || (props.menuActions?.length ?? 0) > 0 || (stripMenu?.length ?? 0) > 0;
     const roomBesideTitle = rowRoom - (band.trailing - (band.trailingMenu ? menuSlot : 0));
     const bandRoom = roomBesideTitle - (menuForced ? menuSlot : 0);
     // The actions keep their place beside the title while they leave it at least as much room as they
@@ -302,7 +313,8 @@ export const DetailsTabHeader = React.memo(function DetailsTabHeader(props: Deta
         ...(button.busy ? { loading: true } : {}),
         onSelect: button.onPress,
     }));
-    const menuActions = [...foldedActions, ...(props.menuActions ?? [])];
+    // The tab's own rows (pin, close) come last, after what the page does: the strip gave them to this header.
+    const menuActions = [...foldedActions, ...(props.menuActions ?? []), ...(stripMenu ?? [])];
     const menu = props.menu ?? (menuActions.length > 0 || iconsFolded ? (
         <PageHeaderMenu testID={`${testID}.menu`} actions={menuActions}
             content={iconsFolded ? <View testID={`${testID}.foldedIcons`} style={styles.foldedIcons}>{props.actions}</View> : undefined} />
@@ -334,7 +346,8 @@ export const DetailsTabHeader = React.memo(function DetailsTabHeader(props: Deta
     const phoneIconsFit = band.actions === 0 || rowRoom - menuSlot - band.actions >= band.actions;
     const phoneIconsInBand = phone && Boolean(iconActions) && !props.controls && buttonList.length === 0 && phoneIconsFit;
     const bandActions = phone
-        ? (phoneIconsInBand ? <View style={styles.bandActions}>{iconActions}{menu}</View> : (menu ?? undefined))
+        ? (sheetBand && paneControls ? <View style={styles.bandActions}>{phoneIconsInBand ? iconActions : null}{menu}{paneControls}</View>
+            : phoneIconsInBand ? <View style={styles.bandActions}>{iconActions}{menu}</View> : (menu ?? undefined))
         : wideActions || menu || paneControls ? (
             <View style={styles.bandActions}>
                 {actionsBelow ? null : wideActions}
@@ -364,13 +377,13 @@ export const DetailsTabHeader = React.memo(function DetailsTabHeader(props: Deta
     ) : null;
     const phoneToolbar = props.actionsFit === 'compact' ? (props.controls ? (
         <View style={styles.controls}>{controls}</View>
-    ) : null) : phone && (props.controls || (props.actions && !phoneIconsInBand) || buttons || paneControls) ? (
+    ) : null) : phone && (props.controls || (props.actions && !phoneIconsInBand) || buttons || (paneControls && !sheetBand)) ? (
         <View style={styles.controls}>
             {controls}
             <View style={styles.grow} />
             {phoneIconsInBand ? null : iconActions}
             {buttons}
-            {paneControls}
+            {sheetBand ? null : paneControls}
         </View>
     ) : controlsBelow || actionsBelow ? (
         <View style={styles.controls}>
@@ -423,7 +436,7 @@ export const DetailsTabHeader = React.memo(function DetailsTabHeader(props: Deta
                 columnMaxWidthPx={props.columnMaxWidthPx}
             />
             {props.body || phoneToolbar ? (
-                <View style={[styles.below, { paddingLeft: metrics.paddingStartPx, paddingRight: metrics.paddingEndPx }]}>
+                <View style={[styles.below, { paddingLeft: metrics.paddingStartPx, paddingRight: metrics.paddingEndPx }, belowColumn]}>
                     {phoneToolbar}
                     {props.body ? (
                         typeof props.body === 'string'
@@ -432,7 +445,7 @@ export const DetailsTabHeader = React.memo(function DetailsTabHeader(props: Deta
                     ) : null}
                 </View>
             ) : null}
-            {props.notice ?? null}
+            {belowColumn && props.notice ? <View style={belowColumn}>{props.notice}</View> : props.notice ?? null}
             {lineMeasure}
             {/* One shade under the whole header stack: band, controls row, body and notice. */}
             <PaneHeaderShade />

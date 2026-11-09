@@ -654,7 +654,9 @@ export const SessionSummaryCard = React.memo(function SessionSummaryCard(props: 
 /**
  * When the Session's facts are last-known, and why (lab companion CSp): the Machine's own presence owner
  * first, else the canonical Session status. Retry re-reads the owner that decided the cause. The one
- * freshness line for the Session summary, drawn by the card or, in the Companion, under its title.
+ * freshness line for the Session summary, drawn by the card or, in the Companion, under its title. It speaks
+ * only while the Session or its Machine is away; a connected Session that is behind on its reports keeps its
+ * status words alone.
  */
 export const SessionSummaryFreshnessLine = React.memo(function SessionSummaryFreshnessLine(props: Readonly<{
     model: SessionSummaryCardModel;
@@ -674,9 +676,10 @@ export const SessionSummaryFreshnessLine = React.memo(function SessionSummaryFre
     // The freshness line says when and why (lab companion CSp): the Machine's own presence owner
     // first, else the canonical Session status. Retry re-reads the owner that decided the cause.
     const machineCause = offline && Boolean(props.machineName);
+    const sessionAway = model.status?.state === 'disconnected' || model.status?.state === 'recoverable_unservable';
     const freshnessReason = machineCause
         ? t('sessionCompanion.freshness.machineOffline', { machine: props.machineName ?? '' })
-        : model.status?.state === 'disconnected' || model.status?.state === 'recoverable_unservable'
+        : sessionAway
             ? t('sessionCompanion.freshness.sessionDisconnected')
             : t('sessionCompanion.freshness.waitingForUpdates');
     const freshnessAsOf = machineCause ? machineLastSeenAt ?? model.asOfMs ?? null : model.asOfMs ?? null;
@@ -691,6 +694,7 @@ export const SessionSummaryFreshnessLine = React.memo(function SessionSummaryFre
         fireAndForget(refresh.finally(() => setRetrying(false)), { tag: 'SessionSummaryCard.retryFreshness' });
     }, [machineCause, retryServerId, retrying]);
 
+    if (!offline && !sessionAway) return null;
     return (
         <SurfaceFreshnessLine
             testID={props.testID}

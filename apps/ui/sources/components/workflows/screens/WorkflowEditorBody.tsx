@@ -1510,14 +1510,15 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     const readinessNode = errorCount === 0 && runBlockedReason === null
         ? null
         : issuesRevealed ? validityNodeFor() : null;
-    // Save leads while there is something to keep: unsaved edits (a never-saved draft once touched reads
-    // `unsaved`) or a failed save. A pristine new draft has nothing to save yet: its status reads "Not
-    // saved yet" alone and Run now stays the one primary (07 §2.3 item 10, §3 "One primary per view").
-    const saveLeads = onSave !== undefined && documentEditable
+    // Run now is the page's one primary and Save is the status line's own action (07 §3 "One primary per view",
+    // lab `editor-E1`). A phone's bar has room for what the wide header doesn't: Add · Save · Run now (07 item 21),
+    // while there is something to keep. A pristine new draft has nothing to save yet.
+    const phoneSaveOffered = compactLayout && onSave !== undefined && documentEditable
         && (props.saveStatus === undefined || ['unsaved', 'failed'].includes(props.saveStatus.kind));
-    const saveButton = !saveLeads ? null : (
+    const phoneSaveButton = !phoneSaveOffered ? null : (
         <RoundButton
-            testID={compactLayout ? `${testIDPrefix}-phone-save` : `${testIDPrefix}-save`}
+            testID={`${testIDPrefix}-phone-save`}
+            display="secondary"
             title={t('workflows.page.save')}
             onPress={submitSave}
         />
@@ -1527,7 +1528,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             draftStore={draftStore}
             readout={readinessNode}
             state={props.saveConflict ? { kind: 'conflict', conflict: props.saveConflict } : (props.saveStatus ?? { kind: 'notSaved' })}
-            {...(onSave === undefined || (saveLeads && props.saveStatus?.kind !== 'failed') ? {} : { onSave: submitSave })}
+            {...(onSave === undefined || (phoneSaveOffered && props.saveStatus?.kind !== 'failed') ? {} : { onSave: submitSave })}
             {...(props.history === undefined ? {} : { onUndo: props.history.undo })}
             onSaveAsCopy={props.onSaveAsCopy ?? (() => {})}
             testIDPrefix={testIDPrefix}
@@ -1577,9 +1578,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             accessibilityLabel={t('workflows.editor.runNow')}
             {...(runReason === null ? {} : { accessibilityHint: runReason })}
             disabled={runPending === true}
-            {...(saveLeads ? { display: 'secondary' as const } : {})}
-            leading={<Icon name="play" size={14} color={saveLeads ? theme.colors.text.primary : theme.colors.button.primary.tint} />}
-            {...(runKeyHint === undefined || saveLeads ? {} : { trailing: <Text style={styles.keyHint}>{runKeyHint}</Text> })}
+            leading={<Icon name="play" size={14} color={theme.colors.button.primary.tint} />}
+            {...(runKeyHint === undefined ? {} : { trailing: <Text style={styles.keyHint}>{runKeyHint}</Text> })}
             onPress={submitRun}
         />
         </View>
@@ -1652,7 +1652,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                         )}
                         {menu}
                         {duplicateButton}
-                        {saveButton}
                         {runNowButton}
                     </View>
                 ),
@@ -1809,7 +1808,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             />}
             <View style={styles.phoneBarSpacer} />
             {duplicateButton}
-            {saveButton}
+            {phoneSaveButton}
             {runNowButton}
         </PagePinnedBar></RoundButtonSizeScope>
     );

@@ -10,6 +10,7 @@ import {
 import { useSessionProjectScmSummarySnapshot } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { useOpenResource } from '@/utils/url/openResource';
 
 import { resolveLinksSectionRow } from './glanceModels';
 
@@ -17,9 +18,8 @@ const NO_REMOTES: readonly never[] = Object.freeze([]);
 
 /**
  * The Links section (lab crows B): the repository's page, read from the remote git reports for the
- * Session's working copy (`origin` first). A Session whose remote has no browsable page, or that is not
- * a repository, has no Links section. The pull request row waits for an owner the app can read
- * (`Triage`'s session binding is plugin-owned), so it is not drawn.
+ * Session's working copy (`origin` first), and the open pull request the working snapshot carries, opened
+ * through the same resource owner as the Git pane. A Session with neither has no Links section.
  */
 export function LinksGlance(
   props: Readonly<{
@@ -44,8 +44,21 @@ export function LinksGlance(
     () => resolveLinksSectionRow(remotes),
     [remotes],
   );
-  if (!repository) return null;
-  const url = repository.url;
+  const pullRequest = snapshot?.repo.isRepo
+    ? (snapshot.pullRequestStatus?.openPullRequest ?? null)
+    : null;
+  const { openResource } = useOpenResource({
+    sessionId: props.sessionId,
+    ...(props.serverId ? { serverId: props.serverId } : {}),
+  });
+  if (!repository && !pullRequest) return null;
+  const externalMark = (
+    <Icon
+      name="arrow-square-out"
+      size={ICON_SIZE.xs}
+      color={theme.colors.text.tertiary}
+    />
+  );
   return (
     <WidgetFrame
       testID={props.testID}
@@ -58,33 +71,64 @@ export function LinksGlance(
       body={{
         kind: 'content',
         children: (
-          <Item
-            testID={`${props.testID}.repository`}
-            density="compact"
-            accessibilityRole="link"
-            icon={
-              <Icon
-                name="git-branch"
-                size={ICON_SIZE.sm}
-                color={theme.colors.text.secondary}
+          <>
+            {repository ? (
+              <Item
+                testID={`${props.testID}.repository`}
+                density="compact"
+                accessibilityRole="link"
+                icon={
+                  <Icon
+                    name="git-branch"
+                    size={ICON_SIZE.sm}
+                    color={theme.colors.text.secondary}
+                  />
+                }
+                title={repository.path}
+                rightElement={externalMark}
+                {...(props.measurementOnly
+                  ? { mode: 'info' as const }
+                  : {
+                      onPress: () => {
+                        void openExternalUrl(repository.url);
+                      },
+                    })}
               />
-            }
-            title={repository.path}
-            rightElement={
-              <Icon
-                name="arrow-square-out"
-                size={ICON_SIZE.xs}
-                color={theme.colors.text.tertiary}
+            ) : null}
+            {pullRequest ? (
+              <Item
+                testID={`${props.testID}.pullRequest`}
+                density="compact"
+                accessibilityRole="link"
+                icon={
+                  <Icon
+                    name="git-pull-request"
+                    size={ICON_SIZE.sm}
+                    color={theme.colors.text.secondary}
+                  />
+                }
+                title={t('sessionCompanion.sections.pullRequest')}
+                {...(typeof pullRequest.number === 'number'
+                  ? {
+                      titleMeta: t('sessionCompanion.sections.pullRequestOpen', {
+                        number: pullRequest.number,
+                      }),
+                    }
+                  : {})}
+                rightElement={externalMark}
+                {...(props.measurementOnly
+                  ? { mode: 'info' as const }
+                  : {
+                      onPress: () => {
+                        void openResource({
+                          kind: 'pullRequest',
+                          url: pullRequest.url,
+                        });
+                      },
+                    })}
               />
-            }
-            {...(props.measurementOnly
-              ? { mode: 'info' as const }
-              : {
-                  onPress: () => {
-                    void openExternalUrl(url);
-                  },
-                })}
-          />
+            ) : null}
+          </>
         ),
       }}
     />

@@ -51,6 +51,7 @@ import type { DocPassageRefV1 } from '@happier-dev/protocol/artifacts/artifactCo
 import { ArtifactPassageQuote } from '@/components/artifacts/ArtifactPassageQuote';
 import { useArtifactTitleProjections } from '@/components/artifacts/useArtifactTitleProjections';
 import { ArtifactEditProposal, type AdmittedDocRead } from '@/components/artifacts/ArtifactEditProposal';
+import { docProposalSelections } from '@/components/artifacts/docProposalSelection';
 import { createArtifactActionsClient, type ArtifactActionsClient } from '@/components/artifacts/artifactActionsClient';
 import { buildDiscussionRouteHref } from './discussionRoutes';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
@@ -397,6 +398,7 @@ function NewDiscussion(props: Readonly<{ target: Extract<DiscussionDetailsTarget
         <DetailsTabHeader
             testID="session-discussion-new-header"
             title=""
+            columnMaxWidthPx={contentWidth.maxWidth}
             titleControl={<TextInput testID="session-discussion-title" style={[styles.titleInput, phone ? styles.titleInputLarge : null]} value={draft.title} onChangeText={(title) => { draft.setTitle(title); if (title.trim()) setTitleRequired(false); }} placeholder={t('session.collaboration.discussion.newPage.namePlaceholder')} accessibilityLabel={t('session.collaboration.discussion.titlePlaceholder')} aria-invalid={titleRequired} autoFocus />}
             meta={[
                 { key: 'people', text: rosterLine, testID: 'session-discussion-new-roster' },
@@ -897,6 +899,8 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
     }, [displayMessages, requesterApprovals]);
     const discussionReturnHref = React.useMemo(() => buildDiscussionRouteHref({ target: { kind: 'discussion', address: { serverId: props.target.address.serverId }, discussionId: props.target.discussionId } }), [props.target.address.serverId, props.target.discussionId]);
     const messageTimelineItems = React.useMemo(() => items.flatMap(item => item.kind === 'workflow_round' ? [...item.rows] : [item]), [items]);
+    const proposalSelections = React.useMemo(() => docProposalSelections(messageTimelineItems.flatMap(item =>
+        item.kind === 'human_message' ? [item.message] : [])), [messageTimelineItems]);
     const messageGroupStarts = React.useMemo(() => new Set(messageTimelineItems.flatMap((item, index) => {
         if (item.kind !== 'human_message') return [];
         const previous = messageTimelineItems[index - 1];
@@ -1227,6 +1231,7 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
             workflowRunNamed={workflowLabel !== null}
             startsGroup={messageGroupStarts.has(item.message.id)}
             repeatsPassage={repeatedPassages.has(item.message.id)}
+            selectedPassage={proposalSelections.get(item.message.id)}
             supersededProposal={supersededProposals.has(item.message.id)}
             selectable={isCommittedDisplayMessage(item.message) && isSelectableDiscussionMessage(item.message) && item.message.id !== mutation?.localId}
             resolveAccountLabel={labels.account}
@@ -1321,6 +1326,7 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
             <PaneHeaderScrollScope>
             {phoneHeader ?? <DetailsTabHeader
                 testID="session-discussion-header"
+                columnMaxWidthPx={threadColumn.maxWidth}
                 title={discussion.title ?? t('session.collaboration.discussion.encryptedTitle')}
                 // Who is in it and who can read it (lab T2-A header line); live presence leads it.
                 meta={roster ? (() => {
@@ -1552,6 +1558,7 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
     onReply?: (messageId: string) => void;
     startsGroup: boolean;
     repeatsPassage: boolean;
+    selectedPassage?: DocPassageRefV1;
     /** A later suggestion in this thread replaced this one. */
     supersededProposal: boolean;
     selectable: boolean;
@@ -1695,6 +1702,7 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
                 ? <ArtifactEditProposal testID={`discussion-proposal-${message.id}`} client={props.proposalClient}
                     docRead={props.proposalDocRead}
                     proposalRef={message.messageRef ?? null} proposal={message.content.proposal}
+                    selectedPassage={props.selectedPassage}
                     disposition={message.docEditProposalDispositionV1} viewerAccountId={props.viewerAccountId}
                     resolveAccountLabel={props.resolveAccountLabel} superseded={props.supersededProposal}
                     proposer={message.producerV1?.kind === 'agent' ? { label: speaker, mention: { sessionId: message.producerV1.sessionId } }

@@ -68,6 +68,8 @@ export function WorkflowContainerLane(props: Readonly<{
     labelTestID: string;
     actionsTestID?: string;
     children: React.ReactNode;
+    /** What ends the lane before it joins back (a loop's stop rule and round limit). */
+    footer?: React.ReactNode;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     // An editable lane name is sized to its words, so its caret sits right after it (DESIGN-6 M1).
@@ -127,6 +129,7 @@ export function WorkflowContainerLane(props: Readonly<{
                 )}
             </View>
             {props.children}
+            {props.footer}
             <View testID={`${props.labelTestID}-join`} pointerEvents="none" accessibilityElementsHidden
                 importantForAccessibility="no-hide-descendants" style={workflowEditorStyles.laneJoin}>
                 <View style={workflowEditorStyles.laneJoinBend} />

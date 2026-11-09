@@ -19,8 +19,9 @@ vi.mock('@/components/ui/popover', async (importOriginal) => (
     (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal)
 ));
 
-import { REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN, SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
-import type { ScmBranchListEntry } from '@happier-dev/protocol';
+import { REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN} from '@happier-dev/protocol/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
+import type { ScmBranchListEntry } from '@happier-dev/protocol/scm/branches';
 import { createDeferred } from '@/dev/testkit';
 let snapshot: ScmWorkingSnapshot;
 let branches: ScmBranchListEntry[];
@@ -182,5 +183,15 @@ describe('GitBranchButton', () => {
         const denied = await renderBranch(false, { ...snapshot, capabilities: { ...snapshot.capabilities, writeStashCreate: false } });
         const deniedMenu = await menu(denied);
         expect(deniedMenu.props.branchItems.some((item: { id: string }) => item.id === 'git:keep-aside')).toBe(false);
+    });
+
+    it('counts changes from a summary delivery, which carries no rows', async () => {
+        const counted: ScmWorkingSnapshot = { ...snapshot, detail: 'summary', entries: [],
+            totals: { ...snapshot.totals, pendingFiles: 3 },
+            summary: { changedFiles: 3, truncated: false } as NonNullable<ScmWorkingSnapshot['summary']> };
+        const popover = await menu(await renderBranch(false, counted));
+        const keepAside = popover.props.branchItems.find((item: { id: string }) => item.id === 'git:keep-aside');
+        expect(keepAside).toBeDefined();
+        expect(keepAside.disabled).not.toBe(true);
     });
 });

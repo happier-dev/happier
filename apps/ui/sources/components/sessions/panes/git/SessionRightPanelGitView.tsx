@@ -1,4 +1,5 @@
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import { usePaneContentInsetPx } from '@/components/ui/lists/listPresentation';
 import { formatHappierAsOfTime } from '@happier-dev/plugin-ui/presentation';
 import { useSessionFilePaneNavigation } from '@/components/sessions/panes/useSessionFileDetailsOpener';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
@@ -48,7 +49,6 @@ import {
     useSessionProjectScmSnapshot,
     useSessionProjectScmSnapshotError,
     useSessionRealtimeScmTranscriptConsumer,
-    useWorkspaceScmTouchedPathsForSession,
     useSetting,
 } from '@/sync/domains/state/storage';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -69,7 +69,7 @@ import {
     createSessionScmStashDetailsTab,
 } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { sessionScmRepositoryInit } from '@/sync/ops/sessions';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { useOpenResource } from '@/utils/url/openResource';
 import { GitOutcomeLine, type GitOutcomeFacts } from './GitOutcomeLine';
 import { GitNextActionButton, type GitNextActionMenuExtra } from './GitNextActionButton';
 import { GitTimelineSection } from './GitTimelineSection';
@@ -78,7 +78,9 @@ import { GitCleanState } from './GitCleanState';
 import { showGitRemotesAndMergesSheet } from './GitRemotesAndMergesSheet';
 import { useSessionGitRepositoryMutations } from './useSessionGitRepositoryMutations';
 import { GitPullRequestSection } from './pullRequest/GitPullRequestSection';
+import { useGitPullRequestDiscovery } from './pullRequest/useGitPullRequestDiscovery';
 import { GitBranchButton } from './branches/GitBranchButton';
+import { useSessionBranchWritesBlocked } from './branches/useSessionBranchWritesBlocked';
 import { GitKeptAsideNotice } from './branches/GitKeptAsideNotice';
 import { GitDisplayMenu, useGitDisplaySettings } from './display/GitDisplayMenu';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -100,9 +102,11 @@ export type SessionRightPanelGitViewProps = Readonly<{
 export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitViewProps) => {
     const router = useDestinationRouter();
     const { theme } = useUnistyles();
+    const contentInsetPx = usePaneContentInsetPx();
     const phone = useDeviceType() === 'phone';
     const terminal = useSessionTerminalAction({ sessionId: props.sessionId, serverId: props.serverId, scopeId: props.scopeId });
     const pane = useAppPaneScope(props.scopeId);
+    const { openResource } = useOpenResource({ sessionId: props.sessionId, serverId: props.serverId });
     const fileNavigation = useSessionFilePaneNavigation({ scopeId: props.scopeId, sessionId: props.sessionId, serverId: props.serverId ?? resolveServerIdForSessionIdFromLocalCache(props.sessionId) });
     const resumeSession = useSessionResumeAction();
     const requestSessionResume = React.useCallback(() => {
@@ -167,7 +171,6 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const effectiveScmSnapshot = scmSnapshot ?? lastGoodScmSnapshot;
     useSessionRealtimeScmTranscriptConsumer({ serverId: props.serverId ?? null, sessionId: props.sessionId }, effectiveScmSnapshot);
     const scmSnapshotError = useSessionProjectScmSnapshotError(props.sessionId, props.serverId);
-    const workspaceTouchedPaths = useWorkspaceScmTouchedPathsForSession(props.sessionId, props.serverId);
     const inFlightScmOperation = useSessionProjectScmInFlightOperation(props.sessionId, props.serverId);
     const operationLog = useSessionProjectScmOperationLog(props.sessionId, props.serverId);
     const lastPushedAt = React.useMemo(() => effectiveScmSnapshot ? selectLastSuccessfulScmPushAt(operationLog, inferRemoteTargetFromSnapshot(effectiveScmSnapshot)) : null, [operationLog, effectiveScmSnapshot]);
@@ -199,7 +202,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         projectPath: project?.key?.rootPath ?? null,
     });
     const { machineReachable, machineRpcTargetAvailable } = useSessionMachineReachability(props.sessionId, props.serverId);
-    const isSessionInactive = session?.active === false;
+    const { blocked: branchWritesBlocked, sessionPaused } = useSessionBranchWritesBlocked(props.sessionId, props.serverId);
     const maxIntervalMs = React.useMemo(() => {
         const raw = typeof autoRefreshIntervalSetting === 'number' && Number.isFinite(autoRefreshIntervalSetting)
             ? autoRefreshIntervalSetting
@@ -207,10 +210,12 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         return Math.max(0, raw);
     }, [autoRefreshIntervalSetting]);
     const baseIntervalMs = React.useMemo(() => Math.max(0, Math.min(10_000, maxIntervalMs)), [maxIntervalMs]);
+
     const {
         historyIdentity: commitHistoryInitKey,
         historyEntries,
         historyLoading,
+        historyError,
         historyHasMore,
         loadCommitHistory,
     } = useScmCommitHistory({
@@ -223,6 +228,14 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const refreshScmData = React.useCallback(async () => {
         await scmStatusSync.invalidateFromUserAndAwait(props.sessionId, props.serverId);
     }, [props.sessionId, props.serverId]);
+    const discoverPullRequest = useGitPullRequestDiscovery({
+        sessionId: props.sessionId, serverId: props.serverId, snapshot: effectiveScmSnapshot, machineReachable, lastPushedAt,
+    });
+    const refreshGitPane = React.useCallback(async () => {
+        await discoverPullRequest();
+        await refreshScmData();
+    }, [discoverPullRequest, refreshScmData]);
+
     const didInitCommitHistoryKeyRef = React.useRef<string | null>(null);
     useScmSessionAutoRefresh({
         sessionId: props.sessionId,
@@ -290,6 +303,9 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const loadMoreHistory = React.useCallback(() => {
         void loadCommitHistory();
     }, [loadCommitHistory]);
+    const retryHistory = React.useCallback(() => {
+        void loadCommitHistory({ reset: true });
+    }, [loadCommitHistory]);
     const incomingCommits = useScmIncomingCommits({
         sessionId: props.sessionId,
         serverId: props.serverId,
@@ -336,12 +352,16 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const isLockedByOtherSession = Boolean(
         inFlightScmOperation && inFlightScmOperation.sessionId !== props.sessionId
     );
-    const { canPublish, publishBusy, publishBranch } = usePublishBranchAction({
+    const { canPublish, publishBusy, publishBranch: publishBranchAction } = usePublishBranchAction({
         sessionId: props.sessionId, serverId: props.serverId,
         snapshot: effectiveScmSnapshot,
         writeEnabled: scmWriteEnabled === true && Boolean(sessionPath),
         disabled: false,
     });
+
+    const publishBranch = React.useCallback(async () => {
+        if (await publishBranchAction()) await refreshGitPane();
+    }, [publishBranchAction, refreshGitPane]);
 
     // What the remote allows right now (capability, policy and preflight); the header resolver picks from it.
     const remoteActions = React.useMemo(() => {
@@ -395,7 +415,6 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
 
     // The pane header (desktop band, phone large title) carries where you are, the one change count and the
     // next sync step; the body never draws a header of its own.
-    const sessionPaused = isSessionInactive && !machineRpcTargetAvailable;
     const machineName = useSessionMachineName(props.sessionId, props.serverId);
     const writeOperation = useSessionScmWriteOperation({
         sessionId: props.sessionId,
@@ -431,14 +450,15 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             prState: openPullRequest ? 'open' : pullRequestModel.kind === 'create' ? 'none' : 'unknown',
             prNumber: openPullRequest?.number ?? null,
             canCreatePr,
+            choosePrBase: pullRequestModel.blockedReason === 'missing-base',
             commitReady,
             // A paused session cannot reach its remote: the menu keeps every step, each unavailable.
             remoteActions: sessionPaused ? [] : remoteActions,
             writeOperation,
         });
-    }, [canCreatePr, changedFileCount, commitReady, conflictPaths.length, effectiveScmSnapshot, isRepo, openPullRequest, pullRequestModel.kind, remoteActions, sessionPaused, writeOperation]);
+    }, [canCreatePr, changedFileCount, commitReady, conflictPaths.length, effectiveScmSnapshot, isRepo, openPullRequest, pullRequestModel.kind, pullRequestModel.blockedReason, remoteActions, sessionPaused, writeOperation]);
     const headerLineLeadingColor = theme.colors.text.secondary;
-    const branchBusy = !scmWriteEnabled || scmOperationBusy || publishBusy || hasGlobalOperationInFlight || isLockedByOtherSession || sessionPaused;
+    const branchBusy = branchWritesBlocked || scmOperationBusy || publishBusy;
     const headerBranchButton = React.useMemo(
         () => (effectiveScmSnapshot && isRepo ? (
             <GitBranchButton
@@ -507,9 +527,9 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const onRunHeaderAction = React.useCallback((key: SessionGitPaneActionKey) => {
         if (key === 'push' || key === 'pull' || key === 'fetch') void runRemoteOperation(key);
         else if (key === 'publish') void publishBranch();
-        else if (key === 'open-pr' && openPullRequestUrl) void openExternalUrl(openPullRequestUrl);
+        else if (key === 'open-pr' && openPullRequestUrl) void openResource({ kind: 'pullRequest', url: openPullRequestUrl });
         else if (key === 'create-pr') requestGitPullRequestForm(props.sessionId, props.serverId);
-    }, [openPullRequestUrl, props.serverId, props.sessionId, publishBranch, runRemoteOperation]);
+    }, [openPullRequestUrl, openResource, props.serverId, props.sessionId, publishBranch, runRemoteOperation]);
     const undoLastCommit = React.useCallback(async (expectedHeadOid: string) => {
         if (!scmWriteEnabled || effectiveScmSnapshot?.capabilities?.writeCommitUndoLast !== true || branchBusy) return;
         await repositoryMutations.undoLastCommit(expectedHeadOid);
@@ -565,7 +585,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         retry: (action: string) => {
             if (action === 'push' || action === 'pull' || action === 'fetch') void runRemoteOperation(action);
         },
-        refresh: () => { void refreshScmData(); },
+        refresh: () => { void refreshGitPane(); },
         publish: () => { void publishBranch(); },
         ...(effectiveScmSnapshot?.capabilities?.writeRemotePolicies === true ? {
             pullThenPush: (policy: Readonly<{ reconcile: 'rebase' | 'merge' }>) => {
@@ -578,7 +598,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         } : {}),
         preferRebase: Boolean(effectiveScmSnapshot?.branch.head)
             && effectiveScmSnapshot?.branch.head !== (effectiveScmSnapshot?.repo.defaultBranch ?? null),
-    }), [terminal, branchBusy, effectiveScmSnapshot?.branch.head, effectiveScmSnapshot?.capabilities?.writeCommitUndoLast, effectiveScmSnapshot?.capabilities?.writeRemotePolicies, effectiveScmSnapshot?.repo.defaultBranch, publishBranch, refreshScmData, runRemoteOperation, scmWriteEnabled, undoLastCommit]);
+    }), [terminal, branchBusy, effectiveScmSnapshot?.branch.head, effectiveScmSnapshot?.capabilities?.writeCommitUndoLast, effectiveScmSnapshot?.capabilities?.writeRemotePolicies, effectiveScmSnapshot?.repo.defaultBranch, publishBranch, refreshGitPane, runRemoteOperation, scmWriteEnabled, undoLastCommit]);
     const landedSha = (writeOperation?.phase === 'succeeded' || writeOperation?.phase === 'effect_applied_with_warning')
         && writeOperation.action === 'commit'
         ? writeOperation.result?.sha ?? null
@@ -594,8 +614,10 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             entries={historyEntries}
             incoming={incomingCommits}
             loading={historyLoading}
+            error={historyError}
             hasMore={historyHasMore}
             onLoadMore={loadMoreHistory}
+            onRetry={retryHistory}
             onOpenCommit={openCommitInDetails}
             landedSha={landedSha}
         />
@@ -625,7 +647,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                 testID="session-rightpanel-git-unavailable"
                 details={userFacingDetails}
                 {...(scmSnapshotErrorCode ? { errorCode: scmSnapshotErrorCode } : {})}
-                onRetry={() => void refreshScmData()}
+                onRetry={() => void refreshGitPane()}
             />
         );
     }
@@ -650,7 +672,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         <SourceControlStaleSnapshotNotice
             testID="session-rightpanel-git-stale"
             error={scmSnapshotError}
-            onRetry={() => void refreshScmData()}
+            onRetry={() => void refreshGitPane()}
         />
     );
 
@@ -706,7 +728,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             justCompleted={writeOperation?.phase === 'succeeded' && writeOperation.action === 'push'}
             phone={phone}
             onCreatePullRequest={paneActions?.menu.some((action) => action.key === 'create-pr' && !action.disabled) ? () => onRunHeaderAction('create-pr') : null}
-            onOpenPullRequest={openPullRequestUrl ? () => void openExternalUrl(openPullRequestUrl) : null}
+            onOpenPullRequest={openPullRequestUrl ? () => void openResource({ kind: 'pullRequest', url: openPullRequestUrl }) : null}
             pullRequestNumber={openPullRequest?.number ?? null}
         />
     );
@@ -718,7 +740,6 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             serverId={props.serverId}
             sessionPath={sessionPath}
             scmSnapshot={effectiveScmSnapshot}
-            workspaceTouchedPaths={workspaceTouchedPaths}
             commitSelectionPaths={commitSelectionPaths}
             commitSelectionPatches={commitSelectionPatches}
             scmCommitStrategy={scmCommitStrategy}
@@ -767,7 +788,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             {!scmWriteEnabled ? (
                 // Git lab ST "Write actions off": the pane stays readable; one notice says why nothing can be
                 // committed here and offers the switch instead of hiding the form silently.
-                <View style={{ paddingHorizontal: theme.space.s12, paddingTop: theme.space.s4, paddingBottom: theme.space.s6 }}>
+                <View style={{ paddingHorizontal: contentInsetPx, paddingTop: theme.space.s4, paddingBottom: theme.space.s6 }}>
                     <AttentionBanner
                         testID="session-git-writes-off"
                         tone="neutral"

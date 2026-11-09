@@ -37,3 +37,25 @@ it('keeps Session freshness separate from machine reachability and reacts to the
     expect(screen.getTextContent()).not.toContain(t('sessionCompanion.freshness.machineOffline', { machine: 'Build computer' }));
     expect(screen.getTextContent()).toContain(t('sessionCompanion.freshness.sessionDisconnected'));
 });
+
+it('says nothing about freshness for a reachable, connected Session that is only behind on its reports', async () => {
+    const serverId = await home.addHome({ name: 'Home A', serverUrl: 'https://summary-online.test', accountId: 'account-a' });
+    const machine = createMachineFixture({ id: 'machine-a', active: true, activeAt: Date.now() });
+    const base = createSessionFixture();
+    const session = createSessionFixture({ id: 'session-a', serverId, active: true, activeAt: Date.now(), presence: 'online',
+        metadata: { ...base.metadata!, machineId: machine.id, path: '/repo', host: 'Build computer' } });
+    storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+    storage.getState().applySessions([session]);
+    const model = projectSessionSummaryCard({ awareness: { ...projectUiSessionAwareness(session, Date.now()), freshness: 'stale' },
+        agentLabel: null, activity: null, openApprovalCount: 0, scm: null, usage: null });
+    expect(model.stale).toBe(true);
+    expect(['disconnected', 'recoverable_unservable']).not.toContain(model.status?.state);
+    const screen = await renderScreen(<SessionSummaryCard model={model} session={session} serverId={serverId}
+        density="compact" machineName="Build computer" />);
+    expect(screen.getTextContent()).not.toContain(t('sessionCompanion.freshness.waitingForUpdates'));
+    expect(screen.getTextContent()).not.toContain(t('common.retry'));
+    // The moment the Machine is away, the same Session says so once, with its Retry.
+    await act(async () => { recordMachineRequestFailed({ serverId, accountId: 'account-a', machineId: machine.id }); });
+    expect(screen.getTextContent()).toContain(t('sessionCompanion.freshness.machineOffline', { machine: 'Build computer' }));
+    expect(screen.getTextContent()).toContain(t('common.retry'));
+});

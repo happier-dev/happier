@@ -122,6 +122,12 @@ export function formatWorkflowLoopSentence(draft: WorkflowEditorDraft, block: Lo
     }
 }
 
+/** The round guard as a reader says it; a cleared field says nothing while the validator asks for a number. */
+function formatWorkflowRoundLimit(maxIterations: WorkflowMaxIterationsV1): string | null {
+    if (typeof maxIterations !== 'number') return t('workflows.loop.roundLimitInput', { name: maxIterations.name });
+    return Number.isFinite(maxIterations) ? t('workflows.loop.roundLimit', { count: maxIterations }) : null;
+}
+
 /**
  * A Repeat's options (Step options for a container, 04 §5.2): the mode, its
  * mode-specific rows, and the round guard. Every edit goes through the draft
@@ -319,11 +325,13 @@ export function WorkflowLoopOptions(props: Readonly<{
 
 /**
  * Repeat in the document (lab `editor-E1`): the heading carries the repeat
- * mark and the loop read as one sentence ("For each issue in ↵ Gather changes ·
- * issues · 6 at a time") with its references as tokens and its literals as
- * words; the trailing select opens the loop's options. The body hangs from the
- * loop's rail (the same recursive block list), and for "until a step says
- * stop", the deciding step sits in its own "After each round" lane.
+ * mark and, for a loop over a count or a list, the loop read as one sentence
+ * ("For each issue in ↵ Gather changes · issues · 6 at a time") with its
+ * references as tokens and its literals as words; the trailing select opens the
+ * loop's options. The body hangs from the loop's rail (the same recursive block
+ * list), and for "until a step says stop", the deciding step sits in its own
+ * "After each round" lane. A loop that stops on a rule says so where the round
+ * ends (lab round 1106 F1): "Again until … · at most 5 rounds" closes its last lane.
  */
 export function WorkflowLoopEditor(props: Readonly<{
     draft: WorkflowEditorDraft;
@@ -344,12 +352,36 @@ export function WorkflowLoopEditor(props: Readonly<{
     testIDPrefix: string;
 }>): React.ReactElement {
     const { block, testIDPrefix } = props;
+    const { theme } = useUnistyles();
     const displayName = workflowBlockReferenceLabel(block);
     const idPrefix = `${testIDPrefix}-loop-${block.id}`;
     const repetition = block.repetition;
     const stopWhen = repetition.kind === 'until' ? repetition.stopWhen : null;
     const sentence = formatWorkflowLoopSentence(props.draft, block);
     const stopHeadline = stopWhen === null ? null : resolveWorkflowConditionHeadline(props.draft, stopWhen);
+    const unnamed = resolveWorkflowUnnamedHeading(block);
+    const roundRule = repetition.kind === 'until' ? t('workflows.loop.againUntil', { condition: stopHeadline?.sentence ?? '' })
+        : repetition.kind === 'evaluate' ? t('workflows.loop.againUntilDecided') : null;
+    const roundLimit = repetition.kind === 'until' || repetition.kind === 'evaluate' ? formatWorkflowRoundLimit(repetition.maxIterations) : null;
+    const turnSentence = roundRule === null ? null : roundLimit === null ? roundRule : `${roundRule} · ${roundLimit}`;
+    const turn = turnSentence === null ? null : (
+        <View testID={`${idPrefix}-turn`} style={workflowEditorStyles.laneTurn}>
+            <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+                style={workflowEditorStyles.laneTurnMark}>
+                <Icon name={WORKFLOW_BLOCK_KIND_GLYPH.loop} size={ICON_SIZE.xxs} color={theme.colors.text.tertiary} />
+            </View>
+            <Text testID={`${idPrefix}-sentence`} accessibilityLabel={turnSentence} style={workflowEditorStyles.metaText}>
+                <WorkflowReferenceSentence draft={props.draft} sentence={turnSentence} references={stopHeadline?.references ?? []} />
+            </Text>
+        </View>
+    );
+    // A rule that closes the lane does not also lead the heading: an unnamed loop's heading is its kind.
+    const headingMeta = turnSentence === null ? (
+        <Text testID={`${idPrefix}-sentence`} accessibilityLabel={sentence}>
+            <WorkflowReferenceSentence draft={props.draft} sentence={sentence}
+                references={repetition.kind === 'count' ? [repetition.count] : repetition.kind === 'items' ? [repetition.items] : []} />
+        </Text>
+    ) : unnamed === 'sentence' ? t('workflows.editor.addLoop') : undefined;
 
     const optionsControl = (
         <WorkflowContainerOptionsControl
@@ -366,17 +398,10 @@ export function WorkflowLoopEditor(props: Readonly<{
                 kindMark={<Icon name={WORKFLOW_BLOCK_KIND_GLYPH.loop} size={ICON_SIZE.xxs} />}
                 ordinal={props.ordinal}
                 selected={props.selected}
-                unnamed={resolveWorkflowUnnamedHeading(block)}
+                unnamed={unnamed}
                 {...(props.focusRegistration === undefined ? {} : { focusRegistration: props.focusRegistration })}
                 displayName={displayName}
-                meta={<Text testID={`${idPrefix}-sentence`} accessibilityLabel={sentence}>
-                    <WorkflowReferenceSentence draft={props.draft}
-                        sentence={stopHeadline === null ? sentence
-                            : t('workflows.page.inspector.repeatUntil', { condition: stopHeadline.sentence })}
-                        references={repetition.kind === 'count' ? [repetition.count]
-                            : repetition.kind === 'items' ? [repetition.items]
-                                : stopHeadline?.references ?? []} />
-                </Text>}
+                meta={headingMeta}
                 // A control with words wraps with the sentence; a bare caret keeps the heading's fixed slot,
                 // so it never sits alone on a line (owner 2026-11-06, as the If does).
                 {...(repetition.kind === 'items' ? { trailing: optionsControl } : {})}
@@ -389,11 +414,12 @@ export function WorkflowLoopEditor(props: Readonly<{
 
             <WorkflowContainerBody>
                 {/* Each round is a lane that forks off the flow and joins back (lab round 1106 F1). */}
-                <WorkflowContainerLane label={t('workflows.editor.loopBody')} labelTestID={`${idPrefix}-body-label`}>
+                <WorkflowContainerLane label={roundRule === null ? t('workflows.editor.loopBody') : t('workflows.loop.eachRound')}
+                    labelTestID={`${idPrefix}-body-label`} footer={repetition.kind === 'until' ? turn : undefined}>
                     {props.renderBody()}
                 </WorkflowContainerLane>
                 {repetition.kind === 'evaluate' ? (
-                    <WorkflowContainerLane label={t('workflows.editor.continuation')} labelTestID={`${idPrefix}-continuation-label`}>
+                    <WorkflowContainerLane label={t('workflows.editor.continuation')} labelTestID={`${idPrefix}-continuation-label`} footer={turn}>
                         {/* The deciding step sits on its lane's grid like a listed block: ordinal in the gutter. */}
                         <View>
                             <WorkflowSpineSegment reach="end" />

@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { DetailsTabHeader } from '@/components/appShell/panes/details/header/DetailsTabHeader';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SessionInPane } from '@/components/sessions/panes/SessionInPane';
+import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { ExecutionRunAgentMark } from '@/components/sessions/runs/ExecutionRunAgentMark';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -119,10 +120,13 @@ const SessionPeekHeader = React.memo(function SessionPeekHeader(
       }) as never,
     );
   }, [props.serverId, props.sessionId, router]);
+  // The peeked transcript stands on the conversation column; its header stands on the same edges.
+  const conversationColumnPx = useLayoutMaxWidth('conversation');
   if (title === null) return null;
   return (
     <DetailsTabHeader
       testID="session-peek-header"
+      columnMaxWidthPx={conversationColumnPx}
       title={title}
       leading={
         agentId ? <ExecutionRunAgentMark agentId={agentId} size={28} /> : undefined

@@ -51,6 +51,10 @@ export type SessionCompanionTranslations = Readonly<{
     drop: Readonly<{ keepBesideChat: string }>;
     sections: Readonly<{
         environment: string; running: string; usage: string; links: string; commit: string;
+        pullRequest: string;
+        pullRequestOpen: (params: Readonly<{ number: number }>) => string;
+        agentsCount: (params: Readonly<{ count: number }>) => string;
+        servicesCount: (params: Readonly<{ count: number }>) => string;
         filesCount: (params: Readonly<{ count: number }>) => string;
         more: (params: Readonly<{ count: number }>) => string;
         context: string;
@@ -111,7 +115,7 @@ export const sessionCompanionTranslationsEnglish = { en: {
         },
         drop: { keepBesideChat: 'Keep beside your chat' },
         sections: { environment: 'Environment', running: 'Running', usage: 'Usage', links: 'Links', commit: 'Commit',
-            filesCount: ({ count }) => (count === 1 ? '1 file' : `${count} files`), more: ({ count }) => `${count} more`, context: 'Context', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
+            pullRequest: "Pull request", pullRequestOpen: ({ number }) => `#${number} · Open`, agentsCount: ({ count }) => (count === 1 ? "1 agent" : `${count} agents`), servicesCount: ({ count }) => (count === 1 ? "1 service" : `${count} services`), filesCount: ({ count }) => (count === 1 ? '1 file' : `${count} files`), more: ({ count }) => `${count} more`, context: 'Context', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} is offline`, sessionDisconnected: "The session isn’t connected", waitingForUpdates: "Waiting for the session to check in" },
         needsYouA11y: ({ count }) => `Companion, ${count} waiting for you`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "en">;

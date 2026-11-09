@@ -1910,6 +1910,32 @@ describe('document anatomy (DESIGN-4)', () => {
         expect(text).not.toContain('“converged”');
     });
 
+    it('ends a loop\'s lane with its stop rule and round limit; the heading stays the name (lab round 1106 F1)', async () => {
+        const harness = await loadHarness();
+        const stopWhen = { kind: 'compare', operator: 'eq', left: { kind: 'result', producer: { blockId: 'check', scope: { kind: 'current' } }, path: ['verdict'] },
+            right: { kind: 'literal', value: 'converged' } };
+        const until = (id: string, name: string | undefined, maxIterations: unknown) => ({ kind: 'loop', id, ...(name ? { name } : {}), body: [step(`${id}-check`, 'Check')],
+            repetition: { kind: 'until', maxIterations, stopWhen } });
+        const draft = buildDraft(harness, [
+            until('rounds', 'Review until it converges', 5),
+            until('byInput', 'Review by input', { kind: 'input', name: 'rounds' }),
+            until('anonymous', undefined, 5),
+        ] as never);
+        const screen = await renderList(harness, { draft });
+        type TextNode = string | { children: readonly TextNode[] };
+        const read = (node: TextNode): string => typeof node === 'string' ? node : node.children.map(read).join('');
+        const textOf = (testID: string) => { const host = screen.findHostByTestId(testID); return host ? read(host as never) : ''; };
+
+        expect(screen.findHostByTestId('workflow-editor-loop-rounds-label-meta')).toBeNull();
+        expect(textOf('workflow-editor-loop-rounds-turn')).toContain('workflows.loop.againUntil');
+        expect(textOf('workflow-editor-loop-rounds-turn')).toContain('workflows.loop.roundLimit');
+        expect(textOf('workflow-editor-loop-byInput-turn')).toContain('workflows.loop.roundLimitInput');
+        expect(screen.getTextContent()).toContain('workflows.loop.eachRound');
+        // An unnamed loop's heading is its kind, so the rule still reads once: at the end of the lane.
+        expect(textOf('workflow-editor-loop-anonymous-label-meta')).not.toContain('workflows.page.inspector.repeatUntil');
+        expect(textOf('workflow-editor-loop-anonymous-turn')).toContain('workflows.loop.againUntil');
+    });
+
     it('keeps a container name whole on a narrow line: sized to its words, meta after it, the consequence wrapping beneath (DESIGN-5 N1)', async () => {
         const harness = await loadHarness();
         const draft = buildDraft(harness, [{ kind: 'parallel', id: 'panel', name: 'Changelog and tests', failurePolicy: 'fail_stop',

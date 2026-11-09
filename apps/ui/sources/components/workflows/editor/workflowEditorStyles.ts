@@ -197,6 +197,18 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         borderColor: theme.colors.border.subtle,
     },
     /** Where a lane joins back: its line bends from its mark column into the container's spine. */
+    /** A loop's "goes round again" line, at the end of its lane (lab round 1106 F1 `.f1-turn`): words on the blocks' edge, its mark in their ordinal column. */
+    laneTurn: {
+        paddingTop: theme.space.s12,
+        paddingLeft: WORKFLOW_DOCUMENT_GUTTER_PX,
+    },
+    laneTurnMark: {
+        position: 'absolute',
+        top: theme.space.s12,
+        left: 0,
+        width: ORDINAL_SIZE,
+        alignItems: 'center',
+    },
     laneJoin: {
         height: theme.space.s12,
     },

@@ -6,15 +6,24 @@ import { Popover } from '@/components/ui/popover';
 import { SelectableMenuResults } from '@/components/ui/forms/dropdown/SelectableMenuResults';
 import type { SelectableMenuItem } from '@/components/ui/forms/dropdown/selectableMenuTypes';
 import { CREATE_ITEM_ID, useSelectableMenu } from '@/components/ui/forms/dropdown/useSelectableMenu';
+import { useScrollRectIntoViewRegistry } from '@/components/ui/scroll/useScrollRectIntoView';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 export type WorkspaceScmBranchPopoverControls = Readonly<{
     closeMenu: () => void;
     reopenMenu: () => void;
+}>;
+
+export type WorkspaceScmBranchPopoverTrigger = Readonly<{
+    open: boolean;
+    disabled: boolean;
+    accessibilityLabel: string;
+    onToggle: () => void;
 }>;
 
 export type WorkspaceScmBranchPopoverProps = Readonly<{
@@ -31,10 +40,14 @@ export type WorkspaceScmBranchPopoverProps = Readonly<{
      * (Git lab BR): a branch glyph, the name as the line's one emphasised noun, a small chevron.
      */
     triggerAppearance?: 'title' | 'line';
+    /** Draws the trigger instead of an appearance (a row of a grouped list); the list still anchors to it. */
+    renderTrigger?: (trigger: WorkspaceScmBranchPopoverTrigger) => React.ReactNode;
     /** Asks the search field to take focus (a "New branch…" row); bump the value to ask again. */
     focusSearchRequest?: number;
     testID?: string;
 }>;
+
+const BRANCH_RESULTS_MAX_HEIGHT = 360;
 
 export function WorkspaceScmBranchPopover(props: WorkspaceScmBranchPopoverProps): React.ReactElement {
     const { theme } = useUnistyles();
@@ -44,7 +57,7 @@ export function WorkspaceScmBranchPopover(props: WorkspaceScmBranchPopoverProps)
     // Git lab BR: one list read top to bottom (current, branches, kept aside, worktrees, start something new).
     const items = React.useMemo(() => [...props.branchItems, ...props.worktreeItems], [props.branchItems, props.worktreeItems]);
     const allowCreateBranch = props.onCreateBranch ?? null;
-    const { searchQuery, selectedIndex, filteredCategories, inputRef, handleSearchChange, handleKeyPress, setSelectedIndex } = useSelectableMenu({
+    const { searchQuery, selectedIndex, filteredCategories, allItems, inputRef, handleSearchChange, handleKeyPress, setSelectedIndex } = useSelectableMenu({
         items,
         onRequestClose: () => props.onOpenChange(false),
         open: props.open,
@@ -62,6 +75,13 @@ export function WorkspaceScmBranchPopover(props: WorkspaceScmBranchPopoverProps)
             })
             : null,
         allowEmptySelection: false,
+    });
+    // The results follow this scroller, so a repository with thousands of branches mounts only the rows in view, and
+    // the highlighted branch (the current one on open, then wherever the keys move) is revealed once.
+    const resultScroll = useScrollRectIntoViewRegistry({
+        activeKey: allItems[selectedIndex]?.id ?? null,
+        padding: theme.space.s8,
+        once: true,
     });
 
     React.useEffect(() => {
@@ -84,15 +104,19 @@ export function WorkspaceScmBranchPopover(props: WorkspaceScmBranchPopoverProps)
     return (
         <>
             <View ref={anchorRef} collapsable={false}>
-                {props.triggerAppearance === 'line' ? (
-                    <Pressable
+                {props.renderTrigger ? props.renderTrigger({
+                    open: props.open,
+                    disabled,
+                    accessibilityLabel: t('sessionGitBranches.openA11y', { branch: props.currentBranch || t('files.detachedHead') }),
+                    onToggle: () => props.onOpenChange(!props.open),
+                }) : props.triggerAppearance === 'line' ? (
+                    <HappierPressable
                         testID={triggerTestId}
                         accessibilityRole="button"
                         accessibilityLabel={t('sessionGitBranches.openA11y', { branch: props.currentBranch || t('files.detachedHead') })}
-                        accessibilityState={{ expanded: props.open, disabled }}
+                        expanded={props.open}
                         onPress={() => props.onOpenChange(!props.open)}
                         disabled={disabled}
-                        hitSlop={6}
                         style={({ pressed }) => ({
                             flexDirection: 'row',
                             alignItems: 'center',
@@ -106,7 +130,7 @@ export function WorkspaceScmBranchPopover(props: WorkspaceScmBranchPopoverProps)
                             {props.currentBranch || t('files.detachedHead')}
                         </Text>
                         <Icon name={props.open ? 'caret-up' : 'caret-down'} size={11} color={theme.colors.text.tertiary} />
-                    </Pressable>
+                    </HappierPressable>
                 ) : (
                     <Pressable
                         testID={triggerTestId}
@@ -175,7 +199,12 @@ export function WorkspaceScmBranchPopover(props: WorkspaceScmBranchPopoverProps)
                             />
                         </View>
                         <ScrollView
-                            style={{ maxHeight: 360 }}
+                            ref={resultScroll.scrollRef}
+                            onLayout={resultScroll.onViewportLayout}
+                            onContentSizeChange={resultScroll.onContentSizeChange}
+                            onScroll={resultScroll.onScroll}
+                            scrollEventThrottle={32}
+                            style={{ maxHeight: BRANCH_RESULTS_MAX_HEIGHT }}
                             contentContainerStyle={{ paddingBottom: theme.space.s8 }}
                             keyboardShouldPersistTaps="handled"
                             nestedScrollEnabled
@@ -188,6 +217,9 @@ export function WorkspaceScmBranchPopover(props: WorkspaceScmBranchPopoverProps)
                                 onPressItem={handleActivateItem}
                                 rowVariant="slim"
                                 emptyLabel={t('files.branchMenu.empty')}
+                                viewport={resultScroll.viewport}
+                                registerItemLayout={resultScroll.registerItemLayout}
+                                initialViewportHeight={BRANCH_RESULTS_MAX_HEIGHT}
                             />
                         </ScrollView>
                     </View>

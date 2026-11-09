@@ -8,7 +8,7 @@ import { resolveSessionPathWithinWorktree } from '@/scm/repository/resolveSessio
 import { useRepoScmBranchList } from '@/scm/repository/useRepoScmBranchList';
 import { repoScmWorktreeService } from '@/scm/repository/repoScmWorktreeService';
 import { runSessionScmMutation, type ScmMutationCall } from '@/scm/operations/runSessionScmMutation';
-import { selectScmChangedFiles } from '@/scm/scmStatusFiles';
+import { selectScmChangedFileCount } from '@/scm/scmStatusFiles';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { sessionScmBranchCheckout, sessionScmBranchCreate, sessionScmStashCreate } from '@/sync/ops';
 import { storage, useSetting } from '@/sync/domains/state/storage';
@@ -26,7 +26,7 @@ import {
     GIT_BRANCH_MENU_ITEM_IDS,
 } from '@/components/workspaces/scm/branches/buildWorkspaceScmBranchPopoverItems';
 import { filterVisibleRepoWorktreeRows } from '@/components/workspaces/scm/worktrees/filterVisibleRepoWorktreeRows';
-import { WorkspaceScmBranchPopover } from '@/components/workspaces/scm/branches/WorkspaceScmBranchPopover';
+import { WorkspaceScmBranchPopover, type WorkspaceScmBranchPopoverProps } from '@/components/workspaces/scm/branches/WorkspaceScmBranchPopover';
 import {
     hasUncommittedChanges,
     isBranchStashAlreadyExistsError,
@@ -46,6 +46,8 @@ export type GitBranchButtonProps = Readonly<{
     onOpenStashDetails?: () => void;
     /** `line`: the pane header's live-line door (default); `title`: a standalone branch title. */
     appearance?: 'line' | 'title';
+    /** Draws the trigger itself (the Companion's branch row) instead of an appearance. */
+    renderTrigger?: WorkspaceScmBranchPopoverProps['renderTrigger'];
     testID?: string;
 }>;
 
@@ -97,7 +99,8 @@ export function GitBranchButton(props: GitBranchButtonProps): React.ReactElement
     const [loadError, setLoadError] = React.useState<string | null>(null);
 
     const changedCount = React.useMemo(
-        () => (snapshot?.repo.isRepo ? selectScmChangedFiles(snapshot).length : 0),
+        // The one change count: a summary delivery (the Companion's counts snapshot) carries no rows to count.
+        () => (snapshot?.repo.isRepo ? selectScmChangedFileCount(snapshot) : 0),
         [snapshot],
     );
     // Kept-aside rows are read only while the list is open (a closed door issues no RPC).
@@ -389,6 +392,7 @@ export function GitBranchButton(props: GitBranchButtonProps): React.ReactElement
             onSelectItem={onSelect}
             onCreateBranch={canCreate ? createBranch : null}
             triggerAppearance={props.appearance ?? 'line'}
+            renderTrigger={props.renderTrigger}
             focusSearchRequest={focusSearchRequest}
             testID={props.testID}
         />

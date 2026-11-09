@@ -5,6 +5,7 @@ import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import type { ServiceRow } from '@/sync/domains/local/services/serviceRow';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 import { scmChangeHasLineDelta } from '@/scm/scmLineDelta';
+import { t } from '@/text';
 
 /**
  * How many items a Companion glance lists before its "n more" (lab WC: a glance, not the list): the Changes
@@ -177,6 +178,15 @@ export function resolveRunningSectionRows(input: Readonly<{
         services,
         moreServices: runningServices.length - services.length,
     };
+}
+
+/** The Running section's header count (lab crows B, "2 agents · 2 services"): every running item by kind, not only the rows drawn. */
+export function formatRunningSectionCount(counts: Readonly<{ agents: number; services: number }>): string | null {
+    const parts = [
+        ...(counts.agents > 0 ? [t('sessionCompanion.sections.agentsCount', { count: counts.agents })] : []),
+        ...(counts.services > 0 ? [t('sessionCompanion.sections.servicesCount', { count: counts.services })] : []),
+    ];
+    return parts.length > 0 ? parts.join(' · ') : null;
 }
 
 /** Links: the repository's page, read from `origin` first, else the first remote that has one. */
