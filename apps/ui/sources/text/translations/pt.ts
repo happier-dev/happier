@@ -18143,6 +18143,8 @@ settingsSession: {
         invalidFolder: "Escolha uma pasta dentro deste checkout.",
         folderUnusable: "Esta pasta não pode ser usada.",
         folderUnusableHint: "Escolha outra pasta nesta máquina. Suas escolhas foram mantidas.",
+        folderUnusable: "Esta pasta não pode ser usada.",
+        folderUnusableHint: "Escolha outra pasta nesta máquina. Suas escolhas foram mantidas.",
         unsupported: "Esta máquina não consegue preparar este projeto.",
         cloneUnsupported: "Esta máquina não consegue clonar repositórios.",
         hostingProviderUnavailable: "O provedor de hospedagem desta Source não está disponível nesta máquina.",

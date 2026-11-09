@@ -230,6 +230,49 @@ describe('git repository clone destination publishing', () => {
         expect(existsSync(resolve(actualParent, 'happier'))).toBe(false);
     });
 
+    it('creates a missing parent only when it reserves the destination', async () => {
+        const parent = resolve(createWorkspace(), 'src', 'nested');
+        const remotePath = createBareRemoteRepository();
+        const destination = await preflightDestination(makeRequest(parent, remotePath));
+        if (!destination.ok) throw new Error(destination.response.error);
+        expect(existsSync(parent)).toBe(false);
+
+        const reservation = await reserveCloneDestination(destination);
+
+        if (!reservation.ok) throw new Error(reservation.response.error);
+        await reservation.privateTempHandle.close();
+        expect(reservation.parentPath).toBe(parent);
+        expect(existsSync(reservation.privateTempPath)).toBe(true);
+        expect(existsSync(resolve(parent, 'happier'))).toBe(false);
+    });
+
+    it('refuses a missing parent that became a symlink before reservation', async () => {
+        const workspace = createWorkspace();
+        const parent = resolve(workspace, 'src');
+        const actualParent = createWorkspace();
+        const remotePath = createBareRemoteRepository();
+        const destination = await preflightDestination(makeRequest(parent, remotePath));
+        if (!destination.ok) throw new Error(destination.response.error);
+        symlinkSync(actualParent, parent, 'dir');
+
+        const reservation = await reserveCloneDestination(destination);
+
+        expect(reservation).toMatchObject({ ok: false, response: { errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH } });
+        expect(existsSync(resolve(actualParent, 'happier'))).toBe(false);
+    });
+
+    it('refuses a parent underneath a file without creating anything', async () => {
+        const workspace = createWorkspace();
+        const blocker = resolve(workspace, 'taken');
+        writeFileSync(blocker, 'keep\n');
+        const remotePath = createBareRemoteRepository();
+
+        expect(await preflightDestination(makeRequest(resolve(blocker, 'child'), remotePath))).toMatchObject({
+            ok: false,
+            response: { errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH },
+        });
+    });
+
     it('removes its empty final reservation when publish fails before moving clone entries', async () => {
         const parent = createWorkspace();
         const remotePath = createBareRemoteRepository();

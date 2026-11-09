@@ -18143,6 +18143,8 @@ settingsSession: {
             invalidFolder: "Wähle einen Ordner in diesem Checkout.",
             folderUnusable: "Dieser Ordner kann nicht verwendet werden.",
             folderUnusableHint: "Wähle einen anderen Ordner auf dieser Maschine. Deine Auswahl bleibt erhalten.",
+            folderUnusable: "Dieser Ordner kann nicht verwendet werden.",
+            folderUnusableHint: "Wähle einen anderen Ordner auf dieser Maschine. Deine Auswahl bleibt erhalten.",
             unsupported: "Dieser Rechner kann dieses Projekt nicht vorbereiten.",
             cloneUnsupported: "Dieser Rechner kann keine Repositorys klonen.",
             hostingProviderUnavailable: "Der Hosting-Anbieter dieser Source ist auf diesem Rechner nicht verfügbar.",

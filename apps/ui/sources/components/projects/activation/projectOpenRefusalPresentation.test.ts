@@ -46,6 +46,13 @@ describe('Project Open refusal presentation', () => {
             expect(`${shown.title} ${shown.description ?? ''}`, code).not.toMatch(/projects\.open\.|[a-z]+_[a-z_]+/);
         }
     });
+    it.each(['invalid_directory', 'INVALID_PATH'])('names an unusable folder and keeps %s behind Details (Projects D2)', code => {
+        const shown = projectOpenRefusalPresentation(code, null);
+        expect(shown.title).not.toBe(t('projects.open.failed'));
+        expect(shown.description).toBeTruthy();
+        expect(`${shown.title} ${shown.description}`).not.toContain(code);
+        expect(shown.details).toEqual([code]);
+    });
     it('names Machine access separately from a failed access check', () => {
         expect(projectOpenRefusalPresentation('machine_access_denied', null).title)
             .not.toBe(projectOpenRefusalPresentation('requester_authority_unavailable', null).title);

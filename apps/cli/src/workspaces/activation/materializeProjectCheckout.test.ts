@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -17,6 +17,15 @@ await import('@/scm/workspace/workspaceCheckoutOperations');
 
 const temporaryRoots: string[] = [];
 const git = promisify(execFile);
+function cloneRegistry(providers: ReturnType<typeof makeProviderRegistry>) {
+  const registration = createGitScmBackendRuntimeRegistration();
+  if (!registration.runtime) throw new Error('Git SCM test runtime is unavailable');
+  return createScmBackendRegistry([createRegisteredScmBackendAdapter({
+    definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+    executableDefinition: registration.runtime, registration,
+    hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(providers),
+  })]);
+}
 async function temporaryRoot() {
   const root = await mkdtemp(join(tmpdir(), 'happier-project-open-'));
   temporaryRoots.push(root);
@@ -48,6 +57,55 @@ describe('materializeProjectCheckout', () => {
       selector: { provider: request.provider, repository: request.repository, protocol: request.protocol }, registry,
       materialization: { kind: 'clone', destinationParentPath: parent, destinationDirectoryName: 'refused' },
     }))).rejects.toMatchObject({ code: 'REMOTE_AUTH_REQUIRED', failureCause, remediation });
+  });
+
+  it.each(['plain', 'symlinked ancestor'] as const)('creates a missing destination parent, like the offered ~/src on a fresh Machine (%s)', async shape => {
+    const home = await temporaryRoot();
+    const real = await realpath(home);
+    let base = real;
+    if (shape === 'symlinked ancestor') {
+      await mkdir(join(real, 'volume'));
+      await symlink(join(real, 'volume'), join(real, 'alias'), process.platform === 'win32' ? 'junction' : 'dir');
+      base = join(real, 'alias');
+    }
+    const remote = createBareRemoteRepository();
+    temporaryRoots.push(join(remote, '..'));
+    const request = makeRequest(join(base, 'src'), remote, 'gitignore');
+    const result = await runWithRealGitScmRuntime(() => materializeProjectCheckout({
+      selector: { provider: request.provider, repository: request.repository, protocol: request.protocol },
+      registry: cloneRegistry(makeProviderRegistry(makeCloneTargetDescription(remote))),
+      materialization: { kind: 'clone', destinationParentPath: join(base, 'src', 'nested'), destinationDirectoryName: 'gitignore' },
+    }));
+    const expected = join(real, shape === 'plain' ? '' : 'volume', 'src', 'nested', 'gitignore');
+    expect(result).toMatchObject({ rootPath: expected, directory: expected, created: true });
+    expect(runGit(expected, ['rev-parse', '--is-inside-work-tree'])).toBe('true');
+  });
+
+  it('leaves no folders behind when the clone is refused before its effect', async () => {
+    const home = await temporaryRoot();
+    const description = makeCloneTargetDescription('/tmp/qa-auth-refusal.git');
+    const request = makeRequest(home, '/tmp/qa-auth-refusal.git');
+    await expect(runWithRealGitScmRuntime(() => materializeProjectCheckout({
+      selector: { provider: request.provider, repository: request.repository, protocol: request.protocol },
+      registry: cloneRegistry(makeProviderRegistry(description, {
+        // External hosting-plugin boundary; SCM dispatch and project materialization stay real.
+        describeCloneTargets: async () => { throw Object.assign(new Error('Credential unavailable'), { errorCode: 'REMOTE_AUTH_REQUIRED' }); },
+      })),
+      materialization: { kind: 'clone', destinationParentPath: join(home, 'src'), destinationDirectoryName: 'refused' },
+    }))).rejects.toMatchObject({ code: 'REMOTE_AUTH_REQUIRED' });
+    await expect(access(join(home, 'src'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.each([['is a file', ''], ['sits under a file', 'child']] as const)('refuses a destination parent that %s and leaves the file alone', async (_shape, suffix) => {
+    const home = await temporaryRoot();
+    await writeFile(join(home, 'taken'), 'keep');
+    const request = makeRequest(home, '/tmp/unused.git');
+    await expect(runWithRealGitScmRuntime(() => materializeProjectCheckout({
+      selector: { provider: request.provider, repository: request.repository, protocol: request.protocol },
+      registry: cloneRegistry(makeProviderRegistry(makeCloneTargetDescription('/tmp/unused.git'))),
+      materialization: { kind: 'clone', destinationParentPath: join(home, 'taken', suffix), destinationDirectoryName: 'repo' },
+    }))).rejects.toMatchObject({ code: 'invalid_directory' });
+    expect(await readFile(join(home, 'taken'), 'utf8')).toBe('keep');
   });
 
   it('materializes initial main at the reviewed pin without a second detached checkout', async () => {

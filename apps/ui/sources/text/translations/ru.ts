@@ -17989,6 +17989,8 @@ settingsSession: {
         invalidFolder: "Выберите папку внутри этого checkout’а.",
         folderUnusable: "Эту папку нельзя использовать.",
         folderUnusableHint: "Выберите другую папку на этой машине. Ваш выбор сохранён.",
+        folderUnusable: "Эту папку нельзя использовать.",
+        folderUnusableHint: "Выберите другую папку на этой машине. Ваш выбор сохранён.",
         unsupported: "Эта машина не может подготовить проект.",
         cloneUnsupported: "Эта машина не может клонировать репозитории.",
         hostingProviderUnavailable: "Хостинг-провайдер этой Source недоступен на этой машине.",

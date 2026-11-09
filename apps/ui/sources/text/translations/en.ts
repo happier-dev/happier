@@ -21473,6 +21473,8 @@ const enProjects = {
       invalidFolder: "Choose a folder inside this checkout.",
       folderUnusable: "This folder can’t be used.",
       folderUnusableHint: "Choose another folder on this machine. Your choices are kept.",
+      folderUnusable: "This folder can’t be used.",
+      folderUnusableHint: "Choose another folder on this machine. Your choices are kept.",
       unsupported: "This machine cannot prepare this project.",
       cloneUnsupported: "This machine cannot clone repositories.",
       hostingProviderUnavailable: "This Source’s hosting provider is unavailable on this machine.",

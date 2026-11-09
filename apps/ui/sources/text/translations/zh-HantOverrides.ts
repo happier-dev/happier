@@ -13639,6 +13639,8 @@ settingsSession: {
             invalidFolder: "請選擇此簽出內的資料夾。",
             folderUnusable: "無法使用此資料夾。",
             folderUnusableHint: "請在這台機器上選擇其他資料夾。你的選擇已保留。",
+            folderUnusable: "無法使用此資料夾。",
+            folderUnusableHint: "請在這台機器上選擇其他資料夾。你的選擇已保留。",
             unsupported: "此機器無法準備此專案。",
             cloneUnsupported: "此機器無法複製儲存庫。",
             hostingProviderUnavailable: "此 Source 的程式碼託管服務在此機器上無法使用。",

@@ -56,6 +56,14 @@ async function existingDirectory(path: string | undefined): Promise<string> {
   }
 }
 
+/** The physical parent when it exists. A missing one stays as chosen: the clone owner creates it when the clone runs. */
+async function cloneParentDirectory(path: string): Promise<string> {
+  const normalized = resolveCanonicalAbsolutePath(path);
+  const missing = normalized && await stat(normalized.path).then(() => false,
+    (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
+  return normalized && missing ? normalized.path : existingDirectory(path);
+}
+
 async function containedDirectory(root: string, directory: string): Promise<string> {
   const physicalDirectory = await existingDirectory(directory);
   if (!isCanonicalAbsolutePathInsideRoot(root, physicalDirectory)) return refused('invalid_directory');
@@ -99,7 +107,7 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
     if (choice.initialCheckout && input.ref !== undefined && input.ref !== choice.initialCheckout.commit) return refused('invalid_materialization');
     if (!input.selector) return refused('source_unavailable');
     const { runScmRepositoryCloneRoute } = await import('@/scm/rpc/repositoryProvisioningDispatch');
-    const parent = await existingDirectory(choice.destinationParentPath);
+    const parent = await cloneParentDirectory(choice.destinationParentPath);
     input.signal?.throwIfAborted();
     // A pinned or starter clone must be exactly that commit, so it never adopts what is already there.
     const retainedRoot = choice.initialCheckout ? null : await retainedCloneRoot(join(parent, choice.destinationDirectoryName), input);

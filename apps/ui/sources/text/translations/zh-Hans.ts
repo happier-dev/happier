@@ -17655,6 +17655,8 @@ settingsSession: {
         invalidFolder: "请选择此检出内的文件夹。",
         folderUnusable: "无法使用此文件夹。",
         folderUnusableHint: "请在这台机器上选择其他文件夹。你的选择已保留。",
+        folderUnusable: "无法使用此文件夹。",
+        folderUnusableHint: "请在这台机器上选择其他文件夹。你的选择已保留。",
         unsupported: "此机器无法准备此项目。",
         cloneUnsupported: "此机器无法克隆仓库。",
         hostingProviderUnavailable: "此 Source 的代码托管服务在此机器上不可用。",

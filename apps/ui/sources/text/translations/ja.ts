@@ -17950,6 +17950,8 @@ settingsSession: {
         invalidFolder: "このチェックアウト内のフォルダーを選んでください。",
         folderUnusable: "このフォルダは使用できません。",
         folderUnusableHint: "このマシン上の別のフォルダを選択してください。選択内容は保持されています。",
+        folderUnusable: "このフォルダは使用できません。",
+        folderUnusableHint: "このマシン上の別のフォルダを選択してください。選択内容は保持されています。",
         unsupported: "このマシンではこのプロジェクトを準備できません。",
         cloneUnsupported: "このマシンではリポジトリをクローンできません。",
         hostingProviderUnavailable: "このSourceのホスティングプロバイダーは、このマシンでは利用できません。",

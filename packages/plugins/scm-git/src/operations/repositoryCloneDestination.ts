@@ -13,7 +13,8 @@ const PRIVATE_CLONE_DIRECTORY_PREFIX = '.happier-clone-';
 const PUBLISH_RESERVATION_MARKER_PREFIX = '.happier-clone-publish-';
 
 export type DestinationPreflightResult =
-    | Readonly<{ ok: true; parentPath: string; parentIdentity: FileIdentity; destinationPath: string }>
+    /** `parentIdentity` is null when the parent does not exist yet; reservation creates it. */
+    | Readonly<{ ok: true; parentPath: string; parentIdentity: FileIdentity | null; destinationPath: string }>
     | Readonly<{ ok: false; response: ScmRepositoryCloneOutput }>;
 
 export type CloneDestinationReservation =
@@ -62,6 +63,14 @@ export function cloneErrorResponse(
         errorCode,
         ...extra,
     };
+}
+
+function fileErrorCode(error: unknown): unknown {
+    return typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
+}
+
+function fileIdentity(stats: Readonly<FileIdentity>): FileIdentity {
+    return { birthtimeMs: stats.birthtimeMs, dev: stats.dev, ino: stats.ino };
 }
 
 export function pathContainsTraversal(value: string): boolean {
@@ -116,11 +125,12 @@ export async function preflightDestination(request: ScmRepositoryCloneInput): Pr
     let parentStats;
     try {
         parentStats = await lstat(parentPath);
-    } catch {
+    } catch (error) {
+        if (fileErrorCode(error) === 'ENOENT') return { ok: true, parentPath, parentIdentity: null, destinationPath };
         return {
             ok: false,
             response: cloneErrorResponse(
-                'Repository clone destination parent does not exist.',
+                'Repository clone destination parent could not be inspected.',
                 SCM_OPERATION_ERROR_CODES.INVALID_PATH,
             ),
         };
@@ -165,10 +175,7 @@ export async function preflightDestination(request: ScmRepositoryCloneInput): Pr
             ),
         };
     } catch (error) {
-        const code = typeof error === 'object' && error !== null
-            ? (error as { code?: unknown }).code
-            : undefined;
-        if (code !== 'ENOENT') {
+        if (fileErrorCode(error) !== 'ENOENT') {
             return {
                 ok: false,
                 response: cloneErrorResponse(
@@ -182,11 +189,7 @@ export async function preflightDestination(request: ScmRepositoryCloneInput): Pr
     return {
         ok: true,
         parentPath,
-        parentIdentity: {
-            birthtimeMs: parentStats.birthtimeMs,
-            dev: parentStats.dev,
-            ino: parentStats.ino,
-        },
+        parentIdentity: fileIdentity(parentStats),
         destinationPath,
     };
 }
@@ -195,9 +198,11 @@ export async function reserveCloneDestination(
     destination: Extract<DestinationPreflightResult, { ok: true }>,
 ): Promise<CloneDestinationReservation> {
     try {
+        if (destination.parentIdentity === null) await mkdir(destination.parentPath, { recursive: true });
+        const parentIdentity = destination.parentIdentity ?? fileIdentity(await lstat(destination.parentPath));
         if (!await isSameCloneDestination({
             path: destination.parentPath,
-            identity: destination.parentIdentity,
+            identity: parentIdentity,
         })) {
             return {
                 ok: false,
@@ -318,9 +323,7 @@ async function restoreMovedCloneEntries(input: Readonly<{
                 await lstat(restoredPath);
                 continue;
             } catch (error) {
-                const code = typeof error === 'object' && error !== null
-                    ? (error as { code?: unknown }).code
-                    : undefined;
+                const code = fileErrorCode(error);
                 if (code !== 'ENOENT') continue;
             }
 
@@ -401,9 +404,7 @@ export async function publishPrivateCloneDestination(
             },
         };
     } catch (error) {
-        const code = typeof error === 'object' && error !== null
-            ? (error as { code?: unknown }).code
-            : undefined;
+        const code = fileErrorCode(error);
         await cleanupPrivateCloneDestination({
             path: reservation.privateTempPath,
             identity: reservation.privateTempIdentity,
@@ -444,9 +445,7 @@ export async function publishPrivateCloneDestination(
                 await lstat(entryDestinationPath);
                 throw new Error('entry_exists');
             } catch (error) {
-                const code = typeof error === 'object' && error !== null
-                    ? (error as { code?: unknown }).code
-                    : undefined;
+                const code = fileErrorCode(error);
                 if (code !== 'ENOENT') throw error;
             }
             await rename(join(reservation.privateTempPath, entry), entryDestinationPath);

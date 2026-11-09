@@ -17911,6 +17911,8 @@ settingsSession: {
         invalidFolder: "Choisis un dossier dans ce checkout.",
         folderUnusable: "Ce dossier ne peut pas être utilisé.",
         folderUnusableHint: "Choisissez un autre dossier sur cette machine. Vos choix sont conservés.",
+        folderUnusable: "Ce dossier ne peut pas être utilisé.",
+        folderUnusableHint: "Choisissez un autre dossier sur cette machine. Vos choix sont conservés.",
         unsupported: "Cette machine ne peut pas préparer ce projet.",
         cloneUnsupported: "Cette machine ne peut pas cloner de dépôts.",
         hostingProviderUnavailable: "L’hébergeur du dépôt de cette Source est indisponible sur cette machine.",

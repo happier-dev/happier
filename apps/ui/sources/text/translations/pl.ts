@@ -17862,6 +17862,8 @@ settingsSession: {
         invalidFolder: "Wybierz folder w tym checkoucie.",
         folderUnusable: "Nie można użyć tego folderu.",
         folderUnusableHint: "Wybierz inny folder na tej maszynie. Twoje wybory zostały zachowane.",
+        folderUnusable: "Nie można użyć tego folderu.",
+        folderUnusableHint: "Wybierz inny folder na tej maszynie. Twoje wybory zostały zachowane.",
         unsupported: "Ta maszyna nie może przygotować tego projektu.",
         cloneUnsupported: "Ta maszyna nie może klonować repozytoriów.",
         hostingProviderUnavailable: "Dostawca hostingu tej Source jest niedostępny na tej maszynie.",

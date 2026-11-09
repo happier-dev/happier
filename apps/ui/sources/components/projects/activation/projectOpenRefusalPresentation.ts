@@ -36,6 +36,7 @@ export function projectOpenRefusalPresentation(code: string, gitRef: string | nu
     if (gitRef && code.includes('ref')) return shown(t('projects.open.refMissing', { ref: gitRef }), t('projects.open.refMissingHint'));
     if (code === 'repository_subfolder_missing') return shown(t('projects.open.subfolderMissing'),
         t('projects.open.subfolderMissingHint', { subfolder: subfolder?.trim() || t('projects.open.subfolderInRepository') }));
+    if (code === 'invalid_directory' || code === 'INVALID_PATH') return shown(t('projects.open.folderUnusable'), t('projects.open.folderUnusableHint'));
     // These two sentences already say what to do next.
     if (code.includes('folder') || code.includes('path')) return shown(t('projects.open.invalidFolder'));
     if (code.includes('source') && code.includes('changed')) return shown(t('projects.open.sourceChanged'));
