@@ -1,5 +1,7 @@
 import type {
     ConnectedServiceQuotaMeterV1,
+    ConnectedServiceQuotaSnapshotV1,
+    ConnectedServiceQuotaLimitSelectionV1,
 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { isConnectedServiceCredentialHealthStatusUsable, normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
 
@@ -7,6 +9,45 @@ import { selectConnectedServiceQuotaSummaryMeters } from '@/sync/domains/connect
 import { selectComparableConnectedServiceQuotaMeters } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import { deriveAccountHealth, type AccountHealth } from '@/sync/domains/connectedServices/deriveAccountHealth';
 import { parseDisplayableCredentialHealthStatus } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
+import { projectConnectedServiceQuotaSnapshotForLimitSelection } from '@/sync/domains/connectedServices/projectConnectedServiceQuotaSnapshotForLimitSelection';
+
+export type PoolQuotaSnapshot = Pick<ConnectedServiceQuotaSnapshotV1, 'meters' | 'fetchedAt' | 'staleAfterMs'>;
+export type PoolUsageFreshness = Readonly<{
+    asOf: number | null;
+    isStale: boolean;
+    notAnswering: boolean;
+    staleMemberIds: readonly string[];
+}>;
+
+/** Pool policy and retained-reading freshness are projected once for detail, index and chooser. */
+export function projectPoolUsage(input: Readonly<{
+    members: ReadonlyArray<Omit<PoolMemberUsageInput, 'meters' | 'isStale'> & Readonly<{ snapshot: PoolQuotaSnapshot | null; failed?: boolean }>>;
+    quotaLimitSelection?: ConnectedServiceQuotaLimitSelectionV1;
+    now: number;
+}>): Readonly<{ usage: PoolUsage; freshness: PoolUsageFreshness }> {
+    let asOf: number | null = null;
+    let readingCount = 0;
+    let failed = false;
+    const staleMemberIds: string[] = [];
+    const members = input.members.map((member) => {
+        const snapshot = projectConnectedServiceQuotaSnapshotForLimitSelection(member.snapshot, input.quotaLimitSelection);
+        const isStale = snapshot !== null && input.now > snapshot.fetchedAt + snapshot.staleAfterMs;
+        if (member.enabled) {
+            failed ||= member.failed === true;
+            if (snapshot) {
+                readingCount += 1;
+                asOf = asOf === null ? snapshot.fetchedAt : Math.min(asOf, snapshot.fetchedAt);
+                if (isStale) staleMemberIds.push(member.accountId);
+            }
+        }
+        return { ...member, meters: snapshot?.meters ?? null, isStale };
+    });
+    return {
+        usage: derivePoolUsage({ members, now: input.now }),
+        freshness: { asOf, isStale: staleMemberIds.length > 0, staleMemberIds,
+            notAnswering: readingCount > 0 && staleMemberIds.length === readingCount && failed },
+    };
+}
 
 /** Capacity from the member's last reported limits; freshness is carried separately. */
 export type PoolMemberRoom = 'room' | 'waiting' | 'unknown';

@@ -53,6 +53,46 @@ function buildModel(overrides: Partial<Parameters<typeof buildNewSessionConnecte
 }
 
 describe('buildNewSessionConnectedServicesSelectionListModel', () => {
+    it('creates freshness visuals only for mounted pool rows in a thousand-pool chooser', () => {
+        const renderPoolFreshness = vi.fn(() => 'reading-age');
+        const model = buildModel({ renderPoolFreshness,
+            quotaSnapshotsByKey: { 'anthropic/work': { meters: [], fetchedAt: Date.now(), staleAfterMs: 60_000 } },
+            groupOptionsByServiceId: { anthropic: Array.from({ length: 1000 }, (_, index) => ({
+                groupId: `pool-${index}`, label: `Pool ${index}`, status: 'ready' as const, activeProfileId: 'work',
+                memberProfileIds: ['work'], enabledMemberCount: 1, autoSwitch: true,
+            })) } });
+        expect(firstStaticSection(model).options.filter(row => row.id.includes(':group:'))).toHaveLength(1000);
+        expect(renderPoolFreshness).toHaveBeenCalledTimes(0);
+        const pool = firstStaticSection(model).options.find(row => row.id === createConnectedServiceGroupOptionId('anthropic', 'pool-999'))!;
+        expect(typeof pool.subtitleContent).toBe('function');
+        if (typeof pool.subtitleContent === 'function') pool.subtitleContent({ selected: false });
+        expect(renderPoolFreshness).toHaveBeenCalledTimes(1);
+    });
+    it('shows only the pool selected limits, retains raw account limits and passes the reading age to the row', () => {
+        const now = 1_800_000_000_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const snapshot = ConnectedServiceQuotaSnapshotV1Schema.parse({ v: 1, serviceId: 'anthropic', profileId: 'work',
+            fetchedAt: now - 120_000, staleAfterMs: 60_000, planLabel: null, accountLabel: null,
+            meters: [
+                { meterId: 'session', label: 'Session', remainingPct: 0, status: 'ok', unit: 'requests', used: 100, limit: 100, utilizationPct: 100, resetsAt: now + 60_000, details: {} },
+                { meterId: 'weekly', label: 'Weekly', remainingPct: 75, status: 'ok', unit: 'requests', used: 25, limit: 100, utilizationPct: 25, resetsAt: now + 600_000, details: {} },
+            ] });
+        const renderPoolFreshness = vi.fn(() => 'reading-age');
+        const model = buildModel({ quotaSnapshotsByKey: { 'anthropic/work': snapshot },
+            quotaErrorsByKey: { 'anthropic/work': 'quota_unavailable' }, renderPoolFreshness,
+            groupOptionsByServiceId: { anthropic: [{ groupId: 'pool', label: 'Pool', status: 'ready', activeProfileId: 'work',
+                memberProfileIds: ['work'], enabledMemberCount: 1, autoSwitch: true,
+                quotaLimitSelection: { mode: 'selected', providerLimitIds: ['weekly'] } }] } });
+        const rows = firstStaticSection(model).options;
+        const pool = rows.find(row => row.id === createConnectedServiceGroupOptionId('anthropic', 'pool'))!;
+        expect(pool.subtitle).toContain('75%');
+        expect(pool.subtitle).not.toContain('Session');
+        expect(rows.find(row => row.id === createConnectedServiceOptionId('anthropic', 'work'))?.subtitle).toContain('Session');
+        expect(typeof pool.subtitleContent).toBe('function');
+        if (typeof pool.subtitleContent === 'function') pool.subtitleContent({ selected: false });
+        expect(renderPoolFreshness).toHaveBeenCalledWith(expect.objectContaining({ asOf: snapshot.fetchedAt, isStale: true, notAnswering: true }), expect.any(String), expect.any(String));
+        vi.restoreAllMocks();
+    });
     it('keeps ready accounts visible with their switch restriction instead of calling their credentials unavailable', () => {
         const model = buildModel({ includeNativeAuthOption: false,
             resolveOptionAvailability: () => ({ disabled: true, availability: 'available' as const,

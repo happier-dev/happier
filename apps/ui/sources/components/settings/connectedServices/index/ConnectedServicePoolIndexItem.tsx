@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { ConnectedServiceQuotaMeterV1} from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { ConnectedServiceQuotaLimitSelectionV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
 import { Icon } from '@/components/ui/icons/Icon';
@@ -12,7 +12,8 @@ import { resolveQuotaTone } from '@/sync/domains/connectedServices/resolveQuotaT
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
-import { derivePoolUsage, type PoolUsage } from '../pools/derivePoolUsage';
+import { projectPoolUsage, type PoolUsage, type PoolUsageFreshness as PoolUsageFreshnessValue } from '../pools/derivePoolUsage';
+import { PoolUsageFreshness } from '../pools/PoolUsageFreshness';
 import { UsageMeterRow, UsageMeterStack, type UsageMeterSize } from '../usage/UsageMeterRow';
 import { OpenableSurface } from './OpenableSurface';
 import { ConnectedAccountIdentityText } from '../ConnectedAccountIdentityText';
@@ -29,6 +30,8 @@ export type ConnectedServicePoolIndexEntry = Readonly<{
     title: string;
     /** "Claude · 3 accounts · uses the one with the most left". */
     subtitle: string;
+    serviceTitle?: string;
+    quotaLimitSelection?: ConnectedServiceQuotaLimitSelectionV1;
     /** The member the pool uses now ("Using Work"); "since" waits for an active-member timestamp. */
     activeTitle: string | null;
     /** When the pool started using that member, when the pool owner reports it for that very member. */
@@ -46,6 +49,7 @@ export type ConnectedServicePoolIndexEntry = Readonly<{
  */
 export const ConnectedServicePoolIndexItemView = React.memo(function ConnectedServicePoolIndexItemView(props: ConnectedServicePoolIndexEntry & Readonly<{
     usage: PoolUsage | null;
+    freshness?: PoolUsageFreshnessValue;
     presentation: 'row' | 'card';
     compact: boolean;
     now: number;
@@ -71,6 +75,7 @@ export const ConnectedServicePoolIndexItemView = React.memo(function ConnectedSe
                     />
                 </View>
             ) : null}
+            {props.freshness ? <PoolUsageFreshness freshness={props.freshness} serviceTitle={props.serviceTitle ?? props.title} /> : null}
         </View>
     );
     const chips = usage ? (
@@ -185,24 +190,24 @@ export const ConnectedServicePoolIndexItem = React.memo(function ConnectedServic
         [members, service],
     );
     const quotas = useConnectedServiceQuotaSnapshots(refs);
-    const usage = React.useMemo(() => {
-        const metersByAccountId = new Map<string, readonly ConnectedServiceQuotaMeterV1[] | null>();
-        for (const profile of quotas.profiles) {
-            if (profile.kind !== 'qualified') continue;
-            metersByAccountId.set(profile.ref.accountId, quotas.snapshotsByKey[profile.key]?.meters ?? null);
-        }
-        return derivePoolUsage({
+    const summary = React.useMemo(() => {
+        const quotaByAccountId = new Map(quotas.profiles.flatMap((profile) => profile.kind === 'qualified'
+            ? [[profile.ref.accountId, { snapshot: quotas.snapshotsByKey[profile.key] ?? null, failed: Boolean(quotas.errorsByKey[profile.key]) }] as const]
+            : []));
+        return projectPoolUsage({
             members: members.map((member) => ({
                 accountId: member.accountId,
                 enabled: member.enabled,
                 credentialStatus: member.credentialStatus,
-                meters: metersByAccountId.get(member.accountId) ?? null,
+                snapshot: quotaByAccountId.get(member.accountId)?.snapshot ?? null,
+                failed: quotaByAccountId.get(member.accountId)?.failed,
             })),
+            quotaLimitSelection: props.quotaLimitSelection,
             // The derivation follows the snapshots; a reset that passes is read on their next update.
             now: Date.now(),
         });
-    }, [members, quotas.profiles, quotas.snapshotsByKey]);
-    return <ConnectedServicePoolIndexItemView {...props} usage={usage} now={Date.now()} />;
+    }, [members, props.quotaLimitSelection, quotas.profiles, quotas.snapshotsByKey, quotas.errorsByKey]);
+    return <ConnectedServicePoolIndexItemView {...props} usage={summary.usage} freshness={summary.freshness} now={Date.now()} />;
 });
 
 const styles = StyleSheet.create((theme) => ({

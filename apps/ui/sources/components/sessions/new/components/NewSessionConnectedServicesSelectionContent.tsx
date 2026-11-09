@@ -35,6 +35,7 @@ import { RouteSourceChevron, useSessionRouteSourceSections, type SessionRouteSou
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { PoolUsageFreshness } from '@/components/settings/connectedServices/pools/PoolUsageFreshness';
 import { SessionModelSourceBrowseHandoffContext } from '@/components/sessions/modelPicker/SessionModelSourceBrowseHandoff';
 import type { SessionRoute } from '@/providers/session/resolveSessionRoutePresentation';
 
@@ -140,7 +141,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
         return next;
     }, [props.profileOptionsByServiceId, props.supportedServiceIds]);
 
-    const { snapshotsByKey: quotaSnapshotsByKey } = useConnectedServiceQuotaBadgeState(requestedProfiles, { fetchPolicy: 'cache_only' });
+    const { snapshotsByKey: quotaSnapshotsByKey, errorsByKey: quotaErrorsByKey } = useConnectedServiceQuotaBadgeState(requestedProfiles, { fetchPolicy: 'cache_only' });
 
     // The row handlers are BEHAVIOUR, not data, so they are held in a ref and
     // invoked through stable wrappers instead of being memo dependencies.
@@ -219,6 +220,11 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
             appliedTeamRoute,
             allowDefaultProfileFallback: props.allowDefaultProfileFallback,
             quotaSnapshotsByKey,
+            quotaErrorsByKey,
+            renderPoolFreshness: (freshness, subtitle, serviceTitle) => <View>
+                <Text style={styles.poolSubtitle}>{subtitle}</Text>
+                <PoolUsageFreshness freshness={freshness} serviceTitle={serviceTitle} />
+            </View>,
             setBindingForService,
             onOpenSettings: openSettings,
             translate: t,
@@ -251,6 +257,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
         props.resolveOptionAvailability,
         props.supportedServiceIds,
         quotaSnapshotsByKey,
+        quotaErrorsByKey,
         reconnectProfile,
         recoverTeamCredentialResource,
         resolveServiceTitle,
@@ -312,6 +319,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingTop: theme.space.s8,
     },
     armedNote: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.secondary,
+    },
+    poolSubtitle: {
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
     },

@@ -39,7 +39,6 @@ import type { UseQualifiedConnectedAccountGroupsResult } from '@/hooks/server/co
 import { formatResetCountdown } from '@/sync/domains/connectedServices/formatResetCountdown';
 import { resolveQuotaMeterTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
 import { getPoolStrategyPresentation, isPoolUsageLimitSwitchEnabled } from '@/sync/domains/connectedServices/connectedServicePoolPolicy';
-import { projectConnectedServiceQuotaSnapshotForLimitSelection } from '@/sync/domains/connectedServices/projectConnectedServiceQuotaSnapshotForLimitSelection';
 import {
     type QualifiedConnectedAccountUiGroup,
     type QualifiedConnectedAccountUiGroupMember,
@@ -72,7 +71,7 @@ import { PoolMembersSelectField, type PoolMembershipCandidate } from './PoolMemb
 import { PoolMemberRow, type PoolMemberNote, type PoolMemberUsage } from './PoolMemberRow';
 import { PoolQuotaLimitsSelectField, type PoolQuotaLimitCandidate } from './PoolQuotaLimitsSelectField';
 import { computePoolMembershipDiff } from './poolMembershipDiff';
-import { derivePoolUsage, resolvePoolManualSwitchSuggestion, type PoolUsage } from './derivePoolUsage';
+import { projectPoolUsage, resolvePoolManualSwitchSuggestion } from './derivePoolUsage';
 import type { usePoolGatewayChoices } from './usePoolGatewayChoices';
 import { CredentialShareButton, useCredentialShareAction } from '@/components/sharing/credentials/CredentialShareSheet';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
@@ -90,8 +89,6 @@ const RECOVERY_MODES: ReadonlyArray<GroupRecoveryMode> = ['switch_or_wait', 'swi
 const TEST_ID = 'connected-services-pool-detail';
 const EMPTY_LABELS: Readonly<Record<string, string | undefined>> = Object.freeze({});
 const EMPTY_USAGE: Readonly<Record<string, PoolMemberQuota>> = Object.freeze({});
-/** Advanced rows under the disclosure: restore, switch when, stale probe, recovery, prompts. */
-const ADVANCED_SETTING_COUNT = 5;
 /** Width at which the pool meter can carry the wide reset column (label, bar, value, "next in … · 14:20"). */
 const LEFT_WIDE_MIN_WIDTH_PX = 520;
 
@@ -162,6 +159,8 @@ export type QualifiedPoolDetailViewProps = Readonly<{
     shareSource?: TeamCredentialSourceHint;
     /** Clears this pool's personal label (`connectedServices.labels.reset`), shown only while one is set. */
     onResetLabel?: () => void;
+    /** Updates only this pool's personal label through the presentation Action owner. */
+    onSetLabel?: (label: string) => Promise<boolean>;
     /** Asked once when the page opens with old readings: the on-demand check for those members. */
     onCheckStale?: (accountIds: readonly string[]) => void;
     onConnectAccount?: (anchor?: PopoverAnchor) => void;
@@ -293,10 +292,6 @@ function isRecoveryMode(value: string): value is GroupRecoveryMode {
     return (RECOVERY_MODES as readonly string[]).includes(value);
 }
 
-function isStale(snapshot: QuotaSnapshot, now: number): boolean {
-    return now > snapshot.fetchedAt + snapshot.staleAfterMs;
-}
-
 /** An integer typed in place, kept inside its bounds; the saved value comes back when refused. */
 function parseBoundedInteger(draft: string, min: number, max: number): number | null {
     const value = Number(draft.trim());
@@ -370,34 +365,23 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
     const memberItems = React.useMemo(() => sortedMembers.map((member) => ({ id: member.ref.accountId, title: identityOf(member.ref.accountId).name })), [identityOf, sortedMembers]);
     const memberAccountIds = React.useMemo(() => sortedMembers.map((member) => member.ref.accountId), [sortedMembers]);
 
-    /** Snapshots as the pool counts them: only the limits the pool is told to count. */
-    const countedSnapshotByAccountId = React.useMemo(() => {
-        const byId: Record<string, QuotaSnapshot | null> = {};
-        for (const member of group.members) {
-            byId[member.ref.accountId] = projectConnectedServiceQuotaSnapshotForLimitSelection(
-                memberQuota[member.ref.accountId]?.snapshot ?? null,
-                group.policy.quotaLimitSelection,
-            );
-        }
-        return byId;
-    }, [group.members, group.policy.quotaLimitSelection, memberQuota]);
-
-    const usage: PoolUsage = React.useMemo(() => {
+    const { usage, freshness } = React.useMemo(() => {
         const accountById = new Map(accounts.map(account => [account.ref.accountId, account]));
-        return derivePoolUsage({
+        return projectPoolUsage({
             now,
+            quotaLimitSelection: group.policy.quotaLimitSelection,
             members: group.members.map((member) => {
-                const snapshot = countedSnapshotByAccountId[member.ref.accountId];
+                const quota = memberQuota[member.ref.accountId];
                 return {
                     accountId: member.ref.accountId,
                     enabled: member.enabled,
                     credentialStatus: accountById.get(member.ref.accountId)?.status,
-                    isStale: snapshot != null && isStale(snapshot, now),
-                    meters: snapshot?.meters ?? null,
+                    snapshot: quota?.snapshot ?? null,
+                    failed: quota?.failed,
                 };
             }),
         });
-    }, [accounts, countedSnapshotByAccountId, group.members, now]);
+    }, [accounts, memberQuota, group.members, group.policy.quotaLimitSelection, now]);
 
     const nextAccountId = React.useMemo(() => resolvePoolManualSwitchSuggestion({
         activeAccountId: group.activeAccountId,
@@ -438,18 +422,21 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         await mutations.patch({ group, policy });
     }, [fallbackControlsEnabled, group, mutations]);
 
-    const [nameDraftState, setNameDraft] = React.useState<Readonly<{ ref: QualifiedConnectedAccountUiGroup['ref']; value: string }> | null>(null);
+    const [nameDraftState, setNameDraft] = React.useState<Readonly<{ ref: QualifiedConnectedAccountUiGroup['ref']; value: string; kind: 'definition' | 'label' }> | null>(null);
     const nameDraft = nameDraftState && sameQualifiedConnectedAccountGroupRef(nameDraftState.ref, group.ref)
         ? nameDraftState.value
         : null;
     if (nameDraftState && nameDraft === null) setNameDraft(null);
     const rename = React.useCallback(() => {
-        if (!mutations.mutating) setNameDraft({ ref: group.ref, value: group.displayName?.trim() ?? '' });
+        if (!mutations.mutating) setNameDraft({ ref: group.ref, value: group.displayName?.trim() ?? '', kind: 'definition' });
     }, [group.displayName, mutations.mutating]);
     const saveName = React.useCallback(async () => {
         if (nameDraft === null || mutations.mutating) return;
-        if (await mutations.patch({ group, displayName: nameDraft.trim() || null })) setNameDraft(null);
-    }, [group, mutations, nameDraft]);
+        const saved = nameDraftState?.kind === 'label'
+            ? await props.onSetLabel?.(nameDraft.trim())
+            : await mutations.patch({ group, displayName: nameDraft.trim() || null });
+        if (saved) setNameDraft(null);
+    }, [group, mutations, nameDraft, nameDraftState?.kind, props.onSetLabel]);
 
     const setMemberEnabled = React.useCallback((account: QualifiedConnectedAccountRef, enabled: boolean) => {
         void mutations.patchMember({ group, account, enabled });
@@ -576,23 +563,10 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
     // ── Left across the pool ──
     const loadingEnabled = enabledMembers.some((member) => memberQuota[member.ref.accountId]?.loading === true
         && !memberQuota[member.ref.accountId]?.snapshot);
-    const enabledSnapshots = enabledMembers
-        .map((member) => countedSnapshotByAccountId[member.ref.accountId])
-        .filter((snapshot): snapshot is QuotaSnapshot => snapshot != null);
-    // Freshness is a pool fact, stated once in the Members header: the pool is as current as the
-    // oldest reading it counts. Nothing is checked while nothing needs a reading, so old readings
-    // read as their age; "didn't answer" is said only when every reading is old and a check failed.
-    const poolAsOf = enabledSnapshots.length > 0 ? Math.min(...enabledSnapshots.map((snapshot) => snapshot.fetchedAt)) : null;
-    const staleMemberIds = enabledMembers
-        .filter((member) => countedSnapshotByAccountId[member.ref.accountId] != null
-            && usage.memberByAccountId[member.ref.accountId]?.isStale)
-        .map((member) => member.ref.accountId);
-    const notAnswering = enabledSnapshots.length > 0
-        && staleMemberIds.length === enabledMembers.filter((member) => countedSnapshotByAccountId[member.ref.accountId] != null).length
-        && enabledMembers.some((member) => memberQuota[member.ref.accountId]?.failed === true);
+    const { asOf: poolAsOf, notAnswering, staleMemberIds } = freshness;
     // One check when the page opens with old readings; nothing polls while it stays open.
     const checkedOnOpen = React.useRef(false);
-    const hasReading = enabledSnapshots.length > 0;
+    const hasReading = poolAsOf !== null;
     const staleOnOpen = staleMemberIds.join('\n');
     const onCheckStale = props.onCheckStale;
     React.useEffect(() => {
@@ -630,7 +604,10 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         ...(compact && nowAction ? [{ id: 'switch', title: nowAction.label, testID: nowAction.testID, onSelect: nowAction.onPress,
             // A menu row is narrow: the email that tells two same-named members apart reads under the verb.
             ...(nowAction.email ? { subtitle: nowAction.email } : {}) }] : []),
-        // A personal label wins over the pool's own name, so renaming alone would change nothing visible.
+        ...(props.onSetLabel ? [{ id: 'editLabel', title: t('connectedServices.detail.actions.editLabel'), onSelect: () => setNameDraft({
+            ref: group.ref, value: labelsByKey[connectedEntitySubjectKeyV1({ kind: 'group', service: group.ref.service, groupId: group.ref.groupId })] ?? label,
+            kind: 'label',
+        }) }] : []),
         ...(props.onResetLabel && labelsByKey[connectedEntitySubjectKeyV1({ kind: 'group', service: group.ref.service, groupId: group.ref.groupId })]
             ? [{ id: 'resetLabel', title: t('connectedServicesCollection.resetPoolLabel'), onSelect: () => props.onResetLabel?.() }] : []),
         { id: 'delete', title: t('connectedServices.pools.delete.title'), destructive: true, onSelect: () => { void deletePool(); } },
@@ -724,8 +701,8 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
             {nameDraft !== null ? (
                 <ItemGroup>
                     <SectionContentRow>
-                        <FieldItem label={t('connectedServices.detail.groupDetail.nameTitle')}>
-                            <FieldTextInput testID={`${TEST_ID}:name-field`} value={nameDraft} onChangeText={(value) => setNameDraft({ ref: group.ref, value })} editable={!mutations.mutating} accessibilityLabel={t('connectedServices.detail.groupDetail.nameTitle')} onSubmitEditing={() => { void saveName(); }} />
+                        <FieldItem label={t(nameDraftState?.kind === 'label' ? 'connectedServices.detail.actions.editLabel' : 'connectedServices.detail.groupDetail.nameTitle')}>
+                            <FieldTextInput testID={`${TEST_ID}:name-field`} value={nameDraft} onChangeText={(value) => setNameDraft(previous => previous ? { ...previous, value } : null)} editable={!mutations.mutating} accessibilityLabel={t(nameDraftState?.kind === 'label' ? 'connectedServices.detail.actions.editLabel' : 'connectedServices.detail.groupDetail.nameTitle')} onSubmitEditing={() => { void saveName(); }} />
                         </FieldItem>
                     </SectionContentRow>
                     <SectionContentRow>
@@ -838,7 +815,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                             const accountId = member.ref.accountId;
                             const identity = identityOf(accountId);
                             const quota = memberQuota[accountId];
-                            const snapshot = countedSnapshotByAccountId[accountId] ?? null;
+                            const snapshot = quota?.snapshot ?? null;
                             const memberState = usage.memberByAccountId[accountId];
                             const isActive = accountId === group.activeAccountId;
                             const plan = snapshot?.planLabel ?? null;
@@ -1021,9 +998,6 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                             testID={`${TEST_ID}:advanced:header`}
                             {...state.headerProps}
                             title={t('connectedServicesPool.advancedTitle')}
-                            // A leading caret would indent every row of the section (the group aligns titles
-                            // to its leading column), so the disclosure glyph trails the count.
-                            detail={t('connectedServicesPool.advancedCount', { count: ADVANCED_SETTING_COUNT })}
                         />
                     )}
                 >

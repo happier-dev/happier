@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 
-import { derivePoolUsage, resolvePoolManualSwitchSuggestion } from './derivePoolUsage';
+import { derivePoolUsage, projectPoolUsage, resolvePoolManualSwitchSuggestion } from './derivePoolUsage';
 
 const NOW = 1_000_000_000;
 const MIN = 60_000;
@@ -25,6 +25,28 @@ function meter(meterId: string, label: string, remainingPct: number | null, rese
 
 const fiveHour = (pct: number | null, resetsIn: number) => meter('5h', '5-hour', pct, resetsIn, { windowDurationMs: 5 * 60 * MIN });
 const weekly = (pct: number | null, resetsIn: number) => meter('wk', 'Weekly', pct, resetsIn, { windowDurationMs: 7 * 24 * 60 * MIN });
+
+describe('projectPoolUsage', () => {
+    it('counts selected limits and qualifies retained readings without changing their capacity', () => {
+        const snapshot = { meters: [fiveHour(0, MIN), weekly(75, 10 * MIN)], fetchedAt: NOW - 2 * MIN, staleAfterMs: MIN };
+        const summary = projectPoolUsage({ now: NOW, quotaLimitSelection: { mode: 'selected', providerLimitIds: ['wk'] },
+            members: [{ accountId: 'work', enabled: true, credentialStatus: 'connected', snapshot, failed: true }] });
+        expect(summary.usage.windows).toEqual([expect.objectContaining({ meterId: 'wk', remainingPct: 75 })]);
+        expect(summary.usage.memberByAccountId.work).toMatchObject({ lowestRemainingPct: 75, room: 'room', isStale: true });
+        expect(summary.freshness).toEqual({ asOf: snapshot.fetchedAt, isStale: true, notAnswering: true, staleMemberIds: ['work'] });
+        expect(snapshot.meters).toHaveLength(2);
+    });
+
+    it('keeps the aggregate warning policy when only one reading is old or failed', () => {
+        const old = { meters: [weekly(60, MIN)], fetchedAt: NOW - 2 * MIN, staleAfterMs: MIN };
+        const summary = projectPoolUsage({ now: NOW, members: [
+            { accountId: 'old', enabled: true, credentialStatus: 'connected', snapshot: old, failed: true },
+            { accountId: 'fresh', enabled: true, credentialStatus: 'connected', snapshot: { ...old, fetchedAt: NOW } },
+        ] });
+        expect(summary.freshness).toMatchObject({ asOf: old.fetchedAt, isStale: true, notAnswering: false });
+        expect(summary.usage.room.withRoom).toBe(2);
+    });
+});
 
 describe('derivePoolUsage', () => {
     it.each([true, false])('keeps reused primary meter ids separate by their window (duration reported: %s)', (reportsDuration) => {

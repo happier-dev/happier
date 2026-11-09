@@ -199,6 +199,8 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
         return {
             testID,
             title: presentConnectedServicesIndexPool(sheet, pool, labelsByKey),
+            serviceTitle: sheet.label,
+            quotaLimitSelection: pool.policy.quotaLimitSelection,
             subtitle: [
                 sheet.label,
                 t('connectedServicesSettings.accountCount', { count: members.length }),

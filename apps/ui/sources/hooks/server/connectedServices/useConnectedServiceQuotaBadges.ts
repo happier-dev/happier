@@ -43,7 +43,7 @@ export function useConnectedServiceQuotaBadgeState(
   const fetchPolicy = options.fetchPolicy ?? 'poll';
   // The snapshots hook is the single normalizer for these refs: badges read the
   // keys it already resolved rather than normalizing the same input again.
-  const { profiles: normalizedProfiles, snapshotsByKey } =
+  const { profiles: normalizedProfiles, snapshotsByKey, errorsByKey } =
     useConnectedServiceQuotaSnapshots(profiles, { fetchPolicy });
 
   const badgesByKey = React.useMemo(() => {
@@ -88,5 +88,6 @@ export function useConnectedServiceQuotaBadgeState(
     snapshotsByKey,
     strategyByKey,
   ]);
-  return { badgesByKey, snapshotsByKey: quotasEnabled ? snapshotsByKey : EMPTY_QUOTA_SNAPSHOTS };
+  return { badgesByKey, snapshotsByKey: quotasEnabled ? snapshotsByKey : EMPTY_QUOTA_SNAPSHOTS,
+    errorsByKey: quotasEnabled ? errorsByKey : EMPTY_QUOTA_SNAPSHOTS };
 }

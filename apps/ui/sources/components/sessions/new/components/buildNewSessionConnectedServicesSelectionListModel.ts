@@ -23,8 +23,7 @@ import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { foldUnavailableRows } from '@/components/sessions/pickers/foldUnavailableRows';
 import { describeDirectDeliveryVisibility, readDirectDeliveryVisibility, type DirectDeliveryDisclosure, type DirectDeliveryDisclosureTranslationKey } from '@/components/sessions/teamCredentials/directDeliveryDisclosure';
 import type { TranslationParams } from '@/text';
-import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
-import { derivePoolUsage, type PoolMemberUsageInput } from '@/components/settings/connectedServices/pools/derivePoolUsage';
+import { derivePoolUsage, projectPoolUsage, type PoolMemberUsageInput, type PoolQuotaSnapshot, type PoolUsage, type PoolUsageFreshness } from '@/components/settings/connectedServices/pools/derivePoolUsage';
 import { ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER } from '@/components/settings/connectedServices/account/accountBlockFormatters';
 import { formatResetCountdown } from '@/sync/domains/connectedServices/formatResetCountdown';
 import { presentConnectedAccountName } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
@@ -111,7 +110,9 @@ export type BuildNewSessionConnectedServicesSelectionListModelParams = Readonly<
     appliedTeamRoute?: Readonly<{ teamId: string; resourceId: string; deliveryMode: TeamCredentialRouteV1 }>;
     /** Exact-binding consumers can prevent stale selections from visually adopting a different default profile. */
     allowDefaultProfileFallback?: boolean;
-    quotaSnapshotsByKey?: Readonly<Record<string, Readonly<{ meters: readonly ConnectedServiceQuotaMeterV1[] }> | null | undefined>>;
+    quotaSnapshotsByKey?: Readonly<Record<string, PoolQuotaSnapshot | null | undefined>>;
+    quotaErrorsByKey?: Readonly<Record<string, string | null | undefined>>;
+    renderPoolFreshness?: (freshness: PoolUsageFreshness, subtitle: string, serviceTitle: string) => React.ReactNode;
     setBindingForService: (serviceId: string, binding: ConnectedServicesServiceBinding) => void;
     onOpenSettings: (serviceId: string, anchor?: PopoverAnchor) => void;
     translate: ConnectedServicesSelectionListTranslate;
@@ -221,8 +222,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             meters: params.quotaSnapshotsByKey?.[connectedServiceProfileKey({ serviceId, profileId })]?.meters ?? null,
         });
         const now = Date.now();
-        const usageSubtitle = (profileIds: readonly string[]): string | undefined => {
-            const usage = derivePoolUsage({ members: profileIds.map(usageMember), now });
+        const formatUsageSubtitle = (usage: PoolUsage): string | undefined => {
             return usage.windows.map(window => {
                 const reset = formatResetCountdown(now, window.resetsAt, ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER);
                 const percent = `${window.remainingPct}%`;
@@ -231,6 +231,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                     : ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER.remaining({ percent })}`;
             }).join(' · ') || undefined;
         };
+        const usageSubtitle = (profileIds: readonly string[]) => formatUsageSubtitle(derivePoolUsage({ members: profileIds.map(usageMember), now }));
         const needsReauthProfiles = serviceOptions.filter((option) => !isConnectedServiceProfileOptionSelectable(option));
         const connectedProfileIds = connectedProfiles.map((option) => option.profileId.trim()).filter(Boolean);
         const binding = params.bindingsByServiceId[serviceId];
@@ -275,15 +276,20 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             if (selected) usesConnectedGroup = true;
             const label = group.label.trim() || groupId;
             const activeProfile = connectedProfiles.find((profile) => profile.profileId.trim() === activeProfileId) ?? null;
+            const summary = projectPoolUsage({ now, quotaLimitSelection: group.quotaLimitSelection,
+                members: (group.memberProfileIds ?? []).map(profileId => {
+                    const key = connectedServiceProfileKey({ serviceId, profileId });
+                    return { accountId: profileId, enabled: true, credentialStatus: profileById.get(profileId)?.status,
+                        snapshot: params.quotaSnapshotsByKey?.[key] ?? null, failed: Boolean(params.quotaErrorsByKey?.[key]) };
+                }) });
+            const subtitle = [resolveGroupSubtitle({ serviceTitle, activeProfileId, profiles: connectedProfiles,
+                translate: params.translate }), availability.subtitle, formatUsageSubtitle(summary.usage)].filter(Boolean).join(' · ');
             options.push({
                 id: optionId,
                 label,
-                subtitle: [resolveGroupSubtitle({
-                    serviceTitle,
-                    activeProfileId,
-                    profiles: connectedProfiles,
-                    translate: params.translate,
-                }), availability.subtitle, usageSubtitle(group.memberProfileIds ?? [])].filter(Boolean).join(' · '),
+                subtitle,
+                subtitleContent: params.renderPoolFreshness && summary.freshness.asOf !== null
+                    ? () => params.renderPoolFreshness!(summary.freshness, subtitle, serviceTitle) : undefined,
                 accessibilityLabel: resolveServiceOptionAccessibilityLabel({ serviceTitle, optionLabel: joinHappierFacts(label, availability.subtitle) }),
                 icon: params.renderRowIcon({
                     kind: 'group',
