@@ -21,6 +21,7 @@ export function ChatLinkOpenLocationSetting() {
             title={t(setting.titleKey)}
             subtitle={t('settingsAppearance.chatLinks.description')}
             subtitleLines={0}
+            accessoryLayout="stacked"
             testIDPrefix="settings.transcript.chatLinkOpenLocation"
             options={[
                 { id: 'browser', label: t('settingsAppearance.chatLinks.browser') },
