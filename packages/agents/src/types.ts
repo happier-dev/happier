@@ -1,5 +1,6 @@
 export type { ConnectedServiceId, AgentToolsDelivery } from '@happier-dev/protocol';
 import { SESSION_PERMISSION_MODES } from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import { AGENT_PERMISSION_INTENTS_V1 } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import type { SessionNativeVendorResumeIdFieldV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import {
     type ConnectedServiceId,
@@ -43,13 +44,7 @@ export type PermissionMode = (typeof PERMISSION_MODES)[number];
  * (e.g. Claude's `acceptEdits`, `bypassPermissions`) are treated as legacy aliases at input
  * boundaries and must not be persisted as the session's selected permission mode.
  */
-export const PERMISSION_INTENTS = [
-    'default',
-    'read-only',
-    'safe-yolo',
-    'yolo',
-    'plan',
-] as const;
+export const PERMISSION_INTENTS = AGENT_PERMISSION_INTENTS_V1;
 
 export type PermissionIntent = (typeof PERMISSION_INTENTS)[number];
 
@@ -84,6 +79,7 @@ export type AgentSessionCapabilities = Readonly<{
 
 export type VendorResumeIdField = SessionNativeVendorResumeIdFieldV1;
 
+/** Released cloudConnect/vendor-token projection vocabulary, not a current Agent roster. */
 export type CloudVendorKey = 'openai' | 'anthropic' | 'gemini';
 export type CloudConnectTargetStatus = 'wired' | 'experimental';
 
