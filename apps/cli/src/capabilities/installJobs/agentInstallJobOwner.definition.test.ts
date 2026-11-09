@@ -101,10 +101,13 @@ describe('definition-qualified managed Agent jobs', () => {
         await mkdir(dirname(bin), { recursive: true }); await writeFile(bin, '#!/bin/sh\nexit 0\n'); await chmod(bin, 0o755);
         return { stdout: '', stderr: '' };
       } } });
-      const job = owner.start({ agentId: 'custom-acp', definitionId: definition.id, expectedDefinitionVersion: '1.2.3',
-        intent: 'install', consent: { vendorRecipe: false } });
+      const request = { agentId: 'custom-acp', definitionId: definition.id, expectedDefinitionVersion: '1.2.3',
+        intent: 'install', consent: { vendorRecipe: false } } as const;
+      const job = owner.start(request);
       expect(job.ok).toBe(true); if (!job.ok) return;
+      expect(owner.start({ ...request, agentId: 'happier.agent.custom-acp/custom-acp' })).toEqual(job);
       expect(await terminal(owner, job.jobId)).toEqual({ kind: 'succeeded', version: '1.2.3' });
+      expect(owner.list()).toMatchObject({ ok: true, jobs: [{ agentId: 'happier.agent.custom-acp/custom-acp', definitionId: definition.id }] });
       expect(publications.map(state => state.contributionRegistryProjectionRevision)).toEqual([1]);
       const ready = await resolveAcpLaunch({ accountId: 'alice', definition, env, platform: process.platform, arch: process.arch });
       expect(ready.kind).toBe('ready'); if (ready.kind !== 'ready') return;

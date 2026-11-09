@@ -27,7 +27,8 @@ import { createCustomAcpAdmittedRuntimeFixture } from '@/plugins/testkit/customA
 import { PLUGIN_MANIFEST } from '../../../../../../../packages/plugins/custom-acp/src/manifest';
 import type { ResolveEngineRegistryParams } from './types';
 import { resolveBackendEngineAdapterResolution, resolveCliEngineRegistry } from './registry';
-import { resolveAccountConfiguredAcpLaunch } from './accountConfiguredAcp';
+import { resolveAccountConfiguredAcpLaunch, resolveAccountConfiguredAcpLaunchForAgent } from './accountConfiguredAcp';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createNativeAgentLaunchPreparationFixture } from './nativeAgentSession.testkit';
 import { waitForCondition } from '@/testkit/async/waitFor';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -401,12 +402,14 @@ describe('Account-configured ACP composed Session journey', () => {
     }
   });
 
-  it('binds a direct Session bridge definition from its existing runtime descriptor', async () => {
+  it.each([true, false])('publishes the configured owner descriptor through the direct Session bridge (descriptor supplied: %s)', async supplied => {
     setConfiguredAcpAccountSettings('/tmp/custom-acp.mjs');
     const { fixture, registryParams } = await createContributedRuntimeFixture();
-    const runtimeDescriptorV1 = { v: 1, agentId: registryParams.backendId, agent: { definitionId: BACKEND_ID } };
+    const runtimeDescriptorV1 = { v: 1, agentId: registryParams.backendId,
+      agent: { definitionId: BACKEND_ID, acpSessionId: PROVIDER_SESSION_ID } };
     const outcome = await new SessionHostBridge().createSessionRuntime(registryParams.backendId, {
-      credentials: createCredentials(), directory: process.cwd(), startedBy: 'terminal', runtimeDescriptorV1,
+      credentials: createCredentials(), directory: process.cwd(), startedBy: 'terminal',
+      ...(supplied ? { runtimeDescriptorV1 } : { agentTarget: registryParams.agentTarget }),
     }, { pluginRuntimeRegistryLease: fixture.lease }).then(async plan => {
       const descriptor = plan.opts.runtimeDescriptorV1;
       await plan.config.pluginRuntimeRegistryLease?.release();
@@ -414,7 +417,26 @@ describe('Account-configured ACP composed Session journey', () => {
     }, (error: unknown) => ({
       ok: false, code: error instanceof Error && 'code' in error ? error.code : undefined,
     }));
-    expect(outcome).toEqual({ ok: true, runtimeDescriptorV1 });
+    expect(outcome).toEqual({ ok: true, runtimeDescriptorV1: {
+      v: 1,
+      agentId: buildQualifiedPluginContributionKey(registryParams.agentTarget.identity),
+      agent: { definitionId: BACKEND_ID, ...(supplied ? { acpSessionId: PROVIDER_SESSION_ID } : {}) },
+    } });
+  });
+
+  it('preserves the selected qualified configured contribution in runtime and Session projections', async () => {
+    setConfiguredAcpAccountSettings('/tmp/custom-acp.mjs');
+    const identity = { pluginId: PLUGIN_MANIFEST.id, localId: CUSTOM_ACP_ID };
+    const agentId = buildQualifiedPluginContributionKey(identity);
+    const agentTarget = { kind: 'agent' as const, identity, definitionId: BACKEND_ID };
+    const runtimeDescriptorV1 = { v: 1 as const, agentId,
+      agent: { definitionId: BACKEND_ID, acpSessionId: PROVIDER_SESSION_ID } };
+    const launch = await resolveAccountConfiguredAcpLaunchForAgent({ identity, agentTarget,
+      startupRuntimeDescriptorV1: runtimeDescriptorV1 });
+    expect(launch?.sessionProjection.flavor).toBe(agentId);
+    expect(launch?.sessionProjection.augmentSessionMetadata({ path: process.cwd(), host: 'fixture', flavor: 'other' }))
+      .toMatchObject({ flavor: agentId });
+    expect(launch).toMatchObject({ agentTarget, runtimeDescriptorV1, runtimeAuthorityAgentId: agentId });
   });
 
   it('flushes and reopens two definitions before launching each through the same contributed Agent with its own command and environment', async () => {

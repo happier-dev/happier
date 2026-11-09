@@ -1,5 +1,6 @@
 import { MachineAcpInventoryRequestSchema, type MachineAgentInventoryItem } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { resolveAcpPlatformFitV1 } from '@happier-dev/protocol/acp/catalog/registry/acpPlatformFitV1';
+import { buildConfiguredAcpAgentSelectionV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { listManagedAcpInstalls } from '@/agent/acp/catalog/registry/managedAgentInstalls';
 import { commandExistsOnPath } from '@happier-dev/cli-common/process';
 import { CapabilityError } from '../errors';
@@ -19,9 +20,10 @@ export function createAcpAgentInventoryCapability(input: Readonly<{
       const installs = parsed.data.definitions.some(definition => definition.launch.kind !== 'command')
         ? await listManagedAcpInstalls({ env: input.env, accountId }) : [];
       const items: MachineAgentInventoryItem[] = parsed.data.definitions.map(definition => {
+        const { agentId } = buildConfiguredAcpAgentSelectionV1(definition.definitionId);
         const launch = definition.launch;
         if (launch.kind === 'command') {
-          return { agentId: 'custom-acp', definitionId: definition.definitionId, title: definition.title,
+          return { agentId, definitionId: definition.definitionId, title: definition.title,
             installed: commandExistsOnPath(launch.command, { env: input.env }), managed: false,
             fit: resolveAcpPlatformFitV1(launch, { platform: input.platform ?? process.platform, arch: input.arch ?? process.arch }),
             version: null, latestVersion: null, update: { supported: false, command: null },
@@ -31,7 +33,7 @@ export function createAcpAgentInventoryCapability(input: Readonly<{
         const matching = installs.filter(install => install.definitionId === definition.definitionId && install.kind === launch.kind);
         const install = matching.find(install => install.version === launch.version) ?? matching[0];
         const fit = resolveAcpPlatformFitV1(launch, { platform: input.platform ?? process.platform, arch: input.arch ?? process.arch });
-        return { agentId: 'custom-acp', definitionId: definition.definitionId, title: definition.title,
+        return { agentId, definitionId: definition.definitionId, title: definition.title,
           installed: Boolean(install), version: install?.version ?? null, managed: Boolean(install), fit,
           latestVersion: launch.version,
           update: { supported: Boolean(install), command: null },

@@ -5,6 +5,19 @@ import type {
 } from '@happier-dev/protocol';
 import type { AcpBackendDefinitionV1, AcpBackendLaunchV1, AcpConfiguredRuntimeV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { buildConfiguredAcpAgentSelectionV1, isCustomAcpAgentContributionIdentityV1, type ConfiguredAcpAgentSelectionV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
+
+/** Resolve the declared routing id separately from the instance's durable identity. */
+export function resolveConfiguredAcpAgentSelection(definitionId: string): ConfiguredAcpAgentSelectionV1 & Readonly<{ runtimeRoutingAgentId: string }> {
+  const selection = buildConfiguredAcpAgentSelectionV1(definitionId);
+  const agents = readCurrentContributionRegistry().agentDefinitionsById;
+  const declared = agents.get(selection.agentId) ?? agents.get(selection.agentTarget.identity.localId);
+  if (!declared || !isCustomAcpAgentContributionIdentityV1(declared.identity)) {
+    throw new AcpCatalogUnavailableError('contribution-unavailable');
+  }
+  return { ...selection, runtimeRoutingAgentId: declared.id };
+}
 
 export class AcpCatalogUnavailableError extends Error {
   readonly code = 'ACP_CATALOG_UNAVAILABLE';

@@ -30,7 +30,7 @@ it('discovers configured ACP receipts in the same dedicated tools payload used f
 });
 
 it('uses tracked definition identity across admitted and adopted sessions while keeping neighboring definitions independent', () => {
-  const target = { agentId: 'custom-acp', definitionId: 'alpha' };
+  const target = { agentId: 'happier.agent.custom-acp/custom-acp', definitionId: 'alpha' };
   const selected: TrackedSession = { pid: process.pid, startedBy: 'daemon', spawnOptions: { directory: tmpdir(),
     agentTarget: { kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId: 'alpha' } } };
   expect(isAgentInstallTargetInUse(target, [selected])).toBe(true);

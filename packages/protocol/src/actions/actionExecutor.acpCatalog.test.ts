@@ -123,7 +123,7 @@ describe('createActionExecutor (custom ACP agent catalog)', () => {
     const executor = createExecutor({ readAccountAcpCatalog: store.readAccountAcpCatalog,
       updateAccountAcpCatalogSettings: store.updateAccountAcpCatalogSettings,
       registryActionExecute: ({ actionId, input }) => registry.execute(actionId, input),
-      machinesAgentsList: async request => ({ items: [{ agentId: 'custom-acp', definitionId: request.definitionId,
+      machinesAgentsList: async request => ({ items: [{ agentId: 'happier.agent.custom-acp/custom-acp', definitionId: request.definitionId,
         title: 'Registry agent', installed: installed.has(request.machineId), managed: installed.has(request.machineId),
         version: installed.get(request.machineId) ?? null, latestVersion: null,
         update: { supported: installed.has(request.machineId), command: null },
@@ -132,7 +132,7 @@ describe('createActionExecutor (custom ACP agent catalog)', () => {
       }] }),
       // Machine transport is the system boundary; the server composed test exercises its real RPC/job owner.
       machineAgentInstallStart: async request => {
-        expect(request).toMatchObject({ agentId: 'custom-acp',
+        expect(request).toMatchObject({ agentId: 'happier.agent.custom-acp/custom-acp',
           intent: installed.has(request.machineId) ? 'update' : 'install', consent: { vendorRecipe: false } });
         const saved = await store.readAccountAcpCatalog();
         const definition = saved.record.definitions.find(definition => definition.id === request.definitionId);
@@ -180,7 +180,7 @@ describe('createActionExecutor (custom ACP agent catalog)', () => {
       { machineId: 'offline', presence: 'offline', platform: 'darwin', arch: 'arm64' },
     ] }), machinesAgentsList: async ({ machineId }, _context) => {
       if (machineId === 'offline') throw new Error('An offline machine must not be probed');
-      return { items: [{ agentId: 'custom-acp', definitionId: authored.id, title: authored.title,
+      return { items: [{ agentId: 'happier.agent.custom-acp/custom-acp', definitionId: authored.id, title: authored.title,
         installed: machineId === 'online', managed: false, version: null, latestVersion: null,
         update: { supported: false, command: null }, signIn: { status: 'unknown', loginSupport: 'unsupported' },
         platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null },

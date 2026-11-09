@@ -108,9 +108,9 @@ describe('machine Agent inventory projection', () => {
     for (const invalid of [{ definitionId: 'foreign', title: definition.title }, { definitionId: 'first', title: 'Custodian private title' }]) {
       const output = projectMachineAgentsDetectResponse({ agents: [], definitions: [definition], response: { protocolVersion: 1,
         results: { 'tool.acpAgentInventory': { ok: true, checkedAt: 2, data: { items: [{ ...facts, ...invalid,
-          agentId: 'custom-acp', managed: true, fit: { kind: 'can_run', via: 'npm' } }] } } } } });
+          agentId: 'happier.agent.custom-acp/custom-acp', managed: true, fit: { kind: 'can_run', via: 'npm' } }] } } } } });
       expect(output.items).toEqual([]);
-      expect(output.unavailable).toEqual([{ agentId: 'custom-acp', definitionId: 'first', reason: 'invalid_facts' }]);
+      expect(output.unavailable).toEqual([{ agentId: 'happier.agent.custom-acp/custom-acp', definitionId: 'first', reason: 'invalid_facts' }]);
       expect(JSON.stringify(output)).not.toContain('Custodian');
     }
     expect(projectAcpCatalogForMachineInventory({ status: 'partial', reason: 'incomplete-inventory', record: { v: 1, definitions: [] }, diagnostics: [] }))
@@ -122,7 +122,8 @@ describe('machine Agent inventory projection', () => {
     expect(buildMachineAgentsDetectRequest({ agents: [], definitions }).requests).toEqual([
       { id: 'tool.acpAgentInventory', params: { definitions } },
     ]);
-    const items = definitions.map(({ definitionId, title }) => ({ ...facts, agentId: 'custom-acp', definitionId, title,
+    // 01F: current configured rows carry the actual qualified contribution, never a host fallback identity.
+    const items = definitions.map(({ definitionId, title }) => ({ ...facts, agentId: 'happier.agent.custom-acp/custom-acp', definitionId, title,
       installed: true, managed: true, version: '1.0', fit: { kind: 'can_run', via: 'npm' } }));
     expect(projectMachineAgentsDetectResponse({ agents: [], definitions,
       response: { protocolVersion: 1, results: { 'tool.acpAgentInventory': { ok: true, checkedAt: 2, data: { items } } } },
@@ -133,7 +134,7 @@ describe('machine Agent inventory projection', () => {
     const definitions = [{ definitionId: 'first', title: 'First', launch: { kind: 'npm' as const, package: 'fixture', version: '1', args: [] } }];
     expect(projectMachineAgentsDetectResponse({ agents: [], definitions,
       response: { protocolVersion: 1, results: { 'tool.acpAgentInventory': { ok: false, checkedAt: 2, error: { code: 'catalog-unavailable' } } } },
-    })).toEqual({ items: [], unavailable: [{ agentId: 'custom-acp', definitionId: 'first', reason: 'probe_failed', errorCode: 'catalog-unavailable' }] });
+    })).toEqual({ items: [], unavailable: [{ agentId: 'happier.agent.custom-acp/custom-acp', definitionId: 'first', reason: 'probe_failed', errorCode: 'catalog-unavailable' }] });
   });
   it('requests complete native status and latest versions for every registry Agent', () => {
     expect(buildMachineAgentsDetectRequest({ agents, refresh: true })).toEqual({

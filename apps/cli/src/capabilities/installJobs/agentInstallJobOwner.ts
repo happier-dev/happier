@@ -19,7 +19,7 @@ import type { LiveWorkItemV1, LiveWorkProducerV1 } from '@/daemon/lifecycle/mana
 import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import type { AcpBackendDefinitionV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
-import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, isCustomAcpAgentContributionIdentityV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { buildConfiguredAcpAgentSelectionV1, isCustomAcpAgentContributionIdentityV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { getAcpArchiveInstallableDescriptor, getAcpNpmRuntimeSpec, getAcpUvRuntimeSpec, installAcpLaunch, resolveAcpLaunch, type AcpLaunchInstallResult } from '@/agent/acp/catalog/configured/resolveAcpLaunch';
@@ -405,15 +405,15 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
       try { registry = readRegistry(); } catch {
         return { ok: false, errorCode: 'install_unavailable', error: 'The agent registry is unavailable.' };
       }
-      const currentAgentIds = new Set(registry.agents.map((agent) => agent.id));
+      const currentAgentIds = new Set(registry.agents.flatMap(agent => [agent.id,
+        ...(agent.identity ? [buildQualifiedPluginContributionKey(agent.identity)] : [])]));
       for (const [key, previous] of recentByAgent) {
         if (!currentAgentIds.has(previous.snapshot.agentId) && ![...activeByAgent.values()].some(active => active.recentKey === key)) {
           recentByAgent.delete(key);
           jobs.delete(previous.snapshot.jobId);
         }
       }
-      const identity = parseQualifiedPluginContributionKey(input.agentId)
-        ?? (input.agentId === CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.localId ? CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 : null);
+      const identity = parseQualifiedPluginContributionKey(input.agentId);
       const routingId = identity ? readAgentRoutingIdForContributionIdentity(indexAgentRoutingIdsByContributionIdentity(registry.agents), identity) : null;
       const requestedId = routingId ?? input.agentId;
       const canonicalId = resolveCanonicalAgentIdFromFlavor(requestedId);
@@ -421,7 +421,8 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
         ?? (canonicalId ? registry.agents.find(candidate => candidate.id === canonicalId) : undefined);
       if (!agent || input.definitionId !== undefined && !isCustomAcpAgentContributionIdentityV1(agent.identity)
         || input.definitionId === undefined && !agent.runtimeSpec) return { ok: false, errorCode: 'install_unavailable', error: 'The agent has no registered CLI runtime.' };
-      const request = { ...parsed.data, agentId: agent.id };
+      const selection = input.definitionId === undefined ? undefined : buildConfiguredAcpAgentSelectionV1(input.definitionId);
+      const request = { ...parsed.data, agentId: selection?.agentId ?? agent.id };
       if ((request.intent === 'uninstall' || request.force || request.definitionId === undefined && request.intent === 'update') && inUse(request)) {
         return { ok: false, errorCode: 'in_use', error: 'Stop the sessions using this Agent before changing its managed installation. Session use must be known.' };
       }
@@ -450,7 +451,7 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
         error: admissionDrain.isFinalShutdown() ? 'The daemon is shutting down.' : 'The daemon is draining.' };
       const job: JobRecord = {
         accountId: requestedAccountId, activeKey, recentKey,
-        snapshot: { jobId: randomUUID(), agentId: agent.id, ...(request.definitionId === undefined ? {} : { definitionId: request.definitionId }),
+        snapshot: { jobId: randomUUID(), agentId: request.agentId, ...(request.definitionId === undefined ? {} : { definitionId: request.definitionId }),
           intent: request.intent, startedAt: Date.now(), steps: [], progress: [], done: false, outcome: null },
         events: [], controller: new AbortController(), completion: Promise.resolve(), cleanupError: null,
       };

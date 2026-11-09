@@ -56,8 +56,8 @@ describe('machine ACP definition inventory', () => {
       { definitionId: 'requested', title: 'Caller title', launch }, { definitionId: 'missing', title: 'Missing', launch },
     ] } }] });
     expect(response.results['tool.acpAgentInventory']).toMatchObject({ ok: true, data: { items: [
-      { agentId: 'custom-acp', definitionId: 'requested', title: 'Caller title', installed: true, version: '1.2.3', managed: true, fit: { kind: 'can_run', via: 'archive', target: 'linux-x64' } },
-      { agentId: 'custom-acp', definitionId: 'missing', title: 'Missing', installed: false, version: null, managed: false },
+      { agentId: 'happier.agent.custom-acp/custom-acp', definitionId: 'requested', title: 'Caller title', installed: true, version: '1.2.3', managed: true, fit: { kind: 'can_run', via: 'archive', target: 'linux-x64' } },
+      { agentId: 'happier.agent.custom-acp/custom-acp', definitionId: 'missing', title: 'Missing', installed: false, version: null, managed: false },
     ] } });
     expect(JSON.stringify(response)).not.toContain('Private installed name');
     expect(JSON.stringify(response)).not.toContain('Other Account');

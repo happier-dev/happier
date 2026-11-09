@@ -2,7 +2,7 @@ import { applyAcpBackendUpsertV1 } from '../catalogMutationsV1.js';
 import { AcpCatalogSettingsV1StoredSchema, type AcpBackendDefinitionV1 } from '../settingsV1.js';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '../../../registries/registryActionsV1.js';
 import { RegistryFetchErrorV1 } from '../../../registries/registryListV1.js';
-import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '../../../agents/executionTargetV1.js';
+import { buildConfiguredAcpAgentSelectionV1 } from '../../../agents/executionTargetV1.js';
 import { DaemonAgentInstallStartResponseSchema } from '../../../daemon/agentInstallJobs.js';
 import { MachinesAgentsListOutputSchema } from '../../../capabilities/machineAgentInventory.js';
 import { ActionExecuteFailureSchema, type ActionExecuteResult } from '../../../actions/actionExecutionResult.js';
@@ -80,6 +80,7 @@ export async function installAcpRegistryAgentV1(input: AgentsAcpBackendsInstallF
   if (!definition) return { ok: false, errorCode: 'acp_catalog_unavailable', error: 'acp_catalog_unavailable' };
   if (definition.launch.kind === 'command') throw new Error('Registry mapping requires a version-pinned launch');
   const definitionId = definition.id;
+  const selection = buildConfiguredAcpAgentSelectionV1(definitionId);
   const reviewedVersion = definition.launch.version;
   const jobs: Array<{ machineId: string; jobId: string }> = [];
   const failures: Array<{ machineId: string; errorCode: string }> = [];
@@ -87,17 +88,17 @@ export async function installAcpRegistryAgentV1(input: AgentsAcpBackendsInstallF
     try {
       context.signal?.throwIfAborted();
       const inventory = MachinesAgentsListOutputSchema.safeParse(await deps.machinesAgentsList!({
-        machineId, agentId: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.localId, definitionId: definition.id, refresh: true,
+        machineId, agentId: selection.agentId, definitionId, refresh: true,
         ...(context.serverId ? { serverId: context.serverId } : {}),
       }, context));
-      const facts = inventory.success ? inventory.data.items.find(item => item.agentId === CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.localId
+      const facts = inventory.success ? inventory.data.items.find(item => item.agentId === selection.agentId
         && item.definitionId === definitionId) : undefined;
       if (!facts) {
         failures.push({ machineId, errorCode: 'machine_agent_inventory_unavailable' });
         continue;
       }
       const result = DaemonAgentInstallStartResponseSchema.parse(await startInstall!({
-        machineId, agentId: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.localId, definitionId: definition.id,
+        machineId, agentId: selection.agentId, definitionId,
         expectedDefinitionVersion: reviewedVersion,
         intent: facts.installed ? 'update' : 'install', consent: { vendorRecipe: false },
         ...(context.serverId ? { serverId: context.serverId } : {}), ...(context.signal ? { signal: context.signal } : {}),

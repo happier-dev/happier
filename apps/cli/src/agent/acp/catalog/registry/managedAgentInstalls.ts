@@ -6,7 +6,7 @@ import {
   managedAcpAccountNamespace, readManagedAcpInstallNamespace,
   uninstallManagedUvAgent,
 } from '@happier-dev/cli-common/agents';
-import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, isCustomAcpAgentContributionIdentityV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { buildConfiguredAcpAgentSelectionV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { agentRoutingIdAddressesContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
@@ -55,14 +55,15 @@ export async function listManagedAcpInstalls(params: Readonly<{ env?: NodeJS.Pro
 
 /** The daemon's actual tracked runner set owns use, including adopted and requester-Account sessions. */
 export function isAgentInstallTargetInUse(target: Readonly<{ agentId: string; definitionId?: string }>, sessions: Iterable<TrackedSession>): boolean {
+  const configuredTarget = target.definitionId === undefined ? undefined : buildConfiguredAcpAgentSelectionV1(target.definitionId).agentTarget;
   for (const session of sessions) {
     const selected = session.spawnOptions?.agentTarget;
     const descriptor = session.spawnOptions?.runtimeDescriptorV1
       ?? readRuntimeDescriptorV1FromMetadata(session.happySessionMetadataFromLocalWebhook);
     const backend = normalizeDaemonBackendTargetV2Input(session.spawnOptions?.backendTarget);
-    if (target.definitionId !== undefined) {
-      const isConfigured = selected && isCustomAcpAgentContributionIdentityV1(selected.identity)
-        || descriptor && agentRoutingIdAddressesContributionIdentityV1(descriptor.agentId, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1)
+    if (configuredTarget) {
+      const isConfigured = selected && agentRoutingIdAddressesContributionIdentityV1(target.agentId, selected.identity)
+        || descriptor && agentRoutingIdAddressesContributionIdentityV1(descriptor.agentId, configuredTarget.identity)
         || backend?.sourceKind === 'configured'
         || readLegacyConfiguredAcpBackendId(session.happySessionMetadataFromLocalWebhook?.flavor) !== null;
       if (!isConfigured) continue;
@@ -70,7 +71,7 @@ export function isAgentInstallTargetInUse(target: Readonly<{ agentId: string; de
         ?? (typeof descriptor?.agent.definitionId === 'string' ? descriptor.agent.definitionId : undefined)
         ?? (backend?.sourceKind === 'configured' ? backend.configuredBackendId ?? backend.backendId : undefined)
         ?? readLegacyConfiguredAcpBackendId(session.happySessionMetadataFromLocalWebhook?.flavor);
-      if (!definitionId || definitionId === target.definitionId) return true;
+      if (!definitionId || definitionId === configuredTarget.definitionId) return true;
     } else if (descriptor?.agentId === target.agentId
       || selected && agentRoutingIdAddressesContributionIdentityV1(target.agentId, selected.identity)
       || resolveTrackedSessionCatalogAgentId(session) === target.agentId) return true;

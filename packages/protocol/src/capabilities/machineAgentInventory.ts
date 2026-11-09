@@ -7,6 +7,8 @@ import { AcpBackendDefinitionV1Schema, AcpBackendLaunchV1Schema, type AcpBackend
 import type { AcpCatalogSnapshotV1 } from '../acp/catalog/catalogRowsV1.js';
 import { AcpPlatformFitV1Schema } from '../acp/catalog/registry/acpPlatformFitV1.js';
 import { isNewerVersion } from '../updates/versionComparison.js';
+import { buildConfiguredAcpAgentSelectionV1, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '../agents/executionTargetV1.js';
+import { agentRoutingIdAddressesContributionIdentityV1 } from '../plugins/contributionIdentity.js';
 
 /** Caller-owned executable facts only. Inventory never carries environment or secret material. */
 export const MachineAcpInventoryDefinitionSchema = lazyZodSchema(() => z.strictObject({
@@ -27,7 +29,10 @@ type DefinitionInventoryInput = Readonly<{
 }>;
 
 export function buildMachineAgentInventoryKey(target: Readonly<{ agentId: string; definitionId?: string }>): string {
-  return target.definitionId === undefined ? target.agentId : JSON.stringify([target.agentId, target.definitionId]);
+  if (target.definitionId === undefined) return target.agentId;
+  const agentId = agentRoutingIdAddressesContributionIdentityV1(target.agentId, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1)
+    ? buildConfiguredAcpAgentSelectionV1(target.definitionId).agentId : target.agentId;
+  return JSON.stringify([agentId, target.definitionId]);
 }
 
 export function projectAcpCatalogForMachineInventory(catalog: AcpCatalogSnapshotV1 | undefined,
@@ -165,7 +170,8 @@ export function buildMachineAgentInventoryDescriptors(
   return [...Object.entries(projection.agentsById)
     .filter(([, agent]) => Boolean(agent.capabilities?.sessions))
     .map(([agentId, agent]) => ({ agentId, title: agent.title?.trim() || agentId })),
-    ...definitions.map(definition => ({ agentId: 'custom-acp', definitionId: definition.definitionId, title: definition.title }))];
+    ...definitions.map(definition => ({ agentId: buildConfiguredAcpAgentSelectionV1(definition.definitionId).agentId,
+      definitionId: definition.definitionId, title: definition.title }))];
 }
 
 /** Inventory readers share non-interactive facts; launch admission needs no vendor update lookup. */
@@ -244,14 +250,15 @@ export function projectMachineAgentsDetectResponse(input: Readonly<{
     const valid = response?.success && !response.data.unavailable && !response.data.definitionCatalog
       && response.data.items.length === expected.size
       && new Set(response.data.items.map(item => item.definitionId)).size === expected.size
-      && response.data.items.every(item => item.agentId === 'custom-acp' && item.definitionId !== undefined
+      && response.data.items.every(item => item.definitionId !== undefined
+        && item.agentId === buildConfiguredAcpAgentSelectionV1(item.definitionId).agentId
         && item.title === expected.get(item.definitionId)?.title && item.managed !== undefined && item.fit !== undefined);
     if (!input.definitionCatalog && valid && response.success) items.push(...response.data.items);
     else for (const definition of input.definitions) {
       const error = result && typeof result === 'object' ? Reflect.get(result, 'error') : undefined;
       const errorCode = input.definitionCatalog?.reason
         ?? (error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined);
-      unavailable.push({ agentId: 'custom-acp', definitionId: definition.definitionId,
+      unavailable.push({ agentId: buildConfiguredAcpAgentSelectionV1(definition.definitionId).agentId, definitionId: definition.definitionId,
         reason: input.definitionCatalog || result && typeof result === 'object' && Reflect.get(result, 'ok') === false
           ? 'probe_failed' : result === undefined ? 'missing_result' : 'invalid_facts',
         ...(typeof errorCode === 'string' ? { errorCode } : {}) });

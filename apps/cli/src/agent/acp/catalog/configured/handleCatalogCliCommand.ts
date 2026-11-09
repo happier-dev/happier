@@ -2,7 +2,7 @@ import type { CommandContext } from '@/cli/commandRegistry';
 import { CONFIGURED_ACP_CATALOG_USAGE } from './catalogHelp';
 import { runBackendSessionCliCommand } from '@/cli/runBackendSessionCliCommand';
 import { readOptionalFlagValue } from '@/cli/sessionStartArgs';
-import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { resolveConfiguredAcpAgentSelection } from './resolveBackend';
 
 export async function handleConfiguredAcpCatalogCliCommand(context: CommandContext): Promise<void> {
   if (context.args.includes('--help') || context.args.includes('-h')) { console.log(CONFIGURED_ACP_CATALOG_USAGE); return; }
@@ -12,15 +12,16 @@ export async function handleConfiguredAcpCatalogCliCommand(context: CommandConte
     throw new Error(CONFIGURED_ACP_CATALOG_USAGE);
   }
 
+  const selection = resolveConfiguredAcpAgentSelection(backendId);
   await runBackendSessionCliCommand({
     context,
     resolveSessionRuntimePreferences: null,
-    backendIdForSessionRuntime: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.localId,
-    runtimeAuthorityAgentId: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.localId,
+    backendIdForSessionRuntime: selection.runtimeRoutingAgentId,
+    runtimeAuthorityAgentId: selection.runtimeAuthorityAgentId,
     loadAccountSettings: true,
     resolveExtraOptions: () => ({
-      agentTarget: { kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId: backendId },
-      runtimeDescriptorV1: { v: 1, agentId: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.localId, agent: { definitionId: backendId } },
+      agentTarget: selection.agentTarget,
+      runtimeDescriptorV1: selection.runtimeDescriptorV1,
     }),
   });
 }

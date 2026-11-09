@@ -1,7 +1,7 @@
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
-import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
+import { buildQualifiedPluginContributionKey, PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
 import { asProtocolZod, projectZodProtocolSchema } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 
@@ -42,6 +42,26 @@ export const AgentExecutionTargetV1Schema = defineStoredReadProjection(
 );
 export type AgentExecutionTargetV1 = z.infer<typeof AgentExecutionTargetV1Schema>;
 export const AgentExecutionTargetV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(AgentExecutionTargetV1Schema));
+
+export type ConfiguredAcpAgentSelectionV1 = Readonly<{
+  agentId: string;
+  agentTarget: Readonly<{ kind: 'agent'; identity: typeof CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1; definitionId: string }>;
+  runtimeDescriptorV1: Readonly<{ v: 1; agentId: string; agent: Readonly<{ definitionId: string }> }>;
+  runtimeAuthorityAgentId: string;
+  flavor: string;
+}>;
+
+/** One configured instance's current identity, shared by launch and install projections. */
+export function buildConfiguredAcpAgentSelectionV1(definitionId: string): ConfiguredAcpAgentSelectionV1 {
+  const agentId = buildQualifiedPluginContributionKey(CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1);
+  const agentTarget = { kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId } as const satisfies AgentExecutionTargetV1;
+  return {
+    agentId, agentTarget,
+    runtimeDescriptorV1: { v: 1 as const, agentId, agent: { definitionId } },
+    runtimeAuthorityAgentId: agentId,
+    flavor: agentId,
+  };
+}
 
 /** Executable catalog choices: Custom ACP declares a container for configured definitions. */
 export function listAgentExecutionTargetsV1(

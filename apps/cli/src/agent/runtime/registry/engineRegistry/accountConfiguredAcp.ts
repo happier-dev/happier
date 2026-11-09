@@ -1,4 +1,4 @@
-import { isCustomAcpAgentContributionIdentityV1, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { buildConfiguredAcpAgentSelectionV1, isCustomAcpAgentContributionIdentityV1, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { agentRoutingIdAddressesContributionIdentityV1, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 import { listValueRefSecretIdsV1 } from '@happier-dev/protocol/valueRefs/valueRefV1';
@@ -29,6 +29,7 @@ export async function resolveAccountConfiguredAcpLaunch(
   definitionId: string,
   savedSecretOperationContext?: SavedSecretOperationContextV1,
 ) {
+  const selection = buildConfiguredAcpAgentSelectionV1(definitionId);
   const readSnapshot = () => savedSecretOperationContext ? savedSecretOperationContext.readSnapshot() : getActiveAccountSettingsSnapshot();
   let accountSnapshot = readSnapshot();
   if (!accountSnapshot?.scopeKey || accountSnapshot.source === 'none') throw new AcpCatalogUnavailableError('account-settings-unavailable');
@@ -64,11 +65,11 @@ export async function resolveAccountConfiguredAcpLaunch(
     executionRunContext: { versions: [1] },
   };
   const sessionProjection = Object.freeze({
-    flavor: 'custom-acp',
-    agentMessageType: 'custom-acp',
+    flavor: selection.flavor,
+    agentMessageType: selection.agentId,
     augmentSessionMetadata: (metadata) => ({
       ...metadata,
-      flavor: 'custom-acp',
+      flavor: selection.flavor,
       ...buildConfiguredAcpBackendSessionMetadata({ backendId: configuredBackend.backendId, title: configuredBackend.title }),
     }),
   } satisfies Readonly<{
@@ -140,7 +141,7 @@ export async function resolveAccountConfiguredAcpLaunch(
   };
   await assertAccountCurrent();
   if (readSnapshot()?.acpCatalog !== catalog) throw new AcpCatalogUnavailableError('catalog-stale');
-  return Object.freeze({ definitionId, configuredBackend, runtimeDefinition, configurationDefaults, sessionCapabilities, sessionProjection, resolveHostLaunch });
+  return Object.freeze({ ...selection, definitionId, configuredBackend, runtimeDefinition, configurationDefaults, sessionCapabilities, sessionProjection, resolveHostLaunch });
 }
 
 /** The declared ACP contribution binds an instance, never a synthetic Agent. */
@@ -167,5 +168,14 @@ export async function resolveAccountConfiguredAcpLaunchForAgent(params: Readonly
   }
   const definitionId = selectedDefinitionId ?? describedDefinitionId;
   if (!definitionId) throw new AcpCatalogUnavailableError('definition-required');
-  return await resolveAccountConfiguredAcpLaunch(definitionId, params.savedSecretOperationContext);
+  const launch = await resolveAccountConfiguredAcpLaunch(definitionId, params.savedSecretOperationContext);
+  if (!params.startupRuntimeDescriptorV1) return launch;
+  return Object.freeze({
+    ...launch,
+    runtimeDescriptorV1: {
+      ...params.startupRuntimeDescriptorV1,
+      ...launch.runtimeDescriptorV1,
+      agent: { ...params.startupRuntimeDescriptorV1.agent, ...launch.runtimeDescriptorV1.agent },
+    },
+  });
 }

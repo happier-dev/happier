@@ -5,6 +5,7 @@ import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
 import { readRecord, readNonEmptyString } from '../../../inputs/inputRecords.js';
 import { resolveAcpPlatformFitV1 } from '../../../acp/catalog/registry/acpPlatformFitV1.js';
 import { MachinesAgentsListOutputSchema, MachineAcpInventoryDefinitionSchema } from '../../../capabilities/machineAgentInventory.js';
+import { buildConfiguredAcpAgentSelectionV1 } from '../../../agents/executionTargetV1.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 
@@ -44,6 +45,7 @@ export async function dispatchAgentsAcp(inv: Pick<CoreInvocation, 'actionId' | '
           const outcome = applyAcpBackendUpsertV1({ settings: { v: 2, backends: catalog.record.definitions },
             backend: request.backend, nowMs: Date.now() });
           if (!outcome.ok) return projectAcpUpsertRefusal(outcome);
+          const selection = buildConfiguredAcpAgentSelectionV1(outcome.backend.id);
           const inventory = await deps.machinesList({ purpose: 'input', ...(ctx.serverId ? { serverId: ctx.serverId } : {}) });
           const failure = readActionFailureEnvelope(inventory);
           if (failure) return failure;
@@ -63,10 +65,10 @@ export async function dispatchAgentsAcp(inv: Pick<CoreInvocation, 'actionId' | '
                 title: outcome.backend.title, launch: outcome.backend.launch });
               try {
                 const result = MachinesAgentsListOutputSchema.safeParse(await deps.machinesAgentsList({ machineId,
-                  agentId: 'custom-acp', definitionId: draft.definitionId, draftDefinitions: [draft], refresh: true,
+                  agentId: selection.agentId, definitionId: draft.definitionId, draftDefinitions: [draft], refresh: true,
                   ...(ctx.serverId ? { serverId: ctx.serverId } : {}),
                 }, ctx));
-                const facts = result.success ? result.data.items.find(item => item.agentId === 'custom-acp'
+                const facts = result.success ? result.data.items.find(item => item.agentId === selection.agentId
                   && item.definitionId === draft.definitionId) : undefined;
                 if (facts) commandFound = facts.installed;
               } catch {
