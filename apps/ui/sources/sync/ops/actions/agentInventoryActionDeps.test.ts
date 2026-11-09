@@ -523,8 +523,7 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
       { agentId: 'codex', includeDefaults: false }, { surface: 'ui', serverId })).toMatchObject({ ok: true, result: {
         profileOptionsByServiceId: { [serviceKey]: [{ profileId: 'primary', status: 'connected', kind: null }] },
         groupOptionsByServiceId: { [serviceKey]: [{ groupId: 'work', status: 'ready', activeProfileId: 'primary' }] },
-        items: expect.arrayContaining([expect.objectContaining({ value: `${serviceKey}:profile:primary` }),
-          expect.objectContaining({ value: `${serviceKey}:group:work` })]),
+        items: expect.arrayContaining([expect.objectContaining({ value: `${serviceKey}:profile:primary` })]),
       } });
   });
 

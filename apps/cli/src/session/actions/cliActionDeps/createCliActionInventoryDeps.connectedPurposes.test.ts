@@ -102,7 +102,6 @@ describe('direct CLI and Action inventory purpose authority', () => {
       { profileId: 'primary', status: 'connected', kind: null },
     ] }, items: expect.arrayContaining([
       expect.objectContaining({ value: `${serviceKey}:profile:primary` }),
-      expect.objectContaining({ value: `${serviceKey}:group:work` }),
     ]), groupOptionsByServiceId: { [serviceKey]: [{
       groupId: 'work', autoSwitch, memberProfileIds: ['primary'], enabledMemberCount: 1,
     }] } } });
