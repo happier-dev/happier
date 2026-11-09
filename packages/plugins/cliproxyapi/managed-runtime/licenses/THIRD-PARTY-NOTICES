@@ -281,9 +281,9 @@ evidence file: LICENSE
    limitations under the License.
 
 ================================================================================
-github.com/andybalholm/brotli v1.0.6
-module checksum: h1:Yf9fFpf49Zrxb9NlQaluyE92/+X7UVHlhMNJN2sxfOI=
-module source: https://pkg.go.dev/github.com/andybalholm/brotli@v1.0.6
+github.com/andybalholm/brotli v1.2.7
+module checksum: h1:UgafRPGMam5ySHfRkhthMqOFA6IFoeF3D7mWIDLjG5A=
+module source: https://pkg.go.dev/github.com/andybalholm/brotli@v1.2.7
 
 --------------------------------------------------------------------------------
 evidence file: LICENSE
@@ -652,9 +652,9 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-github.com/klauspost/compress v1.17.4
-module checksum: h1:Ej5ixsIri7BrIjBkRZLTo6ghwrEtHFk7ijlczPW4fZ4=
-module source: https://pkg.go.dev/github.com/klauspost/compress@v1.17.4
+github.com/klauspost/compress v1.20.2
+module checksum: h1:v5tiZvm1KGLyg5d5oXdXe3lsSPrbEUiKoXGia//I7Qo=
+module source: https://pkg.go.dev/github.com/klauspost/compress@v1.20.2
 
 --------------------------------------------------------------------------------
 evidence file: LICENSE
