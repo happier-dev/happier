@@ -381,6 +381,24 @@ describe('File page View → Edit swap', () => {
         } finally { await screen.unmount(); }
     });
 
+    it('stops saying "No changes" once the buffer is unsaved (QA-PROJECTS D7)', async () => {
+        const { FilePageHeader } = await import('../file/FilePageHeader');
+        const { FileEditorPanel } = await import('../file/editor/FileEditorPanel');
+        const { t } = await import('@/text');
+        fixture.storage.getState().updateWorkspaceScmSnapshot(fixture.scope, fileViewSnapshot({ entries: [] }));
+        const screen = await fixture.render(<ModalProvider>
+            <WorkspaceFileDetailsView scopeId="project:no-changes-dirty" scope={fixture.scope} filePath={filePath} sessionIdForAugmentation={null} />
+        </ModalProvider>);
+        try {
+            const facts = () => (screen.findByType(FilePageHeader).props.summaryFacts ?? []) as readonly string[];
+            await vi.waitFor(() => expect(facts()).toContain(t('detailsSurface.file.noChanges')));
+            await act(async () => { screen.findByType(FilePageHeader).props.edit.onPress(); });
+            await vi.waitFor(() => expect(screen.findAllByType(FileEditorPanel)).toHaveLength(1));
+            await act(async () => { screen.findByType(FileEditorPanel).props.onChange(`${svg}\nedited`); });
+            await vi.waitFor(() => expect(facts()).not.toContain(t('detailsSurface.file.noChanges')));
+        } finally { await screen.unmount(); }
+    });
+
     it('restores a clean retained Edit selection after the File scene remounts', async () => {
         const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
         const { createWorkspaceFileDetailsTab } = await import('@/components/appShell/panes/details/fileDetailsTab');

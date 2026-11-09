@@ -1330,6 +1330,14 @@ function resolveBuiltinWorkflowTitle(ref: DestinationRef): string | null {
     return entry ? tLoose(entry.titleKey) : null;
 }
 
+/** A Project tab's checkout is gone: the complete Project census no longer has it. Never a scoped cache miss. */
+export function isProjectDestinationKnownGone(ref: DestinationRef, state: ReturnType<typeof readRegisteredStorageState>): boolean {
+    if (ref.kind !== 'project' || !ref.params.workspaceRefId || !state?.profileScope || (ref.params.serverId
+        && !areServerProfileIdentifiersEquivalent(state.profileScope.serverId, ref.params.serverId))) return false;
+    const resolution = resolveWorkspaceRefById(readProjectWorkspaceRefs(state), ref.params.workspaceRefId, ref.params.serverId);
+    return resolution.kind !== 'resolved' && resolution.kind !== 'ambiguous' && isProjectAccountRowsCensusComplete(readCurrentProjectAccountRows(state));
+}
+
 /** Absence is settled by a retirement or a complete owner census, never a scoped cache miss. */
 function resolveKnownMissingInstanceTitle(ref: DestinationRef, state: ReturnType<typeof readRegisteredStorageState>): string | null {
     if (!state?.profileScope || (ref.params.serverId
@@ -1339,12 +1347,7 @@ function resolveKnownMissingInstanceTitle(ref: DestinationRef, state: ReturnType
         && isSessionRetiredForServer(state.deletedSessionIds, ref.params.id, ref.params.serverId ?? state.profileScope.serverId)) {
         return t('errors.sessionDeleted');
     }
-    if (ref.kind === 'project' && ref.params.workspaceRefId) {
-        const rows = readCurrentProjectAccountRows(state);
-        const resolution = resolveWorkspaceRefById(readProjectWorkspaceRefs(state), ref.params.workspaceRefId, ref.params.serverId);
-        return resolution.kind !== 'resolved' && resolution.kind !== 'ambiguous' && isProjectAccountRowsCensusComplete(rows)
-            ? t('projects.detail.notFoundTitle') : null;
-    }
+    if (ref.kind === 'project') return isProjectDestinationKnownGone(ref, state) ? t('projects.detail.notFoundTitle') : null;
     if ((ref.kind === 'workflow' || ref.kind === 'artifacts') && ref.params.id && !resolveBuiltinWorkflowTitle(ref)
         && !state.artifacts[ref.params.id] && isArtifactInventoryLoaded(state,
             // A generic Artifact route carries no kind; only the full census can prove its absence.

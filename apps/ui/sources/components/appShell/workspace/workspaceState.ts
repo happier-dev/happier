@@ -198,6 +198,19 @@ export function selectWorkspaceClosableTabIds(state: WorkspaceState, groupId: st
     return state.groups[groupId]?.tabIds.filter(id => requested.has(id) && state.tabs[id] && !state.tabs[id].pinned) ?? [];
 }
 
+/**
+ * Tabs whose destination is known gone (a deleted Project): each group's closable ones, never the tab a group shows,
+ * which keeps its own not-found page and Back, and never a pin.
+ */
+export function selectWorkspaceTabsForGoneDestinations(state: WorkspaceState, isGone: (target: WorkspaceTab['target']) => boolean):
+    readonly Readonly<{ groupId: string; tabIds: readonly string[] }>[] {
+    return Object.values(state.groups).flatMap(group => {
+        const tabIds = selectWorkspaceClosableTabIds(state, group.id, group.tabIds.filter(id => id !== group.activeTabId
+            && state.tabs[id] && isGone(state.tabs[id].target)));
+        return tabIds.length ? [{ groupId: group.id, tabIds }] : [];
+    });
+}
+
 export function reduceWorkspaceState(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
     switch (action.type) {
         case 'setPresentation': {

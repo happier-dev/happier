@@ -28,6 +28,7 @@ import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWor
 import { useActiveServerAccountScope, useWorkspaceRefs, useWorkspaceScmSummarySnapshot, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { sameWorkspaceProject } from '@/sync/domains/workspaces/workspaceRefs';
 import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
+import { resolveWorkspacePathBasenameV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { warmWorkspaceRepositoryDirectoryCache } from '@/sync/domains/workspaces/files/workspaceRepositoryDirectory';
 import { normalizeWorkspaceRootPath, tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
@@ -45,7 +46,7 @@ import { useProjectSource } from '@/components/projects/sources/useProjectSource
 import { readSourceTeamId } from '@/components/projects/sources/projectSourceGroups';
 import { formatProjectSourceAddress } from '@/components/projects/sources/projectSourceAddress';
 import { useProjectsTreeCheckoutFacts } from '@/components/projects/useProjectsTreeCheckoutFacts';
-import { projectsTreeCheckoutKey } from '@/components/projects/projectsTreeRows';
+import { labelProjectCheckouts, projectsTreeCheckoutKey } from '@/components/projects/projectsTreeRows';
 import { useTeamsDirectory } from '@/hooks/teams/useTeamsDirectory';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { WorkspaceLocalChangesBody } from '@/components/projects/scm/WorkspaceLocalChangesBody';
@@ -260,18 +261,24 @@ function CheckoutsBody(props: Props): React.ReactElement {
     const needsYou = (ref: WorkspaceRefV1 | null) => status(ref)?.attention === 'needs-you' ? 0 : 1;
     // Beside the page's main column this is a glance: this checkout, then the two that matter most (who needs
     // the person first), and the rest one press away. Array.sort is stable, so ties keep their listed order.
+    // One label rule across this checkout, its worktrees and its other checkouts (QA-PROJECTS D19).
+    const labels = labelProjectCheckouts([
+        { branch: snapshot?.branch.head ?? status(here)?.branch ?? null, folder: resolveWorkspaceRefDisplayName(checkout) },
+        ...worktrees.map(worktree => ({ branch: worktree.branch ?? null, folder: resolveWorkspacePathBasenameV1(worktree.path) ?? worktree.path })),
+        ...others.map(ref => ({ branch: status(ref)?.branch ?? null, folder: resolveWorkspaceRefDisplayName(ref, projectRefs) })),
+    ]);
     const rows = [
         ...worktrees.map(worktree => ({ rank: needsYou(refAt(scope.machineId, worktree.path)), row: <WidgetGlanceRow key={worktree.path} testID={`${props.testID}.worktree:${worktree.id ?? worktree.path}`} mark="desktop"
-            title={worktree.branch ?? worktree.path} {...fact(scope.machineId, refAt(scope.machineId, worktree.path))}
+            title={labels[1 + worktrees.indexOf(worktree)]!} {...fact(scope.machineId, refAt(scope.machineId, worktree.path))}
             onPress={() => navigation.router.push(navigation.href('overview', undefined, worktree.path, worktree.id) as Parameters<typeof navigation.router.push>[0])} /> })),
         ...others.map(ref => ({ rank: needsYou(ref), row: <WidgetGlanceRow key={`${ref.serverId}:${ref.machineId}:${ref.id}:${ref.rootPath}`} testID={`${props.testID}.checkout:${ref.id}`} mark="desktop"
-            title={status(ref)?.branch ?? resolveWorkspaceRefDisplayName(ref)} {...fact(ref.machineId, ref)}
+            title={labels[1 + worktrees.length + others.indexOf(ref)]!} {...fact(ref.machineId, ref)}
             onPress={() => fireAndForget(openProject(ref.id, { serverId: ref.serverId }), { tag: 'ProjectWidget.openCheckout' })} /> })),
     ].sort((left, right) => left.rank - right.rank);
     const hidden = showAll ? 0 : Math.max(0, rows.length - CHECKOUTS_GLANCE_OTHERS);
     return <View testID={props.testID}>
         <WidgetGlanceRow testID={`${props.testID}.here`} mark="desktop" {...(isOffline(scope.machineId) ? {} : { tag: t('projects.checkouts.here') })}
-            title={snapshot?.branch.head ?? status(here)?.branch ?? resolveWorkspaceRefDisplayName(checkout)}
+            title={labels[0]!}
             {...fact(scope.machineId, here)} />
         {(hidden > 0 ? rows.slice(0, CHECKOUTS_GLANCE_OTHERS) : rows).map(entry => entry.row)}
         {hidden > 0 ? <WidgetGlanceRow testID={`${props.testID}.more`} variant="fact" mark="caret-down"

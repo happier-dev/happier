@@ -10,6 +10,16 @@ const project = (key: string, checkouts: ProjectsTreeCheckout[], teamLabel: stri
 const shape = (rows: ReturnType<typeof buildProjectsTreeRows>) => rows.map((row) => `${'  '.repeat(row.level)}${row.title}${row.titleQualifier ? ` (${row.titleQualifier})` : ''}${row.expandable ? (row.expanded ? ' v' : ' >') : ''}`);
 
 describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
+    it('names every checkout by one rule and tells same-branch siblings apart by folder (QA-PROJECTS D19)', async () => {
+        const { applyProjectsTreeCheckoutFacts, labelProjectCheckouts } = await import('./projectsTreeRows');
+        const folders = project('anchor', [checkout('a', 'devbox', 'happier'), checkout('b', 'devbox', 'happier-wt'), checkout('c', 'devbox', 'docs')]);
+        const facts = { a: 'main', b: 'main', c: null } as Record<string, string | null>;
+        const applied = applyProjectsTreeCheckoutFacts(folders, item => ({ branch: facts[item.refId] ?? null, isWorktree: null, attention: null, newFromSession: false }));
+        expect(applied.checkouts.map(item => item.label)).toEqual(['main · happier', 'main · happier-wt', 'docs']);
+        // The Checkouts widget's rows read the same rule: a worktree is named by its folder, never its absolute path.
+        expect(labelProjectCheckouts([{ branch: 'v0.3', folder: '0.3' }, { branch: null, folder: '0.3-uiref-a2-cold-basis' }]))
+            .toEqual(['v0.3', '0.3-uiref-a2-cold-basis']);
+    });
     it('retains 150 unchanged Project inputs and replaces only the Project whose Machine facts changed', () => {
         const groups = Array.from({ length: 150 }, (_, index) => ({ projectKey: { projectKey: `project-${index}` },
             items: [{ id: `ref-${index}`, serverId: 'home-a', machineId: `machine-${index}`, rootPath: `/repo-${index}` }],

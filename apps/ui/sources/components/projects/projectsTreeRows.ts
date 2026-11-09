@@ -299,6 +299,16 @@ function folderName(rootPath: string): string {
 }
 
 /**
+ * The one name a checkout gets wherever it is listed (the tree, the Checkouts widget): its branch, else its folder,
+ * never an absolute path. Siblings that would read the same add their folder, so they stay distinguishable.
+ */
+export function labelProjectCheckouts(entries: readonly Readonly<{ branch?: string | null; folder: string }>[]): string[] {
+    const names = entries.map(entry => entry.branch?.trim() || entry.folder);
+    return names.map((name, index) => name !== entries[index]!.folder && names.some((other, at) => at !== index && other === name)
+        ? `${name} · ${entries[index]!.folder}` : name);
+}
+
+/**
  * Observed checkout facts folded into a Project built without them (`buildProjectsTreeProjects` yields
  * folder labels, no branch and no attention). The one owner of how a fact reads on a row: the
  * tree's Project sections and the phone list both call it with the facts they subscribed to.
@@ -320,7 +330,9 @@ export function applyProjectsTreeCheckoutFacts(
             attention: facts.attention,
         };
     });
-    return { ...project, newFromSession, checkouts };
+    const labels = labelProjectCheckouts(checkouts.map((checkout, index) => ({ branch: checkout.branch, folder: project.checkouts[index]!.label })));
+    return { ...project, newFromSession, checkouts: checkouts.map((checkout, index) =>
+        checkout.label === labels[index] ? checkout : { ...checkout, label: labels[index]! }) };
 }
 
 /** Share unchanged presentation values with the preceding projection, keyed by exact checkout address. */

@@ -1596,8 +1596,8 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
         : tooLarge && !fileContent ? [formatFilePageBytes(tooLarge.sizeBytes)]
         : mediaFacts ? mediaFacts
         : !fileEntry && !hasPendingDelta && !hasIncludedDelta && typeof fileContent?.content === 'string' && !isBinaryFile
-            // "No changes" only once source control has answered; until then the line says only what is known.
-            ? [...(scmSnapshot ? [t('detailsSurface.file.noChanges')] : []), t('detailsSurface.file.lines', { count: fileDetails.info.lineCount ?? 0 }), ...plainTextFact]
+            // "No changes" only once source control has answered, and never beside an unsaved buffer (QA-PROJECTS D7).
+            ? [...(scmSnapshot && !editorDirty ? [t('detailsSurface.file.noChanges')] : []), t('detailsSurface.file.lines', { count: fileDetails.info.lineCount ?? 0 }), ...plainTextFact]
             : null;
     const summaryFactsKey = summaryFacts ? JSON.stringify(summaryFacts) : null;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the facts are a function of their serialized text

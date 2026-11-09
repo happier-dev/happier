@@ -36,6 +36,18 @@ describe('a widget area frame', () => {
         expect(await frameOn('wallpaper', 'plain')).toEqual({ style: 'plain', areaDefault: 'card' });
     });
 
+    it('stands a widget on its card where a Project page draws its planet behind it, keeping a Plain choice (QA-PROJECTS D8)', async () => {
+        const { AtmosphereBandBoundary } = await import('@/components/atmosphere/atmosphereBandBoundary');
+        const onPlanet = async (override: 'card' | 'plain' | null) => {
+            const screen = await renderScreen(<AtmosphereBandBoundary.Provider value={{ ref: undefined, onLayout: () => {}, onFocusChange: () => {}, planet: true }}>
+                <FrameOf override={override} />
+            </AtmosphereBandBoundary.Provider>);
+            return screen.tree.find(node => (node.type as unknown) === 'FrameOf').props.value;
+        };
+        expect(await onPlanet(null)).toEqual({ style: 'card', areaDefault: 'card' });
+        expect(await onPlanet('plain')).toEqual({ style: 'plain', areaDefault: 'card' });
+    });
+
     it('keeps the placement default on the page colour, under a Horizon band and on a session coat', async () => {
         const plain = { style: 'plain', areaDefault: 'plain' };
         expect(await frameOn('none', null)).toEqual(plain);

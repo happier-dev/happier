@@ -13,7 +13,7 @@ import { isNewSessionModalRoute } from '@/components/sessions/new/navigation/new
 import { useActiveServerAccountScope, useSetting } from '@/sync/domains/state/storage';
 import { getActiveUnsavedChangesGuard, runGuardedNavigation, runGuardedTabNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { hrefForDestinationRef, readDestinationInstanceTitle, resolveCurrentAppDestination, resolveDestinationRefFromHref, type CompactAppDestination, type DestinationRef } from '../destinations/compactAppDestinationCatalog';
+import { hrefForDestinationRef, isProjectDestinationKnownGone, readDestinationInstanceTitle, resolveCurrentAppDestination, resolveDestinationRefFromHref, type CompactAppDestination, type DestinationRef } from '../destinations/compactAppDestinationCatalog';
 import { desktopSessionTargetForDestination, type AppWindowRecord } from '@/desktop/window/appWindowBoot';
 import { registerDesktopAppWindowWorkspace, getDesktopAppWindowWorkspaceLayouts, getDesktopAppWindowTabPresentations,
     getDesktopAppWindows, focusDesktopAppWindow, focusDesktopAppWindowTab, returnDesktopAppWindowTab, closeDesktopAppWindowTab, moveDesktopAppWindowTab, openDesktopAppWindow } from '@/desktop/window/appWindowRuntime';
@@ -29,7 +29,8 @@ import type { SplitCanvasHostControls } from '../splitCanvas/components/SplitCan
 import { createWorkspaceActionAdapter, selectWorkspaceTabsToClose, workspaceActionFailure, type WorkspaceActionOutcome } from './workspaceActions';
 import { executeWorkspaceUiAction, registerMountedWorkspaceAction } from './workspaceActionRuntime';
 import { admitWorkspaceSingletonState, workspaceSingletonDestinationIds } from './workspaceDestinationPolicy';
-import { selectWorkspaceClosableTabIds, type WorkspaceState } from './workspaceState';
+import { selectWorkspaceClosableTabIds, selectWorkspaceTabsForGoneDestinations, type WorkspaceState } from './workspaceState';
+import { readRegisteredStorageState, subscribeRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import { resolvePhoneWorkspaceTabHref } from './workspacePhoneProjection';
 import { useWorkspaceKeyboardShortcuts } from './useWorkspaceKeyboardShortcuts';
 import { WorkspaceRouteHostingContext } from './WorkspaceRouteHostingContext';
@@ -563,6 +564,19 @@ export function WorkspaceProvider(props: Readonly<{
             }),
         });
         if (result !== true) fireAndForget(result, { tag: 'Workspace.closeTabs' });
+    }, [isCurrentUiOwner, runtime]);
+    // A tab whose Project is gone leaves the strip once the Project census says so (QA-PROJECTS D13); the tab on
+    // screen keeps its own not-found page. Project rows change rarely, so this runs only on their publication.
+    React.useEffect(() => {
+        const drop = () => {
+            if (!isCurrentUiOwner()) return;
+            const state = readRegisteredStorageState();
+            if (!state) return;
+            for (const { groupId, tabIds } of selectWorkspaceTabsForGoneDestinations(latest.current.owner.getState(),
+                target => isProjectDestinationKnownGone(target, state))) runtime.adapter.closeTabs(groupId, tabIds);
+        };
+        drop();
+        return subscribeRegisteredStorageState(drop, { projectAccountRows: true, profileScope: true });
     }, [isCurrentUiOwner, runtime]);
     const openHref = React.useCallback((href: string, options?: WorkspaceOpenOptions) => {
         const canEnter = () => entry && latest.current.entry && latest.current.scopeKey === scopeKey

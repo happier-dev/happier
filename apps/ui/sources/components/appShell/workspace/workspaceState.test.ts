@@ -55,6 +55,20 @@ describe('workspace state', () => {
         expect(reduceWorkspaceState(closed, { type: 'closeTabs', groupId: 'group:1', tabIds: ['pinned', 'missing'], newTab: tab('unused', 'newTab') })).toBe(closed);
     });
 
+    it('drops tabs whose destination is known gone, but not the tab on screen or a pinned one (QA-PROJECTS D13)', async () => {
+        const { selectWorkspaceTabsForGoneDestinations } = await import('./workspaceState');
+        const project = (id: string, workspaceRefId: string, pinned = false): WorkspaceTab =>
+            ({ id, target: { kind: 'project', params: { workspaceRefId } }, pinned, preview: false });
+        let state = createWorkspaceState(project('gone-a', 'deleted-1'));
+        for (const next of [project('alive', 'kept'), project('gone-b', 'deleted-2'), project('gone-pinned', 'deleted-3', true), project('gone-shown', 'deleted-4')]) {
+            state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: next });
+        }
+        state = reduceWorkspaceState(state, { type: 'activateTab', groupId: 'group:1', tabId: 'gone-shown' });
+        const gone = (target: WorkspaceTab['target']) => target.kind === 'project' && String(target.params.workspaceRefId).startsWith('deleted');
+        expect(selectWorkspaceTabsForGoneDestinations(state, gone)).toEqual([{ groupId: 'group:1', tabIds: ['gone-a', 'gone-b'] }]);
+        expect(selectWorkspaceTabsForGoneDestinations(state, () => false)).toEqual([]);
+    });
+
     it('bulk closing the final pane leaves one empty tab and closing a split pane restores focus to its sibling', () => {
         let state = createWorkspaceState({ ...tab('a'), pinned: false });
         state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: { ...tab('b'), pinned: false } });

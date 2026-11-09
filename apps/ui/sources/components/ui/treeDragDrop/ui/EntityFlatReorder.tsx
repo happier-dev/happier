@@ -524,7 +524,9 @@ function MountedFlatRow(props: React.ComponentProps<typeof EntityFlatReorderRow>
 }
 
 const FILL_LIST_STYLE = { flex: 1, minHeight: 0 } as const;
-const HORIZONTAL_LIST_STYLE = { flexDirection: 'row', alignItems: 'center' } as const;
+// A horizontal list takes its row's width, not its content's: a bar inside that fits by measurement (the Project
+// page tabs) then measures the room it really has and folds what doesn't fit behind More (QA-PROJECTS D9).
+const HORIZONTAL_LIST_STYLE = { flexShrink: 1, minWidth: 0, justifyContent: 'center' } as const;
 
 /** A write on its way: the row sits at its new place, half-dimmed (a carried source is dimmer). */
 const PENDING_SOURCE_OPACITY = 1 - (1 - HAPPIER_CARRIED_SOURCE_OPACITY) / 2;
