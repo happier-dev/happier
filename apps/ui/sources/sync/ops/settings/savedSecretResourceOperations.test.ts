@@ -176,6 +176,7 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
         'secrets.delete': ['ui'],
         'secrets.shared.create': ['ui'], 'secrets.shared.promote': ['ui'], 'secrets.shared.update': ['ui'],
         'secrets.shared.delete': ['ui'], 'secrets.shared.grants.set': ['ui'],
+        'secrets.shared.repair': ['ui', 'agent'],
     } }) });
     let raw: Record<string, unknown> = { ...options.raw, actionsSettingsV1 };
     let settingsVersion = 7;
@@ -3716,12 +3717,13 @@ describe('Saved Secret operations through their real Account and Action owners',
             accountGrants: ['account-b'], teamGrants: ['team-a'], groupGrants: ['group-a'] });
     });
 
-    it.each(['grants', 'custody', 'already-prepared'] as const)('prepares only owed ready E2EE recipient envelopes (%s)', async phase => {
-        const account = await openAccount('e2ee');
+    it.each(['grants', 'custody', 'already-prepared', 'explicit-ui', 'explicit-agent', 'explicit-agent-complete', 'explicit-agent-approved', 'explicit-agent-rejected'] as const)('prepares only owed ready E2EE recipient envelopes (%s)', async phase => {
+        const needsApproval = phase === 'explicit-agent-approved' || phase === 'explicit-agent-rejected';
+        const account = await openAccount('e2ee', { ask: needsApproval });
         const key = new Uint8Array(32).fill(9);
         const content = sealSavedSecretResourceStoredContentV1({ resourceId: 'resource-a', mode: 'e2ee', resourceDataKey: key,
             content: { v: 1, name: 'Key', kind: 'token', value: 'private-value' }, randomBytes: tweetnacl.randomBytes });
-        account.materialRow('resource-a', 'e2ee', content, phase === 'grants' ? 3 : 4, key);
+        const owned = account.materialRow('resource-a', 'e2ee', content, phase === 'grants' ? 3 : 4, key);
         account.materialRow('received-a', 'e2ee', sealSavedSecretResourceStoredContentV1({ resourceId: 'received-a', mode: 'e2ee', resourceDataKey: key,
             content: { v: 1, name: 'Received', kind: 'token', value: 'received-private' }, randomBytes: tweetnacl.randomBytes }), 4, key, 'recipient');
         account.materialRow('plain-a', 'plain', { t: 'plain', v: { v: 1, name: 'Plain', kind: 'token', value: 'plain' } });
@@ -3731,10 +3733,10 @@ describe('Saved Secret operations through their real Account and Action owners',
         account.setEffect((path, body) => {
             if (path.endsWith('/envelope-census')) return Response.json({ resourceId: 'resource-a', revision: 4, nextCursor: null,
                 recipients: [
-                    { account: { kind: 'account', accountId: 'plain-recipient', firstName: null, lastName: null, username: null, avatarUrl: null }, readiness: { status: 'unavailable', reason: 'plain_account' }, envelopeStatus: 'missing' },
+                    ...(phase === 'explicit-agent-complete' ? [] : [{ account: { kind: 'account', accountId: 'plain-recipient', firstName: null, lastName: null, username: null, avatarUrl: null }, readiness: { status: 'unavailable', reason: 'plain_account' }, envelopeStatus: 'missing' }]),
                     { account: { kind: 'account', accountId: 'ready-recipient', firstName: null, lastName: null, username: null, avatarUrl: null }, readiness: { status: 'available',
                         contentPublicKey: encodeBase64(recipientPublicKey, 'base64'), contentPublicKeyFingerprint: recipientFingerprint },
-                        envelopeStatus: phase === 'already-prepared' ? 'prepared' : 'missing' },
+                        envelopeStatus: phase === 'already-prepared' || account.writes.some(write => write.path.endsWith('/envelopes/repair')) ? 'prepared' : 'missing' },
                 ] });
             if (path.endsWith('/grants')) {
                 SharedSavedSecretGrantsSetInputV1Schema.parse(body);
@@ -3746,8 +3748,59 @@ describe('Saved Secret operations through their real Account and Action owners',
         if (phase === 'grants') expect(await setSavedSecretResourceGrants({ scope: account.scope, resourceId: 'resource-a', expectedRevision: 3,
             encryptionMode: 'e2ee', accountGrants: ['plain-recipient', 'ready-recipient'], teamGrants: [], groupGrants: [],
             decryptDataKeyEnvelope: async () => key })).toEqual({ ok: true });
-        else await repairCustodiedSavedSecretResourceEnvelopesBestEffort({ scope: account.scope, decryptDataKeyEnvelope: async () => key });
-        expect(account.censusReads).toHaveLength(1);
+        else if (phase === 'explicit-ui') {
+            // The real Home catalog publishes the resource mode; old partial
+            // material fixtures omit it and decode to an unavailable editor.
+            owned.entry = { ...owned.entry, encryptionMode: 'e2ee' };
+            await refreshSavedSecretCatalog(account.scope);
+            const entry = getSavedSecretCatalogSnapshot(account.scope)?.data?.find(row => row.ref === owned.entry.ref);
+            if (!entry) throw new Error('Expected decoded Saved Secret catalog row');
+            const { SavedSecretAccessEditor } = await import('@/components/secrets/SavedSecretAccessEditor');
+            const screen = await renderScreen(React.createElement(SavedSecretAccessEditor, {
+                scope: account.scope, target: { kind: 'shared', entry }, onClose: () => {}, onSaved: async () => {},
+            }));
+            await vi.waitFor(() => expect(screen.findByTestId('saved-secret-recipient-finish-sharing')).toBeTruthy());
+            await screen.pressByTestIdAsync('saved-secret-recipient-finish-sharing');
+            await vi.waitFor(() => expect(account.writes.some(write => write.path.endsWith('/envelopes/repair'))).toBe(true));
+            // The ready recipient recovers; the unavailable recipient stays visible.
+            await vi.waitFor(() => expect(screen.findByTestId('saved-secret-recipient-finish-sharing')).toBeNull());
+            expect(screen.findByTestId('saved-secret-recipient:ready-recipient')).toBeTruthy();
+            expect(screen.findByTestId('saved-secret-recipient:plain-recipient')).toBeTruthy();
+            expect(screen.findByTestId('saved-secret-access-failure')).toBeNull();
+        } else if (phase.startsWith('explicit-agent')) {
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            const executor = createDefaultActionExecutor();
+            const input = { resourceId: 'resource-a', expectedRevision: 4 };
+            const context = { surface: 'agent', authority: 'account_automation', serverId: account.scope.serverId,
+                runtimeAccountId: account.scope.accountId, actionCaller: { kind: 'host' } } as const;
+            let result = await executor.execute('secrets.shared.repair', input, { ...context, actionRequestId: `repair-${phase}-1` });
+            if (needsApproval) {
+                const artifactIdFrom = (request: typeof result): string => {
+                    expect(request).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+                    const artifactId = request.ok && request.result && typeof request.result === 'object' ? Reflect.get(request.result, 'artifactId') : null;
+                    if (typeof artifactId !== 'string') throw new Error('Expected real repair approval Artifact');
+                    return artifactId;
+                };
+                let artifactId = artifactIdFrom(result);
+                // Ask holds before census, material acquisition or a repair write.
+                expect(account.censusReads).toEqual([]);
+                expect(account.materialReadPaths).toEqual([]);
+                expect(account.writes).toEqual([]);
+                const person = { ...context, surface: 'ui', authority: 'present_user' } as const;
+                if (phase === 'explicit-agent-rejected') {
+                    expect(await executor.execute('approval.request.decide', { artifactId, decision: 'reject' }, person)).toMatchObject({ ok: true });
+                    expect(account.writes).toEqual([]);
+                    result = await executor.execute('secrets.shared.repair', input, { ...context, actionRequestId: `repair-${phase}-2` });
+                    artifactId = artifactIdFrom(result);
+                }
+                result = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, person);
+                expect(result).toMatchObject({ ok: true });
+                expect(JSON.stringify(result)).not.toContain('private-value');
+                expect(JSON.stringify(result)).not.toContain('encryptedDataKey');
+            } else expect(result).toEqual({ ok: true, result: { resourceId: 'resource-a', revision: 4,
+                status: phase === 'explicit-agent-complete' ? 'complete' : 'incomplete' } });
+        } else await repairCustodiedSavedSecretResourceEnvelopesBestEffort({ scope: account.scope, decryptDataKeyEnvelope: async () => key });
+        if (phase !== 'explicit-ui') expect(account.censusReads).toHaveLength(1);
         expect(new URL(account.censusReads[0]!).searchParams.get('resourceId')).toBe('resource-a');
         const repairs = account.writes.filter(write => write.path.endsWith('/envelopes/repair'));
         expect(repairs).toHaveLength(phase === 'already-prepared' ? 0 : 1);
@@ -3758,7 +3811,10 @@ describe('Saved Secret operations through their real Account and Action owners',
             expect(openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(repair.keyEnvelopes[0]!.encryptedDataKey, 'base64'),
                 recipientSecretKeyOrSeed: recipientSeed })).toEqual(new Uint8Array(32).fill(9));
         }
-        expect(key).toEqual(new Uint8Array(32));
+        if (phase.startsWith('explicit-')) {
+            // Explicit recovery never replaces the already-approved audience.
+            expect(account.writes).toHaveLength(1);
+        } else expect(key).toEqual(new Uint8Array(32));
     });
 
     it.each(['create', 'update', 'delete', 'grants'] as const)('settles the exact approved %s result without redispatching the mutation', async operation => {

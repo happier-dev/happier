@@ -51,6 +51,7 @@ describe('Shared Saved Secret Action contracts', () => {
       'secrets.shared.update': { result: 'required', flow: 'deferred' },
       'secrets.shared.delete': { result: 'required', flow: 'deferred' },
       'secrets.shared.reveal': { result: 'optional', flow: 'deferred' },
+      'secrets.shared.repair': { result: 'required', flow: 'deferred' },
     } as const;
 
     expect(Object.keys(expectedApprovalByActionId)).toEqual(SHARED_SAVED_SECRET_ACTION_IDS_V1);
@@ -68,12 +69,13 @@ describe('Shared Saved Secret Action contracts', () => {
       'secrets.shared.update',
       'secrets.shared.delete',
       'secrets.shared.reveal',
+      'secrets.shared.repair',
     ]);
     for (const id of SHARED_SAVED_SECRET_ACTION_IDS_V1) {
       expect(ActionIdSchema.parse(id)).toBe(id);
       expect(listActionSpecs().filter((spec) => spec.id === id)).toHaveLength(1);
       const spec = getActionSpec(id);
-      if (id === 'secrets.shared.reveal') {
+      if (id === 'secrets.shared.reveal' || id === 'secrets.shared.repair') {
         expect(spec.executionPlacement).toBe('client');
         expect(spec.serverTransport).toBeUndefined();
         continue;
@@ -89,6 +91,19 @@ describe('Shared Saved Secret Action contracts', () => {
         ? { result: 'required' }
         : { result: 'required', flow: 'deferred' });
     }
+  });
+
+  it('offers explicit recovery without accepting secret material or a new audience', () => {
+    const spec = getActionSpec('secrets.shared.repair');
+    const input = { resourceId: 'resource', expectedRevision: 3 };
+    expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: false });
+    expect(spec.inputSchema.parse(input)).toEqual(input);
+    for (const surface of ['agent', 'mcp'] as const) {
+      expect(resolveActionApprovalRouting({ actionId: spec.id, spec, input,
+        context: { surface, authority: 'account_automation' }, settings: normalizeActionsSettingsV1({ v: 1 }) }).required).toBe(true);
+    }
+    expect(spec.inputSchema.safeParse({ resourceId: 'resource', expectedRevision: 3, accountGrants: ['new-person'] }).success).toBe(false);
+    expect(spec.outputSchema.safeParse({ resourceId: 'resource', revision: 3, status: 'complete', value: 'secret' }).success).toBe(false);
   });
 
   it('binds raw V1 list and mutation requests from the source-owned row', () => {

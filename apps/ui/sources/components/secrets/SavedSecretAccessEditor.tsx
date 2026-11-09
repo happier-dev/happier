@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { parseSavedSecretCatalogReferenceV1, type SavedSecretCatalogEntryV1, type SavedSecretResourceEnvelopeCensusRecipientV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import type { SavedSecret } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { SharedSavedSecretRepairOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -14,12 +15,11 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import {
     promotePersonalSavedSecretResource,
     readSavedSecretResourceRecipientReadiness,
-    repairApprovedSavedSecretResourceEnvelopesBestEffort,
     setSavedSecretResourceGrants,
     type SavedSecretResourceOperationResult,
 } from '@/sync/ops/settings/savedSecretResourceOperations';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
-import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
+import { isTeamActionApprovalPendingError, runTeamAction } from '@/sync/ops/teams/teamActionClient';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { t } from '@/text';
 import {
@@ -296,16 +296,21 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
     };
 
     const finishSharing = async (revision: number) => {
-        const encryption = getSyncSingleton().encryption;
-        if (!encryption || !parsed || parsed.kind !== 'shared_resource') return;
+        if (!parsed || parsed.kind !== 'shared_resource') return;
         setFinishingSharing(true);
         try {
-            await repairApprovedSavedSecretResourceEnvelopesBestEffort({
+            const outcome = await runTeamAction({
                 scope: props.scope,
-                resourceId: parsed.id,
-                expectedRevision: revision,
-                decryptDataKeyEnvelope: (value) => encryption.decryptEncryptionKey(value, props.scope),
+                actionId: 'secrets.shared.repair',
+                input: { resourceId: parsed.id, expectedRevision: revision },
+                parse: value => SharedSavedSecretRepairOutputV1Schema.parse(value),
+                onApprovalSucceeded: () => readiness.reload(),
             });
+            if (outcome.kind !== 'succeeded') setFailure('failed');
+        } catch (cause) {
+            if (isTeamActionApprovalPendingError(cause)) {
+                props.requestApproval?.(cause.registration);
+            } else setFailure('failed');
         } finally {
             setFinishingSharing(false);
             readiness.reload();

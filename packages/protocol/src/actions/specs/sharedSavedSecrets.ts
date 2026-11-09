@@ -69,6 +69,15 @@ function projectSharedSavedSecretObservationInput(id: string, input: unknown): u
 
 export const SHARED_SAVED_SECRET_ACTION_SPECS: readonly PreNormalizedActionSpec[] = lazyActionSpecArray(() => Object.freeze(
   SHARED_SAVED_SECRET_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => {
+    if (id === 'secrets.shared.repair') return {
+      id, title: 'Finish sharing Saved Secret', description: 'Prepare owed key envelopes for the already-approved audience at the exact Saved Secret revision.',
+      safety: 'danger', sideEffectClass: 'write', requiredAuthority: 'present_user', executionPlacement: 'client',
+      approval: { result: 'required', flow: 'deferred' }, approvalPolicy: { uiConfirmation: 'direct' }, placements: [],
+      surfaces: { ui: true, cli: false, agent: true, mcp: true, rpc: false, voice: false },
+      bindings: { mcpToolName: 'secrets_shared_repair' },
+      inputSchema: SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1[id], outputSchema: SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[id],
+      inputHints: { fields: [] },
+    };
     if (id === 'secrets.shared.reveal') return {
       id, title: 'Reveal shared Saved Secret', description: 'Display an exact managed Saved Secret only to the person in the app.',
       safety: 'danger', sideEffectClass: 'write', requiredAuthority: 'present_user', executionPlacement: 'client',

@@ -328,11 +328,24 @@ export const SharedSavedSecretGrantsSetInputV1Schema = lazyZodSchema(() => z.str
   keyEnvelopes: z.optional(z.array(SavedSecretResourceRecipientEnvelopeInputV1Schema)),
 }));
 
-/** Internal owner repair after an audience/key change; this is not an Action. */
+/** Internal owner transport; explicit recovery exposes only resource identity/revision. */
 export const SavedSecretResourceEnvelopeRepairInputV1Schema = lazyZodSchema(() => z.strictObject({
   resourceId: ResourceIdSchema,
   expectedRevision: z.number().check(z.int(), z.positive()),
   keyEnvelopes: z.array(SavedSecretResourceRecipientEnvelopeInputV1Schema).check(z.minLength(1)),
+}));
+
+export const SharedSavedSecretRepairInputV1Schema = lazyZodSchema(() => z.strictObject({
+  resourceId: ResourceIdSchema,
+  expectedRevision: z.number().check(z.int(), z.positive()),
+}));
+export type SharedSavedSecretRepairInputV1 = z.infer<typeof SharedSavedSecretRepairInputV1Schema>;
+
+export const SharedSavedSecretRepairOutputV1Schema = lazyZodSchema(() => z.strictObject({
+  resourceId: ResourceIdSchema,
+  revision: z.number().check(z.int(), z.positive()),
+  /** Incomplete retains the existing recipient-readiness recovery path. */
+  status: z.enum(['complete', 'incomplete']),
 }));
 
 export const SharedSavedSecretUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -415,6 +428,7 @@ export const SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1 = {
   'secrets.shared.update': SharedSavedSecretUpdateInputV1Schema,
   'secrets.shared.delete': SharedSavedSecretDeleteInputV1Schema,
   'secrets.shared.reveal': SharedSavedSecretRevealInputV1Schema,
+  'secrets.shared.repair': SharedSavedSecretRepairInputV1Schema,
 } as const satisfies Readonly<Record<SharedSavedSecretActionIdV1, z.ZodMiniType>>;
 
 export const SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 = {
@@ -425,4 +439,5 @@ export const SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 = {
   'secrets.shared.update': SharedSavedSecretMutationOutputV1Schema,
   'secrets.shared.delete': SharedSavedSecretDeleteOutputV1Schema,
   'secrets.shared.reveal': SharedSavedSecretRevealOutputV1Schema,
+  'secrets.shared.repair': SharedSavedSecretRepairOutputV1Schema,
 } as const satisfies Readonly<Record<SharedSavedSecretActionIdV1, z.ZodMiniType>>;
