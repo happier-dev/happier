@@ -93,7 +93,9 @@ describe('S0 deployment wire contracts', () => {
         const providerEnvironment = { kind: 'preview', scriptName: 'worker', previewName: 'pr-1' };
         const preparedNative = { projectName: 'captured-project', gitSource: { type: 'github', repoId: '123' },
             triggerUuid: 'captured-trigger-uuid', previewId: 'captured-preview-id', gitBranch: 'feature/x',
-            workerTag: 'captured-worker-tag', scriptName: 'captured-script-name' };
+            workerTag: 'captured-worker-tag', scriptName: 'captured-script-name',
+            pages: { projectMode: 'directUpload', productionBranch: 'main', buildCommand: 'npm run build',
+                buildOutputDirectory: 'dist', rootDirectory: 'site' } };
         const linkContent = { providerIdentity, credentialPrincipal, providerEnvironment, preparedNative,
             repositoryAccess: { status: 'needsGitAccess', repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/repo' },
                 grantUrl: 'https://example.test/grant' } };
@@ -101,6 +103,8 @@ describe('S0 deployment wire contracts', () => {
         expect(DeploymentTargetLinkContentV1Schema.parse(linkContent)).toEqual(linkContent);
         expect(DeploymentTargetLinkContentV1Schema.safeParse({ ...linkContent,
             preparedNative: { ...preparedNative, gitSource: { ...preparedNative.gitSource, token: 'not-native-metadata' } } }).success).toBe(false);
+        expect(DeploymentTargetLinkContentV1Schema.safeParse({ ...linkContent,
+            preparedNative: { ...preparedNative, pages: { ...preparedNative.pages, environment: { TOKEN: 'not-native-metadata' } } } }).success).toBe(false);
         expect(DeploymentTargetLinkContentV1Schema.safeParse({ ...linkContent,
             providerEnvironment: { kind: 'preview', previewName: 'pr-1' } }).success).toBe(false);
         expect(DeploymentTargetLinkContentV1Schema.safeParse({ ...linkContent,
@@ -121,6 +125,8 @@ describe('S0 deployment wire contracts', () => {
             deploymentId: 'deployment', expectedDeploymentRevision: 1, actionOperationId: 'operation',
             sourceIntent: platformContent.sourceIntent, sourceMethod: 'gitIntegration' };
         expect(DeploymentTargetRoleInputSchemasV1.deploy.parse(lifecycle)).toEqual(lifecycle);
+        expect(DeploymentTargetRoleInputSchemasV1.uploadDeploy.parse({ ...lifecycle, sourceMethod: 'upload' }))
+            .toEqual({ ...lifecycle, sourceMethod: 'upload' });
         expect(DeploymentV1Schema.safeParse({ ...receipt, content: { t: 'plain', v: { ...platformContent, sourceMethod: undefined } } }).success).toBe(false);
         expect(DeploymentV1Schema.safeParse({ ...receipt, content: { t: 'plain', v: { ...platformContent, buildMachineId: 'fabricated' } } }).success).toBe(false);
         expect(DeploymentV1Schema.safeParse({ ...receipt, content: { t: 'plain', v: { ...platformContent, machines: ['fabricated'] } } }).success).toBe(false);

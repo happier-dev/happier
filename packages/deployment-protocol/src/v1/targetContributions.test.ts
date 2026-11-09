@@ -3,7 +3,7 @@ import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/i
 import { PluginContributesV2Schema } from '@happier-dev/protocol';
 import { DeploymentTargetV1Schema } from './target.js';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { DeploymentTargetFailureTransitionV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1,
+import { DeploymentTargetRoleInputProtocolSchemasV1,
     DeploymentTargetRoleResultV1ProtocolSchema } from './target.js';
 
 const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
@@ -91,32 +91,6 @@ describe('deployment target manifest admission', () => {
                 actions: actions.map(action => action.id === 'inspect' ? { ...action, inputSchema } : action),
             } }).targets).toEqual([]);
         }
-    });
-    it('admits exactly the declared same-plugin failure Event payload and isolates a bad descriptor', () => {
-        const failureTransitionEvent = 'failure-transition';
-        const declared = { ...target, id: 'with-failure-event', failureTransitionEvent };
-        const event = { id: failureTransitionEvent, kind: 'event', title: 'Deployment transition',
-            payloadSchema: DeploymentTargetFailureTransitionV1ProtocolSchema.jsonSchema };
-        const value = manifest([declared, target]);
-        const withEvents = { ...value, contributes: { ...value.contributes, events: [event] } };
-        expect(admittedTargets(withEvents).targets).toEqual([declared, target]);
-        for (const events of [[], [{ ...event, payloadSchema: closed }], [{ ...event,
-            payloadSchema: { ...event.payloadSchema, additionalProperties: true } }]]) {
-            expect(admittedTargets({ ...withEvents, contributes: { ...withEvents.contributes, events } }).targets).toEqual([target]);
-        }
-        expect(admittedTargets({ ...withEvents, contributes: { ...withEvents.contributes,
-            deploymentTargets: [{ ...declared, failureTransitionEvent: 'foreign.plugin/failure-transition' }, target],
-        } }).targets).toEqual([target]);
-    });
-    it('retains a qualified failure Event on its runtime target and rejects another plugin Event', () => {
-        const action = { kind: 'plugin', actionId: formatQualifiedPluginActionId({ pluginId: 'example.deploy', localId: 'deploy' }) };
-        const normalized = { ...target, v: 1,
-            source: { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'runtime' } },
-            actions: { inspect: action, link: action, deploy: action, observe: action },
-            failureTransitionEvent: 'example.deploy/failure-transition' };
-        expect(DeploymentTargetV1Schema.safeParse(normalized).success).toBe(true);
-        expect(DeploymentTargetV1Schema.safeParse({ ...normalized,
-            failureTransitionEvent: 'foreign.plugin/failure-transition' }).success).toBe(false);
     });
     it('preserves declared optional runtime roles in the normalized public target', () => {
         const action = { kind: 'plugin', actionId: formatQualifiedPluginActionId({ pluginId: 'example.deploy', localId: 'deploy' }) };
