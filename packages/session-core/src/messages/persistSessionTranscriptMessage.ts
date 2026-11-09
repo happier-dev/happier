@@ -2,6 +2,7 @@ import { z } from 'zod/mini';
 
 import { SessionMessageRoleSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
 import type { SessionMessageRole } from '@happier-dev/protocol';
+import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 
 import { normalizeRawMessage, RawRecordSchema, type NormalizedMessage, type RawRecord } from "../raw/index.js";
 
@@ -48,6 +49,10 @@ export async function persistSessionTranscriptMessage(
         throw new Error('Invalid session transcript message');
     }
 
+    const usageTimingV1 = projectUsageSessionMessageTimingV1({
+        sessionId,
+        message: { id: localId, localId, content: parsedRawRecord.data, createdAt: input.createdAt },
+    });
     const storedContent = deps.sessionEncryptionMode === 'plain'
         ? { content: { t: 'plain' as const, v: parsedRawRecord.data } }
         : await (async () => {
@@ -68,6 +73,7 @@ export async function persistSessionTranscriptMessage(
                 ...storedContent,
                 localId,
                 messageRole: parsedMessageRole.data,
+                usageTimingV1,
             }),
         },
     );

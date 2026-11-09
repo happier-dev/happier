@@ -38,6 +38,7 @@ export function applyTranscriptAccountActorMetadata(
         && previous.v === next.v
         && previous.serverId === next.serverId
         && previous.accountId === next.accountId
+        && previous.accessibility === next.accessibility
         && (previous.profile === next.profile || (previous.profile && next.profile
             && previous.profile.firstName === next.profile.firstName
             && previous.profile.lastName === next.profile.lastName

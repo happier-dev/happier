@@ -14,7 +14,7 @@ export type { Metadata, AgentState } from "./state/index.js";
 export { listPendingRequests, listPendingRequestLists, derivePendingRequestFlags, comparePendingRequestsByAge, selectOldestPendingRequest } from "./pending/index.js";
 export type { PendingRequestFacts, SessionPendingRequest, SessionPendingRequestLists } from "./pending/index.js";
 export { createTranscriptStreamSegmentAssembler, interpretTranscriptStreamSegment } from "./live/index.js";
-export { applyReducedMessages, isSessionMessageRowCurrent, advanceSessionReceivedMessageCurrentness } from "./transcript/index.js";
+export { applyReducedMessages, isSessionMessageRowCurrent, isSessionMessageRevisionHeld, advanceSessionReceivedMessageCurrentness } from "./transcript/index.js";
 export type { OrderedTranscript } from "./transcript/index.js";
 export { readPublishedSessionVisualMessages } from "./transcript/publishedVisuals.js";
 export type { PublishedSessionVisualMessage, PublishedSessionVisualProjection } from "./transcript/publishedVisuals.js";

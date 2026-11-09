@@ -145,6 +145,8 @@ import {
 } from "../messages/transcriptObservationProvenance.js";
 import { applyTranscriptAccountActorMetadata, type TranscriptAccountActorMetadata } from "../messages/transcriptAccountActor.js";
 import {indexTranscriptRow, readTranscriptIndex, type TranscriptMetadataIndex} from './helpers/transcriptIndex.js';
+import { readAuthoritativeTranscriptTarget, applyAuthoritativeTranscriptUpdate, areTranscriptSemanticValuesEqual,
+    readTranscriptObservationMetadata, areTranscriptObservationMetadataEqual, type AuthoritativeTranscriptTarget } from './authoritativeTranscriptUpdates.js';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -155,67 +157,6 @@ function firstString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function areMessageActionReferencesEqual(
-    left: TranscriptObservationMetadata['messageActionReference'],
-    right: TranscriptObservationMetadata['messageActionReference'],
-): boolean {
-    return left === right || (
-        left !== undefined
-        && right !== undefined
-        && left.v === right.v
-        && left.sessionId === right.sessionId
-        && left.messageId === right.messageId
-        && left.observedRevision === right.observedRevision
-    );
-}
-
-function areTranscriptSemanticValuesEqual(left: unknown, right: unknown): boolean {
-    if (Object.is(left, right)) return true;
-    if (left === null || right === null || left === undefined || right === undefined) return false;
-    if (typeof left !== 'object' || typeof right !== 'object') return false;
-    if (Array.isArray(left) || Array.isArray(right)) {
-        if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
-        return left.every((value, index) => areTranscriptSemanticValuesEqual(value, right[index]));
-    }
-
-    const leftRecord = left as Record<string, unknown>;
-    const rightRecord = right as Record<string, unknown>;
-    const leftKeys = Object.keys(leftRecord);
-    const rightKeys = Object.keys(rightRecord);
-    if (leftKeys.length !== rightKeys.length) return false;
-    return leftKeys.every(
-        (key) => Object.prototype.hasOwnProperty.call(rightRecord, key)
-            && areTranscriptSemanticValuesEqual(leftRecord[key], rightRecord[key]),
-    );
-}
-
-function readTranscriptObservationMetadata(message: TranscriptObservationMetadata): TranscriptObservationMetadata {
-    return {
-        ...(message.sourceCreatedAt !== undefined ? { sourceCreatedAt: message.sourceCreatedAt } : {}),
-        ...(message.sourceUpdatedAt !== undefined ? { sourceUpdatedAt: message.sourceUpdatedAt } : {}),
-        ...(message.transcriptObservationProvenance !== undefined
-            ? { transcriptObservationProvenance: message.transcriptObservationProvenance }
-            : {}),
-        ...(message.deliveryResolution !== undefined ? { deliveryResolution: message.deliveryResolution } : {}),
-        ...(message.followDeliveryProjection !== undefined ? { followDeliveryProjection: message.followDeliveryProjection } : {}),
-        ...(message.messageActionReference !== undefined ? { messageActionReference: message.messageActionReference } : {}),
-    };
-}
-
-function areTranscriptObservationMetadataEqual(
-    left: TranscriptObservationMetadata,
-    right: TranscriptObservationMetadata,
-): boolean {
-    return left.sourceCreatedAt === right.sourceCreatedAt
-        && left.sourceUpdatedAt === right.sourceUpdatedAt
-        && areTranscriptSemanticValuesEqual(
-            left.transcriptObservationProvenance,
-            right.transcriptObservationProvenance,
-        )
-        && areTranscriptSemanticValuesEqual(left.deliveryResolution, right.deliveryResolution)
-        && areTranscriptSemanticValuesEqual(left.followDeliveryProjection, right.followDeliveryProjection)
-        && areMessageActionReferencesEqual(left.messageActionReference, right.messageActionReference);
-}
 
 function extractPermissionRequestId(input: unknown): string | null {
     const obj = asRecord(input);
@@ -318,53 +259,6 @@ export type ReducerState = {
     };
 };
 
-type AuthoritativeTranscriptTextTarget = Readonly<{
-    messageId: string;
-    message: ReducerMessage;
-    text: string;
-}>;
-
-function readAuthoritativeTranscriptTextTarget(
-    state: ReducerState,
-    source: NormalizedMessage,
-): AuthoritativeTranscriptTextTarget | null {
-    if (source.isAuthoritativeUpdate !== true || isRecoveredHistoryTranscriptObservation(source)) {
-        return null;
-    }
-
-    if (source.role === 'user') {
-        const messageId = state.messageIds.get(source.id);
-        if (!messageId) return null;
-        const message = state.messages.get(messageId);
-        if (!message || message.role !== 'user' || message.realID !== source.id) return null;
-        return { messageId, message, text: source.content.text };
-    }
-
-    if (source.role !== 'agent' || source.content.length !== 1 || source.content[0]?.type !== 'text') {
-        return null;
-    }
-
-    const isExactAgentTextTarget = (message: ReducerMessage | undefined): message is ReducerMessage => (
-        message?.role === 'agent'
-        && message.realID === source.id
-        && message.text !== null
-        && message.isThinking !== true
-        && message.tool === null
-        && message.event === null
-        && message.transcriptBlockIndex === 0
-    );
-    const directMessageId = state.messageIds.get(source.id);
-    const directMessage = directMessageId ? state.messages.get(directMessageId) : undefined;
-    if (directMessageId && isExactAgentTextTarget(directMessage)) {
-        return { messageId: directMessageId, message: directMessage, text: source.content[0].text };
-    }
-    for (const message of readTranscriptIndex(state).byId.get(source.id) ?? []) {
-        if (isExactAgentTextTarget(message)) {
-            return { messageId: message.id, message, text: source.content[0].text };
-        }
-    }
-    return null;
-}
 
 function hasExplicitAgentStreamIdentity(source: Extract<NormalizedMessage, { role: 'agent' }>): boolean {
     const meta = source.meta as Record<string, unknown> | undefined;
@@ -405,38 +299,6 @@ function isUnmarkedDurableAgentTextDuplicate(
     return false;
 }
 
-function applyAuthoritativeTranscriptTextUpdate(
-    target: AuthoritativeTranscriptTextTarget,
-    source: NormalizedMessage,
-): boolean {
-    const { message } = target;
-    const didTextChange = message.text !== target.text;
-    const didMetaChange = !areTranscriptSemanticValuesEqual(message.meta, source.meta);
-    const didStructuredPresentationChange = !areTranscriptSemanticValuesEqual(
-        message.structuredPresentation,
-        source.structuredPresentation,
-    );
-    const observationBefore = readTranscriptObservationMetadata(message);
-    applyTranscriptObservationMetadata(message, source);
-    const didObservationChange = !areTranscriptObservationMetadataEqual(
-        observationBefore,
-        readTranscriptObservationMetadata(message),
-    );
-    if (!didTextChange && !didMetaChange && !didStructuredPresentationChange && !didObservationChange) {
-        return false;
-    }
-
-    // A server-declared update retains the durable row's id, local id, sequence,
-    // and creation time; only its renderable semantic fields can be replaced.
-    message.text = target.text;
-    message.meta = source.meta;
-    if (source.structuredPresentation !== undefined) {
-        message.structuredPresentation = source.structuredPresentation;
-    } else {
-        delete message.structuredPresentation;
-    }
-    return true;
-}
 
 export function createReducer(): ReducerState {
     return {
@@ -644,11 +506,11 @@ export function reducer(
     // event payload, but it must never create a second rendered/event row.
     const authoritativeTranscriptTargetsBySource = new Map<
         NormalizedMessage,
-        AuthoritativeTranscriptTextTarget
+        AuthoritativeTranscriptTarget
     >();
     const durableAgentDuplicates = new Set<NormalizedMessage>();
     for (const source of orderedIncomingMessages) {
-        const target = readAuthoritativeTranscriptTextTarget(state, source);
+        const target = readAuthoritativeTranscriptTarget(state, source);
         if (target) {
             authoritativeTranscriptTargetsBySource.set(source, target);
         } else if (isUnmarkedDurableAgentTextDuplicate(state, source)) {
@@ -787,7 +649,7 @@ export function reducer(
         if (message) indexTranscriptRow(transcriptIndex, message);
     }
     for (const [source, target] of authoritativeTranscriptTargetsBySource) {
-        if (applyAuthoritativeTranscriptTextUpdate(target, source)) {
+        if (applyAuthoritativeTranscriptUpdate(target, source)) {
             changed.add(target.messageId);
         }
     }

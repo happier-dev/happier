@@ -1,4 +1,4 @@
-import { isPublishedTranscriptSessionBoardItemReferenceCorrespondingV1, resolveTranscriptSessionBoardItemReferenceV1 } from '@happier-dev/protocol/sessions/board';
+import { resolveForkedTranscriptSessionBoardItemReferenceV1, resolvePublishedTranscriptSessionBoardItemReferenceV1, resolveTranscriptSessionBoardItemReferenceV1 } from '@happier-dev/protocol/sessions/board';
 import { SessionForkVisualOriginV1Schema } from '@happier-dev/protocol/sessions/board/forkVisualCopies';
 import { getSessionTranscriptSurfaceItemReferenceSourceKeyV1, readSessionTranscriptSurfaceItemReferencesV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { readPublishedSessionTranscript } from './publishedTranscript.js';
@@ -34,20 +34,21 @@ export function readPublishedSessionVisualMessages(messages: readonly PublishedS
             if (!tool) continue;
             const candidates = references.map((reference, referenceIndex) => ({ reference, referenceIndex }));
             const selected = candidates.find(candidate => {
-                const acknowledged = resolveTranscriptSessionBoardItemReferenceV1({ toolName: tool.name, state: tool.state,
-                    input: tool.input, result: content.content, address: candidate.reference.sourceAddress });
-                return acknowledged && isPublishedTranscriptSessionBoardItemReferenceCorrespondingV1({
-                    acknowledgedReference: acknowledged, publishedReference: candidate.reference,
+                return resolvePublishedTranscriptSessionBoardItemReferenceV1({ toolName: tool.name, state: tool.state,
+                    input: tool.input, result: content.content, publishedReference: candidate.reference,
                     publishedSessionId: published.publishedSessionId,
                 });
             });
             let projection: PublishedSessionVisualProjection | null = selected && published.visualReadable
                 ? { status: 'available', referenceIndex: selected.referenceIndex } : null;
             if (!selected && origin.success && references.every(reference => 'sourceItemId' in reference)) {
-                const acknowledged = resolveTranscriptSessionBoardItemReferenceV1({ toolName: tool.name, state: tool.state,
+                const acknowledged = resolveForkedTranscriptSessionBoardItemReferenceV1({ toolName: tool.name, state: tool.state,
+                    input: tool.input, result: content.content, origin: origin.data, publishedSessionId: published.publishedSessionId,
+                }) ?? resolveTranscriptSessionBoardItemReferenceV1({ toolName: tool.name, state: tool.state,
                     input: tool.input, result: content.content, address: origin.data });
                 if (acknowledged) projection = { status: 'not_copied', sourceKey: getSessionTranscriptSurfaceItemReferenceSourceKeyV1({
                     sourceAddress: acknowledged.address, sourceItemId: acknowledged.itemId, sourceItemRevision: acknowledged.itemRevision,
+                    ...(acknowledged.approvalRequestArtifactId ? { approvalRequestArtifactId: acknowledged.approvalRequestArtifactId } : {}),
                 }) };
             }
             if (projection) {

@@ -13,6 +13,8 @@ export type StreamSegmentMetaV1 = Readonly<{
   segmentLocalId: string | null;
   segmentState: StreamSegmentState | null;
   updatedAtMs: number | null;
+  /** Rewrite generation; text of different generations is never spliced. */
+  textGeneration: number;
 }>;
 
 export function readStreamSegmentMetaV1(meta: unknown): StreamSegmentMetaV1 | null {
@@ -20,7 +22,7 @@ export function readStreamSegmentMetaV1(meta: unknown): StreamSegmentMetaV1 | nu
   const segment = (meta as Record<string, unknown>).happierStreamSegmentV1;
   const parsed = StreamSegmentReadSchema.safeParse(segment);
   if (!parsed.success) return null;
-  const { segmentKind, segmentLocalId, segmentState, updatedAtMs } = parsed.data;
+  const { segmentKind, segmentLocalId, segmentState, updatedAtMs, textGeneration } = parsed.data;
   return { v: 1, segmentKind, segmentLocalId: segmentLocalId ?? null,
-    segmentState: segmentState ?? null, updatedAtMs: updatedAtMs ?? null };
+    segmentState: segmentState ?? null, updatedAtMs: updatedAtMs ?? null, textGeneration: textGeneration ?? 0 };
 }

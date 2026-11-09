@@ -68,5 +68,6 @@ describe('streaming transcript work', () => {
         // Zero is the contract: changed rows are looked up by id. A timeline
         // iteration per chunk is invalid even when the example history is short.
         expect(counted.visits).toBe(0);
+        console.info(JSON.stringify({history, chunks: 4, historyVisits: counted.visits, rowLookups: counted.lookups}));
     });
 });

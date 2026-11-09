@@ -3,8 +3,46 @@ import { describe, expect, it } from 'vitest';
 import { MessageMetaSchema } from "./messageMetaTypes.js";
 import { rawRecordSchema } from '../raw/schemas.js';
 import { TranscriptRawRecordV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
+import { SessionInputAuthoritySchema, SessionInputRequestSchema, readSessionInputAuthority } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { normalizeRawMessage } from '../raw/normalize.js';
 
 describe('stored MessageMetaSchema', () => {
+    it.each(['finished', 'failed_or_stopped'] as const)('retains historical %s Follow authority through the real raw reader and normalization', kind => {
+        // Redacted retained shape: LIVEWAVE3's seven decrypted 2026-10-23/24
+        // rows fail at meta.happierInputAuthorityV1.followDeliveryV1.event.
+        const authority = {
+            v: 1, producer: 'sessionAction', caller: { kind: 'host' },
+            permission: { admittedPermissionCeiling: 'default' },
+            followDeliveryV1: { v: 1, delivery: 'wake', original: {
+                sourceSessionId: 'source', sourceMessage: { localId: 'terminal', seq: 7 },
+            }, event: { kind } },
+        };
+        const raw = { role: 'user', content: { type: 'text', text: 'redacted retained notice' },
+            meta: { happierInputAuthorityV1: authority } };
+        const parsed = rawRecordSchema.safeParse(raw);
+        expect(parsed.success).toBe(true);
+        expect(TranscriptRawRecordV1Schema.safeParse(raw).success).toBe(true);
+        const normalized = normalizeRawMessage('historical', null, 1, raw, { seq: 1, messageRole: 'user' });
+        expect(normalized?.role).toBe('user');
+        expect(normalized?.meta?.happierInputAuthorityV1).toEqual(authority);
+        expect(readSessionInputAuthority(raw.meta, 'stored')).toEqual(authority);
+        expect(readSessionInputAuthority(raw.meta)).toBeNull();
+        expect(SessionInputAuthoritySchema.safeParse(authority).success).toBe(false);
+        expect(SessionInputRequestSchema.safeParse({ ...authority, permission: {} }).success).toBe(false);
+
+        for (const invalid of [
+            { ...authority, permission: { admittedPermissionCeiling: 'unknown' } },
+            { ...authority, producer: 'happierApp' },
+            { ...authority, sourceSession: { sourceSessionId: 'other', sourceTurnId: 'turn', via: 'action' } },
+            { ...authority, followDeliveryV1: { ...authority.followDeliveryV1, original: {
+                ...authority.followDeliveryV1.original, sourceMessage: { localId: 'terminal', seq: 0 },
+            } } },
+        ]) expect(rawRecordSchema.safeParse({ ...raw, meta: { happierInputAuthorityV1: invalid } }).success).toBe(false);
+        expect(rawRecordSchema.safeParse({ ...raw, meta: { ...raw.meta,
+            happierInputRequestV1: { v: 1, producer: 'happierApp', permission: {} },
+        } }).success).toBe(false);
+    });
+
     it('projects known message sidecars without dropping opaque provider payloads', () => {
         const stored = {
             role: 'agent',

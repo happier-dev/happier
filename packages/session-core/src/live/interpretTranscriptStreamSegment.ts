@@ -7,6 +7,8 @@ import {
 import type { RawRecord } from '../raw/schemas.js';
 import type { SessionMessageRole } from '@happier-dev/protocol';
 import {
+    isTerminalTranscriptStreamSegmentRecord,
+    readTranscriptStreamSegmentGeneration,
     readTranscriptStreamSegmentText,
     withTranscriptStreamSegmentText,
     type TranscriptStreamSegmentAssembler,
@@ -44,7 +46,10 @@ export function interpretTranscriptStreamSegment(params: TranscriptStreamSegment
             deltaText,
             tick: params.tick,
             baseLength: params.baseLength,
+            generation: readTranscriptStreamSegmentGeneration(record),
         });
+        // A terminal delta ends the live chain; the durable base stays for the terminal revision.
+        if (isTerminalTranscriptStreamSegmentRecord(record)) assembler.endTranscriptStreamSegmentLive(sessionId, message.localId);
         if (text === null) return null;
         record = record ? withTranscriptStreamSegmentText(record, text) : null;
         if (!record) {

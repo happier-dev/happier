@@ -44,3 +44,18 @@ export function advanceSessionReceivedMessageCurrentness(
         messages.set(messageId, updatedAt);
     }
 }
+
+/**
+ * Whether this reader already holds a Message row at or beyond `updatedAt`. Reading
+ * that row again can change nothing; an unknown row or revision is never held.
+ */
+export function isSessionMessageRevisionHeld(
+    sessionReceivedMessages: SessionReceivedMessages,
+    sessionId: string,
+    messageId: string,
+    updatedAt: number | undefined,
+): boolean {
+    if (updatedAt === undefined || !Number.isFinite(updatedAt)) return false;
+    const held = sessionReceivedMessages.get(sessionId)?.get(messageId);
+    return held !== undefined && held >= updatedAt;
+}

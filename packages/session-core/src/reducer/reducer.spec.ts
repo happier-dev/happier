@@ -67,6 +67,15 @@ describe('reducer', () => {
             expect.objectContaining({ accountActor: refreshed.accountActor, realID: initial.id, seq: 7, text: 'unchanged' }),
         ]);
         expect(reducer(state, [refreshed]).messages).toEqual([]);
+
+        const retired = {
+            ...initial,
+            accountActor: { ...refreshed.accountActor, accessibility: 'former' as const },
+        };
+        expect(reducer(state, [retired]).messages).toEqual([
+            expect.objectContaining({ accountActor: retired.accountActor, realID: initial.id, seq: 7, text: 'unchanged' }),
+        ]);
+        expect(reducer(state, [retired]).messages).toEqual([]);
     });
 
     it('does not rescan the loaded transcript when a page repeats actors it already applied', () => {
@@ -223,6 +232,39 @@ describe('reducer', () => {
     // });
 
     describe('agent event handling', () => {
+        it('replaces only the exact authoritative informational event, with no replay or equal-echo publication', () => {
+            const state = createReducer();
+            const initial: NormalizedMessage = { id: 'ask-row', localId: 'invocation', seq: 1001, createdAt: 1001,
+                role: 'event', isSidechain: false, content: { type: 'message', message: 'Not delivered' } };
+            const history: NormalizedMessage[] = Array.from({ length: 1000 }, (_, index) => ({
+                id: `old-${index}`, localId: `old-local-${index}`, seq: index + 1, createdAt: index,
+                role: 'event', isSidechain: false, content: { type: 'message', message: `Retained ${index}` },
+            }));
+            const rows = reducer(state, [...history, initial]).messages;
+            const before = rows.find(row => row.realID === initial.id)!;
+            const untouched = state.messages.get(rows[0]!.id)!;
+            let retainedReads = 0;
+            const realID = untouched.realID;
+            Object.defineProperty(untouched, 'realID', { configurable: true, get: () => { retainedReads++; return realID; } });
+            const corrected: NormalizedMessage = { ...initial, content: { type: 'message', message: 'Context was reset' } };
+            expect(reducer(state, [corrected]).messages).toEqual([]);
+            const result = reducer(state, [{ ...corrected, isAuthoritativeUpdate: true }]);
+            expect(result.messages).toEqual([expect.objectContaining({ id: before.id, realID: initial.id,
+                localId: initial.localId, seq: initial.seq, createdAt: initial.createdAt,
+                event: { type: 'message', message: 'Context was reset' } })]);
+            expect(state.latestUsage).toBeUndefined();
+            expect(state.latestTodos).toBeUndefined();
+            expect(state.messages.size).toBe(1001);
+            expect(state.messages.get(rows[0]!.id)).toBe(untouched);
+            expect(reducer(state, [structuredClone({ ...corrected, isAuthoritativeUpdate: true })]).messages).toEqual([]);
+            reducer(state, [{ ...initial, isAuthoritativeUpdate: true,
+                transcriptObservationProvenance: { kind: 'non_dependent', source: 'history' } }]);
+            expect(state.messages.get(before.id)?.event).toEqual(corrected.content);
+            expect(reducer(state, [{ ...initial, id: 'different-server-row', isAuthoritativeUpdate: true }]).messages[0])
+                .toMatchObject({ realID: 'different-server-row', event: initial.content });
+            expect(retainedReads).toBe(0);
+        });
+
         it('carries the reserved localId onto the converted agent-event row so the Agent-transition divider stays readable', () => {
             const state = createReducer();
             const localId = buildAgentTransitionDividerLocalId('local-1');
