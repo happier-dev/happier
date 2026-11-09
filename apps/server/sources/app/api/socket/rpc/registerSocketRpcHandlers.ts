@@ -104,7 +104,7 @@ import {
 } from "@/app/ephemeralRunner/materializedRunnerPrincipalCurrentness";
 
 import { canCallSessionScopedRpcMethod, canRegisterSessionScopedRpcMethod, hasCurrentSessionActionRpcSourceBinding,
-    readSessionScopedSocketBinding } from "../sessionScopedBinding";
+    hasCurrentSessionScopedMachineAccessInTx, readSessionScopedSocketBinding } from "../sessionScopedBinding";
 import {
     canEphemeralRunnerMachineRegisterRpcMethod,
     type RestrictedSocketAdmission,
@@ -1728,6 +1728,16 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         return;
                     }
                     sessionWriteTargetUserId = session.accountId;
+                    if (sessionAuthorization.startsAgentWork) {
+                        // Retaining a publisher lets its admitted turn finish; a new provider
+                        // operation is a new admission under the Session owner's Machine grant.
+                        const target = await readCurrentCommittedSessionInputMachineTargetInTx(db, sessionId, { admittedWork: true });
+                        if (target?.accountId !== session.accountId || !await hasCurrentSessionScopedMachineAccessInTx({ tx: db,
+                            accountId: session.accountId, machineId: target.machineId, sessionId })) {
+                            callback?.(buildForbiddenRpcResponse());
+                            return;
+                        }
+                    }
                     if (isRequesterApprovalDecision) {
                         // Requester confirmation spends already-created approval custody. Its exact
                         // Session placement survives a stopped runner, just like queued Session input;
