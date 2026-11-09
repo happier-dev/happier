@@ -122,8 +122,11 @@ export type PluginUiResourceProjectionSnapshot<T> = Readonly<Omit<PluginUiResour
 export type PluginUiResourceSelection<T> = Readonly<{
   getSnapshot(): T;
   subscribe(listener: () => void, live: boolean): () => void;
-  refresh(): Promise<void>;
+  refresh(options?: PluginUiResourceRefreshOptions): Promise<void>;
 }>;
+
+/** Explicit recovery may retire an unresolved read; ordinary invalidations coalesce. */
+export type PluginUiResourceRefreshOptions = Readonly<{ supersede?: boolean }>;
 
 /** The artifact-local currentness facade consumed by this mounted Resource store. */
 export type PluginUiResourceAccountLifetime = Readonly<{
@@ -135,7 +138,7 @@ export type PluginUiResourceEntry = Readonly<{
   getSnapshot(): PluginUiResourceSnapshot;
   subscribe(listener: () => void, live: boolean): () => void;
   /** Settles after this refresh and its queued convergence reads, including failure or retirement. */
-  refresh(options?: Readonly<{ supersede?: boolean }>): Promise<PluginUiResourceSnapshot>;
+  refresh(options?: PluginUiResourceRefreshOptions): Promise<PluginUiResourceSnapshot>;
   select<T, Selected>(projection: PluginUiResourceProjection<T>,
     selector: (snapshot: PluginUiResourceProjectionSnapshot<T>) => Selected): PluginUiResourceSelection<Selected>;
 }>;
@@ -1007,7 +1010,7 @@ export function createPluginUiResourceStore(input: Readonly<{
             }
           };
         },
-        refresh(options?: Readonly<{ supersede?: boolean }>): Promise<PluginUiResourceSnapshot> {
+        refresh(options?: PluginUiResourceRefreshOptions): Promise<PluginUiResourceSnapshot> {
           return new Promise(resolve => {
             if (!isEntryCurrent(entry!)) {
               resolve(Object.freeze({ freshness: 'unknown', pending: 'idle', subscription: 'ended',
@@ -1045,7 +1048,7 @@ export function createPluginUiResourceStore(input: Readonly<{
                 listener();
               }, live);
             },
-            refresh: async () => { await facade.refresh(); },
+            refresh: async (options?: PluginUiResourceRefreshOptions) => { await facade.refresh(options); },
           });
         },
       });

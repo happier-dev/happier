@@ -11,6 +11,7 @@ import type {
     PluginUiResourceReference,
     PluginUiResourceSnapshot,
     PluginUiResourceProjectionSnapshot,
+    PluginUiResourceRefreshOptions,
 } from '@happier-dev/plugin-ui/hostApi';
 import type { PluginUiProjectionModel, PluginUiResourceProjection } from '@/sync/domains/plugins/ui/projection';
 import { createPluginAccountResourceClient } from './pluginAccountResourceClient';
@@ -623,10 +624,10 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
                     subscriptions.add(subscription);
                     return () => { subscriptions.delete(subscription); subscription.release(); };
                 },
-                async refresh() {
+                async refresh(options) {
                     reconcile();
                     if (retired) return retired;
-                    await shared.refresh();
+                    await shared.refresh(options);
                     return snapshot();
                 },
                 select(projection, selector) {
@@ -648,7 +649,7 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
                                 listener();
                             }, live);
                         },
-                        refresh: async () => { await entry.refresh(); },
+                        refresh: async (options?: PluginUiResourceRefreshOptions) => { await entry.refresh(options); },
                     });
                 },
             });
@@ -802,10 +803,10 @@ export function PluginContextualResourceState<TSelected = PluginUiResourceSnapsh
     const snapshot = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     useWidgetFrameResourceActivity(presented && props.active !== false && getResourceSnapshot()?.pending === 'refresh');
     const controls = React.useMemo<PluginContextualResourceControls>(() => ({
-        refresh: async () => { if (entry && currentRef.current?.() !== false) await entry.refresh(); },
+        refresh: async options => { if (entry && currentRef.current?.() !== false) await entry.refresh({ supersede: options?.supersede ?? true }); },
     }), [entry]);
 
     return <>{props.children(snapshot, controls)}</>;
 }
 
-export type PluginContextualResourceControls = Readonly<{ refresh: () => Promise<void> }>;
+export type PluginContextualResourceControls = Readonly<{ refresh: (options?: PluginUiResourceRefreshOptions) => Promise<void> }>;

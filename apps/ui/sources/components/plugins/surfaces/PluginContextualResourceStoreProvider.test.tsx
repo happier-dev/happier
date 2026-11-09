@@ -1,15 +1,14 @@
 import * as React from 'react';
+import renderer, { act } from 'react-test-renderer';
+import { Text } from 'react-native';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PluginUiResourceSnapshot, PluginUiResourceProjection as PluginUiResourceValueProjection } from '@happier-dev/plugin-ui/hostApi';
 import type { Disposable, PluginAccountApi } from '@happier-dev/plugin-sdk';
 import type { PluginActionReadInvalidation } from '@happier-dev/plugin-sdk/actions';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
-import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
-import renderer, { act } from 'react-test-renderer';
-import { Text } from 'react-native';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { PluginUiResourceSnapshot, PluginUiResourceProjection as PluginUiResourceValueProjection } from '@happier-dev/plugin-ui/hostApi';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -30,7 +29,12 @@ import { createPluginContextualResourceWatchClient, createPluginSurfaceResourceW
 import { DeclarativeWidgetDocument } from '@/components/widgets/DeclarativeWidgetDocument';
 import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
-import { PluginDeclarativeDocumentV1Schema, createWorkBoardV1, buildWorkBoardWidgetKeyV1, type WorkBoardWidgetPlacementV1 } from '@happier-dev/protocol';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
+import { resolveRightSidebarPluginTabs } from '@/components/appShell/rightSidebar/rightSidebarPluginTabs';
+import { PluginRightSidebarCountState, readPluginRightSidebarCount, pluginRightSidebarCountHasContent } from '@/components/appShell/rightSidebar/rightSidebarPluginCount';
+import { PluginDeclarativeDocumentV1Schema} from '@happier-dev/protocol/plugins/contributions/ui/declarative-document-authoring';
+import { createWorkBoardV1, buildWorkBoardWidgetKeyV1, type WorkBoardWidgetPlacementV1 } from '@happier-dev/protocol/boards/workBoardV1';
 import { BoardCanvas, type BoardCanvasWidgetRender } from '@/components/boards/canvas/BoardCanvas';
 import { projectBoardMembership } from '@/components/boards/model/boardMembership';
 import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropRuntime';
@@ -41,8 +45,17 @@ import { createWidgetSnapshotCaptureSlot, WidgetSnapshotCaptureContext } from '@
 import { WidgetSnapshotConfirmPanel } from '@/components/widgets/definitions/WidgetSnapshotConfirmPanel';
 import { t } from '@/text';
 import { normalizePluginInstalledUiDeclarations } from '@/sync/domains/plugins/ui/projection';
-import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { WidgetDefinitionV1Schema } from '@happier-dev/protocol/widgets/widgetDefinitionV1';
+import { RightSidebarActionRail } from '@/components/appShell/rightSidebar/RightSidebarActionRail';
+import { Modal } from '@/modal';
+import type { NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { PluginUiPhysicalSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
+import { resolvePluginSidebarResourceContext } from './pluginSurfaceMountBinding';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import type { PluginUiProjectionModel, PluginUiResourceProjection } from '@/sync/domains/plugins/ui/projection';
+import { selectPluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
+import { readProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 
 vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -60,6 +73,10 @@ const machineResourceRpc = vi.hoisted(() => ({
     next: vi.fn(),
     close: vi.fn(),
 }));
+
+// Account-only cases measure zero daemon traffic in their own lifetime, not
+// calls left by an earlier Machine-backed case in this shared boundary.
+beforeEach(() => { for (const port of Object.values(machineResourceRpc)) port.mockClear(); });
 
 // Mock only the daemon network boundary. Keep RPC request/response admission,
 // contextual clients, Resource store, and watch pump real.
@@ -101,7 +118,586 @@ import {
 
 type AccountLifetime = PluginContextualResourceBinding['accountLifetime'];
 
+it('shares an exact inactive Home Resource across independent credential consumers and releases only the last consumer', async () => {
+    installLiveResourceRpc();
+    const active = await createAccountLifetime({ accountId: 'account-a' });
+    const { upsertServerProfileOnly } = await import('@/sync/domains/server/serverRuntime');
+    const { removeServerProfile } = await import('@/sync/domains/server/serverProfiles');
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+    const home = await upsertServerProfileOnly({ serverUrl: 'http://contextual-other-home.test', name: 'Count test Home' });
+    const written = await TokenStorage.setCredentialsForServerUrlWithRollback(home.serverUrl, { serverId: home.id },
+        { token: `e30.${Buffer.from(JSON.stringify({ sub: 'account-b' })).toString('base64url')}.signature` });
+    if (!written) throw new Error('Expected test credential write');
+    const first = await renderHook(() => useServerCredentialAccountScopeBinding(home.id));
+    const second = await renderHook(() => useServerCredentialAccountScopeBinding(home.id));
+    let firstLease: ReturnType<typeof acquirePluginContextualResourceStore> = null;
+    let secondLease: ReturnType<typeof acquirePluginContextualResourceStore> = null;
+    let releaseFirst = () => {};
+    let releaseSecond = () => {};
+    try {
+        await vi.waitFor(() => { expect(first.getCurrent().binding?.scope.accountId).toBe('account-b');
+            expect(second.getCurrent().binding?.scope.accountId).toBe('account-b'); });
+        firstLease = acquirePluginContextualResourceStore(binding(first.getCurrent().binding!));
+        secondLease = acquirePluginContextualResourceStore(binding(second.getCurrent().binding!));
+        expect(firstLease).not.toBeNull();
+        expect(secondLease).not.toBeNull();
+        releaseFirst = firstLease!.store.getEntry(RESOURCE_ID).subscribe(() => {}, true);
+        releaseSecond = secondLease!.store.getEntry(RESOURCE_ID).subscribe(() => {}, true);
+        await vi.waitFor(() => expect(machineResourceRpc.open).toHaveBeenCalledTimes(1));
+        expect(machineResourceRpc.read).toHaveBeenCalledTimes(1);
+        releaseFirst();
+        await first.unmount();
+        expect(active.lifetime.isCurrent()).toBe(true);
+        expect(machineResourceRpc.close).not.toHaveBeenCalled();
+        releaseSecond();
+        await second.unmount();
+        await vi.waitFor(() => expect(machineResourceRpc.close).toHaveBeenCalledTimes(1));
+    } finally {
+        releaseFirst(); releaseSecond(); firstLease?.dispose(); secondLease?.dispose();
+        await first.unmount(); await second.unmount(); await written.rollback(); await removeServerProfile(home.id);
+    }
+});
+
+it('selects content separately from numeric data without another read/watch or positive-to-positive layout work', async () => {
+    installLiveResourceRpc();
+    const account = await createAccountLifetime({ accountId: 'account-a' });
+    const exact = binding(account.lifetime);
+    let contentComputations = 0;
+    let numericValue: string | null = null;
+    const selectNumber = (snapshot: PluginUiResourceSnapshot | null) => snapshot?.value ? new TextDecoder().decode(snapshot.value.bytes) : null;
+    const selectContent = (snapshot: PluginUiResourceSnapshot | null) => snapshot?.value ? Number(new TextDecoder().decode(snapshot.value.bytes)) > 0 : null;
+    const screen = await renderScreen(<PluginContextualResourceStoreProvider>
+        <PluginContextualResourceState binding={exact} resource={RESOURCE_ID} select={selectContent}>
+            {content => { contentComputations += 1; return <Text testID="content">{String(content)}</Text>; }}
+        </PluginContextualResourceState>
+        <PluginContextualResourceState binding={exact} resource={RESOURCE_ID} select={selectNumber}>
+            {count => { numericValue = count; return <Text>{String(count)}</Text>; }}
+        </PluginContextualResourceState>
+    </PluginContextualResourceStoreProvider>);
+    try {
+        await vi.waitFor(() => expect(numericValue).toBe('1'));
+        await vi.waitFor(() => expect(machineResourceRpc.open).toHaveBeenCalledTimes(1));
+        expect(machineResourceRpc.read).toHaveBeenCalledTimes(1);
+        const before = contentComputations;
+        machineResourceRpc.read.mockResolvedValue({ ...resourceResponse('b'), result: { ...resourceResponse('b').result, bytesBase64: 'Mg==' } });
+        const lease = acquirePluginContextualResourceStore(exact)!;
+        try { await act(async () => { await lease.store.getEntry(RESOURCE_ID).refresh(); }); }
+        finally { lease.dispose(); }
+        await vi.waitFor(() => expect(numericValue).toBe('2'));
+        expect(contentComputations).toBe(before);
+    } finally { await screen.unmount(); }
+    await vi.waitFor(() => expect(machineResourceRpc.close).toHaveBeenCalledTimes(1));
+});
+
 const RESOURCE_ID = 'control-state';
+
+it('shows both labelled Project page counts before opening the page, sharing body demand and releasing hidden chrome demand', async () => {
+    const { ProjectPageChromeCounts } = await import('@/components/projects/navigation/ProjectPageChromeCounts');
+    const { ProjectShellHeader } = await import('@/components/projects/shell/ProjectShellHeader');
+    const { resolveProjectPageCatalog } = await import('@/components/projects/detail/projectPageCatalog');
+    const { resolvePluginRightSidebarCountBinding } = await import('@/components/appShell/rightSidebar/rightSidebarPluginCount');
+    const account = await createAccountLifetime({ accountId: 'account-a' });
+    let payload: unknown = { running: 2, failed: 1 };
+    let revision = 0;
+    installLiveResourceRpc({ read: () => {
+        const marker = 'abcd'[revision]!;
+        return { ...resourceResponse(marker), result: { ...resourceResponse(marker).result,
+            bytesBase64: Buffer.from(JSON.stringify(payload)).toString('base64') } };
+    } });
+    const pluginId = 'acme.composer';
+    const executionOrigin = widgetExecutionOrigin(pluginId, 'machine-1');
+    const projection = widgetProjectionOf([], { [pluginId]: { ...widgetInstalledPackage(pluginId, 'Counts'), occurrenceId: 'occurrence-42', executionOrigin } },
+        { [buildQualifiedPluginContributionKey({ pluginId, localId: RESOURCE_ID })]: { id: RESOURCE_ID, pluginId,
+            resourceKind: 'config', contentType: 'application/json', scope: 'surface', occurrenceId: 'occurrence-42' } });
+    const destination = normalizePluginUiDestinationBindingV1({ pluginId, destinationId: 'builds', rendererId: 'native',
+        container: 'appPage', target: { kind: 'project' } })!;
+    const placement: PluginUiPhysicalSurfacePlacementProjection = {
+        id: `surfacePlacement:${pluginId}:builds`, descriptorId: 'builds', pluginId, occurrenceId: 'occurrence-42',
+        contributionKind: 'surfacePlacement', binding: destination, target: destination.target,
+        renderer: { kind: 'declarative', contributionId: 'native' }, executionOrigin,
+        runtime: { resourceCapability: { readable: true, dynamic: true } },
+        display: { title: 'Builds', counts: { resourceId: RESOURCE_ID,
+            items: [{ field: 'running', label: 'Running' }, { field: 'failed', label: 'Failed' }] } },
+        availability: { state: 'available', reason: 'available', diagnostics: [] }, headerActions: [],
+    };
+    const context = readProjectWidgetAreaContextV1({ serverId: account.lifetime.scope.serverId, activeCheckout: {
+        id: 'checkout-a', projectKey: 'project-a', serverId: account.lifetime.scope.serverId, machineId: 'machine-1', rootPath: '/repo', createdAtMs: 1,
+    }, authority: account.lifetime });
+    const pages = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'checkout-a', serverId: account.lifetime.scope.serverId },
+        placements: [placement], policyContext: context.policyContext });
+    const page = pages.at(-1)!;
+    const descriptor = { tab: { placement, plugin: { pluginId, descriptorId: 'builds' }, counts: page.pluginPage!.counts },
+        runtime: { pluginUiProjection: projection, machineId: 'machine-1', serverId: account.lifetime.scope.serverId,
+            accountLifetime: account.lifetime, interactionEnabled: true }, target: context.target! };
+    let shown: readonly import('@/components/projects/navigation/ProjectPageChromeCounts').ProjectPageChromeDescriptor[] = [];
+    const view = (hidden: boolean, body: boolean) => <PluginContextualResourceStoreProvider>
+        <ProjectPageChromeCounts pages={pages} context={context} projection={projection} authority={account.lifetime}
+            preferences={{ orderedIds: [], placements: { [page.id]: hidden ? 'hidden' : 'overflow' } }}>{counted => {
+                shown = counted;
+                return <ProjectShellHeader projectName="Project" checkout={null} pages={[counted[0]!]}
+                    overflowPages={counted.slice(1)} activePage="overview" onSelectPage={() => {}} onNewSession={null} menuActions={[]} />
+            }}</ProjectPageChromeCounts>
+        {body ? <PluginRightSidebarCountState descriptor={descriptor}>{() => null}</PluginRightSidebarCountState> : null}
+    </PluginContextualResourceStoreProvider>;
+    const screen = await renderScreen(view(false, false));
+    try {
+        await vi.waitFor(() => {
+            expect(shown.at(-1)?.count).toContain('Running 2');
+            expect(shown.at(-1)?.count).toContain('Failed 1');
+        });
+        expect(shown.at(-1)?.counts).toEqual([{ field: 'running', label: 'Running', count: 2 },
+            { field: 'failed', label: 'Failed', count: 1 }]);
+        const baseline = shown;
+        await screen.update(view(false, false));
+        expect(shown).toBe(baseline);
+        expect(machineResourceRpc.read).toHaveBeenCalledTimes(1);
+        expect(machineResourceRpc.read.mock.calls[0]![1].context.target).toEqual(context.target);
+        const refresh = async (next: unknown) => {
+            payload = next; revision += 1;
+            const lease = acquirePluginContextualResourceStore(resolvePluginRightSidebarCountBinding(descriptor)!)!;
+            try { await act(async () => { await lease.store.getEntry(RESOURCE_ID).refresh(); }); }
+            finally { lease.dispose(); }
+        };
+        await refresh({ running: 3, failed: 1 });
+        await vi.waitFor(() => expect(shown.at(-1)?.count).toContain('Running 3'));
+        expect(shown[0]).toBe(baseline[0]);
+        expect(shown.at(-1)?.counts?.[1]).toBe(baseline.at(-1)?.counts?.[1]);
+        const changed = shown;
+        await refresh({ running: 3, failed: 1 });
+        expect(shown).toBe(changed);
+        await refresh({ running: null, failed: 1 });
+        await vi.waitFor(() => expect(shown.at(-1)?.counts?.[0]?.count).toBeNull());
+        // An unknown count is dropped from the label, not drawn as a dash; only non-zero counts are named.
+        expect(shown.at(-1)?.count).toBe('Failed 1');
+        await refresh({ running: 0, failed: 0 });
+        await vi.waitFor(() => expect(shown.at(-1)?.counts?.[1]?.count).toBe(0));
+        expect(shown.at(-1)?.count).toBeUndefined();
+        const readsBeforeBody = machineResourceRpc.read.mock.calls.length;
+        await screen.update(view(false, true));
+        expect(machineResourceRpc.read).toHaveBeenCalledTimes(readsBeforeBody);
+        await vi.waitFor(() => expect(machineResourceRpc.open).toHaveBeenCalledTimes(1));
+        await screen.update(view(true, true));
+        expect(machineResourceRpc.close).not.toHaveBeenCalled();
+        await screen.update(view(true, false));
+        await vi.waitFor(() => expect(machineResourceRpc.close).toHaveBeenCalledTimes(1));
+    } finally { await screen.unmount(); }
+});
+
+it('keeps retained Project count demand stable across device placement reorder and a new earlier catalog page', async () => {
+    const { ProjectPageChromeCounts } = await import('@/components/projects/navigation/ProjectPageChromeCounts');
+    const { resolveProjectPageCatalog } = await import('@/components/projects/detail/projectPageCatalog');
+    const account = await createAccountLifetime({ accountId: 'account-a' });
+    installLiveResourceRpc({ read: () => ({ ...resourceResponse('a'), result: { ...resourceResponse('a').result,
+        bytesBase64: Buffer.from('{"running":2,"failed":1}').toString('base64') } }) });
+    const pluginId = 'acme.composer';
+    const executionOrigin = widgetExecutionOrigin(pluginId, 'machine-1');
+    const projection = widgetProjectionOf([], { [pluginId]: { ...widgetInstalledPackage(pluginId, 'Counts'), occurrenceId: 'occurrence-42', executionOrigin } },
+        { [buildQualifiedPluginContributionKey({ pluginId, localId: RESOURCE_ID })]: { id: RESOURCE_ID, pluginId,
+            resourceKind: 'config', contentType: 'application/json', scope: 'surface', occurrenceId: 'occurrence-42' } });
+    const context = readProjectWidgetAreaContextV1({ serverId: account.lifetime.scope.serverId, activeCheckout: {
+        id: 'checkout-a', projectKey: 'project-a', serverId: account.lifetime.scope.serverId, machineId: 'machine-1', rootPath: '/repo', createdAtMs: 1,
+    }, authority: account.lifetime });
+    const placements = ['builds', 'releases'].map(localId => {
+        const binding = normalizePluginUiDestinationBindingV1({ pluginId, destinationId: localId, rendererId: 'native', container: 'appPage', target: { kind: 'project' } })!;
+        return { id: `surfacePlacement:${pluginId}:${localId}`, descriptorId: localId, pluginId, occurrenceId: 'occurrence-42',
+            contributionKind: 'surfacePlacement' as const, binding, target: binding.target,
+            renderer: { kind: 'declarative' as const, contributionId: 'native' }, executionOrigin,
+            runtime: { resourceCapability: { readable: true, dynamic: true } },
+            display: { title: localId, counts: { resourceId: RESOURCE_ID, items: [{ field: 'running', label: 'Running' }, { field: 'failed', label: 'Failed' }] } },
+            availability: { state: 'available' as const, reason: 'available', diagnostics: [] }, headerActions: [] };
+    });
+    const pages = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'checkout-a', serverId: account.lifetime.scope.serverId },
+        placements, policyContext: context.policyContext });
+    const ids = pages.filter(page => page.kind === 'plugin').map(page => page.id);
+    const view = (orderedIds: readonly string[], catalogPages = pages) => <ProjectPageChromeCounts pages={catalogPages} context={context}
+        projection={projection} authority={account.lifetime} preferences={{ orderedIds, placements: {} }}>{() => null}</ProjectPageChromeCounts>;
+    const screen = await renderScreen(view(ids));
+    try {
+        await vi.waitFor(() => expect(machineResourceRpc.open).toHaveBeenCalledTimes(2));
+        expect(machineResourceRpc.read).toHaveBeenCalledTimes(2);
+        await screen.update(view([...ids].reverse()));
+        expect(machineResourceRpc.read).toHaveBeenCalledTimes(2);
+        expect(machineResourceRpc.open).toHaveBeenCalledTimes(2);
+        expect(machineResourceRpc.close).not.toHaveBeenCalled();
+        const earlierBinding = normalizePluginUiDestinationBindingV1({ pluginId, destinationId: 'a-builds', rendererId: 'native',
+            container: 'appPage', target: { kind: 'project' } })!;
+        const earlier = { ...placements[0]!, id: `surfacePlacement:${pluginId}:a-builds`, descriptorId: 'a-builds',
+            binding: earlierBinding, target: earlierBinding.target, display: { ...placements[0]!.display, title: 'A Builds' } };
+        const expanded = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'checkout-a', serverId: account.lifetime.scope.serverId },
+            placements: [earlier, ...placements], policyContext: context.policyContext, baseline: pages });
+        await screen.update(view(ids, expanded));
+        await vi.waitFor(() => expect(machineResourceRpc.open).toHaveBeenCalledTimes(3));
+        expect(machineResourceRpc.read).toHaveBeenCalledTimes(3);
+        expect(machineResourceRpc.close).not.toHaveBeenCalled();
+        await screen.update(view(ids));
+        await vi.waitFor(() => expect(machineResourceRpc.close).toHaveBeenCalledTimes(1));
+        expect(machineResourceRpc.open).toHaveBeenCalledTimes(3);
+        expect(machineResourceRpc.read).toHaveBeenCalledTimes(3);
+    } finally { await screen.unmount(); }
+});
+
+it('projects ordered labelled counts atomically with one read/watch and stable unchanged values', async () => {
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const account = await createAccountLifetime({ accountId: 'account-a' });
+    let payload: unknown = { running: 2, failed: 1 };
+    let revision = 0;
+    installLiveResourceRpc({ read: () => {
+        const marker = 'abcdef01'[revision]!;
+        return { ...resourceResponse(marker), result: { ...resourceResponse(marker).result,
+            bytesBase64: Buffer.from(JSON.stringify(payload)).toString('base64') } };
+    } });
+    const pluginId = 'acme.composer';
+    const executionOrigin = widgetExecutionOrigin(pluginId, 'machine-1');
+    const projection = widgetProjectionOf([], { [pluginId]: { ...widgetInstalledPackage(pluginId, 'Counts'), occurrenceId: 'occurrence-42', executionOrigin } },
+        { [buildQualifiedPluginContributionKey({ pluginId, localId: RESOURCE_ID })]: { id: RESOURCE_ID, pluginId,
+            resourceKind: 'config', contentType: 'application/json', scope: 'session', occurrenceId: 'occurrence-42' } });
+    const destination = normalizePluginUiDestinationBindingV1({ pluginId, destinationId: 'builds', rendererId: 'native',
+        container: 'rightSidebarTab', target: { kind: 'session' } })!;
+    const [tab] = resolveRightSidebarPluginTabs({ scope: 'session', placements: [{
+        id: `surfacePlacement:${pluginId}:builds`, descriptorId: 'builds', pluginId, occurrenceId: 'occurrence-42',
+        contributionKind: 'surfacePlacement', binding: destination, target: destination.target,
+        renderer: { kind: 'declarative', contributionId: 'native' }, executionOrigin,
+        runtime: { resourceCapability: { readable: true, dynamic: true } },
+        display: { title: 'Builds' }, availability: { state: 'available', reason: 'available', diagnostics: [] }, headerActions: [],
+    }] });
+    const descriptor = { tab: { ...tab!, counts: { resourceId: RESOURCE_ID,
+        items: [{ field: 'running', label: 'Running' }, { field: 'failed', label: 'Failed' }] } },
+        runtime: { pluginUiProjection: projection, machineId: 'machine-1', serverId: account.lifetime.scope.serverId,
+            accountLifetime: account.lifetime, interactionEnabled: true }, sessionId: 'session-1' };
+    type CountItem = Readonly<{ field: string; label: string; count: number | null }>;
+    let shown: readonly CountItem[] | undefined;
+    let renders = 0;
+    let content: boolean | null = null;
+    let contentRenders = 0;
+    const view = (placement: 'pinned' | 'overflow') => <PluginContextualResourceStoreProvider>
+        <PluginRightSidebarCountState descriptor={descriptor}>{(scalar, items) => {
+            expect(scalar).toBeNull(); shown = items; renders += 1; return null;
+        }}</PluginRightSidebarCountState>
+        <PluginRightSidebarCountState descriptor={descriptor} select={(_scalar, items) => items}>
+            {() => null}
+        </PluginRightSidebarCountState>
+        <PluginRightSidebarCountState descriptor={descriptor} select={pluginRightSidebarCountHasContent}>
+            {value => { content = value; contentRenders += 1; return null; }}
+        </PluginRightSidebarCountState>
+        <RightSidebarActionRail surfaceId="sessionRail" testIDPrefix="pair-rail" actions={[{ id: 'builds', label: 'Builds', icon: 'folder',
+            active: false, defaultPlacement: placement, pluginCount: descriptor, onPress() {} }]} />
+    </PluginContextualResourceStoreProvider>;
+    const screen = await renderScreen(view('pinned'));
+    const expected = (running: number | null, failed: number | null) => [
+        { field: 'running', label: 'Running', count: running }, { field: 'failed', label: 'Failed', count: failed },
+    ];
+    const refresh = async (next: unknown) => {
+        payload = next; revision += 1;
+        const lease = acquirePluginContextualResourceStore(binding(account.lifetime))!;
+        try { await act(async () => { await lease.store.getEntry(RESOURCE_ID).refresh(); }); }
+        finally { lease.dispose(); }
+    };
+    try {
+        await vi.waitFor(() => expect(shown).toEqual(expected(2, 1)));
+        await vi.waitFor(() => expect(machineResourceRpc.open).toHaveBeenCalledTimes(1));
+        expect(machineResourceRpc.read).toHaveBeenCalledTimes(1);
+        expect(content).toBe(true);
+        expect(screen.findByTestId('pair-rail:builds')?.props.accessibilityLabel).toContain('Running 2');
+        expect(screen.findByTestId('pair-rail:builds')?.props.accessibilityLabel).toContain('Failed 1');
+        await screen.update(view('overflow'));
+        const menu = screen.tree.findByType(DropdownMenu);
+        expect(menu.props.items.find((item: { id: string }) => item.id === 'builds').subtitle).toBe('Running 2 · Failed 1');
+        expect(screen.findByTestId('pair-rail:more')?.props.accessibilityLabel).toContain('Running 2 · Failed 1');
+        const baseline = shown;
+        const before = renders;
+        const contentBefore = contentRenders;
+        await refresh({ running: 2, failed: 1 });
+        expect(shown).toBe(baseline);
+        expect(renders).toBe(before);
+        await refresh({ running: 3, failed: 1 });
+        await vi.waitFor(() => expect(shown).toEqual(expected(3, 1)));
+        expect(shown?.[1]).toBe(baseline?.[1]);
+        expect(contentRenders).toBe(contentBefore);
+        for (const invalid of [{ running: 4 }, { running: 4, failed: -1 }, { running: 4, failed: 0, label: 'Injected' }]) {
+            await refresh(invalid);
+            await vi.waitFor(() => expect(shown).toEqual(expected(null, null)));
+            expect(content).toBeNull();
+        }
+        await refresh({ running: 0, failed: 0 });
+        await vi.waitFor(() => expect(shown).toEqual(expected(0, 0)));
+        expect(content).toBe(false);
+        // Zero counts say nothing: the overflow row carries no subtitle, as the tab label carries no count.
+        expect(screen.tree.findByType(DropdownMenu).props.items.find((item: { id: string }) => item.id === 'builds').subtitle)
+            .toBeUndefined();
+        await refresh({ running: null, failed: 1 });
+        await vi.waitFor(() => expect(shown).toEqual(expected(null, 1)));
+        expect(content).toBe(true);
+        expect(screen.tree.findByType(DropdownMenu).props.items.find((item: { id: string }) => item.id === 'builds').subtitle)
+            .toBe('Running — · Failed 1');
+        expect(machineResourceRpc.open).toHaveBeenCalledTimes(1);
+    } finally { await screen.unmount(); }
+    await vi.waitFor(() => expect(machineResourceRpc.close).toHaveBeenCalledTimes(1));
+});
+
+it('reads unopened Project and unioned App surface counts using the pane context, and global counts without borrowing the containing Session', async () => {
+    const account = await createAccountLifetime({ accountId: 'account-a' });
+    const pluginId = 'acme.composer';
+    const executionOrigin = widgetExecutionOrigin(pluginId, 'machine-1');
+    const snapshot = { hostingProvider: null, branch: { head: 'feature/ci', upstream: null, ahead: 0, behind: 0, detached: false } };
+    const project = readProjectWidgetAreaContextV1({ serverId: account.lifetime.scope.serverId, activeCheckout: {
+        id: 'checkout-a', projectKey: 'project-a', serverId: account.lifetime.scope.serverId, machineId: 'machine-1', rootPath: '/repo', createdAtMs: 1,
+    }, snapshot, authority: account.lifetime }).target!;
+    for (const [targetKind, scope] of [['project', 'surface'], ['app', 'surface'], ['session', 'global']] as const) {
+        installLiveResourceRpc({ read: () => ({ ...resourceResponse('a'), result: { ...resourceResponse('a').result,
+            bytesBase64: Buffer.from('{"count":1}').toString('base64') } }) });
+        const base = widgetProjectionOf([], { [pluginId]: { ...widgetInstalledPackage(pluginId, 'Counts'), occurrenceId: 'occurrence-42', executionOrigin } },
+            { [buildQualifiedPluginContributionKey({ pluginId, localId: RESOURCE_ID })]: { id: RESOURCE_ID, pluginId, resourceKind: 'config', contentType: 'application/json', scope, occurrenceId: 'occurrence-42' } });
+        const destination = normalizePluginUiDestinationBindingV1({ pluginId, destinationId: 'issues', rendererId: 'native',
+            container: 'rightSidebarTab', target: { kind: targetKind } })!;
+        const placement: PluginUiPhysicalSurfacePlacementProjection = {
+            id: `surfacePlacement:${pluginId}:issues`, descriptorId: 'issues', pluginId, occurrenceId: 'occurrence-42',
+            contributionKind: 'surfacePlacement', binding: destination, target: destination.target,
+            renderer: { kind: 'declarative', contributionId: 'native' }, executionOrigin,
+            runtime: { resourceCapability: { readable: true, dynamic: true } },
+            display: { title: 'Issues', defaultPlacement: 'auto', countResourceId: RESOURCE_ID },
+            availability: { state: 'available', reason: 'available', diagnostics: [] }, headerActions: [],
+        };
+        const model = { ...base, surfacePlacementsById: { [placement.id]: placement } };
+        const projected = unionPluginUiProjections([{ machineId: 'machine-1', serverId: account.lifetime.scope.serverId,
+            projection: model, phase: 'current', interactionEnabled: true }], new Map([[pluginId, executionOrigin]]));
+        const projection = projected.pluginUiProjection;
+        if (!projection) throw new Error('Expected the admitted plugin projection');
+        const [tab] = resolveRightSidebarPluginTabs({ scope: targetKind, placements: selectPluginRightSidebarTabPlacements(projection, targetKind) });
+        let shown: number | null = null;
+        const descriptor = { tab: tab!, runtime: { pluginUiProjection: model, machineId: targetKind === 'app' ? 'containing-machine' : 'machine-1',
+            serverId: account.lifetime.scope.serverId, accountLifetime: account.lifetime, interactionEnabled: true },
+            projectId: 'checkout-a', sessionId: 'containing-session', ...(targetKind === 'project' ? { target: project } : {}) };
+        const screen = await renderScreen(<AppShellPluginUiProjectionValueProvider value={{ ...projected,
+            pluginBrowserProjection: null, platform: 'web', accountLifetime: account.lifetime, clientExecutableActivation: { status: 'ready' },
+            reloadClientExecutables() {}, reloadConnectedAccountProjection() {} }}>
+            <PluginContextualResourceStoreProvider><PluginRightSidebarCountState descriptor={descriptor}>{value => { shown = value; return null; }}</PluginRightSidebarCountState></PluginContextualResourceStoreProvider>
+        </AppShellPluginUiProjectionValueProvider>);
+        try {
+            await vi.waitFor(() => expect(shown).toBe(1));
+            expect(machineResourceRpc.read).toHaveBeenCalledTimes(1);
+            expect(machineResourceRpc.read.mock.calls[0]![0]).toBe('machine-1');
+            expect(machineResourceRpc.read.mock.calls[0]![1].context).toEqual(scope === 'global' ? { kind: 'global' }
+                : resolvePluginSidebarResourceContext({ binding: destination, ...(targetKind === 'project' ? { target: project } : {}), sessionId: 'containing-session' }));
+            if (targetKind === 'project') expect(machineResourceRpc.read.mock.calls[0]![1].context.target).toEqual(project);
+        } finally { await screen.unmount(); }
+        await vi.waitFor(() => expect(machineResourceRpc.close).toHaveBeenCalledTimes(1));
+    }
+});
+
+it('reads only the exact count declaration on unrelated committed App publications', async () => {
+    const account = await createAccountLifetime({ accountId: 'account-a' });
+    installLiveResourceRpc({ read: () => ({ ...resourceResponse('a'), result: { ...resourceResponse('a').result,
+        bytesBase64: Buffer.from('{"count":2}').toString('base64') } }) });
+    const pluginId = 'acme.composer';
+    const key = buildQualifiedPluginContributionKey({ pluginId, localId: RESOURCE_ID });
+    const executionOrigin = widgetExecutionOrigin(pluginId, 'machine-1');
+    const base = widgetProjectionOf([], { [pluginId]: { ...widgetInstalledPackage(pluginId, 'Counts'), occurrenceId: 'occurrence-42', executionOrigin } },
+        { [key]: { id: RESOURCE_ID, pluginId, resourceKind: 'config', contentType: 'application/json', scope: 'global', occurrenceId: 'occurrence-42' } });
+    const destination = normalizePluginUiDestinationBindingV1({ pluginId, destinationId: 'issues', rendererId: 'native',
+        container: 'rightSidebarTab', target: { kind: 'app' } })!;
+    const placement: PluginUiPhysicalSurfacePlacementProjection = {
+        id: `surfacePlacement:${pluginId}:issues`, descriptorId: 'issues', pluginId, occurrenceId: 'occurrence-42',
+        contributionKind: 'surfacePlacement', binding: destination, target: destination.target,
+        renderer: { kind: 'declarative', contributionId: 'native' }, executionOrigin,
+        runtime: { resourceCapability: { readable: true, dynamic: true } },
+        display: { title: 'Issues', defaultPlacement: 'auto', countResourceId: RESOURCE_ID },
+        availability: { state: 'available', reason: 'available', diagnostics: [] }, headerActions: [],
+    };
+    const projected = unionPluginUiProjections([{ machineId: 'machine-1', serverId: account.lifetime.scope.serverId,
+        projection: { ...base, surfacePlacementsById: { [placement.id]: placement } }, phase: 'current', interactionEnabled: true }],
+    new Map([[pluginId, executionOrigin]]));
+    const admittedProjection = projected.pluginUiProjection;
+    if (!admittedProjection) throw new Error('Expected the admitted plugin projection');
+    const [tab] = resolveRightSidebarPluginTabs({ scope: 'app', placements: selectPluginRightSidebarTabPlacements(admittedProjection, 'app') });
+    const descriptor = { tab: tab!, runtime: { pluginUiProjection: admittedProjection, machineId: 'machine-1',
+        serverId: account.lifetime.scope.serverId, accountLifetime: account.lifetime, interactionEnabled: true } };
+    let renders = 0;
+    let shown: number | null = null;
+    const screen = await renderScreen(<AppShellPluginUiProjectionValueProvider value={{ ...projected,
+        pluginBrowserProjection: null, platform: 'web', accountLifetime: account.lifetime, clientExecutableActivation: { status: 'ready' },
+        reloadClientExecutables() {}, reloadConnectedAccountProjection() {} }}>
+        <PluginContextualResourceStoreProvider><PluginRightSidebarCountState descriptor={descriptor}>{count => { renders += 1; shown = count; return null; }}</PluginRightSidebarCountState></PluginContextualResourceStoreProvider>
+    </AppShellPluginUiProjectionValueProvider>);
+    let withdraw: (() => void) | undefined;
+    try {
+        await vi.waitFor(() => expect(shown).toBe(2));
+        await vi.waitFor(() => expect(machineResourceRpc.open).toHaveBeenCalledTimes(1));
+        const before = renders;
+        let enumerations = 0;
+        let exactReads = 0;
+        let unrelatedReads = 0;
+        const declaration = admittedProjection.resourcesById[key]!;
+        const rows: Record<string, PluginUiResourceProjection> = { [key]: declaration };
+        for (let index = 0; index < 1_000; index += 1) {
+            const id = `unrelated-${index}`;
+            rows[buildQualifiedPluginContributionKey({ pluginId, localId: id })] = { ...declaration, id };
+        }
+        for (let revision = 1; revision <= 3; revision += 1) {
+            const unrelatedKey = buildQualifiedPluginContributionKey({ pluginId, localId: 'unrelated-0' });
+            // Input observation only: exercise the real committed selector, not a replacement lookup.
+            const resources = new Proxy({ ...rows, [unrelatedKey]: { ...rows[unrelatedKey]!, digest: `sha256:${String(revision).repeat(64)}` } }, {
+                ownKeys(target) { enumerations += 1; return Reflect.ownKeys(target); },
+                get(target, property, receiver) {
+                    if (typeof property === 'string') { if (property === key) exactReads += 1; else unrelatedReads += 1; }
+                    return Reflect.get(target, property, receiver);
+                },
+            });
+            const projection: PluginUiProjectionModel = { ...admittedProjection, generation: revision, resourcesById: resources };
+            await act(async () => { withdraw = publishCommittedAppShellPluginUiProjection(() => projection); });
+        }
+        expect(enumerations).toBe(0);
+        expect(unrelatedReads).toBe(0);
+        expect(exactReads).toBe(3);
+        expect(renders).toBe(before);
+        expect(machineResourceRpc.read).toHaveBeenCalledTimes(1);
+        expect(machineResourceRpc.open).toHaveBeenCalledTimes(1);
+    } finally { await screen.unmount(); withdraw?.(); }
+});
+
+it('drives unopened static-renderer sidebar content and numeric leaves from one declared Resource lifecycle', async () => {
+    const placementOwner = await import('@/sync/domains/settings/mobileSurfacePinning');
+    // Observe the real layout owner, without replacing its implementation.
+    const placementComputations = vi.spyOn(placementOwner, 'resolveNavigationPlacements');
+    const account = await createAccountLifetime({ accountId: 'account-a' });
+    let count: number | null = null;
+    let revision = 0;
+    let invalidate: () => void = () => { throw new Error('Expected a live watch'); };
+    installLiveResourceRpc({ read: () => {
+        const marker = String.fromCharCode(97 + revision);
+        return { ...resourceResponse(marker), result: { ...resourceResponse(marker).result,
+            bytesBase64: Buffer.from(`${JSON.stringify({ count })}${' '.repeat(revision)}`).toString('base64') } };
+    }, onNext: options => new Promise(resolve => {
+        invalidate = () => resolve(invalidatedResponse(options.subscriptionId, String.fromCharCode(97 + revision)));
+        options.signal.addEventListener('abort', () => resolve({ supported: false, reason: 'aborted' }), { once: true });
+    }) });
+    const pluginId = 'acme.composer';
+    const executionOrigin = widgetExecutionOrigin(pluginId, 'machine-1');
+    const projection = widgetProjectionOf([], { [pluginId]: { ...widgetInstalledPackage(pluginId, 'Counts'), occurrenceId: 'occurrence-42', executionOrigin } },
+        { [buildQualifiedPluginContributionKey({ pluginId, localId: RESOURCE_ID })]: { id: RESOURCE_ID, pluginId, resourceKind: 'config', contentType: 'application/json', scope: 'session', occurrenceId: 'occurrence-42' } });
+    const destination = normalizePluginUiDestinationBindingV1({ pluginId, destinationId: 'issues', rendererId: 'native',
+        container: 'rightSidebarTab', target: { kind: 'session' } })!;
+    const [tab] = resolveRightSidebarPluginTabs({ scope: 'session', placements: [{
+        id: `surfacePlacement:${pluginId}:issues`, descriptorId: 'issues', pluginId, occurrenceId: 'occurrence-42',
+        contributionKind: 'surfacePlacement', binding: destination, target: destination.target,
+        renderer: { kind: 'declarative', contributionId: 'native' }, executionOrigin,
+        runtime: { resourceCapability: { readable: true, dynamic: true } },
+        display: { title: 'Issues', defaultPlacement: 'auto', countResourceId: RESOURCE_ID, badge: { label: 'Preview' } },
+        availability: { state: 'available', reason: 'available', diagnostics: [] }, headerActions: [],
+    }] });
+    const descriptor = { tab: tab!, runtime: { pluginUiProjection: projection, machineId: 'machine-1',
+        serverId: account.lifetime.scope.serverId, accountLifetime: account.lifetime, interactionEnabled: true }, sessionId: 'session-1' };
+    let shownCount: number | null = null;
+    let content: boolean | null = null;
+    let layouts = 0;
+    let numericComputations = 0;
+    let renderPreview: ((preferences: NavigationPlacementPreferences) => React.ReactNode) | undefined;
+    const modal = vi.spyOn(Modal, 'show').mockImplementation(config => {
+        // Presentation is the boundary; the captured preview uses the real rail controls.
+        renderPreview = (config.props as { renderPreview?: typeof renderPreview }).renderPreview;
+        return 'count-preview';
+    });
+    const screen = await renderScreen(<PluginContextualResourceStoreProvider>
+        <PluginRightSidebarCountState descriptor={descriptor}>{value => { numericComputations += 1; shownCount = value; return <Text>{String(value)}</Text>; }}</PluginRightSidebarCountState>
+        <PluginRightSidebarCountState descriptor={descriptor} select={value => value === null ? null : value > 0}>
+            {value => { layouts += 1; content = value; return <Text>{String(value)}</Text>; }}
+        </PluginRightSidebarCountState>
+        <RightSidebarActionRail surfaceId="workspaceRail" testIDPrefix="count-rail" actions={[
+            { id: tab!.id, label: 'Issues', icon: 'folder', active: false, defaultPlacement: 'overflow',
+                pluginCount: descriptor, onPress: () => { throw new Error('Preview must not launch a pane'); } },
+        ]} />
+    </PluginContextualResourceStoreProvider>);
+    try {
+        await vi.waitFor(() => expect(machineResourceRpc.open).toHaveBeenCalledTimes(1));
+        expect(machineResourceRpc.read).toHaveBeenCalledTimes(1);
+        for (const nextCount of [0, 3, 3, 8, 0]) {
+            const previousLayouts = layouts;
+            const previousNumericComputations = numericComputations;
+            const previousPlacementComputations = placementComputations.mock.calls.length;
+            const previousCount = shownCount;
+            count = nextCount; revision += 1;
+            await act(async () => invalidate());
+            const lease = acquirePluginContextualResourceStore(binding(account.lifetime))!;
+            try {
+                await vi.waitFor(() => expect(lease.store.getEntry(RESOURCE_ID).getSnapshot().digest)
+                    .toBe(`sha256:${String.fromCharCode(97 + revision).repeat(64)}`));
+            } finally { lease.dispose(); }
+            await vi.waitFor(() => expect(shownCount).toBe(nextCount));
+            expect(content).toBe(nextCount > 0);
+            expect(screen.findByTestId('count-rail:more')!.props.accessibilityLabel).toBe(nextCount > 0 ? `${t('common.more')} ${nextCount}` : t('common.more'));
+            if (nextCount === 8 || nextCount === previousCount) {
+                expect(layouts).toBe(previousLayouts);
+                expect(placementComputations).toHaveBeenCalledTimes(previousPlacementComputations);
+            }
+            if (nextCount === previousCount) expect(numericComputations).toBe(previousNumericComputations);
+            if (nextCount === 3) {
+                await act(async () => screen.findByTestId('count-rail:more')!.props.onLongPress());
+                await vi.waitFor(() => expect(renderPreview).toBeTypeOf('function'));
+            }
+        }
+        const entry = acquirePluginContextualResourceStore(binding(account.lifetime))!;
+        try {
+            const snapshot = entry.store.getEntry(RESOURCE_ID).getSnapshot();
+            expect(readPluginRightSidebarCount({ ...snapshot, error: { code: 'plugin_resource_access_denied', message: 'Denied' } })).toBeNull();
+            expect(readPluginRightSidebarCount({ ...snapshot, value: snapshot.value ? { ...snapshot.value,
+                bytes: new TextEncoder().encode('{"count":-1}') } : undefined })).toBeNull();
+        } finally { entry.dispose(); }
+    } finally { await screen.unmount(); modal.mockRestore(); placementComputations.mockRestore(); }
+    await vi.waitFor(() => expect(machineResourceRpc.close).toHaveBeenCalledTimes(1));
+    const reads = machineResourceRpc.read.mock.calls.length;
+    const watches = machineResourceRpc.open.mock.calls.length;
+    const preview = await renderScreen(<>{renderPreview!({ orderedIds: [], placements: { [tab!.id]: 'pinned' } })}</>);
+    try {
+        expect(preview.findByTestId('count-rail:more')).toBeNull();
+        await act(async () => preview.findByTestId(`count-rail:${tab!.id}`)!.props.onPress());
+        expect(machineResourceRpc.read).toHaveBeenCalledTimes(reads);
+        expect(machineResourceRpc.open).toHaveBeenCalledTimes(watches);
+    } finally { await preview.unmount(); }
+});
+
+it('withdraws a hidden automatic rail count immediately without retaining Resource demand in an exit ghost', async () => {
+    const account = await createAccountLifetime({ accountId: 'account-a' });
+    const { nextSignals } = installLiveResourceRpc({ read: () => ({ ...resourceResponse('a'), result: { ...resourceResponse('a').result,
+        bytesBase64: Buffer.from('{"count":2}').toString('base64') } }) });
+    const pluginId = 'acme.composer';
+    const executionOrigin = widgetExecutionOrigin(pluginId, 'machine-1');
+    const projection = widgetProjectionOf([], { [pluginId]: { ...widgetInstalledPackage(pluginId, 'Counts'), occurrenceId: 'occurrence-42', executionOrigin } },
+        { [buildQualifiedPluginContributionKey({ pluginId, localId: RESOURCE_ID })]: { id: RESOURCE_ID, pluginId,
+            resourceKind: 'config', contentType: 'application/json', scope: 'session', occurrenceId: 'occurrence-42' } });
+    const binding = normalizePluginUiDestinationBindingV1({ pluginId, destinationId: 'issues', rendererId: 'native',
+        container: 'rightSidebarTab', target: { kind: 'session' } })!;
+    const [tab] = resolveRightSidebarPluginTabs({ scope: 'session', placements: [{
+        id: `surfacePlacement:${pluginId}:issues`, descriptorId: 'issues', pluginId, occurrenceId: 'occurrence-42',
+        contributionKind: 'surfacePlacement', binding, target: binding.target,
+        renderer: { kind: 'declarative', contributionId: 'native' }, executionOrigin,
+        runtime: { resourceCapability: { readable: true, dynamic: true } },
+        display: { title: 'Issues', defaultPlacement: 'auto', countResourceId: RESOURCE_ID },
+        availability: { state: 'available', reason: 'available', diagnostics: [] }, headerActions: [],
+    }] });
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const prior = storage.getState().localSettings.navigationSurfacePlacementsV1;
+    storage.getState().applyLocalSettings({ navigationSurfacePlacementsV1: { ...prior, sessionRail: { orderedIds: [], placements: {} } } }, { persist: false });
+    const screen = await renderScreen(<RightSidebarActionRail surfaceId="sessionRail" testIDPrefix="hidden-count" actions={[{
+        id: tab!.id, label: 'Issues', icon: 'folder', active: false, defaultPlacement: 'auto',
+        pluginCount: { tab: tab!, runtime: { pluginUiProjection: projection, machineId: 'machine-1',
+            serverId: account.lifetime.scope.serverId, accountLifetime: account.lifetime, interactionEnabled: true }, sessionId: 'session-1' },
+        onPress() {},
+    }]} />);
+    try {
+        await vi.waitFor(() => expect(screen.findByTestId(`hidden-count:${tab!.id}:badge`)).not.toBeNull());
+        await vi.waitFor(() => expect(machineResourceRpc.open).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(nextSignals).toHaveLength(1));
+        await act(async () => storage.getState().applyLocalSettings({ navigationSurfacePlacementsV1: { ...prior,
+            sessionRail: { orderedIds: [], placements: { [tab!.id]: 'hidden' } } } }, { persist: false }));
+        await vi.waitFor(() => expect(machineResourceRpc.close).toHaveBeenCalledTimes(1));
+        expect(nextSignals.every(signal => signal.aborted)).toBe(true);
+        expect(machineResourceRpc.read).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId(`hidden-count:leaving:${tab!.id}`)).toBeNull();
+    } finally {
+        await screen.unmount();
+        storage.getState().applyLocalSettings({ navigationSurfacePlacementsV1: prior }, { persist: false });
+    }
+});
 
 function resourceResponse(marker: string) {
     return {
@@ -177,6 +773,21 @@ function binding(
         context: Object.freeze({ kind: 'session' as const, sessionId: 'session-1' }),
     });
 }
+
+it('derives Machine readiness from the referenced Resource declaration', async () => {
+    const account = await createAccountLifetime({ accountId: 'account-resource-placement' });
+    const exact = binding(account.lifetime);
+    const store = createPluginDeclaredResourceStore({ ...exact, machineId: null, resourceDeclarationsComplete: true,
+        resourcesById: { portable: { id: 'portable', pluginId: exact.pluginId, resourceKind: 'config', scope: 'global',
+            execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } } },
+        daemon: { id: 'daemon', pluginId: exact.pluginId, resourceKind: 'config', scope: 'global' } } })!;
+    expect(store.requiresMachine?.('portable')).toBe(false);
+    expect(store.requiresMachine?.({ pluginId: exact.pluginId, localId: 'portable' })).toBe(false);
+    expect(store.requiresMachine?.('daemon')).toBe(true);
+    expect(store.requiresMachine?.({ pluginId: 'another.plugin', localId: 'portable' })).toBe(true);
+    expect(store.getEntry('daemon').getSnapshot().error?.code).toBe('plugin_resource_transport_unavailable');
+    store.dispose();
+});
 
 it('fails factory-backed Resource admission explicitly in an unsupported Account placement', async () => {
     let directReads = 0;
@@ -472,6 +1083,94 @@ it('retires nested Account Action read authority immediately while ordinary inva
         for (const pending of nativePending) pending.gate.resolve({ value: 'disposed' });
         unpublish(); await fixture.dispose();
     }
+});
+
+it('supplies one unopened Account Resource with admitted Session SCM facts and withdraws its old HEAD demand', async () => {
+    const observations: Array<Readonly<{ context: unknown; signal: AbortSignal }>> = [];
+    const read = vi.fn((options: Parameters<PluginDynamicResourceRuntime['read']>[0]) => JSON.stringify(options.context));
+    const harness = await createPortableAccountResourceHarness({ read,
+        observe(_notify, options) { observations.push({ context: options.context, signal: options.signal }); return { dispose() {} }; } });
+    const target = { kind: 'session' as const, sessionId: 'session-portable', repository: {
+        kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/repo',
+    }, branch: 'feature/ci', headOid: 'abc123' };
+    const first = createPluginDeclaredResourceStore({ ...harness.input, target })!;
+    const second = createPluginDeclaredResourceStore({ ...harness.input, target: structuredClone(target) })!;
+    const a = first.getEntry('status');
+    const b = second.getEntry('status');
+    const releaseA = a.subscribe(() => {}, true);
+    const releaseB = b.subscribe(() => {}, true);
+    let replacement: ReturnType<typeof createPluginDeclaredResourceStore> = null;
+    let releaseReplacement = () => {};
+    try {
+        await vi.waitFor(() => expect(a.getSnapshot().value).toBeDefined());
+        expect(JSON.parse(new TextDecoder().decode(a.getSnapshot().value!.bytes))).toEqual({ kind: 'session', sessionId: target.sessionId, target });
+        expect(b.getSnapshot().value).toBe(a.getSnapshot().value);
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(observations[0]?.context).toEqual({ kind: 'session', sessionId: target.sessionId, target });
+        releaseA(); releaseB(); first.dispose(); second.dispose();
+        await vi.waitFor(() => expect(observations[0]?.signal.aborted).toBe(true));
+        const nextTarget = { ...target, headOid: 'def456' };
+        replacement = createPluginDeclaredResourceStore({ ...harness.input, target: nextTarget })!;
+        const next = replacement.getEntry('status');
+        releaseReplacement = next.subscribe(() => {}, true);
+        await vi.waitFor(() => expect(next.getSnapshot().value).toBeDefined());
+        expect(JSON.parse(new TextDecoder().decode(next.getSnapshot().value!.bytes))).toEqual({ kind: 'session', sessionId: target.sessionId, target: nextTarget });
+        harness.account.retire();
+        expect(next.getSnapshot().value).toBeUndefined();
+        expect(observations.at(-1)?.signal.aborted).toBe(true);
+        expect(machineResourceRpc.read).not.toHaveBeenCalled();
+    } finally {
+        releaseA(); releaseB(); releaseReplacement(); first.dispose(); second.dispose(); replacement?.dispose(); await harness.dispose();
+    }
+});
+
+it.each(['session', 'project'] as const)('shares labelled %s count chrome with the portable Account Resource without a Machine transport', async kind => {
+    const read = vi.fn(() => JSON.stringify({ running: 2, failed: 1 }));
+    const observe = vi.fn(() => ({ dispose() {} }));
+    const harness = await createPortableAccountResourceHarness({ read, observe }, {}, kind === 'project' ? 'surface' : 'session');
+    const context = readProjectWidgetAreaContextV1({ serverId: harness.account.lifetime.scope.serverId,
+        projectRef: { id: 'checkout-a', projectKey: 'project-a', serverId: harness.account.lifetime.scope.serverId,
+            machineId: 'unselected-machine', rootPath: '/repo', createdAtMs: 1 }, activeCheckout: null, authority: harness.account.lifetime });
+    const target = kind === 'session' ? { kind: 'session' as const, sessionId: harness.input.sessionId, branch: 'feature/ci', headOid: 'abc123' }
+        : context.target!;
+    const destination = normalizePluginUiDestinationBindingV1({ pluginId: harness.pluginId, destinationId: 'builds', rendererId: 'native',
+        container: kind === 'session' ? 'rightSidebarTab' : 'appPage', target: { kind } })!;
+    const placement: PluginUiPhysicalSurfacePlacementProjection = {
+        id: `surfacePlacement:${harness.pluginId}:builds`, descriptorId: 'builds', pluginId: harness.pluginId,
+        occurrenceId: harness.input.expectedCallerOccurrenceId, contributionKind: 'surfacePlacement', binding: destination, target: destination.target,
+        renderer: { kind: 'declarative', contributionId: 'native' }, display: { title: 'Builds', counts: { resourceId: 'status',
+            items: [{ field: 'running', label: 'Running' }, { field: 'failed', label: 'Failed' }] } },
+        availability: { state: 'available', reason: 'available', diagnostics: [] }, headerActions: [],
+    };
+    const body = createPluginDeclaredResourceStore({ ...harness.input, target,
+        ...(kind === 'project' ? { surfaceContext: resolvePluginSidebarResourceContext({ binding: destination, target })! } : {}) })!;
+    const entry = body.getEntry('status');
+    const release = entry.subscribe(() => {}, true);
+    const projection = widgetProjectionOf([], {}, harness.input.resourcesById);
+    const [tab] = resolveRightSidebarPluginTabs({ scope: 'session', placements: kind === 'session' ? [placement] : [] });
+    const { ProjectPageChromeCounts } = await import('@/components/projects/navigation/ProjectPageChromeCounts');
+    const { resolveProjectPageCatalog } = await import('@/components/projects/detail/projectPageCatalog');
+    const pages = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'checkout-a', serverId: harness.account.lifetime.scope.serverId },
+        placements: kind === 'project' ? [placement] : [], policyContext: context.policyContext });
+    let shown: readonly Readonly<{ field: string; label: string; count: number | null }>[] | undefined;
+    const screen = await renderScreen(<PluginContextualResourceStoreProvider>
+        {kind === 'project' ? <ProjectPageChromeCounts pages={pages} context={context} projection={projection} authority={harness.account.lifetime}>
+            {counted => { shown = counted.at(-1)?.counts; return null; }}
+        </ProjectPageChromeCounts> : <PluginRightSidebarCountState descriptor={{ tab: tab!, target, sessionId: harness.input.sessionId,
+            runtime: { pluginUiProjection: projection, machineId: null,
+                serverId: harness.account.lifetime.scope.serverId, accountLifetime: harness.account.lifetime, interactionEnabled: true } }}>
+            {(_scalar, items) => { shown = items; return null; }}
+        </PluginRightSidebarCountState>}
+    </PluginContextualResourceStoreProvider>);
+    try {
+        await vi.waitFor(() => expect(shown).toEqual([{ field: 'running', label: 'Running', count: 2 }, { field: 'failed', label: 'Failed', count: 1 }]));
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(observe).toHaveBeenCalledTimes(1);
+        expect(machineResourceRpc.read).not.toHaveBeenCalled();
+        expect(machineResourceRpc.open).not.toHaveBeenCalled();
+        harness.account.retire();
+        await vi.waitFor(() => expect(shown?.map(item => item.count)).toEqual([null, null]));
+    } finally { release(); await screen.unmount(); body.dispose(); await harness.dispose(); }
 });
 
 it('keeps a portable Resource watch establishing until async attachment succeeds and preserves attach failure', async () => {
@@ -1052,7 +1751,7 @@ describe('PluginContextualResourceStoreProvider', () => {
         const instance = { v: 1 as const, id: 'configured-widget', definition: { kind: 'installed' as const,
             surface: { pluginId: 'acme.composer', localId: 'widget' } }, bindings: {} };
         account.http.seed({ v: 1, items: [{ kind: 'widget', instance }], order: [instance.id], hidden: [] });
-        const resources = { state: { id: RESOURCE_ID, pluginId: 'acme.composer', resourceKind: 'config' as const,
+        const resources = { [buildQualifiedPluginContributionKey({ pluginId: 'acme.composer', localId: RESOURCE_ID })]: { id: RESOURCE_ID, pluginId: 'acme.composer', resourceKind: 'config' as const,
             contentType: 'application/json', scope: 'global' as const } };
         const executionOrigin = widgetExecutionOrigin('acme.composer', 'machine-1');
         const model = widgetProjectionOf([{ pluginId: 'acme.composer', localId: 'widget', target: 'app',
@@ -1092,10 +1791,12 @@ describe('PluginContextualResourceStoreProvider', () => {
         const requestSurface = { pluginId: 'acme.composer', contributionId: 'widget', surfaceId: 'widget-native',
             placement: 'appSurface' as const, platform: 'ios' as const, channel: 'internal' as const,
             resourceScope: [], diagnostics: [] };
-        const projected = widgetProjectionOf([{ pluginId: 'acme.composer', localId: 'widget', target: 'app' }],
+        // Ordinary transport is for a publication that has not arrived, not a
+        // complete publication containing an invalid pathless/scopeless row.
+        const projected = owner === 'shared' ? widgetProjectionOf([{ pluginId: 'acme.composer', localId: 'widget', target: 'app' }],
             { 'acme.composer': widgetInstalledPackage('acme.composer', 'Composer') },
             { state: { id: RESOURCE_ID, pluginId: 'acme.composer', resourceKind: 'config',
-                contentType: 'application/json', ...(owner === 'shared' ? { scope: 'session' as const } : {}) } });
+                contentType: 'application/json', scope: 'session' } }) : undefined;
         const controller = createBoundPluginSurfaceController({ facts: { ...requestSurface,
             accountLifetime: account.lifetime, machineId: 'machine-1', serverId: account.lifetime.scope.serverId,
             sessionId: 'session-1', occurrenceId: 'occurrence-42',
@@ -1106,11 +1807,11 @@ describe('PluginContextualResourceStoreProvider', () => {
         const host = controller.hostApi;
         const surface = createPluginSurfaceContextFixture();
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
-            surface, requestSurface, requestIdPrefix: 'shared-native',
+            surface, requestSurface,
             handleRequest: host.handleRequest, installedMethods: host.installedMethods });
         let snapshot: PluginUiResourceSnapshot | null = null;
         const readSnapshot = (): PluginUiResourceSnapshot | null => snapshot;
-        let refresh = () => {};
+        let refresh: (options?: Readonly<{ supersede?: boolean }>) => void = () => {};
         let privateStore: unknown;
         const useResource = mode === 'live' ? useLivePluginResource : usePluginResource;
         function NativeResourceBody() {
@@ -1153,11 +1854,16 @@ describe('PluginContextualResourceStoreProvider', () => {
             expect(tree.root.findAll(node => typeof node.type === 'string' && node.props.testID === 'native-frame.refreshing')
                 .map(node => node.props.accessibilityLabel)).toContain(t('widgetDefinition.refreshing'));
             expect(JSON.stringify(tree.toJSON())).toContain('Composer');
-            await act(async () => { finishRead(resourceResponse('b')); });
+            machineResourceRpc.read.mockResolvedValueOnce(resourceResponse('b'));
+            await act(async () => { refresh(); });
+            await vi.waitFor(() => { expect(machineResourceRpc.read).toHaveBeenCalledTimes(baselineReads + 2); });
             await vi.waitFor(() => { expect(snapshot?.digest).toBe(`sha256:${'b'.repeat(64)}`); });
+            // A boundary that ignores cancellation must not replace the recovery result later.
+            await act(async () => { finishRead(resourceResponse('c')); });
+            expect(snapshot?.digest).toBe(`sha256:${'b'.repeat(64)}`);
             expect(tree.root.findAll(node => node.props.testID === 'native-frame.refreshing')).toHaveLength(0);
             expect(tree.root.findByType(NativeResourceBody)).toBe(body);
-            expect(machineResourceRpc.read).toHaveBeenCalledTimes(baselineReads + 1);
+            expect(machineResourceRpc.read).toHaveBeenCalledTimes(baselineReads + 2);
             expect(machineResourceRpc.open).toHaveBeenCalledTimes(mode === 'live' ? 1 : 0);
         } finally { await act(async () => { tree?.unmount(); }); adapter.dispose(); controller.dispose(); release?.(); lease?.dispose(); }
     });
@@ -1251,7 +1957,7 @@ describe('PluginContextualResourceStoreProvider', () => {
                 resource: { ...exactBinding, store }, isCurrent: account.lifetime.isCurrent });
             const pending = read({ requestId: 'withdraw-cached-read', method: 'readResource', payload: { resource: RESOURCE_ID } });
             resourcesById = {};
-            await expect(pending).resolves.toMatchObject({ code: 'unavailable', diagnostics: ['plugin_resource_not_found'] });
+            await expect(pending).resolves.toMatchObject({ code: 'plugin_resource_not_found', diagnostics: [] });
         } finally { store.dispose(); }
     });
 
@@ -1301,7 +2007,7 @@ describe('PluginContextualResourceStoreProvider', () => {
             readActionInputFacts: () => ({ pluginUiProjection: projection }),
             interactionEnabled: true, daemonInteractionEnabled: true } });
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface: createPluginSurfaceContextFixture(),
-            requestSurface, requestIdPrefix: 'ordinary-authority', handleRequest: controller.hostApi.handleRequest,
+            requestSurface, handleRequest: controller.hostApi.handleRequest,
             installedMethods: controller.hostApi.installedMethods });
         const events: unknown[] = [];
         const release = controller.subscribeResourceInvalidations(event => { events.push(event); adapter.publishResourceSubscriptionEvent(event); });
@@ -1324,7 +2030,7 @@ describe('PluginContextualResourceStoreProvider', () => {
             await expect(pending).rejects.toMatchObject({ code: 'unavailable', diagnostics: [{ code: 'plugin_resource_aborted' }] });
             projection = { ...projection, resourcesById: {} };
             controller.updateMountedBindings?.({});
-            await expect(adapter.api.watchResource(RESOURCE_ID, () => {})).rejects.toMatchObject({ code: 'unavailable', diagnostics: [{ code: 'plugin_resource_not_found' }] });
+            await expect(adapter.api.watchResource(RESOURCE_ID, () => {})).rejects.toMatchObject({ code: 'plugin_resource_not_found', diagnostics: [{ code: 'plugin_resource_not_found' }] });
         } finally { finishRead(resourceResponse('a')); subscription?.dispose(); release(); adapter.dispose(); controller.dispose(); }
     });
 
@@ -1340,12 +2046,29 @@ describe('PluginContextualResourceStoreProvider', () => {
         const other = createPluginDeclaredResourceStore({ ...base, resourcesById })!;
         const retained = store.getEntry(RESOURCE_ID);
         const shared = other.getEntry(RESOURCE_ID);
+        const decode = vi.fn((content: NonNullable<PluginUiResourceSnapshot['value']>) => new TextDecoder().decode(content.bytes));
+        const projection: PluginUiResourceValueProjection<string> = { decode };
+        const selected = retained.select(projection, snapshot => snapshot.value);
+        const selectedOther = shared.select(projection, snapshot => snapshot.value);
+        const changes = vi.fn();
+        const releaseSelected = selected.subscribe(changes, false);
         const release = retained.subscribe(() => {}, false);
         const releaseOther = shared.subscribe(() => {}, false);
         try {
             await vi.waitFor(() => expect(retained.getSnapshot().value).toBeDefined());
+            expect(selected.getSnapshot()).toBe('1');
+            expect(selectedOther.getSnapshot()).toBe('1');
+            expect(decode).toHaveBeenCalledTimes(1);
+            changes.mockClear();
             resourcesById = {};
+            // Rendering can read before committed reconciliation withdraws demand.
+            expect(selected.getSnapshot()).toBeUndefined();
             expect(store.getEntry(RESOURCE_ID).getSnapshot().error?.code).toBe('plugin_resource_not_found');
+            expect(store.getEntry(RESOURCE_ID).select(projection, snapshot => snapshot.error?.code).getSnapshot()).toBe('plugin_resource_not_found');
+            expect(changes).toHaveBeenCalledTimes(1);
+            await selected.refresh();
+            expect(selected.getSnapshot()).toBeUndefined();
+            expect(selectedOther.getSnapshot()).toBe('1');
             expect(store.getEntry(RESOURCE_ID).getSnapshot().value).toBeUndefined();
             expect(retained.getSnapshot().value).toBeUndefined();
             expect((await retained.refresh()).error?.code).toBe('plugin_resource_not_found');
@@ -1355,7 +2078,7 @@ describe('PluginContextualResourceStoreProvider', () => {
             expect(replacement).not.toBe(retained);
             expect((await replacement.refresh()).value).toBeDefined();
             expect(retained.getSnapshot().value).toBeUndefined();
-        } finally { release(); releaseOther(); store.dispose(); other.dispose(); }
+        } finally { releaseSelected(); release(); releaseOther(); store.dispose(); other.dispose(); }
     });
 
     it('shares declared global bytes across app and Session mounts while keeping Session A and B distinct', async () => {
@@ -1417,7 +2140,7 @@ describe('PluginContextualResourceStoreProvider', () => {
             surface: createPluginSurfaceContextFixture({ mount: { kind: 'destination',
                 destination: { pluginId: 'acme.composer', localId: 'widget' }, container: 'rightPane' },
                 target: { kind: 'session', sessionId: 'session-1' } }),
-            requestSurface, requestIdPrefix: 'shared-resource', handleRequest: host.handleRequest,
+            requestSurface, handleRequest: host.handleRequest,
             installedMethods: host.installedMethods });
         // These are the actual guest Resource stores over the public IPC API,
         // not a substituted watcher/reducer. Only daemon/network is replaced.
@@ -1801,7 +2524,7 @@ describe('PluginContextualResourceStoreProvider', () => {
         const surface = createPluginSurfaceContextFixture();
         const hostApi = controller.hostApi;
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface, requestSurface,
-            requestIdPrefix: 'native-scope-transition', handleRequest: hostApi.handleRequest,
+            handleRequest: hostApi.handleRequest,
             installedMethods: hostApi.installedMethods });
         const lifetime = new AbortController();
         const retirement = controller.onRetire(() => lifetime.abort());

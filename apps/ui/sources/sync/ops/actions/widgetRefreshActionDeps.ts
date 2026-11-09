@@ -9,8 +9,8 @@ import { readInputPath } from '@happier-dev/protocol/inputs';
 import type { PluginUiResourceEntry } from '@happier-dev/plugin-ui/advanced';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import { selectWidgetPlacementsBySurface } from '@/sync/domains/plugins/ui/widgetContract';
-import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
-import { readCompletePluginUiResourceDeclarations } from '@/sync/domains/plugins/ui/projection';
+import { readPluginUiContributionOrigin, resolvePluginUiExecutionDeclaration } from '@/sync/domains/plugins/ui/projectionUnion';
+import { readCompletePluginUiResourceDeclarations, readPluginUiResourceProjection } from '@/sync/domains/plugins/ui/projection';
 import { acquirePluginContextualResourceStore, createPluginDeclaredResourceStore } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { resolveDeclarativeDataResourceBinding } from '@/components/plugins/surfaces/declarativeDataSource';
 import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
@@ -28,7 +28,7 @@ async function refreshEntry(entry: PluginUiResourceEntry, signal?: AbortSignal):
     signal?.throwIfAborted();
     // Start the requested observation before retaining demand, so the static
     // subscriber reuses that read rather than initiating a second baseline.
-    const refresh = entry.refresh();
+    const refresh = entry.refresh({ supersede: true });
     const release = entry.subscribe(() => {}, false);
     try {
         if (!signal) return await refresh;
@@ -85,12 +85,23 @@ export function createWidgetRefreshActionDepsV1(account: LazyActionAccountContex
         // declared plugin Resources only, including for saved native copies.
         if (definition.kind === 'builtin' || authored?.body.kind === 'builtin') return unavailable();
         if (definition.kind !== 'installed' && !authored) return unavailable();
+        const installedDefinition = definition.kind === 'installed' ? definition : authored?.body.kind === 'installed' ? authored.body : null;
+        // Currentness owns the phase: while a trusted installation's Machine
+        // projection has not answered, a missing or incomplete declaration is
+        // pending, not unavailable. The fact is published with declarations.
+        const projectionUnavailable = () => unavailable(installedDefinition && readCurrentAppShellPluginUiProjection({
+            scope: { serverId: account.serverId, accountId: account.accountId }, declarationsOnly: true,
+        })?.establishingExecutionTargetsByPluginId?.[installedDefinition.surface.pluginId]?.length
+            ? 'widget_projection_establishing' : 'widget_projection_unavailable');
+        if (installedDefinition && !readWidgetDescriptor(readCurrentAppShellPluginUiProjection(), installedDefinition)) {
+            const refusal = projectionUnavailable();
+            if (refusal.errorCode === 'widget_projection_establishing') return refusal;
+        }
         const resolved = await deps.widgetInputs.resolve({ ref, instance, context, admission: 'execution', ...(signal ? { signal } : {}) });
         account.assertCurrent();
         if (!isAreaCurrent()) return unavailable('widget_area_scope_retired');
         if (resolved.status !== 'ready') return unavailable(`widget_inputs_${resolved.status}`);
         const initial = await readWidgetActionRuntimeV1(ref.surface, account, signal, undefined, deps);
-        const installedDefinition = definition.kind === 'installed' ? definition : authored?.body.kind === 'installed' ? authored.body : null;
         const matches = (candidate: NonNullable<ReturnType<typeof readWidgetDescriptor>>) => installedDefinition !== null
             && isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(candidate), installedDefinition);
         const installedSeed = ('ok' in initial ? undefined : initial.candidates.find(matches))
@@ -169,13 +180,20 @@ export function createWidgetRefreshActionDepsV1(account: LazyActionAccountContex
         if (!installedDefinition) return unavailable();
         const placement = selectWidgetPlacementsBySurface(runtime.projection, installedDefinition.surface);
         if (placement.length !== 1) return unavailable();
-        const origin = readPluginUiContributionOrigin(placement[0]);
+        const declarations = candidate.resources.map(resource => readPluginUiResourceProjection(runtime.projection?.resourcesById, resource));
+        if (declarations.some(resource => !resource)) return projectionUnavailable();
+        const machineResource = declarations.find(resource => resource?.execution?.target !== 'account');
+        const executionPlacement = machineResource
+            ? resolvePluginUiExecutionDeclaration(placement[0], { machineResource }) : placement[0];
+        if (!executionPlacement) return unavailable();
+        const origin = readPluginUiContributionOrigin(executionPlacement);
         const machineId = runtime.machineId ?? (origin?.phase === 'current' && origin.interactionEnabled ? origin.machineId : null);
-        if (!machineId || (origin?.serverId && !areServerProfileIdentifiersEquivalent(origin.serverId, account.serverId))) return unavailable();
-        const occurrenceId = placement[0].occurrenceId;
+        if (machineResource && !machineId || (origin?.serverId && !areServerProfileIdentifiersEquivalent(origin.serverId, account.serverId))) return unavailable();
+        const occurrenceId = executionPlacement.occurrenceId;
         if (typeof occurrenceId !== 'string' || !occurrenceId) return unavailable();
-        const resourcesById = readCompletePluginUiResourceDeclarations(runtime.projection, installedDefinition.surface.pluginId, occurrenceId);
-        if (resourcesById === undefined) return unavailable();
+        const resourcesById = readCompletePluginUiResourceDeclarations(runtime.projection, installedDefinition.surface.pluginId,
+            runtime.projection.installedPackagesById[installedDefinition.surface.pluginId]?.occurrenceId);
+        if (resourcesById === undefined) return projectionUnavailable();
         const store = createPluginDeclaredResourceStore({ accountLifetime: account.accountLifetime,
             pluginId: installedDefinition.surface.pluginId, machineId, serverId: account.serverId,
             expectedCallerOccurrenceId: occurrenceId, resourcesById, resourceDeclarationsComplete: true,

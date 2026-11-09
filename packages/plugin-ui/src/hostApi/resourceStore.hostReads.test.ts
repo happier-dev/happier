@@ -6,6 +6,33 @@ const content = (digest: string): ResourceContent => ({ contentType: 'applicatio
   bytes: new TextEncoder().encode(JSON.stringify({ digest })) });
 
 describe('host reads in the canonical Resource store', () => {
+  it.each([false, true])('withdraws queued watch demand after its last live subscriber leaves, preserving explicit refresh=%s', async explicitRefresh => {
+    const reads: { signal?: AbortSignal; resolve(value: ResourceContent): void }[] = [];
+    let push: ((event: ResourceSubscriptionEvent) => void) | undefined;
+    const store = createPluginUiResourceStore({ client: {
+      readResource: async (_reference, options) => new Promise(resolve => reads.push({ signal: options?.signal, resolve })),
+      watchResource: async (_reference, listener) => { push = listener; return { admittedDigest: 'baseline', dispose() {} }; },
+    } });
+    const entry = store.getEntry('status');
+    const releaseLive = entry.subscribe(() => {}, true);
+    const releaseFinite = entry.subscribe(() => {}, false);
+    try {
+      await vi.waitFor(() => expect(push).toBeDefined());
+      push!({ version: 1, subscriptionId: 'status', kind: 'invalidated', digest: 'changed' });
+      const requested = explicitRefresh ? entry.refresh() : undefined;
+      releaseLive();
+      reads[0]!.resolve(content('baseline'));
+      await vi.waitFor(() => expect(entry.getSnapshot().digest).toBe('baseline'));
+      expect(reads[0]!.signal?.aborted, 'withdrawing live demand preserves the finite read in progress').toBe(false);
+      expect(reads).toHaveLength(explicitRefresh ? 2 : 1);
+      if (requested) {
+        reads[1]!.resolve(content('changed'));
+        await expect(requested).resolves.toMatchObject({ digest: 'changed', pending: 'idle' });
+      } else {
+        expect(entry.getSnapshot()).toMatchObject({ digest: 'baseline', pending: 'idle' });
+      }
+    } finally { releaseLive(); releaseFinite(); store.dispose(); }
+  });
   it.each(['unavailable', 'unsupported_method'])('refreshes retained bytes when resumed watch admission is %s', async code => {
     let current = content('first');
     let watchFailure = false;
@@ -135,14 +162,16 @@ describe('host reads in the canonical Resource store', () => {
       signal();
       const retired = reads.at(-1)!;
       for (let index = 0; index < 30; index++) signal();
-      const retry = entry.refresh({ supersede: true });
+      const selected = entry.select({ decode: value => value.digest }, snapshot => snapshot);
+      const retry = selected.refresh({ supersede: true });
       expect.soft(retired.signal?.aborted, 'Recovery cancels the active read immediately').toBe(true);
       expect.soft(reads, 'Recovery consumes the queued wakes with one replacement').toHaveLength(baseline + 4);
       // Also resolve the retired boundary to distinguish cancellation from a queued refresh.
       retired.resolve(content('retired'));
       await vi.waitFor(() => expect(reads).toHaveLength(baseline + 4));
       reads.at(-1)!.resolve(content('retry'));
-      await expect(retry).resolves.toMatchObject({ digest: 'retry', pending: 'idle' });
+      await retry;
+      expect(selected.getSnapshot()).toMatchObject({ value: 'retry', pending: 'idle' });
       expect(reads).toHaveLength(baseline + 4);
     } finally { release(); store.dispose(); }
   });

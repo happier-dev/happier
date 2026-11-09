@@ -1,6 +1,6 @@
 import { PluginUiHostReadReferenceV1Schema, type PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { pluginUiResourceReferenceKey, type PluginUiResourceEntry, type PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
-import type { PluginUiResourceProjection, PluginUiResourceProjectionSnapshot } from '@happier-dev/plugin-ui/hostApi';
+import type { PluginUiResourceProjection, PluginUiResourceProjectionSnapshot, PluginUiResourceRefreshOptions } from '@happier-dev/plugin-ui/hostApi';
 
 const UNADMITTED: PluginUiResourceProjectionSnapshot<never> = Object.freeze({ freshness: 'unknown', pending: 'idle', subscription: 'unsupported' });
 const ADMITTING: PluginUiResourceProjectionSnapshot<never> = Object.freeze({ freshness: 'unknown', pending: 'initial', subscription: 'establishing' });
@@ -83,9 +83,9 @@ export function createPluginSurfaceHostReadStore(input: Readonly<{
                     void ensureAdmission();
                     return () => { subscriptions.delete(subscription); subscription.release?.(); };
                 },
-                async refresh() {
+                async refresh(options) {
                     const admitted = await ensureAdmission();
-                    if (admitted && current()) await admitted.refresh();
+                    if (admitted && current()) await admitted.refresh(options);
                     return entry.getSnapshot();
                 },
                 select<T, Selected>(projection: PluginUiResourceProjection<T>,
@@ -105,7 +105,7 @@ export function createPluginSurfaceHostReadStore(input: Readonly<{
                                 listener();
                             }, live);
                         },
-                        async refresh() { await entry.refresh(); },
+                        async refresh(options?: PluginUiResourceRefreshOptions) { await entry.refresh(options); },
                     });
                 },
             });

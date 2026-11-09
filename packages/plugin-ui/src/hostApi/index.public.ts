@@ -16,6 +16,7 @@ import type {
   PluginUiResourceSnapshot,
   PluginUiResourceProjection,
   PluginUiResourceProjectionSnapshot,
+  PluginUiResourceRefreshOptions,
 } from './resourceStore.js';
 import {
   pluginUiResourceReferenceKey,
@@ -75,6 +76,7 @@ export type {
 } from '../composer/index.js';
 export type {
   PluginUiResourceError,
+  PluginUiResourceRefreshOptions,
   PluginUiResourceReference,
   PluginUiResourceSnapshot,
   PluginUiResourceProjection,
@@ -96,11 +98,12 @@ export {
  *
  * `resource` is the current independent-dimension snapshot. `refresh` re-reads
  * through the same canonical authority without clearing an admitted value,
- * and settles when that owner's refresh completes.
+ * and settles when that owner's refresh completes. Explicit recovery supersedes
+ * an unresolved read by default; pass `{ supersede: false }` to queue instead.
  */
 export type PluginUiResourceResult = Readonly<{
   resource: PluginUiResourceSnapshot;
-  refresh: () => Promise<void>;
+  refresh: (options?: PluginUiResourceRefreshOptions) => Promise<void>;
 }>;
 
 export type PluginUiResourceOptions = Readonly<{ enabled?: boolean }>;
@@ -121,9 +124,9 @@ function usePluginResourceBinding(
     () => resourceStore.getEntry(resource),
     [resourceStore, resourceKey],
   );
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (options?: PluginUiResourceRefreshOptions) => {
     if (!enabled || !active || readiness.pending || readiness.ready === false) return;
-    await entry.refresh();
+    await entry.refresh({ supersede: options?.supersede ?? true });
   }, [entry, enabled, active, readiness.pending, readiness.ready]);
   return { entry, enabled, active, readiness, refresh };
 }
@@ -182,7 +185,7 @@ export type PluginUiResourceProjectionResult<T> = Readonly<{
   value: T;
   /** Reads the same admitted projection synchronously, without acquiring or subscribing again. */
   getSnapshot(): T;
-  refresh(): Promise<void>;
+  refresh(options?: PluginUiResourceRefreshOptions): Promise<void>;
 }>;
 
 /**
