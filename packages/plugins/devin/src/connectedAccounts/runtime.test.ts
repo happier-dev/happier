@@ -50,6 +50,9 @@ describe('Devin connected account through registered plugin', () => {
     expect(credentials.values.has('refreshToken')).toBe(false);
     expect(credentials.values.has('expiresAt')).toBe(false);
     const read = { ...ctx, credentials, account: { service: ctx.service, accountId: 'fake-account' } } as Parameters<ConnectedAccountRuntime['status']>[0];
+    const native = await owner.materialize({ kind: 'files', fileIds: ['devin/credentials.toml'] }, read);
+    if (native.kind !== 'files') throw new Error('Expected selected native credentials');
+    expect(new TextDecoder().decode(native.files['devin/credentials.toml'])).toContain('devin-session-token$eyJ.fake.session');
     expect(await owner.materialize({ kind: 'httpHeaders', origin: 'https://server.codeium.com', headerNames: ['authorization'] }, read)).toMatchObject({
       kind: 'httpHeaders', headers: { authorization: 'Basic devin-session-token$eyJ.fake.session-devin-session-token$eyJ.fake.session' },
       facts: { base_url: 'https://server.codeium.com', device_seed: 'fake-account' },
@@ -86,6 +89,9 @@ describe('Devin connected account through registered plugin', () => {
     expect(credentials.values.get('credentialMode')).toBe('enterprise');
     expect(credentials.values.has('sessionToken')).toBe(false);
     const read = { ...ctx, credentials, account: { service: ctx.service, accountId: 'fake-account' } } as Parameters<ConnectedAccountRuntime['status']>[0];
+    const native = await owner.materialize({ kind: 'files', fileIds: ['devin/credentials.toml'] }, read);
+    if (native.kind !== 'files') throw new Error('Expected selected native credentials');
+    expect(new TextDecoder().decode(native.files['devin/credentials.toml'])).toContain('fake-seat-key');
     expect(await owner.refresh({ ...read, stagedCredentials: store(), operation: { operationId: 'fake-op', configurationRevision: '1' } })).toMatchObject({ status: 'unavailable', credentialKind: 'token' });
     await expect(owner.materialize({ kind: 'httpHeaders', origin: 'https://server.codeium.com', headerNames: ['authorization'] }, read)).rejects.toMatchObject({ code: 'unsupported' });
     expect(requests).toHaveLength(0);

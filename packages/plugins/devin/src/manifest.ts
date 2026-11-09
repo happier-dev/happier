@@ -6,6 +6,7 @@ import { devinAccountAuthentication } from './connectedAccounts/account.js';
 
 import { detectDevinCliAuthStatus } from './agent/auth/status.js';
 import { DEVIN_ACP_RUNTIME_DECLARATION } from './agent/acp/runtimeDeclaration.js';
+import { DEVIN_ACP_COMMAND } from './agent/acp/preflight.js';
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { DEVIN_TERMINAL_SURFACE } from './agent/terminal/contribution.js';
 import { DEVIN_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
@@ -33,7 +34,7 @@ export const DEVIN_PLUGIN = definePlugin({
       capability: 'process',
       reason: 'Run the declared Devin CLI executable.',
       scope: {
-        executables: [{ kind: 'systemTool', id: 'devin-cli' }],
+        executables: [{ kind: 'systemTool', id: DEVIN_ACP_COMMAND.toolId }],
         envKeys: ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'APPDATA', 'WINDSURF_API_KEY', 'HAPPIER_DEVIN_NATIVE_DATA_HOME'],
       },
     }, {
@@ -50,7 +51,7 @@ export const DEVIN_PLUGIN = definePlugin({
         title: 'Devin',
         authentication: {
           account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
-          native: { systemTool: 'devin-cli' },
+          native: { systemTool: DEVIN_ACP_COMMAND.toolId },
           defaultModeId: 'browser-session',
           modes: [{
             id: 'browser-session', kind: 'oauthAuthorizationCode', title: 'Sign in with Devin',
@@ -113,7 +114,7 @@ export const DEVIN_PLUGIN = definePlugin({
         connectedAccounts: [{ purpose: DEVIN_NATIVE_PURPOSE, service: 'devin-account',
           materializationKinds: ['files'], credentialKinds: ['oauth', 'token'], required: false }],
         catalog: {
-          agentCliSystemTool: { toolId: 'devin-cli' },
+          agentCliSystemTool: { toolId: DEVIN_ACP_COMMAND.toolId },
           acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds],
           vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
         },
@@ -151,7 +152,7 @@ export const DEVIN_PLUGIN = definePlugin({
         detectAuthStatus: async ({ runDeclaredSystemToolCommand }) =>
           await detectDevinCliAuthStatus({
             runCommand: async (args, options) => await runDeclaredSystemToolCommand({
-              toolId: 'devin-cli',
+              toolId: DEVIN_ACP_COMMAND.toolId,
               args,
               ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
             }),
@@ -161,7 +162,7 @@ export const DEVIN_PLUGIN = definePlugin({
     },
   },
   systemTools: {
-    'devin-cli': { title: 'Devin CLI', executableNames: ['devin'] },
+    [DEVIN_ACP_COMMAND.toolId]: { title: 'Devin CLI', executableNames: ['devin'] },
   },
   settings: {
     [DEVIN_AGENT_SETTINGS_CONTRIBUTION_ID]: DEVIN_AGENT_SETTINGS_DECLARATION,

@@ -21,7 +21,7 @@ describe('Devin plugin manifest', () => {
           capability: 'process',
           scope: {
             executables: [{ kind: 'systemTool', id: 'devin-cli' }],
-            envKeys: ['XDG_CONFIG_HOME', 'APPDATA'],
+            envKeys: ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'APPDATA', 'WINDSURF_API_KEY', 'HAPPIER_DEVIN_NATIVE_DATA_HOME'],
           },
         }, {
           id: 'devin-native-history',

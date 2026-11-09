@@ -179,9 +179,9 @@ function resolveDynamicProbeFailureFallback(agentId: CatalogAgentLookupId): Prob
   return buildStatic(agentId, cfg);
 }
 
-function tryResolveAgentCliLaunchSpec(agentId: CatalogAgentLookupId) {
+function tryResolveAgentCliLaunchSpec(agentId: CatalogAgentLookupId, processEnv?: NodeJS.ProcessEnv) {
   try {
-    return resolveAgentCliLaunchSpec(agentId);
+    return resolveAgentCliLaunchSpec(agentId, { processEnv });
   } catch {
     // An installed Agent without a current CLI runtime contribution must not borrow
     // a bundled Agent's metadata or turn an unavailable probe into a fallback.
@@ -191,12 +191,13 @@ function tryResolveAgentCliLaunchSpec(agentId: CatalogAgentLookupId) {
 
 function shouldFailClosedForMissingCli(params: {
   agentId: CatalogAgentLookupId;
+  env?: NodeJS.ProcessEnv;
   backendTarget?: BackendTargetRefV1;
   runtimeDescriptorV1?: RuntimeDescriptorV1;
 }): boolean {
   if (params.backendTarget?.kind === 'configuredAcpBackend') return false;
   if (!hasStaticAgentModelsFallback(params.agentId)) return false;
-  return tryResolveAgentCliLaunchSpec(params.agentId) === null;
+  return tryResolveAgentCliLaunchSpec(params.agentId, params.env) === null;
 }
 
 function normalizeProbeModel(modelRaw: unknown): ProbedAgentModel | null {

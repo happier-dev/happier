@@ -48,7 +48,8 @@
     "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@happier-dev/plugin-sdk": "0.0.0"
+    "@happier-dev/plugin-sdk": "0.0.0",
+    "smol-toml": "^1.9.0"
   },
   "devDependencies": {
     "typescript": "^5.9.2",
