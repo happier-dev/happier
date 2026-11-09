@@ -49,8 +49,8 @@ describe('direct CLI and Action inventory purpose authority', () => {
       expect(available).toMatchObject({ ok: true, result: {
         profileOptionsByServiceId: { [serviceKey]: [
           { profileId: 'oauth', status: 'unsupported_kind' }, { profileId: 'token', status: 'connected' },
-          { profileId: 'unknown', status: 'unsupported_kind' },
-        ] }, items: [{ value: `${serviceKey}:profile:token` }],
+          { profileId: 'unknown', status: 'connected' },
+        ] }, items: [{ value: `${serviceKey}:profile:token` }, { value: `${serviceKey}:profile:unknown` }],
       } });
       const all = await executor.execute('sessions.spawn.connected_services.list',
         { agentId: 'ohMyPi', includeDefaults: false, includeUnavailable: true }, { surface: 'cli' });
@@ -66,7 +66,11 @@ describe('direct CLI and Action inventory purpose authority', () => {
     const home = 'https://pool-policy-inventory.example.test';
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     const serviceKey = `${service.pluginId}/${service.localId}`;
-    const profile = AccountProfileSchema.parse({ id: 'pool-policy-owner', connectedAccountGroupsV4: [{
+    const profile = AccountProfileSchema.parse({ id: 'pool-policy-owner', connectedAccountsV4: [{
+      ref: { service, accountId: 'primary' }, status: 'connected', kind: null, authenticationModeId: 'oauth',
+      configurationReady: false, configurationRevision: null, revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', scopes: [],
+    }], connectedAccountGroupsV4: [{
       v: 1, ref: { service, groupId: 'work' }, displayName: 'Work', incarnation: 'work:1',
       generation: 2, runtimeStateRevision: 3, policy: { autoSwitch }, activeConnectedAccountId: 'primary',
       state: {}, createdAt: 0, updatedAt: 0, members: [
@@ -94,7 +98,12 @@ describe('direct CLI and Action inventory purpose authority', () => {
     const result = await runWithServerHttpBaseUrl(home, () => createActionExecutor(createCliActionDeps({
       token: credentials.token, credentials, sessionId: 'pool-policy-session', mode: 'plain', ctx: null,
     })).execute('sessions.spawn.connected_services.list', { agentId: 'codex' }, { surface: 'cli' }));
-    expect(result).toMatchObject({ ok: true, result: { groupOptionsByServiceId: { [serviceKey]: [{
+    expect(result).toMatchObject({ ok: true, result: { profileOptionsByServiceId: { [serviceKey]: [
+      { profileId: 'primary', status: 'connected', kind: null },
+    ] }, items: expect.arrayContaining([
+      expect.objectContaining({ value: `${serviceKey}:profile:primary` }),
+      expect.objectContaining({ value: `${serviceKey}:group:work` }),
+    ]), groupOptionsByServiceId: { [serviceKey]: [{
       groupId: 'work', autoSwitch, memberProfileIds: ['primary'], enabledMemberCount: 1,
     }] } } });
     expect(paths.filter(path => path.startsWith('/v3/connect/') || path === '/v4/connect/qualified/groups')).toEqual([]);

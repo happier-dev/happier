@@ -70,11 +70,12 @@ Neither refusal changes the committed target or discards pending input.
 
 Agent declarations own which Connected Account purposes appear in the shared
 UI and Actions. Their declared credential kinds also determine account
-availability through the shared inventory projection. An unknown kind is
-unavailable when a purpose restricts kinds; an unrestricted purpose retains it.
+availability through the shared inventory projection. Only a known kind outside
+the declared set excludes an account; an unknown kind retains its health status
+and can be selected without a fabricated reconnect requirement.
 The server derives known built-in kinds from the canonical authentication-mode
-classifier when retained credential metadata omits the kind. Older unknown-kind
-rows remain visible as unavailable until a compatible producer can classify them.
+classifier when retained credential metadata omits the kind. Account-kind
+metadata is restored at the inventory producer rather than guessed by pickers.
 
 Kilo uses its native OpenAI auth-loader hook with Happier's
 qualified request-auth client: each Responses request obtains an access token,

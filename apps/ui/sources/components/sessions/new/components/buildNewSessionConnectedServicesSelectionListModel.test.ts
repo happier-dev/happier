@@ -16,6 +16,11 @@ import {
 } from './buildNewSessionConnectedServicesSelectionListModel';
 import { presentConnectedAccountSignedOut } from '@/components/settings/connectedServices/account/connectedAccountCredentialStatusLabel';
 import { t } from '@/text';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { getBundledAgentDeclaration } from '@/agents/catalog/catalog';
+import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { applyProjectedCredentialKindRestrictions, buildQualifiedConnectedAccountProfileOptionsByServiceId,
+    buildQualifiedConnectedAccountGroupOptionsByServiceId } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
 
 function firstStaticSection(model: NewSessionConnectedServicesSelectionListModel) {
     const section = model.rootStep.sections[0];
@@ -53,6 +58,43 @@ function buildModel(overrides: Partial<Parameters<typeof buildNewSessionConnecte
 }
 
 describe('buildNewSessionConnectedServicesSelectionListModel', () => {
+    it('selects recorded null-kind Codex accounts and their pool without reconnecting', () => {
+        const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+        const serviceKey = `${service.pluginId}/${service.localId}`;
+        const profile = AccountProfileSchema.parse({ id: 'recorded-null-kind-owner', connectedAccountsV4: [{
+            ref: { service, accountId: 'primary' }, status: 'connected', kind: null, authenticationModeId: 'oauth',
+            configurationReady: false, configurationRevision: null, revisionSemantics: 'revisioned',
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', scopes: [],
+        }], connectedAccountGroupsV4: [{ v: 1, ref: { service, groupId: 'work' }, displayName: 'Work',
+            incarnation: 'work:1', generation: 2, runtimeStateRevision: 3, policy: { autoSwitch: true },
+            activeConnectedAccountId: 'primary', state: {}, createdAt: 0, updatedAt: 0,
+            members: [{ v: 1, connectedAccountId: 'primary', priority: 0, enabled: true, state: {}, createdAt: 0, updatedAt: 0 }],
+        }] });
+        const declaration = getBundledAgentDeclaration('codex');
+        if (!declaration) throw new Error('Missing bundled Codex declaration');
+        const profileOptionsByServiceId = applyProjectedCredentialKindRestrictions({
+            optionsByServiceId: buildQualifiedConnectedAccountProfileOptionsByServiceId({ accounts: profile.connectedAccountsV4,
+                supportedServiceIds: [serviceKey], labelsByKey: {} }),
+            connectedAccounts: (declaration.connectedAccounts ?? []).map(purpose => ({ ...purpose,
+                service: qualifyPluginContributionReferenceV1(purpose.service, declaration.identity.pluginId) })),
+        });
+        const setBindingForService = vi.fn();
+        const onOpenSettings = vi.fn();
+        const model = buildModel({ supportedServiceIds: [serviceKey], profileOptionsByServiceId,
+            groupOptionsByServiceId: buildQualifiedConnectedAccountGroupOptionsByServiceId({
+                groups: profile.connectedAccountGroupsV4, supportedServiceIds: [serviceKey] }),
+            bindingsByServiceId: {}, setBindingForService, onOpenSettings });
+        const rows = firstStaticSection(model).options;
+        const account = rows.find(row => row.id === createConnectedServiceOptionId(serviceKey, 'primary'));
+        const pool = rows.find(row => row.id === createConnectedServiceGroupOptionId(serviceKey, 'work'));
+        expect(account).toBeDefined();
+        expect(pool).toBeDefined();
+        account?.onSelect?.();
+        pool?.onSelect?.();
+        expect(setBindingForService).toHaveBeenCalledWith(serviceKey, { source: 'connected', selection: 'profile', profileId: 'primary' });
+        expect(setBindingForService).toHaveBeenCalledWith(serviceKey, { source: 'connected', selection: 'group', groupId: 'work' });
+        expect(onOpenSettings).not.toHaveBeenCalled();
+    });
     it('creates freshness visuals only for mounted pool rows in a thousand-pool chooser', () => {
         const renderPoolFreshness = vi.fn(() => 'reading-age');
         const model = buildModel({ renderPoolFreshness,

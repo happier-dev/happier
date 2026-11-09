@@ -154,7 +154,7 @@ describe('applyProjectedCredentialKindRestrictions', () => {
         expect(restricted[CLAUDE_SUBSCRIPTION_SERVICE_KEY]).toEqual([
             expect.objectContaining({ profileId: 'max', status: 'unsupported_kind', kind: 'oauth' }),
             expect.objectContaining({ profileId: 'api', status: 'connected', kind: 'token' }),
-            expect.objectContaining({ profileId: 'unclassified', status: 'unsupported_kind', kind: null }),
+            expect.objectContaining({ profileId: 'unclassified', status: 'connected', kind: null }),
         ]);
     });
 

@@ -502,8 +502,29 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
       { agentId: 'ohMyPi' }, { surface: 'ui', serverId })).toMatchObject({ ok: true, result: {
         profileOptionsByServiceId: { [serviceKey]: [
           { profileId: 'oauth', status: 'unsupported_kind' }, { profileId: 'token', status: 'connected' },
-          { profileId: 'unknown', status: 'unsupported_kind' },
-        ] }, items: [{ value: `${serviceKey}:profile:token` }],
+          { profileId: 'unknown', status: 'connected' },
+        ] }, items: [{ value: `${serviceKey}:profile:token` }, { value: `${serviceKey}:profile:unknown` }],
+      } });
+  });
+
+  it('lists a recorded null-kind Codex account and its ready pool through Home inventory', async () => {
+    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+    const serviceKey = `${service.pluginId}/${service.localId}`;
+    homes.answer(serverId, '/v1/account/profile', { body: { id: 'account-a', connectedAccountsV4: [{
+      ref: { service, accountId: 'primary' }, status: 'connected', kind: null, authenticationModeId: 'oauth',
+      configurationReady: false, configurationRevision: null, revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', scopes: [],
+    }], connectedAccountGroupsV4: [{ v: 1, ref: { service, groupId: 'work' }, displayName: 'Work',
+      incarnation: 'work:1', generation: 2, runtimeStateRevision: 3, policy: { autoSwitch: true },
+      activeConnectedAccountId: 'primary', state: {}, createdAt: 0, updatedAt: 0,
+      members: [{ v: 1, connectedAccountId: 'primary', priority: 0, enabled: true, state: {}, createdAt: 0, updatedAt: 0 }],
+    }] } });
+    expect(await createDefaultActionExecutor().execute('sessions.spawn.connected_services.list',
+      { agentId: 'codex', includeDefaults: false }, { surface: 'ui', serverId })).toMatchObject({ ok: true, result: {
+        profileOptionsByServiceId: { [serviceKey]: [{ profileId: 'primary', status: 'connected', kind: null }] },
+        groupOptionsByServiceId: { [serviceKey]: [{ groupId: 'work', status: 'ready', activeProfileId: 'primary' }] },
+        items: expect.arrayContaining([expect.objectContaining({ value: `${serviceKey}:profile:primary` }),
+          expect.objectContaining({ value: `${serviceKey}:group:work` })]),
       } });
   });
 
