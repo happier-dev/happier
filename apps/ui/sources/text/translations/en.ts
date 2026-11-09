@@ -9664,6 +9664,11 @@ const enSession = {
       autoResumeOptions: 'Auto-resume options',
     },
   },
+  accountSignedOut: {
+    status: 'You\'re signed out',
+    detail: 'Sign in again to keep working here.',
+    action: 'Sign in',
+  },
   composerBanners: {
     showBannerAction: 'Show banner',
     hideBannerAction: 'Hide banner',
@@ -17335,6 +17340,7 @@ const enSettingsVoice = {
       mic_plateau: 'Microphone audio stalled.',
       transport_disconnect: 'Voice connection disconnected.',
       provider_error: 'Voice provider failed.',
+      provider_response_invalid: "The Voice provider reported an error for this turn.",
       provider_auth_invalid:
         'Add or update the selected voice provider API key.',
       audio_context_suspended: 'Audio output is suspended.',
@@ -21814,6 +21820,9 @@ const enProjects = {
       chipLabel: ({ machine, branch }: { machine: string; branch: string }) => `Checkout: ${machine} · ${branch}`,
       notAnswering: ({ machine }: { machine: string }) => `${machine} isn’t answering`,
       waiting: ({ machine }: { machine: string }) => `Waiting for ${machine}`,
+      outOfReach: ({ machine }: { machine: string }) => `${machine} is out of reach`,
+      lastSeen: ({ when }: { when: string }) => `Last seen ${when}.`,
+      filesReturn: 'Your files show up here when it’s back.',
       offline: 'offline',
       thisMachine: "On this machine",
       otherMachines: "Other machines",

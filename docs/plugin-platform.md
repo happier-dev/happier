@@ -215,7 +215,10 @@ claim an installed observer or released availability. See the public
 [finite-kind author guide](../apps/docs/content/docs/plugins/guides/background-services.mdx#health-check-kinds-development-source).
 
 For service handles held by the observer's managed-service owner, saved finite
-checks publish their admitted results through `machineServiceRowProjection`. The exact service
+checks publish their admitted results through `machineServiceRowProjection`. The
+publication binding resolves a saved check's local profile against the service's
+portable Home identity through the existing server-profile identity owner; another
+Home's result cannot bind to the service. The exact service
 generation retains those results for the supplying observer's lifetime. Native
 failure takes precedence; otherwise the least healthy retained check supplies the
 service row's health. Finite Action completion leaves the result available, while
@@ -8351,9 +8354,11 @@ diagnostic metadata; the closed category still owns recovery policy and the
 displayed failure reason. This is an additive same-realm 0.3 development contract: earlier
 events without the optional code still use their category, and matching SDK,
 plugin and host source load together. It adds no persisted or wire format.
-The generic failure status is **Failed**. Only explicit connection-failure
+The generic failure status is the translated **Error** label. Only explicit connection-failure
 reasons supply **Couldn't connect** through the shared attempt presenter;
 an established conversation's rejected answer does not claim connection failed.
+The retained reason selects the existing machine-error copy, including a provider
+turn error or the Machine's required Happier reload, without exposing raw provider messages.
 Protocol's `normalizeVoiceFailureCode`, projected through SDK `/voice/client`,
 owns the existing code-shaped diagnostic boundary shared by provider events,
 host failure logging and mediated credential causes; unsupported strings retain

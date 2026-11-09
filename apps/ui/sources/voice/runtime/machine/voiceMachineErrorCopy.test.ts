@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import { hasTranslation, tLoose } from '@/text/i18n';
 
 import type { VoiceMachineErrorKind } from './voiceConversationRuntimeTypes';
 import { readSafeVoiceProviderFailureMessage, resolveVoiceMachineErrorTranslationKey } from './voiceMachineErrorCopy';
@@ -28,6 +29,17 @@ const expectedTranslationKeys = {
 } as const satisfies Readonly<Record<VoiceMachineErrorKind, string>>;
 
 describe('voiceMachineErrorCopy', () => {
+    it.each([
+        ['provider_response_invalid', 'settingsVoice.local.machineErrors.provider_response_invalid'],
+        ['SOURCE_RUNTIME_RELOAD_REQUIRED', 'session.startFailure.cause.SOURCE_RUNTIME_RELOAD_REQUIRED'],
+    ] as const)('explains the retained provider failure %s through real translated recovery copy', (reason, expectedKey) => {
+        const key = resolveVoiceMachineErrorTranslationKey('provider_error', reason);
+        expect(key).toBe(expectedKey);
+        expect(hasTranslation(key)).toBe(true);
+        expect(tLoose(key)).not.toBe(key);
+        expect(tLoose(key)).not.toBe(tLoose('settingsVoice.local.machineErrors.provider_error'));
+    });
+
     it('does not admit arbitrary transport prose as a provider reason', () => {
         const privateFailure = new Error('PRIVATE_TRANSPORT_BODY');
         expect(readSafeVoiceProviderFailureMessage('provider_error', privateFailure)).toBeUndefined();

@@ -64,6 +64,8 @@ export const VOICE_MACHINE_ERROR_REASON_TRANSLATION_KEYS = {
     voice_agent_selection_unavailable: 'settingsVoice.local.machineErrors.agent_selection_unavailable',
     voice_agent_startup_instructions_unsupported: 'settingsVoice.local.machineErrors.agent_selection_unavailable',
     execution_run_protocol_unsupported: 'settingsVoice.local.machineErrors.agent_selection_unavailable',
+    provider_response_invalid: 'settingsVoice.local.machineErrors.provider_response_invalid',
+    source_runtime_reload_required: 'session.startFailure.cause.SOURCE_RUNTIME_RELOAD_REQUIRED',
 } as const;
 
 export type VoiceMachineErrorTranslationKey =
@@ -84,7 +86,8 @@ export function resolveVoiceMachineErrorTranslationKey(
     // Capture retains the public error code; Send retains the safe message.
     const copyReason = reason?.toLowerCase();
     if ((kind === 'session_unavailable' || kind === 'execution_machine_unavailable' || kind === 'service_temporarily_unavailable' || kind === 'provider_setup_required'
-        || (kind === 'provider_error' && (copyReason === 'daemon_streaming_stt_runtime_unavailable' || copyReason === 'usage_limit')))
+        || (kind === 'provider_error' && (copyReason === 'daemon_streaming_stt_runtime_unavailable' || copyReason === 'usage_limit'
+            || copyReason === 'provider_response_invalid' || copyReason === 'source_runtime_reload_required')))
         && isVoiceMachineErrorReasonWithCopy(copyReason)) {
         return VOICE_MACHINE_ERROR_REASON_TRANSLATION_KEYS[copyReason];
     }
