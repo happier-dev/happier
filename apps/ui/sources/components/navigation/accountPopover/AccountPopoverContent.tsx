@@ -92,6 +92,8 @@ export function AccountPopoverContent(props: Readonly<{
     onRestore: () => void;
     onAddHome: () => void;
     onManageHomes: () => void;
+    /** Settings, the popover's first row (owner R3, 2026-11-09): the phone avatar opens this popover, not Settings. */
+    onOpenSettings: () => void;
     onClose: () => void;
     /** The Connection details step's facts (owned by the connection-status control). */
     renderDetails: () => React.ReactNode;
@@ -164,6 +166,15 @@ function RootStep(props: React.ComponentProps<typeof AccountPopoverContent> & Re
 
     return (
         <>
+            <ActionListSection
+                actions={[{
+                    id: 'settings',
+                    testID: 'connection-popover-settings',
+                    label: t('settings.title'),
+                    icon: <Icon name="gear" size={16} color={secondaryIconColor} />,
+                    onPress: props.onOpenSettings,
+                }]}
+            />
             <IdentitySection
                 service={service}
                 homeUnreachable={props.homeSummary.kind === 'unavailable'}

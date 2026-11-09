@@ -95,8 +95,7 @@ export function collectionConditionValueWords(
 
 /**
  * The condition half of a Collection header (lab `clfilter:filter`, `sfcols:mcpFilter`): the filter button
- * with its count, the removable condition tokens and the shared `CollectionConditionEditor` popover (a sheet
- * on a phone), bound to one entity registry. Saved-space lists (Sessions-style Workflows, Discussions) wrap it
+ * with its count, the removable condition tokens and the shared `CollectionConditionEditor` popover, bound to one entity registry. Saved-space lists (Sessions-style Workflows, Discussions) wrap it
  * in {@link useCollectionSpaceHeader}; lists without spaces (Settings columns) use it as is, with the empty
  * filter as their base. The list keeps its loader and applies the filter to the facts it already holds.
  */
@@ -326,8 +325,7 @@ export function useCollectionConditionHeader<Filter, Facts>(
       portal={underSearchField ? FIELD_WIDTH_PORTAL : MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS}
       onRequestClose={closeEditor}
       backdrop={false}
-      phonePresentation="sheet"
-      sheetHeader="none"
+      phonePresentation="panel"
       accessibilityLabel={labels.title}
       containerStyle={{ paddingHorizontal: 0 }}
     >
@@ -348,9 +346,9 @@ export function useCollectionConditionHeader<Filter, Facts>(
     count: tokens.length,
     maxWidth: EDITOR_WIDTH_PX,
     maxHeight: EDITOR_MAX_HEIGHT_PX,
-    render: ({ maxHeight, presentation, done }) => (
+    render: ({ maxHeight, endsWithDone, done }) => (
       <EditorShown onShown={setSubmenuShown}>
-        {renderEditor(maxHeight, presentation === 'sheet' ? done : undefined,
+        {renderEditor(maxHeight, endsWithDone ? done : undefined,
           onSaveAsSpace ? () => { done(); onSaveAsSpace(); } : undefined)}
       </EditorShown>
     ),

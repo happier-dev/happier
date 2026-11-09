@@ -114,7 +114,9 @@ export function findPopoverContentView(
     childType: string = 'PopoverChild',
 ): ReactTestInstance | null {
     const child = findFirstByType(tree, childType);
-    return child ? findNearestHostParent(child) : null;
+    const parent = child ? findNearestHostParent(child) : null;
+    // A phone popover wraps its content in its push host's root; the positioned view is the one around it.
+    return parent?.props?.testID === 'popover-push.root' ? findNearestHostParent(parent) : parent;
 }
 
 export function findHostNodesByTestId(tree: TreeLike, testID: string): ReactTestInstance[] {

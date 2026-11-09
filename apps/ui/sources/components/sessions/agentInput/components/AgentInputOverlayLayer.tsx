@@ -42,7 +42,6 @@ type SharedContentPopoverLike = Readonly<{
     edgeFades?: AgentInputContentPopoverConfig['edgeFades'];
     edgeIndicators?: AgentInputContentPopoverConfig['edgeIndicators'];
     initialVisibility?: AgentInputContentPopoverConfig['initialVisibility'];
-    phonePresentation?: AgentInputContentPopoverConfig['phonePresentation'];
 }>;
 
 type AgentInputContentPopoverEntry = Readonly<{
@@ -54,7 +53,6 @@ type AgentInputContentPopoverEntry = Readonly<{
     boundaryRef?: React.RefObject<View | null> | null;
     content: AgentInputContentPopoverConfig['renderContent'];
     header?: AgentInputContentPopoverConfig['header'];
-    phonePresentation?: AgentInputContentPopoverConfig['phonePresentation'];
     onRequestClose: () => void;
     maxHeightCap?: AgentInputContentPopoverConfig['maxHeightCap'];
     maxWidthCap?: AgentInputContentPopoverConfig['maxWidthCap'];
@@ -93,7 +91,6 @@ function renderContentPopover(entry: AgentInputContentPopoverEntry, place: Place
             boundaryRef={entry.boundaryRef}
             content={entry.content}
             header={entry.header}
-            phonePresentation={entry.phonePresentation}
             onRequestClose={entry.onRequestClose}
             maxHeightCap={entry.maxHeightCap}
             maxWidthCap={entry.maxWidthCap}
@@ -118,7 +115,6 @@ function resolveSharedContentPopoverOptions(
     | 'edgeFades'
     | 'edgeIndicators'
     | 'initialVisibility'
-    | 'phonePresentation'
 > {
     return {
         boundaryRef: popover.boundaryRef as React.RefObject<View | null> | null | undefined,
@@ -129,7 +125,6 @@ function resolveSharedContentPopoverOptions(
         edgeFades: popover.edgeFades,
         edgeIndicators: popover.edgeIndicators,
         initialVisibility: popover.initialVisibility,
-        phonePresentation: popover.phonePresentation,
     };
 }
 
@@ -238,7 +233,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
     });
     const submenu = actionMenuSubmenu.submenu;
     // A picker a + menu row opened is that row's submenu, rendered inside the menu: the shared Popover then
-    // hangs it beside its row, or pushes it inside the menu's sheet on a phone. The menu's content reads
+    // hangs it beside its row, or pushes it inside the menu on a phone. The menu's content reads
     // this list when it renders, after every picker below has been placed.
     const rowPickers: React.ReactNode[] = [];
     const place: PlaceAgentInputPicker = (anchor, node) => {
@@ -275,12 +270,11 @@ export function AgentInputOverlayLayer(props: Readonly<{
             key: 'actionMenu',
             open: props.showActionMenu && props.hasActionMenuPopoverSections,
             anchorRef: props.actionMenuAnchorRef,
-            content: ({ presentation }) => (
+            content: (
                 <AgentInputActionMenuPopoverContent
-                    // A sheet has no hover: its rows open their pickers by press, pushed inside it.
-                    actionMenuActions={presentation === 'sheet' ? actionMenuSubmenu.pressActions : actionMenuSubmenu.actions}
+                    actionMenuActions={actionMenuSubmenu.actions}
                     onCustomizeComposer={props.onCustomizeComposer}
-                    onPointerLeave={presentation === 'sheet' ? undefined : actionMenuSubmenu.onMenuPointerLeave}
+                    onPointerLeave={actionMenuSubmenu.onMenuPointerLeave}
                 >
                     {rowPickers}
                 </AgentInputActionMenuPopoverContent>
@@ -288,8 +282,6 @@ export function AgentInputOverlayLayer(props: Readonly<{
             onRequestClose: props.onActionMenuRequestClose,
             // Tall enough for the lab's whole menu (add actions, every control placed In +, Customize) without scrolling.
             maxHeightCap: 560,
-            // On a phone the menu is the shared bottom sheet (lab C2pp), like every other composer picker.
-            phonePresentation: 'sheet',
             // The + menu is a menu (lab C2plus), never as wide as the composer it opens from.
             maxWidthCap: Math.min(DROPDOWN_MENU_MAX_WIDTH_PX, props.maxWidthCap),
             scrollEnabled: true,
@@ -312,7 +304,6 @@ export function AgentInputOverlayLayer(props: Readonly<{
             submenu: props.activeExtraCollapsedPopoverAnchor === 'actionMenuRow',
             content: props.activeExtraCollapsedPopoverChip.collapsedContentPopover.renderContent,
             header: props.activeExtraCollapsedPopoverChip.collapsedContentPopover.header,
-            phonePresentation: props.activeExtraCollapsedPopoverChip.collapsedContentPopover.phonePresentation,
             onRequestClose: props.onActiveExtraCollapsedPopoverChipClose,
             boundaryRef: props.activeExtraCollapsedPopoverChip.collapsedContentPopover.boundaryRef as React.RefObject<View | null> | null | undefined,
             maxHeightCap: props.activeExtraCollapsedPopoverChip.collapsedContentPopover.maxHeightCap,

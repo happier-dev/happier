@@ -38,7 +38,6 @@ function buildContentPopoverStaticSignature(config: AgentInputContentPopoverConf
         edgeFades: config.edgeFades ?? null,
         edgeIndicators: config.edgeIndicators ?? null,
         initialVisibility: config.initialVisibility ?? null,
-        phonePresentation: config.phonePresentation ?? null,
         header: config.header ?? null,
     });
 }
@@ -68,7 +67,6 @@ function useStableContentPopoverConfig(
             config?.maxHeightCap,
             config?.maxWidthCap,
             config?.scrollEnabled,
-            config?.phonePresentation,
             config?.header,
         ],
     );

@@ -4,14 +4,21 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { Icon } from '@/components/ui/icons/Icon';
 import { hapticsLight } from '@/components/ui/theme/haptics';
+import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { useLocalSettingMutable } from '@/sync/store/hooks';
 import { t } from '@/text';
 
 /**
  * Touch only: keeps the soft keyboard up across sends, for writing several messages in a row. It governs
- * the send's own blur and nothing else, so tapping the transcript still closes the keyboard.
+ * the send's own blur and nothing else, so tapping the transcript still closes the keyboard. It shows only
+ * while the keyboard is open, the one time it can matter (owner R9, 2026-11-09).
  */
 export const AgentInputKeepKeyboardToggle = React.memo(function AgentInputKeepKeyboardToggle() {
+    const keyboardOpen = useKeyboardHeight() > 0;
+    return keyboardOpen ? <KeepKeyboardPin /> : null;
+});
+
+function KeepKeyboardPin() {
     const { theme } = useUnistyles();
     const [setting, setSetting] = useLocalSettingMutable('composerKeepFocusAfterSend');
     const pinned = setting === true;
@@ -36,4 +43,4 @@ export const AgentInputKeepKeyboardToggle = React.memo(function AgentInputKeepKe
             />
         </Pressable>
     );
-});
+}

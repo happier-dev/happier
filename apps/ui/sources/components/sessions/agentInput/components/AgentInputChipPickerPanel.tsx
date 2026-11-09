@@ -1,6 +1,5 @@
 import React from "react";
 import { ScrollView, useWindowDimensions, View } from 'react-native';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Item } from "@/components/ui/lists/Item";
@@ -12,8 +11,6 @@ import { t } from "@/text";
 import { ModalCloseButton } from '@/modal/components/card';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
-import { Icon } from '@/components/ui/icons/Icon';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 import { AgentInputChipPickerDetailPane } from "./AgentInputChipPickerDetailPane";
 import { shouldShowAgentInputChipPickerRail } from "./AgentInputChipPickerLayout";
@@ -110,17 +107,10 @@ export function AgentInputChipPickerPanel(
     }
   }, [props.onRequestClose, props.options]);
 
-  // Phone sheet: the option list and one option's detail are two pushed views of one sheet.
-  const sheet = props.presentation === "sheet" && showDetailedSelector;
-  const [sheetView, setSheetView] = React.useState<"detail" | "list">("detail");
-  const canPushToList = sheet && props.options.length > 1;
-  const handleSheetOptionPress = React.useCallback((optionId: string) => {
-    handleDetailedOptionFocus(optionId);
-    setSheetView("detail");
-  }, [handleDetailedOptionFocus]);
-
+  // A narrow window (a phone) stacks the Agent strip above the same detail as the wide rail layout:
+  // switching Agents happens in place, with no drill-in (owner R5, 2026-11-09).
   const detailedLayout =
-    !sheet && shouldShowAgentInputChipPickerRail(props.options, windowWidth)
+    shouldShowAgentInputChipPickerRail(props.options, windowWidth)
       ? "split"
       : "stacked";
   const detailPaneStyle =
@@ -142,38 +132,7 @@ export function AgentInputChipPickerPanel(
 
   const showCloseButton = props.showCloseButton !== false;
   const shouldRenderTitle = typeof props.title === "string" && props.title.trim().length > 0;
-  const listTitle = shouldRenderTitle ? props.title : t("agentInput.chipPicker.agentsTitle");
-  const sheetShowsList = canPushToList && sheetView === "list";
-  const sheetHeaderRow = sheet ? (
-    <View style={styles.sheetHeaderRow}>
-      <View style={styles.sheetHeaderSide}>
-        {canPushToList && !sheetShowsList ? (
-          <HappierPressable
-            testID="agent-input-chip-picker.sheet-back"
-            accessibilityRole="button"
-            accessibilityLabel={t("selectionList.backTo", { label: listTitle })}
-            onPress={() => setSheetView("list")}
-            style={({ pressed }) => [styles.sheetBack, pressed ? styles.sheetBackPressed : null]}
-          >
-            <Icon name="caret-left" size={16} color={theme.colors.text.primary} />
-            <Text numberOfLines={1} style={styles.sheetBackLabel}>{listTitle}</Text>
-          </HappierPressable>
-        ) : null}
-      </View>
-      <Text
-        testID="agent-input-chip-picker.sheet-title"
-        accessibilityRole="header"
-        numberOfLines={1}
-        style={styles.sheetTitle}
-      >
-        {sheetShowsList ? listTitle : focusedOption?.label ?? listTitle}
-      </Text>
-      <View style={[styles.sheetHeaderSide, styles.sheetHeaderSideEnd]}>
-        <ModalCloseButton testID="agent-input-chip-picker.close" onPress={props.onRequestClose} />
-      </View>
-    </View>
-  ) : null;
-  const headerRow = sheet ? null : shouldRenderTitle || showCloseButton ? (
+  const headerRow = shouldRenderTitle || showCloseButton ? (
     <View style={styles.headerRow}>
       <View style={styles.headerTitleWrap}>
         {shouldRenderTitle ? (
@@ -223,7 +182,6 @@ export function AgentInputChipPickerPanel(
         </View>
       ) : (
         <View style={styles.bodyDetailedShell}>
-          {sheetHeaderRow}
           {headerRow ? <View style={styles.headerDetailed}>{headerRow}</View> : null}
           <View
             style={[
@@ -234,23 +192,7 @@ export function AgentInputChipPickerPanel(
                 : null,
             ]}
           >
-            {sheet ? (
-              sheetShowsList ? (
-                <ScrollView
-                  testID="agent-input-chip-picker.sheet-list-scroll"
-                  style={styles.sheetListScroll}
-                  keyboardShouldPersistTaps="handled"
-                >
-                  <AgentInputChipPickerOptionSelector
-                    sections={sections}
-                    focusedOptionId={focusedOption?.id ?? null}
-                    selectedOptionId={props.selectedOptionId}
-                    onFocusOption={handleSheetOptionPress}
-                    variant="rail"
-                  />
-                </ScrollView>
-              ) : null
-            ) : showDetailedSelector ? (
+            {showDetailedSelector ? (
               detailedLayout === "split" ? (
                 <View style={[styles.railFrame, { width: railWidth, maxWidth: railMaxWidth, maxHeight: railMaxHeight }]}>
                   <ScrollView
@@ -288,10 +230,9 @@ export function AgentInputChipPickerPanel(
                 </View>
               )
             ) : null}
-            {focusedOption && !sheetShowsList ? (
+            {focusedOption ? (
               <View style={[
                 detailContainerStyle,
-                sheet ? styles.sheetDetail : null,
                 detailedLayout === "stacked" && props.detailContentOwnsScroll === true ? styles.detailScrollContentFlush : null,
               ]}>
                 <View
@@ -351,10 +292,10 @@ export function AgentInputChipPickerPanel(
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
+  // The picker's panes sit on the popover's material; only the wide rail is tinted as its own column.
   container: {
     width: "100%",
     overflow: "hidden",
-    backgroundColor: theme.colors.surface.base,
   },
   title: {
     ...Typography.variant('body', 'semiBold'),
@@ -372,53 +313,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
   },
-  sheetHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.space.s8,
-    paddingHorizontal: theme.space.s12,
-    paddingTop: theme.space.s4,
-    paddingBottom: theme.space.s8,
-  },
-  sheetHeaderSide: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  sheetHeaderSideEnd: {
-    justifyContent: "flex-end",
-  },
-  sheetBack: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.space.s2,
-    maxWidth: "100%",
-  },
-  sheetBackPressed: {
-    opacity: motionTokens.press.opacity,
-  },
-  sheetBackLabel: {
-    flexShrink: 1,
-    fontSize: 15,
-    lineHeight: 20,
-    color: theme.colors.text.primary,
-  },
-  sheetTitle: {
-    flexShrink: 1,
-    maxWidth: "50%",
-    textAlign: "center",
-    ...Typography.variant('heading'),
-    color: theme.colors.text.primary,
-  },
-  sheetListScroll: {
-    flex: 1,
-    minHeight: 0,
-  },
-  sheetDetail: {
-    flex: 1,
-    minHeight: 0,
-  },
   headerDetailed: {
     paddingHorizontal: theme.space.s12,
     paddingTop: theme.space.s12,
@@ -429,14 +323,12 @@ const stylesheet = StyleSheet.create((theme) => ({
   bodyDetailedShell: {
     flex: 1,
     minHeight: 0,
-    backgroundColor: theme.colors.surface.base,
   },
   bodyDetailed: {
     flex: 1,
     flexDirection: "row",
     alignItems: "stretch",
     minHeight: AGENT_INPUT_CHIP_PICKER_DETAIL_MIN_HEIGHT,
-    backgroundColor: theme.colors.surface.base,
   },
   bodyDetailedStacked: {
     flexDirection: "column",
@@ -465,7 +357,6 @@ const stylesheet = StyleSheet.create((theme) => ({
   detailScroll: {
     flex: 1,
     minHeight: 0,
-    backgroundColor: theme.colors.surface.base,
   },
   detailStackedWithSelector: {
     width: "100%",

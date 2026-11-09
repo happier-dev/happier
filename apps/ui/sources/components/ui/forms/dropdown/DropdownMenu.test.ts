@@ -645,7 +645,7 @@ describe('DropdownMenu', () => {
         popoverDevice.phone = false;
     });
 
-    it('presents a menu whose rows open submenus as a phone sheet, so its submenus push inside it rather than squeeze beside it', async () => {
+    it('presents a menu whose rows open submenus as a phone panel, so its submenus push inside it rather than squeeze beside it', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
         const render = (items: readonly unknown[]) => renderScreen(React.createElement(DropdownMenu as any, {
             open: true, onOpenChange: vi.fn(), items, onSelect: vi.fn(), trigger: React.createElement('View'),
@@ -654,14 +654,14 @@ describe('DropdownMenu', () => {
             { id: 'mark', title: 'Leading mark', submenu: { placement: 'right', items: [{ id: 'auto', title: 'Auto' }] } },
             { id: 'status', title: 'Status words' },
         ]);
-        expect(withSubmenu.findAllByType('Popover' as any)[0]?.props?.phonePresentation).toBe('sheet');
+        expect(withSubmenu.findAllByType('Popover' as any)[0]?.props?.phonePresentation).toBe('panel');
         act(() => {
             withSubmenu.findByType('SelectableMenuResults' as any)?.props?.onOpenSubmenu?.('mark', {
                 current: { getBoundingClientRect: () => ({ width: 300, height: 44 }) },
             });
         });
-        // Popover decides from the device: on a phone the submenu is a sheet inside the menu's sheet (a push).
-        expect(withSubmenu.findAllByType('Popover' as any)[1]?.props?.phonePresentation).toBe('sheet');
+        // Popover decides from the device: on a phone the submenu pushes inside the menu in place.
+        expect(withSubmenu.findAllByType('Popover' as any)[1]?.props?.phonePresentation).toBe('panel');
         act(() => { withSubmenu.tree.unmount(); });
 
         const plain = await render([{ id: 'status', title: 'Status words' }]);

@@ -6,7 +6,7 @@ import { ActionOperationActivityButton } from '@/components/inbox/actionOperatio
 import { ConnectionStatusControl, type ConnectionStatusTriggerState } from '@/components/navigation/ConnectionStatusControl';
 
 import { PhoneHomeLine } from './PhoneHomeLine';
-import { PhoneSettingsAvatarButton } from './PhoneSettingsAvatarButton';
+import { PhoneAccountAvatarButton } from './PhoneAccountAvatarButton';
 import { PhoneTabNavRowLine, PhoneTabNavRowProvider } from './phoneTabNavRow';
 
 /** Space between the glyphs on the line; each one's hit area splits it, so neighbours never overlap. */
@@ -26,7 +26,7 @@ const Glyphs = React.memo(function Glyphs() {
     return (
         <View style={styles.glyphs}>
             <ActionOperationActivityButton testID="main-header-action-operations" interactiveTargetGapPx={GLYPH_ROW_GAP_PX} />
-            <PhoneSettingsAvatarButton />
+            <PhoneAccountAvatarButton />
         </View>
     );
 });
@@ -37,7 +37,7 @@ export function PhoneMainTabShell(props: Readonly<{ children: React.ReactNode }>
     return <PhoneTabNavRowProvider leading={LEADING} trailing={TRAILING}>{props.children}</PhoneTabNavRowProvider>;
 }
 
-/** The head every phone tab opens on: the Home it is on, Activity and the Settings avatar (owner Q4). */
+/** The head every phone tab opens on: the Home it is on, Activity and the account avatar (owner Q4, R3). */
 export function PhoneMainTabLine() {
     return <PhoneTabNavRowLine testID="main-tab-nav-row" />;
 }

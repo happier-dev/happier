@@ -38,7 +38,7 @@ vi.mock('./AgentInputPopoverSurface', () => ({
 }));
 
 describe('AgentInputContentPopover', () => {
-    it('heads the popover with its title and purpose, and hands both to the phone sheet instead of repeating them', async () => {
+    it('heads the popover with its title and purpose, and hands both to a sheet it is pushed into instead of repeating them', async () => {
         const { AgentInputContentPopover } = await import('./AgentInputContentPopover');
         const header = { title: 'Runs through', description: 'Where Codex gets its models for this session.' };
         const popover = await renderScreen(
@@ -46,7 +46,6 @@ describe('AgentInputContentPopover', () => {
                 open
                 anchorRef={{ current: null } as any}
                 header={header}
-                phonePresentation="sheet"
                 content={<React.Fragment />}
                 onRequestClose={() => {}}
             />,
@@ -60,7 +59,6 @@ describe('AgentInputContentPopover', () => {
                 open
                 anchorRef={{ current: null } as any}
                 header={header}
-                phonePresentation="sheet"
                 content={<React.Fragment />}
                 onRequestClose={() => {}}
             />,
@@ -68,19 +66,17 @@ describe('AgentInputContentPopover', () => {
         presentationState.value = 'popover';
         expect(sheet.getTextContent()).not.toContain('Runs through');
         expect(capturedSelectionPopoverProps.current).toMatchObject({
-            phonePresentation: 'sheet',
             accessibilityLabel: 'Runs through',
             sheetSubtitle: 'Where Codex gets its models for this session.',
         });
     });
 
-    it('gives a phone sheet without a title no empty header band (its content leads, lab m-pick Ap)', async () => {
+    it('names a pushed view only when the popover has a title (its content leads, lab m-pick Ap)', async () => {
         const { AgentInputContentPopover } = await import('./AgentInputContentPopover');
         await renderScreen(
             <AgentInputContentPopover
                 open
                 anchorRef={{ current: null } as any}
-                phonePresentation="sheet"
                 content={<React.Fragment />}
                 onRequestClose={() => {}}
             />,
@@ -92,7 +88,6 @@ describe('AgentInputContentPopover', () => {
                 open
                 anchorRef={{ current: null } as any}
                 header={{ title: 'Runs through' }}
-                phonePresentation="sheet"
                 content={<React.Fragment />}
                 onRequestClose={() => {}}
             />,

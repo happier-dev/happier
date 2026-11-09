@@ -121,8 +121,16 @@ export type PopoverRenderProps = Readonly<{
     maxHeight: number;
     maxWidth: number;
     placement: ResolvedPopoverPlacement;
-    /** Sheet chrome owns the title/close action; callers may omit their anchored title band. */
+    /**
+     * `sheet`: phone chrome names the content (a sheet's band, or the Back row of a view pushed inside a phone
+     * popover) and owns its way out; callers omit their own title band and hover-only affordances.
+     */
     presentation?: 'anchored' | 'sheet';
+    /**
+     * A submenu or row picker opened inside replaces this content in place, with a Back (a phone's popovers
+     * and sheets). The content then drops hover intent: nothing hangs beside it to hover toward.
+     */
+    pushesSubmenus?: boolean;
     /**
      * Dismiss through the incumbent Popover lifecycle. Selection, Escape, and
      * Android Back restore the configured trigger; outside dismissal does not.

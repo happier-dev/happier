@@ -82,13 +82,13 @@ import { buildHomeRecoveryHref } from '@/components/settings/server/navigation/s
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 
 /**
- * `sidebar`: a host-placed trigger opens the account/Home popover. `header` (phones): the trigger opens
- * the Account & Homes page, which renders `page` (the same content, inline). `fullScreen`: the Home's
- * connection facts on the Homes page.
+ * `sidebar` and `header` (a phone tab's head): the trigger opens the account/Home popover in place, beside or
+ * below it (owner R3/R4, 2026-11-09). `page`: the same content inline on the Account & Homes page.
+ * `fullScreen`: the Home's connection facts on the Homes page.
  */
 type Variant = 'sidebar' | 'header' | 'page' | 'fullScreen';
-const ACCOUNT_HOMES_ROUTE = '/homes';
 const RELAY_SETTINGS_ROUTE = '/settings/server';
+const SETTINGS_ROUTE = '/settings';
 const DENSE_POINTER_TARGET_SIZE = 24;
 /** A1 · Identity & Homes is drawn 300 wide, and keeps that width on its steps (long values wrap). */
 const ACCOUNT_POPOVER_WIDTH = 300;
@@ -867,14 +867,13 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             if (result !== true) fireAndForget(result, { tag: 'ConnectionStatusControl.nav.addHome' });
         });
     }, [router, runPopoverAction]);
+    const handleOpenSettings = React.useCallback(() => {
+        runPopoverAction('navigates', () => {
+            const result = runGuardedNavigation(() => router.push(SETTINGS_ROUTE));
+            if (result !== true) fireAndForget(result, { tag: 'ConnectionStatusControl.nav.settings' });
+        });
+    }, [router, runPopoverAction]);
     const handleActivate = React.useCallback(() => {
-        if (props.variant === 'header') {
-            const result = runGuardedNavigation(() => router.push(ACCOUNT_HOMES_ROUTE));
-            if (result !== true) {
-                fireAndForget(result, { tag: 'ConnectionStatusControl.nav.fullScreenHomes' });
-            }
-            return;
-        }
         setOpen((currentOpen) => {
             if (currentOpen) {
                 setDetailsExpanded(false);
@@ -883,7 +882,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             }
             return !currentOpen;
         });
-    }, [props.variant, router]);
+    }, []);
     const collapsedStatusLabel = t(homeSummary.statusLabelKey);
     const collapsedStatusColor = homeSummaryPresentation.color;
     // DESIGN.md forbids color as the only carrier of meaning. For states that
@@ -1115,6 +1114,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             onRestore={handleRestoreAccount}
             onAddHome={handleOpenAddHome}
             onManageHomes={handleManageRelay}
+            onOpenSettings={handleOpenSettings}
             onClose={closePopover}
             renderDetails={() => (
                 <>
@@ -1174,7 +1174,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                     onPress={handleActivate}
                     accessibilityRole="button"
                     accessibilityLabel={`${activeServerLabel}, ${collapsedStatusLabel}`}
-                    expanded={props.variant === 'sidebar' ? open : undefined}
+                    expanded={open}
                 >
                     {collapsedShowsAttentionCue ? (
                         <Icon
@@ -1199,20 +1199,22 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                         {activeServerLabel}
                     </Text>
                     <Icon
-                        name={props.variant === 'header' ? 'caret-right' : open ? 'caret-up' : 'caret-down'}
+                        name={open ? 'caret-up' : 'caret-down'}
                         size={chevronSize}
                         color={collapsedStatusColor}
                         style={styles.statusChevron}
                     />
                 </HappierPressable>
                 )}
-                {props.variant === 'sidebar' && open ? (
+                {open ? (
                     <Popover
                         open={open}
                         anchorRef={anchorRef}
                         focusReturnRef={props.renderTrigger ? hostTriggerFocusRef : triggerRef}
                         autoFocusOnOpen
                         placement={props.popoverPlacement ?? 'bottom'}
+                        // On a phone it spans the screen below the head's trigger (owner R2).
+                        phonePresentation="panel"
                         edgePadding={{ horizontal: 12, vertical: 12 }}
                         portal={{
                             web: true,

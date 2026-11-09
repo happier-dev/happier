@@ -322,7 +322,7 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
             {editor}
             {detailId ? details?.get(detailId)?.() : null}
             {whoAccessory ? <AgentInputSelectionPopover open={accessoryOpen} anchorRef={accessoryAnchorRef}
-                onRequestClose={closeAccessory} phonePresentation="sheet" accessibilityLabel={whoAccessory.label}>
+                onRequestClose={closeAccessory} accessibilityLabel={whoAccessory.label}>
                 {({ maxHeight }) => <ScrollView style={{ maxHeight }} keyboardShouldPersistTaps="handled">
                     {whoAccessory.render(closeAccessory)}
                 </ScrollView>}

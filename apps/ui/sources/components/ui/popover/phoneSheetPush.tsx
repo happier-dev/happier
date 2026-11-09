@@ -1,8 +1,10 @@
 import * as React from 'react';
+import { View } from 'react-native';
 
 import { StepTransitionFrame, type StepTransitionDirection } from '@/components/ui/motion/StepTransitionFrame';
 
 import type { PopoverRenderProps } from './_types';
+import { PhonePushedViewContext } from './phonePushedView';
 
 /**
  * A view pushed inside a phone sheet: a sheet-presented popover opened from inside the sheet (a menu
@@ -117,9 +119,47 @@ export function PhoneSheetPushBody(props: Readonly<{
     );
 }
 
+const PUSHED_UNDER = { display: 'none' } as const;
+/** The anchored phone popover's own content wrapper (hidden while a view is pushed over it). */
+export const ANCHORED_PHONE_PUSH_ROOT_TEST_ID = 'popover-push.root';
+
 /**
- * A sheet-presented popover opened inside a phone sheet: it pushes its content into that sheet while
- * open and renders nothing where it stands.
+ * The body of an anchored popover on a phone: its own content, or the view pushed over it. A phone popover
+ * spans the screen, so a row's picker or submenu replaces the content in place instead of hanging beside
+ * it. The content stays mounted (the pushed popover lives inside it) and comes back on Back; the pushed
+ * content's floating surface draws that Back (`PhonePushedViewContext`).
+ */
+export function AnchoredPhonePushHost(props: Readonly<{
+    renderProps: PopoverRenderProps;
+    children: React.ReactNode;
+}>) {
+    const [stack] = React.useState(createPhoneSheetPushStack);
+    const chrome = React.useSyncExternalStore(stack.subscribe, stack.getChrome, stack.getChrome);
+    React.useSyncExternalStore(stack.subscribe, stack.getVersion, stack.getVersion);
+    const entries = stack.getEntries();
+    const top = entries[entries.length - 1];
+    const pushedView = React.useMemo(
+        () => chrome ? { title: chrome.title, back: stack.back } : null,
+        [chrome, stack],
+    );
+    return (
+        <PhoneSheetPushContext.Provider value={stack}>
+            <View testID={ANCHORED_PHONE_PUSH_ROOT_TEST_ID} style={top ? PUSHED_UNDER : undefined}>{props.children}</View>
+            {top && pushedView ? (
+                <PhonePushedViewContext.Provider value={pushedView}>
+                    <View key={top.key} testID="popover-push.view">
+                        {/* Its Back row names the view, as a sheet's band does, so the content drops its own title. */}
+                        {top.render({ ...props.renderProps, presentation: 'sheet', pushesSubmenus: true, requestClose: top.close })}
+                    </View>
+                </PhonePushedViewContext.Provider>
+            ) : null}
+        </PhoneSheetPushContext.Provider>
+    );
+}
+
+/**
+ * A popover opened inside a phone sheet or phone popover that pushes (`phonePresentation` set): it pushes
+ * its content into that host while open and renders nothing where it stands.
  */
 export function usePhoneSheetPush(input: Readonly<{
     stack: PhoneSheetPushStack;

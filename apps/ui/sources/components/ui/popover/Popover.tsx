@@ -55,7 +55,7 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 import { BaseModal } from '@/modal/components/BaseModal';
 import { ModalCardFrame } from '@/modal/components/card/ModalCardFrame';
 import { ModalBackButton } from '@/modal/components/card/ModalBackButton';
-import { createPhoneSheetPushStack, PhoneSheetPushBody, PhoneSheetPushContext, usePhoneSheetPush, type PhoneSheetPushStack } from './phoneSheetPush';
+import { AnchoredPhonePushHost, createPhoneSheetPushStack, PhoneSheetPushBody, PhoneSheetPushContext, usePhoneSheetPush, type PhoneSheetPushStack } from './phoneSheetPush';
 import { FloatingOverlaySheetContext } from '@/components/ui/overlays/FloatingOverlay';
 import { GlassOpenedLayer } from '@/components/ui/glass/GlassSurface';
 import { GlassLivePictureBackdropContext } from '@/components/ui/glass/livePictureBackdrop';
@@ -180,8 +180,16 @@ function areWindowRectsEqual(a: WindowRect | null, b: WindowRect | null): boolea
 
 type PopoverCommonProps = Readonly<{
     open: boolean;
-    /** Reuse the shared bottom-sheet navigation and chrome on phone viewports. */
-    phonePresentation?: 'sheet';
+    /**
+     * A popover is anchored to its trigger on every width (owner R2, 2026-11-09): menus, pickers and
+     * account/Home popovers alike. On a phone this says how it sits there:
+     * - `panel`: a menu, picker or account popover. On a phone it spans the screen less its gutters (the
+     *   sheet's look) right above or below its trigger, which stays visible; opened inside another phone
+     *   panel or sheet (a submenu, a row's picker) it replaces that one's content in place, with a Back.
+     * - `sheet`: a form or reading panel (its own Done or footer, a long document) is the shared bottom
+     *   sheet on a phone, and pushes like `panel` when opened inside one.
+     */
+    phonePresentation?: 'sheet' | 'panel';
     /** A form's completion control replaces the sheet's close button in the shared header. */
     sheetHeaderAction?: React.ReactNode;
     /** A form summary belongs under the title in the sheet's existing header. */
@@ -359,6 +367,9 @@ function hasOpenNestedWebPopover(owner: OpenWebPopoverEntry): boolean {
     });
 }
 
+/** A phone panel's inset from the screen's sides: the composer's phone picker gutter. */
+const PHONE_PANEL_GUTTER_PX = 12;
+
 /** The room a top/bottom side must offer before it is preferred when the caller sets no cap. */
 const DEFAULT_PREFERRED_ROOM_PX = 400;
 
@@ -404,20 +415,23 @@ export function Popover(requested: PopoverProps) {
     // (TL-C phone glance, READY161).
     const presented = useLayoutPresentationActive();
     const props = presented || !requested.open ? requested : { ...requested, open: false };
-    // A sheet-presented popover opened from inside a phone sheet pushes into that sheet (with a Back)
-    // instead of opening a second sheet over it.
+    // A submenu or form opened from inside a phone popover or sheet pushes into it (with a Back) instead of
+    // opening a second surface over it.
     const pushStack = React.useContext(PhoneSheetPushContext);
+    const phone = deviceType === 'phone';
     // Placement measurements belong to the anchored presentation's mounted tree. A sheet
     // replaces that tree, so returning to desktop measures its new anchor and content afresh.
     // A menu's or picker's own scroll never drives the shade under the pane header it opens from.
     return <PaneHeaderScrollIsolation>
-        {props.phonePresentation === 'sheet' && deviceType === 'phone'
-            ? (pushStack ? <PushedPhonePopoverSheet {...props} stack={pushStack} /> : <PhonePopoverSheet {...props} />)
-            : <AnchoredPopoverPresence {...props} />}
+        {phone && pushStack && props.phonePresentation
+            ? <PushedPhonePopover {...props} stack={pushStack} />
+            : phone && props.phonePresentation === 'sheet'
+                ? <PhonePopoverSheet {...props} />
+                : <AnchoredPopoverPresence {...props} />}
     </PaneHeaderScrollIsolation>;
 }
 
-function PushedPhonePopoverSheet(props: PopoverProps & Readonly<{ stack: PhoneSheetPushStack }>) {
+function PushedPhonePopover(props: PopoverProps & Readonly<{ stack: PhoneSheetPushStack }>) {
     usePhoneSheetPush({
         stack: props.stack,
         open: props.open,
@@ -520,7 +534,7 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
         placement = 'auto',
         gap = 8,
         maxHeightCap: maxHeightCapProp,
-        maxWidthCap = 520,
+        maxWidthCap: requestedMaxWidthCap = 520,
         minWidth: contentSizedMinWidth = CONTENT_SIZED_POPOVER_WIDTH.minPx,
         onRequestClose,
         edgePadding = 0,
@@ -529,6 +543,9 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
         children,
     } = props;
     const open = requestedOpen;
+    const phone = useDeviceType() === 'phone';
+    // A phone panel spans the screen less its gutters, above or below its trigger (`phonePresentation`).
+    const spansPhone = phone && props.phonePresentation === 'panel';
     const keyboardBottomInsetProp = props.keyboardBottomInset;
     const autoFocusOnOpen = props.autoFocusOnOpen === true;
     const resolvedAnchorMode: 'view' | 'rect' = anchorProp ? anchorProp.kind : 'view';
@@ -561,6 +578,7 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
     const boundaryRef = boundaryRefProp === undefined ? boundaryFromContext : boundaryRefProp;
     const followScrollRef = followScrollRefProp === undefined ? scrollSourceFromContext : followScrollRefProp;
     const { width: windowWidth, height: windowHeight } = usePresentationWindowDimensions();
+    const maxWidthCap = spansPhone ? windowWidth : requestedMaxWidthCap;
     // Without an explicit cap a popover takes whatever room its side offers (content scrolls inside it);
     // the room a side must offer to be preferred stays the usual menu height.
     const maxHeightCap = maxHeightCapProp ?? windowHeight;
@@ -584,7 +602,7 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
     const sizesToAnchorExplicitly = props.portal?.matchAnchorWidth === true;
     const anchorAlignOnPortal = props.portal?.anchorAlign ?? 'start';
     const anchorAlignVerticalOnPortal = props.portal?.anchorAlignVertical ?? 'center';
-    const topBottomLayoutOnPortal = props.portal?.topBottomLayout ?? 'anchored';
+    const topBottomLayoutOnPortal = spansPhone ? 'boundary' : props.portal?.topBottomLayout ?? 'anchored';
     const sizeToContentOnPortal = props.portal?.sizeToContent === true && topBottomLayoutOnPortal === 'anchored';
     // A content-sized popover centred on its anchor (a tooltip) is placed from its measured width.
     const centresMeasuredContent = sizeToContentOnPortal && anchorAlignOnPortal === 'center';
@@ -974,8 +992,8 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
         const top = typeof edgePadding === 'number' ? edgePadding : (edgePadding.top ?? vertical);
         const bottom = typeof edgePadding === 'number' ? edgePadding : (edgePadding.bottom ?? vertical);
 
-        return { horizontal, top, bottom };
-    }, [edgePadding]);
+        return { horizontal: spansPhone ? Math.max(horizontal, PHONE_PANEL_GUTTER_PX) : horizontal, top, bottom };
+    }, [edgePadding, spansPhone]);
 
     // The edge padding is a transparent gutter inside the popover's box (see `paddingStyle`): the
     // width a child may fill is the box less that gutter, never the box itself.
@@ -983,10 +1001,11 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
     // narrow it (the composer's pickers zero it), and the clamp then keeps the visible surface the full
     // margin from the window edge itself instead of assuming the gutter is there.
     const horizontalGutter = React.useMemo(() => {
-        if (computed.placement !== 'top' && computed.placement !== 'bottom') return 0;
+        // A phone panel's boundary already stands its gutter in from the screen's sides; its box carries none.
+        if (spansPhone || (computed.placement !== 'top' && computed.placement !== 'bottom')) return 0;
         const carried = resolvePaddingEdges([{ paddingHorizontal: edgeInsets.horizontal }, containerStyle]);
         return Math.max(0, Math.min(edgeInsets.horizontal, carried.left, carried.right));
-    }, [computed.placement, containerStyle, edgeInsets.horizontal]);
+    }, [computed.placement, containerStyle, edgeInsets.horizontal, spansPhone]);
     const contentMaxWidth = Math.max(0, computed.maxWidth - horizontalGutter * 2);
 
     const keyboardHeightRef = React.useRef(0);
@@ -1910,13 +1929,13 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
                 : (edgePadding.vertical ?? 0);
 
         if (computed.placement === 'top' || computed.placement === 'bottom') {
-            return horizontal > 0 ? { paddingHorizontal: horizontal } : {};
+            return horizontal > 0 && !spansPhone ? { paddingHorizontal: horizontal } : {};
         }
         if (computed.placement === 'left' || computed.placement === 'right') {
             return vertical > 0 ? { paddingVertical: vertical } : {};
         }
         return {};
-    }, [computed.placement, edgePadding]);
+    }, [computed.placement, edgePadding, spansPhone]);
 
     const nativePortalShadowPaddingStyle = React.useMemo<ViewStyle>(() => {
         return addPaddingOutset([paddingStyle, containerStyle], nativePortalShadowOutset);
@@ -2056,9 +2075,14 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
     // A repeated native geometry measurement can revisit this component without changing
     // the public layout. Keep the content render tied to that layout, not the measurement.
     // The popover is a floating layer opened over its anchor's surface, never in that surface's flow.
-    const renderedChildren = React.useMemo(() =>
-        <GlassOpenedLayer>{children({ ...computed, maxWidth: contentMaxWidth, requestClose })}</GlassOpenedLayer>,
-        [children, computed, contentMaxWidth, requestClose]);
+    // On a phone the popover spans the screen, so a submenu opened inside it pushes in place (`AnchoredPhonePushHost`).
+    const renderedChildren = React.useMemo(() => {
+        const renderProps = { ...computed, maxWidth: contentMaxWidth, requestClose, ...(phone ? { pushesSubmenus: true } : {}) };
+        const body = children(renderProps);
+        return <GlassOpenedLayer>
+            {phone ? <AnchoredPhonePushHost renderProps={renderProps}>{body}</AnchoredPhonePushHost> : body}
+        </GlassOpenedLayer>;
+    }, [children, computed, contentMaxWidth, phone, requestClose]);
     const content = (
         <EscapeLayerProvider layer={escapeLayer}>
             <PopoverBackdrop

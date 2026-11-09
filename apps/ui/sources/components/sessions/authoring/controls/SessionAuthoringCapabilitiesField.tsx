@@ -70,7 +70,6 @@ export function SessionAuthoringCapabilitiesField(props: Readonly<{
                     content={popover.renderContent}
                     onRequestClose={() => setOpen(false)}
                     {...(popover.header === undefined ? {} : { header: popover.header })}
-                    {...(popover.phonePresentation === undefined ? {} : { phonePresentation: popover.phonePresentation })}
                     {...(popover.keyboardShouldPersistTaps === undefined ? {} : { keyboardShouldPersistTaps: popover.keyboardShouldPersistTaps })}
                     {...(popover.maxHeightCap === undefined ? {} : { maxHeightCap: popover.maxHeightCap })}
                     {...(popover.maxWidthCap === undefined ? {} : { maxWidthCap: popover.maxWidthCap })}

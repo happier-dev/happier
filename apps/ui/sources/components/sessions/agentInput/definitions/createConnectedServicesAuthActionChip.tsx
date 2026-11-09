@@ -62,8 +62,6 @@ export function createConnectedServicesAuthActionChip(params: Readonly<{
                 normalizeNodeForView(<Icon name="path" size={AGENT_INPUT_MENU_ICON_SIZE_PX} color={tint} />),
             renderContent: params.popoverContent,
             header: resolveRunsThroughPopoverHeader(params.agentId),
-            // A phone gets the shared sheet (lab RT1p) rather than a card floating over the composer.
-            phonePresentation: 'sheet',
             maxHeightCap: RUNS_THROUGH_POPOVER_MAX_HEIGHT_PX,
             maxWidthCap: RUNS_THROUGH_POPOVER_MAX_WIDTH_PX,
             scrollEnabled: false,

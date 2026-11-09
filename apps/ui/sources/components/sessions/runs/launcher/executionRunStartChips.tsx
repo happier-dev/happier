@@ -65,10 +65,8 @@ export function createExecutionRunStartContentChip(params: Readonly<{
             maxWidthCap: 460,
             maxHeightCap: 560,
             keyboardShouldPersistTaps: 'handled',
-            // A phone gets the shared sheet, named in its band, rather than a card over the form's own
-            // fields (a Run now form is itself a sheet there); the anchored popover leads with its content.
-            phonePresentation: 'sheet',
-            header: { title: params.title, placement: 'sheet' },
+            // The anchored popover leads with its content; the title names it.
+            header: { title: params.title, placement: 'label' },
             renderContent: params.renderContent,
         },
         render: (ctx: AgentInputExtraActionChipRenderContext) => (

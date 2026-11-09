@@ -224,8 +224,7 @@ function createSessionTalkChip(params: Readonly<{
             icon: (tint) => <Icon name="navigation-arrow" size={AGENT_INPUT_MENU_ICON_SIZE_PX} color={tint} />,
             maxWidthCap: 400,
             maxHeightCap: 560,
-            phonePresentation: 'sheet',
-            header: { title: t('session.participants.talk.title'), placement: 'sheet' },
+            header: { title: t('session.participants.talk.title'), placement: 'label' },
             renderContent: ({ requestClose, maxHeight }) => (
                 <SessionTalkPicker
                     maxHeight={maxHeight}

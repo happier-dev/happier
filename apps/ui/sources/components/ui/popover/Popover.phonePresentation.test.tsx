@@ -258,6 +258,67 @@ describe('Popover phone presentation', () => {
         expect(modalSheets(screen)).toHaveLength(0);
     });
 
+    it('anchors a phone panel to its trigger, spanning the screen less its gutters, never as a sheet (owner R2)', async () => {
+        let renderedBounds: PopoverRenderProps | undefined;
+        const screen = await renderScreen(
+            <Popover open phonePresentation="panel" accessibilityLabel="Model" maxWidthCap={300}
+                onRequestClose={() => {}}>
+                {(bounds) => {
+                    renderedBounds = bounds;
+                    return <FloatingOverlay maxHeight={bounds.maxHeight}><View testID="panel-content" /></FloatingOverlay>;
+                }}
+            </Popover>,
+        );
+
+        expect(screen.findAll((node) => node.props.role === 'dialog')).toHaveLength(0);
+        expect(screen.findByTestId('popover-sheet.close')).toBeNull();
+        expect(Boolean(screen.findByTestId('panel-content'))).toBe(true);
+        expect(renderedBounds?.presentation).not.toBe('sheet');
+        // The caller's desktop width does not hold on a phone: the panel takes the screen less its gutters.
+        expect(renderedBounds?.maxWidth).toBeGreaterThan(300);
+        expect(renderedBounds?.maxWidth).toBeLessThanOrEqual(390);
+    });
+
+    it('pushes a submenu opened inside a phone panel into it in place, with a Back that returns to it', async () => {
+        const parentClose = vi.fn();
+        function Menu() {
+            const [open, setOpen] = React.useState(true);
+            const [picker, setPicker] = React.useState(false);
+            return <Popover open={open} phonePresentation="panel" accessibilityLabel="Add"
+                onRequestClose={() => { parentClose(); setOpen(false); }}>
+                {() => <FloatingOverlay>
+                    <RoundButton testID="menu-row" title="Session type" onPress={() => setPicker(true)} />
+                    {picker ? <Popover open phonePresentation="panel" accessibilityLabel="Session type"
+                        onRequestClose={() => setPicker(false)}>
+                        {() => <FloatingOverlay>
+                            <RoundButton testID="picker-choice" title="Direct" onPress={() => { setPicker(false); setOpen(false); }} />
+                        </FloatingOverlay>}
+                    </Popover> : null}
+                </FloatingOverlay>}
+            </Popover>;
+        }
+        const screen = await renderScreen(<Menu />);
+        await screen.pressByTestIdAsync('menu-row');
+
+        // No sheet and no second popover: the picker replaces the menu's content, named beside its Back.
+        expect(screen.findAll((node) => node.props.role === 'dialog')).toHaveLength(0);
+        expect(screen.findByTestId('popover-push.view')?.findAllByProps({ testID: 'picker-choice' }).length).toBeGreaterThan(0);
+        expect(screen.findByTestId('popover-push.view')?.findAllByProps({ testID: 'popover-push.back' }).length).toBeGreaterThan(0);
+        expect(screen.getTextContent()).toContain('Session type');
+
+        await screen.pressByTestIdAsync('popover-push.back');
+        expect(screen.findByTestId('popover-push.view')).toBeNull();
+        expect(screen.findByTestId('picker-choice')).toBeNull();
+        expect(parentClose).not.toHaveBeenCalled();
+
+        await screen.pressByTestIdAsync('menu-row');
+        await screen.pressByTestIdAsync('picker-choice');
+        // A choice closes the whole popover (after its exit motion).
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+        expect(screen.findByTestId('menu-row')).toBeNull();
+        expect(screen.findByTestId('picker-choice')).toBeNull();
+    });
+
     it('keeps the anchored presentation on a wide viewport when phone sheets are requested', async () => {
         viewport.width = 1200;
         viewport.height = 900;

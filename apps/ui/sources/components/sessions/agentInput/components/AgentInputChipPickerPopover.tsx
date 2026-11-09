@@ -50,16 +50,11 @@ export function AgentInputChipPickerPopover(props: AgentInputChipPickerPopoverPr
             maxHeightCap={props.maxHeightCap ?? 420}
             maxWidthCap={props.maxWidthCap ?? 720}
             portalTopBottomLayout={portalTopBottomLayout}
-            // A phone gets the shared bottom sheet: the option list pushes to one option's detail
-            // inside it instead of a floating card over a clipped tab strip.
-            phonePresentation="sheet"
-            sheetHeader="none"
             accessibilityLabel={props.title || t('agentInput.chipPicker.agentsTitle')}
             onRequestClose={props.onRequestClose}
         >
-            {({ maxHeight, presentation }) => (
+            {({ maxHeight }) => (
                 <AgentInputChipPickerSurface
-                    presentation={presentation}
                     testID="agent-input-chip-picker-popover"
                     // Agent-input popovers shouldn't render their own header chrome; the model section
                     // already provides the relevant header (e.g. MODEL) and refresh affordance.

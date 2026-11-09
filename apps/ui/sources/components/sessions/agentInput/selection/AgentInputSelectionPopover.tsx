@@ -20,13 +20,9 @@ export type AgentInputSelectionPopoverProps = Readonly<{
     /** The room the content needs to show whole, when known up front (see `useAgentInputPopoverLayout`). */
     contentRoom?: number;
     portalTopBottomLayout?: 'anchored' | 'boundary';
-    /** `sheet`: a phone shows the content as the shared bottom sheet (see `Popover.phonePresentation`). */
-    phonePresentation?: 'sheet';
-    /** The sheet's header: the shared title band (default) or `none` when the content draws its own. */
+    /** A pushed view's name: the title beside its Back (default) or `none` when the content draws its own. */
     sheetHeader?: 'band' | 'none';
     sheetSubtitle?: string;
-    /** The sheet band's trailing action (a form's Done), see `Popover.sheetHeaderAction`. */
-    sheetHeaderAction?: React.ReactNode;
     accessibilityLabel?: string;
     children: (args: Readonly<{
         maxHeight: number;
@@ -91,11 +87,11 @@ function OpenAgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) 
             placementMinSpace={popoverLayout.placementMinSpace}
             flip={popoverLayout.flip}
             horizontalBoundaryRef={popoverLayout.horizontalBoundaryRef}
-            // A + menu row's picker is a sheet on a phone, so it pushes inside the menu's sheet.
-            phonePresentation={submenu ? 'sheet' : props.phonePresentation}
+            // Every composer picker is a phone panel: it spans the screen above its chip, and a + menu row's
+            // picker pushes inside the menu, where there is no room beside it.
+            phonePresentation="panel"
             sheetHeader={props.sheetHeader}
             sheetSubtitle={props.sheetSubtitle}
-            sheetHeaderAction={props.sheetHeaderAction}
             accessibilityLabel={props.accessibilityLabel ?? submenu?.title}
             edgePadding={popoverLayout.edgePadding}
             closeOnAnchorPress={false}

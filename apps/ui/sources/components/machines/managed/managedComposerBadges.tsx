@@ -124,8 +124,7 @@ export function buildManagedProgressStatusBadge(
         anchorRef={anchorRef}
         onRequestClose={onRequestClose}
         maxWidthCap={380}
-        // A phone opens the same stages as a bottom sheet, led by the content's own title (lab af-create Op).
-        phonePresentation="sheet"
+        // A phone opens the same stages anchored above the badge, spanning the screen (owner R2).
         testID="managed-machine-progress-popover"
         content={() => <ManagedProgressPopoverContent model={model} />}
       />

@@ -19,7 +19,7 @@ const MOBILE_WEB_AGENT_INPUT_POPOVER_VIEWPORT_MARGIN = 12;
 export type AgentInputContentPopoverRenderArgs = Readonly<{
     requestClose: () => void;
     maxHeight: number;
-    /** `sheet`: shown as a phone sheet (no hover). */
+    /** `sheet`: pushed inside a phone sheet (no hover). */
     presentation?: 'popover' | 'sheet';
     /**
      * The content is laid out in a page section (the New Session wizard's expanded sections) instead
@@ -36,15 +36,13 @@ export type AgentInputPopoverContent =
 export type AgentInputContentPopoverHeader = Readonly<{
     title: string;
     description?: string;
-    /** `sheet`: only a phone sheet's band names it; the anchored popover leads with its own first control. */
-    placement?: 'sheet';
+    /** `label`: the title only names the popover (its accessible name, a pushed view's Back); the content leads with its own first control. */
+    placement?: 'label';
 }>;
 
 export type AgentInputContentPopoverConfig = Readonly<{
     renderContent: AgentInputPopoverContent;
     header?: AgentInputContentPopoverHeader;
-    /** `sheet`: a phone presents it as the shared bottom sheet, whose band carries `header`. */
-    phonePresentation?: 'sheet';
     /** Invoked before the shared overlay closes so content-owned async work can be invalidated. */
     onRequestClose?: () => void;
     boundaryRef?: React.RefObject<any> | null;
@@ -69,7 +67,6 @@ export type AgentInputContentPopoverProps = Readonly<{
     boundaryRef?: React.RefObject<any> | null;
     content: AgentInputPopoverContent;
     header?: AgentInputContentPopoverHeader;
-    phonePresentation?: 'sheet';
     onRequestClose: () => void;
     maxHeightCap?: number;
     maxWidthCap?: number;
@@ -121,17 +118,16 @@ export function AgentInputContentPopover(props: AgentInputContentPopoverProps) {
             maxHeightCap={props.maxHeightCap ?? 420}
             maxWidthCap={maxWidthCap}
             portalTopBottomLayout={usesMobileWebBoundaryLayout || spansFloatingFormColumn ? 'boundary' : undefined}
-            phonePresentation={props.phonePresentation}
-            // A titled popover names itself in the sheet's band; an untitled one (the machine list, led by
-            // its own search) keeps only the grabber instead of an empty band with a lone close button.
+            // A titled popover names itself beside a pushed view's Back; an untitled one (the machine list, led by
+            // its own search) shows the Back alone.
             sheetHeader={props.header ? 'band' : 'none'}
             accessibilityLabel={props.header?.title}
             sheetSubtitle={props.header?.description}
             onRequestClose={props.onRequestClose}
         >
             {({ maxHeight, presentation }) => {
-                // On a phone sheet the shared band already shows the title and purpose.
-                const header = presentation === 'sheet' || props.header?.placement === 'sheet' ? undefined : props.header;
+                // A phone sheet's band already shows the title and purpose.
+                const header = presentation === 'sheet' || props.header?.placement === 'label' ? undefined : props.header;
                 const contentMaxHeight = header ? Math.max(0, maxHeight - headerHeight) : maxHeight;
                 return (
                 <AgentInputPopoverSurface

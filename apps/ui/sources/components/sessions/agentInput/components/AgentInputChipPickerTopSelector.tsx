@@ -4,6 +4,7 @@ import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { HorizontalScrollableRow } from '@/components/ui/scroll/HorizontalScrollableRow';
+import { useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
 import { HAPPIER_PAGE_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -39,6 +40,8 @@ type WebHoverablePressableState = Readonly<{
 export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSelectorProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    // The strip sits on the popover's material, so its scroll fades take the material's own colour.
+    const fadeColor = useGlassSurfaceColor(theme.colors.edge.floatingFill, 'floating', false);
     const transientStyles = React.useMemo(
         () => createAgentInputChipPickerOptionTransientStyles(theme),
         [theme],
@@ -56,7 +59,7 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
                 contentTestID="agent-input-chip-picker.top-selector-content"
                 containerStyle={styles.scrollContainer}
                 contentStyle={styles.scrollContent}
-                fadeColor={theme.colors.background.canvas}
+                fadeColor={fadeColor}
                 indicatorColor={theme.colors.text.tertiary}
                 fadeLeftStyle={styles.fadeLeft}
                 fadeRightStyle={styles.fadeRight}
@@ -120,12 +123,10 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         width: '100%',
-        backgroundColor: theme.colors.background.canvas,
     },
     scrollContainer: {
         width: '100%',
         minHeight: PICKER_OPTION_SIZE + 20,
-        backgroundColor: theme.colors.background.canvas,
     },
     scrollContent: {
         flexDirection: 'row',

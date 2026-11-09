@@ -103,12 +103,6 @@ export type AgentInputChipPickerPanelProps = Readonly<{
     detailPaneHeaderAccessory?: React.ReactNode;
     maxHeight?: number | null;
     detailContentOwnsScroll?: boolean;
-    /**
-     * `sheet`: a phone bottom sheet. The rail becomes a pushed list — the sheet opens on the
-     * focused option's detail with a way back to every option, so the detail keeps the whole
-     * sheet instead of sharing it with a clipped tab strip.
-     */
-    presentation?: 'popover' | 'sheet';
 }>;
 
 export type AgentInputChipPickerOptionSection = Readonly<{

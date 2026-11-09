@@ -235,8 +235,12 @@ export type DropdownMenuProps = Readonly<{
      * Set to 'body' to allow menus to escape overflow-clipped modals.
      */
     popoverPortalWebTarget?: 'body' | 'modal' | 'boundary';
-    /** On a phone, present the menu as the shared bottom sheet (named by `popoverAccessibilityLabel`). */
-    popoverPhonePresentation?: 'sheet';
+    /**
+     * See `Popover.phonePresentation`: `sheet` makes a form-like menu (its own footer) the shared bottom sheet
+     * on a phone, named by `popoverAccessibilityLabel`; `panel` spans a phone. A menu whose rows open submenus
+     * is a panel, and its submenus push inside it.
+     */
+    popoverPhonePresentation?: 'sheet' | 'panel';
     popoverAccessibilityLabel?: string;
     /** The phone sheet's line under its title. */
     popoverSheetSubtitle?: string;
@@ -376,13 +380,13 @@ export function DropdownMenu(props: DropdownMenuProps) {
         anchorRef: React.RefObject<unknown>;
     } | null>(null);
     const menuItems = props.itemSource?.items ?? props.items;
-    // A menu whose rows open submenus is a sheet on a phone (Popover decides from the device), so its submenus
-    // push inside it (`phoneSheetPush`) instead of being squeezed beside it.
+    // A menu whose rows open submenus stays anchored on a phone, where its submenus push inside it
+    // (`phoneSheetPush`) instead of being squeezed beside it.
     const opensSubmenus = React.useMemo(
         () => menuItems.some((item) => item.submenu && (item.submenu.items.length > 0 || item.submenu.renderContent)),
         [menuItems],
     );
-    const phonePresentation = props.popoverPhonePresentation ?? (opensSubmenus ? 'sheet' : undefined);
+    const phonePresentation = props.popoverPhonePresentation ?? (opensSubmenus ? 'panel' : undefined);
     const findMenuItem = React.useCallback((id: string) => {
         if (!props.itemSource) return menuItems.find((item) => item.id === id);
         const index = props.itemSource.indexById.get(id);
@@ -873,18 +877,20 @@ export function DropdownMenu(props: DropdownMenuProps) {
                     sheetHeader={props.popoverSheetHeader}
                     onRequestClose={onRequestClose}
                 >
-                    {({ maxHeight, maxWidth, placement, presentation, requestClose }) => {
+                    {({ maxHeight, maxWidth, placement, presentation, pushesSubmenus, requestClose }) => {
                         requestPopoverCloseRef.current = requestClose;
+                        // A phone's menu pushes its submenus in place: no hover intent opens or closes them.
+                        const hoverIntent = presentation !== 'sheet' && pushesSubmenus !== true;
                         return <>
                         {/* Pointer presence on this surface drives submenu hover intent (web pointers only). */}
                         <View
                             collapsable={false}
                             testID={props.onSurfacePointerChange ? 'dropdown-submenu-surface' : undefined}
-                            // A sheet has no hover: its submenus push inside it and leave only by Back.
-                            onPointerEnter={presentation !== 'sheet' && (Platform.OS === 'web' || props.onSurfacePointerChange) ? (event: unknown) => {
+                            // A pushed submenu leaves only by Back, never by the pointer leaving its menu.
+                            onPointerEnter={hoverIntent && (Platform.OS === 'web' || props.onSurfacePointerChange) ? (event: unknown) => {
                                 props.onSurfacePointerChange?.(true, event);
                             } : undefined}
-                            onPointerLeave={presentation !== 'sheet' && (Platform.OS === 'web' || props.onSurfacePointerChange) ? (event: unknown) => {
+                            onPointerLeave={hoverIntent && (Platform.OS === 'web' || props.onSurfacePointerChange) ? (event: unknown) => {
                                 props.onSurfacePointerChange?.(false, event);
                                 // Leaving this menu for anywhere but its open submenu closes that submenu after the grace.
                                 submenuHover.scheduleClose(event);
@@ -940,7 +946,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                         handlePressMenuItem(item);
                                     }}
                                     onOpenSubmenu={handleOpenSubmenu}
-                                    onHoverItem={presentation === 'sheet' ? IGNORE_SHEET_HOVER : handleHoverItem}
+                                    onHoverItem={hoverIntent ? handleHoverItem : IGNORE_SHEET_HOVER}
                                     rowVariant={rowVariant}
                                     emptyLabel={emptyLabel}
                                     showCategoryTitles={props.showCategoryTitles ?? false}
@@ -982,8 +988,8 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                 showCategoryTitles={activeSubmenuItem.submenu.showCategoryTitles ?? props.showCategoryTitles}
                                 separateCategories={activeSubmenuItem.submenu.separateCategories ?? props.separateCategories}
                                 allowEmptySelection={props.allowEmptySelection}
-                                // A menu that is a sheet on a phone pushes its submenus inside that sheet (`phoneSheetPush`).
-                                popoverPhonePresentation={phonePresentation}
+                                // On a phone a submenu pushes inside its menu (`phoneSheetPush`).
+                                popoverPhonePresentation="panel"
                                 popoverAccessibilityLabel={activeSubmenuItem.submenu.title ?? activeSubmenuItem.title}
                                 {...(activeSubmenuItem.submenu.sheetHeader ? { popoverSheetHeader: activeSubmenuItem.submenu.sheetHeader } : {})}
                                 {...(activeSubmenuItem.submenu.renderContent ? {

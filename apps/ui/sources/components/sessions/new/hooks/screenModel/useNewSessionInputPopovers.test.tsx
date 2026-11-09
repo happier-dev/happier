@@ -214,16 +214,6 @@ describe('useNewSessionInputPopovers', () => {
         await hook.unmount();
     });
 
-    it('presents the long machine and folder pickers as the shared bottom sheet on a phone (lab m-pick Ap)', async () => {
-        const { useNewSessionInputPopovers } = await import('./useNewSessionInputPopovers');
-        const hook = await renderHook((props: HookParams) => useNewSessionInputPopovers(props), {
-            initialProps: createParams(),
-        });
-        expect(hook.getCurrent().machinePopover.phonePresentation).toBe('sheet');
-        expect(hook.getCurrent().pathPopover.phonePresentation).toBe('sheet');
-        await hook.unmount();
-    });
-
     it('projects machine pools into the shared Simple/Wizard popover', async () => {
         const { useNewSessionInputPopovers } = await import('./useNewSessionInputPopovers');
         const params = createParams();

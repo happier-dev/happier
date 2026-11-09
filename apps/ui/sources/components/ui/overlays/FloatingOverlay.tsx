@@ -26,6 +26,10 @@ import {
 import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
 import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
 import { surfaceUsesRim } from '@/components/ui/surfaces/surfaceEdgeTreatment';
+import { PhonePushedViewContext, type PhonePushedView } from '@/components/ui/popover/phonePushedView';
+import { ModalBackButton } from '@/modal/components/card/ModalBackButton';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 
 import { FLOATING_OVERLAY_METRICS } from './floatingOverlayMetrics';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
@@ -91,6 +95,33 @@ const stylesheet = StyleSheet.create((theme) => {
         },
     };
 });
+
+const pushedBackStyles = StyleSheet.create((theme) => ({
+    row: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s4,
+        paddingHorizontal: theme.space.s8,
+        paddingTop: theme.space.s8,
+        paddingBottom: theme.space.s4,
+    },
+    title: {
+        ...Typography.variant('label', 'semiBold'),
+        color: theme.colors.text.primary,
+        flexShrink: 1,
+    },
+}));
+
+/** A pushed view's way back to the popover it replaced, at the top of its floating surface. */
+function PushedViewBackRow(props: Readonly<{ view: PhonePushedView }>) {
+    const styles = pushedBackStyles;
+    return (
+        <View style={styles.row}>
+            <ModalBackButton testID="popover-push.back" onPress={props.view.back} />
+            {props.view.title ? <Text accessibilityRole="header" numberOfLines={1} style={styles.title}>{props.view.title}</Text> : null}
+        </View>
+    );
+}
 
 export type FloatingOverlayEdgeFades =
     | boolean
@@ -162,6 +193,7 @@ interface FloatingOverlayProps {
 
 export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     const insideSheet = React.useContext(FloatingOverlaySheetContext);
+    const pushedView = React.useContext(PhonePushedViewContext);
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const backdropTone = useGlassSurfaceBackdropTone('floating', theme.colors.edge.floatingFill);
@@ -291,9 +323,11 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     );
 
     // The floating surface is the sheet its content sits on: a freshness line inside is one plain line, never a strip.
+    // A view pushed inside a phone popover leads with its way back; surfaces nested in it don't repeat it.
     const surfaceContent = <SurfaceFreshnessOnSheetProvider>
+        {pushedView ? <PushedViewBackRow view={pushedView} /> : null}
         {props.header}
-        {content}
+        {pushedView ? <PhonePushedViewContext.Provider value={null}>{content}</PhonePushedViewContext.Provider> : content}
         {props.footer}
         {scrollEnabled && fadeCfg ? (
             <ScrollEdgeFades color={fadeColor} size={fadeCfg.size} edges={fades.visibility} />

@@ -15,6 +15,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { SelectionListFilter } from '@/components/ui/selectionList';
 import { KeyboardShortcutLabelsContext } from '@/keyboard/shortcutLabels';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 
 import { type CollectionSpacesStripItem } from './CollectionSpacesStrip';
@@ -35,8 +36,11 @@ export type CollectionSpaceTitleFilter = Readonly<{
   count: number;
   maxWidth: number;
   maxHeight: number;
-  /** The filter editor; `done` closes the whole menu (a phone sheet's Show N results). */
-  render: (layout: Readonly<{ maxHeight: number; presentation: 'anchored' | 'sheet'; done: () => void }>) => React.ReactNode;
+  /**
+   * The filter editor; `done` closes the whole menu. On a phone the menu covers the list, so the editor ends
+   * with Show N results (`endsWithDone`).
+   */
+  render: (layout: Readonly<{ maxHeight: number; endsWithDone: boolean; done: () => void }>) => React.ReactNode;
 }>;
 
 type ShortcutId = keyof React.ContextType<typeof KeyboardShortcutLabelsContext>;
@@ -98,6 +102,7 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
   // A saved view that now differs from its space (P6 §7.1); Save changes / Save as follow in the menu.
   const filtered = props.spacesEnabled === true && props.modified;
   const closeMenu = selection.onOpenChange;
+  const phone = useDeviceType() === 'phone';
   const filterItem = React.useMemo((): DropdownMenuItem => {
     const filter = props.filter;
     const base = {
@@ -115,18 +120,18 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
       submenu: {
         items: [],
         title: name,
-        // The editor draws its own header (Filter · Clear); a phone sheet's band keeps only its Back.
+        // The editor draws its own header (Filter · Clear); a phone keeps only its Back above it.
         sheetHeader: 'none',
         maxWidthCap: filter.maxWidth,
         maxHeightCap: filter.maxHeight,
-        renderContent: ({ maxHeight, presentation }) => filter.render({
+        renderContent: ({ maxHeight }) => filter.render({
           maxHeight,
-          presentation: presentation === 'sheet' ? 'sheet' : 'anchored',
+          endsWithDone: phone,
           done: () => closeMenu(false),
         }),
       },
     };
-  }, [closeMenu, iconColor, props.filter, props.filterShortcutId, props.testIDPrefix, shortcutLabels]);
+  }, [closeMenu, iconColor, phone, props.filter, props.filterShortcutId, props.testIDPrefix, shortcutLabels]);
   const items = React.useMemo<readonly DropdownMenuItem[]>(
     () => [
       ...selection.items.map((item, index): DropdownMenuItem => {
@@ -241,7 +246,6 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
       popoverPortalWebTarget="body"
       placement="bottom"
       popoverAnchorAlign="start"
-      popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={t('sessionsList.spacesTitle')}
       trigger={({ toggle }) => (
         <CollectionTitleButton

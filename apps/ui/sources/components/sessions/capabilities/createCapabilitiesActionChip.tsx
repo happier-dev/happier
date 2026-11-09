@@ -68,7 +68,6 @@ export function createCapabilitiesActionChip(
         ),
       renderContent: params.popoverContent,
       header: { title },
-      phonePresentation: 'sheet',
       // The content scrolls its own body under a fixed add field and footer.
       scrollEnabled: false,
       keyboardShouldPersistTaps: 'handled',

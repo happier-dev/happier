@@ -280,7 +280,8 @@ describe('MainView sidebar actions', () => {
         expect(tree.findAllByType('Header')).toHaveLength(0);
         expect(tree.root.findAllByProps({ testID: 'main-header-home-logo' })).toHaveLength(0);
         expect(tree.root.findAllByProps({ testID: 'main-tab-nav-row' }).length).toBeGreaterThan(0);
-        expect(tree.root.findAllByProps({ testID: 'main-header-settings-avatar' }).length).toBeGreaterThan(0);
+        // The Home line and the avatar each open the one account/Home popover in place (owner R3/R4).
+        expect(tree.root.findAllByType('ConnectionStatusControl' as never).map((node) => node.props.variant)).toEqual(['header', 'header']);
     });
 
     it('pins the retained phone sessions surface to the root pathname across route changes', async () => {

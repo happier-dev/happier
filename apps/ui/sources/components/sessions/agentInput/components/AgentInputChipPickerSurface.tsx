@@ -26,8 +26,6 @@ export type AgentInputChipPickerSurfaceProps = Readonly<{
      */
     detailContentOwnsScroll?: boolean;
     maxHeight?: number | null;
-    /** See `AgentInputChipPickerPanelProps.presentation`. */
-    presentation?: 'popover' | 'sheet';
     testID?: string;
 }>;
 
@@ -47,7 +45,6 @@ export function AgentInputChipPickerSurface(props: AgentInputChipPickerSurfacePr
                 detailPaneHeaderAccessory={props.detailPaneHeaderAccessory}
                 maxHeight={props.maxHeight}
                 detailContentOwnsScroll={props.detailContentOwnsScroll}
-                presentation={props.presentation}
             />
         </PopoverScope>
     );

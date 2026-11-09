@@ -297,7 +297,6 @@ export type AgentInputExtraActionChip = Readonly<{
         isEnabled?: () => boolean;
         renderContent: AgentInputContentPopoverConfig['renderContent'];
         header?: AgentInputContentPopoverConfig['header'];
-        phonePresentation?: AgentInputContentPopoverConfig['phonePresentation'];
         boundaryRef?: React.RefObject<any> | null;
         maxHeightCap?: number;
         maxWidthCap?: number;

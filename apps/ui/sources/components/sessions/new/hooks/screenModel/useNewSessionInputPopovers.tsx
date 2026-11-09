@@ -66,12 +66,9 @@ function NewSessionPopoverPathSelectionContent(params: React.ComponentProps<type
 
 export const LARGE_PICKER_LAYOUT: Pick<
     AgentInputContentPopoverConfig,
-    'maxHeightCap' | 'maxWidthCap' | 'keyboardShouldPersistTaps' | 'edgeFades' | 'edgeIndicators' | 'initialVisibility' | 'phonePresentation'
+    'maxHeightCap' | 'maxWidthCap' | 'keyboardShouldPersistTaps' | 'edgeFades' | 'edgeIndicators' | 'initialVisibility'
 > = {
     ...SELECTION_LIST_LARGE_POPOVER_SIZE,
-    // A phone gets the shared bottom sheet for the composer's long pickers (lab m-pick Ap), not a
-    // floating card squeezed above the chip row.
-    phonePresentation: 'sheet',
     keyboardShouldPersistTaps: 'handled',
     edgeFades: { top: true, bottom: true, size: 28 },
     edgeIndicators: true,

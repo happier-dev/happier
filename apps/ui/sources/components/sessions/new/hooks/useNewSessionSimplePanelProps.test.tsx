@@ -225,13 +225,12 @@ describe('useNewSessionSimplePanelProps', () => {
         await hook.unmount();
     });
 
-    it('keeps every field of a shared popover config: phone sheet, header and the latest close handler', async () => {
+    it('keeps every field of a shared popover config: size, header and the latest close handler', async () => {
         const firstClose = vi.fn();
         const secondClose = vi.fn();
         const machinePopover = (onRequestClose: () => void) => ({
             renderContent: () => null,
             maxHeightCap: 560,
-            phonePresentation: 'sheet' as const,
             header: { title: 'Machine', description: 'Where it runs' },
             onRequestClose,
         });
@@ -241,7 +240,7 @@ describe('useNewSessionSimplePanelProps', () => {
         await hook.rerender(createPanelProps({ machinePopover: machinePopover(secondClose) }));
 
         const stable = hook.getCurrent().machinePopover;
-        expect(stable?.phonePresentation).toBe('sheet');
+        expect(stable?.maxHeightCap).toBe(560);
         expect(stable?.header).toEqual({ title: 'Machine', description: 'Where it runs' });
         stable?.onRequestClose?.();
         expect(firstClose).not.toHaveBeenCalled();

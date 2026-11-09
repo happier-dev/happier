@@ -266,8 +266,8 @@ describe('AgentInputSelectionPopover', () => {
         expect(capturedPopoverProps.current?.portal).toMatchObject({ anchorAlignVertical: 'start' });
         // Focus moves into the submenu as it opens, so Left and Escape work from inside it.
         expect(capturedPopoverProps.current?.autoFocusOnOpen).toBe(true);
-        // On a phone it is a sheet, so the shared Popover pushes it inside the menu's sheet, named by its row.
-        expect(capturedPopoverProps.current?.phonePresentation).toBe('sheet');
+        // A phone panel: the shared Popover pushes it inside the menu in place, named by its row.
+        expect(capturedPopoverProps.current?.phonePresentation).toBe('panel');
         expect(capturedPopoverProps.current?.accessibilityLabel).toBe('Default session type');
 
         const surface = screen.findByTestId('agent-input-submenu-surface');

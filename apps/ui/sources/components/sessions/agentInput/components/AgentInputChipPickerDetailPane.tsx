@@ -182,7 +182,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
     gap: theme.space.s10,
-    backgroundColor: theme.colors.surface.base,
   },
   detailHeader: {
     gap: 3,

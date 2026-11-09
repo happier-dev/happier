@@ -52,8 +52,6 @@ describe('createAgentInputActionShortcutChip', () => {
         expect(render).toBeTruthy();
         expect(chip.controlId).toBe('workflow');
         expect(chip.placement).toMatchObject({ id: 'workflow', defaultPlacement: 'overflow', pending: false });
-        // A phone shows the picker as the shared bottom sheet, not a card over the header (lab T4-Rp).
-        expect(chip.collapsedContentPopover?.phonePresentation).toBe('sheet');
         expect(detailRead).not.toHaveBeenCalled();
         expect(demand).not.toHaveBeenCalled();
         render.props.onPress();

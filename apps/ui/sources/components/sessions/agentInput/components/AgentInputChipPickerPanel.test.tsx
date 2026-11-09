@@ -86,40 +86,6 @@ describe('AgentInputChipPickerPanel', () => {
         expect(detailPaneRenderCount).toBe(rendersAfterMount + 1);
     });
 
-    it('pushes from the Agents list to one Agent\'s models inside a phone sheet', async () => {
-        const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
-        const onRequestClose = vi.fn();
-        const screen = await renderScreen(<AgentInputChipPickerPanel
-            title="Agents"
-            presentation="sheet"
-            maxHeight={600}
-            options={[
-                { id: 'one', label: 'One', detailDescription: 'First agent' } as any,
-                { id: 'two', label: 'Two', detailDescription: 'Second agent' } as any,
-            ]}
-            selectedOptionId="two"
-            onSelect={() => {}}
-            onRequestClose={onRequestClose}
-        />);
-
-        // Opens on the selected Agent's models, with the way back to the Agents list.
-        expect(screen.findByTestId('agent-input-chip-picker.detail-pane')?.props.option.id).toBe('two');
-        expect(screen.findByTestId('agent-input-chip-picker.option-rail')).toBeNull();
-        expect(screen.findByTestId('agent-input-chip-picker.sheet-title')?.props.children).toBe('Two');
-
-        await screen.pressByTestIdAsync('agent-input-chip-picker.sheet-back');
-        expect(screen.findByTestId('agent-input-chip-picker.option-rail')).toBeTruthy();
-        expect(screen.findByTestId('agent-input-chip-picker.detail-pane')).toBeNull();
-        expect(screen.findByTestId('agent-input-chip-picker.sheet-back')).toBeNull();
-
-        await screen.pressByTestIdAsync('agent-input-chip-picker.option:one');
-        expect(screen.findByTestId('agent-input-chip-picker.detail-pane')?.props.option.id).toBe('one');
-        expect(screen.findByTestId('agent-input-chip-picker.option-rail')).toBeNull();
-
-        await screen.pressByTestIdAsync('agent-input-chip-picker.close');
-        expect(onRequestClose).toHaveBeenCalledOnce();
-    });
-
     it('does not render inner scroll views in simple mode', async () => {
         const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
 
