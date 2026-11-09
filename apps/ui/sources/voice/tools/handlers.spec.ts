@@ -1552,6 +1552,12 @@ describe('voice tool handlers', () => {
     // Discovery's Voice binding selects the builtin dispatcher; invokeAction
     // addresses contributed plugin Actions and cannot create this builtin.
     const spawnTool = getActionSpec('session.spawn_new').bindings!.voiceClientToolName!;
+    if (configuredDefault) {
+      // RUN103: no Agent was named, and the native Agent refused creation
+      // without calling anything. Publish the executable default-capable entry
+      // in its startup catalog, then exercise that same entry below.
+      expect(prompt, 'Voice must list creation before a default-Agent request').toContain(`- ${spawnTool}:`);
+    }
     const turn = extractVoiceActionsFromAssistantText(
       `<voice_actions>${JSON.stringify({ actions: [{ t: spawnTool, args: spawnInput }] })}</voice_actions>`,
     );

@@ -717,6 +717,7 @@ function createSessionSpawnActionSpecs() {
     },
     title: 'Create session',
     description: 'Create a new session on the requested machine using the selected Agent. Pass directory {kind:"path",path} for a folder or {kind:"managed"} for no folder: Happier creates a private folder for this session.',
+    prompting: { voiceHotPath: true },
     sideEffectClass: 'write',
     safety: 'safe',
     placements: ['command_palette', 'session_info', 'voice_panel'],

@@ -2653,8 +2653,10 @@ progress also checks the exact observed policy alongside publisher, attachment
 and represented-frontier currentness.
 
 In development source, Voice's `spawnSession` / `session.spawn_new` input may
-omit `agentTarget` to use the configured New Session default. The Voice host
-reads `agents.backends.list` for the requested Machine and Home and copies the
+omit `agentTarget` to use the configured New Session default. The Action's
+`prompting.voiceHotPath` metadata publishes creation and its Voice input hints
+in the local Voice agent's startup action list, including this default option.
+The Voice host reads `agents.backends.list` for the requested Machine and Home and copies the
 complete `agentTarget` from its `defaultTargetKey` row before ordinary Action
 review and admission. The inventory's existing preference owner selects the
 default; the Voice agent does not reconstruct it. Explicit selections remain

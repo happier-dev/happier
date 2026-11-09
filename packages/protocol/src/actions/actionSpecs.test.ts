@@ -15,7 +15,7 @@ import {
   ExecutionRunTurnStreamReadResponseSchema,
   ExecutionRunTurnStreamStartResponseSchema,
 } from '../execution/runs/index.js';
-import { actionSpecToActionDefinitionV1, listActionSpecsForCatalogSurface, serializeActionSpec } from './actionCatalog.js';
+import { actionSpecToActionDefinitionV1, listActionSpecsForCatalogSurface, resolveActionCatalogSurfaceProjection, serializeActionSpec } from './actionCatalog.js';
 import { listVoiceToolActionSpecs } from './actionSpecs.js';
 import { resolveActionExecutionPlacementForInput } from './actionSpecs.js';
 import { ActionInputHintsSchema, ActionSpecSchema, PUBLIC_ACTION_IDS, PUBLIC_ACTION_INPUT_SCHEMAS, PUBLIC_ACTION_OUTPUT_SCHEMAS, PublicActionIdSchema, SIGNED_ROOT_ACTION_IDS, SignedRootActionIdSchema, SESSION_TRANSCRIPT_GET_MAX_LIMIT, ActionSurfaceSchema, PLUGIN_ACTION_INPUT_SCHEMAS, PLUGIN_ACTION_OUTPUT_SCHEMAS, PLUGIN_INVOCABLE_ACTION_IDS, PluginInvocableActionIdSchema, SessionTranscriptGetExternalShareableInputV1Schema, getActionContextualDefaults, getActionSpec, isActionSpecSurfacedOn, isHumanSecretApiExcludedActionId, isInternalActionId, isPluginProvenanceOnlyActionId, isPluginSurfaceExcludedActionId, isVoicePromptHotPathSpec, isVoiceSdkSafeActionSpec, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs, projectSessionSpawnNewApiRequest, resolveRuntimeActionHostEffectClass } from './actionSpecs.js';
@@ -5278,10 +5278,9 @@ describe('Action Spec Registry', () => {
     expect(isVoicePromptHotPathSpec({ prompting: { voiceHotPath: false } })).toBe(false);
   });
 
-  it('keeps large launch and option schemas discoverable without publishing them on the Voice hot path', () => {
+  it('keeps option schemas discoverable without publishing them on the Voice hot path', () => {
     const discoverableIds = new Set(listVoiceToolActionSpecs().map((spec) => spec.id));
     for (const id of [
-      'session.spawn_new',
       'action.options.resolve',
       'agents.models.list',
       'agents.config_options.list',
@@ -5306,6 +5305,6 @@ describe('Action Spec Registry', () => {
     }
 
     const parsedJson = JSON.parse(exampleText);
-    expect(spec.inputSchema.safeParse(parsedJson).success).toBe(true);
+    expect(resolveActionCatalogSurfaceProjection(spec, 'voice').inputSchema.safeParse(parsedJson).success).toBe(true);
   });
 });

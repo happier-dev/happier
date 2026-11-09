@@ -275,7 +275,7 @@ describe('voiceAgentPrompt', () => {
     expect(prompt).toContain('searchActionSpecs');
     expect(prompt).toContain('getActionSpec');
     expect(prompt).toContain('resolveActionOptions');
-    expect(prompt).not.toContain('- spawnSession:');
+    expect([...prompt.matchAll(/^- spawnSession:/gm)]).toHaveLength(1);
     expect(prompt).toContain('listRecentPaths');
     expect(prompt).toContain('listAgentBackends');
     expect(prompt).not.toContain('- listAgentModels:');
