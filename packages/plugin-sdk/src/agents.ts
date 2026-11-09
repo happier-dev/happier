@@ -42,10 +42,10 @@ export type {
 } from '@happier-dev/protocol';
 export type { PluginAgentDefinition } from './definePlugin.js';
 
-export { CodexPassiveRealtimeSetupResultV1Schema as AgentPassiveRealtimeSetupResultV1Schema, CodexPassiveRealtimeSetupStatusV1Schema as AgentPassiveRealtimeSetupStatusV1Schema } from '@happier-dev/protocol/capabilities/codexPassiveRealtimeSetup';
+export { AgentPassiveRealtimeSetupResultV1Schema, AgentPassiveRealtimeSetupStatusV1Schema } from '@happier-dev/protocol/capabilities/agentPassiveRealtimeSetup';
 export type {
-    CodexPassiveRealtimeSetupResultV1 as AgentPassiveRealtimeSetupResultV1,
-    CodexPassiveRealtimeSetupStatusV1 as AgentPassiveRealtimeSetupStatusV1,
+    AgentPassiveRealtimeSetupResultV1,
+    AgentPassiveRealtimeSetupStatusV1,
 } from '@happier-dev/protocol/capabilities';
 
 /**

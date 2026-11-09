@@ -9,6 +9,19 @@ const resolveColdProbeEnvironmentFromUntrustedInput = resolvePreflightSessionCon
   params: Readonly<Record<string, unknown>>,
 ) => ReturnType<typeof resolvePreflightSessionControlsProbeEnvironment>;
 
+const codexProbeRegistrySnapshot = {
+  agentDefinitionsById: new Map([['codex', {
+    runtimeSpec: {
+      id: 'codex', title: 'Codex', binaryName: 'codex', sourcePreferenceDefault: 'system-first',
+      managedInstall: null, manualInstallKind: 'none', manualInstallRecipes: null, acceptsJavaScriptFileOverride: false,
+    },
+    catalogEntry: {
+      id: 'codex', cliSubcommand: 'codex', vendorResumeSupport: 'unsupported',
+      connectedAccountNativeHome: { environmentKey: 'CODEX_HOME', defaultRelativePath: '.codex' },
+    },
+  }]]),
+} satisfies NonNullable<Parameters<typeof resolvePreflightSessionControlsProbeEnvironment>[0]['registrySnapshot']>;
+
 async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T> | T): Promise<T> {
   const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
   if (!descriptor) return await run();
@@ -22,6 +35,46 @@ async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T> 
 }
 
 describe('resolvePreflightSessionControlsProbeEnvironment', () => {
+  it('uses only the selected contributed Agent home and executable declarations', async () => {
+    const agentId = 'acme/custom-agent';
+    const resolved = await resolvePreflightSessionControlsProbeEnvironment({
+      agentId,
+      registrySnapshot: {
+        agentDefinitionsById: new Map([[agentId, {
+          runtimeSpec: {
+            id: agentId, title: 'Custom Agent', binaryName: 'custom-agent',
+            sourcePreferenceDefault: 'system-first', managedInstall: null,
+            manualInstallKind: 'none', manualInstallRecipes: null, acceptsJavaScriptFileOverride: false,
+            knownEnvironmentBinDirs: [{ envVar: 'CUSTOM_INSTALL_ROOT', relativeDir: 'bin' }],
+            alternativeBinaryFallbackEnabledEnvVar: 'CUSTOM_FALLBACK_ENABLED',
+          },
+          catalogEntry: {
+            id: agentId, cliSubcommand: agentId, vendorResumeSupport: 'unsupported',
+            connectedAccountNativeHome: {
+              environmentKey: 'CUSTOM_HOME', fallbackEnvironmentKeys: ['CUSTOM_CONFIG_HOME'],
+              sourceEnvironmentKey: 'CUSTOM_SOURCE_HOME', defaultRelativePath: '.custom',
+            },
+          },
+        }]]),
+      },
+      processEnv: {
+        PATH: '/usr/bin', CUSTOM_HOME: '/native/custom', CUSTOM_CONFIG_HOME: '/native/config',
+        CUSTOM_SOURCE_HOME: '/native/source', CUSTOM_INSTALL_ROOT: '/opt/custom', CUSTOM_FALLBACK_ENABLED: '0',
+        HAPPIER_ACME_CUSTOM_AGENT_PATH: '/opt/custom/bin/agent',
+        CODEX_HOME: '/unselected/codex', CLAUDE_CONFIG_DIR: '/unselected/claude',
+        HAPPIER_CODEX_PATH: '/unselected/codex-bin', HAPPIER_CURSOR_AGENT_FALLBACK_ENABLED: '1',
+        CUSTOM_API_KEY: 'fake-ambient-secret', OPENAI_API_KEY: 'fake-unselected-secret',
+      },
+      materializedEnv: { CUSTOM_HOME: '/selected/materialized', CUSTOM_API_KEY: 'fake-selected-secret' },
+    });
+
+    expect(resolved.env).toEqual({
+      PATH: '/usr/bin', CUSTOM_HOME: '/selected/materialized', CUSTOM_CONFIG_HOME: '/native/config',
+      CUSTOM_SOURCE_HOME: '/native/source', CUSTOM_INSTALL_ROOT: '/opt/custom', CUSTOM_FALLBACK_ENABLED: '0',
+      HAPPIER_ACME_CUSTOM_AGENT_PATH: '/opt/custom/bin/agent', CUSTOM_API_KEY: 'fake-selected-secret',
+    });
+  });
+
   it('passes only approved platform and runtime values to cold probe callbacks', async () => {
     const processEnv = {
       PATH: '/usr/local/bin:/usr/bin',
@@ -43,7 +96,7 @@ describe('resolvePreflightSessionControlsProbeEnvironment', () => {
     } satisfies NodeJS.ProcessEnv;
 
     const received = await withPreflightSessionControlsProbeEnvironment(
-      { agentId: 'codex', processEnv },
+      { agentId: 'codex', registrySnapshot: codexProbeRegistrySnapshot, processEnv },
       async ({ env }) => env,
     );
 
@@ -88,6 +141,7 @@ describe('resolvePreflightSessionControlsProbeEnvironment', () => {
       const received = await withPreflightSessionControlsProbeEnvironment(
         {
           agentId: 'codex',
+          registrySnapshot: codexProbeRegistrySnapshot,
           processEnv: {
             path: 'C:\\Windows\\System32;C:\\tools',
             userprofile: 'C:\\Users\\Alice',

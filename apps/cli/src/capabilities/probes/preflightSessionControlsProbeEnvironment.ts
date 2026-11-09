@@ -1,6 +1,8 @@
-import { legacyCustomAcpCompat } from '@happier-dev/agents';
+import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
 
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
+import type { AgentCatalogEntry } from '@/agent/catalog/types';
+import type { ResolvedAgentContribution } from '@/plugins/projection/registry/types';
 import { createAllowedEnvKeySet, isAllowedEnvKey } from '@/utils/env/envKeyAllowlist';
 
 export type PreflightSessionControlsProbeEnvironment = Readonly<{
@@ -9,6 +11,10 @@ export type PreflightSessionControlsProbeEnvironment = Readonly<{
 
 type ResolvePreflightSessionControlsProbeEnvironmentParams = Readonly<{
   agentId?: CatalogAgentLookupId;
+  registrySnapshot?: Readonly<{
+    agentDefinitionsById: ReadonlyMap<string, Pick<ResolvedAgentContribution, 'runtimeSpec' | 'richDefinition' | 'catalogEntry'>>;
+  }>;
+  catalogEntry?: Pick<AgentCatalogEntry, 'connectedAccountNativeHome'> | null;
   processEnv?: NodeJS.ProcessEnv;
   materializedEnv?: Readonly<Record<string, string>>;
 }>;
@@ -42,33 +48,28 @@ const COLD_PROBE_PROCESS_ENV_KEYS = [
   'PROGRAMDATA',
   'NODE_ENV',
   'TSX_TSCONFIG_PATH',
-  'CODEX_HOME',
-  'CLAUDE_CONFIG_DIR',
-  'HAPPIER_CLAUDE_CONFIG_DIR',
   'HAPPIER_HOME_DIR',
   'HAPPIER_JS_RUNTIME_PATH',
   'HAPPIER_MANAGED_NODE_BIN',
   'HAPPIER_NODE_PATH',
   'HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON',
-  'HAPPIER_CURSOR_AGENT_FALLBACK_ENABLED',
 ] as const;
 
-function resolveAgentCliPathOverrideEnvironmentKey(agentId: string | undefined): string | null {
-  // Only the canonical Agent lookup set has an agent-specific CLI override contract.
-  // Treat raw/unrecognized input as having no override rather than normalizing it into an env key.
-  if (!legacyCustomAcpCompat.isAgentLookupId(agentId)) return null;
-  const normalized = String(agentId ?? '')
-    .replace(/[^a-zA-Z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .toUpperCase();
-  return normalized ? `HAPPIER_${normalized}_PATH` : null;
-}
-
 function buildBaseEnvironment(params: ResolvePreflightSessionControlsProbeEnvironmentParams): PreflightSessionControlsProbeEnvironment {
-  const agentCliPathOverrideEnvironmentKey = resolveAgentCliPathOverrideEnvironmentKey(params.agentId);
+  const agent = params.agentId ? params.registrySnapshot?.agentDefinitionsById.get(params.agentId) : undefined;
+  const runtime = agent?.runtimeSpec;
+  const nativeHome = (params.catalogEntry === undefined ? agent?.catalogEntry : params.catalogEntry)?.connectedAccountNativeHome;
+  const declaredEnvironment = agent?.richDefinition?.definition.ui?.behavior?.payload?.environmentVariables;
   const allowedKeys = createAllowedEnvKeySet([
     ...COLD_PROBE_PROCESS_ENV_KEYS,
-    ...(agentCliPathOverrideEnvironmentKey ? [agentCliPathOverrideEnvironmentKey] : []),
+    ...(runtime ? [resolveAgentCliOverrideEnvKey(runtime.id)] : []),
+    ...(runtime?.knownEnvironmentBinDirs?.map((directory) => directory.envVar) ?? []),
+    ...(runtime?.alternativeBinaryFallbackEnabledEnvVar ? [runtime.alternativeBinaryFallbackEnabledEnvVar] : []),
+    ...(nativeHome ? [nativeHome.environmentKey, ...(nativeHome.fallbackEnvironmentKeys ?? []),
+      ...(nativeHome.sourceEnvironmentKey ? [nativeHome.sourceEnvironmentKey] : [])] : []),
+    ...(declaredEnvironment ? [declaredEnvironment.backendMode.envKey,
+      ...(declaredEnvironment.serverBaseUrl
+        ? [declaredEnvironment.serverBaseUrl.envKey, declaredEnvironment.serverBaseUrl.explicitEnvKey] : [])] : []),
   ]);
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(params.processEnv ?? process.env)) {

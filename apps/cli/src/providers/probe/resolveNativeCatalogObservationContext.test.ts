@@ -7,6 +7,7 @@ import { resolveNativeCatalogObservationContext } from './resolveNativeCatalogOb
 describe('resolveNativeCatalogObservationContext', () => {
   it('qualifies the native request-auth use from the same Agent catalog declaration', () => {
     const consumer = { pluginId: 'happier.agent.claude', localId: 'claude' } as const;
+    const providerIdentity = { pluginId: consumer.pluginId, localId: 'anthropic' } as const;
     const provider = ProviderContributionV1Schema.parse({
       v: 1,
       id: 'anthropic',
@@ -54,7 +55,7 @@ describe('resolveNativeCatalogObservationContext', () => {
       agentDefinitionsById: new Map([['claude', { identity: consumer, catalogEntry }]]),
       providersByContributionKey: new Map([[
         'happier.agent.claude/anthropic',
-        { definition: provider },
+        { identity: providerIdentity, definition: provider },
       ]]),
     } as unknown as ReturnType<typeof getResolvedContributionRegistry>;
 
@@ -74,6 +75,7 @@ describe('resolveNativeCatalogObservationContext', () => {
         materialization: { origin: 'https://api.anthropic.com', headerNames: ['authorization'] },
       },
       provider,
+      providerIdentity,
       catalogEntry,
     });
   });

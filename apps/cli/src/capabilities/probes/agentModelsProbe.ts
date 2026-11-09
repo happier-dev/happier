@@ -1,3 +1,4 @@
+import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
@@ -565,6 +566,8 @@ async function probeAgentModels(params: {
           provenance = {};
           catalogObserved = false;
           const modelsRaw = await withPreflightSessionControlsProbeEnvironment({
+            registrySnapshot: params.registrySnapshot ?? readCurrentContributionRegistry(),
+            catalogEntry: params.catalogEntry,
             agentId: params.agentId,
             processEnv: params.env ?? process.env,
             materializedEnv: params.materializedEnv,

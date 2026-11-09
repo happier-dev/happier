@@ -6,12 +6,14 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { ProviderProbeCancelledError } from '@/providers/probe/client';
 import type { PreflightCatalogCleanupScope } from './preflightCatalogCleanupScope';
 import type { CreateAgentInvocationServices } from '@/plugins/runtime/invocation/services/types';
+import type { ResolveContributedProviderCatalogParsers } from '@/providers/probe/runtimeServices';
 
 type AgentPreflightCatalogContext = Readonly<{
   catalogEntry?: AgentCatalogEntry | null;
   runtimeCacheKey?: string;
   createAgentInvocationServices?: CreateAgentInvocationServices;
   registrySnapshot?: ResolvedContributionRegistry;
+  resolveContributedCatalogParsers?: ResolveContributedProviderCatalogParsers;
   isCurrent: () => boolean;
 }>;
 
@@ -47,7 +49,11 @@ export async function withAgentPreflightCatalog<T>(
     if (!isCurrent()) throw new ProviderProbeCancelledError();
     const result = await Promise.race([run({
       ...(lease ? { catalogEntry, runtimeCacheKey, registrySnapshot: lease.registry.contributes,
-        createAgentInvocationServices: lease.registry.createAgentInvocationServices } : {}),
+        createAgentInvocationServices: lease.registry.createAgentInvocationServices,
+        resolveContributedCatalogParsers: async (identity: Parameters<ResolveContributedProviderCatalogParsers>[0]) => {
+          const acquired = await lease.registry.acquireProviderCatalogParsers?.(identity);
+          return acquired ? { pluginId: identity.pluginId, parsersByFormat: acquired.parsersByFormat } : null;
+        } } : {}),
       isCurrent,
     }), aborted]);
     if (!isCurrent()) throw new ProviderProbeCancelledError();

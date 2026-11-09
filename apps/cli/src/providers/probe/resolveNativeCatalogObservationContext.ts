@@ -13,6 +13,7 @@ export type NativeCatalogObservationContext = Readonly<{
   purpose: QualifiedConnectedAccountPurposeV1;
   requestAuthUse: QualifiedConnectedAccountRequestAuthUseV1;
   provider: ProviderContributionV1;
+  providerIdentity: PluginContributionIdentityV1;
   catalogEntry: AgentCatalogEntry | null | undefined;
 }>;
 
@@ -41,6 +42,7 @@ export function resolveNativeCatalogObservationContext(input: Readonly<{
       materialization: declaredUse.materialization,
     }),
     provider: provider.definition,
+    providerIdentity: provider.identity,
     catalogEntry,
   });
 }

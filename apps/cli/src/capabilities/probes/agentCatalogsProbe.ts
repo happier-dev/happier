@@ -1,9 +1,11 @@
+import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { PreflightSessionCatalogsV1Schema, SessionSkillCatalogListResponseV1Schema, type PreflightSessionCatalogsV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { z } from 'zod/mini';
 
 import { normalizeAvailableCommands } from '@/agent/acp/commands/publishSlashCommands';
 import { AGENTS } from '@/agent/catalog/registry';
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import { withPreflightSessionControlsProbeEnvironment } from './preflightSessionControlsProbeEnvironment';
 import type { PreflightSessionControlsProbeParams } from './preflightSessionControlsProbeAdapterTypes';
@@ -17,6 +19,7 @@ const RawCatalogsSchema = z.object({
 type AgentCatalogsProbeParams = PreflightSessionControlsProbeParams & Readonly<{
   agentId: CatalogAgentLookupId;
   catalogEntry?: AgentCatalogEntry | null;
+  registrySnapshot?: ResolvedContributionRegistry;
   materializedEnv?: Readonly<Record<string, string>>;
 }>;
 
@@ -27,6 +30,7 @@ export async function probeAgentCatalogs(params: AgentCatalogsProbeParams): Prom
   const adapter = await entry?.getPreflightSessionControlsProbeAdapter?.();
   const raw = RawCatalogsSchema.parse(adapter?.probeCatalogsRaw
     ? await withPreflightSessionControlsProbeEnvironment({
+      registrySnapshot: params.registrySnapshot ?? readCurrentContributionRegistry(), catalogEntry: entry,
       agentId: params.agentId, processEnv: params.env, materializedEnv: params.materializedEnv,
     }, ({ env }) => adapter.probeCatalogsRaw!({ ...params, probeKind: 'catalogs', env }))
     : { commands: null, skills: null });

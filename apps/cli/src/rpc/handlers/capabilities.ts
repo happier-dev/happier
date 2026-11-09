@@ -163,6 +163,7 @@ async function invokeCliProbeOrInstallMethod(
                 agentRuntimeCacheKey: catalog.runtimeCacheKey,
                 agentRegistrySnapshot: catalog.registrySnapshot,
                 createAgentInvocationServices: catalog.createAgentInvocationServices,
+                resolveContributedCatalogParsers: catalog.resolveContributedCatalogParsers,
             } : {}),
             isAgentRegistryCurrent: catalog.isCurrent,
         }, requestContext);

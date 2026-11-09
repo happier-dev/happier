@@ -118,11 +118,11 @@ export type CapabilitiesInvokeResponse =
   | { ok: false; error: { message: string; code?: string; retryable?: boolean; details?: Readonly<Record<string, string>> }; logPath?: string };
 
 export {
-  CodexPassiveRealtimeSetupResultV1Schema,
-  CodexPassiveRealtimeSetupStatusV1Schema,
-  type CodexPassiveRealtimeSetupResultV1,
-  type CodexPassiveRealtimeSetupStatusV1,
-} from './codexPassiveRealtimeSetup.js';
+  AgentPassiveRealtimeSetupResultV1Schema,
+  AgentPassiveRealtimeSetupStatusV1Schema,
+  type AgentPassiveRealtimeSetupResultV1,
+  type AgentPassiveRealtimeSetupStatusV1,
+} from './agentPassiveRealtimeSetup.js';
 
 export {
   MachineAgentInventoryItemSchema,

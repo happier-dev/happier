@@ -1,3 +1,4 @@
+import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import type { AgentConfigOptionsProbeObservation } from '@happier-dev/protocol/capabilities';
@@ -174,6 +175,8 @@ export async function probeAgentConfigOptionsBestEffort(params: {
 
       const probePreflightConfigOptionsOnce = async () => {
         const configOptionsRaw = await withPreflightSessionControlsProbeEnvironment({
+          registrySnapshot: params.registrySnapshot ?? readCurrentContributionRegistry(),
+          catalogEntry: params.catalogEntry,
           agentId: params.agentId,
           processEnv: params.env ?? process.env,
           materializedEnv: params.materializedEnv,

@@ -936,7 +936,7 @@
     "../../packages/protocol/src/bugs/reports/types.ts",
     "../../packages/protocol/src/bugs/reports/utf8.ts",
     "../../packages/protocol/src/capabilities/agentProbeObservation.ts",
-    "../../packages/protocol/src/capabilities/codexPassiveRealtimeSetup.ts",
+    "../../packages/protocol/src/capabilities/agentPassiveRealtimeSetup.ts",
     "../../packages/protocol/src/capabilities/estimateTokensV1.ts",
     "../../packages/protocol/src/capabilities/index.ts",
     "../../packages/protocol/src/capabilities/invokeFailure.ts",

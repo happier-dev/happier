@@ -3,7 +3,7 @@ import {
   buildConnectedServiceProfileOptionsByServiceId,
   resolveConnectedServiceSessionSelection,
 } from '@happier-dev/agents';
-import { CodexPassiveRealtimeSetupResultV1Schema, type CodexPassiveRealtimeSetupResultV1 } from '@happier-dev/protocol/capabilities/codexPassiveRealtimeSetup';
+import { AgentPassiveRealtimeSetupResultV1Schema, type AgentPassiveRealtimeSetupResultV1 } from '@happier-dev/protocol/capabilities/agentPassiveRealtimeSetup';
 import { ConnectedServiceBindingsV1Schema, readBuiltInLegacyConnectedAccountServiceKeyIngress, type ConnectedServiceBindingsV1 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { CapabilityId } from '@happier-dev/protocol/capabilities';
 import type { VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
@@ -134,8 +134,8 @@ export function projectVoiceProviderPassiveSetupFacts(
  */
 export function readVoiceProviderPassiveRealtimeSetupResult(
   value: unknown,
-): CodexPassiveRealtimeSetupResultV1 | null {
-  const parsed = CodexPassiveRealtimeSetupResultV1Schema.safeParse(value);
+): AgentPassiveRealtimeSetupResultV1 | null {
+  const parsed = AgentPassiveRealtimeSetupResultV1Schema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
 
