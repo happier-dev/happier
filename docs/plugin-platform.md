@@ -214,6 +214,15 @@ source-lifecycle consumers; this development declaration contract alone does not
 claim an installed observer or released availability. See the public
 [finite-kind author guide](../apps/docs/content/docs/plugins/guides/background-services.mdx#health-check-kinds-development-source).
 
+For service handles held by the observer's managed-service owner, saved finite
+checks publish their admitted results through `machineServiceRowProjection`. The exact service
+generation retains those results for the supplying observer's lifetime. Native
+failure takes precedence; otherwise the least healthy retained check supplies the
+service row's health. Finite Action completion leaves the result available, while
+observer retirement, source withdrawal or service retirement removes it. Service
+reads and existing pushed row updates consume that same projection; no UI health
+inference or additional polling is involved.
+
 The development daemon service `services.healthChecks.read({ sourceInstanceId,
 checkIds }, { signal })` spends saved selectors against the existing adopted
 Automation source projection once per finite batch. It accepts no endpoint or

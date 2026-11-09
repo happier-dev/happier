@@ -6,6 +6,7 @@ import type { MachineManagedServiceHandle } from '@/plugins/runtime/invocation/s
 import type { SavedMachineServiceHealthResult } from '@/deployments/healthChecks/savedHealthChecks';
 
 type ServiceHandle = ProjectManagedServiceHandle | MachineManagedServiceHandle;
+type RetainedHealthResult = { result: SavedMachineServiceHealthResult; detach(): void };
 export type MachineServiceRowChange = Readonly<{
     serverId: string; homeServerIdentityId: string | null; machineId: string; handle: ServiceHandle; row: MachineServiceRowV1 | null;
 }>;
@@ -31,7 +32,7 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
     const unavailable = new WeakMap<MachineServiceWatchV1, MachineServiceRowV1>();
     const published = new WeakMap<ServiceHandle, MachineServiceRowV1>();
     const listeners = new Map<string, Set<(change: MachineServiceRowChange) => void>>();
-    const healthResults = new Map<ServiceHandle, Map<string, SavedMachineServiceHealthResult>>();
+    const healthResults = new Map<ServiceHandle, Map<string, RetainedHealthResult>>();
     const statusRank = { up: 0, degraded: 1, unknown: 2, down: 3 } as const;
     const watchIdentity = (watch: MachineServiceWatchV1, machineId: string): Extract<MachineServiceIdentityV1, { kind: 'adopted' }> => Object.freeze({
         kind: 'adopted', machineId, serviceId: watch.watchId, watchId: watch.watchId, watchRevision: watchRevision(watch),
@@ -46,6 +47,7 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
         }
     };
     const retire = (handle: ServiceHandle) => {
+        for (const entry of healthResults.get(handle)?.values() ?? []) entry.detach();
         healthResults.delete(handle);
         if (!published.has(handle)) return;
         published.delete(handle);
@@ -89,7 +91,7 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
             // Native failures remain authoritative; otherwise the admitted saved
             // checks supply readiness that native adapters do not report.
             let checkResult: SavedMachineServiceHealthResult | undefined;
-            for (const result of healthResults.get(handle)?.values() ?? []) {
+            for (const { result } of healthResults.get(handle)?.values() ?? []) {
                 if (!checkResult || statusRank[result.result.status] > statusRank[checkResult.result.status]) checkResult = result;
             }
             const health: NonNullable<MachineServiceRowV1['health']> = checkResult && nativeHealth.status !== 'down'
@@ -168,17 +170,35 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
             const target = targetOf(handle);
             if (target.serverId !== result.serverId || target.machineId !== result.subject.machineId
                 || handle.serviceId !== result.subject.serviceId || handle.instanceId !== result.generation
-                || handle.retirementSignal.aborted || !handle.isCurrent()) return;
-            let results = healthResults.get(handle);
-            if (!results) { results = new Map(); healthResults.set(handle, results); }
-            results.set(JSON.stringify([result.caller, result.occurrenceId, result.sourceInstanceId, result.check.checkId]), result);
+                || handle.retirementSignal.aborted || !handle.isCurrent() || result.retirementSignal?.aborted) return;
+            const results = healthResults.get(handle) ?? new Map<string, RetainedHealthResult>();
+            healthResults.set(handle, results);
+            const key = JSON.stringify([result.caller, result.occurrenceId, result.sourceInstanceId, result.check.checkId]);
+            const previous = results.get(key);
+            if (previous && previous.result.retirementSignal === result.retirementSignal) {
+                previous.result = result;
+            } else {
+                previous?.detach();
+                const withdraw = () => {
+                    if (results.get(key) !== retained) return;
+                    results.delete(key);
+                    retained.detach();
+                    if (!results.size) healthResults.delete(handle);
+                    publish(handle);
+                };
+                const retained: RetainedHealthResult = { result,
+                    detach: () => result.retirementSignal?.removeEventListener('abort', withdraw) };
+                results.set(key, retained);
+                result.retirementSignal?.addEventListener('abort', withdraw, { once: true });
+            }
             publish(handle);
         },
         reconcileHealthResults(isCurrent: (result: SavedMachineServiceHealthResult) => boolean) {
             for (const [handle, results] of healthResults) {
                 let changed = false;
-                for (const [key, result] of results) {
-                    if (isCurrent(result)) continue;
+                for (const [key, entry] of results) {
+                    if (isCurrent(entry.result)) continue;
+                    entry.detach();
                     results.delete(key); changed = true;
                 }
                 if (!results.size) healthResults.delete(handle);

@@ -37,6 +37,7 @@ export type SavedMachineServiceHealthResult = Readonly<{
     serverId: string; sourceInstanceId: string; caller: PluginMachineMaterializationRefV1; occurrenceId: string;
     subject: Readonly<{ kind: 'machineService'; machineId: string; serviceId: string }>;
     generation: string | null; check: HealthCheckDefinitionV1; result: HealthCheckResultV1;
+    retirementSignal?: AbortSignal;
 }>;
 
 /** One finite admission over the existing adopted source and live service read. */
@@ -296,7 +297,8 @@ export function createSavedHealthChecksHost(input: Readonly<{
                     for (const observation of results) {
                         await input.onServiceResult?.({ serverId: input.serverId, sourceInstanceId: request.sourceInstanceId,
                             caller, occurrenceId: seed.occurrenceId, subject, generation: detail.service.generation,
-                            check: checks.find(check => check.checkId === observation.checkId)!, result: observation.result });
+                            check: checks.find(check => check.checkId === observation.checkId)!, result: observation.result,
+                            retirementSignal: seed.retirementSignal });
                     }
                     return results;
                 },
