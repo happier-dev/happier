@@ -1,16 +1,17 @@
 import { useMemo } from 'react';
 
-import { useSetting } from '@/sync/domains/state/storage';
+import { useSettingsSelector } from '@/sync/domains/state/storage';
 import { resolveStoredVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 import { useVoiceSessionStore } from './voiceSessionStore';
 
-/** Selection prepares the next provider; the published attempt retains its own provider. */
+/** An admitted attempt owns its executable provider and any deliberate active handoff. */
 export function useVoiceProviderRuntimeDemand(): ReadonlySet<string> {
-  const settings = useSetting('voiceSettingsV1');
-  const selected = resolveStoredVoiceProviderId(settings.providerId);
   const active = useVoiceSessionStore(state => state.adapterId);
+  const canStop = useVoiceSessionStore(state => state.canStop);
+  const selected = useSettingsSelector(settings => settings.voiceSettingsV1.providerId, ['voiceSettingsV1']);
+  const handoff = active && canStop ? resolveStoredVoiceProviderId(selected) : null;
   return useMemo(() => new Set([
-    ...(selected ? [selected] : []),
     ...(active ? [active] : []),
-  ]), [selected, active]);
+    ...(handoff ? [handoff] : []),
+  ]), [active, handoff]);
 }

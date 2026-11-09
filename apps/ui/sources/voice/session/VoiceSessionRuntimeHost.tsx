@@ -2,13 +2,19 @@ import * as React from 'react';
 import { retryableLazy } from '@/components/ui/performance/retryableLazy';
 
 import { useVoiceProviderRuntimeDemand } from './useVoiceProviderRuntimeDemand';
+import { rejectVoiceSessionRuntimeRequest } from './voiceSessionLifecycleControllerStore';
 
 const Runtime = retryableLazy(async () => {
-    const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
-    return { default: VoiceSessionRuntime };
+    try {
+        const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
+        return { default: VoiceSessionRuntime };
+    } catch (error) {
+        rejectVoiceSessionRuntimeRequest(error);
+        throw error;
+    }
 });
 
-/** Discovery stays synchronous; executable adapters are needed only after Voice is enabled. */
+/** Discovery stays synchronous; the first Start admits executable adapter loading. */
 export function VoiceSessionRuntimeHost(): React.ReactElement | null {
     const demanded = useVoiceProviderRuntimeDemand().size > 0;
     const activated = React.useRef(false);

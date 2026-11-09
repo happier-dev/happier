@@ -24,10 +24,43 @@ export type VoiceSessionManager = Readonly<{
 
 export function createVoiceSessionManager(deps: Readonly<{
   getLifecycleController?: () => VoiceSessionLifecycleController | null;
+  getRuntimeRetryTarget?: () => SessionAddress | null;
+  requestRuntime?: (target: SessionAddress | null, signal: AbortSignal) => Readonly<{
+    ready: Promise<VoiceSessionLifecycleController | null>;
+    adopt: (snapshot: VoiceSessionSnapshot) => void;
+    dispose: (error?: unknown) => void;
+  }> | null;
 }>): VoiceSessionManager {
   const resolveLifecycleController = (): VoiceSessionLifecycleController | null => deps.getLifecycleController?.() ?? null;
+  let preparing: Readonly<{ cancellation: AbortController; target: SessionAddress | null }> | null = null;
 
   const toggle = async (targetSessionAddress: SessionAddress | null, conversationSelection?: VoiceConversationSelection) => {
+    if (preparing) {
+      preparing.cancellation.abort();
+      return;
+    }
+    if (deps.requestRuntime && !getVoiceSessionSnapshot().canStop) {
+      const request = { cancellation: new AbortController(), target: targetSessionAddress };
+      preparing = request;
+      const runtime = deps.requestRuntime(targetSessionAddress, request.cancellation.signal);
+      if (!runtime) { preparing = null; return; }
+      try {
+        const lifecycle = await runtime.ready.catch((error: unknown) => {
+          runtime.dispose(error);
+          return null;
+        });
+        if (!lifecycle || request.cancellation.signal.aborted) return;
+        // toggle synchronously admits this Start before handing presentation to its owner.
+        const starting = lifecycle.toggle(targetSessionAddress, conversationSelection);
+        runtime.adopt(lifecycle.getSnapshot());
+        preparing = null;
+        await starting;
+      } finally {
+        if (preparing === request) preparing = null;
+        runtime.dispose();
+      }
+      return;
+    }
     const lifecycleController = resolveLifecycleController();
     if (!lifecycleController) return;
     await lifecycleController.toggle(targetSessionAddress, conversationSelection);
@@ -41,11 +74,18 @@ export function createVoiceSessionManager(deps: Readonly<{
 
   const retry = async (sessionId: string) => {
     const lifecycleController = resolveLifecycleController();
-    if (!lifecycleController) return;
+    if (!lifecycleController) {
+      const snapshot = getVoiceSessionSnapshot();
+      if (snapshot.sessionId === sessionId && snapshot.errorRecoveryAction === 'retry') {
+        await toggle(deps.getRuntimeRetryTarget?.() ?? null);
+      }
+      return;
+    }
     await lifecycleController.retry(sessionId);
   };
 
   const stop = async (sessionId: string) => {
+    preparing?.cancellation.abort();
     const lifecycleController = resolveLifecycleController();
     if (!lifecycleController) return;
     await lifecycleController.stop(sessionId);
@@ -85,10 +125,10 @@ export function createVoiceSessionManager(deps: Readonly<{
     commitInput,
     beginHoldToTalk: (sessionId) => resolveLifecycleController()?.beginHoldToTalk(sessionId) ?? null,
     finishHoldToTalk: async (sessionId, outcome) => await resolveLifecycleController()?.finishHoldToTalk(sessionId, outcome) ?? false,
-    getAttemptTargetSessionAddress: () => resolveLifecycleController()?.getAttemptTargetSessionAddress() ?? null,
+    getAttemptTargetSessionAddress: () => preparing?.target ?? resolveLifecycleController()?.getAttemptTargetSessionAddress() ?? null,
     matchesAttempt: (attemptId) => getVoiceSessionPresentedAttemptId() === attemptId,
     setMuted,
     sendContextUpdate,
-    getSnapshot: () => resolveLifecycleController()?.getSnapshot() ?? getVoiceSessionSnapshot(),
+    getSnapshot: () => preparing ? getVoiceSessionSnapshot() : resolveLifecycleController()?.getSnapshot() ?? getVoiceSessionSnapshot(),
   };
 }

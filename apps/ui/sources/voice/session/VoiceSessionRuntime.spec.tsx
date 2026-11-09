@@ -8,7 +8,7 @@ import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
-import { createDeferred, renderScreen as renderRuntimeScreen, waitForTestEvent } from '@/dev/testkit';
+import { createDeferred, createRootLayoutFeaturesResponse, renderScreen as renderRuntimeScreen, waitForTestEvent } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { settingsParse } from '@/sync/domains/settings/settings';
@@ -85,7 +85,8 @@ vi.mock('expo-audio', () => ({ AudioModule: {
   requestRecordingPermissionsAsync: async () => ({ granted: true, canAskAgain: true }),
 } }));
 vi.mock('socket.io-client', async original => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ pathname: '/settings/voice', segments: ['(app)', 'settings', 'voice'] }).module);
+const runtimeRoute = vi.hoisted(() => ({ pathname: '/settings/voice', segments: ['(app)', 'settings', 'voice'] }));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ pathname: () => runtimeRoute.pathname, segments: () => runtimeRoute.segments }).module);
 // The incumbent Vitest platform resolver selects complete actual .web modules
 // for the explicit browser invocation. Do not use an async mock import here:
 // LiveMic's UI dependency graph re-enters that same mock factory during load.
@@ -248,9 +249,11 @@ await import('@/sync/ops/actions/defaultActionExecutor');
 
 async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolean; startGate?: Promise<void>; selectedProviderId?: string; local?: boolean; localPlatform?: 'ios' | 'web'; codex?: boolean;
   coldShell?: boolean;
+  coldSavedCredential?: boolean;
   transcriptResponse?: (body: Readonly<{ localId: string }>) => Promise<Response | null>;
 }> = {}) {
   platformOsMock.value = input.local ? input.localPlatform ?? 'ios' : 'web';
+  if (input.coldShell) Object.assign(runtimeRoute, { pathname: '/', segments: ['(app)'] });
   if (input.local && platformOsMock.value !== 'web') {
     // The actual web live producer's no-browser capability branch delegates
     // to NativeMic; recognizer/coordinator assertions prove that real path.
@@ -302,6 +305,14 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   const transcriptSequences = new Map<string, number>();
   let hostedLeaseIndex = 0;
   const serverUrl = 'https://voice-mounted-runtime.example.test';
+  const coldCredentialRef = 'happier:shared-secret:v1:cold-elevenlabs-key';
+  const coldCredentialMaterials = SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [{
+    resourceId: 'cold-elevenlabs-key', encryptionMode: 'plain', recipientEnvelope: null,
+    storedContent: { t: 'plain', v: { v: 1, name: 'Voice', kind: 'apiKey', value: 'cold-saved-key' } },
+    entry: { ref: coldCredentialRef, source: 'shared_resource', relationship: 'owner', name: 'Voice', kind: 'apiKey',
+      encryptionMode: 'plain', owner: null, accessSources: [{ kind: 'account' }], audience: null, ownerAccountId: null,
+      revision: 1, materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+  }] });
   const spawnSession = (raw: unknown) => {
     const request = SessionSpawnNewInputV2Schema.parse(raw);
     if (!('path' in request.directory)) throw new Error('Expected actual Global absolute directory');
@@ -398,10 +409,14 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   accountConnection = await restoreServerAccountForTest({
     serverUrl, accountId: 'account-a', credentialScope: 'restored-home',
     activation: 'switch',
-    ...(input.codex ? { configureSocket, serverIdentityId: 'srv_voice-mounted-runtime',
+    ...(input.coldSavedCredential ? { additionalRequestOrigins: ['https://api.elevenlabs.io'] } : {}),
+    ...(input.codex || input.coldShell ? { ...(input.codex ? { configureSocket } : {}), serverIdentityId: 'srv_voice-mounted-runtime',
       credentials: { token: createServedHomeAccountToken('account-a', true) } } : {}),
     request: createSessionReadBatchFetchBoundary(async (url, init) => {
       const path = new URL(String(url)).pathname;
+      if (input.coldShell && path === '/v1/features') {
+        return Response.json(createRootLayoutFeaturesResponse({ features: { voice: { enabled: true } } }));
+      }
       const preparation = settingsHttp.handle(url, init) ?? answerVoiceRealtimePreparationHttpRequest(url, {});
       let settingsPost: typeof httpRequests[number]['settingsPost'];
       if (path === '/v2/account/settings' && init?.method === 'POST' && preparation) {
@@ -415,15 +430,31 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
         };
       }
       httpRequests.push({ path, method: init?.method ?? 'GET', ...(settingsPost ? { settingsPost } : {}) });
+      if (input.coldSavedCredential && path === '/v1/account/saved-secrets/resources') return Response.json({
+        resources: coldCredentialMaterials.resources.map(resource => resource.entry),
+      });
+      if (input.coldSavedCredential && path === '/v1/account/saved-secrets/resources/materials') return Response.json(coldCredentialMaterials);
+      if (input.coldSavedCredential && path === '/v1/convai/agents/agent-cold-start') return Response.json({
+        agent_id: 'agent-cold-start', tags: ['happier_voice_config_v1'], platform_settings: {
+          auth: { enable_auth: true }, overrides: { conversation_config_override: {
+            agent: { first_message: true, language: true, prompt: { prompt: true } },
+            conversation: { text_only: true }, tts: { voice_id: true },
+          } },
+        },
+      });
+      if (input.coldSavedCredential && path === '/v1/convai/conversation/token') return Response.json({ token: 'mounted-token' });
+      if (input.coldShell && path === '/v1/account/entity-rows/connected-accounts/purposes') return Response.json({
+        status: 'present', revision: 1, content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } },
+      });
       const actionResponse = await actionHttp?.handle(new URL(String(url)), init);
       if (actionResponse) return actionResponse;
       if (preparation) return preparation;
       if (path === '/v1/account/profile') return Response.json(profile);
-      if (input.codex && path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: machineId, accountId: 'account-a' })]);
-      if (input.codex && path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
+      if (path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: machineId, accountId: 'account-a' })]);
+      if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
         id => id === machineId ? createPlainMachineRowFixture({ id, accountId: 'account-a' }) : null);
-      if (input.codex && path === `/v1/machines/${machineId}`) return Response.json({ machine: createPlainMachineRowFixture({ id: machineId, accountId: 'account-a' }) });
-      if (input.codex && path === `/v1/machines/${machineId}/access`) {
+      if (path === `/v1/machines/${machineId}`) return Response.json({ machine: createPlainMachineRowFixture({ id: machineId, accountId: 'account-a' }) });
+      if (path === `/v1/machines/${machineId}/access`) {
         const row = createPlainMachineRowFixture({ id: machineId, accountId: 'account-a' });
         return Response.json({ machineId, custodian: row.access!.custodian, access: row.access, canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [] });
       }
@@ -469,16 +500,19 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   const account = accountConnection;
   const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
   const accountServerId = resolveServerProfileScopeIdForIdentifier(account.home.id);
-  if (input.codex) {
+  if (input.codex || input.coldShell) {
     const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
     actionLoaderDisposals.push(await installRealActionExecutorModuleLoader());
   }
   const { sync } = await import('@/sync/sync');
   await sync.resumeSync('manual');
   await waitForTestEvent(storage.subscribe, storage.getState, state => state.isDataReady
-    && state.profileScope?.serverId === accountServerId && state.profileScope.accountId === 'account-a');
+    && state.profileScope?.serverId === accountServerId && state.profileScope.accountId === 'account-a'
+    && state.machines[machineId] !== undefined);
   expect(storage.getState().profileScope).toEqual({ serverId: accountServerId, accountId: 'account-a' });
   expect(storage.getState().isDataReady).toBe(true);
+  const { createDefaultVoiceProviderRegistry } = await import('@/voice/registry/defaultRegistry');
+  const elevenLabsEntry = createDefaultVoiceProviderRegistry().get(ELEVENLABS_PROVIDER_ID);
   const localProviderId = input.selectedProviderId === 'local_conversation' ? 'local_conversation' : 'local_direct';
   const voice = input.local
     ? writeVoiceProviderSettingsConfig(voiceSettingsParse({ providerId: localProviderId }), localProviderId,
@@ -488,12 +522,28 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
     : input.codex
       ? writeVoiceProviderSettingsConfig(voiceSettingsParse({ providerId: CODEX_PROVIDER_ID, executionMachine: { mode: 'fixed', machineId } }), CODEX_PROVIDER_ID,
         { globalConnectedServices: { v: 1, bindingsByServiceId: { [CODEX_CONNECTED_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' } } } })
-      : writeVoiceProviderSettingsConfig(voiceSettingsParse({ providerId: ELEVENLABS_PROVIDER_ID }), ELEVENLABS_PROVIDER_ID, ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS);
+      : writeVoiceProviderSettingsConfig(voiceSettingsParse({ providerId: ELEVENLABS_PROVIDER_ID,
+        executionMachine: { mode: 'fixed', machineId } }), ELEVENLABS_PROVIDER_ID,
+        input.coldSavedCredential ? { ...elevenLabsEntry?.providerSettings?.defaultConfig, billingMode: 'byo', agentId: 'agent-cold-start' } : ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS);
   const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
   storage.getState().applySettingsLocal({
-    ...normalizeVoiceSettingsLocalDelta({ voice: { ...voice, providerId: input.coldShell ? 'off' : input.selectedProviderId ?? (input.local ? 'local_direct' : ELEVENLABS_PROVIDER_ID) } }, storage.getState().settings),
-    ...(input.currentUi ? { featureToggles: { ...storage.getState().settings.featureToggles, voice: true } } : {}),
+    ...normalizeVoiceSettingsLocalDelta({ voice: { ...voice, providerId: input.selectedProviderId ?? (input.local ? 'local_direct' : ELEVENLABS_PROVIDER_ID) } }, storage.getState().settings),
+    ...(input.currentUi || input.coldShell ? { featureToggles: { ...storage.getState().settings.featureToggles, voice: true } } : {}),
   });
+  if (input.coldSavedCredential) {
+    const { saveAndUseAccountVoiceCredential } = await import('@/voice/credentials/accountVoiceCredential');
+    const entry = elevenLabsEntry;
+    if (entry?.kind !== 'voice.conversation-provider.v1' || !entry.declaration?.credentials) throw new Error('ElevenLabs credential declaration unavailable');
+    const configured = saveAndUseAccountVoiceCredential({ settings: storage.getState().settings,
+      contribution: { pluginId: entry.pluginId, localId: entry.declaration.id },
+      credentialSlotId: entry.declaration.credentials.slot.id, currentDeclaration: entry.declaration,
+      expectedSettingsVersion: 0, expectedSecretId: null, expectedSecretUpdatedAt: null,
+      value: 'cold-saved-key', generateId: () => coldCredentialRef, now: 1,
+    }).settings;
+    // Material is absent from restored Settings and must be acquired through
+    // the actual Account catalog owner after explicit Start.
+    storage.getState().applySettingsLocal({ voiceSettingsV1: configured.voiceSettingsV1, secrets: [] });
+  }
   sdk.endSession.mockReset().mockResolvedValue(undefined);
   const conversation = {
     getId: () => 'mounted-provider-conversation', endSession: (...args: unknown[]) => {
@@ -503,7 +553,9 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
     },
     setMicMuted() {}, setVolume() {}, sendUserMessage() {}, sendContextualUpdate() {},
   };
+  const coldStart = input.coldShell ? createDeferred<void>() : null;
   sdk.startSession.mockReset().mockImplementation(async () => {
+    await coldStart?.promise;
     await input.startGate;
     return conversation;
   });
@@ -536,12 +588,29 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
     expect(getVoiceAdapterRegistry().list()).toHaveLength(0);
     expect(sdk.startSession).not.toHaveBeenCalled();
     expect(screen.findAllByType('ShellContent')).toHaveLength(1);
-    await act(async () => {
-      storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice }, storage.getState().settings));
-    });
-    await vi.waitFor(() => expect(getVoiceSessionLifecycleController()).not.toBeNull());
-    // The cold-runtime change (afe5cc0949) loads the selected provider after
-    // publishing the shell controller. Start needs its real registration.
+    const { getConnectedAccountCatalogValue } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+    expect(getConnectedAccountCatalogValue(storage.getState().settingsScope, 'purposes').value).toBeNull();
+    const { voiceSessionManager } = await import('./voiceSession');
+    const { createFrontDoorUiActionExecutor } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+    const execute = createFrontDoorUiActionExecutor(undefined, { serverId: accountServerId, expectedAccountId: 'account-a' });
+    const idle = await execute('ui.voice_global.get', {});
+    expect(idle).toMatchObject({ voice: { status: 'disconnected', canStart: true, canStop: false } });
+    expect(getVoiceSessionLifecycleController()).toBeNull();
+    let starting!: ReturnType<typeof execute>;
+    await act(async () => { starting = execute('ui.voice_global.start', { target: { kind: 'global' }, expectedAttempt: null }); });
+    const { getVoiceSessionPresentedAttemptId } = await import('./voiceSessionStore');
+    let attemptId: string | null = null;
+    try {
+      await vi.waitFor(() => expect(voiceSessionManager.getSnapshot()).toMatchObject({ status: 'connecting', canStop: true }));
+      attemptId = getVoiceSessionPresentedAttemptId();
+      expect(attemptId).not.toBeNull();
+      await vi.waitFor(() => expect(getVoiceSessionLifecycleController()).not.toBeNull());
+    } finally {
+      coldStart?.resolve();
+    }
+    await act(async () => { expect(await starting).toMatchObject({ status: 'completed' }); });
+    expect(getVoiceSessionPresentedAttemptId()).toBe(attemptId);
+    // First Start owns executable demand and waits for the real registration.
     const registry = getVoiceAdapterRegistry();
     await waitForTestEvent(listener => registry.subscribe!(listener),
       () => registry.get(ELEVENLABS_PROVIDER_ID), adapter => adapter !== null);
@@ -549,10 +618,7 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   const lifecycle = getVoiceSessionLifecycleController();
   if (!lifecycle) throw new Error('Mounted Voice lifecycle unavailable');
   expect(lifecycle.getConfiguredProviderId()).toBe(input.codex ? CODEX_PROVIDER_ID : input.local ? localProviderId : ELEVENLABS_PROVIDER_ID);
-  const registry = (await import('./voiceAdapterRegistry')).getVoiceAdapterRegistry();
-  await waitForTestEvent(listener => registry.subscribe!(listener),
-    () => registry.get(lifecycle.getConfiguredProviderId()!), adapter => adapter !== null);
-  return { screen, lifecycle, runtime, httpRequests, agentRequests, sessionHttp,
+  return { screen, lifecycle, runtime, httpRequests, agentRequests, sessionHttp, machineId,
     waitForAgentRequests(predicate: (requests: typeof agentRequests) => boolean) {
       return waitForTestEvent(notify => {
         agentRequestListeners.add(notify);
@@ -571,7 +637,7 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
 async function mountGeneratedElevenLabsRuntime(input: Readonly<{ currentUi?: boolean; selectedProviderId?: string }> = {}) {
   const mounted = await prepareGeneratedVoiceRuntime(input);
   const { lifecycle } = mounted;
-  await act(async () => { await lifecycle.toggle(null); });
+  await act(async () => { await (await import('./voiceSession')).voiceSessionManager.toggle(null); });
   expect(lifecycle.getSnapshot(), JSON.stringify({ snapshot: lifecycle.getSnapshot(), sdkStarts: sdk.startSession.mock.calls.length, requests: mounted.httpRequests })).toMatchObject({ adapterId: ELEVENLABS_PROVIDER_ID, status: 'connected' });
   await waitForSdkCall('startSession', 1);
   expect(sdk.startSession).toHaveBeenCalledOnce();
@@ -584,7 +650,7 @@ async function mountGeneratedLocalRuntime(selectedProviderId: 'local_direct' | '
   if (!accountConnection) throw new Error('Native Voice Account unavailable');
   const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
   const target = { serverId: resolveServerProfileScopeIdForIdentifier(accountConnection.home.id), sessionId: 'mounted-native-session' };
-  await act(async () => { await mounted.lifecycle.toggle(target); });
+  await act(async () => { await (await import('./voiceSession')).voiceSessionManager.toggle(target); });
   expect(mounted.lifecycle.getSnapshot()).toMatchObject({ adapterId: selectedProviderId,
     sessionId: target.sessionId, status: 'connected', canStop: true,
   });
@@ -638,7 +704,7 @@ async function mountGeneratedCodexRuntime(input: Readonly<{ global?: boolean; gr
   }
   let start: Promise<void> | undefined;
   try {
-    await act(async () => { start = mounted.lifecycle.toggle(input.global ? null : target); void start.catch(() => {}); });
+    await act(async () => { start = (await import('./voiceSession')).voiceSessionManager.toggle(input.global ? null : target); void start.catch(() => {}); });
     if (!start) throw new Error('Mounted Voice start was not admitted');
     const peer = await Promise.race([browser.peerCreated(), start.then(() => browser.peer)]);
     expect(browser.peers, JSON.stringify(mounted.lifecycle.getSnapshot())).toHaveLength(1);
@@ -668,6 +734,8 @@ async function prepareMountedOpenAiRuntime(input: Readonly<{ credentialSource?: 
     && state.profileScope?.serverId === environment.accountConnection.home.id && state.profileScope.accountId === 'openai-composed-account');
   expect(storage.getState().profileScope).toEqual({ serverId: environment.accountConnection.home.id, accountId: 'openai-composed-account' });
   expect(storage.getState().isDataReady).toBe(true);
+  await environment.configureVoice({ ...storage.getState().settings.voice,
+    executionMachine: { mode: 'fixed', machineId: environment.credentialMachineId } });
   const audioContext = new TestVoiceAudioContext();
   // The browser SDK fixture exposes only the Web Audio leaves capture consumes.
   const browser = installVoiceWebRtcBrowserBoundary({ createAudioContext: () => audioContext as unknown as AudioContext });
@@ -691,14 +759,12 @@ async function prepareMountedOpenAiRuntime(input: Readonly<{ credentialSource?: 
   const lifecycle = getVoiceSessionLifecycleController();
   if (!lifecycle) throw new Error('Mounted OpenAI lifecycle unavailable');
   expect(lifecycle.getConfiguredProviderId()).toBe(OPENAI_PROVIDER_ID);
-  const registry = (await import('./voiceAdapterRegistry')).getVoiceAdapterRegistry();
-  await waitForTestEvent(listener => registry.subscribe!(listener),
-    () => registry.get(OPENAI_PROVIDER_ID), adapter => adapter !== null);
   return { environment, browser, screen, lifecycle, runtime };
 }
 
 describe('VoiceSessionRuntime', () => {
   beforeEach(async () => {
+    Object.assign(runtimeRoute, { pathname: '/settings/voice', segments: ['(app)', 'settings', 'voice'] });
     resetConnectedAccountCatalogSnapshotsForTests();
     installDisconnectedServerSocketBoundary();
     resourceMaterials = [];
@@ -769,15 +835,23 @@ describe('VoiceSessionRuntime', () => {
     nativeSpeech.disposeNativeSdkBridge();
   });
 
-  it('keeps a cold disabled shell free of adapters, then starts and stops through the real enabled runtime', async () => {
+  it.each([false, true])('keeps a configured Home shell cold until public Start with shared saved credential=%s, then starts and stops through the real runtime', async coldSavedCredential => {
     // A browser shell needs its physical media ports, as in the Codex recipe.
     browserBoundaries.push(installVoiceWebRtcBrowserBoundary());
     vi.stubGlobal('window', new EventTarget());
     vi.stubGlobal('document', createMountedBrowserDocument());
-    const { lifecycle } = await prepareGeneratedVoiceRuntime({ coldShell: true });
-    await act(async () => { await lifecycle.toggle(null); });
+    const { lifecycle, httpRequests } = await prepareGeneratedVoiceRuntime({ coldShell: true, coldSavedCredential });
     expect(lifecycle.getSnapshot()).toMatchObject({ adapterId: ELEVENLABS_PROVIDER_ID, status: 'connected', canStop: true });
     expect(sdk.startSession).toHaveBeenCalledOnce();
+    if (coldSavedCredential) expect(httpRequests).toContainEqual(expect.objectContaining({
+      path: '/v1/account/saved-secrets/resources/materials',
+    }));
+    const { voiceSessionManager } = await import('./voiceSession');
+    await act(async () => { await voiceSessionManager.stop(VOICE_AGENT_GLOBAL_SESSION_ID); });
+    expect(voiceSessionManager.getSnapshot()).toMatchObject({ adapterId: null, status: 'disconnected', canStop: false });
+    await act(async () => { await voiceSessionManager.toggle(null); });
+    expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', canStop: true });
+    expect(sdk.startSession).toHaveBeenCalledTimes(2);
     const { storage } = await import('@/sync/domains/state/storage');
     const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
     await act(async () => {
@@ -787,7 +861,7 @@ describe('VoiceSessionRuntime', () => {
     const { getVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
     expect(getVoiceSessionLifecycleController()).toBe(lifecycle);
     expect(lifecycle.getSnapshot().canStop).toBe(false);
-    expect(sdk.endSession).toHaveBeenCalledOnce();
+    expect(sdk.endSession).toHaveBeenCalledTimes(2);
   });
 
   it('does not activate a source provider while declaration admission is establishing', async () => {
@@ -1046,7 +1120,7 @@ describe('VoiceSessionRuntime', () => {
       storage.getState().applySessions([{ ...session, seq: acknowledgedSeq, updatedAt }]);
       mounted.sessionHttp.replaceSession(conversation.sessionId,
         SessionCurrentProjectionRecordV1Schema.parse({ ...current, seq: acknowledgedSeq, updatedAt }));
-      await mounted.lifecycle.toggle(null);
+      await (await import('./voiceSession')).voiceSessionManager.toggle(null);
     });
     expect(mounted.lifecycle.getSnapshot().status, JSON.stringify({ snapshot: mounted.lifecycle.getSnapshot(), sdkStarts: sdk.startSession.mock.calls.length,
       requests: mounted.httpRequests.map(({ path, method }) => ({ path, method })) })).toBe('connected');
@@ -1067,7 +1141,7 @@ describe('VoiceSessionRuntime', () => {
     const { readStoredSessionMessages } = await import('@happier-dev/session-core/messages');
     const { getDeviceAnalyticsId } = await import('@/track/settingsAnalytics/deviceAnalyticsIdentity');
     let start: Promise<void> | undefined;
-    await act(async () => { start = mounted.lifecycle.toggle(null); });
+    await act(async () => { start = (await import('./voiceSession')).voiceSessionManager.toggle(null); });
     try {
       await waitForSdkCall('startSession', 1);
       expect(sdk.startSession).toHaveBeenCalledOnce();
@@ -1102,7 +1176,7 @@ describe('VoiceSessionRuntime', () => {
     const { getVoiceSessionPresentedBinding } = await import('./voiceSessionStore');
     const { readStoredSessionMessages } = await import('@happier-dev/session-core/messages');
     const { readVoiceContinuationProvenance } = await import('@/voice/transcript/voiceTranscriptNoteMeta');
-    await act(async () => { await mounted.lifecycle.toggle(null); });
+    await act(async () => { await (await import('./voiceSession')).voiceSessionManager.toggle(null); });
     await firstWrite.promise;
     expect(writes).toHaveLength(1);
     const binding = getVoiceSessionPresentedBinding();
@@ -1295,7 +1369,7 @@ describe('VoiceSessionRuntime', () => {
         headers: Object.freeze({}), body: new TextEncoder().encode('{}'),
       });
     };
-    await act(async () => { await lifecycle.toggle(null); });
+    await act(async () => { await (await import('./voiceSession')).voiceSessionManager.toggle(null); });
     expect(getVoiceSessionSnapshot()).toMatchObject({
       status: 'error', errorCode: 'provider_auth_invalid', errorRecoveryAction: 'review_credentials',
     });
@@ -1340,7 +1414,7 @@ describe('VoiceSessionRuntime', () => {
     };
     let retry: Promise<void> | undefined;
     try {
-      await act(async () => { retry = lifecycle.toggle(null); void retry.catch(() => {}); });
+      await act(async () => { retry = (await import('./voiceSession')).voiceSessionManager.toggle(null); void retry.catch(() => {}); });
       if (!retry) throw new Error('Mounted Voice retry was not admitted');
       const peer = await Promise.race([browser.peerCreated(), retry.then(() => browser.peer)]);
       expect(browser.peers).toHaveLength(1);
@@ -1417,7 +1491,7 @@ describe('VoiceSessionRuntime', () => {
     const { storage } = await import('@/sync/domains/state/storage');
     const { applyAccountSettingsSavedSecretMutation } = await import('@happier-dev/protocol/account/settings/savedSecretMutationOwner');
     const { OpenAiRealtimeSettingsV1Schema } = await import('../../../../../packages/plugins/openai/src/protocol/voice/settings');
-    const start = lifecycle.toggle(null);
+    const start = (await import('./voiceSession')).voiceSessionManager.toggle(null);
     void start.catch(() => undefined);
     const peer = await Promise.race([browser.peerCreated(), start.then(() => browser.peer)]);
     expect(browser.peers, JSON.stringify(lifecycle.getSnapshot())).toHaveLength(1);
@@ -1502,7 +1576,7 @@ describe('VoiceSessionRuntime', () => {
       await mintGate.promise;
       return providerResponse(...args);
     });
-    const start = lifecycle.toggle(null);
+    const start = (await import('./voiceSession')).voiceSessionManager.toggle(null);
     // The held SDK operation may reject if an assertion fails and cleanup wins.
     void start.catch(() => undefined);
     try {
@@ -1808,7 +1882,7 @@ describe('VoiceSessionRuntime', () => {
     generatedRuntimeScreens.push(screen);
     const lifecycle = getVoiceSessionLifecycleController();
     if (!lifecycle) throw new Error('Actual no-Account lifecycle unavailable');
-    await act(async () => { await lifecycle.toggle(null); });
+    await act(async () => { await (await import('./voiceSession')).voiceSessionManager.toggle(null); });
     expect(getActiveServerAccountScope()).toBeNull();
     expect(lifecycle.getSnapshot()).toMatchObject({ status: 'error', canStop: false });
     expect(sdk.startSession).not.toHaveBeenCalled();
@@ -1849,7 +1923,7 @@ describe('VoiceSessionRuntime', () => {
     let start: Promise<void> | undefined;
     let switching: Promise<AccountScope> | undefined;
     await act(async () => {
-      start = lifecycle.toggle(null);
+      start = (await import('./voiceSession')).voiceSessionManager.toggle(null);
       void start.catch(() => undefined);
     });
     try {
@@ -1968,6 +2042,26 @@ describe('VoiceSessionRuntime', () => {
     }
   });
 
+  it('hands an active Local attempt to an unloaded realtime provider through the existing lifecycle', async () => {
+    const { screen, lifecycle, runtime, machineId } = await mountGeneratedLocalRuntime();
+    const { getVoiceAdapterRegistry } = await import('./voiceAdapterRegistry');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
+    expect(getVoiceAdapterRegistry().get(ELEVENLABS_PROVIDER_ID)).toBeNull();
+    await act(async () => {
+      const voice = writeVoiceProviderSettingsConfig({ ...storage.getState().settings.voice,
+        providerId: ELEVENLABS_PROVIDER_ID, executionMachine: { mode: 'fixed', machineId },
+      }, ELEVENLABS_PROVIDER_ID, ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS);
+      storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice }, storage.getState().settings));
+      await screen.update(runtime);
+    });
+    await vi.waitFor(() => expect(lifecycle.getSnapshot()).toMatchObject({
+      adapterId: ELEVENLABS_PROVIDER_ID, status: 'connected', canStop: true,
+    }));
+    expect(recognizer.stop).toHaveBeenCalledOnce();
+    expect(sdk.startSession).toHaveBeenCalledOnce();
+  });
+
   it('stops the current owner and settles to off after a real disconnect snapshot', async () => {
     const stopped = createDeferred<void>();
     const { screen, lifecycle, runtime } = await mountGeneratedElevenLabsRuntime();
@@ -1998,7 +2092,7 @@ describe('VoiceSessionRuntime', () => {
         adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false,
       });
       expect(lifecycle.getConfiguredProviderId()).toBeNull();
-      await act(async () => { await lifecycle.toggle(null); });
+      await act(async () => { await (await import('./voiceSession')).voiceSessionManager.toggle(null); });
       expect(sdk.startSession).toHaveBeenCalledOnce();
     } finally {
       stopped.resolve();
@@ -2052,7 +2146,7 @@ describe('VoiceSessionRuntime', () => {
     const lifecycle = getVoiceSessionLifecycleController();
     if (!lifecycle) throw new Error('Mounted lifecycle unavailable');
     expect(lifecycle.getConfiguredProviderId()).toBeNull();
-    await act(async () => { await lifecycle.toggle(null); });
+    await act(async () => { await (await import('./voiceSession')).voiceSessionManager.toggle(null); });
     expect(sdk.startSession).not.toHaveBeenCalled();
 
     expect(getVoiceSessionSnapshot()).toEqual({

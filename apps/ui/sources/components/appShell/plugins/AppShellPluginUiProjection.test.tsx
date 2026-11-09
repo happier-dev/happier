@@ -2272,7 +2272,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         }));
     });
 
-    it.each(['originless', 'development'] as const)('acquires the selected %s Voice provider from a cold shell, then unwinds it offline until fresh re-description', async (custody) => {
+    it.each(['originless', 'development'] as const)('keeps selected %s Voice descriptor-only until Start, then unwinds it offline until fresh re-description', async (custody) => {
         const consoleErrors = vi.spyOn(console, 'error');
         onTestFinished(() => consoleErrors.mockRestore());
         // Two live machines deliberately disagree with the fixed Voice choice.
@@ -2470,6 +2470,16 @@ describe('AppShellPluginUiProjectionProvider', () => {
             <AppShellPluginUiProjectionProvider><ProjectionProbe /></AppShellPluginUiProjectionProvider>
         );
         const screen = await renderScreen(renderApp());
+        await flushHookEffects({ cycles: 8 });
+        expect(appShellClientExecutableRuntimeState.loaderBackend.loadInstalledBundle).not.toHaveBeenCalled();
+        expect(getCurrentAppShellVoiceProviderActivation(providerId)).toBeNull();
+        const { voiceSessionManager } = await import('@/voice/session/voiceSession');
+        let starting!: Promise<void>;
+        await act(async () => { starting = voiceSessionManager.toggle(null); });
+        onTestFinished(async () => {
+            await voiceSessionManager.stop('');
+            await starting;
+        });
         await flushHookEffects({ cycles: 8 });
         const acquisition = getCurrentAppShellVoiceProviderActivation(providerId);
         expect(acquisition).not.toBeNull();

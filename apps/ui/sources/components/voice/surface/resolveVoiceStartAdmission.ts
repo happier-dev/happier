@@ -2,16 +2,24 @@ import { VoiceRuntimePlatformSchema, type VoiceRuntimePlatform } from '@happier-
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { projectVoiceProviderSettings, type VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { projectVoiceCredentialReadiness } from '@/voice/credentials/credentialReadiness';
-import { projectVoiceProviderRequirements, projectVoiceReadinessRequirement } from '@/voice/registry/readiness';
+import { resolveAccountVoiceCredentialStatus } from '@/voice/credentials/accountVoiceCredential';
+import { projectVoiceProviderRequirements, projectVoiceReadinessRequirement, type VoiceRoleReadiness } from '@/voice/registry/readiness';
 import {
     isExternalVoiceProviderConnectedServicesBindingReady,
     type ExternalVoiceProviderSettingsDescriptor,
 } from '@/voice/settings/externalProviderSettings';
 import { resolveVoiceProviderIdForBindingScope } from '@/voice/settings/resolveVoiceProviderId';
 
+export type VoiceStartRefusal = Readonly<{
+    reasonKey: string;
+    recoveryAction: 'open_session' | 'open_setup' | VoiceRoleReadiness['recoveryAction'];
+}>;
+
 export type VoiceStartAdmission = Readonly<{
     /** Whether a Voice attempt may be started at all. */
     canStart: boolean;
+    /** The same decision supplies the explanation and remedy; consumers never infer a refusal. */
+    refusal: VoiceStartRefusal | null;
     /**
      * Whether the provider's connected-services reference is present (or the provider needs none).
      *
@@ -75,17 +83,42 @@ export function resolveVoiceStartAdmission(input: Readonly<{
     // slot; its speech engines own those facts. Compose the selected conversation
     // declaration's credential through the same owner Settings uses.
     const hasCredentialSlot = entry?.kind === 'voice.conversation-provider.v1' && Boolean(entry.declaration?.credentials);
-    const credentialReady = !hasCredentialSlot || !requirements?.includes('credential') || (entry !== null && input.credentialContext !== undefined
-        && projectVoiceReadinessRequirement(entry.roles[0] ?? 'realtime_conversation', input.providerId, 'credential',
-            projectVoiceCredentialReadiness({ ...input.credentialContext, entry, envelope }).credential) === null);
+    const credential = hasCredentialSlot && entry && input.credentialContext
+        ? projectVoiceCredentialReadiness({ ...input.credentialContext, entry, envelope }).credential : 'unknown';
+    // Start supplies preparation demand. Its activation owner already joins the
+    // credential catalogs before use; opening Set up is not a prerequisite for
+    // resolving a saved selection. Known missing/withdrawn credentials still refuse.
+    const selectedCredential = credential === 'unknown' && entry?.kind === 'voice.conversation-provider.v1'
+        && entry.declaration?.credentials && input.credentialContext
+        ? resolveAccountVoiceCredentialStatus({ settings: input.credentialContext.settings,
+            contribution: { pluginId: entry.pluginId, localId: entry.declaration.id },
+            credentialSlotId: entry.declaration.credentials.slot.id,
+            resolveSavedSecret: input.credentialContext.resolveSavedSecret }) : null;
+    const awaitingSelectedCredential = selectedCredential?.reference != null && selectedCredential.status !== 'missing';
+    const credentialRefusal = hasCredentialSlot && requirements?.includes('credential') && entry
+        && !awaitingSelectedCredential
+        ? projectVoiceReadinessRequirement(entry.roles[0] ?? 'realtime_conversation', input.providerId, 'credential',
+            credential)
+        : null;
+    const credentialReady = credentialRefusal === null;
+    const refusal: VoiceStartRefusal | null = !entry
+        ? { reasonKey: 'voice.readiness.provider_unselected', recoveryAction: 'open_setup' }
+        : input.daemonLocalVoiceUnavailable
+        ? { reasonKey: 'voice.readiness.server_feature_disabled', recoveryAction: 'switch_provider' }
+        : !platformSupported
+            ? { reasonKey: 'voice.readiness.platform_unsupported', recoveryAction: 'switch_provider' }
+            : !connectedServicesBindingReady
+                ? { reasonKey: 'voice.readiness.settings_missing_required_setting', recoveryAction: 'open_provider_settings' }
+                : credentialRefusal
+                    ? credentialRefusal
+                    : !providerReadyForBinding
+                        ? { reasonKey: 'voice.readiness.settings_unknown', recoveryAction: 'open_provider_settings' }
+                        : !input.globalStartAuthorized && !input.startSessionId
+                            ? { reasonKey: 'commandPalette.commands.sessionRequiredBody', recoveryAction: 'open_session' }
+                            : null;
     return {
-        canStart:
-            !input.daemonLocalVoiceUnavailable
-            && providerReadyForBinding
-            && platformSupported
-            && connectedServicesBindingReady
-            && credentialReady
-            && (input.globalStartAuthorized || Boolean(input.startSessionId)),
+        canStart: refusal === null,
+        refusal,
         connectedServicesBindingReady,
         credentialReady,
     };

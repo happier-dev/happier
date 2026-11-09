@@ -1,5 +1,3 @@
-import { isBundledAgentId } from '@happier-dev/agents';
-import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import { createLocalVoiceAdapter } from '@/voice/adapters/local/createLocalVoiceAdapter';
 import { resolveLocalConversationTranscriptMode } from './resolveLocalConversationTranscriptMode';
 import type { VoiceAdapterController } from '@/voice/session/types';
@@ -7,6 +5,7 @@ import { readLocalConversationVoiceSettings, readVoiceProviderSettingsConfig, vo
 import { resolveActiveLocalVoiceAgentBinding } from '@/voice/context/resolveActiveLocalVoiceAgentBinding';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
+import { projectLocalVoiceSurfaceCapabilities } from '@/voice/registry/voiceProviderSurfaceCapabilities';
 
 function readConfig(voiceSettings: unknown) {
   const parsedVoice = voiceSettingsParse(voiceSettings);
@@ -25,27 +24,7 @@ export function createLocalConversationVoiceAdapter(input: Readonly<{
     contextUpdates: false,
     textTurns: true,
     resolveBindingTranscriptMode: resolveLocalConversationTranscriptMode,
-    resolveSurfaceCapabilities: (voiceSettings) => {
-      // The registry names the adapter whose capabilities are requested. A
-      // next-provider selection cannot revoke this adapter's running controls.
-      const config = readConfig(voiceSettings);
-      if (!config) return null;
-      const agentMode = config.conversationMode === 'agent';
-      // A fixed Agent is the exact runtime a refusal is repaired on; an Agent that follows the
-      // session has no identity of its own.
-      const { agentSource, agentId, agentIdentity } = config.agent;
-      const agentRuntime = agentMode && agentSource === 'agent'
-        ? agentIdentity ?? (isBundledAgentId(agentId) ? BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[agentId] : null)
-        : null;
-      return {
-        allowsGlobalStart: agentMode,
-        controlSessionScope: agentMode ? 'global' : 'surface',
-        requiresVoiceAgentFeature: agentMode,
-        bargeInEnabled: config.tts.bargeInEnabled !== false,
-        cancelResponse: 'immediate',
-        ...(agentRuntime ? { agentRuntime } : {}),
-      };
-    },
+    resolveSurfaceCapabilities: (voiceSettings) => projectLocalVoiceSurfaceCapabilities('local_conversation', voiceSettings),
     resolveContextChannel: (voiceSettings) => {
       const active = resolveActiveLocalVoiceAgentBinding();
       if (!active) return null;

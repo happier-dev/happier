@@ -3,6 +3,7 @@ import type {
   BundledRealtimeProviderRuntimeHost,
 } from './bundledConversationRuntimeContract';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { projectDeclaredVoiceAgentIdentity, projectDeclaredVoiceSurfaceCapabilities } from './voiceProviderSurfaceCapabilities';
 import { buildQualifiedPluginContributionKey, createPluginContributionIdentity, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { deriveVoiceCredentialBindingIdentityV1, VoiceProviderContributionSchema, type VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
@@ -776,20 +777,10 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
         const provider = input.providerRef ?? (() => {
           throw activationError('voice_agent_realtime_provider_identity_required');
         })();
-        const agent = typeof declaration.execution.agent === 'string'
-          ? Object.freeze({
-              pluginId: provider.pluginId,
-              localId: declaration.execution.agent,
-            })
-          : declaration.execution.agent;
+        const agent = projectDeclaredVoiceAgentIdentity(provider.pluginId, declaration.execution.agent);
         const connectedServicesBinding = providerSettings.connectedServicesBinding;
         if (connectedServicesBinding) {
-          const bindingAgent = typeof connectedServicesBinding.agent === 'string'
-            ? Object.freeze({
-                pluginId: provider.pluginId,
-                localId: connectedServicesBinding.agent,
-              })
-            : connectedServicesBinding.agent;
+          const bindingAgent = projectDeclaredVoiceAgentIdentity(provider.pluginId, connectedServicesBinding.agent);
           if (bindingAgent.pluginId !== agent.pluginId || bindingAgent.localId !== agent.localId) {
             throw activationError('voice_agent_realtime_binding_agent_mismatch');
           }
@@ -976,23 +967,9 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
           },
         }
       : {}),
-    resolveSurfaceCapabilities: input.resolveSurfaceCapabilities ?? ((settings) => {
-      const voiceSettings = voiceSettingsParse(readVoiceSettingsInput(settings));
-      const projection = projectExternalVoiceProviderSettings(
-        voiceSettings.providers[providerId] ?? null,
-        providerSettings,
-      );
-      if (voiceSettings.providerId !== providerId || projection.status !== 'ready') return null;
-      return Object.freeze({
-        allowsGlobalStart: true,
-        controlSessionScope: 'global' as const,
-        requiresVoiceAgentFeature: false,
-        bargeInEnabled: declaration.capabilities.turn.bargeIn,
-        cancelResponse: declaration.capabilities.turn.cancelResponse ? 'immediate' as const : 'unsupported' as const,
-        interruptionPolicy: declaration.capabilities.turn.interruptionPolicy
-          ?? (declaration.capabilities.turn.bargeIn ? 'client_two_stage' as const : 'disabled' as const),
-      });
-    }),
+    resolveSurfaceCapabilities: input.resolveSurfaceCapabilities ?? ((settings) =>
+      projectDeclaredVoiceSurfaceCapabilities({ providerId, declaration, providerSettings,
+        pluginId: input.providerRef?.pluginId }, settings)),
     ...(runtime.outputLevelMeter ? { outputLevelMeter: runtime.outputLevelMeter } : {}),
   });
   const contribution = createBundledRealtimeProviderRuntime(input.host, config);

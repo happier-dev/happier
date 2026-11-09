@@ -8,6 +8,7 @@ import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegi
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { resolveVoiceProviderIdForBindingScope } from '@/voice/settings/resolveVoiceProviderId';
 import { saveAndUseAccountVoiceCredential } from '@/voice/credentials/accountVoiceCredential';
+import { applySavedSecretCatalogPage, resolveSavedSecretReference, resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 
 const settings = voiceSettingsParse({ providerId: 'local_conversation', providers: {
     local_conversation: { schemaVersion: 1, config: { conversationMode: 'agent' } },
@@ -22,6 +23,20 @@ function registry(supportedPlatforms: readonly ('web' | 'ios' | 'android')[]) {
 }
 
 describe('resolveVoiceStartAdmission', () => {
+    it('explains a direct-session start without a target while admitting that same mode with a Session', () => {
+        const voiceSettings = voiceSettingsParse({ providerId: 'local_conversation', providers: {
+            local_conversation: { schemaVersion: 1, config: { conversationMode: 'direct_session' } },
+        } });
+        const input = { bindingScope: 'global' as const, daemonLocalVoiceUnavailable: false,
+            globalStartAuthorized: false, providerId: 'local_conversation', platform: 'web' as const,
+            providerSettings: null, registry: registry(['web']), startSessionId: null, voiceSettings };
+        expect(resolveVoiceStartAdmission(input)).toMatchObject({ canStart: false, refusal: {
+            reasonKey: 'commandPalette.commands.sessionRequiredBody', recoveryAction: 'open_session',
+        } });
+        expect(resolveVoiceStartAdmission({ ...input, bindingScope: 'session', startSessionId: 'working-session' }))
+            .toMatchObject({ canStart: true, refusal: null });
+    });
+
     it('keeps Grok setup required across catalog hydration when no credential is selected', () => {
         const registry = createDefaultVoiceProviderRegistry();
         const providerId = 'happier.voice.xai/realtime-grok';
@@ -53,6 +68,51 @@ describe('resolveVoiceStartAdmission', () => {
             registry, startSessionId: null, voiceSettings: configured.voice,
             credentialContext: { settings: configured, connectedPurposes: { v: 1, bindings: [] } },
         }).canStart).toBe(true);
+        // A saved selection survives a fresh shell whose catalog has not loaded.
+        // Explicit Start owns preparation; opening Set up must not be its producer.
+        expect(resolveVoiceStartAdmission({ bindingScope: 'global', daemonLocalVoiceUnavailable: false,
+            globalStartAuthorized: true, providerId, platform: 'web', providerSettings: entry.providerSettings,
+            registry, startSessionId: null, voiceSettings: configured.voice,
+            credentialContext: { settings: configured, connectedPurposes: null },
+        }).canStart).toBe(true);
+    });
+    it('lets explicit Start resolve a selected resource but refuses its known withdrawal', () => {
+        const registry = createDefaultVoiceProviderRegistry();
+        const providerId = 'happier.voice.xai/realtime-grok';
+        const entry = registry.get(providerId);
+        if (entry?.kind !== 'voice.conversation-provider.v1' || !entry.declaration?.credentials || !entry.providerSettings) {
+            throw new Error('Grok credential declaration unavailable');
+        }
+        const ref = 'happier:shared-secret:v1:cold-grok-resource';
+        const configured = saveAndUseAccountVoiceCredential({
+            settings: settingsParse({ voice: { providerId, providers: {
+                [providerId]: { schemaVersion: entry.providerSettings.schemaVersion, config: entry.providerSettings.defaultConfig },
+            } } }),
+            contribution: { pluginId: entry.pluginId, localId: entry.declaration.id },
+            credentialSlotId: entry.declaration.credentials.slot.id, currentDeclaration: entry.declaration,
+            expectedSettingsVersion: 0, expectedSecretId: null, expectedSecretUpdatedAt: null,
+            value: 'test-credential', generateId: () => ref, now: 1,
+        }).settings;
+        const linked = { ...configured, secrets: [] };
+        const scope = { serverId: 'cold-admission-home', accountId: 'cold-admission-account' };
+        const project = (connectedPurposes: null | { v: 1; bindings: [] }) => resolveVoiceStartAdmission({
+            bindingScope: 'global', daemonLocalVoiceUnavailable: false, globalStartAuthorized: true,
+            providerId, platform: 'web', providerSettings: entry.providerSettings, registry,
+            startSessionId: null, voiceSettings: linked.voice,
+            credentialContext: { settings: linked, connectedPurposes,
+                resolveSavedSecret: selected => resolveSavedSecretReference(scope, [], selected, { includeMaterial: false }) },
+        });
+        try {
+            expect(project(null).canStart).toBe(true);
+            expect(project({ v: 1, bindings: [] }).canStart).toBe(true);
+            applySavedSecretCatalogPage({ scope, entries: [], includesMaterial: false, observedAt: 1 });
+            expect(project(null).canStart).toBe(false);
+            expect(project({ v: 1, bindings: [] })).toMatchObject({ canStart: false, refusal: {
+                reasonKey: 'voice.readiness.credential_missing', recoveryAction: 'configure_credential',
+            } });
+        } finally {
+            resetSavedSecretCatalogSnapshotsForTests();
+        }
     });
     it('fails start admission before runtime lookup when the selected provider does not support this platform', () => {
         expect(resolveVoiceStartAdmission({

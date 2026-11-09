@@ -6,6 +6,8 @@ import type {
   VoiceAdapterRuntimeActionResult,
 } from './types';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
+import { projectVoiceProviderDescriptorSurfaceCapabilities } from '@/voice/registry/voiceProviderSurfaceCapabilities';
 import { canAgentRealtimeVoiceStartNewConversation } from '@/voice/registry/resolveAgentRealtimeVoiceConversationBinding';
 import {
   listExternalVoiceProviderRegistrations,
@@ -20,6 +22,7 @@ type Registry = Readonly<{
 
 let controllers: VoiceAdapterController[] = [];
 const registryListeners = new Set<() => void>();
+const providerRegistry = createDefaultVoiceProviderRegistry();
 
 subscribeExternalVoiceProviderRegistrations(() => {
   for (const listener of registryListeners) listener();
@@ -68,9 +71,10 @@ export function resolveVoiceAdapterSurfaceCapabilities(
   voiceSettings: unknown,
 ): VoiceAdapterSurfaceCapabilities | null {
   const adapter = getVoiceAdapterRegistry().get(adapterId);
-  if (!adapter?.resolveSurfaceCapabilities) return null;
   try {
-    const capability = adapter.resolveSurfaceCapabilities(voiceSettings);
+    const capability = adapter?.resolveSurfaceCapabilities
+      ? adapter.resolveSurfaceCapabilities(voiceSettings)
+      : projectVoiceProviderDescriptorSurfaceCapabilities(providerRegistry.get(adapterId), voiceSettings);
     if (!capability
       || typeof capability.allowsGlobalStart !== 'boolean'
       || (capability.controlSessionScope !== 'surface' && capability.controlSessionScope !== 'global')
@@ -91,7 +95,7 @@ export function resolveVoiceAdapterSurfaceCapabilities(
       allowsGlobalStart: capability.allowsGlobalStart,
       controlSessionScope: capability.controlSessionScope,
       requiresVoiceAgentFeature: capability.requiresVoiceAgentFeature,
-      bargeInEnabled: capability.bargeInEnabled && typeof adapter.bargeIn === 'function',
+      bargeInEnabled: capability.bargeInEnabled && typeof adapter?.bargeIn === 'function',
       cancelResponse: capability.cancelResponse === 'immediate' ? 'immediate' : 'unsupported',
       ...(capability.interruptionPolicy !== undefined
         ? { interruptionPolicy: capability.interruptionPolicy }

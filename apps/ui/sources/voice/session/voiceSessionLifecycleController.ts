@@ -183,6 +183,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
     onSyncedConversationMessages?: (address: SessionAddress, messages: readonly Message[]) => void;
     captureAdmission?: VoiceCaptureAdmissionController;
     acquireConnectivityLease?: () => () => void;
+    activateProvider?: (providerId: string) => Promise<void>;
     getRegistry?: () => ReturnType<typeof getVoiceAdapterRegistry>;
     retiringAttempt?: Promise<void>;
     cancelRetiringAttempt?: () => void;
@@ -777,6 +778,12 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             const targetAdapter = getRegistry().get(targetAdapterId);
             if (!targetAdapter) {
                 pendingAdapterSwitch = null;
+                // The source has completed Stop. Admit the missing handoff leaf
+                // through the same activation and connecting projection as Start.
+                void startConfiguredAdapter(
+                    pending.requestedTargetSessionAddress,
+                    targetAdapterId === pending.sourceAdapterId ? pending.conversationSelection : undefined,
+                ).catch(() => {}).finally(() => { publishSnapshot(); });
                 return;
             }
 
@@ -996,18 +1003,22 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 role: 'realtime_conversation',
                 executionMachine: projectVoiceExecutionMachineReadiness(machine.kind, machine.kind === 'none' ? null : machine.machineId),
             }) : null;
-        const failure = readiness ? createVoiceMachineError({
+        let failure = readiness ? createVoiceMachineError({
             kind: readiness.recoveryAction === 'select_execution_machine' ? 'execution_machine_unavailable' : 'service_temporarily_unavailable',
             reason: readiness.code,
         }) : undefined;
         const activation = !failure && !adapter && providerId && providerId !== 'off'
-            ? getCurrentAppShellVoiceProviderActivation(providerId) : null;
+            ? getCurrentAppShellVoiceProviderActivation(providerId) ?? deps?.activateProvider?.(providerId) : null;
         if (activation && providerId && providerId !== 'off') {
             const request: VoiceRecoveryBinding = { providerId, conversationSelection,
                 sessionId: sessionId.trim() || VOICE_AGENT_GLOBAL_SESSION_ID, requestedTargetSessionAddress };
             pendingStart = request;
             publishSnapshot();
-            await activation;
+            try {
+                await activation;
+            } catch {
+                failure = createVoiceMachineError({ kind: 'service_temporarily_unavailable', reason: 'voice_provider_adapter_not_registered' });
+            }
             if (disposed || pendingStart !== request || configuredProviderId !== providerId) return;
             pendingStart = null;
             adapter = resolveConfiguredAdapter();
