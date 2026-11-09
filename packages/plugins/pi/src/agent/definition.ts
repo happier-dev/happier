@@ -1,3 +1,4 @@
+import { PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES } from './auth/services/qualifiedPurposes.js';
 import { piConnectedServiceStateSharingDescriptor } from './connectedServices/stateSharingDescriptor.js';
 
 const { providerId: _providerId, ...stateSharing } = piConnectedServiceStateSharingDescriptor;
@@ -19,7 +20,7 @@ export const AGENT_DEFINITION = Object.freeze({
     flavorAliases: ['pi-coding-agent'],
     cloudConnect: null,
     connectedServices: {
-      supportedServiceIds: ['openai-codex', 'openai', 'claude-subscription', 'anthropic'],
+      supportedServiceIds: PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.map((row) => row.service.localId),
       providerStateSharing: {
         config: {
           supported: false,

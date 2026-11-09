@@ -4,6 +4,7 @@ import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 
+import { PI_REQUEST_AUTH_PURPOSE_ROWS } from '../qualifiedPurposes.js';
 import {
   isDeclaredPiRequestAuthPurpose,
 } from './purposes.js';
@@ -82,14 +83,9 @@ export function readPiRequestAuthMaterialization(value: unknown): PiRequestAuthM
     const parsed = readBinding(candidate);
     if (!parsed) return null;
     const { service, purpose } = parsed;
-    const providerId: PiRequestAuthProviderId | null =
-      service.pluginId === 'happier.agent.claude'
-        && service.localId === 'claude-subscription'
-        ? 'anthropic'
-        : service.pluginId === 'happier.agent.codex'
-          && service.localId === 'openai-codex'
-          ? 'openai-codex'
-          : null;
+    const providerId = PI_REQUEST_AUTH_PURPOSE_ROWS.find((row) =>
+      row.service.pluginId === service.pluginId && row.service.localId === service.localId,
+    )?.native.providerId;
     if (
       !providerId
       || purposes[providerId] !== undefined

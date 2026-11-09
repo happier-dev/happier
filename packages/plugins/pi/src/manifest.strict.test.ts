@@ -23,6 +23,7 @@ describe('Pi strict plugin manifest', () => {
     const processAccess = PLUGIN_MANIFEST.hostAccess.required.find((entry) => entry.id === 'pi-process');
     expect(processAccess?.scope.envKeys).toEqual(PI_LAUNCH_ENV_KEYS);
     expect(processAccess?.scope.envKeys).toEqual([
+      'HAPPIER_PI_PROVIDER_API_KEY',
       'HAPPIER_PI_THINKING_LEVEL',
       'PI_OFFLINE',
       'HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH',

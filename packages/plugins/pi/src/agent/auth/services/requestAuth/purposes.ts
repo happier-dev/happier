@@ -1,5 +1,7 @@
 import { isRecord, type JsonValue } from '@happier-dev/plugin-sdk';
 
+import { PI_REQUEST_AUTH_PURPOSE_ROWS } from '../qualifiedPurposes.js';
+
 import type { PiRequestAuthProviderId, PiRequestAuthPurposeMap } from './source.js';
 
 export const PI_REQUEST_AUTH_CONSUMER = Object.freeze({
@@ -7,50 +9,33 @@ export const PI_REQUEST_AUTH_CONSUMER = Object.freeze({
   localId: 'pi',
 } as const);
 
-export const PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID = 'anthropic-model-request' as const;
-export const PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID = 'openai-codex-model-request' as const;
+export { PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID, PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID } from '../qualifiedPurposes.js';
 
-export const PI_REQUEST_AUTH_DECLARED_PURPOSES = Object.freeze({
-  anthropic: Object.freeze({
+type PiRequestAuthPurposeRow = (typeof PI_REQUEST_AUTH_PURPOSE_ROWS)[number];
+
+export const PI_REQUEST_AUTH_DECLARED_PURPOSES = Object.freeze(Object.fromEntries(
+  PI_REQUEST_AUTH_PURPOSE_ROWS.map((row) => [row.native.providerId, Object.freeze({
     consumer: PI_REQUEST_AUTH_CONSUMER,
-    purpose: PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
-  }),
-  'openai-codex': Object.freeze({
-    consumer: PI_REQUEST_AUTH_CONSUMER,
-    purpose: PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
-  }),
-});
+    purpose: row.purpose,
+  })]),
+) as { readonly [Row in PiRequestAuthPurposeRow as Row['native']['providerId']]: Readonly<{
+  consumer: typeof PI_REQUEST_AUTH_CONSUMER;
+  purpose: Row['purpose'];
+}> });
 
-export const PI_REQUEST_AUTH_PROVIDER_MATERIALIZATIONS = Object.freeze({
-  anthropic: Object.freeze({
-    kind: 'httpHeaders' as const,
-    origin: 'https://api.anthropic.com',
-    headerNames: Object.freeze(['authorization']),
-  }),
-  'openai-codex': Object.freeze({
-    kind: 'httpHeaders' as const,
-    origin: 'https://chatgpt.com',
-    headerNames: Object.freeze(['authorization', 'chatgpt-account-id']),
-  }),
-});
+export const PI_REQUEST_AUTH_PROVIDER_MATERIALIZATIONS = Object.freeze(Object.fromEntries(
+  PI_REQUEST_AUTH_PURPOSE_ROWS.map((row) => [row.native.providerId, row.requestAuth.materialization]),
+) as { readonly [Row in PiRequestAuthPurposeRow as Row['native']['providerId']]: Row['requestAuth']['materialization'] });
 
-// These are stripped before every wrapped attempt. Anthropic includes x-api-key for
-// native/API-key isolation even though the request-auth lease itself is OAuth Bearer.
-export const PI_REQUEST_AUTH_PROVIDER_OWNED_HEADERS = Object.freeze({
-  anthropic: Object.freeze(['authorization', 'x-api-key']),
-  'openai-codex': Object.freeze(['authorization', 'chatgpt-account-id']),
-} satisfies Readonly<Record<PiRequestAuthProviderId, readonly string[]>>);
+// Native API-key headers must be stripped as well as request-auth lease headers.
+export const PI_REQUEST_AUTH_PROVIDER_OWNED_HEADERS = Object.freeze(Object.fromEntries(
+  PI_REQUEST_AUTH_PURPOSE_ROWS.map((row) => [row.native.providerId, row.requestAuth.ownedHeaders]),
+) as { readonly [Row in PiRequestAuthPurposeRow as Row['native']['providerId']]: Row['requestAuth']['ownedHeaders'] });
 
-export const PI_REQUEST_AUTH_USES = Object.freeze([
-  Object.freeze({
-    purpose: PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
-    materialization: PI_REQUEST_AUTH_PROVIDER_MATERIALIZATIONS.anthropic,
-  }),
-  Object.freeze({
-    purpose: PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
-    materialization: PI_REQUEST_AUTH_PROVIDER_MATERIALIZATIONS['openai-codex'],
-  }),
-]);
+export const PI_REQUEST_AUTH_USES = Object.freeze(PI_REQUEST_AUTH_PURPOSE_ROWS.map((row) => Object.freeze({
+  purpose: row.purpose,
+  materialization: row.requestAuth.materialization,
+})));
 
 export function isDeclaredPiRequestAuthPurpose(
   providerId: PiRequestAuthProviderId,
@@ -65,5 +50,5 @@ export function isDeclaredPiRequestAuthPurpose(
 }
 
 export function hasPiRequestAuthPurpose(purposes: PiRequestAuthPurposeMap): boolean {
-  return purposes.anthropic !== undefined || purposes['openai-codex'] !== undefined;
+  return PI_REQUEST_AUTH_PURPOSE_ROWS.some((row) => purposes[row.native.providerId] !== undefined);
 }

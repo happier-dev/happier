@@ -43,8 +43,8 @@ function disconnectedConnectedAccounts(): ConnectedAccountsFixture {
     getBinding: vi.fn(async () => null),
     materialize: vi.fn(),
     requestSelection: vi.fn(),
-    watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => void) => {
-      listener({ kind: 'resync' });
+    watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
+      listener({ kind: 'resync', authorityChanged: true });
       return { dispose() {} };
     }),
   };
@@ -99,6 +99,14 @@ function createContext(
         return;
       }
       capture.written.push(value);
+      if (typeof record.id === 'string' && record.type === 'set_model') {
+        await capture.listener?.({
+          type: 'response',
+          id: record.id,
+          command: 'set_model',
+          success: true,
+        });
+      }
     },
     subscribe(listener) {
       capture.listener = listener;
@@ -244,6 +252,7 @@ describe('activate', () => {
     expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
       'agents',
       'hooks',
+      'resources',
       'settings',
       'systemTools',
       'ui',
@@ -329,8 +338,8 @@ describe('activate', () => {
       pageTranscript: expect.any(Function),
       readAfterTranscript: expect.any(Function),
     });
-    expect(registration?.externalSessions).not.toBe(piExternalSessionsContribution);
-    expect(registration?.externalSessions?.resolveSource).not.toBe(
+    expect(registration?.externalSessions).toBe(piExternalSessionsContribution);
+    expect(registration?.externalSessions?.resolveSource).toBe(
       piExternalSessionsContribution.resolveSource,
     );
     const cancelled = new AbortController();
@@ -664,8 +673,8 @@ describe('activate', () => {
           : { ANTHROPIC_API_KEY: 'sk-anthropic-public' },
       })),
       requestSelection: vi.fn(),
-      watch: vi.fn((purpose: string, listener: (event: { kind: 'resync' }) => void) => {
-        listener({ kind: 'resync' });
+      watch: vi.fn((purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
+        listener({ kind: 'resync', authorityChanged: true });
         return { dispose: () => { disposedPurposes.push(purpose); } };
       }),
     };
@@ -692,10 +701,10 @@ describe('activate', () => {
         'anthropic-api-key',
       ]);
       expect(connectedAccounts.getBinding.mock.calls).toEqual([
-        ['anthropic-model-request', { signal: expect.any(AbortSignal) }],
-        ['openai-codex-model-request', { signal: expect.any(AbortSignal) }],
-        ['openai-api-key', { signal: expect.any(AbortSignal) }],
-        ['anthropic-api-key', { signal: expect.any(AbortSignal) }],
+        ['anthropic-model-request', { signal: expect.any(AbortSignal), observation: true }],
+        ['openai-codex-model-request', { signal: expect.any(AbortSignal), observation: true }],
+        ['openai-api-key', { signal: expect.any(AbortSignal), observation: true }],
+        ['anthropic-api-key', { signal: expect.any(AbortSignal), observation: true }],
       ]);
       expect(connectedAccounts.materialize.mock.calls).toEqual([
         [
@@ -783,7 +792,7 @@ describe('activate', () => {
       service: { pluginId: 'happier.voice.openai', localId: 'openai' },
       accountId: 'openai-account',
     } as const;
-    const listeners = new Map<string, (event: { kind: 'resync' }) => void | Promise<void>>();
+    const listeners = new Map<string, (event: { kind: 'resync'; authorityChanged: boolean }) => void | Promise<void>>();
     const connectedAccounts: ConnectedAccountsFixture = {
       getBinding: vi.fn(async (purpose: string) => purpose === 'openai-api-key'
         ? {
@@ -794,13 +803,13 @@ describe('activate', () => {
           }
         : null),
       materialize: vi.fn(async () => {
-        await listeners.get('openai-api-key')?.({ kind: 'resync' });
+        await listeners.get('openai-api-key')?.({ kind: 'resync', authorityChanged: true });
         return { kind: 'environment' as const, env: { OPENAI_API_KEY: 'sk-openai-public' } };
       }),
       requestSelection: vi.fn(),
-      watch: vi.fn((purpose: string, listener: (event: { kind: 'resync' }) => void) => {
+      watch: vi.fn((purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
         listeners.set(purpose, listener);
-        listener({ kind: 'resync' });
+        listener({ kind: 'resync', authorityChanged: true });
         return { dispose() {} };
       }),
     };
@@ -841,8 +850,8 @@ describe('activate', () => {
         : null),
       materialize: vi.fn(async () => ({ kind: 'environment' as const, env: { UNEXPECTED: 'secret' } })),
       requestSelection: vi.fn(),
-      watch: vi.fn((purpose: string, listener: (event: { kind: 'resync' }) => void) => {
-        listener({ kind: 'resync' });
+      watch: vi.fn((purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
+        listener({ kind: 'resync', authorityChanged: true });
         return { dispose: () => { disposedPurposes.push(purpose); } };
       }),
     };
@@ -886,8 +895,8 @@ describe('activate', () => {
         : null),
       materialize: vi.fn(),
       requestSelection: vi.fn(),
-      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => void) => {
-        listener({ kind: 'resync' });
+      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
+        listener({ kind: 'resync', authorityChanged: true });
         return { dispose() {} };
       }),
     };
@@ -939,8 +948,8 @@ describe('activate', () => {
         env: { CLAUDE_CODE_OAUTH_TOKEN: 'claude-setup-token-public' },
       })),
       requestSelection: vi.fn(),
-      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => void) => {
-        listener({ kind: 'resync' });
+      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
+        listener({ kind: 'resync', authorityChanged: true });
         return { dispose() {} };
       }),
     };
@@ -952,6 +961,12 @@ describe('activate', () => {
         kind: 'create',
         sessionId: 'pi-public-setup-token',
         cwd: '/tmp/pi-workspace',
+        configuration: {
+          mode: { value: null, updatedAtMs: 0 },
+          model: { value: 'openai-codex/gpt-6-luna', updatedAtMs: 1, selectionSource: 'explicit' },
+          permissionIntent: { value: 'read-only', updatedAtMs: 0 },
+          options: {},
+        },
         launchEnvironment: {
           values: {
             PI_CODING_AGENT_DIR: agentDir,
@@ -1031,8 +1046,8 @@ describe('activate', () => {
         : null),
       materialize: vi.fn(),
       requestSelection: vi.fn(),
-      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => void) => {
-        listener({ kind: 'resync' });
+      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
+        listener({ kind: 'resync', authorityChanged: true });
         return { dispose() {} };
       }),
     };
@@ -1044,6 +1059,12 @@ describe('activate', () => {
         kind: 'create',
         sessionId: 'pi-request-auth-only',
         cwd: '/tmp/pi-workspace',
+        configuration: {
+          mode: { value: null, updatedAtMs: 0 },
+          model: { value: 'openai-codex/gpt-6-luna', updatedAtMs: 1, selectionSource: 'explicit' },
+          permissionIntent: { value: 'read-only', updatedAtMs: 0 },
+          options: {},
+        },
         launchEnvironment: {
           values: {
             PI_CODING_AGENT_DIR: agentDir,
@@ -1122,8 +1143,8 @@ describe('activate', () => {
         };
       }),
       requestSelection: vi.fn(),
-      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => void) => {
-        listener({ kind: 'resync' });
+      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
+        listener({ kind: 'resync', authorityChanged: true });
         return { dispose() {} };
       }),
     };
@@ -1215,8 +1236,8 @@ describe('activate', () => {
         });
       }),
       requestSelection: vi.fn(),
-      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => void) => {
-        listener({ kind: 'resync' });
+      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
+        listener({ kind: 'resync', authorityChanged: true });
         return { dispose() {} };
       }),
     };
@@ -1279,15 +1300,15 @@ describe('activate', () => {
   });
 
   it('disposes the one Pi session runtime and every purpose watch on a later public resync', async () => {
-    const listeners = new Map<string, (event: { kind: 'resync' }) => void>();
+    const listeners = new Map<string, (event: { kind: 'resync'; authorityChanged: boolean }) => void>();
     const disposedPurposes: string[] = [];
     const connectedAccounts: ConnectedAccountsFixture = {
       getBinding: vi.fn(async () => null),
       materialize: vi.fn(),
       requestSelection: vi.fn(),
-      watch: vi.fn((purpose: string, listener: (event: { kind: 'resync' }) => void) => {
+      watch: vi.fn((purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
         listeners.set(purpose, listener);
-        listener({ kind: 'resync' });
+        listener({ kind: 'resync', authorityChanged: true });
         return { dispose: () => { disposedPurposes.push(purpose); } };
       }),
     };
@@ -1300,7 +1321,7 @@ describe('activate', () => {
       cwd: '/tmp/pi-workspace',
     }, context.session);
 
-    listeners.get('openai-api-key')?.({ kind: 'resync' });
+    listeners.get('openai-api-key')?.({ kind: 'resync', authorityChanged: true });
     await vi.waitFor(() => expect(capture.disposeCount).toBe(1));
     expect(disposedPurposes.sort()).toEqual([
       'anthropic-api-key',
