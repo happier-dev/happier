@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { createPluginHttpFixture, createPluginTestkit, createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
+import { resolveEffectiveActionInputFields } from '@happier-dev/plugin-sdk/actions';
 import * as entry from '../index.js';
 
 const credentialRef = { service: { pluginId: entry.manifest.id, localId: 'cloudflare' }, accountId: 'selected-profile' };
@@ -9,6 +10,48 @@ const credentialPrincipal = { kind: 'account', accountId: 'owner', purpose: { co
 const draft = { credentialRef, credentialPrincipal, product: 'pages', providerIdentity: { providerAccountId: 'account' } };
 const json = (result: unknown, result_info?: unknown) => ({ status: 200, headers: {},
   body: new TextEncoder().encode(JSON.stringify({ success: true, result, ...(result_info ? { result_info } : {}) })) });
+
+it('keeps an empty Account discovery distinct from a missing draft dependency', async () => {
+  const http = createPluginHttpFixture({ async request() { return json([]); } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
+  try {
+    await expect(kit.invokeAction('target-options-read', { credentialRef, credentialPrincipal,
+      fieldPath: 'providerIdentity.providerAccountId' })).resolves.toEqual({ options: [] });
+    await expect(kit.invokeAction('target-options-read', { credentialRef, credentialPrincipal, product: 'pages',
+      fieldPath: 'providerIdentity.providerResourceId' })).rejects.toMatchObject({ code: 'missing_option_dependency',
+        details: { requiredDraftPath: 'providerIdentity.providerAccountId' } });
+    await expect(kit.invokeAction('target-options-read', { ...draft, product: 'workers',
+      fieldPath: 'triggerUuid' })).rejects.toMatchObject({ code: 'missing_option_dependency',
+        details: { requiredDraftPath: 'providerIdentity.providerResourceId' } });
+    const { product: _product, ...withoutProduct } = draft;
+    await expect(kit.invokeAction('target-options-read', { ...withoutProduct,
+      fieldPath: 'providerIdentity.providerResourceId' })).rejects.toMatchObject({ code: 'missing_option_dependency',
+        details: { requiredDraftPath: 'product' } });
+  } finally { await kit.dispose(); }
+});
+
+it.each(['workers-inspect', 'pages-inspect', 'targets-inspect-v1'])('resolves required discovery choices and conditional trigger visibility for %s', (actionId) => {
+  const action = entry.manifest.contributes.actions.find(value => value.id === actionId);
+  if (!action) throw new Error('Missing Cloudflare inspect Action');
+  const fields = (input: unknown) => resolveEffectiveActionInputFields({ inputHints: action.inputHints }, input);
+  expect(fields({}).filter(field => field.required).map(field => field.path)).toEqual(expect.arrayContaining([
+    'providerIdentity.providerAccountId', 'providerIdentity.providerResourceId', 'providerEnvironment',
+  ]));
+  if (actionId !== 'pages-inspect') {
+    expect(fields({ providerEnvironment: { kind: 'script', scriptName: 'worker' } })
+      .find(field => field.path === 'triggerUuid')).toMatchObject({ required: true });
+    expect(fields({ providerEnvironment: { kind: 'preview', scriptName: 'worker', previewName: 'feature' } })
+      .some(field => field.path === 'triggerUuid')).toBe(false);
+    expect(fields({ providerEnvironment: { kind: 'script', scriptName: 'worker' } })
+      .some(field => field.path === 'preparedNative.projectName' && field.required)).toBe(false);
+  }
+  if (actionId !== 'workers-inspect') {
+    for (const kind of ['production', 'preview']) {
+      expect(fields({ providerEnvironment: { kind } })
+        .find(field => field.path === 'preparedNative.projectName')).toMatchObject({ required: true });
+    }
+  }
+});
 
 it.each([
   { targetKind: 'cloudflare-workers', row: { id: 'selected-worker', tag: 'worker-tag' },
@@ -111,6 +154,13 @@ it('propagates cancelled Resource lifetime and custody refusal without provider 
       query: { draftInput: draft, fieldPath: 'providerIdentity.providerResourceId' },
       readAction: async () => ({ ok: false, errorCode: 'connected_account_access_denied', error: 'Denied' }) })))
       .rejects.toMatchObject({ code: 'connected_account_access_denied' });
+    // The Resource-to-host Action boundary returns the canonical typed refusal.
+    await expect(resource.read(createTestResourceInvocationContext({
+      query: { draftInput: draft, fieldPath: 'triggerUuid' },
+      readAction: async () => ({ ok: false, errorCode: 'missing_option_dependency', error: 'missing_option_dependency',
+        details: { requiredDraftPath: 'providerIdentity.providerResourceId' } }) })))
+      .rejects.toMatchObject({ code: 'missing_option_dependency',
+        details: { requiredDraftPath: 'providerIdentity.providerResourceId' } });
   } finally { await kit.dispose(); }
 });
 

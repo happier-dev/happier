@@ -21,6 +21,9 @@ type Input = Readonly<{ product?: 'workers' | 'pages'; providerIdentity?: { prov
   fieldPath: string; query?: string; cursor?: string }>;
 type Option = { value: JsonValue; label: string };
 function invalid(): never { throw new PluginError({ code: 'provider_response_invalid' }); }
+function missingDependency(requiredDraftPath: string): never {
+  throw new PluginError({ code: 'missing_option_dependency', details: { requiredDraftPath } });
+}
 function name(value: unknown): value is string { return typeof value === 'string' && value.length > 0; }
 function options(rows: readonly Option[], query?: string) {
   const search = query?.toLocaleLowerCase();
@@ -45,10 +48,10 @@ async function read(input: Input, context: DeploymentContext) {
     reply = await requestAccounts(context, params.size ? `?${params}` : '');
   } else {
     const accountId = input.providerIdentity?.providerAccountId;
-    if (!accountId) return { options: [] };
+    if (!accountId) missingDependency('providerIdentity.providerAccountId');
     let path: string;
     if (input.fieldPath === 'triggerUuid') {
-      if (!input.providerIdentity?.providerResourceId) return { options: [] };
+      if (!input.providerIdentity?.providerResourceId) missingDependency('providerIdentity.providerResourceId');
       path = `/builds/workers/${encodeURIComponent(input.providerIdentity.providerResourceId)}/triggers`;
     } else if (input.product === 'pages') {
       if (input.fieldPath === 'providerEnvironment') return { options: options([
@@ -59,7 +62,7 @@ async function read(input: Input, context: DeploymentContext) {
       selectedScript = input.fieldPath === 'providerEnvironment' ? input.scriptName : undefined;
       if (selectedScript && input.query) params.set('name', input.query);
       path = selectedScript ? `/workers/workers/${encodeURIComponent(selectedScript)}/previews${params.size ? `?${params}` : ''}` : '/workers/scripts';
-    } else return { options: [] };
+    } else return missingDependency('product');
     reply = await request(context, accountId, path, 'link');
   }
   if ('code' in reply) throw new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase } });
@@ -140,7 +143,12 @@ function targetOptionsFor(product?: 'workers' | 'pages'): PluginDynamicResourceR
     if (query.query !== undefined) input.query = query.query;
     if (query.cursor !== undefined) input.cursor = query.cursor;
     const result = await options.readAction({ pluginId, localId: 'target-options-read' }, input, { signal: options.signal });
-    if (!result.ok) throw new PluginError({ code: 'errorCode' in result && typeof result.errorCode === 'string' ? result.errorCode : 'deployment_unavailable' });
+    if (!result.ok) {
+      const code = 'errorCode' in result && typeof result.errorCode === 'string' ? result.errorCode : 'deployment_unavailable';
+      const details = 'details' in result ? result.details : undefined;
+      throw new PluginError({ code, ...(code === 'missing_option_dependency' && isObject(details) && typeof details.requiredDraftPath === 'string'
+        ? { details: { requiredDraftPath: details.requiredDraftPath } } : {}) });
+    }
     return JSON.stringify(result.result);
   },
   observe() { return { dispose() {} }; },
@@ -166,10 +174,14 @@ export const targetOptionInputTypes = {
 } as const;
 export const targetOptionInputHints = { fields: [
   ...([['providerIdentity.providerAccountId', 'Cloudflare Account'],
-    ['providerIdentity.providerResourceId', 'Project or Worker'], ['providerEnvironment', 'Environment'],
-    ['preparedNative.projectName', 'Pages project name'], ['triggerUuid', 'Worker build trigger']] as const).map(([path, title]) => ({
-      path, title, widget: 'select' as const, inputType: { pluginId, localId: 'target-choice' },
+    ['providerIdentity.providerResourceId', 'Project or Worker'], ['providerEnvironment', 'Environment']] as const).map(([path, title]) => ({
+      path, title, required: true, widget: 'select' as const, inputType: { pluginId, localId: 'target-choice' },
     })),
+  { path: 'preparedNative.projectName', title: 'Pages project name', widget: 'select', inputType: { pluginId, localId: 'target-choice' },
+    requiredWhen: { op: 'not', predicate: { op: 'truthy', path: 'providerEnvironment.scriptName' } } },
+  { path: 'triggerUuid', title: 'Worker build trigger', widget: 'select', inputType: { pluginId, localId: 'target-choice' },
+    requiredWhen: { op: 'eq', path: 'providerEnvironment.kind', value: 'script' },
+    visibleWhen: { op: 'eq', path: 'providerEnvironment.kind', value: 'script' } },
 ] } as const;
 export const targetProductSchema = product;
 
