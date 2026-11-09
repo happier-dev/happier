@@ -2,7 +2,7 @@ import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { MachineInstallationProofV1Schema } from '../../../identity/installationKeySchemas.js';
 
-/** The installed Computer owner attests its own-source decision; desktop keys stay private. */
+/** The installed Browser or Computer owner attests source access; host-private scope keys stay private. */
 export const MachineLiveStreamSourceAdmissionBindingV1Schema = lazyZodSchema(() => z.strictObject({
   homeServerIdentityId: z.string().check(z.minLength(1)),
   actorAccountId: z.string().check(z.minLength(1)),

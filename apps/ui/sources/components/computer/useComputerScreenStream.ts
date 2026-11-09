@@ -1,18 +1,27 @@
 import * as React from 'react';
-import type { MachineLiveStreamCapsV1, MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol';
+import type { MachineLiveStreamCapsV1} from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import type { MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
 
 import type { BrowserStreamedSurfaceRuntime } from '@/components/browser/adapters/BrowserStreamedTarget';
-import { useSimulatorRelayIngestion, type SimulatorRelayTransport } from '@/components/devices/simulator/relay/useSimulatorRelayIngestion';
+import { useSimulatorRelayIngestion, type SimulatorRelayTransport, type UseSimulatorRelayIngestionInput } from '@/components/devices/simulator/relay/useSimulatorRelayIngestion';
 import { useMachineLiveStreamRelaySocket } from '@/components/stream/useMachineLiveStreamRelaySocket';
 import { useMachineLiveStreamId } from '@/components/stream/useMachineLiveStreamId';
-import { publishComputerStatusFrame, publishComputerStreamInputFailure } from '@/sync/domains/computer/computerControlClient';
+import type { RemoteViewerClipboardShortcut } from '@happier-dev/plugin-ui/presentation';
+import { computerScopeKey, publishComputerStatusFrame, publishComputerStreamInputFailure } from '@/sync/domains/computer/computerControlClient';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import type { ComputerScope } from '@/sync/domains/computer/computerControlClient';
 
 /** The live-stream family and codec W7's native computer source registers (`_CONTRACTS.md`, W7 U3 supplement). */
 const SCREEN_STREAM_FAMILY = 'screen';
 const SCREEN_CODECS = ['image.frame.v1'] as const;
 /** No viewer-proposed ceilings: the registered source and the server grant own the cadence. */
 const NO_VIEWER_CAPS: MachineLiveStreamCapsV1 = {};
+
+/** The machine relay's transport ports, shared by the live and local-demo compositions. */
+export type ComputerScreenTransport = Readonly<{
+    resolveSocket: NonNullable<Parameters<typeof useMachineLiveStreamRelaySocket>[0]['resolveSocket']>;
+    openRelay: NonNullable<UseSimulatorRelayIngestionInput['openRelay']>;
+}>;
 
 /**
  * The shared window's live picture: the exact `sourceId` the computer owner returned for the Session's
@@ -21,7 +30,7 @@ const NO_VIEWER_CAPS: MachineLiveStreamCapsV1 = {};
  * the daemon turns the person's tap or key into a takeover and drains the agent first (W7).
  */
 export function useComputerScreenStream(input: Readonly<{
-    sessionId: string;
+    scope: ComputerScope;
     machineId: string | null;
     serverId: string | null;
     accountLifetime?: ServerAccountScopeLifetime | null;
@@ -29,12 +38,15 @@ export function useComputerScreenStream(input: Readonly<{
     machineName: string | null;
     enabled?: boolean;
     inputEnabled?: boolean;
+    clipboardShortcut?: RemoteViewerClipboardShortcut;
+    transport?: ComputerScreenTransport;
 }>): BrowserStreamedSurfaceRuntime | null {
     const machineId = input.machineId?.trim() ?? '';
     const serverId = input.serverId?.trim() || input.accountLifetime?.scope.serverId || '';
     // Like the retained Browser, parking suspends ingestion, not source/socket identity.
     // The shared player's existing last frame then survives the gap between responsive binders.
     const sourceId = input.sourceId;
+    const viewerKey = JSON.stringify([input.accountLifetime?.scope.accountId ?? null, computerScopeKey(input.scope)]);
     const inputEnabled = input.enabled !== false && (input.inputEnabled ?? true);
     const socket = useMachineLiveStreamRelaySocket({
         machineId,
@@ -42,6 +54,7 @@ export function useComputerScreenStream(input: Readonly<{
         accountLifetime: input.accountLifetime,
         enabled: Boolean(sourceId && machineId),
         disconnectTag: 'computer-live-stream-relay-disconnect',
+        resolveSocket: input.transport?.resolveSocket,
     });
     const transport = React.useMemo<SimulatorRelayTransport | null>(() => (socket
         ? { send: (_event, envelope) => socket.sendEnvelope(envelope), onEnvelope: (listener) => socket.onEnvelope(listener) }
@@ -62,12 +75,13 @@ export function useComputerScreenStream(input: Readonly<{
         ...(sourceId ? { sourceId } : {}),
         caps: NO_VIEWER_CAPS,
         sourceCodecs: SCREEN_CODECS,
+        openRelay: input.transport?.openRelay,
         onMetadataFrame: frame => {
-            if (sourceId && machineId) publishComputerStatusFrame({ sessionId: input.sessionId, machineId, serverId: serverId || null }, sourceId, frame);
+            if (sourceId && machineId) publishComputerStatusFrame(input.scope, sourceId, frame);
         },
         onReceipt: receipt => {
             if (sourceId && machineId && receipt.terminal === false && receipt.reasonCode) {
-                publishComputerStreamInputFailure({ sessionId: input.sessionId, machineId, serverId: serverId || null }, sourceId, receipt.reasonCode);
+                publishComputerStreamInputFailure(input.scope, sourceId, receipt.reasonCode);
             }
         },
     });
@@ -90,7 +104,8 @@ export function useComputerScreenStream(input: Readonly<{
             connecting: !socket || !playerState,
             playerState,
             onRetry: ingestion.retry,
-            input: inputEnabled && sendControl && streamId ? { sourceId, streamId, send: sendControl } : null,
+            input: inputEnabled && sendControl && streamId ? { sourceId, streamId, viewerKey, send: sendControl,
+                clipboardShortcut: input.clipboardShortcut } : null,
         };
-    }, [ingestion.retry, inputEnabled, machineName, playerState, sendControl, socket, sourceId, streamId]);
+    }, [ingestion.retry, input.clipboardShortcut, inputEnabled, machineName, playerState, sendControl, socket, sourceId, streamId, viewerKey]);
 }

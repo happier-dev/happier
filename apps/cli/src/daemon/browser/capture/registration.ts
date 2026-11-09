@@ -222,7 +222,7 @@ export function registerBrowserLiveCapture(input: Readonly<{
                 } };
             },
         };
-        input.registry.register({ sourceId, streamFamily: 'browser.streamed', adapter,
+        input.registry.register({ sourceId, streamFamily: 'browser.streamed', adapter, browser: view,
             capabilities: { v: 1, sourceId, sourceKind: 'browser', supportedCodecs: ['image.mjpeg'],
                 inputMode: 'shared', sidebands: [], health: { status: 'available' } } });
         registered.add(sourceId);

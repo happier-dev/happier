@@ -55,7 +55,9 @@ describe('personal desktop composed route and private process', () => {
     vi.stubEnv('HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED', undefined);
     vi.stubEnv('HAPPIER_CLI_SUBPROCESS_ENTRYPOINT', '/fixture/embedded/index.mjs');
     for (const key of ['TMPDIR', 'TMP', 'TEMP']) vi.stubEnv(key, process.env[key]);
-    vi.stubGlobal('process', { ...process, execPath: '/fixture/happier' });
+    // Process inherits EventEmitter methods; spreading it removes listeners and
+    // prevents the real worker from reporting an assertion or uncaught error.
+    vi.stubGlobal('process', Object.create(process, { execPath: { value: '/fixture/happier' } }));
     const launchedEnvironments: NodeJS.ProcessEnv[] = [];
     let nextDisplay = 80;
     let workerCount = 0;

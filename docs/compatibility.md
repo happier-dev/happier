@@ -102,6 +102,14 @@ meaning. The existing Details Browser resource retains the optional engine choic
 and old resources remain readable. No wire epoch, profile storage migration or released
 compatibility adapter is introduced by this direct development cut.
 
+Shared-Machine Browser and Computer viewers reuse the existing V1 installed-source
+proof and V2 viewer-bound relay grant. The common stream starter now obtains that
+proof for shared Machines, including Manage requesters. Browser source admission
+is registered at the Machine client lifetime independently of Computer startup.
+Matching development UI and daemon must reload together; a daemon without Browser
+source admission returns unavailable rather than falling back to an owner grant.
+No proof schema or grant version changes in this correction.
+
 Persistent-profile custody uses the same product-side profile predicate for every
 Browser command and view list/watch. A requester without Manage access receives
 `profile_policy_denied` for commands targeting a persistent profile, and discovery
@@ -237,6 +245,25 @@ Matching development Protocol, SDK/daemon and Home readers must reload together:
 older strict enum readers reject new producer error codes, and older strict
 status readers reject the additional explanation. This is an unreleased
 development contract change, with no permissive fallback or released adapter.
+
+## Connected Account credential kind (unreleased 0.3)
+
+Connected Account authentication and established-health results accept the
+optional closed `credentialKind: 'oauth' | 'token'` provider fact. Authentication
+settlement, retained prepared settlement and refresh carry it into the existing
+V4 credential metadata's optional `kind`; inventory reads project that fact.
+Presentation metadata remains unchanged. Omitted refresh facts preserve an
+existing kind. Prior records without the field remain readable and unknown
+unless the existing legacy-mode classifier recognizes them; no service or
+modern authentication-mode inference or automatic backfill is introduced.
+Unknown kinds retain health and selection eligibility; only a known kind
+outside the Agent's declared set excludes an account.
+
+This is a coordinated direct cut in unpublished 0.3: reload the matching
+protocol, plugin SDK, daemon, server and clients together. Older strict metadata
+readers do not accept the added field. Existing kindless records acquire a
+known kind only after a real provider refresh or reconnect reports it. No
+database migration, additional schema epoch or released 0.2 adapter is needed.
 
 ## Artifact kind change hints (unreleased 0.3)
 

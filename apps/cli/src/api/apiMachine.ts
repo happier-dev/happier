@@ -5,7 +5,7 @@ import { z } from 'zod/mini';
  */
 
 import axios from '@/api/client/credentialAxios';
-import { settleMachineCaddyFirewallForHost } from '@/machines/reachability/machineReachabilityHost';
+import { settleMachineCaddyFirewallForHost, settleMachinePrivateWorkloadFirewallForHost } from '@/machines/reachability/machineReachabilityHost';
 import { observeOwnDaemonReachability } from '@/machines/reachability/observeOwnDaemonReachability';
 import { PluginWebhookHeartbeatReceiptEphemeralV1Schema, type PluginWebhookHeartbeatReceiptHintV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 import type { AutomationEventSourcesInvalidatedHostEventV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
@@ -1616,6 +1616,13 @@ export class ApiMachineClient {
         });
         // Native-view imports are available independently of managed Chromium startup.
         registerDaemonBrowserControlHandler(this.rpcHandlerManager, { getNativeClient: () => this });
+        registerMachineLiveStreamSourceAdmissionHandler(this.rpcHandlerManager, {
+            machineId: this.machine.id,
+            resolveComputer: () => this.resolveComputerRoutes(),
+            resolveBrowser: () => this.browserControlRoutes,
+            readHomeServerIdentityId: () => this.lifecycleDependencies.resolveCurrentServerIdentityId?.(),
+            readInstallationIdentity: readInstallationIdentityIfExistsSync,
+        });
         registerDaemonMachineAgentIsolationRpcHandlers(this.rpcHandlerManager, {
             runActionOperation: request => this.runActionOperation(request),
             read: () => this.getAgentIsolationSnapshot(),
@@ -2992,6 +2999,8 @@ export class ApiMachineClient {
                 return { readDesired: desired.read, elevation,
                     settleCaddyFirewall: input => settleMachineCaddyFirewallForHost({ ...input, port,
                         readDaemonProof: () => observeOwnDaemonReachability({ client: this, signal: input.signal }) }),
+                    settlePrivateWorkloadFirewall: input => settleMachinePrivateWorkloadFirewallForHost({ ...input, port,
+                        readDaemonProof: () => observeOwnDaemonReachability({ client: this, signal: input.signal }) }),
                 };
             },
             resolveRequesterIdentity: context => this.resolveDeploymentSourceRequesterIdentity(context),
@@ -3306,12 +3315,12 @@ export class ApiMachineClient {
         this.connectedAccountPurposeBindingRuntime = runtime;
     }
 
+    private browserControlRoutes: BrowserDaemonControlRoutes | null = null;
+    private resolveComputerRoutes: () => ComputerRoutes | null = () => null;
+
     registerComputerRoutes(resolveComputer: () => ComputerRoutes | null): void {
+        this.resolveComputerRoutes = resolveComputer;
         registerDaemonComputerHandler(this.rpcHandlerManager, { resolveComputer });
-        registerMachineLiveStreamSourceAdmissionHandler(this.rpcHandlerManager, {
-            machineId: this.machine.id, resolveComputer,
-            readInstallationIdentity: readInstallationIdentityIfExistsSync,
-        });
     }
 
     registerManagedFiniteWake(input: Parameters<typeof registerManagedFiniteWake>[1]): void {
@@ -3319,6 +3328,7 @@ export class ApiMachineClient {
     }
 
     registerBrowserControlRoutes(browserControl: BrowserDaemonControlRoutes): void {
+        this.browserControlRoutes = browserControl;
         registerDaemonBrowserControlHandler(this.rpcHandlerManager, {
             browserControl,
             getNativeClient: () => this,

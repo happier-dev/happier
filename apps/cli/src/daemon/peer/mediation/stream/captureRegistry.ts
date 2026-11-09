@@ -13,6 +13,8 @@ export type MachineLiveStreamRegisteredCaptureSource = Readonly<{
     capabilities: MachineLiveStreamCaptureSourceV1;
     /** Native target lifecycle and control share this exact registered capture source. */
     computer?: ComputerCaptureSource;
+    /** Browser owner identity, supplied by capture registration rather than viewer input. */
+    browser?: Readonly<{ browserSessionId: string; viewId: string }>;
     /** Supplied only by manifest-backed activation, never renderer input. */
     plugin?: Readonly<{ pluginId: string; localId: string; occurrenceId: string }>;
     /** Retired when this exact source is unregistered or replaced. */

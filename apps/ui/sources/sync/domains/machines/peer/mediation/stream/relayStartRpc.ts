@@ -31,7 +31,11 @@ export async function startMachineLiveStreamRelayViaMachineRpc(input: Readonly<{
         const raw = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId: input.machineId,
             serverId: input.serverId,
-            method: RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START,
+            ...(payload.startRequest.authorization?.payload.v === 2
+                ? { accountId: payload.startRequest.authorization.payload.viewerAccountId } : {}),
+            method: payload.startRequest.authorization?.payload.v === 2
+                ? RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START
+                : RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START,
             payload,
             signal: input.signal,
             ...(typeof input.timeoutMs === 'number' ? { timeoutMs: input.timeoutMs } : {}),

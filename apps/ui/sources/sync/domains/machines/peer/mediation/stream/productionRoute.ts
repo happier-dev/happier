@@ -1,10 +1,13 @@
 import {
-    type FeaturesResponse,
+    type FeaturesResponse} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import {
     type MachineLiveStreamCapsV1,
-    type MachineLiveStreamCodecIdV1,
     type MachineLiveStreamRelayAuthorizationV1,
     type MachineLiveStreamStartRequestV1,
-} from '@happier-dev/protocol';
+    type MachineLiveStreamSourceAdmissionV1,
+} from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import {
+    type MachineLiveStreamCodecIdV1} from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
@@ -19,6 +22,9 @@ import {
     type MachineLiveStreamUnsignedStartRequest,
 } from './productionRouteHttp';
 import { resolveMachineLiveStreamAvailability } from './availability';
+import { requestMachineLiveStreamSourceAdmission } from './sourceAdmission';
+import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 
 
 const SERVER_FEATURES_TIMEOUT_MS = 5_000;
@@ -52,6 +58,7 @@ async function startServerRelayedStream(input: Readonly<{
     server: Readonly<{ serverId: string; serverUrl: string }>;
     credentials: Awaited<ReturnType<typeof TokenStorage.getCredentialsForServerUrl>>;
     startRequest: MachineLiveStreamUnsignedStartRequest;
+    sourceAdmission?: MachineLiveStreamSourceAdmissionV1;
     timeoutMs?: number;
     signal?: AbortSignal;
 }>): Promise<ProductionMachineLiveStreamStartResult> {
@@ -60,6 +67,7 @@ async function startServerRelayedStream(input: Readonly<{
         server: input.server,
         credentials: input.credentials,
         startRequest: input.startRequest,
+        sourceAdmission: input.sourceAdmission,
         timeoutMs: input.timeoutMs,
         signal: input.signal,
     });
@@ -84,6 +92,7 @@ export async function startProductionMachineLiveStream(input: Readonly<{
     streamId: string;
     streamFamily: string;
     sourceId?: string;
+    sourceAdmission?: MachineLiveStreamSourceAdmissionV1;
     // Per-tab viewer socket id (W1-C-2). Threaded into the base start request so it reaches both
     // the server mint body and the signed start request; the protocol superRefine then asserts the
     // start request and the minted grant agree on it.
@@ -130,7 +139,16 @@ export async function startProductionMachineLiveStream(input: Readonly<{
     });
     if (availability.status !== 'available') return { ok: false,
         reasonCode: availability.status === 'disabled' ? availability.reasonCode : 'server_features_unavailable' };
+    let sourceAdmission = input.sourceAdmission;
+    const state = readRegisteredStorageState();
+    const machine = state ? resolveServerScopedMachine(state, server.serverId, input.sourceMachineId) : null;
+    if (!sourceAdmission && machine?.isShared === true) {
+        const admitted = await requestMachineLiveStreamSourceAdmission({ ...input, serverId: server.serverId, accountId });
+        if (!admitted.ok) return admitted;
+        sourceAdmission = admitted.sourceAdmission;
+    }
     return await startServerRelayedStream({
-        server, credentials, startRequest: createBaseStartRequest(input), timeoutMs: input.timeoutMs, signal: input.signal,
+        server, credentials, startRequest: createBaseStartRequest(input), sourceAdmission,
+        timeoutMs: input.timeoutMs, signal: input.signal,
     });
 }

@@ -71,6 +71,13 @@ the workspace target. The opaque stream target id is not a replacement for that
 identity. A workspace tab saved before this 0.3 development correction may remain
 unavailable; close it and reopen the browser from current discovery.
 
+Shared-Machine viewers in current 0.3 development source obtain source admission
+from the installed daemon before the Home mints a viewer-bound relay grant.
+Browser admission consumes the same profile-filtered view list as discovery;
+Computer admission consumes the requester's desktop scope. The acting Account
+remains distinct from the Machine's custodian through relay start. Successful
+Browser control or recording does not by itself establish viewer-route admission.
+
 In the current 0.3 development daemon, a finished recording is persisted in its Session's
 working directory by `persistSessionMedia`. The daemon then admits a media-only transcript
 attachment through its existing encrypted durable mutation custody, using the recording's

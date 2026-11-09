@@ -27,7 +27,7 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { DirectRouteGrantScopeV1Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { DaemonMachineLiveStreamRelayStartRequestV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/relayStartRpcV1';
-import { MachineLiveStreamRelayAuthorizationV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { MachineLiveStreamRelayAuthorizationV1Schema, MachineLiveStreamSourceAdmissionV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import { createMachineLiveStreamRelayAuthorizationSigningInputV1, MACHINE_LIVE_STREAM_SOCKET_EVENT } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
@@ -88,11 +88,17 @@ const boundary = vi.hoisted(() => ({
     disconnect: vi.fn(async () => undefined),
     relaySend: null as ((raw: unknown) => void) | null,
     maxFrameBytes: undefined as number | undefined,
+    sourceAdmission: null as ((payload: unknown) => Promise<unknown>) | null,
+    startRelay: null as ((payload: unknown) => Promise<unknown>) | null,
+    sharedViewer: false,
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: async (input: { method: string; payload?: unknown; signal?: AbortSignal }) => {
         boundary.requests.push(input);
+        if (input.method === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT && boundary.sourceAdmission) return boundary.sourceAdmission(input.payload);
+        if ((input.method === RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START
+            || input.method === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START) && boundary.startRelay) return boundary.startRelay(input.payload);
         if (input.method === 'daemon.browser.view.watch' && boundary.watchViews) return boundary.watchViews(input);
         if (input.method === 'daemon.browser.view.list' && boundary.discoveryGate) await boundary.discoveryGate;
         if (input.method === 'daemon.browser.view.list') return boundary.discoveryError
@@ -273,12 +279,16 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             }
             if (path !== '/v1/machines/peer/mediation/route-grants') return null;
             const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            if (boundary.sharedViewer && !request.sourceAdmission) return Response.json({ ok: false, reasonCode: 'route_unavailable' });
+            const admittedSource = request.sourceAdmission ? MachineLiveStreamSourceAdmissionV1Schema.parse(request.sourceAdmission) : null;
             const scope = DirectRouteGrantScopeV1Schema.parse(request.scope);
             if (scope.kind !== 'live_stream') throw new Error('Expected a live-stream grant');
             const { kind: _kind, ...streamScope } = scope;
             const now = Date.now();
             return Response.json({ ok: true, relayAuthorization: MachineLiveStreamRelayAuthorizationV1Schema.parse({
-                payload: { v: 1, grantId: `grant:${scope.streamId}`, accountId: home.accountId,
+                payload: { v: boundary.sharedViewer ? 2 : 1, grantId: `grant:${scope.streamId}`, accountId: admittedSource?.payload.accountId ?? home.accountId,
+                    ...(boundary.sharedViewer ? { viewerAccountId: home.accountId, sourceMachineInstallationId: 'installation',
+                        personalSourceAdmission: admittedSource?.payload.liveStreamSourceAdmission } : {}),
                     sourceMachineId: request.machineId, targetMachineId: request.targetMachineId,
                     flowKind: 'live_stream', routeKind: 'server_relay', ...streamScope,
                     ...(boundary.maxFrameBytes ? { maxFrameBytes: boundary.maxFrameBytes } : {}),
@@ -300,6 +310,13 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         boundary.disconnect.mockClear();
         boundary.relaySend = null;
         boundary.maxFrameBytes = undefined;
+        boundary.sourceAdmission = null;
+        boundary.startRelay = null;
+        boundary.sharedViewer = false;
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        storage.getState().applyMachines([createMachineFixture({ id: 'machine_1', storageMode: 'plain' })],
+            false, { sourceServerId: serverId });
     });
 
     it('renders the advertised daemon source when opened through the canonical workspace target', async () => {
@@ -463,10 +480,12 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         await failed.unmount();
     });
 
-    it('discovers the real managed Session profile so an Action-opened view can offer Start recording', async () => {
+    it.each(['owner', 'use', 'manage'] as const)('streams the Action-opened managed Session profile for %s and keeps recording available', async role => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-recording-profile-'));
         const profiles = createBrowserProfileStore({ storageRootDirectory: directory,
             partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: directory }) });
+        const cdpListeners = new Set<BrowserSidecarCdpEventSubscriber>();
+        let captureStarted = false;
         const factory = createProductBrowserSidecarControlAdapterFactory({ platform: 'linux', profileStore: profiles,
             resolveManagedCandidate: async () => ({ source: 'managedBrowserPackage', executablePath: '/managed/chrome',
                 discoveryKind: 'managedRuntime', available: true, provenance: { origin: 'managed_package',
@@ -477,12 +496,13 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                     const child = new EventEmitter();
                     const stderr = new EventEmitter();
                     queueMicrotask(() => stderr.emit('data', 'DevTools listening on ws://127.0.0.1:9444/devtools/browser/test\n'));
-                    return Object.assign(child, { pid: 123, stderr,
+                    return Object.assign(child, { pid: 123, stderr, stdio: [null, null, null, new PassThrough(), new PassThrough()],
                         kill: () => { child.emit('exit', 0, 'SIGTERM'); return true; } });
                 },
                 connectTransport: async () => ({ transport: { openPage: async () => ({ targetId: 'page', sessionId: 'cdp' }),
-                    dispatchPageCommand: async () => ({}), dispatchBrowserCommand: async () => ({ success: true }),
-                    subscribeCdpEvents: () => () => {} } }),
+                    dispatchPageCommand: async ({ method }) => { if (method === 'Page.startScreencast') captureStarted = true; return {}; },
+                    dispatchBrowserCommand: async () => ({ success: true }),
+                    subscribeCdpEvents: listener => { cdpListeners.add(listener); return () => { cdpListeners.delete(listener); }; } } }),
             }) });
         const runtime = await factory({ machineId: 'machine_1' });
         if (!runtime.ok || !runtime.contextCapture) throw new Error('Managed runtime unavailable');
@@ -492,11 +512,57 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         const broker = createBrowserDaemonControlBroker();
         broker.registerAdapter(runtime.adapter);
         const routes = createBrowserDaemonControlRoutes({ broker, captureRegistry: registry });
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        storage.getState().applyMachines([createMachineFixture({ id: 'machine_1', storageMode: 'plain',
+            ...(role !== 'owner' ? { isShared: true, access: { custodian: { accountId: 'machine-owner', displayName: 'Owner' },
+                role, resourceMode: 'plain', accessState: 'ready' } } : {}),
+        })], false, { sourceServerId: serverId });
+        const { MachineInstallationIdentityV1Schema } = await import('@happier-dev/protocol/machines/identity/installationIdentity');
+        const keys = tweetnacl.sign.keyPair();
+        const installation = MachineInstallationIdentityV1Schema.parse({ version: 1, installationId: 'installation', createdAt: 0,
+            publicKey: Buffer.from(keys.publicKey).toString('base64url'), privateKey: Buffer.from(keys.secretKey).toString('base64url') });
+        const admission = { machineId: 'machine_1', installationId: 'installation', actorAccountId: home.accountId,
+            custodianAccountId: 'machine-owner', role: role === 'owner' ? 'manage' as const : role, encryptionMode: 'plain' as const };
+        const identityStore = await import('../../../../../cli/src/daemon/identity/store');
+        // Substitute the installed identity's filesystem read, never its signing or RPC owners.
+        const installationRead = vi.spyOn(identityStore, 'readInstallationIdentityIfExistsSync').mockReturnValue(installation);
+        const { ApiMachineClient } = await import('../../../../../cli/src/api/apiMachine');
+        const { RpcHandlerManager } = await import('../../../../../cli/src/api/rpc/RpcHandlerManager');
+        const client = new ApiMachineClient(home.token, { id: 'machine_1', encryptionMode: 'plain',
+            metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined,
+            { resolveCurrentServerIdentityId: () => serverId });
+        const rpc: unknown = Reflect.get(client, 'rpcHandlerManager');
+        if (!(rpc instanceof RpcHandlerManager)) throw new Error('Machine RPC owner missing');
+        const rpcContext = { verifiedPeerAuthority: 'present_user' as const,
+            // The Machine RPC network boundary supplies its completed ingress admission.
+            // Real HTTP admission and grant verification are composed in the server SQLite test.
+            admissionResult: { ok: true as const },
+            rpcContext: { machineAdmission: admission, verifyMachineAdmissionCurrent: async () => true } };
+        boundary.sourceAdmission = payload => rpc.invokeLocal(RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT, payload, rpcContext);
+        client.registerBrowserControlRoutes(routes);
+        boundary.sharedViewer = role !== 'owner';
+        const relay = createMachineLiveStreamRelayTerminator({ machineId: 'machine_1', nowMs: Date.now,
+            accountId: 'machine-owner', sourceMachineInstallationId: 'installation',
+            resolveRelayAuthorizationTrustRoots: () => [{ keyId: 'viewer-test', publicKeyBase64Url: installation.publicKey }],
+            captureAdapter: createDaemonMachineLiveStreamCaptureAdapter(registry),
+            emitEnvelope: envelope => { for (const listener of boundary.listeners) listener(envelope); } });
+        client.registerLiveStreamRelayRoutes(relay);
+        boundary.startRelay = async payload => {
+            const { startRequest } = DaemonMachineLiveStreamRelayStartRequestV1Schema.parse(payload);
+            // The HTTP boundary returns the grant; the production daemon still verifies its signature.
+            if (startRequest.authorization) startRequest.authorization.signature = { keyId: 'viewer-test', alg: 'Ed25519',
+                valueBase64Url: Buffer.from(tweetnacl.sign.detached(Buffer.from(createMachineLiveStreamRelayAuthorizationSigningInputV1(
+                    startRequest.authorization.payload)), keys.secretKey)).toString('base64url') };
+            return rpc.invokeLocal(startRequest.authorization?.payload.v === 2
+                ? RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START : RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START,
+                { protocolVersion: 1, machineId: 'machine_1', startRequest }, rpcContext);
+        };
         let unmount: (() => Promise<void>) | undefined;
         try {
             const opened = await routes.dispatchCommand({ kind: 'openView', commandId: 'action-open', browserSessionId: view.browserSessionId,
                 viewId: view.viewId, platform: 'web', target: view.target, focus: true });
-            expect(opened.status).toBe('dispatched');
+            expect(opened).toMatchObject({ status: 'dispatched' });
             boundary.views = [...routes.listViews(view.browserSessionId)];
             const profile = profiles.listProfiles()[0];
             if (!profile) throw new Error('Managed profile missing');
@@ -510,16 +576,34 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             const hook = await renderHook(() => {
                 const [state, setState] = React.useState(createBrowserControlState);
                 const activeView = state.viewsById[view.viewId] ?? null;
-                useBrowserStreamedSurfaceRuntime({ view: activeView, browserSessionId: view.browserSessionId,
+                const picture = useBrowserStreamedSurfaceRuntime({ view: activeView, browserSessionId: view.browserSessionId,
                     machineId: 'machine_1', serverId,
                     onBrowserEvent: event => setState(previous => applyBrowserControlEvent(previous, event)) });
                 const control = resolveBrowserRecordingControl({ view: activeView,
                     profileId: state.sessionsById[view.browserSessionId]?.profileId ?? null,
                     state: createBrowserRecordingState(), recordingCapabilities, enabled: true });
-                return { state, control };
+                return { state, control, picture };
             });
             unmount = () => hook.unmount();
             await flushHookEffects({ cycles: 6, turns: 6 });
+            await act(async () => { await vi.waitFor(() => expect(boundary.requests).toContainEqual(expect.objectContaining({
+                method: role === 'owner' ? RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START : RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START,
+            }))); });
+            await act(async () => { await vi.waitFor(() => expect(captureStarted).toBe(true)); });
+            await act(async () => { for (const listener of cdpListeners) listener({ method: 'Page.screencastFrame', sessionId: 'cdp',
+                params: { sessionId: 1, data: 'AQID', metadata: { deviceWidth: 400, deviceHeight: 200 } } }); });
+            await flushHookEffects();
+            expect(hook.getCurrent().picture?.playerState?.lastFrameUrl).toBeTruthy();
+            if (role !== 'owner') {
+                await profiles.registerPersistentProfile({ profileId: 'owner-login', storageMode: 'user',
+                    owner: { kind: 'user', id: 'machine-owner' }, cleanupOnSessionClose: false });
+                const privateView = { browserSessionId: 'owner-private-browser', viewId: 'private-view' };
+                expect(await routes.dispatchCommand({ kind: 'openView', commandId: 'owner-open', ...privateView,
+                    platform: 'web', target: view.target, profileId: 'owner-login' })).toMatchObject({ status: 'dispatched' });
+                expect(await boundary.sourceAdmission?.({ protocolVersion: 1, machineId: 'machine_1',
+                    sourceId: browserViewKey(privateView), streamFamily: 'browser.streamed' }))
+                    .toMatchObject({ result: { ok: role === 'manage', ...(role === 'use' ? { reasonCode: 'capture_source_denied' } : {}) } });
+            }
             expect(hook.getCurrent().state.sessionsById[view.browserSessionId]?.profileId).toBe(profile.profileId);
             expect(hook.getCurrent().control.unavailable).toBeNull();
             expect(hook.getCurrent().control.startRequest).toMatchObject({ profileId: profile.profileId,
@@ -529,7 +613,10 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         } finally {
             await unmount?.();
             registration.dispose();
+            await relay.dispose();
             await runtime.dispose?.();
+            await client.shutdown();
+            installationRead.mockRestore();
             await rm(directory, { recursive: true, force: true });
         }
     });
@@ -886,7 +973,7 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         }
     });
 
-    it('saves all binary download ranges through files.save from the mounted web viewer using its negotiated frame budget', async () => {
+    it.each([false, true])('saves all binary download ranges through files.save from the mounted web viewer (retained duplicate: %s)', async retainedDuplicate => {
         boundary.maxFrameBytes = 8000;
         boundary.views = [daemonView({ v: 1, sourceId: 'browser-view-key-1', sourceKind: 'browser',
             supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } })];
@@ -907,6 +994,7 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             initialBrowserState={applyBrowserControlEvent(createBrowserControlState(), opened)}
             pluginBrowserActionContext={{ machineId: 'machine_1', serverId, sessionId: 'session_1' }}
             policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }} />);
+        let hidden: Awaited<ReturnType<typeof renderScreen>> | undefined;
         try {
             await flushHookEffects({ cycles: 6, turns: 6 });
             await waitForStreamAdmission();
@@ -947,12 +1035,19 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             };
             const interactions = screen.findByType(BrowserPageInteractions);
             expect(interactions.props.onSaveDownload).toBeTypeOf('function');
+            if (retainedDuplicate) {
+                hidden = await renderScreen(<BrowserSurfaceHost browserSessionId={view.browserSessionId} platform="web" visible={false}
+                    initialBrowserState={applyBrowserControlEvent(createBrowserControlState(), opened)}
+                    pluginBrowserActionContext={{ machineId: 'machine_1', serverId, sessionId: 'session_1' }}
+                    policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }} />);
+                await flushHookEffects();
+            }
             await act(async () => { await interactions.props.onSaveDownload(interactions.props.interaction.downloads[0]); });
             expect(requested).toEqual([8000, 8000, 8000]);
             expect(click).toHaveBeenCalledOnce();
             expect(blobs).toHaveLength(1);
             expect(new Uint8Array(await blobs[0].arrayBuffer())).toEqual(bytes);
-        } finally { await screen.unmount(); createUrl.mockRestore(); revoke.mockRestore(); vi.unstubAllGlobals(); }
+        } finally { await hidden?.unmount(); await screen.unmount(); createUrl.mockRestore(); revoke.mockRestore(); vi.unstubAllGlobals(); }
     });
 
     it('relays controlling-viewer copy, cut and paste through clipboard input and the system clipboard', async () => {
