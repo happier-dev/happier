@@ -519,8 +519,9 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
       activeConnectedAccountId: 'primary', state: {}, createdAt: 0, updatedAt: 0,
       members: [{ v: 1, connectedAccountId: 'primary', priority: 0, enabled: true, state: {}, createdAt: 0, updatedAt: 0 }],
     }] } });
-    expect(await createDefaultActionExecutor().execute('sessions.spawn.connected_services.list',
-      { agentId: 'codex', includeDefaults: false }, { surface: 'ui', serverId })).toMatchObject({ ok: true, result: {
+    const result = await createDefaultActionExecutor().execute('sessions.spawn.connected_services.list',
+      { agentId: 'codex', includeDefaults: false }, { surface: 'ui', serverId });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: {
         profileOptionsByServiceId: { [serviceKey]: [{ profileId: 'primary', status: 'connected', kind: null }] },
         groupOptionsByServiceId: { [serviceKey]: [{ groupId: 'work', status: 'ready', activeProfileId: 'primary' }] },
         items: expect.arrayContaining([expect.objectContaining({ value: `${serviceKey}:profile:primary` })]),

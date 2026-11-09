@@ -101,7 +101,7 @@ export function buildQualifiedConnectedAccountGroupOptionsByServiceId(params: Re
                     ?? group.displayName ?? group.ref.groupId,
                 activeProfileId,
                 memberProfileIds,
-                quotaLimitSelection: group.policy.quotaLimitSelection,
+                ...(group.policy.quotaLimitSelection ? { quotaLimitSelection: group.policy.quotaLimitSelection } : {}),
                 generation: group.generation,
                 enabledMemberCount: memberProfileIds.length,
                 autoSwitch: group.policy.autoSwitch === true,
