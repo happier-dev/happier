@@ -258,6 +258,70 @@ describe('configured action execution through the shared Session owner', () => {
         expect(JSON.stringify(seeds[0])).toContain('receipt');
     });
 
+    // JOURNEY-OPUS-93: a never-deployed Environment has no saved checkout. An incomplete
+    // registry returned before the ordinary New Session authoring path, stranding the inline chooser.
+    it.each([
+        ['deploymentEnvironment', 'empty'], ['deploymentEnvironment', 'partial'],
+        ['deploymentEnvironment', 'unavailable'], ['deploymentEnvironment', 'ambiguous'],
+        ['deploymentEnvironment', 'noController'], ['deploymentReceipt', 'partial'],
+        ['deploymentEnvironment', 'composerUnavailable'],
+    ] as const)('settles %s with unresolved placement (%s)', async (kind, placement) => {
+        const subject = kind === 'deploymentEnvironment'
+            ? { kind, serverId: 'server-a', environmentId: 'environment' }
+            : { kind, serverId: 'server-a', environmentId: 'environment', deploymentId: 'receipt' };
+        const project = { projectKey: { id: 'workspace-a' }, serverId: 'server-a', machineId: 'chosen',
+            rootPath: '/repos/app', sourceId: 'project-source', reachable: true, worktrees: [] };
+        const seeds: unknown[] = [];
+        const host = {
+            version: () => ({ methods: ['openNewSession'] }),
+            context: async () => ({ accountScope: { serverId: 'server-a', accountId: 'account-a' } }),
+            openNewSession: async (seed: unknown) => {
+                if (placement === 'composerUnavailable') throw new PluginError({ code: 'action_unavailable' });
+                seeds.push(seed);
+            },
+            executeAction: async (id: string) => {
+                if (triageBoundaryActionId(id) === 'actions/read-v1') return { ...catalog, actions: [
+                    { ...action, actionId: 'set-it-up', label: 'Set it up', workspaceMode: 'repository' },
+                ] };
+                if (id === 'deployments.environments.get') return { ok: true, environment: { id: 'environment',
+                    projectSourceId: 'project-source', ...(placement === 'noController' ? {} : { controllerMachineId: 'chosen' }) } };
+                if (id === 'deployments.receipts.get') return { ok: true, deployment: { id: 'receipt', environmentId: 'environment' } };
+                if (id === 'projects.list') {
+                    if (placement === 'unavailable') throw new PluginError({ code: 'action_unavailable' });
+                    return { items: placement === 'ambiguous' ? [project, { ...project, projectKey: { id: 'workspace-b' },
+                        rootPath: '/repos/other' }] : [], truncated: placement === 'partial' || placement === 'composerUnavailable' };
+                }
+                if (id === 'agents.backends.list') return { items: [] };
+                throw new Error(`Unexpected host Action ${id}`);
+            },
+        };
+        // Both launch modes must reach the same composer rather than a folder-only retry.
+        for (const delivery of ['compose', 'send'] as const) {
+            const input = parseHandoffInput({ v: 1, handoff: { task: 'investigate', configuredActionId: 'set-it-up',
+                context: { kind: 'failure', subject }, evidence: [{ kind: 'failure', subject }],
+                sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery } });
+            const result = await runTriageConfiguredHandoffV1(host as unknown as Parameters<typeof runTriageConfiguredHandoffV1>[0],
+                input.handoff, { entries: [], signal: new AbortController().signal });
+            if (placement === 'composerUnavailable') {
+                expect(result.handoff).toEqual({ kind: 'unavailable', reason: 'composerUnavailable' });
+                continue;
+            }
+            expect(result.handoff).toEqual({ kind: 'composed', destination: { kind: 'newSessionDraft' } });
+            const seed = seeds.at(-1);
+            expect(seed).toMatchObject({ prompt: expect.any(String) });
+            if (placement === 'noController') expect(seed).not.toHaveProperty('placement');
+            else expect(seed).toMatchObject({ placement: { kind: 'exactTarget', serverId: 'server-a', machineId: 'chosen' } });
+            expect(seed).not.toHaveProperty('directoryIntent');
+            const serialized = JSON.stringify(seed);
+            expect(serialized).toContain(kind === 'deploymentEnvironment' ? 'deployments.environments.get' : 'deployments.receipts.get');
+            expect(serialized).toContain('environment');
+            expect(seed).toMatchObject({ attachments: [{ value: { value: { forgeEvidence: { items: [
+                { source: { kind: 'alert' }, text: expect.any(String) },
+            ] } } } }] });
+        }
+        expect(seeds).toHaveLength(placement === 'composerUnavailable' ? 0 : 2);
+    });
+
     it('rejects the retired top-level entry execution envelope', () => {
         expect(TriagePublicHandoffActionInputV1Schema.safeParse({
             v: 1,

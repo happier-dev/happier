@@ -14,7 +14,8 @@ import {
 type Machine = { serverId: string; machineId: string };
 type Workspace = NonNullable<Extract<TriageSessionHandoffInputV1['context'], { kind: 'failure' }>['workspace']>;
 type PlacementChoice = Extract<TriageSessionHandoffResultV1, { kind: 'placement_choice_required' }>;
-type InvestigationRead = null | PlacementChoice | {
+type UnresolvedPlacement = PlacementChoice & { machine?: Machine; registry?: TriageProjectRegistryReadV1 };
+type InvestigationRead = null | (UnresolvedPlacement & { evidence: SessionInputForgeEvidenceV1['items'][number] }) | {
     kind: 'ready'; machine: Machine; workspace?: Workspace; registry?: TriageProjectRegistryReadV1;
     evidence: SessionInputForgeEvidenceV1['items'][number];
 };
@@ -88,7 +89,8 @@ export async function readTriageHealthAlertHandoffV1(
         }
         placement = await resolveInvestigationPlacement(host, scope.serverId, machine, context.workspace,
             sourceId, signal);
-        if (!placement || placement.kind !== 'ready') return placement;
+        if (!placement) return null;
+        if (placement.kind !== 'ready') return { ...placement, evidence };
         machine = placement.machine;
     } else {
         machine ??= page.data.machine;
@@ -197,7 +199,7 @@ async function readFailureSubject(
     if (signal.aborted) return null;
     const placement = await resolveInvestigationPlacement(host, serverId, selected ?? affected, context.workspace,
         selected ? undefined : projectSourceId, signal);
-    if (!placement || placement.kind !== 'ready') return placement;
+    if (!placement) return null;
     return { ...placement,
         evidence: { source: { kind: 'alert' as const, label: subject.kind === 'deploymentEnvironment' ? 'Environment reference'
             : subject.kind === 'deploymentReceipt' ? receiptTitle ?? 'Deployment reference' : 'Failure reference' }, author: { kind: 'process' as const },
@@ -217,22 +219,22 @@ function failedReceiptTitle(operation: string | undefined, state: string, revisi
  * No folder is guessed from a label, a log, or a repository URL. */
 async function resolveInvestigationPlacement(host: TriageActionResolutionHostV1, serverId: string,
     machine: Machine | undefined, workspace: Workspace | undefined, sourceId: string | undefined, signal: AbortSignal,
-): Promise<null | PlacementChoice | { kind: 'ready'; machine: Machine; workspace?: Workspace; registry?: TriageProjectRegistryReadV1 }> {
+): Promise<null | UnresolvedPlacement | { kind: 'ready'; machine: Machine; workspace?: Workspace; registry?: TriageProjectRegistryReadV1 }> {
     const registry = !machine || sourceId ? await readTriageProjectRegistryV1(host, { signal }) : undefined;
     const projects = registry?.status === 'read' ? registry.projects.filter(project => project.serverId === serverId) : [];
     const candidate = projectInvestigationPlacementCandidate;
     if (!machine) return { kind: 'placement_choice_required', reason: 'controller_required', agents: [],
-        candidates: projects.map(candidate) };
+        candidates: projects.map(candidate), registry };
     if (!workspace && sourceId) {
         const matches = projects.filter(project => project.sourceId === sourceId && project.machineId === machine.machineId);
         if (matches.length > 1 || registry?.status !== 'read' || !registry.complete) return {
-            kind: 'placement_choice_required', reason: 'ambiguous_workspace', candidates: matches.map(candidate), agents: [],
+            kind: 'placement_choice_required', reason: 'ambiguous_workspace', candidates: matches.map(candidate), agents: [], machine, registry,
         };
         const match = matches[0];
         if (match) {
             const chosen = candidate(match);
             if (!match.reachable || !chosen.workspace) return { kind: 'placement_choice_required', reason: 'machine_unreachable',
-                candidates: [chosen], agents: [] };
+                candidates: [chosen], agents: [], machine, registry };
             workspace = chosen.workspace;
         }
     }

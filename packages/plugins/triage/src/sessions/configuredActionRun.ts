@@ -43,7 +43,7 @@ type HandoffHost = Omit<TriageConfiguredActionRunHostV1, 'context' | 'selectActi
 type HandoffEntries = TriageConfiguredActionRunRequestV1['entries'];
 
 /** Convert evidence to data only. The attachment dispatch owner alone frames it. */
-function handoffForgeEvidence(input: TriageSessionHandoffInputV1, health?: Extract<Awaited<ReturnType<typeof readTriageHealthAlertHandoffV1>>, { kind: 'ready' }>): SessionInputForgeEvidenceV1 | undefined {
+function handoffForgeEvidence(input: TriageSessionHandoffInputV1, health?: NonNullable<Awaited<ReturnType<typeof readTriageHealthAlertHandoffV1>>>): SessionInputForgeEvidenceV1 | undefined {
     const items: SessionInputForgeEvidenceV1['items'][number][] = health ? [health.evidence] : [];
     for (const evidence of input.evidence) {
         switch (evidence.kind) {
@@ -88,11 +88,7 @@ export async function runTriageConfiguredHandoffV1(
         ? await readTriageHealthAlertHandoffV1(host, input, options.signal) : undefined;
     if (options.signal.aborted) return finish({ kind: 'cancelled' }, options.resumeStart);
     if (healthRead === null || input.context.kind !== 'healthAlert' && input.context.kind !== 'failure' && input.evidence.some(evidence => evidence.kind === 'alert' || evidence.kind === 'failure')) return unavailable('evidenceInvalid');
-    if (healthRead?.kind === 'placement_choice_required') {
-        const agents = await readTriageInvestigationAgentV1(host, input.agentChoice.kind === 'target' ? input.agentChoice.targetKey : undefined, cancellation);
-        return finish({ ...healthRead, agents: agents.candidates }, options.resumeStart);
-    }
-    const health = healthRead;
+    const health = healthRead?.kind === 'ready' ? healthRead : undefined;
     const nativeSubject = health === undefined ? undefined : input.context.kind === 'failure'
         ? triageFailureSubjectEntryV1(input.context.subject) : input.context.kind === 'healthAlert'
             ? triageHealthAlertEntryV1(input.context) : undefined;
@@ -110,7 +106,7 @@ export async function runTriageConfiguredHandoffV1(
             || recovery.entries[0]!.sourceInstanceId !== primary.sourceInstance.sourceInstanceId) return unavailable('scopeMismatch');
     }
     let repository = input.context.kind === 'repository' ? input.context.repository : primary?.repository;
-    let registry: Awaited<ReturnType<typeof readTriageProjectRegistryV1>> | undefined = health?.registry;
+    let registry: Awaited<ReturnType<typeof readTriageProjectRegistryV1>> | undefined = healthRead?.registry;
     const readRegistry = async () => registry ??= await readTriageProjectRegistryV1(host, cancellation);
     const suppliedWorkspace = input.context.kind === 'repository' ? input.context.workspace : undefined;
     const sameWorkspace = (left: NonNullable<typeof suppliedWorkspace>, right: NonNullable<typeof suppliedWorkspace>) =>
@@ -145,7 +141,7 @@ export async function runTriageConfiguredHandoffV1(
             const evidenceRepository = evidence.kind === 'hostedCi' ? evidence.summary.repository : evidence.repository;
             if (repository === undefined || !sameScmHostingRepositoryIdentity(repository, evidenceRepository)) return unavailable('repositoryMismatch');
         } else if (evidence.kind === 'alert' || evidence.kind === 'failure') {
-            if (!health) return unavailable('evidenceInvalid');
+            if (!healthRead) return unavailable('evidenceInvalid');
         } else {
             // The operation address names observation custody, not the worker
             // or original checkout. Read only the existing authorized metadata.
@@ -169,7 +165,7 @@ export async function runTriageConfiguredHandoffV1(
     if (references.status !== 'resolved') return targetUnavailable('action_references_unresolved', references.status);
     const promptText = resolveTriageActionInstructionV1(action, references.prompt?.text ?? null,
         { task: input.task, context: input.context.kind });
-    const forgeEvidence = handoffForgeEvidence(input, health);
+    const forgeEvidence = handoffForgeEvidence(input, healthRead);
     const attachment = forgeEvidence === undefined ? [] : [buildTriageForgeEvidenceAttachmentDraftV1(forgeEvidence)];
     if (attachment.some((item) => !ProtocolComposerAttachmentAuthorValueV1Schema.safeParse(item.value).success)) return unavailable('evidenceInvalid');
     const delivery = action.target.delivery;
@@ -177,14 +173,17 @@ export async function runTriageConfiguredHandoffV1(
     // keeps its Agent unless the caller supplied an explicit Agent/profile.
     const preferredKey = input.sessionChoice.kind === 'existing' && input.agentChoice.kind === 'configured' ? undefined
         : input.agentChoice.kind === 'target' ? input.agentChoice.targetKey : references.profile?.preferredAgentTargetKey;
-    const investigationAgent = health && input.sessionChoice.kind !== 'existing' && (delivery === 'send' || preferredKey !== undefined)
+    const investigationAgent = healthRead && (healthRead.kind === 'placement_choice_required'
+        || input.sessionChoice.kind !== 'existing' && (delivery === 'send' || preferredKey !== undefined))
         ? await readTriageInvestigationAgentV1(host, preferredKey, cancellation) : undefined;
     const agent = investigationAgent?.selection ?? (preferredKey === undefined ? undefined : await readTriageAgentExecutionTargetV1(host, preferredKey, cancellation));
     if (options.signal.aborted) return finish({ kind: 'cancelled' }, options.resumeStart);
     if (!investigationAgent && preferredKey !== undefined && agent?.status !== 'resolved') return finish({ kind: 'selectionRequired', fields: ['agentChoice'] }, options.resumeStart);
     // A subject whose folder or Agent is still open is not a complete start. The person settles it in the
     // prefilled composer (owner ruling 16:50Z); only a caller with no composer receives this typed choice.
-    const unresolvedChoice: Extract<TriageSessionHandoffResultV1, { kind: 'placement_choice_required' }> | undefined = !health
+    const unresolvedChoice: Extract<TriageSessionHandoffResultV1, { kind: 'placement_choice_required' }> | undefined = healthRead?.kind === 'placement_choice_required'
+        ? { kind: healthRead.kind, reason: healthRead.reason, candidates: healthRead.candidates, agents: investigationAgent?.candidates ?? [] }
+        : !health
         ? undefined
         : action.workspaceMode !== 'reference_only' && !health.workspace
             ? { kind: 'placement_choice_required', reason: 'ambiguous_workspace',
@@ -314,8 +313,9 @@ export async function runTriageConfiguredHandoffV1(
     else {
         // An admitted existing Session already owns its placement. Do not read
         // an unrelated project census just to deliver reference-only input.
-        const placement = health ? resolveTriageActionPlacementV1({ workspaceMode: action.workspaceMode,
-            profile: { placement: { fixed: health.machine, ...(health.workspace ? { directory: health.workspace.rootPath } : {}) } },
+        const placement = healthRead ? resolveTriageActionPlacementV1({ workspaceMode: action.workspaceMode,
+            ...(healthRead.machine ? { profile: { placement: { fixed: healthRead.machine,
+                ...(health?.workspace ? { directory: health.workspace.rootPath } : {}) } } } : {}),
             projects: [], registryComplete: true }) : existing === undefined
             ? registry === undefined
                 ? await readTriageActionPlacementV1(host, action, references.profile?.preferences, repository, cancellation)

@@ -410,10 +410,12 @@ managed-service inventory or unrelated service establishment before starting it.
 Missing controllers, unreachable Machines, ambiguous/incomplete folder facts or
 missing default Agents return `placement_choice_required` with `reason`,
 `candidates: [{machine, workspace?, reachable}]` and `agents: [{targetKey,label}]`.
-These are choices, never automatic failover. The hook exposes this outcome
-unchanged; the UI renders an inline chooser and calls
-`investigateWithPlacement({machine?,workspace?,agentTargetKey?})`. The owner
-validates the selected workspace and resolves the selected Agent inventory key.
+These are choices, never automatic failover. On the 0.3 UI, an unresolved new
+Session opens the shared New Session composer with the subject reference and
+any known Machine; that composer owns the remaining folder and Agent choices.
+An unavailable composer returns an explicit `composerUnavailable` outcome.
+Headless callers and existing Sessions retain the typed placement choice. A
+caller supplying a workspace or Agent key uses the same placement and Agent owners.
 If the Session creator subsequently refuses that target, its terminal target or
 Agent error also returns this choice. The refused Machine is marked unreachable
 alongside the already-read alternative Project placements; an Agent installation

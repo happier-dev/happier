@@ -10,7 +10,7 @@ import { MachineAvailabilityDiagnosticV1Schema, type MachineAvailabilityDiagnost
 
 export const ExternalActionRequestIdV1Schema = lazyZodSchema(() => z.string().check(z.minLength(1), maxCodeUnits(EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1), z.refine((value) => value.trim() === value, 'requestId must not have outer whitespace')));
 
-const EXTERNAL_ACTION_HTTP_ERROR_CODES_V1 = [
+const ExternalActionHttpErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'invalid_action',
   'invalid_envelope',
   'request_too_large',
@@ -23,8 +23,7 @@ const EXTERNAL_ACTION_HTTP_ERROR_CODES_V1 = [
   'project_requester_home_unavailable',
   'invalid_encrypted_envelope',
   'encrypted_action_unsupported',
-] as const;
-const ExternalActionHttpErrorCodeV1Schema = lazyZodSchema(() => z.enum(EXTERNAL_ACTION_HTTP_ERROR_CODES_V1));
+] as const));
 export type ExternalActionHttpErrorCodeV1 = z.infer<typeof ExternalActionHttpErrorCodeV1Schema>;
 
 const EXTERNAL_ACTION_HTTP_PLACEMENT_ERROR_CODES = [
@@ -46,7 +45,7 @@ const EXTERNAL_ACTION_HTTP_AUTHENTICATION_ERROR_CODES = [
  * input, execution detail, target metadata, or daemon diagnostics.
  */
 export const ExternalActionHttpErrorCodeSchema = lazyZodSchema(() => z.enum([
-  ...EXTERNAL_ACTION_HTTP_ERROR_CODES_V1,
+  ...ExternalActionHttpErrorCodeV1Schema.options,
   ...EXTERNAL_ACTION_HTTP_PLACEMENT_ERROR_CODES,
   ...EXTERNAL_ACTION_HTTP_AUTHENTICATION_ERROR_CODES,
 ]));
