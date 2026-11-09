@@ -287,7 +287,7 @@ async function withExternalTaskSource(
                                 // Genuine Action RPC boundary: all creation, source admission and result handling stay real.
                                 execute: async () => {
                                     if (options.originLinkTransport !== undefined) {
-                                        if (options.originLinkTransport === 'failed') throw new PluginError({ code: 'denied', message: 'Link refused at the Action boundary' });
+                                        if (options.originLinkTransport === 'failed') return { v: 1, status: 'conflict' };
                                         throw new Error('Origin link response lost');
                                     }
                                     if (options.linkTransport === 'notStarted') {

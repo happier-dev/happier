@@ -269,10 +269,11 @@ export async function runTriageScanPass(input: Readonly<{
         if (aborted()) break;
         if (settled.status === 'rejected') {
             // A rejected invocation is not provider evidence about the source.
+            const requestId = readPluginErrorRequestIdV1(settled.reason);
             const parsed = isPluginError(settled.reason)
                 ? TriageListInvocationErrorV1Schema.safeParse({
                     code: settled.reason.code, retryable: settled.reason.retryable,
-                    requestId: readPluginErrorRequestIdV1(settled.reason),
+                    ...(requestId === undefined ? {} : { requestId }),
                 })
                 : null;
             const error = parsed?.success

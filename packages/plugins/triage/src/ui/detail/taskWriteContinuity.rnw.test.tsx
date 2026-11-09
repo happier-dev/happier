@@ -59,12 +59,12 @@ it.each([
   },
 );
 
-it('retains uncertainty when the mounted host cannot transmit pre-handler dispatch evidence', async () => {
+it('permits a deliberate retry after the mounted host confirms the handler did not start', async () => {
   let write!: ReturnType<typeof useTriageTaskCommit>;
   let attempts = 0;
   await act(async () => {
     mounted.push(await createPluginUiTestkit({
-      identity: { instanceId: 'untransmitted-dispatch-evidence', mountNonce: 'one' },
+      identity: { instanceId: 'confirmed-dispatch-evidence', mountNonce: 'one' },
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },
       surface: defineUiSurface(() => {
         write = useTriageTaskCommit(async () => undefined);
@@ -76,16 +76,16 @@ it('retains uncertainty when the mounted host cannot transmit pre-handler dispat
         attempts++;
         const error = new PluginError({ code: 'plugin_action_current_intent_unavailable', retryable: false });
         // Genuine host boundary shape: cli-common/registration/actionHandlerInvocation.ts.
-        // The current hostApiWire V1 error schema does not carry this advisory.
         throw Object.assign(error, { actionHandlerInvocation: 'notStarted',
           data: { ...error.data, actionHandlerInvocation: 'notStarted' } });
       } },
     }));
   });
   await act(async () => { await write.commit('tasks/create-v1', {}); });
-  expect(write.result).toEqual({ kind: 'uncertain', failure: { class: 'unknown', code: 'plugin_action_current_intent_unavailable' } });
-  await act(async () => { await write.commit('tasks/create-v1', {}); });
+  expect(write.result).toEqual({ kind: 'refused', reason: 'plugin_action_current_intent_unavailable' });
   expect(attempts).toBe(1);
+  await act(async () => { await write.commit('tasks/create-v1', {}); });
+  expect(attempts).toBe(2);
 });
 
 it('holds a lost create response across remounts of the same scoped draft without replaying the write', async () => {

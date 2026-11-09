@@ -230,6 +230,9 @@ describe('one materialization pass', () => {
     it.each([
         { error: new PluginError({ code: 'source_read_refused', retryable: true, message: 'private exception' }),
             expected: { code: 'source_read_refused', retryable: true } },
+        { error: new PluginError({ code: 'source_read_refused', retryable: true, message: 'private exception',
+            details: { requestId: 'source-read-request' } }),
+            expected: { code: 'source_read_refused', retryable: true, requestId: 'source-read-request' } },
         // Ordinary separately bundled SDK errors share the public contract, not a constructor.
         { error: Object.assign(new Error('private exception'), {
             name: 'PluginError', code: 'external_source_refused', retryable: false,
