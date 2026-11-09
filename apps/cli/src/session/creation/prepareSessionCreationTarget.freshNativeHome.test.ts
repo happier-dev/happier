@@ -81,6 +81,7 @@ describe('fresh native Session directory preflight', () => {
         return { status: 200, data: { sessions: [] } };
       throw new Error(`Unexpected Home write: ${new URL(String(url)).pathname}`);
     });
+    let directoryPreflights = 0;
     const invokeNative: MachineActionDirectTargetTransport['invoke'] = async (method, request, options) => {
       // The native RPC process is the transport/OS boundary: its HOME differs
       // from this daemon. All registered preparation and Action logic is real.
@@ -94,6 +95,7 @@ describe('fresh native Session directory preflight', () => {
           signIn: { status: 'signedIn', loginSupport: 'unsupported' }, platform: { supported: true },
           install: { available: false, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [],
         } } } };
+      if (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) directoryPreflights++;
       vi.stubEnv('HOME', root);
       try { return await native.invokeLocal(method, request, options); }
       finally { vi.stubEnv('HOME', daemonHome); }
@@ -124,17 +126,25 @@ describe('fresh native Session directory preflight', () => {
         connectedServices: { v: 2, bindingsByServiceId: {} },
       });
       const preflight = await deps.sessionSpawnNewDirectoryApprovalPreflight!({ input: request });
+      const preflightsBeforeCreate = directoryPreflights;
       const executor = createCliActionExecutor(params);
       const result = await executor.execute('session.spawn_new', projectSessionSpawnNewActionInputV2(request),
         { surface: 'cli', authority: 'present_user' });
       expect(launched, JSON.stringify({ result, preflight, checkedPaths })).toEqual([root]);
+      expect(directoryPreflights - preflightsBeforeCreate).toBe(1);
       expect(preflight).toEqual({ type: 'not_required' });
+      const beforeNextExecution = directoryPreflights;
+      await executor.execute('session.spawn_new', projectSessionSpawnNewActionInputV2({
+        ...request, creationKey: 'fresh-native-home-next-execution',
+      }), { surface: 'cli', authority: 'present_user' });
+      expect(directoryPreflights - beforeNextExecution).toBe(1);
+      expect(launched).toEqual([root, root]);
       const denied = await executor.execute('session.spawn_new', projectSessionSpawnNewActionInputV2({
         ...request, creationKey: 'explicit-daemon-home', directory: { kind: 'path', path: daemonHome },
       }), { surface: 'cli', authority: 'present_user' });
       expect(denied).toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed', retryable: false,
         launchError: { code: 'invalid_directory' } } });
-      expect(launched).toEqual([root]);
+      expect(launched).toEqual([root, root]);
     } finally {
       homeGet.mockRestore(); homePost.mockRestore(); homeRpc.mockRestore(); ordinaryHomeRpc.mockRestore();
       nativeAccess.mockRestore(); vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true });
