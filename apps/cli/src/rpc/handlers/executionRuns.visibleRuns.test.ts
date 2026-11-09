@@ -194,6 +194,56 @@ describe('visible runs: create and bind', () => {
     expect(t.sent[0]).not.toHaveProperty('modelOverride');
   });
 
+  it('atomically reserves a placeholder across concurrent distinct starts', async () => {
+    const t = setup({ reviewer_1: reviewerPlaceholder() });
+    const [first, second] = await Promise.all([
+      t.client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START_V2, {
+        ...visibleReview,
+        targetSessionId: 'reviewer_1',
+        startRequestId: 'concurrent-start-1',
+      }),
+      t.client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START_V2, {
+        ...visibleReview,
+        targetSessionId: 'reviewer_1',
+        startRequestId: 'concurrent-start-2',
+      }),
+    ]);
+    const accepted = [first, second].filter((result) => result.ok !== false);
+    const rejected = [first, second].filter((result) => result.ok === false);
+    expect(accepted).toHaveLength(1);
+    expect(rejected).toEqual([
+      expect.objectContaining({ errorCode: 'execution_run_bind_rejected', reason: 'child_busy' }),
+    ]);
+    expect(t.sent).toHaveLength(1);
+    expect(t.children.reviewer_1!.metadata.executionRunLinkV1).toEqual(
+      expect.objectContaining({ runId: accepted[0]!.runId }),
+    );
+    const listed = await t.client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, {});
+    expect(listed.runs).toHaveLength(1);
+  });
+
+  it('releases the placeholder reservation when a start fails before controller installation', async () => {
+    const t = setup({ reviewer_1: reviewerPlaceholder() });
+    t.failNextSend();
+    const failed = await t.client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START_V2, {
+      ...visibleReview,
+      targetSessionId: 'reviewer_1',
+      startRequestId: 'failed-start',
+    });
+    expect(failed).toEqual(expect.objectContaining({ ok: false, errorCode: 'execution_run_failed' }));
+
+    const recovered = await t.client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START_V2, {
+      ...visibleReview,
+      targetSessionId: 'reviewer_1',
+      startRequestId: 'recovered-start',
+    });
+    expect(recovered).toEqual(expect.objectContaining({ linkedSessionId: 'reviewer_1', binding: 'reused' }));
+    expect(t.sent).toHaveLength(1);
+    expect(t.children.reviewer_1!.metadata.executionRunLinkV1).toEqual(
+      expect.objectContaining({ runId: recovered.runId }),
+    );
+  });
+
   it('echoes the child\'s actual role assignment, as read back from the child, for a created and a bound child', async () => {
     const t = setup({ reviewer_1: reviewerPlaceholder() });
     const created = await t.client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START_V2, { ...visibleReview, role: 'reviewer', roleSource: 'explicit' });
@@ -470,6 +520,26 @@ describe('visible runs: recovery without a configured deadline', () => {
     const run = await runOf(t, started.runId);
     expect(run.status).toBe('failed');
     expect(run.error.code).toBe('execution_run_visible_repair_undelivered');
+  });
+
+  it('enforces the owning run deadline while a delivered repair prompt has no response', async () => {
+    const t = setup({ reviewer_1: reviewerPlaceholder() }, { boundedTimeoutMs: 60 });
+    const started = await t.client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START_V2, {
+      ...visibleReview,
+      targetSessionId: 'reviewer_1',
+    });
+    t.children.reviewer_1!.transcript.push({ seq: 10, role: 'assistant', text: 'Prose without the contract.', localId: null, meta: null });
+    await report(t.client, { runId: started.runId, linkedSessionId: 'reviewer_1', turnEpoch: 1, kind: 'turn_completed' });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(t.sent).toHaveLength(2);
+    const timedOut = await t.client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: started.runId });
+    expect(timedOut.run).toEqual(expect.objectContaining({ status: 'timeout', error: expect.objectContaining({ code: 'execution_run_timeout' }) }));
+
+    t.children.reviewer_1!.transcript.push({ seq: 12, role: 'assistant', text: reviewOutput, localId: null, meta: null });
+    expect(await report(t.client, { runId: started.runId, linkedSessionId: 'reviewer_1', turnEpoch: 2, kind: 'turn_completed' }))
+      .toEqual({ ok: true, accepted: false, reason: 'run_terminal' });
+    await settle();
+    expect((await t.client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: started.runId })).run.status).toBe('timeout');
   });
 
   it('persists the link confirmation and re-arms the handshake when a rehydrated run was never confirmed', async () => {

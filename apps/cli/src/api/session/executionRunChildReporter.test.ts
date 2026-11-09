@@ -6,7 +6,7 @@ import { createExecutionRunChildReporter } from './executionRunChildReporter';
 
 const link = { v: 1 as const, parentSessionId: 'lead', runId: 'run_1', turnEpoch: 0 };
 
-function harness(responses: Array<'accepted' | 'throw' | 'run_terminal'>) {
+function harness(responses: Array<'accepted' | 'throw' | 'unknown_run' | 'run_terminal'>) {
   let metadata: Record<string, unknown> = { executionRunLinkV1: link };
   const calls: Array<{ parentSessionId: string; request: Record<string, unknown> }> = [];
   const reporter = createExecutionRunChildReporter({
@@ -19,7 +19,8 @@ function harness(responses: Array<'accepted' | 'throw' | 'run_terminal'>) {
       calls.push({ parentSessionId, request: request as Record<string, unknown> });
       const next = responses.shift() ?? 'accepted';
       if (next === 'throw') throw new Error('relay unavailable');
-      return next === 'accepted' ? { ok: true, accepted: true } : { ok: true, accepted: false, reason: 'run_terminal' };
+      if (next === 'accepted') return { ok: true, accepted: true };
+      return { ok: true, accepted: false, reason: next };
     },
     getNowMs: () => 50,
     retryDelaysMs: [0, 0],
@@ -61,6 +62,14 @@ describe('createExecutionRunChildReporter', () => {
     const t = harness(['accepted', 'throw', 'accepted']);
     await t.reporter.onMetadataObserved();
     await t.reporter.onTurnCompleted();
+    expect(readExecutionRunLinkV1(t.metadata())?.report).toEqual({ turnEpoch: 1, reportedAt: 50, ack: 'accepted', attempts: 2 });
+  });
+
+  it('retries an early unknown-run response and records the accepted receipt once the parent installs the run', async () => {
+    const t = harness(['accepted', 'unknown_run', 'accepted']);
+    await t.reporter.onMetadataObserved();
+    await t.reporter.onTurnCompleted();
+    expect(t.calls).toHaveLength(3);
     expect(readExecutionRunLinkV1(t.metadata())?.report).toEqual({ turnEpoch: 1, reportedAt: 50, ack: 'accepted', attempts: 2 });
   });
 

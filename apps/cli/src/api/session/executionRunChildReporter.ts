@@ -75,8 +75,20 @@ export function createExecutionRunChildReporter(params: Readonly<{
         if (record && response?.accepted === true) {
           await writeReport(request.runId, { turnEpoch: request.turnEpoch, reportedAt: getNowMs(), ack: 'accepted', attempts: attempt });
         }
-        // A valid response that accepts nothing (finished or foreign run) leaves the record as it is.
-        return;
+        // The link can reach the child before the parent installs its run controller. Keep that
+        // one ordering response inside this report's existing retry lifecycle; every other valid
+        // rejection is terminal and leaves the record as it is.
+        if (response?.accepted !== false || response.reason !== 'unknown_run') return;
+        const exhausted = attempt === maxAttempts;
+        if (record) {
+          await writeReport(request.runId, {
+            turnEpoch: request.turnEpoch,
+            reportedAt: getNowMs(),
+            ack: exhausted ? 'failed' : 'pending',
+            attempts: attempt,
+          });
+        }
+        if (exhausted) return;
       } catch (error) {
         logger.debug('[EXECUTION RUN] Child turn report failed', {
           runId: request.runId,

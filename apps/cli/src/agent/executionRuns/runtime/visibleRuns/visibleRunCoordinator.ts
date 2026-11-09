@@ -19,6 +19,7 @@ import {
 
 import type { ExecutionRunController, ExecutionRunSessionController } from '@/agent/executionRuns/controllers/types';
 import type { ExecutionRunProfileBoundedCompleteResult } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
+import type { FinishExecutionRun } from '@/agent/executionRuns/runtime/executionRunFinishRun';
 import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
 import { buildExecutionRunProfileStartParams } from '@/agent/executionRuns/runtime/buildExecutionRunProfileStartParams';
 import type { ExecutionRunLaunchRoleV1, ExecutionRunManagerStartParams, ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
@@ -33,25 +34,13 @@ import {
 } from './visibleRunRules';
 import type { VisibleRunSessionPort } from './visibleRunSessionPort';
 
-type FinishRunNext = Readonly<{
-  status: ExecutionRunState['status'];
-  summary?: string;
-  finishedAtMs: number;
-  error?: { code: string; message?: string };
-}>;
-
 export type VisibleRunCoordinatorDeps = Readonly<{
   hostSessionId: string;
   port: VisibleRunSessionPort;
   runs: Map<string, ExecutionRunState>;
   controllers: Map<string, ExecutionRunController>;
   getNowMs: () => number;
-  finishRun: (
-    runId: string,
-    next: FinishRunNext,
-    toolResult: { output: any; isError?: boolean; meta?: Record<string, unknown> },
-    structuredMeta?: ExecutionRunProfileBoundedCompleteResult['structuredMeta'],
-  ) => Promise<void>;
+  finishRun: FinishExecutionRun;
   /** The same bounded task deadline hidden runs use; null leaves the run unbounded. */
   resolveTaskDeadlineMs: (params: ExecutionRunManagerStartParams) => number | null;
   /** The existing child-provisioning backstop: the window for the child's `linked` handshake. */
@@ -445,7 +434,7 @@ export class VisibleRunCoordinator {
       });
       return;
     }
-    if (opts.atDeadline && !ctrl.completion) {
+    if (opts.atDeadline && (!ctrl.completion || ctrl.pendingRepair !== null)) {
       await this.timeout(runId);
       return;
     }
@@ -496,14 +485,23 @@ export class VisibleRunCoordinator {
   }
 
   private async timeout(runId: string): Promise<void> {
-    if (!this.settle(runId)) return;
+    const ctrl = this.settle(runId);
+    if (!ctrl) return;
+    const pendingRepair = ctrl.pendingRepair;
+    ctrl.pendingRepair = null;
     const finishedAtMs = this.deps.getNowMs();
     const message = 'The linked child did not produce a valid result before the run deadline';
-    await this.deps.finishRun(
-      runId,
-      { status: 'timeout', summary: message, finishedAtMs, error: { code: 'execution_run_timeout', message } },
-      { output: { status: 'timeout', summary: message, runId, finishedAtMs }, isError: true },
-    );
+    try {
+      await this.deps.finishRun(
+        runId,
+        { status: 'timeout', summary: message, finishedAtMs, error: { code: 'execution_run_timeout', message } },
+        { output: { status: 'timeout', summary: message, runId, finishedAtMs }, isError: true },
+      );
+    } finally {
+      // Release the repair completion chain after terminal state is authoritative. Its late
+      // completion calls back through complete(), which observes the terminal run and does nothing.
+      pendingRepair?.('');
+    }
   }
 
   /** `execution.run.send` on a running visible run: a message to the child, never a control override. */

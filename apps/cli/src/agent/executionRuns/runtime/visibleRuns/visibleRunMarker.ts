@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { AcpConfigOptionOverridesV1Schema, BackendTargetRefSchema, ExecutionRunRoleSchema } from '@happier-dev/protocol';
+import { AcpConfigOptionOverridesV1Schema, BackendTargetRefSchema, ExecutionRunRoleSchema, lazySchema } from '@happier-dev/protocol';
 
 import type { ExecutionRunSessionController } from '@/agent/executionRuns/controllers/types';
 import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
@@ -11,7 +11,7 @@ import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionR
  * marker schema is passthrough, so older daemons keep it untouched. D18: identifiers and controls
  * only, never task instructions or role text; rehydration reads those back from the child Session.
  */
-export const VisibleRunMarkerV1Schema = z.object({
+export const VisibleRunMarkerV1Schema = lazySchema(() => z.object({
   v: z.literal(1),
   linkedSessionId: z.string().min(1),
   binding: z.enum(['created', 'reused']),
@@ -34,7 +34,7 @@ export const VisibleRunMarkerV1Schema = z.object({
   lastReportedTurnEpoch: z.number().int().min(0),
   /** Absolute task deadline from the start; a restarted runner keeps it, and daemon GC retains the marker past it only for the terminal TTL. */
   deadlineAtMs: z.number().int().nullable(),
-}).passthrough();
+}).passthrough());
 export type VisibleRunMarkerV1 = z.infer<typeof VisibleRunMarkerV1Schema>;
 
 export function buildVisibleRunMarkerV1(run: ExecutionRunState, ctrl: ExecutionRunSessionController): VisibleRunMarkerV1 {

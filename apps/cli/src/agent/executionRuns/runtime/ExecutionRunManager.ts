@@ -33,7 +33,11 @@ import {
   type ExecutionRunPublicState,
 } from '@happier-dev/protocol';
 
-import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
+import type {
+  FinishExecutionRun,
+  FinishExecutionRunNext,
+  FinishExecutionRunToolResult,
+} from '@/agent/executionRuns/runtime/executionRunFinishRun';
 import { VoiceAgentError, VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import { resolveCliVoicePromptStackBlocks } from '@/agent/promptLibrary/resolveCliVoicePromptStackBlocks';
 import { configuration } from '@/configuration';
@@ -156,6 +160,7 @@ export class ExecutionRunManager {
   private readonly terminalRuntimeActivityPromises = new Map<string, Promise<void>>();
   private readonly terminalStateWaiters = new Map<string, Set<Readonly<{ resolve: () => void }>>>();
   private readonly runLifecycleTails = new Map<string, Promise<void>>();
+  private readonly visibleBindReservationTails = new Map<string, Promise<void>>();
   private disposalPromise: Promise<void> | null = null;
   private controllerDisposalTail: Promise<void> = Promise.resolve();
   private readonly voiceAgentManager: VoiceAgentManager;
@@ -295,24 +300,32 @@ export class ExecutionRunManager {
     return terminal;
   }
 
-  private async withRunLifecycleLock<T>(runId: string, operation: () => Promise<T>): Promise<T> {
-    const previous = this.runLifecycleTails.get(runId) ?? Promise.resolve();
+  private async withLifecycleLock<T>(
+    tails: Map<string, Promise<void>>,
+    key: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = tails.get(key) ?? Promise.resolve();
     let release!: () => void;
     const currentGate = new Promise<void>((resolve) => {
       release = resolve;
     });
     const currentTail = previous.catch(() => {}).then(() => currentGate);
-    this.runLifecycleTails.set(runId, currentTail);
+    tails.set(key, currentTail);
 
     await previous.catch(() => {});
     try {
       return await operation();
     } finally {
       release();
-      if (this.runLifecycleTails.get(runId) === currentTail) {
-        this.runLifecycleTails.delete(runId);
+      if (tails.get(key) === currentTail) {
+        tails.delete(key);
       }
     }
+  }
+
+  private async withRunLifecycleLock<T>(runId: string, operation: () => Promise<T>): Promise<T> {
+    return await this.withLifecycleLock(this.runLifecycleTails, runId, operation);
   }
 
   constructor(opts: Readonly<{
@@ -401,7 +414,7 @@ export class ExecutionRunManager {
         runs: this.runs,
         controllers: this.controllers,
         getNowMs: () => this.getNowMs(),
-        finishRun: async (runId, next, toolResult, structuredMeta) => await this.finishRun(runId, next as any, toolResult, structuredMeta),
+        finishRun: this.finishRun.bind(this),
         resolveTaskDeadlineMs: (params) => this.resolveBoundedTimeoutMs(params),
         handshakeTimeoutMs: readBackendProvisionTimeoutMs(),
         onPublicStateUpdated: (runId) => this.emitPublicStateUpdated(runId),
@@ -590,29 +603,9 @@ export class ExecutionRunManager {
 
   private async finishRun(
     runId: string,
-    next: Omit<
-      ExecutionRunState,
-      | 'runId'
-      | 'callId'
-      | 'sidechainId'
-      | 'sessionId'
-      | 'depth'
-      | 'intent'
-      | 'backendTarget'
-      | 'backendId'
-      | 'instructions'
-      | 'permissionMode'
-      | 'retentionPolicy'
-      | 'runClass'
-      | 'ioMode'
-      | 'startedAtMs'
-      | 'resumeHandle'
-    > & {
-      status: ExecutionRunState['status'];
-      finishedAtMs: number;
-    },
-    toolResult: { output: any; isError?: boolean; meta?: Record<string, unknown> },
-    structuredMeta?: ExecutionRunStructuredMeta,
+    next: FinishExecutionRunNext,
+    toolResult: FinishExecutionRunToolResult,
+    structuredMeta?: Parameters<FinishExecutionRun>[3],
   ): Promise<void> {
     const wasRunning = this.runs.get(runId)?.status === 'running';
     finishExecutionRun({
@@ -743,23 +736,38 @@ export class ExecutionRunManager {
     return this.controllers.get(runId)?.kind === 'session';
   }
 
-  /** Bind admission before any run state exists: a rejection creates nothing. */
-  async admitVisibleBind(params: Readonly<{
+  /**
+   * Bind admission and start share one child-scoped reservation. The reservation begins before the
+   * asynchronous child read and ends only after the caller has installed the controller/link (or
+   * failed), so distinct starts cannot both admit the same placeholder.
+   */
+  async withVisibleBindReservation<T>(params: Readonly<{
     intent: ExecutionRunVisibleIntent;
     requestedRole?: ExecutionRunRole;
     targetSessionId: string;
     controls: VisibleRunControls;
-  }>): Promise<Readonly<{ ok: true; childRole: string; childAssignmentId: string | null } | { ok: false; reason: ExecutionRunBindRejectionReason }>> {
-    if (!this.visibleRuns || !this.visibleRunSessionPort) return { ok: false, reason: 'foreign_child' };
-    const child = await this.visibleRunSessionPort.readChild(params.targetSessionId);
-    if (!child) return { ok: false, reason: 'foreign_child' };
-    return admitVisibleRunBind({
-      hostingSessionId: this.hostSessionId,
-      intent: params.intent,
-      ...(params.requestedRole ? { requestedRole: params.requestedRole } : {}),
-      child,
-      busy: this.visibleRuns.isBusy(params.targetSessionId),
-      controls: params.controls,
+  }>, operation: (admitted: Readonly<{ childRole: string; childAssignmentId: string | null }>) => Promise<T>): Promise<
+    Readonly<{ ok: true; value: T } | { ok: false; reason: ExecutionRunBindRejectionReason }>
+  > {
+    const visibleRuns = this.visibleRuns;
+    const visibleRunSessionPort = this.visibleRunSessionPort;
+    if (!visibleRuns || !visibleRunSessionPort) return { ok: false, reason: 'foreign_child' };
+    return await this.withLifecycleLock(this.visibleBindReservationTails, params.targetSessionId, async () => {
+      const child = await visibleRunSessionPort.readChild(params.targetSessionId);
+      if (!child) return { ok: false as const, reason: 'foreign_child' as const };
+      const admitted = admitVisibleRunBind({
+        hostingSessionId: this.hostSessionId,
+        intent: params.intent,
+        ...(params.requestedRole ? { requestedRole: params.requestedRole } : {}),
+        child,
+        busy: visibleRuns.isBusy(params.targetSessionId),
+        controls: params.controls,
+      });
+      if (!admitted.ok) return admitted;
+      return {
+        ok: true as const,
+        value: await operation({ childRole: admitted.childRole, childAssignmentId: admitted.childAssignmentId }),
+      };
     });
   }
 

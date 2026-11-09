@@ -5,7 +5,7 @@ import type { AgentBackend, AgentMessageHandler, SessionId } from '@/agent/core/
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { AcpSendFn } from '@/agent/acp/bridge/acpSessionForwarding';
 import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
-import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
+import type { FinishExecutionRun } from '@/agent/executionRuns/runtime/executionRunFinishRun';
 import { buildExecutionRunPrompt } from '@/agent/executionRuns/profiles/shared/buildExecutionRunPrompt';
 import { EXECUTION_RUN_VISIBLE_ERROR_CODES } from '@happier-dev/protocol';
 import { toExecutionRunProfileRole } from '@/agent/executionRuns/runtime/buildExecutionRunProfileStartParams';
@@ -38,35 +38,6 @@ import {
 import { disposeExecutionRunBackendController, settleExecutionRunControllerOccurrence } from '@/agent/executionRuns/runtime/settleExecutionRunControllerOccurrence';
 
 type SendAcp = AcpSendFn;
-
-type FinishRunNext = Omit<
-  ExecutionRunState,
-  | 'runId'
-  | 'callId'
-  | 'sidechainId'
-  | 'sessionId'
-  | 'depth'
-  | 'intent'
-  | 'backendTarget'
-  | 'backendId'
-  | 'instructions'
-  | 'permissionMode'
-  | 'retentionPolicy'
-  | 'runClass'
-  | 'ioMode'
-  | 'startedAtMs'
-  | 'resumeHandle'
-> & {
-  status: ExecutionRunState['status'];
-  finishedAtMs: number;
-};
-
-type FinishRun = (
-  runId: string,
-  next: FinishRunNext,
-  toolResult: { output: any; isError?: boolean; meta?: Record<string, unknown> },
-  structuredMeta?: ExecutionRunStructuredMeta,
-) => void | Promise<void>;
 
 function normalizeVoiceAgentModelId(value: unknown): string {
   if (typeof value !== 'string') return '';
@@ -170,7 +141,7 @@ export async function startExecutionRun(args: Readonly<{
   isSessionClosing?: () => boolean;
   enqueueMarkerWrite: (runId: string, write: () => Promise<void>) => Promise<void>;
   writeActivityMarker: (runId: string, nowMs: number, opts?: Readonly<{ force?: boolean }>) => Promise<void>;
-  finishRun: FinishRun;
+  finishRun: FinishExecutionRun;
   executeBoundedRun: ExecuteBoundedRun;
   send: (
     runId: string,

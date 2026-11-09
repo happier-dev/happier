@@ -531,85 +531,88 @@ export function registerExecutionRunHandlers(
         return true;
       }
     })();
-    let boundChildAssignmentId: string | null = null;
+    const startAfterBindAdmission = async (boundChildAssignmentId: string | null) => {
+      // A created visible child receives its role as a Session snapshot through the role-aware spawn.
+      const createsRoleBearingChild = visibility === 'session' && !targetSessionId && role !== undefined;
+      const visibleSessionRole = createsRoleBearingChild
+        ? planSessionRoleChangeV1({ role, settings: accountSettings, changeId: 'run-role:' + randomUUID(), at: Date.now() })
+        : null;
+      if (createsRoleBearingChild && !visibleSessionRole?.assignment) {
+        return {
+          ok: false,
+          error: 'Role ' + role + ' is not in the role catalog of this account',
+          errorCode: EXECUTION_RUN_VISIBLE_ERROR_CODES.ROLE_UNSUPPORTED,
+        };
+      }
+      let launchRole: ExecutionRunLaunchRoleV1 | null = null;
+      if (role !== undefined) {
+        const profile = resolveAssignableSessionRoleProfileV1(accountSettings, role);
+        if (!profile || !profile.instructions.trim()) {
+          return {
+            ok: false,
+            error: `Role ${role} is not in this account's role catalog`,
+            errorCode: EXECUTION_RUN_VISIBLE_ERROR_CODES.ROLE_UNSUPPORTED,
+          };
+        }
+        launchRole = {
+          id: role,
+          name: profile.name,
+          // The echo names the child's actual assignment: the created snapshot's or the bound child's.
+          assignmentId: visibleSessionRole?.assignment?.assignmentId ?? boundChildAssignmentId ?? `run-role:${randomUUID()}`,
+          instructions: profile.instructions,
+          roleSource: roleSource === 'settings' ? 'settings' : 'explicit',
+        };
+      }
+      const started = await startRun(
+        // A visible child's result reaches its Lead unless the caller opts out explicitly.
+        visibility === 'session' && request.notifyParentOnCompletion === undefined ? { ...request, notifyParentOnCompletion: true } : request,
+        {
+          visibility,
+          launchRole,
+          fingerprintSource: parsed.data,
+          ...(visibleControls ? { visibleControls } : {}),
+          ...(targetSessionId ? { targetSessionId } : {}),
+          ...(visibleSessionRole?.assignment ? { visibleSessionRoleV1: visibleSessionRole.assignment as FreshAssignableSessionRoleV1 } : {}),
+        },
+      );
+      if (!started.ok) return started;
+      // An idempotent replay returns the run that was already admitted; echo its retained state.
+      const appliedRun = manager.get(started.runId);
+      const appliedRole = appliedRun?.launch?.role ?? launchRole;
+      return {
+        runId: started.runId,
+        callId: started.callId,
+        sidechainId: started.sidechainId,
+        ...(started.requestedConfiguration ? { requestedConfiguration: started.requestedConfiguration } : {}),
+        visibility,
+        binding: appliedRun?.launch?.binding ?? null,
+        linkedSessionId: appliedRun?.launch?.linkedSessionId ?? null,
+        role: appliedRole ? { id: appliedRole.id, name: appliedRole.name, assignmentId: appliedRole.assignmentId } : null,
+        roleSource: appliedRole?.roleSource ?? 'none',
+        permissionMode: request.permissionMode,
+        modelId: request.modelId ?? null,
+      };
+    };
+
     if (visibleControls && targetSessionId && !replaysAdmittedStart) {
       if (!isExecutionRunVisibleIntent(request.intent)) return invalidParams();
-      const admitted = await manager.admitVisibleBind({
+      const reserved = await manager.withVisibleBindReservation({
         intent: request.intent,
         ...(role !== undefined ? { requestedRole: role } : {}),
         targetSessionId,
         controls: visibleControls,
-      });
-      if (!admitted.ok) {
+      }, async (admitted) => await startAfterBindAdmission(admitted.childAssignmentId));
+      if (!reserved.ok) {
         return {
           ok: false,
-          error: 'The run cannot bind session ' + targetSessionId + ': ' + admitted.reason,
+          error: 'The run cannot bind session ' + targetSessionId + ': ' + reserved.reason,
           errorCode: EXECUTION_RUN_VISIBLE_ERROR_CODES.BIND_REJECTED,
-          reason: admitted.reason,
+          reason: reserved.reason,
         };
       }
-      boundChildAssignmentId = admitted.childAssignmentId;
+      return reserved.value;
     }
-    // A created visible child receives its role as a Session snapshot through the role-aware spawn.
-    const createsRoleBearingChild = visibility === 'session' && !targetSessionId && role !== undefined;
-    const visibleSessionRole = createsRoleBearingChild
-      ? planSessionRoleChangeV1({ role, settings: accountSettings, changeId: 'run-role:' + randomUUID(), at: Date.now() })
-      : null;
-    if (createsRoleBearingChild && !visibleSessionRole?.assignment) {
-      return {
-        ok: false,
-        error: 'Role ' + role + ' is not in the role catalog of this account',
-        errorCode: EXECUTION_RUN_VISIBLE_ERROR_CODES.ROLE_UNSUPPORTED,
-      };
-    }
-    let launchRole: ExecutionRunLaunchRoleV1 | null = null;
-    if (role !== undefined) {
-      const profile = resolveAssignableSessionRoleProfileV1(accountSettings, role);
-      if (!profile || !profile.instructions.trim()) {
-        return {
-          ok: false,
-          error: `Role ${role} is not in this account's role catalog`,
-          errorCode: EXECUTION_RUN_VISIBLE_ERROR_CODES.ROLE_UNSUPPORTED,
-        };
-      }
-      launchRole = {
-        id: role,
-        name: profile.name,
-        // The echo names the child's actual assignment: the created snapshot's or the bound child's.
-        assignmentId: visibleSessionRole?.assignment?.assignmentId ?? boundChildAssignmentId ?? `run-role:${randomUUID()}`,
-        instructions: profile.instructions,
-        roleSource: roleSource === 'settings' ? 'settings' : 'explicit',
-      };
-    }
-    const started = await startRun(
-      // A visible child's result reaches its Lead unless the caller opts out explicitly.
-      visibility === 'session' && request.notifyParentOnCompletion === undefined ? { ...request, notifyParentOnCompletion: true } : request,
-      {
-        visibility,
-        launchRole,
-        fingerprintSource: parsed.data,
-        ...(visibleControls ? { visibleControls } : {}),
-        ...(targetSessionId ? { targetSessionId } : {}),
-        ...(visibleSessionRole?.assignment ? { visibleSessionRoleV1: visibleSessionRole.assignment as FreshAssignableSessionRoleV1 } : {}),
-      },
-    );
-    if (!started.ok) return started;
-    // An idempotent replay returns the run that was already admitted; echo its retained state.
-    const appliedRun = manager.get(started.runId);
-    const appliedRole = appliedRun?.launch?.role ?? launchRole;
-    return {
-      runId: started.runId,
-      callId: started.callId,
-      sidechainId: started.sidechainId,
-      ...(started.requestedConfiguration ? { requestedConfiguration: started.requestedConfiguration } : {}),
-      visibility,
-      binding: appliedRun?.launch?.binding ?? null,
-      linkedSessionId: appliedRun?.launch?.linkedSessionId ?? null,
-      role: appliedRole ? { id: appliedRole.id, name: appliedRole.name, assignmentId: appliedRole.assignmentId } : null,
-      roleSource: appliedRole?.roleSource ?? 'none',
-      permissionMode: request.permissionMode,
-      modelId: request.modelId ?? null,
-    };
+    return await startAfterBindAdmission(null);
   });
 
   /** Wake-up from a visible run's linked child; the transcript stays authoritative. */
