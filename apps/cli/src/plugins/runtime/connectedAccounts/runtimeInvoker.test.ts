@@ -40,6 +40,7 @@ import {
     type ConnectedAccountRuntimeLease,
 } from './contributionRegistry';
 import { createPluginRuntimeOccurrenceId } from '../runtimeSlots';
+import { createPluginRegistrationScope, type PluginRuntimeRegistration } from '../api/registrationScope';
 import { createQualifiedConnectedAccountAttemptTransactionAdapters } from '@/daemon/connectedServices/qualifiedConnectedAccountAttemptTransactionAdapters';
 import { createConnectedAccountAttemptTransactionApiBoundary } from '@/testkit/connectedAccountAttemptTransactionApi';
 import { createConnectedAccountConfigurationOwner } from '@happier-dev/cli-common/connectedAccounts';
@@ -184,7 +185,7 @@ function invokeEstablished(
 }
 
 describe('connected-account runtime invoker', () => {
-    it('invokes contributed native materialization without fabricating a saved account', async () => {
+    it('invokes contributed native materialization through activation without fabricating a saved account', async () => {
         const registeredRuntime: PluginConnectedAccountRuntime = {
             ...runtime(() => {}),
             async materializeNative(request, context) {
@@ -197,15 +198,24 @@ describe('connected-account runtime invoker', () => {
             },
         };
         const createRegistry = (activateOnDemand = async () => {}, nativeRuntime = registeredRuntime) => {
-            let activated = false;
+            let registrations: readonly PluginRuntimeRegistration[] = [];
             return createConnectedAccountContributionRegistry({
                 descriptors: [{ provenance: 'external', source: { kind: 'path' },
                     pluginId: service.pluginId, definition: { ...descriptor, authentication: {
                         ...descriptor.authentication, native: { systemTool: 'acme-login' },
                     } } }],
-                activateOnDemand: async () => { await activateOnDemand(); activated = true; },
-                readRegistrations: () => activated ? [{ pluginId: service.pluginId, localId: service.localId,
-                    occurrenceId: runtimeIdentity.occurrenceId, runtime: nativeRuntime }] : [],
+                activateOnDemand: async () => {
+                    await activateOnDemand();
+                    const scope = createPluginRegistrationScope({ pluginId: service.pluginId,
+                        target: { realm: 'daemon' }, rights: [{ family: 'connectedAccountDescriptors',
+                            localId: service.localId, target: { realm: 'daemon' } }],
+                    });
+                    scope.api.connectedAccounts.register(service.localId, nativeRuntime);
+                    registrations = scope.commit();
+                },
+                readRegistrations: () => registrations.flatMap(registration => registration.family === 'connectedAccountDescriptors'
+                    ? [{ pluginId: service.pluginId, localId: registration.localId,
+                        occurrenceId: runtimeIdentity.occurrenceId, runtime: registration.value }] : []),
                 readPluginOccurrenceId: () => runtimeIdentity.occurrenceId,
                 readPluginSourceCustody: () => runtimeIdentity.sourceCustody,
                 isPluginOccurrenceCurrent: () => true,
@@ -381,7 +391,7 @@ describe('connected-account runtime invoker', () => {
         });
         await expect(invokeEstablished(invoker, {
             kind: 'materialize', request: {
-                kind: 'httpHeaders', origins: ['https://api.example.test'], headerNames: ['authorization'],
+                kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'],
             },
         })).resolves.toEqual({ kind: 'httpHeaders', headers });
     });
@@ -406,7 +416,7 @@ describe('connected-account runtime invoker', () => {
         });
         const result = invokeEstablished(invoker, {
             kind: 'materialize', request: {
-                kind: 'httpHeaders', origins: ['https://api.example.test'], headerNames: ['authorization'],
+                kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'],
             },
         }, isCurrent, cancellation.signal);
         if (outcome === 'retiredDuringCopy') {

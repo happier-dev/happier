@@ -29,8 +29,12 @@ export function snapshotConnectedAccountRuntime(value: unknown) {
     const authentication = requireStaticRegistrationObject(Reflect.get(receiver, 'authentication'), 'Connected Account authentication');
     const modes = requireStaticRegistrationObject(Reflect.get(authentication, 'modes'), 'Connected Account authentication modes');
     const recovery = Reflect.get(receiver, 'recoveryCredits');
+    const materializeNative = captureStaticRegistrationMethod<CapturedMethod>(
+        receiver, 'materializeNative', 'Connected Account runtime.materializeNative', false,
+    );
     return Object.freeze({
         ...captureCallbacks(receiver, establishedCallbacks),
+        ...(materializeNative ? { materializeNative } : {}),
         authentication: Object.freeze({
             modes: Object.freeze(Object.fromEntries(Object.entries(modes).map(([id, value]) => {
                 const mode = requireStaticRegistrationObject(value, `Connected Account authentication mode '${id}'`);
