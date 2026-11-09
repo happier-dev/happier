@@ -48,6 +48,11 @@ describe('CLIProxyAPI plugin manifest', () => {
         'managedPurpose.anthropic.title': expect.any(String),
         'managedPurpose.meta.title': expect.any(String),
         'managedPurpose.gemini.title': expect.any(String),
+        'managedPurpose.antigravity.title': expect.any(String),
+        'managedPurpose.kimi.title': expect.any(String),
+        'managedPurpose.xai.title': expect.any(String),
+        'managedPurpose.devin.title': expect.any(String),
+        'managedPurpose.unavailable.sdkRegistration': expect.any(String),
       });
       expect(bundle.messages['managedPurpose.openai.title'].trim()).not.toBe('');
       expect(bundle.messages['managedPurpose.anthropic.title'].trim()).not.toBe('');

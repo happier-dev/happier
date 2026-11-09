@@ -2,5 +2,10 @@
   "managedPurpose.openai.title": "Compte ou groupe ChatGPT",
   "managedPurpose.anthropic.title": "Compte ou groupe Claude",
   "managedPurpose.meta.title": "Compte Muse ou pool",
-  "managedPurpose.gemini.title": "Compte ou pool avec clé API Gemini"
+  "managedPurpose.gemini.title": "Compte ou pool avec clé API Gemini",
+  "managedPurpose.antigravity.title": "Compte ou groupe Antigravity",
+  "managedPurpose.kimi.title": "Compte ou groupe Kimi Code",
+  "managedPurpose.xai.title": "Compte ou groupe xAI",
+  "managedPurpose.devin.title": "Compte ou groupe Devin",
+  "managedPurpose.unavailable.sdkRegistration": "Cette famille de comptes n’est pas prise en charge par l’environnement d’exécution actuel de la passerelle."
 }

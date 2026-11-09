@@ -5,6 +5,7 @@ import {
   createProviderManagedRuntimeDeclarationEqualityKeyV1,
   resolveProviderManagedRuntimeDeclarationV1,
 } from './v1.js';
+import * as gatewayContributions from '../gatewayContributionsV1.js';
 
 const unknownCapabilities = {
   streaming: 'unknown',
@@ -43,6 +44,42 @@ function validContribution() {
 }
 
 describe('ProviderContributionV1Schema', () => {
+  it('publishes passive unavailable families without creating executable purposes or changing runtime identity', () => {
+    const active = Array.from({ length: 4 }, (_, index) => ({ purpose: `active-${index}`, service: `service-${index}` }));
+    const unavailable = Array.from({ length: 4 }, (_, index) => ({
+      purpose: `unavailable-${index}`,
+      service: `unavailable-service-${index}`,
+      title: { key: `unavailable.${index}.title`, fallback: `Unavailable family ${index}` },
+      unavailableReason: { key: 'gateway.prerequisite', fallback: 'The declared runtime prerequisite is unavailable.' },
+    }));
+    const base = { ...validContribution(),
+      catalog: { ...validContribution().catalog, sourceRegistryVersion: 'managed-client/v1' },
+      managedRuntime: { kind: 'managed', endpointTemplateIds: ['responses'], connectedAccounts: active },
+    };
+    const contribution = ProviderContributionV1Schema.parse({ ...base, managedRuntime: {
+      ...base.managedRuntime, unavailableConnectedAccounts: unavailable,
+    } });
+    const implementationIdentity = { pluginId: 'acme.gateway', localId: 'gateway' };
+    const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity, managedRuntime: contribution.managedRuntime! });
+    expect(managedRuntime.connectedAccounts.map(row => row.purpose)).toEqual(active.map(row => row.purpose));
+    expect(managedRuntime.requestAuthUses).toEqual([]);
+    expect(managedRuntime.unavailableConnectedAccounts?.[0]).toMatchObject({
+      ...unavailable[0], service: { pluginId: implementationIdentity.pluginId, localId: unavailable[0].service },
+    });
+    expect(createProviderManagedRuntimeDeclarationEqualityKeyV1({ implementationIdentity, managedRuntime }))
+      .toBe(createProviderManagedRuntimeDeclarationEqualityKeyV1({ implementationIdentity, managedRuntime: ProviderContributionV1Schema.parse(base).managedRuntime! }));
+    const declarations = [{ contributionKey: 'acme.gateway/gateway', definition: contribution, provenance: 'first_party' as const }];
+    const families = gatewayContributions.readProviderGatewayFamilyAvailabilityV1('acme.gateway/gateway', declarations);
+    expect(families?.filter(row => row.status === 'available')).toHaveLength(4);
+    expect(families?.filter(row => row.status === 'unavailable')).toHaveLength(4);
+    expect(gatewayContributions.chooseProviderGatewayContributionV1(declarations, { purpose: 'unavailable-0' }))
+      .toEqual({ status: 'unavailable', choices: [] });
+    expect(gatewayContributions.chooseProviderGatewayContributionV1(declarations, { purpose: 'active-0' }).status).toBe('selected');
+    expect(ProviderContributionV1Schema.safeParse({ ...base, managedRuntime: {
+      ...base.managedRuntime, unavailableConnectedAccounts: [{ ...unavailable[0], materializationKinds: ['httpHeaders'] }],
+    } }).success).toBe(false);
+  });
+
   it('preserves declared operation restriction copy without changing managed runtime identity', () => {
     const connectedAccount = { purpose: 'vendor-upstream', service: 'subscription' };
     const operationRestriction = {

@@ -5,6 +5,7 @@ import {
   CLIPROXYAPI_MANAGED_CATALOG_SOURCE_REGISTRY_VERSION,
   CLIPROXYAPI_MANAGED_ENDPOINT_TEMPLATE_IDS,
   CLIPROXYAPI_MANAGED_REQUEST_AUTH_USES,
+  CLIPROXYAPI_MANAGED_UNAVAILABLE_CONNECTED_ACCOUNTS,
 } from './managedProjection.js';
 
 const CLIPROXYAPI_LOCAL_ORIGINS = [
@@ -103,6 +104,9 @@ export const CLIPROXYAPI_PROVIDER_CONTRIBUTION = {
     sharing: 'connectionMachine',
     sourceEnvelopeTransport: 'cpx-v1',
     connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
+    unavailableConnectedAccounts: CLIPROXYAPI_MANAGED_UNAVAILABLE_CONNECTED_ACCOUNTS.map(
+      (declaration) => ({ ...declaration, service: { ...declaration.service } }),
+    ),
     connectedAccounts: CLIPROXYAPI_MANAGED_CONNECTED_ACCOUNTS.map(
       (declaration) => ({
         ...declaration,

@@ -2,5 +2,10 @@
   "managedPurpose.openai.title": "Account o pool ChatGPT",
   "managedPurpose.anthropic.title": "Account o pool Claude",
   "managedPurpose.meta.title": "Account Muse o pool",
-  "managedPurpose.gemini.title": "Account o pool con chiave API Gemini"
+  "managedPurpose.gemini.title": "Account o pool con chiave API Gemini",
+  "managedPurpose.antigravity.title": "Account o pool Antigravity",
+  "managedPurpose.kimi.title": "Account o pool Kimi Code",
+  "managedPurpose.xai.title": "Account o pool xAI",
+  "managedPurpose.devin.title": "Account o pool Devin",
+  "managedPurpose.unavailable.sdkRegistration": "Questa famiglia di account non è supportata dall’ambiente di esecuzione attuale del gateway."
 }

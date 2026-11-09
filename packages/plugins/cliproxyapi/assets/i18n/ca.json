@@ -2,5 +2,10 @@
   "managedPurpose.openai.title": "Compte o grup de ChatGPT",
   "managedPurpose.anthropic.title": "Compte o grup de Claude",
   "managedPurpose.meta.title": "Compte de Muse o grup",
-  "managedPurpose.gemini.title": "Compte o grup amb clau d’API de Gemini"
+  "managedPurpose.gemini.title": "Compte o grup amb clau d’API de Gemini",
+  "managedPurpose.antigravity.title": "Compte o grup de Antigravity",
+  "managedPurpose.kimi.title": "Compte o grup de Kimi Code",
+  "managedPurpose.xai.title": "Compte o grup de xAI",
+  "managedPurpose.devin.title": "Compte o grup de Devin",
+  "managedPurpose.unavailable.sdkRegistration": "L’entorn d’execució actual de la passarel·la no admet aquesta família de comptes."
 }

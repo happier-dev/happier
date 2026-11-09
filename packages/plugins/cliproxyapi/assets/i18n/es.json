@@ -2,5 +2,10 @@
   "managedPurpose.openai.title": "Cuenta o grupo de ChatGPT",
   "managedPurpose.anthropic.title": "Cuenta o grupo de Claude",
   "managedPurpose.meta.title": "Cuenta de Muse o grupo",
-  "managedPurpose.gemini.title": "Cuenta o grupo con clave de API de Gemini"
+  "managedPurpose.gemini.title": "Cuenta o grupo con clave de API de Gemini",
+  "managedPurpose.antigravity.title": "Cuenta o grupo de Antigravity",
+  "managedPurpose.kimi.title": "Cuenta o grupo de Kimi Code",
+  "managedPurpose.xai.title": "Cuenta o grupo de xAI",
+  "managedPurpose.devin.title": "Cuenta o grupo de Devin",
+  "managedPurpose.unavailable.sdkRegistration": "El entorno de ejecución actual de la pasarela no admite esta familia de cuentas."
 }

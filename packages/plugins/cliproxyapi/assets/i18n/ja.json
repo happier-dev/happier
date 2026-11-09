@@ -2,5 +2,10 @@
   "managedPurpose.openai.title": "ChatGPT アカウントまたはプール",
   "managedPurpose.anthropic.title": "Claude アカウントまたはプール",
   "managedPurpose.meta.title": "Muse アカウントまたはプール",
-  "managedPurpose.gemini.title": "Gemini API キーのアカウントまたはプール"
+  "managedPurpose.gemini.title": "Gemini API キーのアカウントまたはプール",
+  "managedPurpose.antigravity.title": "Antigravity アカウントまたはプール",
+  "managedPurpose.kimi.title": "Kimi Code アカウントまたはプール",
+  "managedPurpose.xai.title": "xAI アカウントまたはプール",
+  "managedPurpose.devin.title": "Devin アカウントまたはプール",
+  "managedPurpose.unavailable.sdkRegistration": "このアカウント種別は現在のゲートウェイランタイムではサポートされていません。"
 }

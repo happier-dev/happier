@@ -2,5 +2,10 @@
   "managedPurpose.openai.title": "ChatGPT 帐户或帐户池",
   "managedPurpose.anthropic.title": "Claude 帐户或帐户池",
   "managedPurpose.meta.title": "Muse 账户或池",
-  "managedPurpose.gemini.title": "Gemini API 密钥账户或账户池"
+  "managedPurpose.gemini.title": "Gemini API 密钥账户或账户池",
+  "managedPurpose.antigravity.title": "Antigravity 帐户或帐户池",
+  "managedPurpose.kimi.title": "Kimi Code 帐户或帐户池",
+  "managedPurpose.xai.title": "xAI 帐户或帐户池",
+  "managedPurpose.devin.title": "Devin 帐户或帐户池",
+  "managedPurpose.unavailable.sdkRegistration": "当前网关运行时不支持此账号类型。"
 }

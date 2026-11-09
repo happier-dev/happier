@@ -2,5 +2,10 @@
   "managedPurpose.openai.title": "ChatGPT 帳戶或帳戶集區",
   "managedPurpose.anthropic.title": "Claude 帳戶或帳戶集區",
   "managedPurpose.meta.title": "Muse 帳戶或集區",
-  "managedPurpose.gemini.title": "Gemini API 金鑰帳戶或帳戶池"
+  "managedPurpose.gemini.title": "Gemini API 金鑰帳戶或帳戶池",
+  "managedPurpose.antigravity.title": "Antigravity 帳戶或帳戶集區",
+  "managedPurpose.kimi.title": "Kimi Code 帳戶或帳戶集區",
+  "managedPurpose.xai.title": "xAI 帳戶或帳戶集區",
+  "managedPurpose.devin.title": "Devin 帳戶或帳戶集區",
+  "managedPurpose.unavailable.sdkRegistration": "目前的閘道執行環境不支援此帳號類型。"
 }

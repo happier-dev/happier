@@ -2,5 +2,10 @@
   "managedPurpose.openai.title": "Conta ou grupo do ChatGPT",
   "managedPurpose.anthropic.title": "Conta ou grupo do Claude",
   "managedPurpose.meta.title": "Conta Muse ou grupo",
-  "managedPurpose.gemini.title": "Conta ou grupo com chave de API Gemini"
+  "managedPurpose.gemini.title": "Conta ou grupo com chave de API Gemini",
+  "managedPurpose.antigravity.title": "Conta ou grupo do Antigravity",
+  "managedPurpose.kimi.title": "Conta ou grupo do Kimi Code",
+  "managedPurpose.xai.title": "Conta ou grupo do xAI",
+  "managedPurpose.devin.title": "Conta ou grupo do Devin",
+  "managedPurpose.unavailable.sdkRegistration": "Esta família de contas não é compatível com o ambiente de execução atual do gateway."
 }

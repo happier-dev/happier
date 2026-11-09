@@ -30,7 +30,7 @@ import {
   type PluginContributionIdentityV1,
 } from '../../plugins/contributionIdentity.js';
 import { ProviderManagedPurposeOperationRestrictionV1Schema } from '../managedPurposeOperationRestrictionV1.js';
-import type { PluginLocalizedStringV2 } from '../../plugins/contributions/publicTypes.js';
+import { PluginLocalizedStringV2Schema, type PluginLocalizedStringV2 } from '../../plugins/contributions/publicTypes.js';
 import type { ConnectedServiceCredentialKind } from '../../connect/connectedServiceCredentialKind.js';
 import {
   ConnectedAccountPurposeDeclarationV1Schema,
@@ -137,6 +137,14 @@ export type ProviderManagedConnectedAccountPurposeBindingPolicyV1 = z.infer<
   typeof ProviderManagedConnectedAccountPurposeBindingPolicyV1Schema
 >;
 
+/** Presentation only: no endpoint, materialization or request-auth authority. */
+export const ProviderManagedUnavailableConnectedAccountPurposeV1Schema = lazyZodSchema(() => z.strictObject({
+  purpose: ConnectedAccountPurposeDeclarationV1Schema.shape.purpose,
+  service: ConnectedAccountPurposeDeclarationV1Schema.shape.service,
+  title: ConnectedAccountPurposeDeclarationV1Schema.shape.title,
+  unavailableReason: PluginLocalizedStringV2Schema,
+}));
+
 export const ProviderManagedRuntimeDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('managed'),
   /** The managed runtime always supplies its declared client credential. */
@@ -146,6 +154,7 @@ export const ProviderManagedRuntimeDeclarationV1Schema = lazyZodSchema(() => z.s
   /** Implements the private exact-source envelope consumed by the host broker. */
   sourceEnvelopeTransport: z.optional(z.literal('cpx-v1')),
   dependencies: z.optional(z.array(asProtocolZod(PluginContributionLocalIdSchema)).check(z.maxLength(16))),
+  unavailableConnectedAccounts: z.optional(z.array(ProviderManagedUnavailableConnectedAccountPurposeV1Schema)),
   connectedAccounts: z.optional(z.array(z.extend(ConnectedAccountPurposeDeclarationV1Schema, {
     /** Passive copy for a restriction enforced by the family's operation owner. */
     operationRestriction: z.optional(ProviderManagedPurposeOperationRestrictionV1Schema),
@@ -253,6 +262,12 @@ export type ResolvedProviderManagedRuntimeDeclarationV1 = Readonly<{
   sharing?: 'connectionMachine';
   sourceEnvelopeTransport?: 'cpx-v1';
   dependencies: string[];
+  unavailableConnectedAccounts?: ReadonlyArray<Readonly<{
+    purpose: string;
+    service: PluginContributionIdentityV1;
+    title?: PluginLocalizedStringV2;
+    unavailableReason: PluginLocalizedStringV2;
+  }>>;
   connectedAccounts:
     ResolvedProviderManagedConnectedAccountPurposeDeclarationV1[];
   connectedAccountPurposeBindingPolicy?:
@@ -331,6 +346,12 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
     compareProviderCanonicalStringsV1,
   );
   const endpointTemplateIds = [...parsed.endpointTemplateIds];
+  const unavailableConnectedAccounts = parsed.unavailableConnectedAccounts?.map(declaration => Object.freeze({
+    ...declaration,
+    service: Object.freeze(PluginContributionIdentityV1Schema.parse(typeof declaration.service === 'string'
+      ? { pluginId: implementationIdentity.pluginId, localId: declaration.service } : declaration.service)),
+  }));
+  if (unavailableConnectedAccounts) Object.freeze(unavailableConnectedAccounts);
   const connectedAccounts:
     ResolvedProviderManagedConnectedAccountPurposeDeclarationV1[] = (
       parsed.connectedAccounts ?? []
@@ -405,6 +426,7 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
     ...(parsed.sharing === undefined ? {} : { sharing: parsed.sharing }),
     ...(parsed.sourceEnvelopeTransport === undefined ? {} : { sourceEnvelopeTransport: parsed.sourceEnvelopeTransport }),
     dependencies,
+    ...(unavailableConnectedAccounts === undefined ? {} : { unavailableConnectedAccounts }),
     connectedAccounts,
     ...(connectedAccountPurposeBindingPolicy === undefined
       ? {}
@@ -433,10 +455,11 @@ export function createProviderManagedRuntimeDeclarationEqualityKeyV1(input: Read
     implementationIdentity,
     managedRuntime: input.managedRuntime,
   });
+  const { unavailableConnectedAccounts: _unavailable, ...runtimeEffects } = managedRuntime;
   return JSON.stringify({
     implementationIdentity,
     managedRuntime: {
-      ...managedRuntime,
+      ...runtimeEffects,
       connectedAccounts: managedRuntime.connectedAccounts.map(
         ({ title: _title, operationRestriction: _restriction, ...declaration }) => declaration,
       ),

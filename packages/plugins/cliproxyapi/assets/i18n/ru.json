@@ -2,5 +2,10 @@
   "managedPurpose.openai.title": "Учётная запись или пул ChatGPT",
   "managedPurpose.anthropic.title": "Учётная запись или пул Claude",
   "managedPurpose.meta.title": "Аккаунт Muse или пул",
-  "managedPurpose.gemini.title": "Аккаунт или пул с API-ключом Gemini"
+  "managedPurpose.gemini.title": "Аккаунт или пул с API-ключом Gemini",
+  "managedPurpose.antigravity.title": "Учётная запись или пул Antigravity",
+  "managedPurpose.kimi.title": "Учётная запись или пул Kimi Code",
+  "managedPurpose.xai.title": "Учётная запись или пул xAI",
+  "managedPurpose.devin.title": "Учётная запись или пул Devin",
+  "managedPurpose.unavailable.sdkRegistration": "Это семейство аккаунтов не поддерживается текущей средой выполнения шлюза."
 }

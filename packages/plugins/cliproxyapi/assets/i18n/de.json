@@ -2,5 +2,10 @@
   "managedPurpose.openai.title": "ChatGPT-Konto oder Pool",
   "managedPurpose.anthropic.title": "Claude-Konto oder Pool",
   "managedPurpose.meta.title": "Muse-Konto oder Pool",
-  "managedPurpose.gemini.title": "Gemini-API-Schlüssel-Konto oder Pool"
+  "managedPurpose.gemini.title": "Gemini-API-Schlüssel-Konto oder Pool",
+  "managedPurpose.antigravity.title": "Antigravity-Konto oder Pool",
+  "managedPurpose.kimi.title": "Kimi Code-Konto oder Pool",
+  "managedPurpose.xai.title": "xAI-Konto oder Pool",
+  "managedPurpose.devin.title": "Devin-Konto oder Pool",
+  "managedPurpose.unavailable.sdkRegistration": "Diese Kontofamilie wird von der aktuellen Gateway-Laufzeit nicht unterstützt."
 }

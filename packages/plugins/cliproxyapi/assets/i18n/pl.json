@@ -2,5 +2,10 @@
   "managedPurpose.openai.title": "Konto lub pula ChatGPT",
   "managedPurpose.anthropic.title": "Konto lub pula Claude",
   "managedPurpose.meta.title": "Konto Muse lub pula",
-  "managedPurpose.gemini.title": "Konto lub pula kluczy API Gemini"
+  "managedPurpose.gemini.title": "Konto lub pula kluczy API Gemini",
+  "managedPurpose.antigravity.title": "Konto lub pula Antigravity",
+  "managedPurpose.kimi.title": "Konto lub pula Kimi Code",
+  "managedPurpose.xai.title": "Konto lub pula xAI",
+  "managedPurpose.devin.title": "Konto lub pula Devin",
+  "managedPurpose.unavailable.sdkRegistration": "Ta rodzina kont nie jest obsługiwana przez bieżące środowisko uruchomieniowe bramy."
 }

@@ -1,4 +1,4 @@
-import { CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES } from './managedContract.js';
+import { CLIPROXYAPI_MANAGED_FAMILIES, CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES } from './managedContract.js';
 import { CLIPROXYAPI_STATIC_MODELS, CLIPROXYAPI_STATIC_MODEL_SDK_VERSION } from './staticModels.generated.js';
 
 export const CLIPROXYAPI_MANAGED_MODEL_LIST_ENABLED = true;
@@ -25,6 +25,16 @@ export const CLIPROXYAPI_MANAGED_CONNECTED_ACCOUNTS = Object.freeze(
     ...family.connectedAccount,
     staticModels: CLIPROXYAPI_STATIC_MODELS[family.authEntry.provider],
   })),
+);
+
+export const CLIPROXYAPI_MANAGED_UNAVAILABLE_CONNECTED_ACCOUNTS = Object.freeze(
+  CLIPROXYAPI_MANAGED_FAMILIES.filter((family) => family.availability === 'unavailable')
+    .map((family) => Object.freeze({
+      purpose: family.purpose,
+      service: family.connectedAccount.service,
+      title: family.title,
+      unavailableReason: family.unavailableReason,
+    })),
 );
 
 export const CLIPROXYAPI_MANAGED_REQUEST_AUTH_USES = Object.freeze(

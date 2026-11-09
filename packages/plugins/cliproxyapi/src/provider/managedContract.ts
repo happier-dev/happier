@@ -1,6 +1,7 @@
 import type { ProviderContribution } from '@happier-dev/plugin-sdk/providers';
 
-export type ManagedGatewayFamily = Readonly<{
+type AvailableManagedGatewayFamily = Readonly<{
+  availability: 'available';
   purpose: string;
   title: Readonly<{ key: string; fallback: string }>;
   authEntry: Readonly<{ id: string; provider: string }>;
@@ -26,6 +27,18 @@ export type ManagedGatewayFamily = Readonly<{
     adapter: 'late-headers' | 'request-local-auth';
   }>;
 }>;
+
+type UnavailableManagedGatewayFamily = Readonly<{
+  availability: 'unavailable';
+  purpose: string;
+  title: Readonly<{ key: string; fallback: string }>;
+  connectedAccount: Readonly<{
+    service: Readonly<{ pluginId: string; localId: string }>;
+  }>;
+  unavailableReason: Readonly<{ key: string; fallback: string }>;
+}>;
+
+export type ManagedGatewayFamily = AvailableManagedGatewayFamily | UnavailableManagedGatewayFamily;
 
 export const CLIPROXYAPI_MANAGED_ENV = Object.freeze({
   downstreamBearer: 'HAPPIER_CLIPROXYAPI_DOWNSTREAM_BEARER',
@@ -61,8 +74,14 @@ export const CLIPROXYAPI_MANAGED_SERVICE = Object.freeze({
  * managed runtime launch snapshot, and Go wrapper process configuration all
  * derive from these selected rows; none keeps a purpose-specific shadow map.
  */
-export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
+const SDK_REGISTRATION_UNAVAILABLE_REASON = Object.freeze({
+  key: 'managedPurpose.unavailable.sdkRegistration',
+  fallback: 'This account family is not supported by the current gateway runtime.',
+});
+
+export const CLIPROXYAPI_MANAGED_FAMILIES = Object.freeze([
   Object.freeze({
+    availability: 'available',
     purpose: 'openai-upstream',
     sdk: {
       catalog: { getter: 'GetCodexProModels' },
@@ -99,6 +118,7 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
     }),
   }),
   Object.freeze({
+    availability: 'available',
     purpose: 'anthropic-upstream',
     sdk: {
       catalog: { getter: 'GetClaudeModels' },
@@ -131,6 +151,7 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
     }),
   }),
   Object.freeze({
+    availability: 'available',
     purpose: 'meta-upstream',
     title: Object.freeze({ key: 'managedPurpose.meta.title', fallback: 'Muse account or pool' }),
     authEntry: Object.freeze({ id: 'meta', provider: 'meta' }),
@@ -154,6 +175,7 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
     },
   }),
   Object.freeze({
+    availability: 'available',
     purpose: 'gemini-upstream',
     title: Object.freeze({ key: 'managedPurpose.gemini.title', fallback: 'Gemini API key account or pool' }),
     authEntry: Object.freeze({ id: 'gemini', provider: 'gemini' }),
@@ -177,4 +199,36 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
       adapter: 'late-headers',
     },
   }),
+  Object.freeze({
+    availability: 'unavailable',
+    purpose: 'antigravity-upstream',
+    title: Object.freeze({ key: 'managedPurpose.antigravity.title', fallback: 'Antigravity account or pool' }),
+    connectedAccount: Object.freeze({ service: Object.freeze({ pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' }) }),
+    unavailableReason: SDK_REGISTRATION_UNAVAILABLE_REASON,
+  }),
+  Object.freeze({
+    availability: 'unavailable',
+    purpose: 'kimi-upstream',
+    title: Object.freeze({ key: 'managedPurpose.kimi.title', fallback: 'Kimi Code account or pool' }),
+    connectedAccount: Object.freeze({ service: Object.freeze({ pluginId: 'happier.agent.kimi', localId: 'kimi-code' }) }),
+    unavailableReason: SDK_REGISTRATION_UNAVAILABLE_REASON,
+  }),
+  Object.freeze({
+    availability: 'unavailable',
+    purpose: 'xai-upstream',
+    title: Object.freeze({ key: 'managedPurpose.xai.title', fallback: 'xAI account or pool' }),
+    connectedAccount: Object.freeze({ service: Object.freeze({ pluginId: 'happier.agent.grok', localId: 'xai-account' }) }),
+    unavailableReason: SDK_REGISTRATION_UNAVAILABLE_REASON,
+  }),
+  Object.freeze({
+    availability: 'unavailable',
+    purpose: 'devin-upstream',
+    title: Object.freeze({ key: 'managedPurpose.devin.title', fallback: 'Devin account or pool' }),
+    connectedAccount: Object.freeze({ service: Object.freeze({ pluginId: 'happier.agent.devin', localId: 'devin-account' }) }),
+    unavailableReason: SDK_REGISTRATION_UNAVAILABLE_REASON,
+  }),
 ] as const satisfies readonly ManagedGatewayFamily[]);
+
+export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze(
+  CLIPROXYAPI_MANAGED_FAMILIES.filter((family) => family.availability === 'available'),
+);

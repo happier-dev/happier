@@ -26,6 +26,26 @@ export function readProviderGatewayContributionPurposesV1(contributionKey: strin
         .map(projectProviderManagedConnectedAccountPurposeV1);
 }
 
+export type ProviderGatewayFamilyAvailabilityV1 =
+    | (NonNullable<ReturnType<typeof readProviderGatewayContributionPurposesV1>>[number] & Readonly<{ status: 'available' }>)
+    | (NonNullable<ReturnType<typeof resolveProviderManagedRuntimeDeclarationV1>['unavailableConnectedAccounts']>[number] & Readonly<{ status: 'unavailable' }>);
+
+/** Passive family presentation never expands selectable or executable purposes. */
+export function readProviderGatewayFamilyAvailabilityV1(contributionKey: string,
+    declarations: readonly AccountProviderDeclarationV1[],
+): readonly ProviderGatewayFamilyAvailabilityV1[] | null {
+    const declaration = declarations.find(row => areProviderContributionKeysEqualV1(row.contributionKey, contributionKey));
+    const identity = parseQualifiedPluginContributionKey(contributionKey);
+    if (!declaration || !identity) return null;
+    if (!declaration.definition.managedRuntime) return [];
+    const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity: identity,
+        managedRuntime: declaration.definition.managedRuntime });
+    return [
+        ...managedRuntime.connectedAccounts.map(purpose => ({ ...projectProviderManagedConnectedAccountPurposeV1(purpose), status: 'available' as const })),
+        ...(managedRuntime.unavailableConnectedAccounts ?? []).map(purpose => ({ ...purpose, status: 'unavailable' as const })),
+    ];
+}
+
 /** Descriptor-only enumeration: no saved-connection read or runtime activation. */
 export function listProviderGatewayContributionsV1(declarations: readonly AccountProviderDeclarationV1[]): ProviderGatewayContributionV1[] {
     return declarations.flatMap(declaration => {

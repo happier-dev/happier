@@ -2085,13 +2085,17 @@ is usable. The SDK key-value store is disabled; no SDK credential store is enabl
 The catalog is compatibility evidence, not Account entitlement.
 
 The managed-family owner is the plugin's dependency-free
-`src/provider/managedContract.ts`. Its rows generate Go executor descriptors,
+`src/provider/managedContract.ts`. Its executable rows generate Go executor descriptors,
 registration seeds and static catalogs in the same pass; Provider contributions
 and launch snapshots consume the matching TypeScript projection. Run
 `pnpm --dir packages/plugins/cliproxyapi run catalog:generate` after changing a
 row or the SDK pin. The generated families are ChatGPT/Codex,
 Claude, Muse/Meta and Gemini API keys. Meta uses an existing inference key with
 its API-version header at the final HTTPS transport boundary; the child never mints a key.
+The same family owner declares Antigravity, Kimi, xAI and Devin as unavailable
+presentation rows with their service, title and localized SDK limitation. These
+rows supply no executable purpose or request-auth slot: the pinned SDK replaces
+their required credential adapters during startup.
 The development Muse service owns device sign-in, explicit selected-Machine
 native import and manual key credentials in the existing qualified account
 lifecycle. Device sign-in mints once at connection; launch, status and quota
@@ -2105,7 +2109,7 @@ refresh sources remain unavailable. Contributor variants are model ids chosen
 through the existing picker, with no account observation or setting. This
 integration is unreleased; see [Muse accounts](../apps/docs/content/docs/accounts/connected-services.mdx#muse-accounts-in-03-development)
 for user-facing behavior and the single terms notice.
-Each row declares its private allowed origins and credential-header stripping
+Each executable row declares its private allowed origins and credential-header stripping
 names. The public request-auth materialization retains one declared `origin`.
 The final transport checks each outbound host against that origin list and
 replaces sentinel headers with the daemon's request-local material.
@@ -2869,6 +2873,7 @@ continue to fail the existing reachability check.
 4. When the Provider owns a supervised local runtime, declare its single cold `managedRuntime` facet and register exactly one matching runtime with `api.providers.register(localId, runtime)`.
    In 0.3 development source, a runtime that always supplies its declared client credential may set `managedRuntime.credentialRequired: true`, derived from the same canonical client-access declaration used by its runtime. The shared source-fact owner then marks the existing credential slot and transports as required for `managedLocal` compatibility. External connections retain the contribution's ordinary credential requirement. Omit the managed field when the runtime has no such guarantee; `false` is not a declaration value.
    In 0.3 development source, a managed Connected Account purpose may declare `endpointTemplateIds` for its supported downstream broker routes. Each endpoint must belong to that managed runtime and be unique within its purpose; different upstream services may support the same endpoint. The broker validates the signed implementation, exact endpoint/protocol and source service against the current Provider registry, requiring exactly one matching purpose before selecting the declared account. Missing or ambiguous declarations make the route unavailable. CLIProxyAPI projects its proven downstream translations from the same upstream-family contract used by ordinary managed serving; an endpoint alone never selects a vendor or authorizes an unbound account.
+   In 0.3 development source, `managedRuntime.unavailableConnectedAccounts` declares passive family identities, titles and localized reasons for the gateway's family presentation. The family projection reads these alongside executable `connectedAccounts`; gateway selection, request-auth uses and endpoint admission consume only executable purposes. Derive both projections from the plugin's one family declaration so displaying an unavailable family cannot activate its adapter.
 5. When the Provider's catalog endpoint answers in a wire format Happier does not bundle, name that format in the catalog probe's `parser` and register its implementation with `api.providers.registerCatalogParser(localId, format, parse)`. Happier bundles `openai-models`, `anthropic-models`, `ollama-tags`, and `lmstudio-native-models`; every other declared format is implemented by the declaring plugin, and a format with no reachable implementation fails the probe with `provider_contribution_unavailable` rather than being read by another Provider's parser. Set the probe's `reportsModelLoadState` when the format carries per-model load state, which is what makes model loading available — not whether the host bundles the format.
 6. Register every arm the contribution declares. Activation validates the complete declared-vs-registered composite: a Provider that declares a managed runtime and a contributed catalog format must register both, and registering a managed runtime or catalog format the contribution does not declare is refused. A partial registration fails activation instead of silently publishing the half that registered.
 7. Add explicit compatibility overrides only for verified pair-specific quirks.
