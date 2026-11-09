@@ -851,7 +851,7 @@ describe('SessionItem activity time', () => {
         );
 
         const rowStyle = flattenStyle(screen.findByTestId('session-list-item-sess_compact_avatar_phone')?.props.style);
-        expect(rowStyle.height).toBe(42);
+        expect(rowStyle.height).toBe(48);
         expect(screen.findAllByType(AvatarMock)[0].props.size).toBe(20);
         expect(findRowContentStyle(screen, 'sess_compact_avatar_phone').marginLeft).toBe(8);
     });
@@ -1101,7 +1101,7 @@ describe('SessionItem activity time', () => {
         const rowStyle = flattenStyle(screen.findByTestId('session-list-item-sess_compact_phone')?.props.style);
         const titleStyle = flattenStyle(findSessionTitleText(screen, 'Session')?.props.style);
 
-        expect(rowStyle.height).toBe(42);
+        expect(rowStyle.height).toBe(48);
         expect(titleStyle.fontSize).toBe(14);
         expect(titleStyle.lineHeight).toBe(18);
     });

@@ -1557,6 +1557,38 @@ type SessionViewProps = Readonly<{
     chatBottomSpacing?: 'default' | 'none';
 }>;
 
+const SessionExecutionRunChatHeader = React.memo(function SessionExecutionRunChatHeader(props: Readonly<{
+    session: Session;
+    headerProps: React.ComponentProps<typeof ChatHeaderView>;
+}>) {
+    const pending = useSessionPendingMessages(props.session.id);
+    const status = getSessionStatus(props.session, Date.now(), { workingTextMode: 'static' });
+    const pendingCount = pending.isLoaded
+        ? pending.messages.length
+        : Math.max(0, props.session.pendingCount ?? 0);
+    const pendingFlags = derivePendingRequestFlagsFromSession(props.session);
+    const turnState = resolveExecutionRunTurnState({
+        latestTurnStatus: props.session.latestTurnStatus,
+        pendingCount: Math.max(pendingCount, props.session.pendingBlockedCount ?? 0),
+        hasPendingRequests:
+            pendingFlags.hasPendingPermissionRequests
+            || pendingFlags.hasPendingUserActionRequests,
+    });
+    const deliveryState = resolveExecutionRunDeliveryState(
+        readExecutionRunLinkPresentationSource(props.session.metadata),
+    );
+    return (
+        <ChatHeaderView
+            {...props.headerProps}
+            badges={[
+                ...(props.headerProps.badges ?? []),
+                formatExecutionRunTurnState(turnState, status.statusText),
+                formatExecutionRunDeliveryState(deliveryState),
+            ]}
+        />
+    );
+});
+
 export const SessionView = React.memo((props: SessionViewProps) => {
     const sessionId = props.id;
     const router = useRouter();
@@ -1579,7 +1611,6 @@ export const SessionView = React.memo((props: SessionViewProps) => {
     const routeHydrationTerminalMissing = !session && routeHydrationState?.kind === 'missing';
     const stableSessionForLoadedView = session;
     const stableSessionForHeader = session;
-    const headerPending = useSessionPendingMessages(sessionId);
     const isDataReady = useIsDataReady();
     const { theme } = useUnistyles();
     const explicitRouteServerId = (routeHydrationState?.serverId ?? props.routeServerId ?? '').trim();
@@ -1823,28 +1854,6 @@ export const SessionView = React.memo((props: SessionViewProps) => {
                 sessionRoleProfilesV1,
             }),
         } : null;
-        const executionRunBadges = (() => {
-            if (!shouldShowExecutionRunLinkPresentation(headerSession.metadata)) return [];
-            const status = getSessionStatus(headerSession, Date.now(), { workingTextMode: 'static' });
-            const pendingCount = headerPending.isLoaded
-                ? headerPending.messages.length
-                : Math.max(0, headerSession.pendingCount ?? 0);
-            const pendingFlags = derivePendingRequestFlagsFromSession(headerSession);
-            const turnState = resolveExecutionRunTurnState({
-                latestTurnStatus: headerSession.latestTurnStatus,
-                pendingCount: Math.max(pendingCount, headerSession.pendingBlockedCount ?? 0),
-                hasPendingRequests:
-                    pendingFlags.hasPendingPermissionRequests
-                    || pendingFlags.hasPendingUserActionRequests,
-            });
-            const deliveryState = resolveExecutionRunDeliveryState(
-                readExecutionRunLinkPresentationSource(headerSession.metadata),
-            );
-            return [
-                formatExecutionRunTurnState(turnState, status.statusText),
-                formatExecutionRunDeliveryState(deliveryState),
-            ];
-        })();
         const openSessionInfo = () => routerRef.current.navigate(buildCurrentSessionHref('/info') as any, {
             dangerouslySingular() {
                 return 'session-info';
@@ -1875,7 +1884,7 @@ export const SessionView = React.memo((props: SessionViewProps) => {
             agentId: resolveAgentIdFromSessionMetadata(headerSession.metadata)
                 ?? resolveAgentIdFromFlavor(headerSession.metadata?.flavor ?? null),
 	            rightElement,
-	            badges: [storageBadge, ...(providerBadge ? [providerBadge] : []), ...(roleBadge ? [roleBadge] : []), ...executionRunBadges],
+	            badges: [storageBadge, ...(providerBadge ? [providerBadge] : []), ...(roleBadge ? [roleBadge] : [])],
 	            isConnected: isConnected,
 	            flavor: headerSession.metadata?.flavor || null,
 	        };
@@ -1883,8 +1892,6 @@ export const SessionView = React.memo((props: SessionViewProps) => {
         directSessionRuntime,
         handleToggleWorkspaceExperience,
         isDataReady,
-        headerPending.isLoaded,
-        headerPending.messages.length,
         mobileWorkspaceExperienceState.showWorkspaceExperienceToggle,
         mobileWorkspaceExperienceState.workspaceExperienceToggleLabelKey,
         mobileWorkspaceExperienceToggleActionId,
@@ -1967,14 +1974,28 @@ export const SessionView = React.memo((props: SessionViewProps) => {
             {/* Header - always shown on desktop/Mac, hidden in landscape mode only on actual phones */}
             {showTopHeader && shouldRenderSessionSurface && (
                 <View style={{ zIndex: 1000 }}>
-                    <ChatHeaderView
-                        {...headerProps}
-                        onBackPress={handleBackPress}
-                        showBackButton={!isTablet}
-                        constrainWidth={constrainHeaderWidth}
-                        contentTrailingInsetPx={actionRailVisible ? PANE_ACTION_RAIL_WIDTH : 0}
-                        includeTopInset={headerSafeAreaTopMode !== 'external'}
-                    />
+                    {session && shouldShowExecutionRunLinkPresentation(session.metadata) ? (
+                        <SessionExecutionRunChatHeader
+                            session={session}
+                            headerProps={{
+                                ...headerProps,
+                                onBackPress: handleBackPress,
+                                showBackButton: !isTablet,
+                                constrainWidth: constrainHeaderWidth,
+                                contentTrailingInsetPx: actionRailVisible ? PANE_ACTION_RAIL_WIDTH : 0,
+                                includeTopInset: headerSafeAreaTopMode !== 'external',
+                            }}
+                        />
+                    ) : (
+                        <ChatHeaderView
+                            {...headerProps}
+                            onBackPress={handleBackPress}
+                            showBackButton={!isTablet}
+                            constrainWidth={constrainHeaderWidth}
+                            contentTrailingInsetPx={actionRailVisible ? PANE_ACTION_RAIL_WIDTH : 0}
+                            includeTopInset={headerSafeAreaTopMode !== 'external'}
+                        />
+                    )}
                 </View>
             )}
 

@@ -136,7 +136,7 @@ describe('transcript items pipeline — action-draft option key locality', () =>
         let pipelineRuns = 0;
         const hook = await renderHook(() => {
             pipelineRuns += 1;
-            const resolveActionDraftFieldOptions = useSessionActionFieldOptionsForRowHeight();
+            const resolveActionDraftFieldOptions = useSessionActionFieldOptionsForRowHeight('s1');
             return {
                 resolveActionDraftFieldOptions,
                 pipeline: useTranscriptItemsPipeline(buildDeps(resolveActionDraftFieldOptions)),

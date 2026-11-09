@@ -62,6 +62,7 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     { name: 'prompts/folders', titleKey: 'promptLibrary.folders' },
     { name: 'prompts/index', titleKey: 'settings.prompts' },
     { name: 'prompts/library', headerShown: false },
+    { name: 'prompts/preview', titleKey: 'promptLibrary.runtimePreview' },
     { name: 'prompts/registries', titleKey: 'promptLibrary.registries' },
     { name: 'prompts/registries/item', titleKey: 'promptLibrary.registries' },
     { name: 'prompts/skills/[id]', titleKey: 'promptLibrary.editSkill' },

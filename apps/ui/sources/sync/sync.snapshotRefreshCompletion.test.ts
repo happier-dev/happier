@@ -99,6 +99,7 @@ describe('snapshot refresh completion', () => {
         vi.stubGlobal('fetch', vi.fn(createServerFetchWithReachabilityProbe(async (input) => {
             const url = new URL(input instanceof Request ? input.url : String(input));
             if (url.pathname === '/v2/cursor') return Response.json({ cursor: 42, changesFloor: 0 });
+            if (url.pathname === '/v2/session-organization/appearance-presentations') return Response.json({ error: 'Not found' }, { status: 404 });
             if (url.pathname === '/v2/session-organization') return Response.json({ snapshot: {
                 schemaVersion: 1, version: 1, pins: [], folders: [], folderAssignments: [],
                 tags: [], tagAssignments: [], orderEntries: [], labels: [],
@@ -131,6 +132,7 @@ describe('snapshot refresh completion', () => {
             requestedPaths.push(url.pathname);
             if (url.pathname === '/v2/cursor') return Response.json({ cursor: 42, changesFloor: 0 });
             if (url.pathname === '/v2/changes') return Response.json({ changes: [], nextCursor: 42 });
+            if (url.pathname === '/v2/session-organization/appearance-presentations') return Response.json({ error: 'Not found' }, { status: 404 });
             if (url.pathname === '/v2/session-organization') return Response.json({ snapshot: {
                 schemaVersion: 1, version: 1, pins: [], folders: [], folderAssignments: [],
                 tags: [], tagAssignments: [], orderEntries: [], labels: [],
@@ -180,6 +182,7 @@ describe('snapshot refresh completion', () => {
             const url = new URL(input instanceof Request ? input.url : String(input));
             if (url.pathname === '/v2/cursor') return Response.json({ cursor: 42, changesFloor: 0 });
             if (url.pathname === '/v2/changes') return Response.json({ changes: [], nextCursor: 42 });
+            if (url.pathname === '/v2/session-organization/appearance-presentations') return Response.json({ error: 'Not found' }, { status: 404 });
             if (url.pathname === '/v2/session-organization') {
                 await organizationReady.promise;
                 return Response.json({ snapshot: { ...organization, version: 2,
@@ -317,6 +320,7 @@ describe('snapshot refresh completion', () => {
                     content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: `revision-${revision}` } } },
                 }], nextAfterSeq: null });
             }
+            if (url.pathname === '/v2/session-organization/appearance-presentations') return Response.json({ error: 'Not found' }, { status: 404 });
             if (url.pathname === '/v2/session-organization') return Response.json({ snapshot: {
                 schemaVersion: 1, version: 1, pins: [], folders: [], folderAssignments: [],
                 tags: [], tagAssignments: [], orderEntries: [], labels: [],
@@ -380,6 +384,7 @@ describe('snapshot refresh completion', () => {
                 if (reason === 'stopped') runtime.sessionsSync.stop();
                 return Response.json({ cursor: 42, changesFloor: 0 });
             }
+            if (url.pathname === '/v2/session-organization/appearance-presentations') return Response.json({ error: 'Not found' }, { status: 404 });
             if (url.pathname === '/v2/session-organization') {
                 return Response.json({ snapshot: {
                     schemaVersion: 1, version: 1, pins: [], folders: [], folderAssignments: [],

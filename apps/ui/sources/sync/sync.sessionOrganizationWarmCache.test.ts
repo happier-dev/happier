@@ -181,6 +181,9 @@ describe('session organization warm cache', () => {
         vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
             requestedUrls.push(url);
+            if (url.includes('/v2/session-organization/appearance-presentations')) {
+                return Response.json({ error: 'Not found' }, { status: 404 });
+            }
             if (url.includes('/v2/session-organization')) {
                 await organizationHeld;
                 return new Response(JSON.stringify({ snapshot: organizationSnapshot({ version: 9 }) }), {
