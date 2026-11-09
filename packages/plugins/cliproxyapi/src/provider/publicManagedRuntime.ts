@@ -256,7 +256,7 @@ async function resolveManagedPurposeSnapshot(
           localId: CLIPROXYAPI_PROVIDER_LOCAL_ID,
         },
         purpose: family.purpose,
-        allowedHttpsOrigins: family.requestAuth.materialization.origins,
+        allowedHttpsOrigins: family.origins,
         protocols: family.protocols,
       })),
     }),

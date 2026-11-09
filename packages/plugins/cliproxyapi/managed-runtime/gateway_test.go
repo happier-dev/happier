@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,18 @@ import (
 	"github.com/gin-gonic/gin"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
+
+func TestManagedMetaUsesNativeKeyExecutorRegistration(t *testing.T) {
+	entry := testAuthEntry("meta", Provider("meta"), "meta-upstream")
+	entry.AllowedHTTPSOrigins = []string{"https://api.meta.ai"}
+	if err := entry.validate(); err != nil {
+		t.Fatalf("Meta key family must be admitted: %v", err)
+	}
+	auth := managedRuntimeAuth(entry)
+	if auth.Attributes["api_key"] == "" || strings.HasPrefix(auth.Attributes["api_key"], "dca_") {
+		t.Fatal("Meta must use the existing-key executor branch without DCA minting")
+	}
+}
 
 func TestValidateConfigRejectsCompetingAuthEntriesAndUnsafeServingInputs(t *testing.T) {
 	t.Parallel()
@@ -57,7 +70,7 @@ func TestValidateConfigRejectsCompetingAuthEntriesAndUnsafeServingInputs(t *test
 		{name: "consumer local id surrounding whitespace", mutate: func(cfg *Config) {
 			cfg.AuthEntries[0].Purpose.Consumer.LocalID = " cliproxyapi "
 		}},
-		{name: "unsupported provider", mutate: func(cfg *Config) { cfg.AuthEntries[0].Provider = Provider("gemini") }},
+		{name: "unsupported provider", mutate: func(cfg *Config) { cfg.AuthEntries[0].Provider = Provider("unknown-provider") }},
 		{name: "duplicate auth id", mutate: func(cfg *Config) { cfg.AuthEntries[1].ID = cfg.AuthEntries[0].ID }},
 		{name: "second codex selector entry", mutate: func(cfg *Config) {
 			cfg.AuthEntries = append(cfg.AuthEntries, testAuthEntry(
@@ -70,10 +83,10 @@ func TestValidateConfigRejectsCompetingAuthEntriesAndUnsafeServingInputs(t *test
 			))
 		}},
 		{name: "missing allowed HTTPS origin", mutate: func(cfg *Config) {
-			cfg.AuthEntries[0].AllowedHTTPSOrigin = ""
+			cfg.AuthEntries[0].AllowedHTTPSOrigins = []string{""}
 		}},
 		{name: "non-HTTPS allowed origin", mutate: func(cfg *Config) {
-			cfg.AuthEntries[0].AllowedHTTPSOrigin = "http://upstream.invalid"
+			cfg.AuthEntries[0].AllowedHTTPSOrigins = []string{"http://upstream.invalid"}
 		}},
 		{name: "duplicate protocol", mutate: func(cfg *Config) {
 			cfg.Protocols = append(cfg.Protocols, ProtocolOpenAIResponses)
@@ -198,7 +211,7 @@ func TestStrictServingMiddlewareBlocksEveryUnconfiguredRouteBeforeHandler(t *tes
 // V8 Claude writes x-api-key directly to preserve wire casing. Credentials
 // remain case insensitive at Happier's final materialization boundary.
 func TestLeaseTransportRemovesCredentialHeadersRegardlessOfWireCasing(t *testing.T) {
-	broker := &sequenceBroker{leases: []OAuthBearerLease{validLease("current", nil)}}
+	broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease("current", nil)}}
 	capture := &captureRoundTripper{}
 	provider, err := newLeaseRoundTripperProvider([]AuthEntry{testLeaseAuthEntry("claude", ProviderClaude, "anthropic-upstream")}, broker, capture)
 	if err != nil {
@@ -225,7 +238,7 @@ func TestLeaseTransportRemovesCredentialHeadersRegardlessOfWireCasing(t *testing
 func TestLeaseTransportAcquiresPerAttemptAndOwnsCredentialHeadersAfterExecutorShaping(t *testing.T) {
 	t.Parallel()
 
-	broker := &sequenceBroker{leases: []OAuthBearerLease{
+	broker := &sequenceBroker{leases: []RequestAuthHeaders{
 		leaseWithHeaders("lease-token-a", map[string]string{"Chatgpt-Account-Id": "account-a"}),
 		validLease("lease-token-b", nil),
 	}}
@@ -295,17 +308,17 @@ func TestLeaseTransportAcquiresPerAttemptAndOwnsCredentialHeadersAfterExecutorSh
 func TestLeaseTransportRejectsCrossOriginRedirectBeforeSecondBrokerLookupOrUpstreamEffect(t *testing.T) {
 	t.Parallel()
 
-	broker := &sequenceBroker{leases: []OAuthBearerLease{
+	broker := &sequenceBroker{leases: []RequestAuthHeaders{
 		validLease("first-lease", nil),
 		validLease("must-not-be-read", nil),
 	}}
 	upstream := &redirectRoundTripper{location: "https://untrusted.invalid/next"}
 	provider, err := newLeaseRoundTripperProvider(
 		[]AuthEntry{{
-			ID:                 "codex",
-			Provider:           ProviderCodex,
-			Purpose:            testPurpose("openai-upstream"),
-			AllowedHTTPSOrigin: "https://upstream.invalid",
+			ID:                  "codex",
+			Provider:            ProviderCodex,
+			Purpose:             testPurpose("openai-upstream"),
+			AllowedHTTPSOrigins: []string{"https://upstream.invalid"},
 		}},
 		broker,
 		upstream,
@@ -335,17 +348,17 @@ func TestLeaseTransportRejectsCrossOriginRedirectBeforeSecondBrokerLookupOrUpstr
 func TestLeaseTransportReauthorizesSameOriginRedirectAtTheFinalTransport(t *testing.T) {
 	t.Parallel()
 
-	broker := &sequenceBroker{leases: []OAuthBearerLease{
+	broker := &sequenceBroker{leases: []RequestAuthHeaders{
 		validLease("first-lease", nil),
 		validLease("second-lease", nil),
 	}}
 	upstream := &redirectRoundTripper{location: "https://upstream.invalid/v1/redirected"}
 	provider, err := newLeaseRoundTripperProvider(
 		[]AuthEntry{{
-			ID:                 "codex",
-			Provider:           ProviderCodex,
-			Purpose:            testPurpose("openai-upstream"),
-			AllowedHTTPSOrigin: "https://upstream.invalid",
+			ID:                  "codex",
+			Provider:            ProviderCodex,
+			Purpose:             testPurpose("openai-upstream"),
+			AllowedHTTPSOrigins: []string{"https://upstream.invalid"},
 		}},
 		broker,
 		upstream,
@@ -377,58 +390,26 @@ func TestLeaseTransportReauthorizesSameOriginRedirectAtTheFinalTransport(t *test
 	}
 }
 
-func TestLeaseTransportRejectsInvalidAuthoritativeHeaderProjectionWithoutUpstreamEffect(t *testing.T) {
+func TestHTTPBrokerRejectsInvalidAuthoritativeHeaderProjection(t *testing.T) {
 	t.Parallel()
-
-	testCases := []struct {
-		name  string
-		lease OAuthBearerLease
-	}{
-		{
-			name:  "authorization in required headers",
-			lease: leaseWithHeaders("lease-token", map[string]string{"authorization": "not-allowed"}),
-		},
-		{
-			name: "case-insensitive duplicate",
-			lease: leaseWithHeaders("lease-token", map[string]string{
-				"Chatgpt-Account-Id": "a",
-				"chatgpt-account-id": "b",
-			}),
-		},
-		{name: "missing access token", lease: validLease("", nil)},
-		{name: "expired lease", lease: expiredLease("lease-token")},
+	missingHeaders := validLease("", nil)
+	missingHeaders.Headers = nil
+	cases := []RequestAuthHeaders{
+		leaseWithHeaders("lease-token", map[string]string{"authorization": "duplicate"}),
+		leaseWithHeaders("lease-token", map[string]string{"Chatgpt-Account-Id": "a", "chatgpt-account-id": "b"}),
+		missingHeaders, expiredLease("lease-token"),
 	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			capture := &captureRoundTripper{}
-			broker := &sequenceBroker{leases: []OAuthBearerLease{tc.lease}}
-			provider, err := newLeaseRoundTripperProvider(
-				[]AuthEntry{testLeaseAuthEntry("codex", ProviderCodex, "openai-upstream")},
-				broker,
-				capture,
-			)
-			if err != nil {
-				t.Fatalf("newLeaseRoundTripperProvider() error = %v", err)
-			}
-			request := httptest.NewRequest(http.MethodPost, "https://upstream.invalid/v1/responses", nil)
-			_, err = provider.RoundTripperFor(&coreauth.Auth{
-				ID:       "codex",
-				Provider: string(ProviderCodex),
-			}).RoundTrip(request)
-			if err == nil {
-				t.Fatal("RoundTrip() error = nil, want fail-closed lease error")
-			}
-			if len(broker.purposes()) != 1 {
-				t.Fatal("invalid lease test did not reach the canonical request-auth lookup boundary")
-			}
-			if len(capture.requests()) != 0 {
-				t.Fatal("invalid lease reached upstream transport")
-			}
-			if strings.Contains(err.Error(), "lease-token") || strings.Contains(err.Error(), "secret") {
-				t.Fatalf("error leaked credential material: %v", err)
-			}
-		})
+	for _, material := range cases {
+		path := filepath.Join(t.TempDir(), "capability.json")
+		writeCapabilityV2(t, path, testCapability(25), 32123)
+		broker, err := NewHTTPBroker(HTTPBrokerConfig{CapabilityPath: path})
+		if err != nil {
+			t.Fatal(err)
+		}
+		broker.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) { return brokerSuccessEnvelope(material) })
+		if _, err := broker.LookupRequestAuth(context.Background(), testPurpose("openai-upstream")); err == nil {
+			t.Fatal("invalid request material was admitted by the process-boundary parser")
+		}
 	}
 }
 
@@ -441,7 +422,7 @@ func TestLeaseTransportOwnsExactlyOneBodySafeRetryAfterCurrentnessChanged(t *tes
 	} {
 		t.Run(string(outcomeStatus), func(t *testing.T) {
 			broker := &sequenceBroker{
-				leases: []OAuthBearerLease{
+				leases: []RequestAuthHeaders{
 					validLease("member-a", map[string]string{"Chatgpt-Account-Id": "account-a"}),
 					validLease("member-b", map[string]string{"Chatgpt-Account-Id": "account-b"}),
 				},
@@ -500,7 +481,7 @@ func TestLeaseTransportDoesNotReplayDeniedOrTimedOutAuthFailureReports(t *testin
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			broker := &sequenceBroker{
-				leases: []OAuthBearerLease{
+				leases: []RequestAuthHeaders{
 					validLease("member-a", nil),
 					validLease("must-not-be-read", nil),
 				},
@@ -569,7 +550,7 @@ func TestLeaseTransportNeverRetriesQuotaOrUnsafeAuthBody(t *testing.T) {
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			broker := &sequenceBroker{leases: []OAuthBearerLease{validLease("member-a", nil)}}
+			broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease("member-a", nil)}}
 			upstream := &statusRoundTripper{statuses: []int{testCase.status}}
 			provider, err := newLeaseRoundTripperProvider(
 				[]AuthEntry{testLeaseAuthEntry("codex", ProviderCodex, "openai-upstream")},
@@ -606,7 +587,7 @@ func TestLeaseTransportNeverRetriesQuotaOrUnsafeAuthBody(t *testing.T) {
 
 	t.Run("unsafe auth body", func(t *testing.T) {
 		broker := &sequenceBroker{
-			leases:       []OAuthBearerLease{validLease("member-a", nil)},
+			leases:       []RequestAuthHeaders{validLease("member-a", nil)},
 			authOutcomes: []RequestAuthFailureOutcome{{Status: FailureStatusCurrentChanged}},
 		}
 		upstream := &statusRoundTripper{statuses: []int{http.StatusUnauthorized}}
@@ -631,12 +612,12 @@ func TestLeaseTransportNeverRetriesQuotaOrUnsafeAuthBody(t *testing.T) {
 	})
 }
 
-func leaseWithHeaders(token string, headers map[string]string) OAuthBearerLease {
+func leaseWithHeaders(token string, headers map[string]string) RequestAuthHeaders {
 	lease := validLease(token, headers)
 	return lease
 }
 
-func expiredLease(token string) OAuthBearerLease {
+func expiredLease(token string) RequestAuthHeaders {
 	lease := validLease(token, nil)
 	lease.ExpiresAt = time.Now().Add(-time.Minute).UnixMilli()
 	return lease
@@ -648,40 +629,40 @@ func TestValidateLeaseMirrorsFrozenCredentialContextBounds(t *testing.T) {
 	valid := validLease("lease-token", nil)
 	testCases := []struct {
 		name   string
-		mutate func(*OAuthBearerLease)
+		mutate func(*RequestAuthHeaders)
 	}{
-		{name: "negative expiry", mutate: func(lease *OAuthBearerLease) { lease.ExpiresAt = -1 }},
-		{name: "invalid service plugin id", mutate: func(lease *OAuthBearerLease) {
+		{name: "negative expiry", mutate: func(lease *RequestAuthHeaders) { lease.ExpiresAt = -1 }},
+		{name: "invalid service plugin id", mutate: func(lease *RequestAuthHeaders) {
 			lease.CredentialContext.Account.Service.PluginID = "single"
 		}},
-		{name: "invalid service local id", mutate: func(lease *OAuthBearerLease) {
+		{name: "invalid service local id", mutate: func(lease *RequestAuthHeaders) {
 			lease.CredentialContext.Account.Service.LocalID = "Bad"
 		}},
-		{name: "missing account id", mutate: func(lease *OAuthBearerLease) {
+		{name: "missing account id", mutate: func(lease *RequestAuthHeaders) {
 			lease.CredentialContext.Account.AccountID = ""
 		}},
-		{name: "invalid credential revision", mutate: func(lease *OAuthBearerLease) {
+		{name: "invalid credential revision", mutate: func(lease *RequestAuthHeaders) {
 			lease.CredentialContext.CredentialRevision = "revision-1"
 		}},
-		{name: "invalid group id", mutate: func(lease *OAuthBearerLease) {
+		{name: "invalid group id", mutate: func(lease *RequestAuthHeaders) {
 			lease.CredentialContext.Group = &RequestAuthGroupContext{GroupID: "bad/group", Generation: 1}
 		}},
-		{name: "negative group generation", mutate: func(lease *OAuthBearerLease) {
+		{name: "negative group generation", mutate: func(lease *RequestAuthHeaders) {
 			lease.CredentialContext.Group = &RequestAuthGroupContext{GroupID: "group-a", Generation: -1}
 		}},
-		{name: "invalid token fingerprint", mutate: func(lease *OAuthBearerLease) {
+		{name: "invalid token fingerprint", mutate: func(lease *RequestAuthHeaders) {
 			lease.CredentialContext.FailingAccessTokenFingerprint = "sha256:not-hex"
 		}},
 	}
-	if err := validateLease(valid, time.Now()); err != nil {
+	if err := validateRequestAuthHeaders(valid, time.Now()); err != nil {
 		t.Fatalf("valid lease rejected: %v", err)
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			lease := valid
 			tc.mutate(&lease)
-			if err := validateLease(lease, time.Now()); err == nil {
-				t.Fatal("validateLease() error = nil")
+			if err := validateRequestAuthHeaders(lease, time.Now()); err == nil {
+				t.Fatal("validateRequestAuthHeaders() error = nil")
 			}
 		})
 	}
@@ -689,7 +670,7 @@ func TestValidateLeaseMirrorsFrozenCredentialContextBounds(t *testing.T) {
 
 type sequenceBroker struct {
 	mu            sync.Mutex
-	leases        []OAuthBearerLease
+	leases        []RequestAuthHeaders
 	calls         []QualifiedPurpose
 	next          int
 	err           error
@@ -720,15 +701,15 @@ func (b *sequenceBroker) ReportQuotaFailure(_ context.Context, request Connected
 	return RequestAuthFailureOutcome{Status: FailureStatusCurrentUnchanged}, nil
 }
 
-func (b *sequenceBroker) LookupRequestAuth(_ context.Context, purpose QualifiedPurpose) (OAuthBearerLease, error) {
+func (b *sequenceBroker) LookupRequestAuth(_ context.Context, purpose QualifiedPurpose) (RequestAuthHeaders, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.calls = append(b.calls, purpose)
 	if b.err != nil {
-		return OAuthBearerLease{}, b.err
+		return RequestAuthHeaders{}, b.err
 	}
 	if b.next >= len(b.leases) {
-		return OAuthBearerLease{}, errors.New("no fixture lease")
+		return RequestAuthHeaders{}, errors.New("no fixture lease")
 	}
 	lease := b.leases[b.next]
 	b.next++
@@ -810,23 +791,17 @@ func testPurpose(localPurpose string) QualifiedPurpose {
 }
 
 func testAuthEntry(id string, provider Provider, purpose string) AuthEntry {
-	allowedHTTPSOrigin := "https://upstream.invalid"
-	switch provider {
-	case ProviderCodex:
-		allowedHTTPSOrigin = "https://chatgpt.com"
-	case ProviderClaude:
-		allowedHTTPSOrigin = "https://api.anthropic.com"
-	}
+	family, _ := managedFamilyForProvider(provider)
 	return AuthEntry{
-		ID:                 id,
-		Provider:           provider,
-		Purpose:            testPurpose(purpose),
-		AllowedHTTPSOrigin: allowedHTTPSOrigin,
+		ID:                  id,
+		Provider:            provider,
+		Purpose:             testPurpose(purpose),
+		AllowedHTTPSOrigins: family.Origins,
 	}
 }
 
 func testLeaseAuthEntry(id string, provider Provider, purpose string) AuthEntry {
 	entry := testAuthEntry(id, provider, purpose)
-	entry.AllowedHTTPSOrigin = "https://upstream.invalid"
+	entry.AllowedHTTPSOrigins = []string{"https://upstream.invalid"}
 	return entry
 }

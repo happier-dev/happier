@@ -30,15 +30,15 @@ type RequestAuthCredentialContext struct {
 	FailingAccessTokenFingerprint string                   `json:"failingAccessTokenFingerprint,omitempty"`
 }
 
-type OAuthBearerLease struct {
-	AccessToken       string                       `json:"accessToken"`
-	RequiredHeaders   map[string]string            `json:"requiredHeaders,omitempty"`
+type RequestAuthHeaders struct {
+	Headers           map[string]string            `json:"headers"`
+	Facts             map[string]any               `json:"facts"`
 	ExpiresAt         int64                        `json:"expiresAt,omitempty"`
 	CredentialContext RequestAuthCredentialContext `json:"credentialContext"`
 }
 
 type RequestAuthBroker interface {
-	LookupRequestAuth(ctx context.Context, purpose QualifiedPurpose) (OAuthBearerLease, error)
+	LookupRequestAuth(ctx context.Context, purpose QualifiedPurpose) (RequestAuthHeaders, error)
 	ReportAuthFailure(ctx context.Context, request ConnectedAccountAuthFailureRequest) (RequestAuthFailureOutcome, error)
 	ReportQuotaFailure(ctx context.Context, request ConnectedAccountQuotaFailureRequest) (RequestAuthFailureOutcome, error)
 }
@@ -147,10 +147,10 @@ func (t *leaseRoundTripper) roundTrip(request *http.Request, allowAuthRetry bool
 	if request == nil {
 		return nil, fmt.Errorf("upstream request is missing")
 	}
-	if err := requireAllowedHTTPSOrigin(request.URL, t.entry.AllowedHTTPSOrigin); err != nil {
+	if err := requireAllowedHTTPSOrigin(request.URL, t.entry.AllowedHTTPSOrigins); err != nil {
 		return nil, err
 	}
-	if err := t.requireCurrentConsumer(request.Context()); err != nil {
+	if err := t.requireAdmittedConsumer(request.Context()); err != nil {
 		return nil, err
 	}
 	lease, err := t.broker.LookupRequestAuth(request.Context(), t.entry.Purpose)
@@ -164,34 +164,26 @@ func (t *leaseRoundTripper) roundTrip(request *http.Request, allowAuthRetry bool
 		}
 		return refusal.providerResponse(request), nil
 	}
-	if err := validateLease(lease, time.Now()); err != nil {
-		return nil, err
-	}
-	// Borrowing can await a refresh. Consumer withdrawal during that await
-	// must refuse the newly returned credential before the final upstream hop.
-	if err := t.requireCurrentConsumer(request.Context()); err != nil {
+	// Finite admitted work retains its selected scope across a credential
+	// borrow. Caller cancellation still wins before the upstream effect.
+	if err := request.Context().Err(); err != nil {
 		return nil, err
 	}
 
 	outbound := request.Clone(request.Context())
 	outbound.Header = request.Header.Clone()
-	// These are the bounded credential/account identity headers the pinned
-	// Codex and Claude executors can derive from registration-time auth data.
-	// Re-derive this list against the upstream whenever go.mod moves the pin.
-	for _, name := range []string{
-		"Authorization",
-		"Chatgpt-Account-Id",
-		"X-Api-Key",
-		"X-Claude-Code-Session-Id",
-	} {
-		for wireName := range outbound.Header {
-			if strings.EqualFold(wireName, name) {
-				delete(outbound.Header, wireName)
+	// Strip SDK-derived credential headers using the plugin's family owner,
+	// including stale headers from another family on a reused request.
+	for _, family := range managedFamilies {
+		for _, name := range family.StripHeaderNames {
+			for wireName := range outbound.Header {
+				if strings.EqualFold(wireName, name) {
+					delete(outbound.Header, wireName)
+				}
 			}
 		}
 	}
-	outbound.Header.Set("Authorization", "Bearer "+lease.AccessToken)
-	for name, value := range lease.RequiredHeaders {
+	for name, value := range lease.Headers {
 		outbound.Header.Set(name, value)
 	}
 	response, err := t.base.RoundTrip(outbound)
@@ -234,7 +226,7 @@ func (t *leaseRoundTripper) roundTrip(request *http.Request, allowAuthRetry bool
 	return response, nil
 }
 
-func (t *leaseRoundTripper) requireCurrentConsumer(ctx context.Context) error {
+func (t *leaseRoundTripper) requireAdmittedConsumer(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -245,8 +237,7 @@ func (t *leaseRoundTripper) requireCurrentConsumer(ctx context.Context) error {
 	if !ok {
 		return fmt.Errorf("consumer access is required")
 	}
-	access, err := scope.current()
-	if err != nil || !access.admits(t.entry.Purpose) {
+	if !scope.access.admits(t.entry.Purpose) {
 		return fmt.Errorf("consumer purpose is not authorized")
 	}
 	return nil
@@ -316,9 +307,19 @@ var (
 	tokenFingerprintPattern   = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 )
 
-func validateLease(lease OAuthBearerLease, now time.Time) error {
-	if len(lease.AccessToken) == 0 || len(lease.AccessToken) > 128*1024 {
-		return fmt.Errorf("request-auth lease access token is invalid")
+func validateRequestAuthHeaders(lease RequestAuthHeaders, now time.Time) error {
+	if lease.Headers == nil {
+		return fmt.Errorf("request-auth headers are missing")
+	}
+	if lease.Facts == nil {
+		return fmt.Errorf("request-auth facts are missing")
+	}
+	for _, value := range lease.Facts {
+		switch value.(type) {
+		case string, bool, float64:
+		default:
+			return fmt.Errorf("request-auth fact must be scalar")
+		}
 	}
 	if lease.ExpiresAt < 0 {
 		return fmt.Errorf("request-auth lease expiry is invalid")
@@ -326,15 +327,12 @@ func validateLease(lease OAuthBearerLease, now time.Time) error {
 	if lease.ExpiresAt > 0 && now.UnixMilli() >= lease.ExpiresAt {
 		return fmt.Errorf("request-auth lease is expired")
 	}
-	if len(lease.RequiredHeaders) > 32 {
+	if len(lease.Headers) > 32 {
 		return fmt.Errorf("request-auth lease has too many required headers")
 	}
-	seen := make(map[string]struct{}, len(lease.RequiredHeaders))
-	for name, value := range lease.RequiredHeaders {
+	seen := make(map[string]struct{}, len(lease.Headers))
+	for name, value := range lease.Headers {
 		normalized := strings.ToLower(name)
-		if normalized == "authorization" {
-			return fmt.Errorf("request-auth lease required headers cannot include Authorization")
-		}
 		if _, exists := seen[normalized]; exists {
 			return fmt.Errorf("request-auth lease required header names must be unique case-insensitively")
 		}
@@ -342,7 +340,12 @@ func validateLease(lease OAuthBearerLease, now time.Time) error {
 		if len(name) == 0 || len(name) > 128 || !headerNamePattern.MatchString(name) {
 			return fmt.Errorf("request-auth lease contains an invalid required header name")
 		}
-		if len(value) > 16*1024 || strings.ContainsAny(value, "\r\n") {
+		maxValueBytes := 16 * 1024
+		if normalized == "authorization" {
+			// Preserve the former token bound plus its Bearer scheme prefix.
+			maxValueBytes = 128*1024 + len("Bearer ")
+		}
+		if len(value) > maxValueBytes || strings.ContainsAny(value, "\r\n") {
 			return fmt.Errorf("request-auth lease contains an invalid required header value")
 		}
 	}

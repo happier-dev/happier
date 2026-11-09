@@ -46,6 +46,8 @@ describe('CLIProxyAPI plugin manifest', () => {
       expect(bundle.messages).toEqual({
         'managedPurpose.openai.title': expect.any(String),
         'managedPurpose.anthropic.title': expect.any(String),
+        'managedPurpose.meta.title': expect.any(String),
+        'managedPurpose.gemini.title': expect.any(String),
       });
       expect(bundle.messages['managedPurpose.openai.title'].trim()).not.toBe('');
       expect(bundle.messages['managedPurpose.anthropic.title'].trim()).not.toBe('');
@@ -82,7 +84,7 @@ describe('CLIProxyAPI plugin manifest', () => {
       managedRuntime: {
         kind: 'managed',
         connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
-        connectedAccounts: [{
+        connectedAccounts: expect.arrayContaining([expect.objectContaining({
           purpose: 'openai-upstream',
           title: {
             key: 'managedPurpose.openai.title',
@@ -94,7 +96,7 @@ describe('CLIProxyAPI plugin manifest', () => {
           },
           required: false,
           materializationKinds: ['httpHeaders'],
-        }, {
+        }), expect.objectContaining({
           purpose: 'anthropic-upstream',
           title: {
             key: 'managedPurpose.anthropic.title',
@@ -106,8 +108,8 @@ describe('CLIProxyAPI plugin manifest', () => {
           },
           required: false,
           materializationKinds: ['httpHeaders'],
-        }],
-        requestAuthUses: [{
+        })]),
+        requestAuthUses: expect.arrayContaining([{
           purpose: 'openai-upstream',
           materialization: {
             kind: 'httpHeaders',
@@ -121,7 +123,7 @@ describe('CLIProxyAPI plugin manifest', () => {
             origin: 'https://api.anthropic.com',
             headerNames: ['authorization'],
           },
-        }],
+        }]),
         endpointTemplateIds: [
           'cliproxyapi-openai-chat',
           'cliproxyapi-openai-responses',

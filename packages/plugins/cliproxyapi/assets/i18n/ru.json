@@ -1,4 +1,6 @@
 {
   "managedPurpose.openai.title": "Учётная запись или пул ChatGPT",
-  "managedPurpose.anthropic.title": "Учётная запись или пул Claude"
+  "managedPurpose.anthropic.title": "Учётная запись или пул Claude",
+  "managedPurpose.meta.title": "Аккаунт Muse или пул",
+  "managedPurpose.gemini.title": "Аккаунт или пул с API-ключом Gemini"
 }

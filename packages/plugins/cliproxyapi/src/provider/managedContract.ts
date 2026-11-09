@@ -4,6 +4,7 @@ export type ManagedGatewayFamily = Readonly<{
   purpose: string;
   title: Readonly<{ key: string; fallback: string }>;
   authEntry: Readonly<{ id: string; provider: string }>;
+  origins: readonly string[];
   protocols: readonly ProviderContribution['endpointTemplates'][number]['protocol'][];
   connectedAccount: Readonly<{
     service: Readonly<{ pluginId: string; localId: string }>;
@@ -12,7 +13,7 @@ export type ManagedGatewayFamily = Readonly<{
     catalogObservation?: NonNullable<NonNullable<ProviderContribution['managedRuntime']>['connectedAccounts']>[number]['catalogObservation'];
   }>;
   requestAuth: Readonly<{ materialization: Readonly<{
-    kind: 'httpHeaders'; origins: readonly string[]; headerNames: readonly string[];
+    kind: 'httpHeaders'; origin: string; headerNames: readonly string[];
   }> }>;
   sdk: Readonly<{
     catalog: Readonly<{ getter: string }>;
@@ -73,6 +74,7 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
       fallback: 'ChatGPT account or pool',
     }),
     authEntry: Object.freeze({ id: 'codex', provider: 'codex' }),
+    origins: Object.freeze(['https://chatgpt.com']),
     // Proven downstream translations, independent of upstream authorization.
     protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
     connectedAccount: Object.freeze({
@@ -87,7 +89,7 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
     requestAuth: Object.freeze({
       materialization: Object.freeze({
         kind: 'httpHeaders' as const,
-        origins: Object.freeze(['https://chatgpt.com']),
+        origin: 'https://chatgpt.com',
         headerNames: Object.freeze([
           'authorization',
           'chatgpt-account-id',
@@ -108,6 +110,7 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
       fallback: 'Claude account or pool',
     }),
     authEntry: Object.freeze({ id: 'claude', provider: 'claude' }),
+    origins: Object.freeze(['https://api.anthropic.com']),
     protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
     connectedAccount: Object.freeze({
       service: Object.freeze({
@@ -121,7 +124,7 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
     requestAuth: Object.freeze({
       materialization: Object.freeze({
         kind: 'httpHeaders' as const,
-        origins: Object.freeze(['https://api.anthropic.com']),
+        origin: 'https://api.anthropic.com',
         headerNames: Object.freeze(['authorization']),
       }),
     }),
@@ -130,6 +133,7 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
     purpose: 'meta-upstream',
     title: Object.freeze({ key: 'managedPurpose.meta.title', fallback: 'Muse account or pool' }),
     authEntry: Object.freeze({ id: 'meta', provider: 'meta' }),
+    origins: Object.freeze(['https://api.meta.ai']),
     protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
     connectedAccount: Object.freeze({
       service: Object.freeze({ pluginId: 'happier.agent.muse', localId: 'muse-account' }),
@@ -138,7 +142,7 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
     }),
     requestAuth: Object.freeze({ materialization: Object.freeze({
       kind: 'httpHeaders' as const,
-      origins: Object.freeze(['https://api.meta.ai']),
+      origin: 'https://api.meta.ai',
       headerNames: Object.freeze(['authorization', 'x-api-version']),
     }) }),
     sdk: {
@@ -152,6 +156,7 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
     purpose: 'gemini-upstream',
     title: Object.freeze({ key: 'managedPurpose.gemini.title', fallback: 'Gemini API key account or pool' }),
     authEntry: Object.freeze({ id: 'gemini', provider: 'gemini' }),
+    origins: Object.freeze(['https://generativelanguage.googleapis.com']),
     protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
     connectedAccount: Object.freeze({
       service: Object.freeze({ pluginId: 'happier.agent.gemini', localId: 'gemini-account' }),
@@ -161,7 +166,7 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
     }),
     requestAuth: Object.freeze({ materialization: Object.freeze({
       kind: 'httpHeaders' as const,
-      origins: Object.freeze(['https://generativelanguage.googleapis.com']),
+      origin: 'https://generativelanguage.googleapis.com',
       headerNames: Object.freeze(['x-goog-api-key']),
     }) }),
     sdk: {

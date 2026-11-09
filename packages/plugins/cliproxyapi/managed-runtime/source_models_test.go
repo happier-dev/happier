@@ -20,7 +20,7 @@ func TestPinnedSDKExplicitModelRegistrationRoutesExactIDs(t *testing.T) {
 		AuthEntries:      []AuthEntry{testAuthEntry("codex", ProviderCodex, "openai-upstream")},
 		Protocols:        []ProviderProtocol{ProtocolOpenAIResponses}, ModelListEnabled: true,
 	}
-	broker := &sequenceBroker{leases: []OAuthBearerLease{validLease("controlled-source", nil)}}
+	broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease("controlled-source", nil)}}
 	upstream := &protocolFixtureRoundTripper{}
 	gateway, err := NewGateway(cfg, testRuntimeIdentity(), broker, upstream)
 	if err != nil {
@@ -74,7 +74,7 @@ func TestObservedConsumerModelsRouteWithoutAdmittingAnotherSource(t *testing.T) 
 		DownstreamBearer: "physical-health-only", ConsumerAccessPath: accessPath,
 		AuthEntries: []AuthEntry{testAuthEntry("codex", ProviderCodex, "openai-upstream")},
 		Protocols:   []ProviderProtocol{ProtocolOpenAIResponses}, ModelListEnabled: true}
-	broker := &sequenceBroker{leases: []OAuthBearerLease{validLease("controlled-one", nil), validLease("controlled-two", nil)}}
+	broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease("controlled-one", nil), validLease("controlled-two", nil)}}
 	upstream := &protocolFixtureRoundTripper{}
 	gateway, err := NewGateway(cfg, testRuntimeIdentity(), broker, upstream)
 	if err != nil {

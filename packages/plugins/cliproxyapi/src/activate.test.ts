@@ -19,6 +19,7 @@ import type {
 import { activate } from './index.js';
 import * as publicPackage from './index.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
+import { CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES } from './provider/managedContract.js';
 import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from './provider/contribution.js';
 
 type ManagedPurpose = 'openai-upstream' | 'anthropic-upstream';
@@ -44,22 +45,10 @@ const healthyIdentity = Object.freeze({
     'openai-responses',
     'anthropic',
   ]),
-  purposes: Object.freeze([
-    Object.freeze({
-      consumer: Object.freeze({
-        pluginId: 'happier.provider.cliproxyapi',
-        localId: 'cliproxyapi',
-      }),
-      purpose: 'openai-upstream',
-    }),
-    Object.freeze({
-      consumer: Object.freeze({
-        pluginId: 'happier.provider.cliproxyapi',
-        localId: 'cliproxyapi',
-      }),
-      purpose: 'anthropic-upstream',
-    }),
-  ]),
+  purposes: CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES.map((family) => ({
+    consumer: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+    purpose: family.purpose,
+  })),
   modelListEnabled: true,
   sourceClass: 'connected_account',
 });
@@ -67,30 +56,13 @@ const healthyIdentity = Object.freeze({
 const fullyBoundPurposeConfiguration = JSON.stringify({
   v: 3,
   modelListEnabled: true,
-  purposes: [
-    {
-      id: 'codex',
-      provider: 'codex',
-      consumer: {
-        pluginId: 'happier.provider.cliproxyapi',
-        localId: 'cliproxyapi',
-      },
-      purpose: 'openai-upstream',
-      allowedHttpsOrigin: 'https://chatgpt.com',
-      protocols: ['openai-chat', 'openai-responses', 'anthropic'],
-    },
-    {
-      id: 'claude',
-      provider: 'claude',
-      consumer: {
-        pluginId: 'happier.provider.cliproxyapi',
-        localId: 'cliproxyapi',
-      },
-      purpose: 'anthropic-upstream',
-      allowedHttpsOrigin: 'https://api.anthropic.com',
-      protocols: ['openai-chat', 'openai-responses', 'anthropic'],
-    },
-  ],
+  purposes: CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES.map((family) => ({
+    ...family.authEntry,
+    consumer: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+    purpose: family.purpose,
+    allowedHttpsOrigins: family.origins,
+    protocols: family.protocols,
+  })),
 });
 
 function response(

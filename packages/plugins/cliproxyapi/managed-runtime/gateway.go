@@ -15,11 +15,6 @@ const WrapperContractVersion = "happier.cliproxyapi-managed/v3"
 
 type Provider string
 
-const (
-	ProviderCodex  Provider = "codex"
-	ProviderClaude Provider = "claude"
-)
-
 type ContributionIdentity struct {
 	PluginID string `json:"pluginId"`
 	LocalID  string `json:"localId"`
@@ -31,10 +26,10 @@ type QualifiedPurpose struct {
 }
 
 type AuthEntry struct {
-	ID                 string           `json:"id"`
-	Provider           Provider         `json:"provider"`
-	Purpose            QualifiedPurpose `json:"purpose"`
-	AllowedHTTPSOrigin string           `json:"allowedHttpsOrigin"`
+	ID                  string           `json:"id"`
+	Provider            Provider         `json:"provider"`
+	Purpose             QualifiedPurpose `json:"purpose"`
+	AllowedHTTPSOrigins []string         `json:"allowedHttpsOrigins"`
 }
 
 type Config struct {
@@ -112,16 +107,19 @@ func (entry AuthEntry) validate() error {
 	if !entryIDPattern.MatchString(entry.ID) {
 		return fmt.Errorf("has an invalid id")
 	}
-	switch entry.Provider {
-	case ProviderCodex, ProviderClaude:
-	default:
+	if _, supported := managedFamilyForProvider(entry.Provider); !supported {
 		return fmt.Errorf("has unsupported provider %q", entry.Provider)
 	}
 	if err := entry.Purpose.validate(); err != nil {
 		return fmt.Errorf("purpose: %w", err)
 	}
-	if _, err := parseAllowedHTTPSOrigin(entry.AllowedHTTPSOrigin); err != nil {
-		return fmt.Errorf("allowed HTTPS origin: %w", err)
+	if len(entry.AllowedHTTPSOrigins) == 0 {
+		return fmt.Errorf("allowed HTTPS origins are missing")
+	}
+	for _, origin := range entry.AllowedHTTPSOrigins {
+		if _, err := parseAllowedHTTPSOrigin(origin); err != nil {
+			return fmt.Errorf("allowed HTTPS origin: %w", err)
+		}
 	}
 	return nil
 }
@@ -143,13 +141,16 @@ func parseAllowedHTTPSOrigin(value string) (*url.URL, error) {
 	return parsed, nil
 }
 
-func requireAllowedHTTPSOrigin(request *url.URL, configuredOrigin string) error {
-	allowed, err := parseAllowedHTTPSOrigin(configuredOrigin)
-	if err != nil || request == nil || request.Scheme != "https" || request.Host != allowed.Host ||
-		request.User != nil || request.Opaque != "" {
-		return fmt.Errorf("managed upstream origin is not authorized")
+func requireAllowedHTTPSOrigin(request *url.URL, configuredOrigins []string) error {
+	if request != nil && request.Scheme == "https" && request.User == nil && request.Opaque == "" {
+		for _, origin := range configuredOrigins {
+			allowed, err := parseAllowedHTTPSOrigin(origin)
+			if err == nil && request.Host == allowed.Host {
+				return nil
+			}
+		}
 	}
-	return nil
+	return fmt.Errorf("managed upstream origin is not authorized")
 }
 
 func (p QualifiedPurpose) validate() error {

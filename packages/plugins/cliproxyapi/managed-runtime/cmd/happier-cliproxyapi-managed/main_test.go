@@ -15,7 +15,7 @@ import (
 	managedruntime "github.com/happier-dev/happier/packages/plugins/cliproxyapi/managed-runtime"
 )
 
-const fullyBoundPurposeConfiguration = `{"v":3,"modelListEnabled":true,"purposes":[{"id":"codex","provider":"codex","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"openai-upstream","allowedHttpsOrigin":"https://chatgpt.com","protocols":["openai-chat","openai-responses"]},{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigin":"https://api.anthropic.com","protocols":["anthropic"]}]}`
+const fullyBoundPurposeConfiguration = `{"v":3,"modelListEnabled":true,"purposes":[{"id":"codex","provider":"codex","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"openai-upstream","allowedHttpsOrigins":["https://chatgpt.com"],"protocols":["openai-chat","openai-responses"]},{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigins":["https://api.anthropic.com"],"protocols":["anthropic"]}]}`
 
 func TestMaterializeGatewayConfigUsesSharedConsumerAccessInsteadOfOneSessionCapability(t *testing.T) {
 	root := t.TempDir()
@@ -88,13 +88,13 @@ func TestMaterializeGatewayConfigReadsExactProcessEnvironmentAndImmutableFacts(t
 	if len(config.AuthEntries) != 2 || config.AuthEntries[0].ID != "codex" ||
 		config.AuthEntries[0].Provider != managedruntime.ProviderCodex ||
 		config.AuthEntries[0].Purpose.Purpose != "openai-upstream" ||
-		config.AuthEntries[0].AllowedHTTPSOrigin != "https://chatgpt.com" {
+		config.AuthEntries[0].AllowedHTTPSOrigins[0] != "https://chatgpt.com" {
 		t.Fatalf("auth entries = %#v", config.AuthEntries)
 	}
 	if config.AuthEntries[1].ID != "claude" ||
 		config.AuthEntries[1].Provider != managedruntime.ProviderClaude ||
 		config.AuthEntries[1].Purpose.Purpose != "anthropic-upstream" ||
-		config.AuthEntries[1].AllowedHTTPSOrigin != "https://api.anthropic.com" {
+		config.AuthEntries[1].AllowedHTTPSOrigins[0] != "https://api.anthropic.com" {
 		t.Fatalf("auth entries = %#v", config.AuthEntries)
 	}
 	if brokerConfig.ConsumerAccessPath != capabilityPath {

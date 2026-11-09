@@ -22,7 +22,7 @@ func TestLeasedClaudeDoesNotFetchSentinelProfile(t *testing.T) {
 	defer profileProxy.Close()
 	testCase := crossProtocolCases()[1]
 	cfg := crossProtocolConfig(t, testCase)
-	broker := &sequenceBroker{leases: []OAuthBearerLease{validLease("current-claude-lease", nil)}}
+	broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease("current-claude-lease", nil)}}
 	upstream := &protocolFixtureRoundTripper{}
 	gateway, err := NewGateway(cfg, testRuntimeIdentity(), broker, upstream)
 	if err != nil {
@@ -62,7 +62,7 @@ func TestLeasedGatewayAcceptsRotatedLeaseAfterUnauthorized(t *testing.T) {
 			testCase.model = "gpt-6.1-sol"
 			testCase.request = fmt.Sprintf(`{"model":"gpt-6.1-sol","stream":%t,"max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`, stream)
 			cfg := crossProtocolConfig(t, testCase)
-			broker := &sequenceBroker{leases: []OAuthBearerLease{
+			broker := &sequenceBroker{leases: []RequestAuthHeaders{
 				validLease("rejected-lease", nil), validLease("rotated-lease", nil),
 			}}
 			upstream := &protocolFixtureRoundTripper{statuses: []int{http.StatusUnauthorized, http.StatusOK}}

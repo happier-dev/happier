@@ -93,7 +93,8 @@ func consumerAdmitsAuth(access consumerAccess, entry AuthEntry, auth *coreauth.A
 
 // Registration follows the existing consumer admission/settlement lock and
 // lifetime. It is not an observation cache: immutable clients are installed
-// once per admitted consumer, and removed when that consumer settles.
+// once per admitted consumer, and removed after its admitted work finishes
+// during settlement, including finite work retained after withdrawal.
 type consumerModelRegistrations struct {
 	entries    []AuthEntry
 	manager    *coreauth.Manager

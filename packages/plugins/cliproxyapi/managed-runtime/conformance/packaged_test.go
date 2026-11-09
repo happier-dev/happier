@@ -50,7 +50,7 @@ func TestPackagedWrapper(t *testing.T) {
 		managedruntime.DownstreamBearerEnvironmentVariable+"="+downstreamBearer,
 		managedruntime.ConsumerAccessPathEnvironmentVariable+"="+capabilityPath,
 		managedruntime.ManagedPurposeConfigurationEnvironmentVariable+"="+
-			`{"v":3,"modelListEnabled":true,"purposes":[{"id":"codex","provider":"codex","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"openai-upstream","allowedHttpsOrigin":"https://chatgpt.com","protocols":["openai-chat","openai-responses"]},{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigin":"https://api.anthropic.com","protocols":["anthropic"]}]}`,
+			`{"v":3,"modelListEnabled":true,"purposes":[{"id":"codex","provider":"codex","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"openai-upstream","allowedHttpsOrigins":["https://chatgpt.com"],"protocols":["openai-chat","openai-responses"]},{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigins":["https://api.anthropic.com"],"protocols":["anthropic"]}]}`,
 	)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

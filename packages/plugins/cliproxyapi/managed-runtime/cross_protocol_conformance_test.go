@@ -50,22 +50,22 @@ func crossProtocolCases() []crossProtocolCase {
 
 func crossProtocolConfig(t *testing.T, testCase crossProtocolCase) Config {
 	t.Helper()
-	id := "codex"
-	if testCase.provider == ProviderClaude {
-		id = "claude"
+	family, ok := managedFamilyForProvider(testCase.provider)
+	if !ok {
+		t.Fatalf("unknown fixture provider %q", testCase.provider)
 	}
 	return Config{
 		Host: "127.0.0.1", Port: reserveLoopbackPort(t), DownstreamBearer: "downstream-session-bearer", RuntimeDir: t.TempDir(),
-		AuthEntries: []AuthEntry{testAuthEntry(id, testCase.provider, testCase.purpose)},
+		AuthEntries: []AuthEntry{testAuthEntry(family.ID, testCase.provider, testCase.purpose)},
 		Protocols:   []ProviderProtocol{testCase.protocol}, ModelListEnabled: true,
 	}
 }
 
 func TestPinnedSDKCrossProtocolStreamingToolRoundTrip(t *testing.T) {
-	for _, testCase := range crossProtocolCases() {
+	for _, testCase := range append(crossProtocolCases(), metaProtocolCases()...) {
 		t.Run(testCase.name, func(t *testing.T) {
 			cfg := crossProtocolConfig(t, testCase)
-			broker := &sequenceBroker{leases: []OAuthBearerLease{validLease("current-one", nil), validLease("current-two", nil)}}
+			broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease("current-one", nil), validLease("current-two", nil)}}
 			upstream := &protocolFixtureRoundTripper{toolCall: true}
 			gateway, err := NewGateway(cfg, testRuntimeIdentity(), broker, upstream)
 			if err != nil {
@@ -125,10 +125,10 @@ func TestPinnedSDKCrossProtocolStreamingToolRoundTrip(t *testing.T) {
 }
 
 func TestPinnedSDKCrossProtocolErrorsHaveNoHiddenReplay(t *testing.T) {
-	for _, testCase := range crossProtocolCases() {
+	for _, testCase := range append(crossProtocolCases(), metaProtocolCases()...) {
 		t.Run(testCase.name, func(t *testing.T) {
 			cfg := crossProtocolConfig(t, testCase)
-			broker := &sequenceBroker{leases: []OAuthBearerLease{validLease("error-member", nil), validLease("error-member", nil), validLease("error-member", nil), validLease("error-member", nil)}}
+			broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease("error-member", nil), validLease("error-member", nil), validLease("error-member", nil), validLease("error-member", nil)}}
 			upstream := &protocolFixtureRoundTripper{statuses: []int{401, 403, 429, 500}}
 			gateway, err := NewGateway(cfg, testRuntimeIdentity(), broker, upstream)
 			if err != nil {
@@ -153,10 +153,10 @@ func TestPinnedSDKCrossProtocolErrorsHaveNoHiddenReplay(t *testing.T) {
 }
 
 func TestPinnedSDKCrossProtocolCancellation(t *testing.T) {
-	for _, testCase := range crossProtocolCases() {
+	for _, testCase := range append(crossProtocolCases(), metaProtocolCases()...) {
 		t.Run(testCase.name, func(t *testing.T) {
 			cfg := crossProtocolConfig(t, testCase)
-			broker := &sequenceBroker{leases: []OAuthBearerLease{validLease("cancel-member", nil)}}
+			broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease("cancel-member", nil)}}
 			upstream := &cancellationRoundTripper{started: make(chan struct{}), canceled: make(chan struct{})}
 			gateway, err := NewGateway(cfg, testRuntimeIdentity(), broker, upstream)
 			if err != nil {
@@ -211,7 +211,7 @@ func TestPinnedSDKCrossProtocolAuxiliarySurfaces(t *testing.T) {
 	for _, testCase := range crossProtocolCases()[:2] {
 		t.Run(testCase.name, func(t *testing.T) {
 			cfg := crossProtocolConfig(t, testCase)
-			broker := &sequenceBroker{leases: []OAuthBearerLease{validLease("auxiliary-member", nil)}}
+			broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease("auxiliary-member", nil)}}
 			upstream := &protocolFixtureRoundTripper{}
 			gateway, err := NewGateway(cfg, testRuntimeIdentity(), broker, upstream)
 			if err != nil {

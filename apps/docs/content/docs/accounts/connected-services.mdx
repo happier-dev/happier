@@ -133,6 +133,49 @@ that same user and host select a source automatically; different or unknown
 identities still ask you to choose. Existing duplicate accounts stay available
 until you remove them deliberately.
 
+## Muse accounts in 0.3 development
+
+The unreleased Muse integration is being validated with three connection methods:
+Meta device sign-in, an API key, and explicit import of a complete native login
+from the machine you choose. Device sign-in mints an inference key once while
+connecting. Launching a session or reading usage does not mint another key.
+
+Device and imported accounts use a private Muse login file. API-key accounts
+deliver the selected key through the environment and keep their key identity;
+they do not imply a subscription allowance. Native-default launches keep your
+original configuration location. Selected native accounts preserve settings and
+trust, and link other existing top-level configuration entries. New top-level
+configuration folders created during that session remain private to its home.
+
+Usage shows only supplied observations; missing allowance stays unknown. Choose
+contributor model variants in the model picker. Contributor selection is not an
+account setting. If credentials expire or are rejected, sign in again explicitly.
+Removing the saved account removes its managed native home after active sessions
+release it; it does not log out your original native Muse installation.
+
+[Meta's terms](https://dev.meta.ai/legal/terms-of-service) restrict subscription
+credentials to its coding harness. A working key route does not establish
+equivalent billing, subscription benefits or data-use behavior.
+
+## Kimi accounts in 0.3 development
+
+The unreleased Kimi integration is being validated with regional device sign-in,
+a manual Kimi Code or Moonshot platform key, and explicit import of a Node Kimi
+login from the machine you choose. Import uses that installation's selected
+configuration and credential reference. An unsupported native format leaves
+device sign-in available as a separate choice.
+
+Selected native accounts keep refresh credentials with Happier's daemon. Sessions
+and finite runs receive current access material in a private configuration while
+sharing native session state. Changing accounts applies on the next launch or
+reconnect; a running session may need relaunch when its access expires. Your
+original native login is preserved. Installed-Node subscription acceptance is
+still awaiting release validation.
+
+Usage preserves supplied windows and resets, with extra-usage money shown
+separately. Missing identity or allowance remains unknown. A platform key does
+not imply a Kimi Code subscription, and manual keys have no OAuth refresh.
+
 ## Gateways in 0.3 development
 
 The unreleased gateway integration projects your managed Provider connections
@@ -142,6 +185,16 @@ chosen gateway assigns that vendor slot, and disabling it clears the slot only
 if it still belongs to that pool. Multiple gateways require an explicit choice.
 These operations use the existing approval policy and revision-checked
 connection update, rather than a separate pool-routing setting.
+
+The development gateway adds a **Muse account or pool** slot beside ChatGPT and
+Claude. Select its connected account or pool in the existing gateway draft;
+the gateway uses the account's inference key, while Connected services keeps
+ownership of authentication and refresh. A saved slot or a static model listing
+does not establish account entitlement or runtime readiness.
+
+The same development gateway offers **Gemini API key account or pool** for Gemini
+AI Studio keys. Select the API-key account or pool in the existing draft.
+Service-account and Vertex credentials remain unsupported by this gateway slot.
 
 The current 0.3 development add flow opens an unsaved gateway draft in Connected
 services, including when opened from a pool. Opening or discarding the draft

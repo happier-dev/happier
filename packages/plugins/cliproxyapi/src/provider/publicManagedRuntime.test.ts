@@ -21,32 +21,18 @@ import type {
   ManagedServices,
 } from '@happier-dev/plugin-sdk/managed-services';
 
+import { CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES } from './managedContract.js';
 import { CLIPROXYAPI_PUBLIC_MANAGED_PROVIDER_RUNTIME } from './publicManagedRuntime.js';
 
-type ManagedPurpose = 'openai-upstream' | 'anthropic-upstream';
+type ManagedPurpose = typeof CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES[number]['purpose'];
 
-const managedPurposeFamilies = Object.freeze([
-  Object.freeze({
-    id: 'codex',
-    provider: 'codex',
-    purpose: 'openai-upstream' as const,
-    allowedHttpsOrigin: 'https://chatgpt.com',
-    protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
-    endpointTemplateIds: Object.freeze([
-      'cliproxyapi-openai-responses',
-      'cliproxyapi-openai-chat',
-      'cliproxyapi-anthropic',
-    ]),
-  }),
-  Object.freeze({
-    id: 'claude',
-    provider: 'claude',
-    purpose: 'anthropic-upstream' as const,
-    allowedHttpsOrigin: 'https://api.anthropic.com',
-    protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
-    endpointTemplateIds: Object.freeze(['cliproxyapi-openai-responses', 'cliproxyapi-openai-chat', 'cliproxyapi-anthropic']),
-  }),
-]);
+const managedPurposeFamilies = CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES.map((family) => ({
+  ...family.authEntry,
+  purpose: family.purpose,
+  allowedHttpsOrigins: family.origins,
+  protocols: family.protocols,
+  endpointTemplateIds: ['cliproxyapi-openai-responses', 'cliproxyapi-openai-chat', 'cliproxyapi-anthropic'],
+}));
 
 const healthySnapshot = Object.freeze({
   id: 'cliproxyapi-managed',
@@ -60,15 +46,7 @@ const healthySnapshot = Object.freeze({
 } satisfies ManagedServiceSnapshot);
 
 function bindingFor(purpose: ManagedPurpose): PluginConnectedAccountBindingSummary {
-  const service = purpose === 'openai-upstream'
-    ? Object.freeze({
-        pluginId: 'happier.agent.codex',
-        localId: 'openai-codex',
-      })
-    : Object.freeze({
-        pluginId: 'happier.agent.claude',
-        localId: 'claude-subscription',
-      });
+  const service = CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES.find((family) => family.purpose === purpose)!.connectedAccount.service;
   return Object.freeze({
     purpose,
     service,
@@ -86,8 +64,8 @@ function connectedAccounts(boundPurposes: readonly ManagedPurpose[]): Readonly<{
 }> {
   const bound = new Set(boundPurposes);
   const getBinding = vi.fn<ConnectedAccountsService['getBinding']>(async (purpose) => (
-    purpose === 'openai-upstream' || purpose === 'anthropic-upstream'
-      ? (bound.has(purpose) ? bindingFor(purpose) : null)
+    CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES.some((family) => family.purpose === purpose)
+      ? (bound.has(purpose as ManagedPurpose) ? bindingFor(purpose as ManagedPurpose) : null)
       : null
   ));
   return Object.freeze({
@@ -555,7 +533,8 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
     expect(spec).toMatchObject({ requestAuth: { kind: 'connectedAccountConsumerAccessPath', injectEnvironmentKey: 'HAPPIER_CLIPROXYAPI_CONSUMER_ACCESS_PATH' } });
     if (spec?.mode.kind !== 'spawn') throw new Error('Missing physical gateway spec');
     const configuration = JSON.parse(spec.mode.launch.env!.HAPPIER_CLIPROXYAPI_MANAGED_PURPOSE_CONFIGURATION!);
-    expect(configuration.purposes.map((purpose: { purpose: string }) => purpose.purpose)).toEqual(['openai-upstream', 'anthropic-upstream']);
+    expect(configuration.purposes.map((purpose: { purpose: string }) => purpose.purpose))
+      .toEqual(managedPurposeFamilies.map((family) => family.purpose));
   });
   it.each([
     {
@@ -613,7 +592,7 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
           localId: 'cliproxyapi',
         },
         purpose: family.purpose,
-        allowedHttpsOrigin: family.allowedHttpsOrigin,
+        allowedHttpsOrigins: family.allowedHttpsOrigins,
         protocols: family.protocols,
       })),
     });
@@ -627,7 +606,7 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
       'anthropic-upstream',
       { signal },
     );
-    expect(accounts.getBinding).toHaveBeenCalledTimes(2);
+    expect(accounts.getBinding).toHaveBeenCalledTimes(managedPurposeFamilies.length);
     expect(supervise).toHaveBeenCalledWith(expect.objectContaining({
       mode: expect.objectContaining({
         launch: expect.objectContaining({
@@ -674,7 +653,7 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
       signal,
     })).rejects.toThrow('requires an exact upstream source');
 
-    expect(accounts.getBinding).toHaveBeenCalledTimes(2);
+    expect(accounts.getBinding).toHaveBeenCalledTimes(managedPurposeFamilies.length);
     expect(forbiddenBindOrStateCreationCount).toBe(0);
 
     const root = await mkdtemp(join(tmpdir(), 'happier-cliproxyapi-composed-'));

@@ -110,7 +110,7 @@ func TestPinnedSDKMixedServingUsesFinalLeaseAfterExecutorShaping(t *testing.T) {
 		},
 		ModelListEnabled: true,
 	}
-	broker := &sequenceBroker{leases: []OAuthBearerLease{
+	broker := &sequenceBroker{leases: []RequestAuthHeaders{
 		validLease("codex-current", map[string]string{"Chatgpt-Account-Id": "account-current"}),
 		validLease("claude-current", nil),
 		validLease("codex-chat-current", map[string]string{"Chatgpt-Account-Id": "account-chat-current"}),
@@ -143,7 +143,7 @@ func TestPinnedSDKMixedServingUsesFinalLeaseAfterExecutorShaping(t *testing.T) {
 		t.Fatalf("managed health identity = %#v", healthIdentity)
 	}
 	catalog := gateway.Catalog()
-	assertGeneratedCatalogMatchesRegisteredSDK(t, catalog)
+	assertGeneratedCatalogMatchesRegisteredSDK(t, catalog, cfg.AuthEntries)
 	if !catalogContains(catalog, ProviderCodex, "gpt-6.1-sol") {
 		t.Fatal("credential-free catalog omitted pinned Codex compatibility model")
 	}
@@ -251,7 +251,7 @@ func TestPinnedSDKUnregisteredCodexModelsDoNotReachUpstream(t *testing.T) {
 				AuthEntries:      []AuthEntry{testAuthEntry("codex", ProviderCodex, "openai-upstream")},
 				Protocols:        []ProviderProtocol{ProtocolOpenAIResponses}, ModelListEnabled: true,
 			}
-			broker := &sequenceBroker{leases: []OAuthBearerLease{validLease("controlled-codex", nil)}}
+			broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease("controlled-codex", nil)}}
 			upstream := &protocolFixtureRoundTripper{}
 			gateway, err := newGatewayForConformance(cfg, testRuntimeIdentity(), broker, upstream, nil)
 			if err != nil {
@@ -292,7 +292,7 @@ func TestPinnedSDKUnregisteredCodexModelsDoNotReachUpstream(t *testing.T) {
 	}
 }
 
-func assertGeneratedCatalogMatchesRegisteredSDK(t *testing.T, catalog []CatalogModel) {
+func assertGeneratedCatalogMatchesRegisteredSDK(t *testing.T, catalog []CatalogModel, entries []AuthEntry) {
 	t.Helper()
 	source, err := os.ReadFile("../src/provider/staticModels.generated.ts")
 	if err != nil {
@@ -311,9 +311,9 @@ func assertGeneratedCatalogMatchesRegisteredSDK(t *testing.T, catalog []CatalogM
 		t.Fatal(err)
 	}
 	want := map[string]bool{}
-	for provider, models := range generated {
-		for _, model := range models {
-			want[string(provider)+"/"+model.ID] = true
+	for _, entry := range entries {
+		for _, model := range generated[entry.Provider] {
+			want[string(entry.Provider)+"/"+model.ID] = true
 		}
 	}
 	for _, model := range catalog {
@@ -333,7 +333,7 @@ func TestPinnedSDKSparseBindingsSeparateServingProtocolFromUpstreamAuthority(t *
 		t.Run(testCase.name, func(t *testing.T) {
 			cfg := crossProtocolConfig(t, testCase)
 			cfg.Protocols = []ProviderProtocol{ProtocolOpenAIChat, ProtocolOpenAIResponses, ProtocolAnthropic}
-			broker := &sequenceBroker{leases: []OAuthBearerLease{validLease("only-bound-member", nil)}}
+			broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease("only-bound-member", nil)}}
 			upstream := &protocolFixtureRoundTripper{}
 			gateway, err := NewGateway(cfg, testRuntimeIdentity(), broker, upstream)
 			if err != nil {
@@ -410,7 +410,7 @@ func TestPinnedSDKClaudeExecutorKeepsRequestShapingOutsideRequestTimeCredentialO
 				},
 				Protocols: []ProviderProtocol{ProtocolAnthropic},
 			}
-			broker := &sequenceBroker{leases: []OAuthBearerLease{validLease("claude-current", nil)}}
+			broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease("claude-current", nil)}}
 			upstream := &protocolFixtureRoundTripper{}
 			var mutateAuth func(*coreauth.Auth)
 			if testCase.registrationToken != "" {
@@ -551,7 +551,7 @@ func TestPinnedSDKClaudeStreamingAndCountTokensUseFinalLeaseAfterExecutorShaping
 				},
 				Protocols: []ProviderProtocol{ProtocolAnthropic},
 			}
-			broker := &sequenceBroker{leases: []OAuthBearerLease{validLease(
+			broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease(
 				testCase.leaseToken,
 				map[string]string{"X-App": testCase.leaseAppHeader},
 			)}}
@@ -649,7 +649,7 @@ func TestPinnedSDKDoesNotReplayOrCoolDownManagedEntry(t *testing.T) {
 		},
 		Protocols: []ProviderProtocol{ProtocolOpenAIResponses},
 	}
-	broker := &sequenceBroker{leases: []OAuthBearerLease{
+	broker := &sequenceBroker{leases: []RequestAuthHeaders{
 		validLease("member-a", map[string]string{"Chatgpt-Account-Id": "account-a"}),
 		validLease("member-b", map[string]string{"Chatgpt-Account-Id": "account-b"}),
 		validLease("member-c", map[string]string{"Chatgpt-Account-Id": "account-c"}),
@@ -738,7 +738,7 @@ func TestPinnedSDKComposesOneLeafCurrentnessRetryWithoutManagerOrBootstrapReplay
 				},
 				Protocols: []ProviderProtocol{ProtocolOpenAIResponses},
 			}
-			leases := []OAuthBearerLease{
+			leases := []RequestAuthHeaders{
 				validLease("member-a", map[string]string{"Chatgpt-Account-Id": "account-header-a"}),
 				validLease("member-b", map[string]string{"Chatgpt-Account-Id": "account-header-b"}),
 				validLease("member-c-must-not-be-used", map[string]string{"Chatgpt-Account-Id": "account-header-c"}),
@@ -865,7 +865,7 @@ func TestPinnedSDKKeepsDownstreamBearerSeparateFromBrokerCapabilityAndOtherSessi
 		},
 		Protocols: []ProviderProtocol{ProtocolOpenAIResponses},
 	}
-	broker := &sequenceBroker{leases: []OAuthBearerLease{
+	broker := &sequenceBroker{leases: []RequestAuthHeaders{
 		validLease("current-upstream", nil),
 	}}
 	upstream := &protocolFixtureRoundTripper{}
@@ -930,7 +930,7 @@ func TestPinnedSDKWrapperIngressAcceptsOnlyExactSingleBearerBeforeSDKAuth(t *tes
 		},
 		Protocols: []ProviderProtocol{ProtocolOpenAIResponses},
 	}
-	broker := &sequenceBroker{leases: []OAuthBearerLease{validLease("current-upstream", nil)}}
+	broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease("current-upstream", nil)}}
 	upstream := &protocolFixtureRoundTripper{}
 	gateway, err := NewGateway(cfg, testRuntimeIdentity(), broker, upstream)
 	if err != nil {
@@ -1105,7 +1105,7 @@ func TestPinnedSDKPreservesStreamingToolsAndDownstreamWebsocketOverFinalTranspor
 		map[string]any{"token": testCapability(91), "capabilityPath": streamCapabilityPath, "purposes": []QualifiedPurpose{testPurpose("openai-upstream")}},
 		map[string]any{"token": testCapability(92), "capabilityPath": websocketCapabilityPath, "purposes": []QualifiedPurpose{testPurpose("openai-upstream")}},
 	)
-	broker := &sequenceBroker{leases: []OAuthBearerLease{
+	broker := &sequenceBroker{leases: []RequestAuthHeaders{
 		validLease("stream-member", map[string]string{"Chatgpt-Account-Id": "stream-account"}),
 		validLease("websocket-member", map[string]string{"Chatgpt-Account-Id": "websocket-account"}),
 	}}
@@ -1199,7 +1199,7 @@ func TestPinnedSDKPropagatesDownstreamCancellationToFinalTransport(t *testing.T)
 		},
 		Protocols: []ProviderProtocol{ProtocolOpenAIResponses},
 	}
-	broker := &sequenceBroker{leases: []OAuthBearerLease{validLease("cancel-member", nil)}}
+	broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease("cancel-member", nil)}}
 	upstream := &cancellationRoundTripper{
 		started:  make(chan struct{}),
 		canceled: make(chan struct{}),
@@ -1253,10 +1253,17 @@ func TestPinnedSDKPropagatesDownstreamCancellationToFinalTransport(t *testing.T)
 	}
 }
 
-func validLease(token string, headers map[string]string) OAuthBearerLease {
-	return OAuthBearerLease{
-		AccessToken:     token,
-		RequiredHeaders: headers,
+func validLease(token string, headers map[string]string) RequestAuthHeaders {
+	material := make(map[string]string, len(headers)+1)
+	if token != "" {
+		material["Authorization"] = "Bearer " + token
+	}
+	for name, value := range headers {
+		material[name] = value
+	}
+	return RequestAuthHeaders{
+		Headers: material,
+		Facts:   map[string]any{},
 		CredentialContext: RequestAuthCredentialContext{
 			Account: QualifiedAccountRef{
 				Service:   ContributionIdentity{PluginID: "happier.connected-service.openai", LocalID: "account"},

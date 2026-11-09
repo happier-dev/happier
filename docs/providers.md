@@ -31,6 +31,32 @@ SCM identity and Copilot refusal remain separate outcomes. Copilot's ChatGPT and
 Provider choices retain their own explicit routes. Neither source adds a gateway
 family, secret store, native credential-file writer or background quota probe.
 
+### Kimi connected accounts (0.3 development)
+
+The unreleased Kimi service owns regional device sign-in, manual Code/platform
+keys and explicit import of the selected Machine's Node Kimi login. Import reads
+the resolved `KIMI_CODE_HOME` config and its exact selected OAuth credential
+reference; it neither scans profiles nor falls back to the retired Python home.
+The daemon refresh callback retains refresh custody. Only explicit invalid-grant
+evidence requires reconnect; policy refusals and inconclusive refresh outcomes
+retain their provenance without declaring the grant invalid.
+
+`KIMI_CONNECTED_ACCOUNT_LAUNCH` feeds the existing native-home engine for Session
+and finite execution. Its private config references the selected current access
+token through `HAPPIER_KIMI_ACCESS_TOKEN`, omits OAuth references and preserves
+shared session state. The selected credential's model response supplies the
+native catalog; an unavailable selected default returns
+`model_selection_required`. Resume checks use the declared session-file catalog.
+Static access expires normally, so a running child can need reconnect/relaunch.
+Actual installed-Node subscription routing remains a release-validation check;
+the fake-process composition does not prove vendor acceptance.
+
+Demanded identity and usage retain upstream observations, including every
+supplied window/reset and separate extra-usage money. Missing allowance stays
+unavailable. Request auth produces selected headers, actual expiry and scalar
+base/domain/device facts for the gateway adapter; it adds no executor or refresh
+scheduler. Manual keys retain token kind and have no OAuth expiry or refresh.
+
 ### Connected Account sign-in placement (0.3 development)
 
 Portable authentication shares one plugin exchange and one authentication-attempt
@@ -2022,7 +2048,8 @@ refresh sources remain unavailable. Contributor variants are model ids chosen
 through the existing picker, with no account observation or setting. This
 integration is unreleased; see [Muse accounts](../apps/docs/content/docs/accounts/connected-services.mdx#muse-accounts-in-03-development)
 for user-facing behavior and the single terms notice.
-Each row declares its allowed origins and credential-header stripping names.
+Each row declares its private allowed origins and credential-header stripping
+names. The public request-auth materialization retains one declared `origin`.
 The final transport checks each outbound host against that origin list and
 replaces sentinel headers with the daemon's request-local material.
 

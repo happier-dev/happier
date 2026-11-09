@@ -339,8 +339,8 @@ func TestHTTPBrokerReadsTheAtomicV2CapabilityTransportTuple(t *testing.T) {
 	if err != nil {
 		t.Fatalf("V2 lookup failed: %v", err)
 	}
-	if lease.AccessToken != "v2-lease" {
-		t.Fatalf("lease access token = %q", lease.AccessToken)
+	if lease.Headers["Authorization"] != "Bearer v2-lease" {
+		t.Fatalf("lease access token = %q", lease.Headers["Authorization"])
 	}
 	if networkCalls.Load() != 1 {
 		t.Fatalf("V2 lookup made %d network calls, want 1", networkCalls.Load())
@@ -525,9 +525,9 @@ func TestHTTPBrokerPreservesBoundedStatusAndCodeWithoutRetryAuthority(t *testing
 func TestHTTPBrokerAcceptsProtocolValidLeaseBeyondFormerEnvelopeCap(t *testing.T) {
 	t.Parallel()
 	lease := validLease("large-current-lease", nil)
-	lease.RequiredHeaders = make(map[string]string, 32)
+	lease.Headers = make(map[string]string, 32)
 	for index := 0; index < 32; index++ {
-		lease.RequiredHeaders[fmt.Sprintf("x-required-%d", index)] = strings.Repeat("a", 16*1024)
+		lease.Headers[fmt.Sprintf("x-required-%d", index)] = strings.Repeat("a", 16*1024)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(writer).Encode(map[string]any{"ok": true, "value": lease})
@@ -540,7 +540,7 @@ func TestHTTPBrokerAcceptsProtocolValidLeaseBeyondFormerEnvelopeCap(t *testing.T
 		t.Fatal(err)
 	}
 	got, err := broker.LookupRequestAuth(context.Background(), testPurpose("openai-upstream"))
-	if err != nil || len(got.RequiredHeaders) != 32 || got.RequiredHeaders["x-required-31"] != lease.RequiredHeaders["x-required-31"] {
+	if err != nil || len(got.Headers) != 32 || got.Headers["x-required-31"] != lease.Headers["x-required-31"] {
 		t.Fatalf("protocol-valid current lease was rejected or truncated: %v", err)
 	}
 }
@@ -700,8 +700,8 @@ func TestHTTPBrokerReclassifiesAtomicReplacementTupleWithoutResending(t *testing
 	if err != nil {
 		t.Fatalf("settled replacement lookup: %v", err)
 	}
-	if lease.AccessToken != "replacement-lease" {
-		t.Fatalf("replacement lease access token = %q", lease.AccessToken)
+	if lease.Headers["Authorization"] != "Bearer replacement-lease" {
+		t.Fatalf("replacement lease access token = %q", lease.Headers["Authorization"])
 	}
 	if oldDaemonCalls.Load() != 1 || replacementDaemonCalls.Load() != 1 {
 		t.Fatalf(
@@ -1194,7 +1194,7 @@ func TestLeaseTransportUsesCompletedBrokerLeaseAsTheOnlyUpstreamLinearizationBou
 			ID:                 "codex",
 			Provider:           ProviderCodex,
 			Purpose:            testPurpose("openai-upstream"),
-			AllowedHTTPSOrigin: "https://upstream.invalid",
+			AllowedHTTPSOrigins: []string{"https://upstream.invalid"},
 		},
 		broker: broker,
 		base: roundTripperFunc(func(request *http.Request) (*http.Response, error) {

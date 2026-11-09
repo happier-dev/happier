@@ -193,6 +193,18 @@ per vendor; each pool remains single-vendor. Choosing another pool replaces that
 vendor's slot. Clearing a pool's use removes only the slot it still owns, and
 does not change the other vendor selections.
 
+The development declaration includes **Muse account or pool** alongside ChatGPT
+and Claude. Muse uses the connected account's Meta inference key through the same
+Chat Completions, Responses and Anthropic Messages endpoints. Static model rows
+describe SDK compatibility; they do not prove that your account can use a model.
+This remains unreleased development behavior.
+
+The **Gemini API key account or pool** slot uses a Gemini AI Studio API key
+through those same three endpoints. Service-account and Vertex credentials are
+unsupported by this slot; native Gemini Interactions is outside this gateway
+family. The connected account supplies the raw API-key header, with no OAuth
+fallback.
+
 To start, open **Connected services** and choose **Add gateway** in **Gateways**.
 This opens an unsaved draft. On a pool, choosing **Use in other agents** before
 any gateway exists opens the same draft with that pool selected for its vendor.

@@ -99,19 +99,19 @@ func NewHTTPBroker(config HTTPBrokerConfig) (*HTTPBroker, error) {
 	}, nil
 }
 
-func (b *HTTPBroker) LookupRequestAuth(ctx context.Context, purpose QualifiedPurpose) (OAuthBearerLease, error) {
+func (b *HTTPBroker) LookupRequestAuth(ctx context.Context, purpose QualifiedPurpose) (RequestAuthHeaders, error) {
 	if err := purpose.validate(); err != nil {
-		return OAuthBearerLease{}, fmt.Errorf("request-auth purpose is invalid: %w", err)
+		return RequestAuthHeaders{}, fmt.Errorf("request-auth purpose is invalid: %w", err)
 	}
-	var lease OAuthBearerLease
+	var lease RequestAuthHeaders
 	err := b.post(ctx, ConnectedAccountRequestAuthLookupPath, struct {
 		Purpose QualifiedPurpose `json:"purpose"`
 	}{Purpose: purpose}, &lease, 0)
 	if err != nil {
-		return OAuthBearerLease{}, err
+		return RequestAuthHeaders{}, err
 	}
-	if err := validateLease(lease, time.Now()); err != nil {
-		return OAuthBearerLease{}, fmt.Errorf("request-auth broker returned an invalid lease: %w", err)
+	if err := validateRequestAuthHeaders(lease, time.Now()); err != nil {
+		return RequestAuthHeaders{}, fmt.Errorf("request-auth broker returned an invalid lease: %w", err)
 	}
 	return lease, nil
 }
@@ -204,11 +204,7 @@ func (b *HTTPBroker) readTransportTuple(ctx context.Context) (requestAuthTranspo
 		if !ok || scope.path != b.config.ConsumerAccessPath {
 			return requestAuthTransportTuple{}, &BrokerHTTPError{StatusCode: http.StatusServiceUnavailable, Code: "request_auth_unavailable"}
 		}
-		access, err := scope.current()
-		if err != nil {
-			return requestAuthTransportTuple{}, &BrokerHTTPError{StatusCode: http.StatusServiceUnavailable, Code: "request_auth_unavailable"}
-		}
-		path = access.CapabilityPath
+		path = scope.access.CapabilityPath
 	}
 	transport, err := readScopedCapability(path)
 	if err != nil {

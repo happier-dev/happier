@@ -12,12 +12,12 @@ func TestManagedPurposeConfigurationRequiresAndPropagatesModelListDeclaration(t 
 	}{
 		{
 			name:               "enabled",
-			configuration:      `{"v":3,"modelListEnabled":true,"purposes":[{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigin":"https://api.anthropic.com","protocols":["anthropic"]}]}`,
+			configuration:      `{"v":3,"modelListEnabled":true,"purposes":[{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigins":["https://api.anthropic.com"],"protocols":["anthropic"]}]}`,
 			wantModelListRoute: true,
 		},
 		{
 			name:               "disabled",
-			configuration:      `{"v":3,"modelListEnabled":false,"purposes":[{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigin":"https://api.anthropic.com","protocols":["anthropic"]}]}`,
+			configuration:      `{"v":3,"modelListEnabled":false,"purposes":[{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigins":["https://api.anthropic.com"],"protocols":["anthropic"]}]}`,
 			wantModelListRoute: false,
 		},
 	} {
@@ -52,7 +52,7 @@ func TestManagedPurposeConfigurationRequiresAndPropagatesModelListDeclaration(t 
 	}
 
 	_, err := ParseManagedPurposeConfiguration(
-		`{"v":2,"purposes":[{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigin":"https://api.anthropic.com","protocols":["anthropic"]}]}`,
+		`{"v":2,"purposes":[{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigins":["https://api.anthropic.com"],"protocols":["anthropic"]}]}`,
 	)
 	if err == nil {
 		t.Fatal("ParseManagedPurposeConfiguration() accepted a missing model-list declaration")

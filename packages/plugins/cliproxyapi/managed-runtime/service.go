@@ -262,12 +262,10 @@ func managedRuntimeAuth(entry AuthEntry) *coreauth.Auth {
 		coreauth.AttributeAuthKind:      coreauth.AuthKindOAuth,
 		coreauth.AttributeRuntimeOnly:   "true",
 		coreauth.AttributeSourceBackend: coreauth.AuthSourceMemory,
-		"websockets":                    "false",
 	}
-	if entry.Provider == ProviderCodex {
-		// This describes the SDK's widest static compatibility surface. Catalog
-		// rows remain explicitly account-unverified and do not claim entitlement.
-		attributes["plan_type"] = "pro"
+	family, _ := managedFamilyForProvider(entry.Provider)
+	for key, value := range family.SeedAttributes {
+		attributes[key] = value
 	}
 	metadata := map[string]any{
 		// A rejected lease must not poison the unrelated registration sentinel.
@@ -277,15 +275,9 @@ func managedRuntimeAuth(entry AuthEntry) *coreauth.Auth {
 			"action": coreauth.RequestScopedActionStop,
 		}},
 	}
-	registrationSentinel := "happier-registration-sentinel"
-	if entry.Provider == ProviderClaude {
-		// Keep the pinned executor on its subscription/OAuth translation path.
-		registrationSentinel = "sk-ant-oat01-happier-registration-sentinel"
-		// Leases carry the real credential only at the final transport boundary.
-		// Use the SDK's explicit opt-out from credential profile acquisition.
-		metadata["skip_account_profile"] = true
+	for key, value := range family.SeedMetadata {
+		metadata[key] = value
 	}
-	metadata["access_token"] = registrationSentinel
 	return &coreauth.Auth{
 		ID:         entry.ID,
 		Provider:   string(entry.Provider),

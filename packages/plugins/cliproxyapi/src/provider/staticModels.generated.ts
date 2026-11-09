@@ -921,5 +921,725 @@ export const CLIPROXYAPI_STATIC_MODELS = {
         "toolRoundTrips": "unsupported"
       }
     }
+  ],
+  "gemini": [
+    {
+      "id": "gemini-2.5-flash",
+      "name": "gemini-2.5-flash",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      }
+    },
+    {
+      "id": "gemini-2.5-flash-lite",
+      "name": "gemini-2.5-flash-lite",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      }
+    },
+    {
+      "id": "gemini-2.5-pro",
+      "name": "gemini-2.5-pro",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      }
+    },
+    {
+      "id": "gemini-3-flash-preview",
+      "name": "gemini-3-flash-preview",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "minimal",
+          "options": [
+            {
+              "value": "minimal",
+              "name": "Minimal"
+            },
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "medium",
+              "name": "Medium"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini-3-pro-image-preview",
+      "name": "gemini-3-pro-image-preview",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "low",
+          "options": [
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini-3-pro-preview",
+      "name": "gemini-3-pro-preview",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "low",
+          "options": [
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini-3.1-flash-image-preview",
+      "name": "gemini-3.1-flash-image-preview",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "minimal",
+          "options": [
+            {
+              "value": "minimal",
+              "name": "Minimal"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini-3.1-flash-lite-preview",
+      "name": "gemini-3.1-flash-lite-preview",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "minimal",
+          "options": [
+            {
+              "value": "minimal",
+              "name": "Minimal"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini-3.1-pro-preview",
+      "name": "gemini-3.1-pro-preview",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "low",
+          "options": [
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "medium",
+              "name": "Medium"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini-3.5-flash",
+      "name": "gemini-3.5-flash",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "minimal",
+          "options": [
+            {
+              "value": "minimal",
+              "name": "Minimal"
+            },
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "medium",
+              "name": "Medium"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini-3.5-flash-lite",
+      "name": "gemini-3.5-flash-lite",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "minimal",
+          "options": [
+            {
+              "value": "minimal",
+              "name": "Minimal"
+            },
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "medium",
+              "name": "Medium"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini-3.6-flash",
+      "name": "gemini-3.6-flash",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "minimal",
+          "options": [
+            {
+              "value": "minimal",
+              "name": "Minimal"
+            },
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "medium",
+              "name": "Medium"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini-3.8-flash",
+      "name": "gemini-3.8-flash",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "low",
+          "options": [
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "medium",
+              "name": "Medium"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini-4-argon",
+      "name": "gemini-4-argon",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "low",
+          "options": [
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "medium",
+              "name": "Medium"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "meta": [
+    {
+      "id": "muse-spark-1.1",
+      "name": "muse-spark-1.1",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "low",
+          "options": [
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "medium",
+              "name": "Medium"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            },
+            {
+              "value": "xhigh",
+              "name": "XHigh"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "muse-spark-1.2",
+      "name": "muse-spark-1.2",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "minimal",
+          "options": [
+            {
+              "value": "minimal",
+              "name": "Minimal"
+            },
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "medium",
+              "name": "Medium"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            },
+            {
+              "value": "xhigh",
+              "name": "XHigh"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "muse-spark-1.2-contributor",
+      "name": "muse-spark-1.2-contributor",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "minimal",
+          "options": [
+            {
+              "value": "minimal",
+              "name": "Minimal"
+            },
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "medium",
+              "name": "Medium"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            },
+            {
+              "value": "xhigh",
+              "name": "XHigh"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "muse-spark-1.3",
+      "name": "muse-spark-1.3",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "minimal",
+          "options": [
+            {
+              "value": "minimal",
+              "name": "Minimal"
+            },
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "medium",
+              "name": "Medium"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            },
+            {
+              "value": "xhigh",
+              "name": "XHigh"
+            },
+            {
+              "value": "max",
+              "name": "Max"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "muse-spark-1.3-contributor",
+      "name": "muse-spark-1.3-contributor",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "minimal",
+          "options": [
+            {
+              "value": "minimal",
+              "name": "Minimal"
+            },
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "medium",
+              "name": "Medium"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            },
+            {
+              "value": "xhigh",
+              "name": "XHigh"
+            },
+            {
+              "value": "max",
+              "name": "Max"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "muse-wonder-1.0",
+      "name": "muse-wonder-1.0",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "minimal",
+          "options": [
+            {
+              "value": "minimal",
+              "name": "Minimal"
+            },
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "medium",
+              "name": "Medium"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            },
+            {
+              "value": "xhigh",
+              "name": "XHigh"
+            },
+            {
+              "value": "max",
+              "name": "Max"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "muse-wonder-1.0-contributor",
+      "name": "muse-wonder-1.0-contributor",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "minimal",
+          "options": [
+            {
+              "value": "minimal",
+              "name": "Minimal"
+            },
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "medium",
+              "name": "Medium"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            },
+            {
+              "value": "xhigh",
+              "name": "XHigh"
+            },
+            {
+              "value": "max",
+              "name": "Max"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "muse-wonder-full-1.0",
+      "name": "muse-wonder-full-1.0",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "minimal",
+          "options": [
+            {
+              "value": "minimal",
+              "name": "Minimal"
+            },
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "medium",
+              "name": "Medium"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            },
+            {
+              "value": "xhigh",
+              "name": "XHigh"
+            },
+            {
+              "value": "max",
+              "name": "Max"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "muse-wonder-full-1.0-contributor",
+      "name": "muse-wonder-full-1.0-contributor",
+      "capabilities": {
+        "reasoningControls": "unknown",
+        "toolRoundTrips": "unknown"
+      },
+      "modelOptions": [
+        {
+          "id": "reasoning_effort",
+          "name": "Thinking",
+          "type": "select",
+          "currentValue": "minimal",
+          "options": [
+            {
+              "value": "minimal",
+              "name": "Minimal"
+            },
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "medium",
+              "name": "Medium"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            },
+            {
+              "value": "xhigh",
+              "name": "XHigh"
+            },
+            {
+              "value": "max",
+              "name": "Max"
+            }
+          ]
+        }
+      ]
+    }
   ]
 } satisfies Record<string, Extract<ProviderCatalogDeclarationV1, { source: 'static' }>['staticModels']>;

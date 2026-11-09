@@ -38,12 +38,12 @@ type ProviderConnectionPassThroughConfiguration struct {
 // validates and consumes the exact selected rows; it does not keep a second
 // purpose-to-provider or purpose-to-protocol table.
 type ManagedPurposeConfigurationRow struct {
-	ID                 string               `json:"id"`
-	Provider           Provider             `json:"provider"`
-	Consumer           ContributionIdentity `json:"consumer"`
-	Purpose            string               `json:"purpose"`
-	AllowedHTTPSOrigin string               `json:"allowedHttpsOrigin"`
-	Protocols          []ProviderProtocol   `json:"protocols"`
+	ID                  string               `json:"id"`
+	Provider            Provider             `json:"provider"`
+	Consumer            ContributionIdentity `json:"consumer"`
+	Purpose             string               `json:"purpose"`
+	AllowedHTTPSOrigins []string             `json:"allowedHttpsOrigins"`
+	Protocols           []ProviderProtocol   `json:"protocols"`
 }
 
 // ParseManagedPurposeConfiguration accepts only the non-secret, host-created
@@ -91,10 +91,10 @@ func ImmutableGatewayConfig(
 	seenProtocols := make(map[ProviderProtocol]struct{})
 	for _, row := range normalizedPurposeConfiguration.Purposes {
 		authEntries = append(authEntries, AuthEntry{
-			ID:                 row.ID,
-			Provider:           row.Provider,
-			Purpose:            QualifiedPurpose{Consumer: row.Consumer, Purpose: row.Purpose},
-			AllowedHTTPSOrigin: row.AllowedHTTPSOrigin,
+			ID:                  row.ID,
+			Provider:            row.Provider,
+			Purpose:             QualifiedPurpose{Consumer: row.Consumer, Purpose: row.Purpose},
+			AllowedHTTPSOrigins: row.AllowedHTTPSOrigins,
 		})
 		for _, protocol := range row.Protocols {
 			if _, exists := seenProtocols[protocol]; !exists {
@@ -149,10 +149,10 @@ func normalizeManagedPurposeConfiguration(
 	purposes := make([]ManagedPurposeConfigurationRow, 0, len(configuration.Purposes))
 	for _, row := range configuration.Purposes {
 		entry := AuthEntry{
-			ID:                 row.ID,
-			Provider:           row.Provider,
-			Purpose:            QualifiedPurpose{Consumer: row.Consumer, Purpose: row.Purpose},
-			AllowedHTTPSOrigin: row.AllowedHTTPSOrigin,
+			ID:                  row.ID,
+			Provider:            row.Provider,
+			Purpose:             QualifiedPurpose{Consumer: row.Consumer, Purpose: row.Purpose},
+			AllowedHTTPSOrigins: row.AllowedHTTPSOrigins,
 		}
 		if err := entry.validate(); err != nil || len(row.Protocols) == 0 {
 			return ManagedPurposeConfiguration{}, fmt.Errorf("managed purpose configuration is invalid")
@@ -182,12 +182,12 @@ func normalizeManagedPurposeConfiguration(
 			protocols = append(protocols, protocol)
 		}
 		purposes = append(purposes, ManagedPurposeConfigurationRow{
-			ID:                 row.ID,
-			Provider:           row.Provider,
-			Consumer:           row.Consumer,
-			Purpose:            row.Purpose,
-			AllowedHTTPSOrigin: row.AllowedHTTPSOrigin,
-			Protocols:          protocols,
+			ID:                  row.ID,
+			Provider:            row.Provider,
+			Consumer:            row.Consumer,
+			Purpose:             row.Purpose,
+			AllowedHTTPSOrigins: row.AllowedHTTPSOrigins,
+			Protocols:           protocols,
 		})
 	}
 	return ManagedPurposeConfiguration{

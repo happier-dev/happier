@@ -1,4 +1,6 @@
 {
   "managedPurpose.openai.title": "ChatGPT 帳戶或帳戶集區",
-  "managedPurpose.anthropic.title": "Claude 帳戶或帳戶集區"
+  "managedPurpose.anthropic.title": "Claude 帳戶或帳戶集區",
+  "managedPurpose.meta.title": "Muse 帳戶或集區",
+  "managedPurpose.gemini.title": "Gemini API 金鑰帳戶或帳戶池"
 }

@@ -15,7 +15,11 @@
     {"id": "upstream-v8-routes", "kind": "official-doc", "url": "https://github.com/router-for-me/CLIProxyAPI/blob/681ce41b6e44c45b15b79378b003909d6ba29e68/internal/api/server_routes.go", "accessedAt": "2026-11-09", "revision": "v8.0.61-681ce41b6e44c45b15b79378b003909d6ba29e68"},
     {"id": "upstream-v8-access", "kind": "official-doc", "url": "https://github.com/router-for-me/CLIProxyAPI/blob/681ce41b6e44c45b15b79378b003909d6ba29e68/internal/access/config_access/provider.go", "accessedAt": "2026-11-09", "revision": "v8.0.61-681ce41b6e44c45b15b79378b003909d6ba29e68"},
     {"id": "upstream-v8-release", "kind": "official-doc", "url": "https://github.com/router-for-me/CLIProxyAPI/blob/681ce41b6e44c45b15b79378b003909d6ba29e68/.github/workflows/release.yaml", "accessedAt": "2026-11-09", "revision": "v8.0.61-681ce41b6e44c45b15b79378b003909d6ba29e68"},
-    {"id": "v8-carrier-conformance", "kind": "repository-history", "locator": "packages/plugins/cliproxyapi/managed-runtime/cross_protocol_conformance_test.go", "accessedAt": "2026-11-09", "revision": "SDK-v8.0.61-681ce41b6e44c45b15b79378b003909d6ba29e68-stream-tools-cancel-errors"}
+    {"id": "v8-carrier-conformance", "kind": "repository-history", "locator": "packages/plugins/cliproxyapi/managed-runtime/cross_protocol_conformance_test.go", "accessedAt": "2026-11-09", "revision": "SDK-v8.0.61-681ce41b6e44c45b15b79378b003909d6ba29e68-stream-tools-cancel-errors"},
+    {"id": "managed-family-plan", "kind": "product-decision", "locator": ".project/plans/2026-11-09-muse-and-account-wiring/00-PROGRAM.md", "accessedAt": "2026-11-09", "revision": "2026-11-09-approved-family-owner-and-headers-materialization"},
+    {"id": "managed-family-contract", "kind": "repository-history", "locator": "packages/plugins/cliproxyapi/src/provider/managedContract.ts", "accessedAt": "2026-11-09", "revision": "SDK-v8.0.61-four-family-owner"},
+    {"id": "meta-family-conformance", "kind": "repository-history", "locator": "packages/plugins/cliproxyapi/managed-runtime/meta_conformance_test.go", "accessedAt": "2026-11-09", "revision": "SDK-v8.0.61-real-Meta-executor-headers-stream-tools-continuation"},
+    {"id": "gemini-family-conformance", "kind": "repository-history", "locator": "packages/plugins/cliproxyapi/managed-runtime/gemini_conformance_test.go", "accessedAt": "2026-11-09", "revision": "SDK-v8.0.61-real-Gemini-key-executor-stream-tools-continuation"}
   ],
   "facts": [
     {"path": "catalog.probes.cliproxyapi-openai-responses.openai-models", "sourceIds": ["upstream-v8-routes", "product-contract"], "status": "verified"},
@@ -52,11 +56,24 @@
     {"path": "managedRuntime.kind", "sourceIds": ["product-contract"], "status": "verified"},
     {"path": "managedRuntime.requestAuthUses.anthropic-upstream.materialization.headerNames.authorization", "sourceIds": ["product-contract"], "status": "verified"},
     {"path": "managedRuntime.requestAuthUses.anthropic-upstream.materialization.kind.httpHeaders", "sourceIds": ["product-contract"], "status": "verified"},
-    {"path": "managedRuntime.requestAuthUses.anthropic-upstream.materialization.origin.https%3A%2F%2Fapi.anthropic.com", "sourceIds": ["product-contract"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.anthropic-upstream.materialization.origin.https%3A%2F%2Fapi.anthropic.com", "sourceIds": ["managed-family-plan", "managed-family-contract"], "status": "verified"},
     {"path": "managedRuntime.requestAuthUses.openai-upstream.materialization.headerNames.authorization", "sourceIds": ["product-contract"], "status": "verified"},
     {"path": "managedRuntime.requestAuthUses.openai-upstream.materialization.headerNames.chatgpt-account-id", "sourceIds": ["product-contract"], "status": "verified"},
     {"path": "managedRuntime.requestAuthUses.openai-upstream.materialization.kind.httpHeaders", "sourceIds": ["product-contract"], "status": "verified"},
-    {"path": "managedRuntime.requestAuthUses.openai-upstream.materialization.origin.https%3A%2F%2Fchatgpt.com", "sourceIds": ["product-contract"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.openai-upstream.materialization.origin.https%3A%2F%2Fchatgpt.com", "sourceIds": ["managed-family-plan", "managed-family-contract"], "status": "verified"},
+    {"path": "managedRuntime.connectedAccounts.meta-upstream.required", "sourceIds": ["managed-family-plan", "managed-family-contract", "meta-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.connectedAccounts.meta-upstream.service.happier.agent.muse/muse-account", "sourceIds": ["managed-family-plan", "managed-family-contract", "meta-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.connectedAccounts.meta-upstream.materializationKinds.httpHeaders", "sourceIds": ["managed-family-plan", "managed-family-contract", "meta-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.meta-upstream.materialization.kind.httpHeaders", "sourceIds": ["managed-family-plan", "managed-family-contract", "meta-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.meta-upstream.materialization.headerNames.authorization", "sourceIds": ["managed-family-plan", "managed-family-contract", "meta-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.meta-upstream.materialization.headerNames.x-api-version", "sourceIds": ["managed-family-plan", "managed-family-contract", "meta-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.meta-upstream.materialization.origin.https%3A%2F%2Fapi.meta.ai", "sourceIds": ["managed-family-plan", "managed-family-contract", "meta-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.connectedAccounts.gemini-upstream.required", "sourceIds": ["managed-family-plan", "managed-family-contract", "gemini-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.connectedAccounts.gemini-upstream.service.happier.agent.gemini/gemini-account", "sourceIds": ["managed-family-plan", "managed-family-contract", "gemini-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.connectedAccounts.gemini-upstream.materializationKinds.httpHeaders", "sourceIds": ["managed-family-plan", "managed-family-contract", "gemini-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.gemini-upstream.materialization.kind.httpHeaders", "sourceIds": ["managed-family-plan", "managed-family-contract", "gemini-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.gemini-upstream.materialization.headerNames.x-goog-api-key", "sourceIds": ["managed-family-plan", "managed-family-contract", "gemini-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.gemini-upstream.materialization.origin.https%3A%2F%2Fgenerativelanguage.googleapis.com", "sourceIds": ["managed-family-plan", "managed-family-contract", "gemini-family-conformance"], "status": "verified"},
     {"path": "websiteUrl", "sourceIds": ["upstream-v8-overview"], "status": "verified"}
   ]
 }

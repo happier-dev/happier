@@ -9,11 +9,11 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
@@ -100,23 +100,6 @@ func (a consumerAccess) admits(purpose QualifiedPurpose) bool {
 	return false
 }
 
-func (s consumerRequestScope) current() (consumerAccess, error) {
-	consumers, err := readConsumerAccess(s.path)
-	if err != nil {
-		return consumerAccess{}, fmt.Errorf("consumer access is unavailable")
-	}
-	current, ok := findConsumer(consumers, s.access.Token)
-	if !ok || current.CapabilityPath != s.access.CapabilityPath || len(current.Purposes) != len(s.access.Purposes) || !reflect.DeepEqual(current.ModelCatalogs, s.access.ModelCatalogs) {
-		return consumerAccess{}, fmt.Errorf("consumer access is no longer admitted")
-	}
-	for _, purpose := range s.access.Purposes {
-		if !current.admits(purpose) {
-			return consumerAccess{}, fmt.Errorf("consumer access is no longer admitted")
-		}
-	}
-	return current, nil
-}
-
 func requestConsumerScope(ctx context.Context) (consumerRequestScope, bool) {
 	if scope, ok := ctx.Value(consumerRequestScopeKey{}).(consumerRequestScope); ok {
 		return scope, true
@@ -131,8 +114,9 @@ func requestConsumerScope(ctx context.Context) (consumerRequestScope, bool) {
 }
 
 type consumerInflightRequest struct {
-	cancel context.CancelFunc
-	done   chan struct{}
+	cancel    context.CancelFunc
+	done      chan struct{}
+	openEnded bool
 }
 
 type consumerAccessOwner struct {
@@ -199,7 +183,8 @@ func (o *consumerAccessOwner) middleware() gin.HandlerFunc {
 			return
 		}
 		ctx, cancel := context.WithCancel(c.Request.Context())
-		active := &consumerInflightRequest{cancel: cancel, done: make(chan struct{})}
+		active := &consumerInflightRequest{cancel: cancel, done: make(chan struct{}),
+			openEnded: c.Request.Method == http.MethodGet && websocket.IsWebSocketUpgrade(c.Request)}
 		if o.inflight[token] == nil {
 			o.inflight[token] = make(map[*consumerInflightRequest]struct{})
 		}
@@ -260,7 +245,11 @@ func (o *consumerAccessOwner) settle(c *gin.Context) {
 	pending := make([]*consumerInflightRequest, 0, len(o.inflight[input.Token]))
 	for active := range o.inflight[input.Token] {
 		pending = append(pending, active)
-		active.cancel()
+		// Generated SSE is finite admitted work. Only an open-ended
+		// interactive connection closes when the consumer is withdrawn.
+		if active.openEnded {
+			active.cancel()
+		}
 	}
 	o.mu.Unlock()
 	for _, active := range pending {
@@ -289,10 +278,7 @@ func (s *consumerAdmissionSelector) Pick(ctx context.Context, provider, model st
 	if !ok {
 		return nil, fmt.Errorf("consumer access is required")
 	}
-	access, err := scope.current()
-	if err != nil {
-		return nil, err
-	}
+	access := scope.access
 	admitted := make([]*coreauth.Auth, 0, len(auths))
 	for _, auth := range auths {
 		if auth == nil {

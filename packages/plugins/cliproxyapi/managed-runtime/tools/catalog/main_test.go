@@ -23,7 +23,15 @@ func TestGeneratedCatalogMatchesPinnedSDKSource(t *testing.T) {
 	if err := json.Unmarshal(data, &module); err != nil {
 		t.Fatal(err)
 	}
-	want, err := generate(module.Dir, module.Version)
+	familyJSON, err := exec.Command("node", "--experimental-strip-types", "../../../tools/catalog/generate.mjs", "--print-families").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	families, err := readFamilies(bytes.NewReader(familyJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := generate(module.Dir, module.Version, families)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,6 +48,9 @@ func TestGeneratedCatalogMatchesPinnedSDKSource(t *testing.T) {
 	modelJSON := strings.SplitN(string(want), "export const CLIPROXYAPI_STATIC_MODELS = ", 2)[1]
 	if err := json.Unmarshal([]byte(strings.SplitN(modelJSON, " satisfies ", 2)[0]), &rows); err != nil {
 		t.Fatal(err)
+	}
+	if len(rows["meta"]) == 0 {
+		t.Fatal("managed Meta family is missing its pinned SDK compatibility catalog")
 	}
 	images := map[string]bool{
 		"gpt-image-1.5": false, "gpt-image-2": false,
@@ -83,7 +94,7 @@ func TestGeneratedCatalogMatchesPinnedSDKSource(t *testing.T) {
 	t.Run("Go health SDK identity follows the selected module", func(t *testing.T) {
 		file, err := parser.ParseFile(token.NewFileSet(), "../../sdk_version.generated.go", nil, 0)
 		if err != nil {
-			t.Fatalf("generated SDK version is missing or invalid: %v; run go -C managed-runtime run ./tools/catalog from the plugin root", err)
+			t.Fatalf("generated SDK version is missing or invalid: %v; run node --experimental-strip-types ./tools/catalog/generate.mjs from the plugin root", err)
 		}
 		for _, declaration := range file.Decls {
 			constants, ok := declaration.(*ast.GenDecl)
@@ -115,6 +126,21 @@ func TestGeneratedCatalogMatchesPinnedSDKSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(got, want) {
-		t.Fatal("static model output is stale: run go -C managed-runtime run ./tools/catalog from the plugin root")
+		t.Fatal("static model output is stale: run node --experimental-strip-types ./tools/catalog/generate.mjs from the plugin root")
+	}
+	wantFamilies, err := generateFamilies(families)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotFamilies, err := os.ReadFile("../../families.generated.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotFamilies, wantFamilies) {
+		t.Fatal("managed family output is stale: run node --experimental-strip-types ./tools/catalog/generate.mjs from the plugin root")
+	}
+	families[0].SDK.Catalog.Getter = "GetMissingManagedCatalog"
+	if _, err := generate(module.Dir, module.Version, families); err == nil || !strings.Contains(err.Error(), "GetMissingManagedCatalog") {
+		t.Fatalf("unknown SDK getter must identify the failing family accessor: %v", err)
 	}
 }

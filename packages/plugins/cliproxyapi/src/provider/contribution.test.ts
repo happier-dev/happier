@@ -4,6 +4,45 @@ import { ProviderContributionV1Schema } from '@happier-dev/protocol';
 import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from './contribution.js';
 
 describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
+  it('publishes the Gemini key route with its native header and credential-free catalog', () => {
+    const parsed = ProviderContributionV1Schema.parse(CLIPROXYAPI_PROVIDER_CONTRIBUTION);
+    expect(parsed.managedRuntime?.connectedAccounts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        purpose: 'gemini-upstream',
+        service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' },
+        endpointTemplateIds: ['cliproxyapi-openai-chat', 'cliproxyapi-openai-responses', 'cliproxyapi-anthropic'],
+        staticModels: expect.arrayContaining([expect.objectContaining({ id: 'gemini-2.5-flash' })]),
+      }),
+    ]));
+    expect(parsed.managedRuntime?.requestAuthUses).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        purpose: 'gemini-upstream',
+        materialization: {
+          kind: 'httpHeaders', origin: 'https://generativelanguage.googleapis.com',
+          headerNames: ['x-goog-api-key'],
+        },
+      }),
+    ]));
+  });
+  it('publishes the Muse key route through the same managed account declaration', () => {
+    const parsed = ProviderContributionV1Schema.parse(CLIPROXYAPI_PROVIDER_CONTRIBUTION);
+    expect(parsed.managedRuntime?.connectedAccounts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        purpose: 'meta-upstream',
+        service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
+        staticModels: expect.arrayContaining([expect.objectContaining({ id: 'muse-spark-1.3' })]),
+      }),
+    ]));
+    expect(parsed.managedRuntime?.requestAuthUses).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        purpose: 'meta-upstream',
+        materialization: {
+          kind: 'httpHeaders', origin: 'https://api.meta.ai',
+          headerNames: ['authorization', 'x-api-version'],
+        },
+      }),
+    ]));
+  });
   it('publishes credential-free SDK compatibility models for each managed service without claiming tool support', () => {
     const parsed = ProviderContributionV1Schema.parse(CLIPROXYAPI_PROVIDER_CONTRIBUTION);
     const families = parsed.managedRuntime?.connectedAccounts ?? [];
@@ -132,19 +171,19 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
       managedRuntime: {
         kind: 'managed',
         connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
-        connectedAccounts: [{
+        connectedAccounts: expect.arrayContaining([expect.objectContaining({
           purpose: 'openai-upstream',
           title: {
             key: 'managedPurpose.openai.title',
             fallback: 'ChatGPT account or pool',
           },
-        }, {
+        }), expect.objectContaining({
           purpose: 'anthropic-upstream',
           title: {
             key: 'managedPurpose.anthropic.title',
             fallback: 'Claude account or pool',
           },
-        }],
+        })]),
       },
       catalog: {
         source: 'probe',
