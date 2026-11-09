@@ -701,9 +701,9 @@ describe('reachable preset detail', () => {
       await hook.unmount();
     }
   });
-  it.each(['use', 'create'] as const)(
-    'reviews a delegated Team preset without controller inventory, credential choices or private probes (%s)',
-    async (intent) => {
+  it.each([['use', undefined], ['create', 'Company builder']] as const)(
+    'admits current delegated reviewed facts with the live catalog disabled, without controller inventory or private probes (%s)',
+    async (intent, controllerDisplayName) => {
       const serverId = await seed();
       const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
       const { storage } = await import('@/sync/domains/state/storage');
@@ -712,7 +712,7 @@ describe('reachable preset detail', () => {
         preset: {
           ...preset,
           owner: { kind: 'team', teamId: 'team-1' },
-          controllerDisplayName: 'Company builder',
+          controllerDisplayName,
           retention: { kind: 'unused', afterMs: 60_000, effect: 'delete' },
           wakeOnAcceptedMessage: false,
         },
@@ -824,7 +824,9 @@ describe('reachable preset detail', () => {
       await waitForHomeGovernance(() =>
         expect(screen.findByTestId(actionTestId)?.props.disabled).toBe(false),
       );
-      expect(screen.tree.findAll(node => node.props.children === 'Company builder').length).toBeGreaterThan(0);
+      expect(screen.tree.findByType(MachineConfigurationReceipt).props.model.facts).toContainEqual(
+        expect.objectContaining({ id: 'controller', value: controllerDisplayName ?? t('managedMachines.receipt.managingComputer') }),
+      );
       await act(async () => screen.pressByTestId(actionTestId));
       if (intent === 'use')
         expect(onUse).toHaveBeenCalledWith(

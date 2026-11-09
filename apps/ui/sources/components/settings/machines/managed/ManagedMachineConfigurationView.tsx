@@ -59,14 +59,16 @@ import { useProjectedConnectedServicesRegistry, useProjectedPluginLocalizedTextR
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { createMachinePresetCollectionClient } from './machinePresetCollectionClient';
 import type { MachinePresetCollectionOptions, MachinePresetCollectionSettledResult } from './machinePresetCollectionClient';
-import { useMachinePresetQuery, isMachinePresetAccessLost } from './useMachinePresets';
+import { useMachinePresetQuery, useMachinePresets, isMachinePresetAccessLost } from './useMachinePresets';
+import { ManagedStartFromSection, managedStartFromPresets } from './ManagedStartFromSection';
+import { showManagedCreationReview } from './ManagedCreationReview';
 import { isAuthoritativeScopedSnapshotRefusal } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { ManagedScopeRow } from './ManagedScopeRow';
 import { ManagedMachineConfigurator } from './ManagedMachineConfigurator';
 import { ManagedCreationDisabledBanner } from './ManagedMachineStateRow';
 import { useManagedControllerScope } from './useManagedControllerScope';
 import { buildManagedConfigurationReceipt, describeLocalHeadroom, describeManagedConfigurationSummary, formatManagedSizeBytes, managedAgentSignInReceiptFacts, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
-import { MachineSetupSection } from './MachineSetupSection';
+import { MachineSetupSection, describeMachineSetup } from './MachineSetupSection';
 import { ManagedEnrollmentIdentitySection, isManagedEnrollmentIdentityReviewed } from './ManagedEnrollmentIdentitySection';
 import { ManagedFieldRow, managedPresetLimitRow } from './MachinePresetDetail';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
@@ -112,10 +114,27 @@ export type ManagedMachineConfigurationViewProps = Readonly<{
     /** Add-to-Preset hand-off: the editor starts from this draft plus the item, and returns after its own Save or Cancel. */
     presetContinuation?: MachinePresetEditContinuation;
 }>;
+const NO_SERVERS: readonly string[] = [];
+const NO_PRESETS: readonly ManagedMachinePresetV1[] = [];
+
 export function ManagedMachineConfigurationView(props: ManagedMachineConfigurationViewProps) {
-    return <ManagedMachineConfigurationViewBody key={JSON.stringify([props.serverId, props.provisioner, props.presetId, props.initialOptionsSelectors])} {...props} />;
+    // "Start from" is chosen above the per-preset draft below, so its own list stays while that draft is re-read.
+    const offersStartFrom = !props.presetOnly && !props.onUse && !!props.provisioner;
+    const serverIds = React.useMemo(() => offersStartFrom ? [props.serverId] : NO_SERVERS, [offersStartFrom, props.serverId]);
+    const listed = useMachinePresets(serverIds).presetsByServerId[props.serverId] ?? NO_PRESETS;
+    const startFromPresets = React.useMemo(() => managedStartFromPresets(listed, props.provisioner), [listed, props.provisioner]);
+    const [startFrom, setStartFrom] = React.useState<Readonly<{ routePresetId: string | undefined; presetId: string | undefined }> | null>(null);
+    const presetId = startFrom && startFrom.routePresetId === props.presetId ? startFrom.presetId : props.presetId;
+    const routePresetId = props.presetId;
+    const onStartFromChange = React.useCallback((next: string | null) =>
+        setStartFrom({ routePresetId, presetId: next ?? undefined }), [routePresetId]);
+    const showsStartFrom = offersStartFrom && startFromPresets.length > 0 && (!presetId || startFromPresets.some(preset => preset.id === presetId));
+    return <ManagedMachineConfigurationViewBody key={JSON.stringify([props.serverId, props.provisioner, presetId, props.initialOptionsSelectors])} {...props} presetId={presetId}
+        startFrom={showsStartFrom ? { presets: startFromPresets, onChange: onStartFromChange } : undefined} />;
 }
-function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationViewProps) {
+function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationViewProps & Readonly<{
+    startFrom?: Readonly<{ presets: readonly ManagedMachinePresetV1[]; onChange: (presetId: string | null) => void }>;
+}>) {
     const approvalHandler = React.useRef<(registration: ActionApprovalRegistration) => void>(() => {});
     const onApprovalPending = React.useCallback((registration: ActionApprovalRegistration) => approvalHandler.current(registration), []);
     const router = useRouter();
@@ -562,7 +581,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         [receiptController?.installationId]));
     const knownControllerName = liveControllerName ?? savedControllerName;
     // Sentences ("Runs on …", "How much CPU and memory … has free") never say "Unknown": an unnamed controller is the
-    // computer that manages it. The receipt's labelled fact keeps its explicit unknown value.
+    // computer that manages it. A delegated receipt also uses that label without reading the controller.
     const controllerName = knownControllerName ?? t('managedMachines.receipt.managingComputer');
     const activeBinding = catalog.binding;
     const missingLaunchField = launchFields.find(field => field.required && isBlankInput(readInputPath(fieldInput, field.path)));
@@ -570,7 +589,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // One decision owns both admission of the Create control and the reason beside it.
     const creationUnavailableReason = busy ? t('common.loading')
         : !activeBinding?.isCurrent() ? t('common.unavailable')
-        : !catalogCurrent || !catalogProvisioner ? t('managedMachines.providers.unavailable')
+        : (!delegatedReview && !catalogCurrent) || !catalogProvisioner ? t('managedMachines.providers.unavailable')
         : needsApp ? t('managedMachines.add.status.needsApp')
         : accountHostUnreadable ? t('common.unavailable')
         : accountHostPending ? t('managedMachines.options.loading', { provider: title })
@@ -695,8 +714,21 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // A hand-off into the editor goes back the way it came; leaving writes nothing.
     const continuationCancel: ManagedReceiptModel['secondary'] = continuation ? [{ label: t('common.cancel'), onPress: continuation.onReturn,
         disabled: busy, testID: 'managed-config.continuation-cancel', tone: 'text' }] : undefined;
+    // A Preset with setup changes the new Machine: the receipt's Create opens one review of what it does, and that review's confirm is the Create.
+    const reviewsSetup = !props.presetOnly && !props.onUse && !!draft?.preset && describeMachineSetup(draft.setup).length > 0;
+    const openCreationReview = () => {
+        if (!draft?.preset || !draft.setup) return;
+        const identity = draft.enrollmentIdentity;
+        const cost = receipt.cost && receipt.cost.kind !== 'unpriced' ? presentManagedCost(receipt.cost) : null;
+        showManagedCreationReview({ name: draft.name, setup: draft.setup, scope: activeBinding?.scope ?? null,
+            preset: { name: draft.preset.name ?? title, revision: draft.preset.revision },
+            server: { title, spec: [summarySpec, cost ? `${cost.value}${cost.unit}` : null].filter(Boolean).join(' · '), mark: receiptMark },
+            administrator: identity?.kind === 'dedicatedDaemonUser' ? t(`managedMachines.identity.${identity.adminAccessAtCreation}`) : undefined,
+            confirmLabel: [t('managedMachines.creationReview.confirm'), cost ? `${cost.value}${cost.unit}` : null].filter(Boolean).join(' · '),
+            onConfirm: () => { void create(); } });
+    };
     const receipt: ManagedReceiptModel = {
-        ...(receiptFacts ? buildManagedConfigurationReceipt({ launch: receiptFacts.launch, reviewedFacts: receiptFacts, providerTitle: title, controllerName: knownControllerName, homeName, mark: receiptMark, localized,
+        ...(receiptFacts ? buildManagedConfigurationReceipt({ launch: receiptFacts.launch, reviewedFacts: receiptFacts, providerTitle: title, controllerName: delegatedAcquire ? controllerName : knownControllerName, homeName, mark: receiptMark, localized,
             ...(acquireTarget === 'account' && !receiptController ? { managedBy: 'account' as const } : {}), agentSignIn,
             credentialPresentations: credentialAccounts.presentationsByKey, keepEditedBelow: Boolean(keepPolicy && defaultPolicy),
             enrollmentIdentity: props.presetOnly ? undefined : draft?.enrollmentIdentity })
@@ -733,9 +765,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             onChange: policy => setDraft(current => current ? { ...current, override: policy } : current),
             onReset: () => setDraft(current => current ? { ...current, override: undefined,
                 preset: props.presetOnly && current.preset ? { id: current.preset.id, revision: current.preset.revision, name: current.preset.name } : current.preset } : current), disabled: !catalogPlacementAvailable || !catalogProvisioner || busy } : undefined,
-        primary: { label: props.presetOnly ? t('common.save') : props.onUse ? props.startsSession ? t('managedMachines.receipt.createAndStart') : t('common.use') : provisioner?.descriptor.kindTitle
+        primary: { label: reviewsSetup ? t('managedMachines.receipt.reviewAndCreate') : props.presetOnly ? t('common.save') : props.onUse ? props.startsSession ? t('managedMachines.receipt.createAndStart') : t('common.use') : provisioner?.descriptor.kindTitle
             ? t('managedMachines.receipt.createKind', { kind: localized(provisioner.contribution.pluginId, provisioner.descriptor.kindTitle) }) : t('managedMachines.add.create'),
-            onPress: () => { if (props.presetOnly) void save(); else if (props.onUse) commitUse(); else void create(); },
+            onPress: () => { if (props.presetOnly) void save(); else if (props.onUse) commitUse(); else if (reviewsSetup) openCreationReview(); else void create(); },
             disabled: props.presetOnly ? !maySave : !mayCreate, loading: busy, testID: props.onUse && !props.presetOnly ? 'managed-config.use' : 'managed-config.create',
             // Who bills, under the action that starts the billing; only where the provisioner declares it.
             ...(!props.presetOnly && (creationUnavailableReason ?? billingFootnote)
@@ -938,6 +970,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         {!props.presetOnly && preset?.archivedAt !== undefined ? <AttentionBanner testID="managed-config.preset-archived" tone="neutral" title={t('machinePresets.archived')} /> : null}
         {/* A failure leads the form column, where the choices would be: below a long page it would sit out of sight on a phone. */}
         {errorNotice}
+        {props.startFrom ? <ManagedStartFromSection testID="managed-config.start-from" presets={props.startFrom.presets}
+            selectedId={props.presetId ?? null} disabled={busy} onChange={props.startFrom.onChange} /> : null}
         {draft && credentialPurposes?.length ? <ItemGroup title={t('managedMachines.receipt.account')}
             description={!requiredCredentialPurposes?.length ? t('common.optional') : credentialsReady ? undefined
                 : t(requiredCredentialPurposes.some(({ options }) => options.length === 0) ? 'managedMachines.credential.required' : 'managedMachines.credential.choose')}>
