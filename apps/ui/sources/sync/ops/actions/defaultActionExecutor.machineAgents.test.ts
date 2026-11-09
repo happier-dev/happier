@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { buildConfiguredAcpAgentSelectionV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { DaemonAgentInstallStartResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { AccountSettingsV2UpdateRequestSchema, ARTIFACT_PLAIN_DATA_KEY_MARKER, BUILT_IN_ROLES_V1, RoleActionOutputSchemasV1,
@@ -407,7 +408,8 @@ describe('UI machine Agent inventory Action transport', () => {
         ]);
     });
 
-    it('includes the captured Account managed definitions in definition-qualified Machine inventory', async () => {
+    it.each([undefined, 'custom-acp', buildConfiguredAcpAgentSelectionV1('managed-definition').agentId])(
+        'includes the captured Account managed definitions in Machine inventory selected by %s', async (agentId) => {
         const serverId = await addHome({ name: 'Managed Inventory Home', serverUrl: 'https://managed-inventory.test', accountId: 'alice' });
         harness.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
         const record = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: [{ id: 'managed-definition',
@@ -428,16 +430,17 @@ describe('UI machine Agent inventory Action transport', () => {
             }] } }] });
             expect(JSON.stringify(payload)).not.toContain('PRIVATE_ENV');
             return { protocolVersion: 1, results: { 'tool.acpAgentInventory': { ok: true, checkedAt: 1,
-                data: { items: [{ ...facts, agentId: 'custom-acp', definitionId: 'managed-definition',
+                data: { items: [{ ...facts, agentId: buildConfiguredAcpAgentSelectionV1('managed-definition').agentId, definitionId: 'managed-definition',
                     title: 'Managed definition', installed: true, managed: true, version: '1.0.0',
                     fit: { kind: 'can_run', via: 'npm' }, dependencies: [] }] },
             } } };
         });
         const inventory = await createDefaultActionExecutor().execute('machines.agents.list', {
-            machineId: 'machine-1', definitionId: 'managed-definition',
+            machineId: 'machine-1', ...(agentId ? { agentId } : {}), definitionId: 'managed-definition',
         }, { surface: 'ui', authority: 'present_user', serverId });
         expect(inventory, JSON.stringify({ inventory, paths: harness.requests.map(request => request.path) })).toMatchObject({ ok: true,
-            result: { items: [{ agentId: 'custom-acp', definitionId: 'managed-definition', installed: true, version: '1.0.0' }] },
+            result: { items: [{ agentId: buildConfiguredAcpAgentSelectionV1('managed-definition').agentId,
+                definitionId: 'managed-definition', installed: true, version: '1.0.0' }] },
         });
     });
 
@@ -455,7 +458,7 @@ describe('UI machine Agent inventory Action transport', () => {
             }] } }] });
             expect(JSON.stringify(payload)).not.toContain('PRIVATE_ENV');
             return { protocolVersion: 1, results: { 'tool.acpAgentInventory': { ok: true, checkedAt: 1,
-                data: { items: [{ ...facts, agentId: 'custom-acp', definitionId: 'draft-agent', title: 'Draft agent',
+                data: { items: [{ ...facts, agentId: buildConfiguredAcpAgentSelectionV1('draft-agent').agentId, definitionId: 'draft-agent', title: 'Draft agent',
                     installed: true, managed: false, fit: { kind: 'can_run', via: 'command' }, dependencies: [] }] },
             } } };
         });

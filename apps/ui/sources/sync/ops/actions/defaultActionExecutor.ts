@@ -60,7 +60,9 @@ import type { SettingsDeclarationOperationInputV1 } from '@happier-dev/protocol/
 import { recoverHistoricalAutomationTemplates } from '@/sync/ops/account/recoverHistoricalAutomationTemplates';
 import { startAgentSignInRpc, checkAgentSignInRpc } from '@/agents/machineAgents/signIn/api';
 import { buildSessionPermissionRespondRpcParamsV1, buildSessionUserActionAnswerDetails, buildSessionUserActionAnswerMap } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
-import { buildMachineAgentsDetectRequest, projectMachineAgentsDetectResponse, projectAcpCatalogForMachineInventory, MachineAgentInventoryUnavailableError } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { buildMachineAgentInventoryKey, buildMachineAgentsDetectRequest, projectMachineAgentsDetectResponse, projectAcpCatalogForMachineInventory, MachineAgentInventoryUnavailableError } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { agentRoutingIdAddressesContributionIdentityV1 } from '@happier-dev/protocol/plugins/contributionIdentity';
 import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1, listApprovalArtifactsV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { StoredApprovalRequestSchema, readApprovalRequesterDecisionV1, resolveApprovalExecutor, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
@@ -3736,7 +3738,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     machinesAgentsList: async (args, context) => {
       const catalog = args.draftDefinitions ? { definitions: args.draftDefinitions }
         : projectAcpCatalogForMachineInventory(await readAccountAcpCatalog({ signal: context.signal }));
-      const definitions = catalog.definitions?.filter(definition => (!args.agentId || args.agentId === 'custom-acp')
+      const includesConfiguredDefinitions = !args.agentId
+        || agentRoutingIdAddressesContributionIdentityV1(args.agentId, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1);
+      const definitions = catalog.definitions?.filter(definition => includesConfiguredDefinitions
         && (!args.definitionId || definition.definitionId === args.definitionId)) ?? [];
       // Executable-only draft probes need no plugin roster and never carry env material.
       const roster = args.draftDefinitions ? { supported: true as const, projection: { agentsById: {} } }
@@ -3750,7 +3754,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         return { ok: false, errorCode: 'machine_agent_inventory_unavailable', error: 'machine_agent_inventory_unavailable' };
       }
       const agents = buildMachineAgentInventoryDescriptors({ pluginProjectionV2: roster.projection, definitions })
-        .filter(({ agentId, definitionId }) => (!args.agentId || args.agentId === agentId)
+        .filter(({ agentId, definitionId }) => (!args.agentId
+          || buildMachineAgentInventoryKey({ agentId: args.agentId, definitionId }) === buildMachineAgentInventoryKey({ agentId, definitionId }))
           && (!args.definitionId || args.definitionId === definitionId));
       const inventory = { definitions, ...('definitionCatalog' in catalog && catalog.definitionCatalog
         ? { definitionCatalog: catalog.definitionCatalog } : {}) };

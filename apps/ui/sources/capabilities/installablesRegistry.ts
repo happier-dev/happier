@@ -15,12 +15,6 @@ import {
 
 export type { InstallableAutoUpdateMode, InstallableDefaultPolicy };
 
-import {
-    buildCodexAcpLatestVersionDetectRequest,
-    getCodexAcpDepData,
-    getCodexAcpDetectResult,
-    shouldPrefetchCodexAcpLatestVersion,
-} from './codexAcpDep';
 import { isLatestVersionCheckDue } from '@/updates/latestVersionCheckFreshness';
 
 export type InstallableDepDataLike = {
@@ -313,35 +307,6 @@ export function getInstallablesRegistryEntries(
             descriptionKey: 'deps.installable.difftastic.description',
             iconName: 'arrows-left-right',
         }),
-        [INSTALLABLE_KEYS.CODEX_ACP]: {
-            enabledWhen: () => true,
-            title: t('deps.installable.codexAcp.title'),
-            subtitle: null,
-            iconName: 'arrows-left-right',
-            setupUrl: null,
-            groupTitleKey: 'newSession.codexAcpBanner.title',
-            supportsManagedOverrideInstall: false,
-            installLabels: {
-                install: t('newSession.codexAcpBanner.install'),
-                update: t('newSession.codexAcpBanner.update'),
-                reinstall: t('newSession.codexAcpBanner.reinstall'),
-            },
-            installModal: {
-                installTitle: t('newSession.codexAcpInstallModal.installTitle'),
-                updateTitle: t('newSession.codexAcpInstallModal.updateTitle'),
-                reinstallTitle: t('newSession.codexAcpInstallModal.reinstallTitle'),
-                description: t('newSession.codexAcpInstallModal.description'),
-            },
-            getStatus: (results) => getCodexAcpDepData(results),
-            getDetectResult: (results) => getCodexAcpDetectResult(results),
-            shouldPrefetchLatestVersion: ({ requireExistingResult, result, data }) =>
-                shouldPrefetchCodexAcpLatestVersion({
-                    requireExistingResult,
-                    result,
-                    data: data ?? null,
-                }),
-            buildLatestVersionDetectRequest: buildCodexAcpLatestVersionDetectRequest,
-        },
         [INSTALLABLE_KEYS.GH]: {
             enabledWhen: () => true,
             title: t('deps.installable.gh.title'),

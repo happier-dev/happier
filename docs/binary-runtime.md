@@ -49,6 +49,24 @@ cancellation, plugin retirement and Processes custody with the LSP host.
 Diagnostics stream independently of the supervisor's retained output preview;
 no result-count or output-size cap is imposed by the checker.
 
+## Configured binary dependencies (0.3 development source)
+
+A managed dependency with a `githubReleaseBinary` source can declare a
+`configured_binary` launch: its executable override, configuration arguments,
+and ordered legacy executable paths belong to that selected contribution.
+The generic release adapter uses the selected descriptor for status, launch,
+installation and updates; it does not select a built-in Agent implicitly.
+Machine tools and update views use that declaration's capability and display metadata.
+Release asset targeting remains optional; status and installation share the
+same release selector. Explicit overrides retain priority, followed by the
+requested system or managed preference. Existing install consent and dependency-keyed install state remain
+with the runtime installable owner.
+
+Codex ACP declares its historical npm shims through this same launch contract.
+Windows tries `.cmd`, `.exe`, then the extensionless shim; POSIX tries the
+extensionless shim. Each historical shim requires the existing managed
+JavaScript runtime, while the current native release binary does not.
+
 ## Runtime contract
 
 In current development source, `scripts/pipeline/release/bun-standalone.entitlements.plist`

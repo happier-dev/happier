@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
     AZ_INSTALLABLE_DESCRIPTOR,
     COMPUTER_AGENT_DESKTOP_INSTALLABLE_DESCRIPTOR,
@@ -12,6 +12,26 @@ import { type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributi
 import { getInstallablesRegistryEntries } from './installablesRegistry';
 
 describe('getInstallablesRegistryEntries', () => {
+    it('uses the selected contribution capability even when its key matches a released installable', () => {
+        const [entry] = getInstallablesRegistryEntries({ projectedInstallables: [{
+            id: 'selected-runtime',
+            key: 'codex-acp',
+            capabilityId: 'dep.selected-runtime',
+            sourceKind: 'github_release_binary',
+            display: { name: 'Selected runtime' },
+            defaultPolicy: { autoInstallWhenNeeded: false, autoUpdateMode: 'notify' },
+            experimental: false,
+        }] });
+        if (!entry) throw new Error('Missing selected runtime');
+        const data = { installed: true, installedVersion: '1.0.0', sourceKind: 'github_release_binary', lastInstallLogPath: null, lastBackgroundUpdateCheckAtMs: null };
+        const result = { ok: true, checkedAt: 1, data } as const;
+        expect(entry.getDetectResult({ 'dep.selected-runtime': result })).toBe(result);
+        expect(entry.getStatus({ 'dep.selected-runtime': result })).toBe(data);
+        expect(entry.buildLatestVersionDetectRequest()).toEqual({ requests: [{
+            id: 'dep.selected-runtime', params: { includeLatestVersion: true, onlyIfInstalled: true },
+        }] });
+    });
+
     it.each([
         AZ_INSTALLABLE_DESCRIPTOR,
         COMPUTER_AGENT_DESKTOP_INSTALLABLE_DESCRIPTOR,
@@ -34,6 +54,30 @@ describe('getInstallablesRegistryEntries', () => {
             descriptor,
         })] });
         expect(entries[0]?.subtitle).toBe(descriptor.description);
+    });
+
+    it('refreshes a carried-forward version check using its own timestamp', () => {
+        const now = new Date('2026-02-08T00:00:00.000Z').getTime();
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+        try {
+            const entry = getInstallablesRegistryEntries().find(candidate => candidate.key === AZ_INSTALLABLE_DESCRIPTOR.key);
+            if (!entry) throw new Error('Missing declared installable');
+            expect(entry.shouldPrefetchLatestVersion({
+                requireExistingResult: true,
+                result: { ok: true, checkedAt: now, data: {} },
+                data: {
+                    installed: true,
+                    installedVersion: '1.0.0',
+                    sourceKind: 'manual_only',
+                    lastInstallLogPath: null,
+                    lastBackgroundUpdateCheckAtMs: null,
+                    latestVersionCheck: {
+                        ok: true, latestVersion: '1.0.1', label: 'v1.0.1',
+                        checkedAt: now - 2 * 24 * 60 * 60 * 1000,
+                    },
+                },
+            })).toBe(true);
+        } finally { clock.mockRestore(); }
     });
 
     it.each(['local-embeddings', 'local-voice-runtime', 'difftastic'] as const)('exposes %s for offline preinstallation without version polling', (key) => {
