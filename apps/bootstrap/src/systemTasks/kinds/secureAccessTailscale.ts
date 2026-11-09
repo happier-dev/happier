@@ -16,6 +16,7 @@ import {
   type RelayAccessConfig,
   type RelayAccessExecutionContext,
   type RelayAccessProvider,
+  type RelayAccessStatus,
 } from '@happier-dev/cli-common/relayAccess';
 import {
   createTailscaleReadinessRuntimeDeps,
@@ -69,9 +70,11 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
     void
   > {
     const parsed = parseSecureAccessTailscaleParams(params);
+    const config = createBuiltinRelayAccessSelection(parsed.providerId);
     let state = yield* runTailscaleReadinessFlow(parsed, deps, context);
 
     if (state.shareableHttpsUrl) {
+      await deps.relayAccess.writeConfig({ target: parsed.target, config });
       yield {
         type: 'progress',
         stepId: 'tailscale.verifyUrl',
@@ -109,7 +112,7 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
       params: {
         target: serializeSecureAccessTailscaleTarget(parsed.target),
         upstreamUrl: parsed.upstreamUrl,
-        config: createBuiltinRelayAccessSelection(parsed.providerId),
+        config,
       },
       ...(context?.signal ? { signal: context.signal } : {}),
       emit: () => undefined,
@@ -118,6 +121,7 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
       },
     });
 
+    assertTailscaleOperatorAuthorized(secureAccessResult.status);
     const approvalUrl = resolveApprovalUrlFromRelayAccessDetails(secureAccessResult.status.details);
     if (approvalUrl) {
       yield {
@@ -332,6 +336,7 @@ async function inspectSecureAccessTailscaleState(
     ...(options?.deadline ? { deadline: options.deadline } : {}),
     ...(options?.signal ? { signal: options.signal } : {}),
   });
+  assertTailscaleOperatorAuthorized(relayAccessStatus);
 
   return {
     installed: true,
@@ -341,6 +346,16 @@ async function inspectSecureAccessTailscaleState(
     authUrl: status.authUrl,
     shareableHttpsUrl: appendServePathToHttpsUrl(relayAccessStatus.shareUrl ?? null, params.servePath),
   };
+}
+
+function assertTailscaleOperatorAuthorized(status: Pick<RelayAccessStatus, 'state' | 'details'>): void {
+  if (status.state !== 'error' || !status.details || typeof status.details !== 'object' || Array.isArray(status.details)) {
+    return;
+  }
+  const details = status.details as Record<string, unknown>;
+  if (details.code === 'tailscale_operator_authorization_refused' && typeof details.message === 'string') {
+    throw new systemTasks.SystemTaskExecutionError(details.code, details.message);
+  }
 }
 
 function resolveApprovalUrlFromRelayAccessDetails(details: unknown): string | null {

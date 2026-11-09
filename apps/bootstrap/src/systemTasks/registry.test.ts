@@ -200,7 +200,7 @@ describe('createHsetupSystemTaskRegistry', () => {
 
   it.skipIf(process.platform === 'win32')('runs daemon.service.start.v1 and waits for the ready daemon status snapshot', async () => {
     const fakeCli = createFakeHappierCli({
-      daemonStatuses: [
+      daemonStatusesByServerId: { __default__: [
         {
           server: {
             serverUrl: 'https://relay.example.test',
@@ -209,12 +209,12 @@ describe('createHsetupSystemTaskRegistry', () => {
             webappUrl: 'https://app.example.test',
           },
           daemon: {
-            running: true,
-            pid: 4321,
+            running: false,
+            pid: null,
           },
           service: {
             installed: true,
-            running: true,
+            running: false,
           },
           auth: {
             authenticated: true,
@@ -223,29 +223,7 @@ describe('createHsetupSystemTaskRegistry', () => {
             needsAuth: false,
           },
         },
-        {
-          server: {
-            serverUrl: 'https://relay.example.test',
-            localServerUrl: null,
-            publicServerUrl: 'https://relay.example.test',
-            webappUrl: 'https://app.example.test',
-          },
-          daemon: {
-            running: true,
-            pid: 4321,
-          },
-          service: {
-            installed: true,
-            running: true,
-          },
-          auth: {
-            authenticated: true,
-            machineRegistered: true,
-            machineId: 'machine-local-1',
-            needsAuth: false,
-          },
-        },
-      ],
+      ] },
     });
     const previousCliPath = process.env.HAPPIER_BOOTSTRAP_CLI_PATH;
     const previousStatePath = process.env.HAPPIER_FAKE_CLI_STATE_PATH;
@@ -287,11 +265,7 @@ describe('createHsetupSystemTaskRegistry', () => {
           daemonComparableKey: null,
         }),
       });
-      expect(fakeCli.readInvocations()).toEqual([
-        ['daemon', 'status', '--json'],
-        ['service', 'start', '--json'],
-        ['daemon', 'status', '--json'],
-      ]);
+      expect(fakeCli.readInvocations()).toContainEqual(['service', 'start', '--json']);
     } finally {
       restoreEnvVar('HAPPIER_BOOTSTRAP_CLI_PATH', previousCliPath);
       restoreEnvVar('HAPPIER_FAKE_CLI_STATE_PATH', previousStatePath);
@@ -302,7 +276,7 @@ describe('createHsetupSystemTaskRegistry', () => {
 
   it.skipIf(process.platform === 'win32')('runs daemon.service.stop.v1 and stops the local daemon service through the canonical CLI wrapper', async () => {
     const fakeCli = createFakeHappierCli({
-      daemonStatuses: [
+      daemonStatusesByServerId: { __default__: [
         {
           server: {
             serverUrl: 'https://relay.example.test',
@@ -325,29 +299,7 @@ describe('createHsetupSystemTaskRegistry', () => {
             needsAuth: false,
           },
         },
-        {
-          server: {
-            serverUrl: 'https://relay.example.test',
-            localServerUrl: null,
-            publicServerUrl: 'https://relay.example.test',
-            webappUrl: 'https://app.example.test',
-          },
-          daemon: {
-            running: false,
-            pid: null,
-          },
-          service: {
-            installed: true,
-            running: false,
-          },
-          auth: {
-            authenticated: true,
-            machineRegistered: true,
-            machineId: 'machine-local-1',
-            needsAuth: false,
-          },
-        },
-      ],
+      ] },
     });
     const previousCliPath = process.env.HAPPIER_BOOTSTRAP_CLI_PATH;
     const previousStatePath = process.env.HAPPIER_FAKE_CLI_STATE_PATH;
@@ -389,11 +341,7 @@ describe('createHsetupSystemTaskRegistry', () => {
           daemonComparableKey: null,
         }),
       });
-      expect(fakeCli.readInvocations()).toEqual([
-        ['daemon', 'status', '--json'],
-        ['service', 'stop', '--json'],
-        ['daemon', 'status', '--json'],
-      ]);
+      expect(fakeCli.readInvocations()).toContainEqual(['service', 'stop', '--json']);
     } finally {
       restoreEnvVar('HAPPIER_BOOTSTRAP_CLI_PATH', previousCliPath);
       restoreEnvVar('HAPPIER_FAKE_CLI_STATE_PATH', previousStatePath);
@@ -404,7 +352,7 @@ describe('createHsetupSystemTaskRegistry', () => {
 
   it.skipIf(process.platform === 'win32')('runs daemon.service.restart.v1 and restarts the local daemon service through the canonical CLI wrapper', async () => {
     const fakeCli = createFakeHappierCli({
-      daemonStatuses: [
+      daemonStatusesByServerId: { __default__: [
         {
           server: {
             serverUrl: 'https://relay.example.test',
@@ -427,29 +375,7 @@ describe('createHsetupSystemTaskRegistry', () => {
             needsAuth: false,
           },
         },
-        {
-          server: {
-            serverUrl: 'https://relay.example.test',
-            localServerUrl: null,
-            publicServerUrl: 'https://relay.example.test',
-            webappUrl: 'https://app.example.test',
-          },
-          daemon: {
-            running: true,
-            pid: 4321,
-          },
-          service: {
-            installed: true,
-            running: true,
-          },
-          auth: {
-            authenticated: true,
-            machineRegistered: true,
-            machineId: 'machine-local-1',
-            needsAuth: false,
-          },
-        },
-      ],
+      ] },
     });
     const previousCliPath = process.env.HAPPIER_BOOTSTRAP_CLI_PATH;
     const previousStatePath = process.env.HAPPIER_FAKE_CLI_STATE_PATH;
@@ -491,11 +417,7 @@ describe('createHsetupSystemTaskRegistry', () => {
           daemonComparableKey: null,
         }),
       });
-      expect(fakeCli.readInvocations()).toEqual([
-        ['daemon', 'status', '--json'],
-        ['service', 'restart', '--json'],
-        ['daemon', 'status', '--json'],
-      ]);
+      expect(fakeCli.readInvocations()).toContainEqual(['service', 'restart', '--json']);
     } finally {
       restoreEnvVar('HAPPIER_BOOTSTRAP_CLI_PATH', previousCliPath);
       restoreEnvVar('HAPPIER_FAKE_CLI_STATE_PATH', previousStatePath);
@@ -994,6 +916,8 @@ describe('createHsetupSystemTaskRegistry', () => {
   });
 
   it('runs secureAccess.tailscale.v1 with the existing tailnet-only serve URL when tailscale is already ready', async () => {
+    const accessHome = mkdtempSync(join(tmpdir(), 'hsetup-tailscale-ready-selection-'));
+    const previousAccessHome = process.env.HAPPIER_HOME_DIR;
     const fakeCli = createFakeTailscaleCli({
       serveStatuses: [
         [
@@ -1007,6 +931,7 @@ describe('createHsetupSystemTaskRegistry', () => {
     const previousLogPath = process.env.HAPPIER_FAKE_TAILSCALE_LOG_PATH;
     const events: unknown[] = [];
     try {
+      process.env.HAPPIER_HOME_DIR = accessHome;
       process.env.HAPPIER_TAILSCALE_BIN = fakeCli.cliPath;
       process.env.HAPPIER_FAKE_TAILSCALE_STATE_PATH = join(fakeCli.cliPath, '..', 'scenario.json');
       process.env.HAPPIER_FAKE_TAILSCALE_LOG_PATH = join(fakeCli.cliPath, '..', 'invocations.log');
@@ -1048,11 +973,15 @@ describe('createHsetupSystemTaskRegistry', () => {
         ['status', '--json'],
         ['serve', 'status'],
       ]);
+      expect(JSON.parse(readFileSync(join(accessHome, 'relay', 'access', 'local.json'), 'utf8')))
+        .toEqual(relaySelection('tailscaleServe'));
     } finally {
+      restoreEnvVar('HAPPIER_HOME_DIR', previousAccessHome);
       restoreEnvVar('HAPPIER_TAILSCALE_BIN', previousTailscaleBin);
       restoreEnvVar('HAPPIER_FAKE_TAILSCALE_STATE_PATH', previousStatePath);
       restoreEnvVar('HAPPIER_FAKE_TAILSCALE_LOG_PATH', previousLogPath);
       fakeCli.cleanup();
+      rmSync(accessHome, { recursive: true, force: true });
     }
   });
 

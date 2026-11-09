@@ -1,6 +1,6 @@
 import {
   createLocalHappierJsonExecutor,
-  createSetupMachineRecipeExecutorFromHappierJsonExecutor,
+  createEnrollMachineFlowExecutorFromHappierJsonExecutor,
   DEFAULT_HAPPIER_CLI_ENV_VAR_NAMES,
   readLocalServerProfileScope,
   resolveExplicitOrInstalledLocalFirstPartyCommand,
@@ -9,7 +9,7 @@ import {
   type HappierServerScope,
   type LocalFirstPartyCommandProvenance,
   type LocalServerProfileScope,
-  type SetupMachineRecipeExecutor,
+  type EnrollMachineFlowExecutor,
 } from '@happier-dev/cli-common/systemTasks';
 import { readMachineDaemonOwnershipMetadataFromSocketAuth, type MachineDaemonOwnershipMetadata } from '@happier-dev/protocol';
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
@@ -23,18 +23,18 @@ export type LocalSetupRelayProfile = Readonly<{
 }>;
 
 /**
- * The one local-machine recipe executor behind `setup.thisComputer.v1` and
+ * The one local-machine flow executor behind `setup.thisComputer.v1` and
  * `setup.repairThisComputer.v1`: every setup/repair step runs the managed `happier` CLI for the
  * selected release ring through the canonical JSON executor and its canonical status readers.
  */
-export function createLocalSetupRecipeExecutor(params: Readonly<{
+export function createLocalSetupFlowExecutor(params: Readonly<{
   signal?: AbortSignal;
   releaseRing?: PublicReleaseRingId;
   takeOverManualRelayRuntime?: boolean;
   scopeToConfiguredServer?: boolean;
   knownServerScope?: LocalServerProfileScope | null;
-}>): SetupMachineRecipeExecutor {
-  return createSetupMachineRecipeExecutorFromHappierJsonExecutor({
+}>): EnrollMachineFlowExecutor {
+  return createEnrollMachineFlowExecutorFromHappierJsonExecutor({
     executor: createLocalHappierJsonExecutor({ releaseRing: params.releaseRing, signal: params.signal }),
     options: {
       takeOverManualRelayRuntime: params.takeOverManualRelayRuntime,

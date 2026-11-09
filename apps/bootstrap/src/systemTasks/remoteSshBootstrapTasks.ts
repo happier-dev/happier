@@ -29,7 +29,6 @@ import { runLocalHappierJsonCommand } from './happierCli.js';
 import { redactSshText } from '../ssh/index.js';
 import { extractSshHost, normalizeBootstrapChannel, parseFirstJsonObject, resolveDefaultKnownHostsPath, runCommandCapture } from './taskRuntime.js';
 import { installOrUpdateRelayRuntimeDefault } from './relayRuntimeTasks.js';
-import { installRemoteFirstPartyComponent } from './remoteFirstPartyPayloadInstaller.js';
 
 type SshConnectionConfig = SystemTaskSshConnectionConfig;
 type SshConnectionWithPasswordConfig = SshConnectionConfig & Readonly<{ password?: string }>;
@@ -96,24 +95,6 @@ export async function resolveRemoteSshHostTrustDefault(params: Readonly<{
   };
 }
 
-export async function installRemoteCliDefault(params: Readonly<{
-  parsed: RemoteBootstrapMachineParams;
-  auth: Readonly<{ mode: 'agent' } | { mode: 'keyFile'; privateKeyPath: string } | { mode: 'password'; password: string }>;
-  knownHostsMode: 'app' | 'system';
-  signal?: AbortSignal;
-}>, deps: Readonly<{
-  installRemoteFirstPartyComponent?: typeof installRemoteFirstPartyComponent;
-}> = {}): Promise<void> {
-  const ssh = buildRemoteSshConnection(params.parsed.ssh, params.auth);
-  await (deps.installRemoteFirstPartyComponent ?? installRemoteFirstPartyComponent)({
-    componentId: 'happier-cli',
-    channel: params.parsed.channel,
-    ssh,
-    knownHostsMode: params.knownHostsMode,
-    ...(params.signal ? { signal: params.signal } : {}),
-  });
-}
-
 export function createRemoteEnrollmentExecutorDefault(params: Readonly<{
   parsed: RemoteBootstrapMachineParams;
   auth: Readonly<{ mode: 'agent' } | { mode: 'keyFile'; privateKeyPath: string } | { mode: 'password'; password: string }>;
@@ -127,6 +108,7 @@ export function createRemoteEnrollmentExecutorDefault(params: Readonly<{
     auth: openSshAuth,
     knownHostsMode: params.knownHostsMode,
     channel: normalizeBootstrapChannel(params.parsed.channel).releaseChannel,
+    enrollmentIdentity: params.parsed.enrollmentIdentity,
     runRemoteText: async ({ remoteCommand, input, onStdoutChunk, includeStdoutInError, timeoutMs, signal }) => (
       await runOpenSshRemoteCommand({
         target: ssh.target,
@@ -250,6 +232,7 @@ export async function runRemoteBootstrapCommandDefault(params: Readonly<{
     webappUrl,
     ...(shouldPreferLocal ? { localServerUrl: relayLocalServerUrl } : {}),
     daemonServiceMode: params.parsed.serviceMode,
+    enrollmentIdentity: params.parsed.enrollmentIdentity,
     data: params.data,
   });
 

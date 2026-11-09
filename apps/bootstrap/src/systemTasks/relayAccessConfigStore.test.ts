@@ -10,6 +10,17 @@ import type { SystemTaskSshConnectionConfig } from '@happier-dev/cli-common/syst
 import { createRelayAccessConfigStore } from './relayAccessConfigStore.js';
 
 describe('relayAccessConfigStore', () => {
+  it('reads the canonical selection from the exact addressed SSH target', async () => {
+    const config = { provider: { kind: 'builtin', id: 'lan' }, config: { url: 'https://relay.remote.example.test' }, credentialRefs: [] };
+    const ssh: SystemTaskSshConnectionConfig = { target: 'dev@example.test', auth: 'agent', port: 2222 };
+    const runRemoteText = vi.fn(async () => ({ status: 0, stdout: JSON.stringify(config), stderr: '' }));
+    const store = createRelayAccessConfigStore({ resolveHappyHomeDir: () => '/unused-local-home', ssh: {
+      runRemoteText, copyLocalFileToRemote: async () => undefined,
+    } });
+    expect(await store.readConfig({ target: { kind: 'ssh', ssh } })).toEqual(config);
+    expect(runRemoteText).toHaveBeenCalledWith(expect.objectContaining({ ssh }));
+  });
+
   it('writes local relay access config into an already-resolved happy home dir (no nested .happier)', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'hsetup-relay-access-local-'));
     const happyHomeDir = join(rootDir, '.happier');

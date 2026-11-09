@@ -11,7 +11,7 @@ vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>()), spawn: spawnMock,
 }));
 
-import { readLocalServerProfileScopeForRelay } from './localSetupExecutor.js';
+import { readLocalServerProfileScopeForRelay } from './localSetupFlowExecutor.js';
 
 afterEach(() => { vi.unstubAllEnvs(); spawnMock.mockReset(); });
 

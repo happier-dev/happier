@@ -9,7 +9,7 @@ import {
   readBackgroundServiceSetupGuidance,
   readLocalCliUpdateFact,
   resolveBackgroundServiceSetupReconciliationDisposition,
-  runSetupMachineRecipe,
+  runEnrollMachineFlow,
   SystemTaskExecutionError,
   type BackgroundServiceSetupGuidance,
   type BackgroundServiceSetupServiceTarget,
@@ -22,7 +22,7 @@ import {
   type LocalServerProfileScope,
   type InteractiveSystemTaskContext,
   type InteractiveSystemTaskKind,
-  type SetupMachineRecipeExecutor,
+  type EnrollMachineFlowExecutor,
   updateManagedLocalFirstPartyComponent,
 } from '@happier-dev/cli-common/systemTasks';
 import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/agents';
@@ -57,14 +57,14 @@ import {
 } from '../happierCli.js';
 
 import {
-  createLocalSetupRecipeExecutor,
+  createLocalSetupFlowExecutor,
   readLocalActiveRelayProfile,
   readLocalCurrentRelayOwner,
   readLocalServerProfileScopeForRelay,
   readLocalSetupCliAcquisition,
   type LocalSetupCliAcquisition,
   type LocalSetupRelayProfile,
-} from './localSetupExecutor.js';
+} from './localSetupFlowExecutor.js';
 import { resolveManagedCliBinDir } from './cliPathExposure.js';
 import { requestTokenOnlyPairingApproval } from './tokenOnlyPairingApproval.js';
 
@@ -118,7 +118,7 @@ function emitCommandDiagnostics(
   });
 }
 
-function createInstrumentedRecipeExecutor(
+function createInstrumentedFlowExecutor(
   ctx: Readonly<{
     emit: (event: Readonly<{
       type: string;
@@ -131,12 +131,12 @@ function createInstrumentedRecipeExecutor(
     takeOverManualRelayRuntime?: boolean;
     releaseRing?: PublicReleaseRingId;
   }>,
-  recipeExecutor: SetupMachineRecipeExecutor,
-): SetupMachineRecipeExecutor {
+  flowExecutor: EnrollMachineFlowExecutor,
+): EnrollMachineFlowExecutor {
   const takeoverArgs = params.takeOverManualRelayRuntime === true ? ['--takeover'] : [];
   const commandInvoker = resolveCliInvokerNameForPublicRing(params.releaseRing ?? 'stable');
-  const requestAuthPairing = recipeExecutor.requestAuthPairing;
-  const waitForAuthPairing = recipeExecutor.waitForAuthPairing;
+  const requestAuthPairing = flowExecutor.requestAuthPairing;
+  const waitForAuthPairing = flowExecutor.waitForAuthPairing;
   if (!requestAuthPairing || !waitForAuthPairing) {
     throw new SystemTaskExecutionError(
       'invalid_setup_executor',
@@ -144,7 +144,7 @@ function createInstrumentedRecipeExecutor(
     );
   }
   return {
-    ...recipeExecutor,
+    ...flowExecutor,
     async configureRelay(profile) {
       emitCommandDiagnostics(ctx, {
         stepId: 'setup.thisComputer.configureRelay',
@@ -163,7 +163,7 @@ function createInstrumentedRecipeExecutor(
           ],
         },
       });
-      await recipeExecutor.configureRelay(profile);
+      await flowExecutor.configureRelay(profile);
     },
     async readAuthStatus() {
       emitCommandDiagnostics(ctx, {
@@ -174,7 +174,7 @@ function createInstrumentedRecipeExecutor(
           args: ['auth', 'status', '--json'],
         },
       });
-      return await recipeExecutor.readAuthStatus();
+      return await flowExecutor.readAuthStatus();
     },
     async requestAuthPairing() {
       emitCommandDiagnostics(ctx, {
@@ -200,7 +200,7 @@ function createInstrumentedRecipeExecutor(
       return await waitForAuthPairing(publicKey);
     },
     async approveAuthPairing(publicKey, requestPayload) {
-      if (!recipeExecutor.approveAuthPairing) {
+      if (!flowExecutor.approveAuthPairing) {
         return;
       }
       emitCommandDiagnostics(ctx, {
@@ -212,10 +212,10 @@ function createInstrumentedRecipeExecutor(
           details: publicKey ? 'Approving the local pairing request for this computer.' : undefined,
         },
       });
-      await recipeExecutor.approveAuthPairing(publicKey, requestPayload);
+      await flowExecutor.approveAuthPairing(publicKey, requestPayload);
     },
     async installDaemonService(opts) {
-      if (!recipeExecutor.installDaemonService) {
+      if (!flowExecutor.installDaemonService) {
         return;
       }
       const args = [
@@ -230,10 +230,10 @@ function createInstrumentedRecipeExecutor(
         message: `Running ${commandInvoker} ${args.join(' ')}`,
         diagnostics: { command: commandInvoker, args },
       });
-      await recipeExecutor.installDaemonService(opts);
+      await flowExecutor.installDaemonService(opts);
     },
     async startDaemonService(opts) {
-      if (!recipeExecutor.startDaemonService) {
+      if (!flowExecutor.startDaemonService) {
         return;
       }
       const args = ['service', 'start', ...((opts?.takeover ?? takeoverArgs.length > 0) ? ['--takeover'] : []), '--json'];
@@ -242,10 +242,10 @@ function createInstrumentedRecipeExecutor(
         message: `Running ${commandInvoker} ${args.join(' ')}`,
         diagnostics: { command: commandInvoker, args },
       });
-      await recipeExecutor.startDaemonService(opts);
+      await flowExecutor.startDaemonService(opts);
     },
     async restartDaemonService() {
-      if (!recipeExecutor.restartDaemonService) {
+      if (!flowExecutor.restartDaemonService) {
         return;
       }
       emitCommandDiagnostics(ctx, {
@@ -253,10 +253,10 @@ function createInstrumentedRecipeExecutor(
         message: `Running ${commandInvoker} service restart --json`,
         diagnostics: { command: commandInvoker, args: ['service', 'restart', '--json'] },
       });
-      await recipeExecutor.restartDaemonService();
+      await flowExecutor.restartDaemonService();
     },
     async waitForReadyDaemon(params) {
-      if (!recipeExecutor.waitForReadyDaemon) {
+      if (!flowExecutor.waitForReadyDaemon) {
         return {
           serviceInstalled: false,
           daemonRunning: false,
@@ -273,7 +273,7 @@ function createInstrumentedRecipeExecutor(
           details: 'Checking whether the background service is installed, running, and authenticated for the selected Relay.',
         },
       });
-      return await recipeExecutor.waitForReadyDaemon(params);
+      return await flowExecutor.waitForReadyDaemon(params);
     },
   };
 }
@@ -333,7 +333,7 @@ export type SetupThisComputerInteractiveDeps = Readonly<{
    */
   ensureLocalHappierTools: (params: FirstPartyAcquisitionOptions & Readonly<{ releaseChannel?: PublicReleaseRingId }>) => Promise<LocalSetupCliAcquisition>;
   readActiveRelayProfile: (params: Readonly<{ releaseRing?: PublicReleaseRingId }>) => Promise<SetupThisComputerRelayProfile>;
-  createRecipeExecutor: (params: Readonly<{
+  createFlowExecutor: (params: Readonly<{
     signal?: AbortSignal;
     releaseRing?: PublicReleaseRingId;
     takeOverManualRelayRuntime?: boolean;
@@ -341,7 +341,7 @@ export type SetupThisComputerInteractiveDeps = Readonly<{
     scopeToConfiguredServer?: boolean;
     /** The explicit Home's scope read before any write, so the executor never re-decides it. */
     knownServerScope?: LocalServerProfileScope | null;
-  }>) => SetupMachineRecipeExecutor;
+  }>) => EnrollMachineFlowExecutor;
   /**
    * Read-only: which saved profile the explicit Home is and which server the terminal follows
    * (`server list --json`). Runs before any consent, so it must never write.
@@ -385,7 +385,7 @@ export type SetupThisComputerInteractiveDeps = Readonly<{
  */
 type MutatingSetupThisComputerDepName =
   | 'ensureLocalHappierTools'
-  | 'createRecipeExecutor'
+  | 'createFlowExecutor'
   | 'switchDefaultReleaseChannel'
   | 'exposeHappierCliOnPath'
   | 'upgradeCliForTokenOnlyPairing'
@@ -553,16 +553,16 @@ export function createSetupThisComputerInteractiveTaskKind(
 
       const settledGuidance = guidance;
 
-      // The recipe configures the explicit relay before it reads auth status and pairs, so the
+      // The flow configures the explicit relay before it reads auth status and pairs, so the
       // terminal always targets the Home that is being approved. Each run builds its executor
       // fresh, so a retry after a CLI replacement drives the new CLI.
-      const runRecipe = async () => await runSetupMachineRecipe({
+      const runFlow = async () => await runEnrollMachineFlow({
         relayProfile,
         ...(parsed.activeAccountId ? { expectedAccountId: parsed.activeAccountId } : {}),
-        executor: createInstrumentedRecipeExecutor(
+        executor: createInstrumentedFlowExecutor(
           ctx,
           { releaseRing, takeOverManualRelayRuntime: shouldTakeOverManualRelayRuntime },
-          deps.createRecipeExecutor({
+          deps.createFlowExecutor({
             signal: ctx.signal,
             releaseRing,
             takeOverManualRelayRuntime: shouldTakeOverManualRelayRuntime,
@@ -637,9 +637,9 @@ export function createSetupThisComputerInteractiveTaskKind(
       // R12: the services this run does not converge itself, as they were before it touched any.
       const servicesBeforeRun = answeredCliChoice && deps.cliChoice ? await deps.cliChoice.readServices() : null;
 
-      let recipeResult: Awaited<ReturnType<typeof runRecipe>>;
+      let flowResult: Awaited<ReturnType<typeof runFlow>>;
       try {
-        recipeResult = await runRecipe();
+        flowResult = await runFlow();
       } catch (error) {
         // R3-3: a managed CLI that predates token-only pairing (or profile-scoped setup) is replaced
         // by the newer CLI on its channel through the acquisition owner, and setup runs once more
@@ -666,12 +666,12 @@ export function createSetupThisComputerInteractiveTaskKind(
         });
         if (!upgraded) throw error;
         ctx.signal?.throwIfAborted();
-        recipeResult = await runRecipe();
+        flowResult = await runFlow();
       }
 
       if (servicesBeforeRun && deps.cliChoice) {
         // One CLI per home and ring: every other service of this home follows the answer too, each
-        // at its own target; the one this run set up was converged by the recipe above.
+        // at its own target; the one this run set up was converged by the flow above.
         const convergence = await deps.cliChoice.convergeServices({
           signal: ctx.signal,
           services: servicesBeforeRun,
@@ -690,7 +690,7 @@ export function createSetupThisComputerInteractiveTaskKind(
         }
       }
 
-      const machineId = recipeResult.machineId;
+      const machineId = flowResult.machineId;
       if (!machineId) {
         throw new SystemTaskExecutionError(
           'machine_id_unavailable',
@@ -970,7 +970,7 @@ export function createProductionSetupThisComputerInteractiveDeps(): Pick<
       });
       return readLocalSetupCliAcquisition({ ...(releaseChannel ? { releaseRing: releaseChannel } : {}) });
     },
-    createRecipeExecutor: createLocalSetupRecipeExecutor,
+    createFlowExecutor: createLocalSetupFlowExecutor,
     upgradeCliForTokenOnlyPairing: async ({ releaseChannel, signal, onProgress }) => {
       const fact = readLocalCliUpdateFact({ ...(releaseChannel ? { releaseRing: releaseChannel } : {}) });
       if (!fact?.managed || !fact.updateAvailable) return false;

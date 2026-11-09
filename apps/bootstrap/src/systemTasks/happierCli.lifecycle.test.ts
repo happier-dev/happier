@@ -8,7 +8,7 @@ vi.mock('node:child_process', async (original) => ({
 }));
 
 import { runLocalHappierJsonCommand } from './happierCli.js';
-import { createLocalSetupRecipeExecutor } from './kinds/localSetupExecutor.js';
+import { createLocalSetupFlowExecutor } from './kinds/localSetupFlowExecutor.js';
 import { createDaemonServiceStartHandler, createDaemonServiceStopHandler, createDaemonServiceRestartHandler } from './kinds/daemonService.js';
 
 function childFixture() {
@@ -36,13 +36,13 @@ it('lets a legacy local service install finish beyond 60 seconds without changin
   await expect(result).resolves.toEqual({ ok: true });
 });
 
-it('cancels an in-flight local recipe service command using the task signal', async () => {
+it('cancels an in-flight local flow service command using the task signal', async () => {
   vi.useFakeTimers();
   const child = childFixture();
   const controller = new AbortController();
   const params = { releaseRing: 'stable' as const, signal: controller.signal };
-  const recipe = createLocalSetupRecipeExecutor(params);
-  const result = recipe.startDaemonService!().catch((error: unknown) => error);
+  const flow = createLocalSetupFlowExecutor(params);
+  const result = flow.startDaemonService!().catch((error: unknown) => error);
   await vi.advanceTimersByTimeAsync(1);
   expect(spawnMock).toHaveBeenCalled();
   controller.abort();

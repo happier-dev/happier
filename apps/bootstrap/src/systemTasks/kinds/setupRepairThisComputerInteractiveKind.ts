@@ -1,26 +1,26 @@
 import {
   readBackgroundServiceSetupGuidance,
   resolveBackgroundServiceSetupReconciliationDisposition,
-  runSetupMachineRecipe,
+  runEnrollMachineFlow,
   SystemTaskExecutionError,
   type BackgroundServiceSetupGuidance,
   type BackgroundServiceSetupServiceTarget,
   type InteractiveSystemTaskKind,
   type LocalServerProfileScope,
-  type SetupMachineRecipeExecutor,
+  type EnrollMachineFlowExecutor,
 } from '@happier-dev/cli-common/systemTasks';
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import { normalizeBootstrapChannel } from '../taskRuntime.js';
 
 import {
-  createLocalSetupRecipeExecutor,
+  createLocalSetupFlowExecutor,
   readLocalActiveRelayProfile,
   readLocalServerProfileScopeForRelay,
   readLocalSetupCliAcquisition,
   type LocalSetupCliAcquisition,
   type LocalSetupRelayProfile,
-} from './localSetupExecutor.js';
+} from './localSetupFlowExecutor.js';
 import { requestTokenOnlyPairingApproval } from './tokenOnlyPairingApproval.js';
 
 export type SetupRepairThisComputerParams = Readonly<{
@@ -38,12 +38,12 @@ export type SetupRepairThisComputerParams = Readonly<{
 
 export type SetupRepairThisComputerInteractiveDeps = Readonly<{
   readActiveRelayProfile: (params: Readonly<{ releaseRing?: PublicReleaseRingId }>) => Promise<LocalSetupRelayProfile>;
-  createRecipeExecutor: (params: Readonly<{
+  createFlowExecutor: (params: Readonly<{
     signal?: AbortSignal;
     releaseRing?: PublicReleaseRingId;
     scopeToConfiguredServer?: boolean;
     knownServerScope?: LocalServerProfileScope | null;
-  }>) => SetupMachineRecipeExecutor;
+  }>) => EnrollMachineFlowExecutor;
   /** Read-only resolution of the explicit Home's saved profile; spawns the real CLI, so it has no default. */
   readServerProfileScope: (params: Readonly<{
     releaseRing?: PublicReleaseRingId;
@@ -116,19 +116,19 @@ function parseSetupRepairThisComputerParams(params: unknown): SetupRepairThisCom
 }
 
 /**
- * Local drift/needs-auth repair: the same canonical local-machine recipe as `setup.thisComputer.v1`
+ * Local drift/needs-auth repair: the same canonical local-machine flow as `setup.thisComputer.v1`
  * (configure the explicit relay → pair → install → start → prove readiness) without the guided
  * service-conflict preflight, on the repair step ids. Pairing is approved through the same blocking
  * token-only prompt the desktop approval owner already answers for local setup; a missing token-only
  * material or a declined answer fails with a named error instead of waiting on nothing.
  */
 /**
- * `createRecipeExecutor` is the gateway to every mutating CLI operation this kind performs
+ * `createFlowExecutor` is the gateway to every mutating CLI operation this kind performs
  * (relay repoint, pairing, credential write, service install/start). It has **no default**, so a
  * construction that forgets it is a compile error rather than a silent run against the developer's
  * real machine. The two read-only deps keep their defaults.
  */
-type RequiredSetupRepairDepName = 'createRecipeExecutor' | 'readServerProfileScope';
+type RequiredSetupRepairDepName = 'createFlowExecutor' | 'readServerProfileScope';
 
 export type SetupRepairThisComputerInteractiveDepsInput =
   Pick<SetupRepairThisComputerInteractiveDeps, RequiredSetupRepairDepName>
@@ -140,7 +140,7 @@ export function createProductionSetupRepairThisComputerInteractiveDeps(): Pick<
   RequiredSetupRepairDepName
 > {
   return {
-    createRecipeExecutor: createLocalSetupRecipeExecutor,
+    createFlowExecutor: createLocalSetupFlowExecutor,
     readServerProfileScope: readLocalServerProfileScopeForRelay,
   };
 }
@@ -203,10 +203,10 @@ export function createSetupRepairThisComputerInteractiveTaskKind(
         );
       }
 
-      const recipeResult = await runSetupMachineRecipe({
+      const flowResult = await runEnrollMachineFlow({
         relayProfile,
         ...(parsed.activeAccountId ? { expectedAccountId: parsed.activeAccountId } : {}),
-        executor: deps.createRecipeExecutor({
+        executor: deps.createFlowExecutor({
           signal: ctx.signal,
           releaseRing,
           ...(parsed.activeRelayUrl ? { scopeToConfiguredServer: true, knownServerScope: profileScope } : {}),
@@ -264,7 +264,7 @@ export function createSetupRepairThisComputerInteractiveTaskKind(
         daemonReadinessErrorMessage: 'Background service did not reach a ready state for the selected Relay.',
       });
 
-      const daemonMachineId = recipeResult.daemonStatus?.machineId?.trim() || null;
+      const daemonMachineId = flowResult.daemonStatus?.machineId?.trim() || null;
       if (!daemonMachineId) {
         throw new SystemTaskExecutionError(
           'daemon_service_not_ready',

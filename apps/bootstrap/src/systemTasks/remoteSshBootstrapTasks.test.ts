@@ -3,11 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { RemoteBootstrapMachineParams } from '@happier-dev/cli-common/systemTasks';
-import { installRemoteFirstPartyComponent } from '@happier-dev/cli-common/systemTasks';
+import { createOpenSshRemoteCliTransport } from '@happier-dev/cli-common/systemTasks';
+import { installRemoteCli } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-    installRemoteCliDefault,
     approveLocalRemoteAuthRequestDefault,
     createRemoteEnrollmentExecutorDefault,
     resolveRemoteSshHostTrustDefault,
@@ -233,48 +233,19 @@ describe('resolveRemoteSshHostTrustDefault', () => {
     });
 });
 
-describe('installRemoteCliDefault', () => {
+describe('shared remote CLI installer', () => {
     it('rejects cancelled setup before the real installer probes the remote host', async () => {
         const controller = new AbortController();
         controller.abort();
-        await expect(installRemoteCliDefault({
-            parsed: createParsedRemoteBootstrapParams(), auth: { mode: 'agent' }, knownHostsMode: 'system',
-            signal: controller.signal,
-        }, {
-            installRemoteFirstPartyComponent: (params) => installRemoteFirstPartyComponent(params, {
-                // Only the remote OS/network boundaries are replaced; installer admission is real.
-                resolveRemoteReleaseTarget: async () => { throw new Error('Remote probe reached after cancellation'); },
-                runRemoteText: async () => ({ status: 0, stdout: '', stderr: '' }),
-                copyLocalDirectoryToRemote: async () => undefined,
+        let remoteProbes = 0;
+        await expect(installRemoteCli({ channel: 'stable', signal: controller.signal,
+            transport: createOpenSshRemoteCliTransport({ channel: 'stable', ssh: createParsedRemoteBootstrapParams().ssh,
+                auth: { mode: 'agent' }, knownHostsMode: 'system', signal: controller.signal,
+                // Only the remote OS boundary is substituted; the installer remains real.
+                exec: async () => { remoteProbes++; return { status: 0, stdout: '', stderr: '' }; },
             }),
         })).rejects.toMatchObject({ name: 'AbortError' });
-    });
-
-    it('delegates remote CLI installation to the shared first-party installer', async () => {
-        const invocations: Array<Record<string, unknown>> = [];
-
-        await installRemoteCliDefault({
-            parsed: createParsedRemoteBootstrapParams(),
-            auth: { mode: 'agent' },
-            knownHostsMode: 'system',
-        }, {
-            installRemoteFirstPartyComponent: async (params) => {
-                invocations.push(params as Record<string, unknown>);
-                return {
-                    binaryPath: '$HOME/.happier/cli/current/happier',
-                    versionId: '1.2.3',
-                    source: 'https://example.test/happier.tgz',
-                };
-            },
-        });
-
-        expect(invocations).toEqual([
-            expect.objectContaining({
-                componentId: 'happier-cli',
-                channel: 'stable',
-                knownHostsMode: 'system',
-            }),
-        ]);
+        expect(remoteProbes).toBe(0);
     });
 });
 

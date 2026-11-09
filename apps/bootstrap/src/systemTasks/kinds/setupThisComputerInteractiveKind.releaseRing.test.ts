@@ -16,7 +16,7 @@ vi.mock('@happier-dev/cli-common/systemTasks', async () => {
 
 import { createSystemTasksRunner } from '@happier-dev/cli-common/systemTasks';
 
-import { createLocalSetupRecipeExecutor } from './localSetupExecutor.js';
+import { createLocalSetupFlowExecutor } from './localSetupFlowExecutor.js';
 import {
     createProductionSetupThisComputerInteractiveDeps,
     createSetupThisComputerInteractiveTaskKind,
@@ -140,7 +140,7 @@ describe('createSetupThisComputerInteractiveTaskKind release-ring manual relay t
         }));
 
         const kind = createSetupThisComputerInteractiveTaskKind({
-            createRecipeExecutor: createLocalSetupRecipeExecutor,
+            createFlowExecutor: createLocalSetupFlowExecutor,
             switchDefaultReleaseChannel: async () => undefined,
             readServerProfileScope: createProductionSetupThisComputerInteractiveDeps().readServerProfileScope,
             upgradeCliForTokenOnlyPairing: async () => false,
@@ -270,13 +270,13 @@ describe('createSetupThisComputerInteractiveTaskKind release-ring manual relay t
                 webappUrl: 'https://app.example.test',
                 localServerUrl: null,
             }),
-            createRecipeExecutor: (params) => {
+            createFlowExecutor: (params) => {
                 executorCalls.push({ ...params });
                 return {
                 configureRelay: async () => {
                     invocations.push('configureRelay');
                 },
-                // Already paired: valid credentials and a server-confirmed machine, so the recipe
+                // Already paired: valid credentials and a server-confirmed machine, so the flow
                 // attempts no pairing. Pairing is covered by the pairing-approval tests.
                 readAuthStatus: async () => ({
                     authenticated: true,
@@ -393,9 +393,9 @@ describe('createSetupThisComputerInteractiveTaskKind release-ring manual relay t
                 webappUrl: 'https://app.example.test',
                 localServerUrl: null,
             }),
-            createRecipeExecutor: () => ({
+            createFlowExecutor: () => ({
                 configureRelay: async () => undefined,
-                // Already paired: valid credentials and a server-confirmed machine, so the recipe
+                // Already paired: valid credentials and a server-confirmed machine, so the flow
                 // attempts no pairing. Pairing is covered by the pairing-approval tests.
                 readAuthStatus: async () => ({
                     authenticated: true,

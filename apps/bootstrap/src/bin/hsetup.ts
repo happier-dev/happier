@@ -1,5 +1,9 @@
+import { readDesktopInstallationContext } from '@happier-dev/cli-common/firstPartyRuntime';
+import { uninstallDesktopComponents } from '../systemTasks/desktopUninstall.js';
 import { systemTasks } from '@happier-dev/cli-common';
+import { installRemoteCli } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import type { InteractiveSystemTaskEventInput, InteractiveSystemTaskKind, InteractiveSystemTaskKindMap } from '@happier-dev/cli-common/systemTasks';
+import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import {
@@ -15,11 +19,11 @@ import {
 import { createHsetupSystemTaskRegistry, createSystemTaskId } from '../systemTasks/registry.js';
 import {
   approveLocalRemoteAuthRequestDefault,
-  installRemoteCliDefault,
   resolveRemoteSshHostTrustDefault,
   runRemoteBootstrapCommandDefault,
   createRemoteEnrollmentExecutorDefault,
 } from '../systemTasks/remoteSshBootstrapTasks.js';
+import { resolveDefaultKnownHostsPath } from '../systemTasks/taskRuntime.js';
 import {
   createProductionSetupRepairThisComputerInteractiveDeps,
   createSetupRepairThisComputerInteractiveTaskKind,
@@ -53,6 +57,23 @@ type SignalProcessLike = Readonly<{
 }>;
 
 export async function runHsetupCli(argv: readonly string[], io: HsetupIo = createDefaultIo()): Promise<number> {
+  if (argv[0] === 'desktop' && argv[1] === 'uninstall') {
+    try {
+      if (argv.length !== 6 || argv[2] !== '--bundle-id' || argv[4] !== '--state-dir') {
+        throw new Error('usage: hsetup desktop uninstall --bundle-id <id> --state-dir <absolute-path>');
+      }
+      const context = readDesktopInstallationContext({ HAPPIER_DESKTOP_BUNDLE_ID: argv[3], HAPPIER_DESKTOP_STATE_DIR: argv[5] });
+      if (!context) throw new Error('Desktop uninstall requires a bundle identity and state directory.');
+      await uninstallDesktopComponents(context);
+      io.stdout.write(`${JSON.stringify({ ok: true })}\n`);
+      return 0;
+    } catch (error) {
+      io.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      return 1;
+    } finally {
+      io.stdin.close?.();
+    }
+  }
   const parsed = parseHsetupArgs(argv);
   if (!parsed.ok) {
     io.stderr.write(`${parsed.message}\n`);
@@ -188,7 +209,14 @@ export function createDefaultInteractiveKinds(): InteractiveSystemTaskKindMap {
     ),
     'remote.ssh.bootstrapMachine.v1': systemTasks.createRemoteSshBootstrapMachineTaskKind({
       resolveHostTrust: resolveRemoteSshHostTrustDefault,
-      installRemoteCli: installRemoteCliDefault,
+      installRemoteCli: async ({ parsed, auth, knownHostsMode, signal, context }) => {
+        const channel = parsed.channel ?? 'stable';
+        await installRemoteCli({ channel, signal,
+          transport: systemTasks.createOpenSshRemoteCliTransport({ ssh: parsed.ssh, auth, knownHostsMode, channel, signal,
+            ...(knownHostsMode === 'app' ? { knownHostsPath: parsed.ssh.knownHostsPath || resolveDefaultKnownHostsPath() } : {}) }),
+          bootstrap: { parsed, context, createPromptId: randomUUID },
+        });
+      },
       approveLocalAuthRequest: approveLocalRemoteAuthRequestDefault,
       createRemoteEnrollmentExecutor: createRemoteEnrollmentExecutorDefault,
       runRemoteCommand: runRemoteBootstrapCommandDefault,
@@ -216,6 +244,7 @@ async function executeInteractiveSystemTask(params: Readonly<{
 
   try {
     const data = await params.kind.run({
+      taskId: params.taskId,
       params: params.params,
       signal: params.signal,
       emit,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createSystemTasksRunner, type SetupMachineRecipeExecutor } from '@happier-dev/cli-common/systemTasks';
+import { createSystemTasksRunner, type EnrollMachineFlowExecutor } from '@happier-dev/cli-common/systemTasks';
 
 import { createSetupThisComputerInteractiveTaskKind } from './setupThisComputerInteractiveKind.js';
 
@@ -37,12 +37,12 @@ async function waitForResult(
   throw new Error(`Expected final result for ${params.taskId}: ${JSON.stringify(latest)}`);
 }
 
-function createRecipeExecutor(invocations: string[]): SetupMachineRecipeExecutor {
+function createFlowExecutor(invocations: string[]): EnrollMachineFlowExecutor {
   return {
     configureRelay: async () => {
       invocations.push('configureRelay');
     },
-    // Already paired: valid credentials and a server-confirmed machine, so the recipe
+    // Already paired: valid credentials and a server-confirmed machine, so the flow
     // attempts no pairing. Pairing is covered by the pairing-approval tests.
     readAuthStatus: async () => ({
       authenticated: true,
@@ -82,7 +82,7 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
         webappUrl: 'https://app.example.test',
         localServerUrl: null,
       }),
-      createRecipeExecutor: () => createRecipeExecutor(invocations),
+      createFlowExecutor: () => createFlowExecutor(invocations),
       readBackgroundServiceSetupGuidance: async () => ({
         targetReleaseChannel: 'preview',
         targetServerUrl: 'https://relay.example.test',
@@ -150,7 +150,7 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
         webappUrl: 'https://app.example.test',
         localServerUrl: null,
       }),
-      createRecipeExecutor: () => createRecipeExecutor(invocations),
+      createFlowExecutor: () => createFlowExecutor(invocations),
       readBackgroundServiceSetupGuidance: async () => ({
         targetReleaseChannel: 'stable',
         targetServerUrl: 'https://relay.example.test',
@@ -220,7 +220,7 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
         webappUrl: 'https://app.example.test',
         localServerUrl: null,
       }),
-      createRecipeExecutor: () => createRecipeExecutor(invocations),
+      createFlowExecutor: () => createFlowExecutor(invocations),
       readBackgroundServiceSetupGuidance: async () => ({
         targetReleaseChannel: 'stable',
         targetServerUrl: 'https://relay.example.test',
@@ -289,7 +289,7 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
         webappUrl: 'https://app.example.test',
         localServerUrl: null,
       }),
-      createRecipeExecutor: () => createRecipeExecutor(invocations),
+      createFlowExecutor: () => createFlowExecutor(invocations),
       readBackgroundServiceSetupGuidance: async () => ({
         targetReleaseChannel: 'stable',
         targetServerUrl: 'https://relay.example.test',
@@ -371,7 +371,7 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
         webappUrl: 'https://app.example.test',
         localServerUrl: null,
       }),
-      createRecipeExecutor: () => createRecipeExecutor(invocations),
+      createFlowExecutor: () => createFlowExecutor(invocations),
       readBackgroundServiceSetupGuidance: async () => ({
         targetReleaseChannel: 'preview',
         targetServerUrl: 'https://relay.example.test',
@@ -533,11 +533,11 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
         webappUrl: 'https://app-from-cli.example.test',
         localServerUrl: 'http://127.0.0.1:60000',
       }),
-      createRecipeExecutor: () => ({
+      createFlowExecutor: () => ({
         configureRelay: async (profile) => {
           configureRelayProfiles.push(profile);
         },
-        // Already paired: valid credentials and a server-confirmed machine, so the recipe
+        // Already paired: valid credentials and a server-confirmed machine, so the flow
         // attempts no pairing. Pairing is covered by the pairing-approval tests.
         readAuthStatus: async () => ({
           authenticated: true,
@@ -616,7 +616,7 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
         webappUrl: 'https://app.example.test',
         localServerUrl: null,
       }),
-      createRecipeExecutor: () => createRecipeExecutor(invocations),
+      createFlowExecutor: () => createFlowExecutor(invocations),
       readBackgroundServiceSetupGuidance: async () => ({
         targetReleaseChannel: 'stable',
         targetServerUrl: 'https://relay.example.test',
@@ -718,7 +718,7 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
         webappUrl: 'https://app.example.test',
         localServerUrl: null,
       }),
-      createRecipeExecutor: () => createRecipeExecutor(invocations),
+      createFlowExecutor: () => createFlowExecutor(invocations),
       readBackgroundServiceSetupGuidance: async () => ({
         targetReleaseChannel: 'stable',
         targetServerUrl: 'https://relay.example.test',
@@ -811,7 +811,7 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
         webappUrl: 'https://app.example.test',
         localServerUrl: null,
       }),
-      createRecipeExecutor: () => createRecipeExecutor([]),
+      createFlowExecutor: () => createFlowExecutor([]),
       readBackgroundServiceSetupGuidance: async () => ({
         targetReleaseChannel: 'preview',
         targetServerUrl: 'https://relay.example.test',
@@ -888,7 +888,7 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
         webappUrl: 'https://app.example.test',
         localServerUrl: null,
       }),
-      createRecipeExecutor: () => createRecipeExecutor(invocations),
+      createFlowExecutor: () => createFlowExecutor(invocations),
       readBackgroundServiceSetupGuidance: async () => ({
         targetReleaseChannel: 'preview',
         targetServerUrl: 'https://relay.example.test',
@@ -994,7 +994,7 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
         webappUrl: 'https://app.example.test',
         localServerUrl: null,
       }),
-      createRecipeExecutor: () => createRecipeExecutor([]),
+      createFlowExecutor: () => createFlowExecutor([]),
       readBackgroundServiceSetupGuidance: async () => ({
         targetReleaseChannel: 'preview',
         targetServerUrl: 'https://relay.example.test',

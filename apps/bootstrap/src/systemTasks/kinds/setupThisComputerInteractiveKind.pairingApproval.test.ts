@@ -4,7 +4,7 @@ import {
   deriveBoxPublicKeyFromSeed,
   openTerminalProvisioningV3Response,
 } from '@happier-dev/protocol';
-import { createSetupMachineRecipeExecutorFromHappierJsonExecutor, createSystemTasksRunner, type SetupMachineRecipeExecutor } from '@happier-dev/cli-common/systemTasks';
+import { createEnrollMachineFlowExecutorFromHappierJsonExecutor, createSystemTasksRunner, type EnrollMachineFlowExecutor } from '@happier-dev/cli-common/systemTasks';
 
 import { createSetupThisComputerInteractiveTaskKind } from './setupThisComputerInteractiveKind.js';
 
@@ -73,7 +73,7 @@ function createPairingFixture(): PairingFixture {
 function createUnauthenticatedPairingExecutor(
   invocations: string[],
   fixture: PairingFixture,
-): SetupMachineRecipeExecutor {
+): EnrollMachineFlowExecutor {
   return {
     configureRelay: async () => {
       invocations.push('configureRelay');
@@ -153,10 +153,10 @@ describe('setup.thisComputer.v1 pairing approval', () => {
       supportsTokenOnly: true,
     };
     let approved = false;
-    const executor = createSetupMachineRecipeExecutorFromHappierJsonExecutor({
+    const executor = createEnrollMachineFlowExecutorFromHappierJsonExecutor({
       executor: {
         runHappierText: async () => ({ status: 0, stdout: '', stderr: '' }),
-        // The CLI process boundary validates what the real recipe and instrumentation send.
+        // The CLI process boundary validates what the real flow and instrumentation send.
         runHappierJson: async (args, opts) => {
           if (args.includes('status')) return { ok: true, data: {
             authenticated: true, credentialState: 'valid', machineRegistrationState: 'local-only', machineId: null,
@@ -177,7 +177,7 @@ describe('setup.thisComputer.v1 pairing approval', () => {
       exposeHappierCliOnPath: async () => ({ changed: false, shellReloadHint: null, failure: null, existingCommand: null }),
       ensureLocalHappierTools: async () => MANAGED_CLI,
       readActiveRelayProfile: async () => ({ serverUrl: RELAY_SERVER_URL, webappUrl: RELAY_WEBAPP_URL, localServerUrl: null }),
-      createRecipeExecutor: () => executor,
+      createFlowExecutor: () => executor,
       ...noGuidanceDeps(),
     });
     const runner = createSystemTasksRunner({ kinds: { 'setup.thisComputer.v1': kind } });
@@ -205,7 +205,7 @@ describe('setup.thisComputer.v1 pairing approval', () => {
         webappUrl: RELAY_WEBAPP_URL,
         localServerUrl: null,
       }),
-      createRecipeExecutor: () => createUnauthenticatedPairingExecutor(invocations, fixture),
+      createFlowExecutor: () => createUnauthenticatedPairingExecutor(invocations, fixture),
       ...noGuidanceDeps(),
     });
 
@@ -250,7 +250,7 @@ describe('setup.thisComputer.v1 pairing approval', () => {
         webappUrl: RELAY_WEBAPP_URL,
         localServerUrl: null,
       }),
-      createRecipeExecutor: () => createUnauthenticatedPairingExecutor(invocations, fixture),
+      createFlowExecutor: () => createUnauthenticatedPairingExecutor(invocations, fixture),
       ...noGuidanceDeps(),
     });
 
@@ -330,7 +330,7 @@ describe('setup.thisComputer.v1 pairing approval', () => {
         webappUrl: RELAY_WEBAPP_URL,
         localServerUrl: null,
       }),
-      createRecipeExecutor: () => createUnauthenticatedPairingExecutor(invocations, fixture),
+      createFlowExecutor: () => createUnauthenticatedPairingExecutor(invocations, fixture),
       ...noGuidanceDeps(),
     });
 
@@ -378,7 +378,7 @@ describe('setup.thisComputer.v1 pairing approval', () => {
         webappUrl: RELAY_WEBAPP_URL,
         localServerUrl: null,
       }),
-      createRecipeExecutor: () => ({
+      createFlowExecutor: () => ({
         ...executor,
         // A CLI old enough to predate token-only pairing: a public key and nothing to seal.
         requestAuthPairing: async () => {
@@ -418,7 +418,7 @@ describe('setup.thisComputer.v1 pairing approval', () => {
       exposeHappierCliOnPath: async () => ({ changed: false, shellReloadHint: null, failure: null, existingCommand: null }),
       ensureLocalHappierTools: async () => MANAGED_CLI,
       readActiveRelayProfile: async () => ({ serverUrl: RELAY_SERVER_URL, webappUrl: RELAY_WEBAPP_URL, localServerUrl: null }),
-      createRecipeExecutor: () => ({
+      createFlowExecutor: () => ({
         ...executor,
         requestAuthPairing: upgraded
           ? executor.requestAuthPairing
@@ -467,7 +467,7 @@ describe('setup.thisComputer.v1 pairing approval', () => {
         webappUrl: RELAY_WEBAPP_URL,
         localServerUrl: null,
       }),
-      createRecipeExecutor: () => createUnauthenticatedPairingExecutor(invocations, fixture),
+      createFlowExecutor: () => createUnauthenticatedPairingExecutor(invocations, fixture),
       ...noGuidanceDeps(),
     });
 

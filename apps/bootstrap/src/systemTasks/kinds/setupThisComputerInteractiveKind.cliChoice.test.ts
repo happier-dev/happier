@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { HappierCliChoice } from '@happier-dev/cli-common/firstPartyRuntime';
-import { createSystemTasksRunner, type SetupMachineRecipeExecutor } from '@happier-dev/cli-common/systemTasks';
+import { createSystemTasksRunner, type EnrollMachineFlowExecutor } from '@happier-dev/cli-common/systemTasks';
 import type { SetupCliChoicePromptData } from '@happier-dev/protocol';
 
 import {
@@ -25,7 +25,7 @@ function question(overrides: Partial<SetupCliChoicePromptData> = {}): SetupCliCh
   };
 }
 
-function createRecipeExecutor(calls: string[]): SetupMachineRecipeExecutor {
+function createFlowExecutor(calls: string[]): EnrollMachineFlowExecutor {
   return {
     configureRelay: async () => { calls.push('configureRelay'); },
     readAuthStatus: async () => ({
@@ -60,7 +60,7 @@ function createKind(calls: string[], cliChoice: Partial<SetupCliChoiceDeps> & Pi
       return { provenance: 'override', command: NPM_CLI } as const;
     },
     exposeHappierCliOnPath: async () => ({ changed: false, shellReloadHint: null, failure: null, existingCommand: null }),
-    createRecipeExecutor: () => createRecipeExecutor(calls),
+    createFlowExecutor: () => createFlowExecutor(calls),
     readBackgroundServiceSetupGuidance: async () => ({
       targetReleaseChannel: 'stable',
       targetServerUrl: 'https://relay.example.test',
