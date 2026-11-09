@@ -7,7 +7,7 @@ import { createProcessCustodyFixture } from '@/testkit/processCustodyFixture';
 import { MachineStoragePolicyV1Schema } from '@happier-dev/protocol/storage/storageV1';
 import { createActivityLog } from '@/daemon/guard/activityLog';
 import { createBrowserRecordingDaemonService } from '@/daemon/browser/recording/service';
-import { createBrowserRecordingSessionMediaWriter } from '@/daemon/browser/recording/sessionMediaWriter';
+import { createBrowserRecordingSessionMediaWriter } from '../../daemon/recording/sessionMediaWriter';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { createDeferred } from '@/testkit/async/deferred';
 import { createLogRetentionOwner, storageLogRoots } from '@/utils/logs/logRetention';
@@ -23,6 +23,8 @@ import { createLinuxMachineVitalsReader } from '@/daemon/vitals/readers/linux';
 import { createLinuxVitalsFixture } from '@/daemon/vitals/readers/linux.testkit';
 import { HappierStorageSummaryV1Schema, TrashEntryV1Schema } from '@happier-dev/protocol/storage/storageV1';
 import { MachineVitalsSampleV1Schema } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
+import { createMachineResourcesPolicyRuntime } from '@/daemon/resources/machineResourcesPolicy';
+import { createStoragePolicyFixture } from '../storagePolicy.testkit';
 
 // The Node timer module is the external clock boundary; use Vitest's same fake clock.
 const clockBoundary = vi.hoisted(() => ({ onArm: undefined as (() => void) | undefined }));
@@ -32,7 +34,7 @@ vi.mock('node:timers', () => ({ setTimeout: (callback: () => void, delay?: numbe
   clearTimeout: (handle: ReturnType<typeof globalThis.setTimeout>) => globalThis.clearTimeout(handle) }));
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, rm: vi.fn(actual.rm) };
+  return { ...actual, rm: vi.fn(actual.rm), readdir: vi.fn(actual.readdir) };
 });
 vi.mock('node:child_process', async importOriginal => {
   const actual = await importOriginal<typeof import('node:child_process')>();
@@ -50,6 +52,8 @@ async function fixture(withRecording = false, readIdle?: () => boolean | Promise
   const home = join(scratch, `home-${serial++}`); await fs.mkdir(home);
   const logDir = join(home, 'logs'); await fs.mkdir(logDir);
   let policy = MachineStoragePolicyV1Schema.parse({});
+  const resourcesPolicy = await createStoragePolicyFixture(policy);
+  const readPolicy = () => { const snapshot = resourcesPolicy.read(); return snapshot.status === 'ready' ? snapshot.policy.storage : undefined; };
   let idle = false; let power = false;
   const policyListeners = new Set<() => void>(); const idleListeners = new Set<() => void>(); const volumeListeners = new Set<() => void>();
   const subscribe = (listeners: Set<() => void>) => (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
@@ -70,7 +74,7 @@ async function fixture(withRecording = false, readIdle?: () => boolean | Promise
   let logPasses = 0;
   const logs = createLogRetentionOwner({ happyHomeDir: home, currentLogPaths: () => { logPasses++; return [join(logDir, 'current.log')]; },
     env: { HAPPIER_CRASHED_SESSION_LOG_KEEP_COUNT: '1' }, onError: error => errors.push(error) });
-  const maintenance = createStorageMaintenance({ readPolicy: () => policy, subscribePolicy: subscribe(policyListeners), subscribeVolumes: subscribe(volumeListeners),
+  const maintenance = createStorageMaintenance({ readPolicy, subscribePolicy: listener => resourcesPolicy.subscribeKey('storage', listener), subscribeVolumes: subscribe(volumeListeners),
     isIdle: () => readIdle ? readIdle() : idle, subscribeIdle: subscribe(idleListeners), isOnPower: () => power, subscribePower: subscribe(idleListeners),
     getTrashStore: async () => store, logs, recordings, runScheduledScan: async () => { scans++; }, activityLog,
     actorAccountId: 'custodian', onError: error => errors.push(error) });
@@ -79,7 +83,7 @@ async function fixture(withRecording = false, readIdle?: () => boolean | Promise
     const at = new Date(Date.now() - ageDays * day); await fs.utimes(path, at, at); return path;
   }
   return { home, logDir, store, logs, activityLog, maintenance, recordings, errors, automatic, writeLog,
-    readPolicy: () => policy, isIdle: () => readIdle ? readIdle() : idle, isOnPower: () => power,
+    resourcesPolicy, readPolicy, isIdle: () => readIdle ? readIdle() : idle, isOnPower: () => power,
     subscribePolicy: subscribe(policyListeners), subscribeIdle: subscribe(idleListeners), subscribeVolumes: subscribe(volumeListeners),
     async writeRecording(expiresAtMs: number) {
       await fs.writeFile(source, bytes);
@@ -93,7 +97,7 @@ async function fixture(withRecording = false, readIdle?: () => boolean | Promise
       expect((await recordings.stopRecording({ recordingId: 'recording', stoppedAtMs: Date.now() + 2_000, navigationGenerationEnd: 2, expiresAtMs })).status).toBe('finalized');
       await fs.unlink(source); return recordings.listStorageRecordings()[0].path;
     },
-    setPolicy(patch: Partial<typeof policy>) { policy = { ...policy, ...patch }; for (const listener of policyListeners) listener(); },
+    async setPolicy(patch: Partial<typeof policy>) { policy = { ...policy, ...patch }; await resourcesPolicy.setStorage(policy); for (const listener of policyListeners) listener(); },
     setIdlePower(nextIdle: boolean, nextPower: boolean) { idle = nextIdle; power = nextPower; for (const listener of idleListeners) listener(); },
     get logPasses() { return logPasses; }, get scans() { return scans; } };
 }
@@ -106,6 +110,164 @@ describe('one due-time storage maintenance owner with real retained files', () =
   beforeEach(() => { vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] }); vi.setSystemTime(new Date('2026-10-11T09:00:00Z')); });
   afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
   afterAll(async () => { await disposeNative?.(); await fs.rm(scratch, { recursive: true, force: true }); });
+
+  it('does no Storage invalidation, catalog, sizing or maintenance work for unrelated policy changes', async () => {
+    const f = await fixture();
+    const cache = join(f.home, 'cache'); await fs.mkdir(cache); await fs.writeFile(join(cache, 'bytes'), Buffer.alloc(8192));
+    const oldLog = await f.writeLog('policy-edge.log', 5);
+    const service = createStorageService({ machineId: 'machine', homeDir: f.home, activityLog: f.activityLog,
+      resourcesPolicy: f.resourcesPolicy,
+      readVolumes: () => [{ id: 'fixture', label: 'Fixture', mount: scratch, totalBytes: 1_000_000, availableBytes: 500_000 }],
+      catalog: { happyHomeDir: f.home, activeServerDir: f.home, tempRoot: join(f.home, 'absent-temp'),
+        readProjects: () => ({ status: 'ready', projects: [] }) },
+      maintenance: { subscribeVolumes: f.subscribeVolumes, isIdle: f.isIdle, subscribeIdle: f.subscribeIdle,
+        isOnPower: f.isOnPower, subscribePower: f.subscribeIdle, logs: f.logs, recordings: f.recordings,
+        activityLog: f.activityLog, actorAccountId: 'custodian', onError: error => f.errors.push(error) } });
+    let invalidations = 0;
+    const off = service.subscribe(() => { invalidations++; });
+    const sizingPasses = () => vi.mocked(childProcess.spawn).mock.calls.filter(([, args]) => args?.[0] === 'disk-measure').length;
+    const catalogReads = () => vi.mocked(fs.readdir).mock.calls.filter(([path]) => String(path) === cache).length;
+    try {
+      await service.initialize(); await service.refresh();
+      invalidations = 0;
+      const before = { catalog: catalogReads(), sizing: sizingPasses(), maintenance: f.logPasses };
+      for (const enabled of [true, false, true]) {
+        const current = f.resourcesPolicy.read(); expect(current.status).toBe('ready');
+        if (current.status !== 'ready') throw new Error('Fixture policy must be ready');
+        expect(await f.resourcesPolicy.set({ expectedRevision: current.revision, patch: { alerts: { cpu: { enabled } } } }))
+          .toMatchObject({ status: 'applied' });
+        await service.initialize();
+        await service.categoryList('caches');
+      }
+      expect.soft(invalidations, 'unrelated policy publications invalidate no Storage observations').toBe(0);
+      expect.soft(catalogReads() - before.catalog, 'unrelated policy publications enumerate no catalog paths').toBe(0);
+      expect.soft(sizingPasses() - before.sizing, 'unrelated policy publications start no native sizing').toBe(0);
+      expect.soft(f.logPasses - before.maintenance, 'unrelated policy publications start no retention passes').toBe(0);
+
+      const beforeStorage = { sizing: sizingPasses(), maintenance: f.logPasses };
+      await f.setPolicy({ logRetentionDays: 1 }); await service.initialize();
+      expect(f.logPasses - beforeStorage.maintenance).toBe(1);
+      await expect(fs.lstat(oldLog)).rejects.toMatchObject({ code: 'ENOENT' });
+      await service.categoryList('caches');
+      expect(sizingPasses() - beforeStorage.sizing, 'measure the pruned log and refresh Storage sizing').toBe(2);
+      expect(f.errors).toEqual([]);
+    } finally { off(); service.dispose(); f.resourcesPolicy.stop(); f.maintenance.stop(); }
+  });
+
+  it('keeps retained bytes untouched before policy hydration and resumes on the policy edge', async () => {
+    const f = await fixture();
+    await f.setPolicy({ trashEmptyAfterDays: null, logRetentionDays: null });
+    const path = join(f.home, 'retained-cache'); await fs.mkdir(path); await fs.writeFile(join(path, 'bytes'), 'retained');
+    vi.setSystemTime(Date.now() - 8 * day);
+    const entry = await (await f.store.prepare({ path, title: 'Retained', batchId: 'restart', size,
+      movedBy: { accountId: 'custodian', kind: 'person' } })).commit();
+    vi.setSystemTime(Date.now() + 8 * day);
+    const oldLog = await f.writeLog('retained.log', 40);
+    let availability: 'ready' | 'unavailable' | 'locked' = 'unavailable';
+    let retention: number | null = null;
+    const policy = createMachineResourcesPolicyRuntime({ port: {
+      read: async () => availability === 'ready' ? { status: 'ready', metadataVersion: 1,
+        metadata: { resourcesPolicyV1: { v: 1, storage: { trashEmptyAfterDays: retention, logRetentionDays: retention } } } } : { status: availability },
+      compareAndSwap: async () => ({ status: 'unavailable' }),
+    } });
+    const service = createStorageService({ machineId: 'machine', homeDir: scratch, activityLog: f.activityLog,
+      resourcesPolicy: policy,
+      readVolumes: () => [{ id: 'fixture', label: 'Fixture', mount: scratch, totalBytes: 1_000_000, availableBytes: 500_000 }],
+      catalog: { happyHomeDir: f.home, activeServerDir: f.home, tempRoot: join(f.home, 'absent-temp') },
+      maintenance: { subscribeVolumes: f.subscribeVolumes,
+        isIdle: () => true, subscribeIdle: f.subscribeIdle, isOnPower: () => true, subscribePower: f.subscribeIdle,
+        logs: f.logs, recordings: f.recordings, activityLog: f.activityLog, actorAccountId: 'custodian', onError: error => f.errors.push(error) },
+    });
+    try {
+      await service.initialize();
+      expect(await f.store.read(entry.entryId)).toMatchObject({ emptiesAt: null });
+      await expect(fs.readFile(join(f.home, 'trash', entry.entryId, 'payload', 'bytes'), 'utf8')).resolves.toBe('retained');
+      await expect(fs.lstat(oldLog)).resolves.toBeDefined();
+      expect(f.logPasses, 'unavailable policy starts no log retention work').toBe(0);
+      availability = 'locked'; await policy.reload(); await service.initialize();
+      expect(f.logPasses).toBe(0);
+      availability = 'ready'; await policy.reload(); await service.initialize();
+      expect(await f.store.read(entry.entryId)).toMatchObject({ emptiesAt: null });
+      await expect(fs.lstat(oldLog)).resolves.toBeDefined();
+      const afterReady = f.logPasses; expect(afterReady).toBeGreaterThan(0);
+      retention = 1; await policy.reload(); await service.initialize();
+      await expect(fs.lstat(oldLog)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await f.store.list()).toEqual([]);
+      expect(f.errors).toEqual([]);
+    } finally { service.dispose(); policy.stop(); f.maintenance.stop(); }
+  });
+
+  it('refuses policy-dependent reads and cleanup while protected folders are unavailable, then recovers', async () => {
+    const f = await fixture();
+    const oldLog = await f.writeLog('protected.log', 40);
+    const restorePath = join(scratch, 'policy-dependent-restore');
+    await fs.writeFile(restorePath, 'restore bytes');
+    const retained = await (await f.store.prepare({ path: restorePath, title: 'Restore', batchId: 'policy', size,
+      movedBy: { accountId: 'custodian', kind: 'person' } })).commit();
+    let availability: 'ready' | 'unavailable' | 'locked' = 'ready';
+    const policy = createMachineResourcesPolicyRuntime({ port: {
+      read: async () => availability === 'ready' ? { status: 'ready', metadataVersion: 1,
+        metadata: { resourcesPolicyV1: { v: 1, storage: { protectedFolders: [{ path: oldLog, addedAt: Date.now() }] } } } } : { status: availability },
+      compareAndSwap: async () => ({ status: 'unavailable' }),
+    } });
+    const actor = { accountId: 'custodian', custodianAccountId: 'custodian', kind: 'person' as const,
+      assertCurrent: async () => {}, assertCurrentAuthority: async () => {} };
+    const service = createStorageService({ machineId: 'machine', homeDir: scratch, activityLog: f.activityLog,
+      resourcesPolicy: policy,
+      readVolumes: () => [{ id: 'fixture', label: 'Fixture', mount: scratch, totalBytes: 1_000_000, availableBytes: 500_000 }],
+      catalog: { happyHomeDir: f.home, activeServerDir: f.home, tempRoot: join(f.home, 'absent-temp'), readInUsePaths: () => ({ reliable: true, paths: [] }) },
+    });
+    try {
+      await expect(service.trashRestore({ machineId: 'machine', entryIds: [] }, { actor })).resolves.toMatchObject({ outcomes: [] });
+      await expect(service.trashEmpty({ machineId: 'machine', entryIds: [] }, { actor })).resolves.toMatchObject({ outcomes: [] });
+      await policy.reload();
+      const listed = await service.categoryList('logs', { actor });
+      const item = listed.items.find(item => item.path === oldLog)!;
+      expect(item.verdict).toBe('keep');
+      const reviewed = await service.itemsCheck([{ itemId: item.itemId, path: item.path }], { actor });
+      expect(reviewed.items).toHaveLength(1);
+      for (const status of ['unavailable', 'locked'] as const) {
+        availability = status; await policy.reload();
+        await expect(service.summary({ actor })).rejects.toMatchObject({ code: 'policy_unavailable' });
+        await expect(service.itemsCheck([{ itemId: item.itemId, path: item.path }], { actor })).rejects.toMatchObject({ code: 'policy_unavailable' });
+        const items = reviewed.items.map(item => ({ ref: item.ref, expect: item.expect }));
+        await expect(service.trashMove({ machineId: 'machine', items }, { actor })).rejects.toMatchObject({ code: 'policy_unavailable' });
+        await expect(service.deleteNow({ machineId: 'machine', items }, { actor })).rejects.toMatchObject({ code: 'policy_unavailable' });
+        await expect(service.trashRestore({ machineId: 'machine', entryIds: [retained.entryId] }, { actor })).resolves.toMatchObject({
+          outcomes: [{ entryId: retained.entryId, status: 'failed', reason: { code: 'policy_unavailable' } }],
+        });
+        await expect(service.trashEmpty({ machineId: 'machine', entryIds: [] }, { actor })).resolves.toMatchObject({ outcomes: [] });
+        await expect(service.trashRestore({ machineId: 'machine', entryIds: [] }, { actor })).resolves.toMatchObject({ outcomes: [] });
+        await expect(fs.lstat(oldLog)).resolves.toBeDefined();
+      }
+      await expect(service.trashEmpty({ machineId: 'machine', entryIds: [retained.entryId] }, { actor })).resolves.toMatchObject({
+        outcomes: [{ entryId: retained.entryId, status: 'deleted' }],
+      });
+      availability = 'ready'; await policy.reload();
+      expect((await service.categoryList('logs', { actor })).items.find(item => item.path === oldLog)?.verdict).toBe('keep');
+    } finally { service.dispose(); policy.stop(); f.maintenance.stop(); }
+  });
+
+  it('withdraws maintenance effects when policy becomes unavailable during a retained-file pass', async () => {
+    const f = await fixture();
+    const first = await f.writeLog('z-first.log', 40);
+    const second = await f.writeLog('a-second.log', 40);
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    vi.mocked(fs.rm).mockImplementation(async (path, options) => {
+      await actual.rm(path, options);
+      if (path === first) await f.resourcesPolicy.setAvailability('locked');
+    });
+    try {
+      await f.maintenance.start();
+      await expect(fs.lstat(first)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(fs.readFile(second)).resolves.toHaveLength(4096);
+      expect(f.errors).toContainEqual(expect.objectContaining({ code: 'policy_unavailable' }));
+      expect(vi.getTimerCount()).toBe(0);
+      await f.resourcesPolicy.setAvailability('ready');
+      await f.maintenance.requestPass();
+      await expect(fs.lstat(second)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { vi.mocked(fs.rm).mockImplementation(actual.rm); f.maintenance.stop(); }
+  });
 
   it('projects sampler edges into real maintenance and Storage without idle work or no-op Trash invalidation', async () => {
     const f = await fixture();
@@ -128,10 +290,7 @@ describe('one due-time storage maintenance owner with real retained files', () =
     const activityLog = await createActivityLog({ activeServerDir: f.home, resourceSummary });
     const binding = createDaemonStorageVitalsBindings(sampler);
     const service = createStorageService({ machineId: 'machine', homeDir: f.home, custodianAccountId: 'custodian',
-      activityLog, readPolicy: f.readPolicy, ...binding, subscribeChanges: listener => {
-        const releases = [f.subscribePolicy(listener), binding.subscribeVolumes(listener)];
-        return () => { for (const release of releases) release(); };
-      },
+      activityLog, resourcesPolicy: f.resourcesPolicy, ...binding, subscribeChanges: binding.subscribeVolumes,
       catalog: { happyHomeDir: f.home, activeServerDir: f.home, tempRoot: join(f.home, 'absent-temp'),
         readProjects: () => ({ status: 'ready', projects: [] }) } });
     const store = await service.maintenanceTrash();
@@ -155,7 +314,7 @@ describe('one due-time storage maintenance owner with real retained files', () =
       const entry = await (await store.prepare({ path, title: 'Retained', batchId: 'sampler', size,
         movedBy: { accountId: 'custodian', kind: 'person' } })).commit();
       await maintenance.start();
-      const initial = HappierStorageSummaryV1Schema.parse(await service.summary());
+      const initial = HappierStorageSummaryV1Schema.parse(await service.refresh());
       const before = f.logPasses;
       storageWakes = 0;
       // requestPass is the existing queue's settlement fence. Subtract its one
@@ -184,6 +343,7 @@ describe('one due-time storage maintenance owner with real retained files', () =
       const beforeVolume = f.logPasses;
       await tick(); await maintenance.requestPass();
       expect(f.logPasses - beforeVolume - 1, 'a newly mounted volume must reach maintenance').toBe(1);
+      await service.categoryList('caches');
       const afterVolume = HappierStorageSummaryV1Schema.parse(await service.summary());
       expect(afterVolume.volumes).toHaveLength(2);
       expect(afterVolume.sizedAt).toBeGreaterThan(initial.sizedAt);
@@ -194,7 +354,7 @@ describe('one due-time storage maintenance owner with real retained files', () =
       expect(f.logPasses - beforePower - 1, 'an AC edge must reach maintenance').toBe(1);
       expect(binding.isOnPower()).toBe(false);
 
-      f.setPolicy({ logRetentionDays: 1, trashEmptyAfterDays: 1 });
+      await f.setPolicy({ logRetentionDays: 1, trashEmptyAfterDays: 1 });
       await maintenance.requestPass();
       await expect(fs.lstat(oldLog)).rejects.toMatchObject({ code: 'ENOENT' });
       expect(TrashEntryV1Schema.parse(await store.read(entry.entryId)).emptiesAt).toBe(entry.movedAt + day);
@@ -217,12 +377,12 @@ describe('one due-time storage maintenance owner with real retained files', () =
     const f = await fixture(false, () => { if (scheduled && !idle) blocked.resolve('blocked'); return idle; });
     const volumes = [join(f.home, 'scan-a'), join(f.home, 'scan-b')];
     for (const volume of volumes) { await fs.mkdir(volume); await fs.writeFile(join(volume, 'bytes'), Buffer.alloc(4096, 7)); }
-    f.setIdlePower(true, true); f.setPolicy({ wholeDiskEnabled: true });
+    f.setIdlePower(true, true); await f.setPolicy({ wholeDiskEnabled: true });
     const service = createStorageService({ machineId: 'machine', homeDir: f.home, custodianAccountId: 'custodian', activityLog: f.activityLog,
       catalog: { happyHomeDir: f.home, activeServerDir: f.home, tempRoot: join(f.home, 'absent-temp'), readProjects: () => ({ status: 'ready', projects: [] }) },
-      readPolicy: f.readPolicy, subscribeChanges: f.subscribePolicy,
+      resourcesPolicy: f.resourcesPolicy,
       readVolumes: () => volumes.map((mount, index) => ({ id: `volume-${index}`, label: `Volume ${index}`, mount, totalBytes: 1_000_000, availableBytes: 500_000 })),
-      maintenance: { subscribePolicy: f.subscribePolicy, subscribeVolumes: f.subscribeVolumes, isIdle: f.isIdle, subscribeIdle: f.subscribeIdle,
+      maintenance: { subscribeVolumes: f.subscribeVolumes, isIdle: f.isIdle, subscribeIdle: f.subscribeIdle,
         isOnPower: () => { const onPower = f.isOnPower(); if (!onPower) powerChecked.resolve(); return onPower; },
         subscribePower: f.subscribeIdle, logs: f.logs, recordings: f.recordings,
         activityLog: f.activityLog, actorAccountId: 'custodian', onError: error => f.errors.push(error) } });
@@ -252,7 +412,7 @@ describe('one due-time storage maintenance owner with real retained files', () =
       const schedule = () => { const due = new Date(Date.now() + 60_000); return { weekday: due.getDay(),
         time: `${String(due.getHours()).padStart(2, '0')}:${String(due.getMinutes()).padStart(2, '0')}`, onlyOnPower: true as const }; };
       const armed = createDeferred<void>(); clockBoundary.onArm = () => armed.resolve();
-      f.setPolicy({ scheduledScan: schedule() }); await armed.promise; clockBoundary.onArm = undefined;
+      await f.setPolicy({ scheduledScan: schedule() }); await armed.promise; clockBoundary.onArm = undefined;
       scheduled = true; closeMakesBusy = true;
       const passRearmed = createDeferred<void>(); clockBoundary.onArm = () => passRearmed.resolve();
       await vi.advanceTimersByTimeAsync(60_000);
@@ -270,15 +430,32 @@ describe('one due-time storage maintenance owner with real retained files', () =
       // A later due pass is held again, then policy-off retires pending admission.
       secondComplete = createDeferred(); blocked = createDeferred<'blocked' | 'second_native'>(); powerChecked = createDeferred(); idle = true; closeMakesBusy = true;
       const rearmed = createDeferred<void>(); clockBoundary.onArm = () => rearmed.resolve();
-      f.setPolicy({ scheduledScan: schedule() }); await rearmed.promise; clockBoundary.onArm = undefined;
+      await f.setPolicy({ scheduledScan: schedule() }); await rearmed.promise; clockBoundary.onArm = undefined;
       await vi.advanceTimersByTimeAsync(60_000);
       expect(await blocked.promise).toBe('blocked');
       const scansBeforeDisable = nativeScans;
-      f.setPolicy({ wholeDiskEnabled: false }); idle = true; f.setIdlePower(true, true);
+      await f.setPolicy({ wholeDiskEnabled: false }); idle = true; f.setIdlePower(true, true);
       await new Promise<void>(resolveTurn => setImmediate(resolveTurn));
       expect((await service.summary()).wholeDisk).toEqual({ enabled: false, scans: [] });
       expect(nativeScans).toBe(scansBeforeDisable);
     } finally { clockBoundary.onArm = undefined; service.dispose(); f.maintenance.stop(); spawn.mockImplementation(actual.spawn); }
+  });
+
+  it('never recurses when a reviewed file becomes a directory at the OS removal boundary', async () => {
+    const f = await fixture(); const path = join(f.home, 'reviewed-leaf'); await fs.writeFile(path, 'owned source');
+    const expectedIdentity = await readStoragePathIdentity(path);
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    vi.mocked(fs.rm).mockImplementation(async (...args) => {
+      if (args[0] === path) {
+        await actual.rename(path, join(f.home, 'reviewed-leaf-preserved'));
+        await actual.mkdir(path); await actual.writeFile(join(path, 'runtime-data'), 'must survive');
+      }
+      return actual.rm(...args);
+    });
+    try {
+      await expect(removeStoragePath(path, { allowedRoot: f.home, expectedIdentity })).rejects.toThrow();
+      expect(await fs.readFile(join(path, 'runtime-data'), 'utf8')).toBe('must survive');
+    } finally { vi.mocked(fs.rm).mockImplementation(actual.rm); f.maintenance.stop(); }
   });
 
   it.skipIf(process.platform === 'win32')('does not start permission-repair effects after the admitted deletion is refused and maintenance stops', async () => {
@@ -322,11 +499,11 @@ describe('one due-time storage maintenance owner with real retained files', () =
   });
 
   it('rearms existing Never Trash on a policy edge, then empties at the new deadline', async () => {
-    const f = await fixture(); f.setPolicy({ trashEmptyAfterDays: null, logRetentionDays: null });
+    const f = await fixture(); await f.setPolicy({ trashEmptyAfterDays: null, logRetentionDays: null });
     const path = join(f.home, 'retained'); await fs.mkdir(path); await fs.writeFile(join(path, 'bytes'), 'retained');
     const entry = await (await f.store.prepare({ path, title: 'Retained', batchId: 'never', size, movedBy: { accountId: 'other', kind: 'person' } })).commit();
     await f.maintenance.start(); expect(vi.getTimerCount()).toBe(0);
-    f.setPolicy({ trashEmptyAfterDays: 1 }); await f.maintenance.requestPass();
+    await f.setPolicy({ trashEmptyAfterDays: 1 }); await f.maintenance.requestPass();
     expect((await f.store.read(entry.entryId))?.emptiesAt).toBe(entry.movedAt + day); expect(vi.getTimerCount()).toBe(1);
     await vi.advanceTimersByTimeAsync(day); await f.maintenance.requestPass(); expect(await f.store.list()).toEqual([]);
     f.maintenance.stop();
@@ -334,7 +511,7 @@ describe('one due-time storage maintenance owner with real retained files', () =
 
   it('holds a due scan for idle and on-power edges without polling or delaying cheap file expiry', async () => {
     const f = await fixture(); const at = new Date(Date.now() + 60_000);
-    f.setPolicy({ wholeDiskEnabled: true, scheduledScan: { weekday: at.getDay(), time: `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`, onlyOnPower: true }, logRetentionDays: 1 });
+    await f.setPolicy({ wholeDiskEnabled: true, scheduledScan: { weekday: at.getDay(), time: `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`, onlyOnPower: true }, logRetentionDays: 1 });
     const path = await f.writeLog('due.log', 1 - 60_000 / day);
     await f.maintenance.start(); expect(vi.getTimerCount()).toBe(1);
     await vi.advanceTimersByTimeAsync(60_000); await f.maintenance.requestPass();
@@ -357,7 +534,7 @@ describe('one due-time storage maintenance owner with real retained files', () =
     const entered = createDeferred<void>(); const idle = createDeferred<boolean>();
     const f = await fixture(false, () => { entered.resolve(); return idle.promise; });
     const at = new Date(Date.now()); f.setIdlePower(true, true);
-    f.setPolicy({ logRetentionDays: null, wholeDiskEnabled: true, scheduledScan: { weekday: at.getDay(),
+    await f.setPolicy({ logRetentionDays: null, wholeDiskEnabled: true, scheduledScan: { weekday: at.getDay(),
       time: `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`, onlyOnPower: true } });
     const starting = f.maintenance.start(); await entered.promise;
     f.maintenance.stop(); idle.resolve(true); await starting;
@@ -367,7 +544,7 @@ describe('one due-time storage maintenance owner with real retained files', () =
   it('records already-deleted log bytes after stop without deleting the next file or admitting a scan', async () => {
     const f = await fixture(); const first = await f.writeLog('z-first.log', 40); const second = await f.writeLog('a-second.log', 40);
     const at = new Date(Date.now()); f.setIdlePower(true, true);
-    f.setPolicy({ wholeDiskEnabled: true, scheduledScan: { weekday: at.getDay(),
+    await f.setPolicy({ wholeDiskEnabled: true, scheduledScan: { weekday: at.getDay(),
       time: `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`, onlyOnPower: true } });
     const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     vi.mocked(fs.rm).mockImplementation(async (path, options) => {
@@ -384,7 +561,7 @@ describe('one due-time storage maintenance owner with real retained files', () =
   });
 
   it('rearms from a new actual recording expiry and reports actual freed allocated bytes', async () => {
-    const f = await fixture(true); f.setPolicy({ logRetentionDays: null, trashEmptyAfterDays: null });
+    const f = await fixture(true); await f.setPolicy({ logRetentionDays: null, trashEmptyAfterDays: null });
     await f.maintenance.start(); expect(vi.getTimerCount()).toBe(0);
     const path = await f.writeRecording(Date.now() + 60_000); await f.maintenance.requestPass();
     expect(vi.getTimerCount()).toBe(1); expect(await fs.readFile(path)).toHaveLength(4104);

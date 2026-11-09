@@ -41,7 +41,10 @@ export async function removeStoragePath(path: string, input: Readonly<{
     // Authority can wait on Home. Keep its returned permission bound to the
     // original filesystem object if the path was replaced during that wait.
     await assertStoragePathIdentity(physical, input.expectedIdentity);
-    try { await rm(storagePathToFs(physical), { recursive: true, force: true }); }
+    // A reviewed leaf must never recursively remove a directory substituted
+    // after the last identity check at the OS boundary.
+    const recursive = input.expectedIdentity.kind === 'directory';
+    try { await rm(storagePathToFs(physical), { recursive, force: true }); }
     catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
         if (code !== 'EACCES' && code !== 'ENOTEMPTY' && !(process.platform === 'win32' && code === 'EPERM')) throw error;
@@ -50,7 +53,7 @@ export async function removeStoragePath(path: string, input: Readonly<{
         await assertStoragePathIdentity(physical, input.expectedIdentity);
         await input.beforeEffect?.();
         await assertStoragePathIdentity(physical, input.expectedIdentity);
-        await rm(storagePathToFs(physical), { recursive: true, force: true });
+        await rm(storagePathToFs(physical), { recursive, force: true });
     }
     try { await lstat(storagePathToFs(physical)); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }

@@ -2,13 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout, clearTimeout } from 'node:timers';
 import type { MachineStoragePolicyV1 } from '@happier-dev/protocol/storage/storageV1';
 import type { ActivityLog } from '@/daemon/guard/activityLog';
-import type { BrowserRecordingDaemonService } from '@/daemon/browser/recording/service';
+import type { BrowserRecordingDaemonService } from '../../daemon/recording/service';
 import type { LogRetentionPassResult } from '@/utils/logs/logRetention';
 import type { TrashStore } from '../trash/trashStore';
+import { storagePolicyUnavailableError } from '../storagePolicy';
 
 type Subscribe = (listener: () => void) => () => void;
 export type StorageMaintenanceDeps = Readonly<{
-  readPolicy(): MachineStoragePolicyV1;
+  /** Undefined while the Machine policy is unknown (loading, locked, offline): every policy effect waits for its edge. */
+  readPolicy(): MachineStoragePolicyV1 | undefined;
   subscribePolicy: Subscribe;
   subscribeVolumes: Subscribe;
   isIdle(): boolean | Promise<boolean>;
@@ -72,11 +74,15 @@ export function createStorageMaintenance(deps: StorageMaintenanceDeps) {
   const trashChanged = () => { if (running && !inPass) void requestPass().catch(deps.onError); };
   const beforeEffect = async () => {
     if (!running) throw Object.assign(new Error('Storage maintenance stopped'), { name: 'AbortError' });
+    if (!deps.readPolicy()) throw storagePolicyUnavailableError();
   };
 
   async function pass() {
     inPass = true;
     const policy = deps.readPolicy();
+    // Retention, Trash emptying, log pruning and scheduled scans act on the
+    // user's policy only. Unknown policy is not a default; subscribePolicy wakes us.
+    if (!policy) { clearTimer(); return; }
     const at = now();
     const key = JSON.stringify([policy.wholeDiskEnabled, policy.scheduledScan]);
     if (key !== scheduleKey) { scheduleKey = key; nextScanAt = scheduledAt(policy, at); }
@@ -137,7 +143,7 @@ export function createStorageMaintenance(deps: StorageMaintenanceDeps) {
     try { await recordHousekeeping(); } catch (error) { receiptFailure = { error }; }
     if (nextScanAt !== null && nextScanAt <= now() && await deps.isIdle() && running && deps.isOnPower()) {
       const current = deps.readPolicy();
-      if (current.wholeDiskEnabled && JSON.stringify([current.wholeDiskEnabled, current.scheduledScan]) === scheduleKey) {
+      if (current?.wholeDiskEnabled && JSON.stringify([current.wholeDiskEnabled, current.scheduledScan]) === scheduleKey) {
         try { await deps.runScheduledScan(); nextScanAt = scheduledAt(current, now() + 1); }
         catch (error) { deps.onError(error); }
       }
@@ -148,7 +154,7 @@ export function createStorageMaintenance(deps: StorageMaintenanceDeps) {
     const candidates = [nextLogAt, deps.recordings.nextExpiryAtMs(), ...entries.map(entry => entry.emptiesAt),
       nextScanAt !== null && nextScanAt > now() ? nextScanAt : null].filter((due): due is number => due !== null && due > now());
     // Failed/blocked due work waits for a canonical change edge, not a retry interval or a zero-delay loop.
-    arm(candidates.reduce<number | null>((first, due) => first === null ? due : Math.min(first, due), null));
+    arm(deps.readPolicy() ? candidates.reduce<number | null>((first, due) => first === null ? due : Math.min(first, due), null) : null);
     if (receiptFailure) throw receiptFailure.error;
   }
   let releaseTrash: (() => void) | undefined;

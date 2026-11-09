@@ -1,4 +1,4 @@
-import { getMachineResourcesPolicyV1, mutateMachineResourcesPolicyV1, readMachineResourcesPolicyV1SnapshotFromMetadata, MachineResourcesPolicyMutationV1Schema, type MachineResourcesPolicyGetResultV1, type MachineResourcesPolicyMutationResultV1 } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
+import { getMachineResourcesPolicyV1, mutateMachineResourcesPolicyV1, readMachineResourcesPolicyV1SnapshotFromMetadata, MachineResourcesPolicyMutationV1Schema, type MachineResourcesPolicyV1, type MachineResourcesPolicyGetResultV1, type MachineResourcesPolicyMutationResultV1 } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import type { MachineGuardStateV1 } from '@happier-dev/protocol/machines/guard/guardStateV1';
@@ -8,7 +8,8 @@ export type MachineResourcesPolicyRuntime = Readonly<{
   read: () => MachineResourcesPolicyGetResultV1;
   reload: () => Promise<void>;
   subscribe: (listener: () => void) => () => void;
-  set: (input: unknown, options?: Readonly<{ signal?: AbortSignal; verifyCurrent?: () => Promise<boolean> }>) => Promise<MachineResourcesPolicyMutationResultV1>;
+  subscribeKey: (key: keyof MachineResourcesPolicyV1, listener: () => void) => () => void;
+  set: (input: unknown, options?: Readonly<{ signal?: AbortSignal }>) => Promise<MachineResourcesPolicyMutationResultV1>;
   stop: () => void;
 }>;
 export function createMachineResourcesPolicyRuntime(dependencies: Readonly<{
@@ -19,10 +20,17 @@ export function createMachineResourcesPolicyRuntime(dependencies: Readonly<{
   let snapshot: MachineResourcesPolicyGetResultV1 = { status: 'unavailable' };
   let stopped = false;
   const listeners = new Set<() => void>();
+  const keyListeners = new Map<keyof MachineResourcesPolicyV1, Set<() => void>>();
   const publish = (next: MachineResourcesPolicyGetResultV1) => {
     if (stopped || next.status === 'ready' && snapshot.status === 'ready' && next.revision < snapshot.revision
       || sameStrictJsonValue(snapshot, next)) return;
+    const previous = snapshot;
     snapshot = next;
+    for (const [key, subscribed] of keyListeners) {
+      const before = previous.status === 'ready' ? previous.policy[key] : null;
+      const after = next.status === 'ready' ? next.policy[key] : null;
+      if (!sameStrictJsonValue(before, after)) for (const listener of subscribed) listener();
+    }
     for (const listener of listeners) listener();
   };
   const reload = async () => {
@@ -31,6 +39,13 @@ export function createMachineResourcesPolicyRuntime(dependencies: Readonly<{
     publish(next);
   };
   return { read: () => snapshot, reload, subscribe(listener) { if (!stopped) listeners.add(listener); return () => { listeners.delete(listener); }; },
+    subscribeKey(key, listener) {
+      if (stopped) return () => {};
+      let subscribed = keyListeners.get(key);
+      if (!subscribed) { subscribed = new Set(); keyListeners.set(key, subscribed); }
+      subscribed.add(listener);
+      return () => { subscribed.delete(listener); if (!subscribed.size && keyListeners.get(key) === subscribed) keyListeners.delete(key); };
+    },
     async set(input, options) {
       if (stopped) return { status: 'unavailable', reason: 'stopped' };
       const parsed = MachineResourcesPolicyMutationV1Schema.safeParse(input);
@@ -56,7 +71,6 @@ export function createMachineResourcesPolicyRuntime(dependencies: Readonly<{
         }) : { status: read.status };
         return read;
       }, compareAndSwap: async input => {
-        if (stopped || options?.signal?.aborted || options?.verifyCurrent && !await options.verifyCurrent()) return { status: 'unavailable' };
         if (stopped || options?.signal?.aborted) return { status: 'unavailable' };
         metadataWriteAttempted = true;
         const answer = await dependencies.port.compareAndSwap(input);
@@ -64,10 +78,9 @@ export function createMachineResourcesPolicyRuntime(dependencies: Readonly<{
         return answer;
       } };
       const result = await mutateMachineResourcesPolicyV1(input, port, options);
-      // Unchanged/conflicting local reads have no CAS effect guard, but still
-      // require current authority before returning the Machine's private policy.
+      // No-write reads still respect local shutdown/cancellation. Remote
+      // revocation is admitted on the next request, not during this receipt.
       if ('policy' in result && !metadataWriteAttempted) {
-        if (stopped || options?.signal?.aborted || options?.verifyCurrent && !await options.verifyCurrent()) return { status: 'unavailable', reason: 'admission_withdrawn' };
         if (stopped || options?.signal?.aborted) return { status: 'unavailable', reason: 'admission_withdrawn' };
       }
       // CAS (including lost-ACK reconciliation) already returned the canonical field.
@@ -77,6 +90,6 @@ export function createMachineResourcesPolicyRuntime(dependencies: Readonly<{
       else if (observed.status !== 'ready') publish(observed);
       return result;
     },
-    stop() { stopped = true; snapshot = { status: 'unavailable' }; listeners.clear(); },
+    stop() { stopped = true; snapshot = { status: 'unavailable' }; listeners.clear(); keyListeners.clear(); },
   };
 }

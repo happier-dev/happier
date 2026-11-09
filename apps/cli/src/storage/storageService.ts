@@ -64,7 +64,7 @@ export type StorageServiceDeps = Readonly<{
     homeDir?: string;
     activityLog?: ActivityLog;
     /** The only Storage policy source. Not ready (loading, locked, offline) is unknown, never a default. */
-    resourcesPolicy: Pick<MachineResourcesPolicyRuntime, 'read' | 'set' | 'subscribe'>;
+    resourcesPolicy: Pick<MachineResourcesPolicyRuntime, 'read' | 'set' | 'subscribeKey'>;
     canRunStorageOwnerOperation?: () => boolean | Promise<boolean>;
     readLowPower?: () => boolean;
     readIndexedStorageItem?: (ref: StorageItemRefV1) => Promise<TrustedDiskNode | null>;
@@ -88,6 +88,7 @@ export function createStorageService(deps: StorageServiceDeps) {
         const snapshot = deps.resourcesPolicy.read();
         return snapshot.status === 'ready' ? snapshot.policy.storage : undefined;
     };
+    const subscribePolicy = (listener: () => void) => deps.resourcesPolicy.subscribeKey('storage', listener);
     const requirePolicy = (): MachineStoragePolicyV1 => {
         const policy = readPolicy();
         if (!policy) throw storagePolicyUnavailableError();
@@ -144,7 +145,7 @@ export function createStorageService(deps: StorageServiceDeps) {
     };
     const unsubscribe = deps.subscribeChanges?.(() => { invalidate(); reconcileScans(); });
     // Policy edges change availability, protection and retention verdicts.
-    const unsubscribePolicy = deps.resourcesPolicy.subscribe(() => { invalidate(); reconcileScans(); });
+    const unsubscribePolicy = subscribePolicy(() => { invalidate(); reconcileScans(); });
     const unsubscribeWorktrees = scmWorktreeMutationActivity.subscribe(invalidate);
     const assertActive = (signal?: AbortSignal) => { if (disposed || signal?.aborted) throw abortError(); };
     async function scans() {
@@ -199,7 +200,7 @@ export function createStorageService(deps: StorageServiceDeps) {
                         }
                     };
                     scheduledSubscriptions.push(deps.maintenance.subscribeIdle(resume),
-                        deps.maintenance.subscribePower(resume), deps.resourcesPolicy.subscribe(policyChanged));
+                        deps.maintenance.subscribePower(resume), subscribePolicy(policyChanged));
                 }
                 return { index, runner };
             })();
@@ -484,7 +485,7 @@ export function createStorageService(deps: StorageServiceDeps) {
     const protectedFolders = createStorageProtectedFolders({ resourcesPolicy: deps.resourcesPolicy,
         readProtectionFacts: operations.readProtectionFacts });
     const maintenance = deps.maintenance ? createStorageMaintenance({ ...deps.maintenance,
-        readPolicy, subscribePolicy: deps.resourcesPolicy.subscribe,
+        readPolicy, subscribePolicy,
         getTrashStore: operations.maintenanceTrash,
         runScheduledScan: async () => {
             const key = currentScheduledPolicyKey();
