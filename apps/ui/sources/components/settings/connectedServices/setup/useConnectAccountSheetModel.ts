@@ -10,6 +10,7 @@ import { resolveConnectSheetOpening } from './connectSheetOpening';
 import type { ConnectedServiceSetupTarget } from './ConnectedServiceSetupPanel';
 import type { ConnectSheetAccountRequest, ConnectSheetAccountResult } from './ConnectedServiceSetupModal';
 import type { MachineAdministrationTargetSelectorProps } from '@/components/settings/machines/MachineAdministrationTargetSelector';
+import type { ConnectedAccountSetupFacts } from '../account/useConnectedAccountSetupCompletion';
 
 /** Account inventory, purpose admission and returned selection belong to their existing owners. */
 export function useConnectAccountSheetModel(request: ConnectSheetAccountRequest,
@@ -17,8 +18,8 @@ export function useConnectAccountSheetModel(request: ConnectSheetAccountRequest,
     const viewer = useActiveServerAccountScope();
     const close = React.useCallback(() => onResult({ kind: 'dismissed' }), [onResult]);
     const selectedTarget = React.useMemo(() => request.account ? { kind: 'account' as const, account: request.account } : null, [request.account]);
-    const settle = React.useCallback((account: QualifiedConnectedAccountRef, kind: 'selected' | 'connected') =>
-        onResult({ kind, account }), [onResult]);
+    const settle = React.useCallback((account: QualifiedConnectedAccountRef, kind: 'selected' | 'connected', facts?: ConnectedAccountSetupFacts) =>
+        onResult({ kind, account, ...facts }), [onResult]);
     const purposeSetup = useConnectedAccountPurposeSetup({ request: request.purposeRequest ?? null,
         selectedTarget, onClose: close,
         ...(request.purposeSettlement === 'resourceDefault' ? { onSettled: settle } : { onSelected: settle }) });
@@ -47,16 +48,16 @@ export function useConnectAccountSheetModel(request: ConnectSheetAccountRequest,
         : request.service ? [request.service] : purposeSetup.declaration?.serviceRefs,
         [selectedService, request.service, purposeSetup.declaration]);
     const savedAccounts = useProfile(profile => profile.connectedAccountsV4.filter(account => !services || services.some(service =>
-        service.pluginId === account.ref.service.pluginId && service.localId === account.ref.service.localId)));
+        service.pluginId === account.ref.service.pluginId && service.localId === account.ref.service.localId)), ['connectedAccountsV4']);
     const opening = resolveConnectSheetOpening(selectedService ? { ...request, service: selectedService } : request,
         { accounts: savedAccounts, services });
     const onSelected = (account: QualifiedConnectedAccountRef) => {
         if (request.purposeRequest) void purposeSetup.select({ kind: 'account', account });
         else onResult({ kind: 'selected', account });
     };
-    const onConnected = (account: QualifiedConnectedAccountRef) => {
-        if (request.purposeRequest) purposeSetup.onConnected(account);
-        else onResult({ kind: 'connected', account });
+    const onConnected = (account: QualifiedConnectedAccountRef, facts?: ConnectedAccountSetupFacts) => {
+        if (request.purposeRequest) purposeSetup.onConnected(account, facts);
+        else onResult({ kind: 'connected', account, ...facts });
     };
     return { initialMode: opening.initialMode, preselected: typeof opening.preselected === 'object' ? opening.preselected : null,
         savedAccounts, catalog, target, setTarget, onSelected, onConnected, close, purposeSetup, machineRequired, machineAvailability, targetSelection, onMachineRequirementChange,

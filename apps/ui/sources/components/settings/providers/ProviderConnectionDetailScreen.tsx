@@ -206,7 +206,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const profile = useProfile(profile => ({
         connectedAccountsV4: profile.connectedAccountsV4,
         connectedAccountGroupsV4: profile.connectedAccountGroupsV4,
-    }));
+    }), ['connectedAccountsV4', 'connectedAccountGroupsV4']);
     const { present } = useConnectedAccountIdentityPrivacy();
     const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
     const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
@@ -284,12 +284,14 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const ignoreManagedPurposeGuardRef = React.useRef(false);
     const probeGenerationRef = React.useRef(0);
     const pendingProbe = React.useRef<AbortController | null>(null);
+    const [helperModelsOpen, setHelperModelsOpen] = React.useState(false);
     const models = useProviderConnectionModelsSection({
         declarationContext: query.declarationContext,
         connectionId: props.connectionId,
         connection,
         enabled: enabled && accountAddressAvailable,
         active: focused && connection !== null,
+        catalogActive: helperModelsOpen,
         machineId,
         serverId,
         resolveCurrentTarget,
@@ -866,9 +868,6 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         ? gatewayRuntimeQuery.data?.connections.find(row => row.connectionId === props.connectionId) ?? null
         : null;
     const gatewayRuntime = gatewayRuntimeConnection?.runtime.gateway;
-    const gatewayModels = React.useMemo(() => (models.groups[0]?.rows ?? []).map((row) => ({
-        id: row.descriptor.id, name: row.descriptor.name,
-    })), [models.groups]);
     const connectGatewayService = React.useCallback((serviceKey: string, anchor?: PopoverAnchor) => {
         const service = parseQualifiedPluginContributionKey(serviceKey) ?? undefined;
         fireAndForget(presentConnectSheet({ scope: addressedScope, service, ...(anchor ? { anchor } : {}) }), {
@@ -1440,7 +1439,10 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                     onChangePlacement={(gatewayPlacement) => changeGatewayConfiguration({ gatewayPlacement })}
                     helperModels={gateway.saved.roleModels}
                     modelRoles={gatewayModelRoles}
-                    models={gatewayModels}
+                    models={models.catalogModels}
+                    modelsLoading={models.catalogLoading}
+                    onHelperMenuOpenChange={setHelperModelsOpen}
+                    modelsError={models.catalogError}
                     onChangeHelperModels={(roleModels) => changeGatewayConfiguration({ roleModels })}
                     disabled={!connectedAccountScopeMatchesTarget || query.loading || query.catalog === null}
                     // Read-only (another Account's machine) and not ready (still reading, or never read) say

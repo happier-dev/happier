@@ -113,7 +113,7 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
     }, [credentials, params.serverId]);
     const execution = useMountedActionExecution(actionScope);
     const profileScope = useActiveServerAccountScope();
-    const profileGroups = useProfile(profile => profile.connectedAccountGroupsV4);
+    const profileGroups = useProfile(profile => profile.connectedAccountGroupsV4, ['connectedAccountGroupsV4']);
     const [failure, setFailure] = React.useState<Readonly<{ basis: LoadBasis; error: string }> | null>(null);
     const [refreshing, setRefreshing] = React.useState<LoadBasis | null>(null);
     const [mutating, setMutating] = React.useState(false);

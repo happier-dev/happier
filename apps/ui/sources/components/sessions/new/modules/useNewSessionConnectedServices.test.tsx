@@ -1,4 +1,4 @@
-import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, createSessionFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { CONNECTED_SERVICES_BINDINGS_KEY } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { projectMachineAgent } from '@/agents/machineAgents/machineAgentModel';
 import { projectMachineAgentConnectedServices } from '@/agents/machineAgents/machineAgentConnectedServices';
@@ -16,6 +16,8 @@ import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch'
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { DaemonMergedProjectionInputsState } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import type { NewSessionConnectedServicesSelectionContentProps } from '../components/NewSessionConnectedServicesSelectionContent';
+import { SelectionList, type SelectionListStep } from '@/components/ui/selectionList';
+import { createConnectedServiceOptionId } from '../components/buildNewSessionConnectedServicesSelectionListModel';
 import { act } from 'react-test-renderer';
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -288,6 +290,11 @@ function requireCollapsedContentPopover(chip: AgentInputExtraActionChip | null) 
     return popover;
 }
 
+function renderedAccountOptionIds(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    const step: SelectionListStep = screen.findByType(SelectionList).props.rootStep;
+    return step.sections.flatMap(section => 'options' in section ? section.options.map(option => option.id) : []);
+}
+
 type ConnectedAccountsParam = ReadonlyArray<Readonly<{
     purpose: string;
     service: { pluginId: string; localId: string };
@@ -317,6 +324,8 @@ afterEach(async () => {
 
 describe('new Session Connected Accounts from the machine catalog', () => {
     it('keeps both Claude subscription choices and the open overlay through offline recovery and background projection refresh', async () => {
+        const { AuthProvider } = await import('@/auth/context/AuthContext');
+        const wrapPicker = (content: React.ReactElement) => <AuthProvider initialCredentials={null}>{content}</AuthProvider>;
         const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
         const serviceKey = 'happier.agent.claude/claude-subscription';
         // This is the daemon's public declaration, not the bundled scalar catalog.
@@ -381,8 +390,10 @@ describe('new Session Connected Accounts from the machine catalog', () => {
         if (typeof popover.renderContent !== 'function') throw new Error('Expected account picker content renderer');
         const content = popover.renderContent({ maxHeight: 560, requestClose: vi.fn() }) as React.ReactElement<NewSessionConnectedServicesSelectionContentProps>;
         expect(content.props.supportedServiceIds).toEqual([serviceKey]);
-        expect(content.props.profileOptionsByServiceId[serviceKey]?.map((profile) => profile.profileId)).toEqual(['personal', 'work']);
-        expect(content.props.groupOptionsByServiceId).toEqual({});
+        const picker = await renderScreen(wrapPicker(content));
+        expect(renderedAccountOptionIds(picker)).toEqual(expect.arrayContaining([
+            createConnectedServiceOptionId(serviceKey, 'personal'), createConnectedServiceOptionId(serviceKey, 'work'),
+        ]));
         await act(async () => {
             hook.getCurrent().overlay.openSelectionOverlay('collapsedExtra', 'chip', 'new-session-connected-services-auth');
         });
@@ -398,8 +409,10 @@ describe('new Session Connected Accounts from the machine catalog', () => {
             const currentPopover = requireCollapsedContentPopover(current.overlay.activeExtraCollapsedPopoverChip);
             if (typeof currentPopover.renderContent !== 'function') throw new Error('Expected picker renderer');
             const currentContent = currentPopover.renderContent({ maxHeight: 560, requestClose: vi.fn() }) as React.ReactElement<NewSessionConnectedServicesSelectionContentProps>;
-            expect(currentContent.props.profileOptionsByServiceId[serviceKey]?.map((profile) => profile.profileId), phase)
-                .toEqual(['personal', 'work']);
+            await act(async () => { picker.update(wrapPicker(currentContent)); });
+            expect(renderedAccountOptionIds(picker), phase).toEqual(expect.arrayContaining([
+                createConnectedServiceOptionId(serviceKey, 'personal'), createConnectedServiceOptionId(serviceKey, 'work'),
+            ]));
         }
         await act(async () => {
             await content.props.setBindingForService(serviceKey, { source: 'connected', selection: 'profile', profileId: 'work' });
@@ -784,6 +797,59 @@ describe('New Session purpose catalog authority', () => {
 
 describe('useNewSessionConnectedServices', () => {
     beforeEach(arrangeLegacyConnectedServicesHomes);
+    it('PC-6 keeps the closed account chip quiet with 1,000 Sessions and 121 Machines, then reads its inventory once on open', async () => {
+        const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
+        const { AuthProvider } = await import('@/auth/context/AuthContext');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const request = await arrangeAccountGroupFeatures();
+        const requests: string[] = [];
+        const countedRequest: typeof fetch = async (input, init) => {
+            const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+            requests.push(path);
+            // The remote Account already owns current metadata rows; opening this
+            // picker reads their catalog once, without legacy migration work.
+            if (path.startsWith('/v1/account/entity-rows/connected-metadata/')) {
+                return Response.json({ status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, entries: [] } } });
+            }
+            return request(input, init);
+        };
+        setRuntimeFetch(countedRequest);
+        vi.stubGlobal('fetch', countedRequest);
+        storage.setState({
+            sessions: Object.fromEntries(Array.from({ length: 1_000 }, (_, index) => {
+                const fixture = createSessionFixture({ id: `quiet-session-${index}` });
+                const session = { ...fixture, metadata: { ...fixture.metadata, machineId: `quiet-machine-${index % 121}` } };
+                return [session.id, session];
+            })),
+            machineListByServerId: { [activeHomeId]: Array.from({ length: 121 }, (_, index) => createMachineFixture({ id: `quiet-machine-${index}` })) },
+        });
+        const hook = await renderHook(() => ({
+            binding: useServerCredentialAccountScopeBinding(activeHomeId),
+            value: useNewSessionConnectedServices({ agentCore: null, defaultAuthAgentId: 'claude',
+                defaultAuthConsumer: { pluginId: 'happier.agent.claude', localId: 'claude' },
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
+                agentOptionState: { [CONNECTED_SERVICES_BINDINGS_KEY]: { [CLAUDE_SERVICE_KEY]: { source: 'native' } } },
+                settings: { connectedServicesDefaultProfileByServiceId: {} }, targetServerId: activeHomeId,
+                router: { push() {} }, setAgentOptionStateForCurrentAgent() {},
+            }),
+        }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().binding.resolution.kind).toBe('bound'));
+        await act(async () => {});
+        const presentationRead = '/v1/account/entity-rows/connected-metadata/presentation';
+        expect(requests.filter(path => path.startsWith('/v1/account/entity-rows/connected-metadata/'))).toHaveLength(0);
+        expect(requests.filter(path => path === '/v1/account/profile')).toHaveLength(0);
+        expect(requests.filter(path => path.includes('/rpc'))).toHaveLength(0);
+        const content = requireCollapsedContentPopover(hook.getCurrent().value.connectedServicesAuthChip).renderContent;
+        if (typeof content !== 'function') throw new Error('Expected account picker content');
+        const open = await renderScreen(<AuthProvider initialCredentials={legacyConnection!.credentials}>
+            {content({ requestClose() {}, maxHeight: 420 })}
+        </AuthProvider>);
+        await waitForHomeGovernance(() => expect(requests.filter(path => path === presentationRead)).toHaveLength(1));
+        expect(renderedAccountOptionIds(open)).toContain(createConnectedServiceOptionId(CLAUDE_SERVICE_KEY, 'work'));
+        expect(requests.filter(path => path.includes('/rpc'))).toHaveLength(0);
+        await open.unmount();
+        await hook.unmount();
+    });
     it('authors only the picked purpose and retains underlying intent while another purpose is locked', async () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
         const target = 'happier.agent.claude/claude';
@@ -1035,7 +1101,6 @@ describe('useNewSessionConnectedServices', () => {
     });
     it('authors an Account prompt trigger with a profile picked through the New Session authentication owner', async () => {
         const { TriggerPopover } = await import('@/components/workflows/triggers/TriggerPopover');
-        const { NewSessionConnectedServicesSelectionContent } = await import('../components/NewSessionConnectedServicesSelectionContent');
         const { createDefaultWhen } = await import('@/components/workflows/triggers/sessionTriggerForm');
         const { AuthProvider } = await import('@/auth/context/AuthContext');
         const { resolveWorkflowStepSelectionV1 } = await import('@happier-dev/protocol/workflows/workflowStepSelectionV1');
@@ -1048,11 +1113,7 @@ describe('useNewSessionConnectedServices', () => {
                 selection: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } } }}
             workflowOptions={[]} onSubmit={submit} /></AuthProvider>);
         await screen.pressByTestIdAsync('new-session-connected-services-auth-chip');
-        const panel = screen.root.findByType(NewSessionConnectedServicesSelectionContent);
-        expect(panel.props.profileOptionsByServiceId[CLAUDE_SERVICE_KEY]).toEqual(expect.arrayContaining([
-            expect.objectContaining({ profileId: 'work' }),
-        ]));
-        const { createConnectedServiceOptionId } = await import('../components/buildNewSessionConnectedServicesSelectionListModel');
+        expect(renderedAccountOptionIds(screen)).toContain(createConnectedServiceOptionId(CLAUDE_SERVICE_KEY, 'work'));
         await screen.pressByTestIdAsync(`new-session.connected-services.selection-list:new-session-connected-services-root:option:${createConnectedServiceOptionId(CLAUDE_SERVICE_KEY, 'work')}`);
         await screen.pressByTestIdAsync('prompt-auth-submit');
         const target = submit.mock.calls[0]?.[1].target;
@@ -1226,6 +1287,9 @@ describe('useNewSessionConnectedServices', () => {
         expect(hook.getCurrent().agentOptionState).toEqual({ connectedServicesBindingsByServiceId:
             { [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' } },
         });
+        expect(hook.getCurrent().connectedServicesBindingsPayload).toMatchObject({ bindingsByServiceId: {
+            [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
+        } });
         expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label)
             .toBe('Runs through Anthropic API key · Work');
         // "Runs through <account>": the account is the route's native source.

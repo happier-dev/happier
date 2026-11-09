@@ -12,6 +12,9 @@ import type {
   ProviderGatewayPlacementV1,
 } from '@happier-dev/protocol/providers/connections/v1';
 import type { DaemonProviderConnectionViewV1 } from '@happier-dev/protocol/rpc';
+import type { ProviderModelDescriptorV1 } from '@happier-dev/protocol/models/descriptor';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { presentProviderError } from '@/providers/connection/errorPresentation';
 import type { AgentProviderRequirementsV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
@@ -94,7 +97,11 @@ export type ProviderGatewaySectionsProps = Readonly<{
   onChangePlacement: (placement: ProviderGatewayPlacementV1 | null) => void;
   helperModels: ProviderRoleModelsV1 | undefined;
   modelRoles: NonNullable<AgentProviderRequirementsV1['modelRoles']>;
-  models: readonly Readonly<{ id: string; name: string }>[];
+  /** Null until the catalog has answered; an empty array is an observed empty catalog. */
+  models: readonly ProviderModelDescriptorV1[] | null;
+  modelsLoading?: boolean;
+  onHelperMenuOpenChange?: (open: boolean) => void;
+  modelsError?: ProviderErrorV1 | null;
   /** `null` clears every pin. */
   onChangeHelperModels: (
     helperModels: ProviderRoleModelsV1 | null,
@@ -170,7 +177,7 @@ export const ProviderGatewaySections = React.memo(
     const [helperMenuOpen, setHelperMenuOpen] =
       React.useState<HelperRole | null>(null);
     const [knowOpen, setKnowOpen] = React.useState(false);
-    const connectedServiceKeyList = useProfile(selectConnectedServiceKeys);
+    const connectedServiceKeyList = useProfile(selectConnectedServiceKeys, ['connectedAccountsV4']);
     const connectedServiceKeys = React.useMemo(
       () => new Set(connectedServiceKeyList ? connectedServiceKeyList.split('\n') : []),
       [connectedServiceKeyList],
@@ -251,16 +258,17 @@ export const ProviderGatewaySections = React.memo(
               : t('settingsProvidersCollection.gateway.computerOnline');
     const computerTrouble = chosen !== null && chosen.machine?.online !== true;
 
-    const helperItems = React.useMemo(
-      () => [
-        {
-          id: SAME_AS_SESSION,
-          title: t('settingsProvidersCollection.gateway.helperSameAsSession'),
-        },
-        ...props.models.map((model) => ({ id: model.id, title: model.name })),
-      ],
-      [props.models],
-    );
+    const helperCatalogPending = props.models === null && props.modelsLoading === true;
+    const helperCatalogStatus = props.modelsError
+      ? t(presentProviderError(props.modelsError).descriptionKey)
+      : helperCatalogPending ? t('common.loading')
+        : props.models === null ? t('common.unavailable') : undefined;
+    const sessionHelperItem = React.useMemo(() => ({ id: SAME_AS_SESSION,
+      title: t('settingsProvidersCollection.gateway.helperSameAsSession') }), []);
+    const helperItems = React.useMemo(() => helperMenuOpen === null ? [sessionHelperItem] : [
+      sessionHelperItem,
+      ...(props.models ?? []).map(model => ({ id: model.id, title: model.name })),
+    ], [helperMenuOpen, props.models, sessionHelperItem]);
     const setHelper = (role: HelperRole, modelId: string) => {
       const next: ProviderRoleModelsV1 = {
         ...props.helperModels,
@@ -415,11 +423,16 @@ export const ProviderGatewaySections = React.memo(
         >
           <SettingAnchor setting={PROVIDER_GATEWAY_SETTINGS.settings.helpers}><>{props.modelRoles.map(({ id: role, title }) => {
             const pinned = props.helperModels?.[role] ?? SAME_AS_SESSION;
+            const selectedModel = helperMenuOpen !== role && pinned !== SAME_AS_SESSION
+              ? props.models?.find(model => model.id === pinned) : undefined;
+            const items = selectedModel
+              ? [sessionHelperItem, { id: selectedModel.id, title: selectedModel.name }]
+              : helperMenuOpen === role ? helperItems : [sessionHelperItem];
             return (
               <DropdownMenu
                 key={role}
                 open={helperMenuOpen === role}
-                onOpenChange={(open) => setHelperMenuOpen(open ? role : null)}
+                onOpenChange={(open) => { setHelperMenuOpen(open ? role : null); props.onHelperMenuOpenChange?.(open); }}
                 variant="selectable"
                 search={helperItems.length > 8}
                 selectedId={pinned}
@@ -428,19 +441,23 @@ export const ProviderGatewaySections = React.memo(
                 connectToTrigger={true}
                 rowKind="item"
                 popoverPortalWebTarget="body"
+                emptyLabel={helperCatalogStatus}
                 itemTrigger={{
                   title,
+                  subtitle: helperCatalogStatus,
                   // A pin whose model left the gateway still says which model it names.
                   detailFormatter: (selected) => selected?.title ?? pinned,
                   field: { quietValue: pinned === SAME_AS_SESSION },
                   itemProps: {
-                    disabled: props.disabled,
+                    disabled: props.disabled || helperCatalogPending,
+                    loading: helperCatalogPending,
                     testID: `provider-gateway-helper:${role}`,
                   },
                 }}
-                items={helperItems}
+                items={items}
                 onSelect={(modelId) => {
                   setHelperMenuOpen(null);
+                  props.onHelperMenuOpenChange?.(false);
                   if (modelId !== pinned) setHelper(role, modelId);
                 }}
               />

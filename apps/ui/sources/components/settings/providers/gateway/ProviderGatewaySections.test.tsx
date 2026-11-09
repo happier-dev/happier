@@ -3,6 +3,9 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { presentProviderError } from '@/providers/connection/errorPresentation';
+import { t } from '@/text';
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
@@ -39,6 +42,36 @@ function render(overrides: Partial<ProviderGatewaySectionsProps> = {}) {
 }
 
 describe('ProviderGatewaySections (lab rgateway GW1/GW2)', () => {
+    it('projects only held selected helper labels while closed and builds current options on opening', async () => {
+        const readNames: string[] = [];
+        const models = Array.from({ length: 200 }, (_, index) => ({
+            id: `model-${index}`,
+            get name() { readNames.push(`model-${index}`); return `Model ${index}`; },
+        }));
+        const screen = await render({ models, modelRoles: [{ id: 'reviewer', title: 'Reviewer' }],
+            helperModels: { reviewer: 'model-7' } });
+        expect(screen.getTextContent()).toContain('Model 7');
+        expect(new Set(readNames)).toEqual(new Set(['model-7']));
+        readNames.length = 0;
+        await screen.pressByTestIdAsync('provider-gateway-helper:reviewer');
+        await vi.waitFor(() => expect(new Set(readNames).size).toBe(200));
+    });
+
+    it('distinguishes unread, loading, failed, and observed empty helper catalogs', async () => {
+        const modelRoles = [{ id: 'reviewer', title: 'Code reviewer' }];
+        const unread = await render({ modelRoles, models: null });
+        expect(unread.getTextContent()).toContain(t('common.unavailable'));
+        const loading = await render({ modelRoles, models: null, modelsLoading: true });
+        expect(loading.getTextContent()).toContain(t('common.loading'));
+        expect(loading.findByTestId('provider-gateway-helper:reviewer')?.props.disabled).toBe(true);
+        const error = createProviderErrorV1('provider_endpoint_unreachable');
+        const failed = await render({ modelRoles, models: null, modelsError: error });
+        expect(failed.getTextContent()).toContain(t(presentProviderError(error).descriptionKey));
+        const empty = await render({ modelRoles, models: [] });
+        expect(empty.getTextContent()).not.toContain(t('common.unavailable'));
+        expect(empty.findByTestId('provider-gateway-helper:reviewer')?.props.disabled).toBe(false);
+    });
+
     it('renders contributed model roles without substituting a host role list', async () => {
         const screen = await render({ modelRoles: [{ id: 'reviewer', title: 'Code reviewer' }] });
         expect(screen.findByTestId('provider-gateway-helper:reviewer')).toBeTruthy();

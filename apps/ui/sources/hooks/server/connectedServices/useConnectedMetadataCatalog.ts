@@ -8,9 +8,10 @@ import { getConnectedMetadataCatalog, subscribeConnectedMetadataCatalog,
 
 export const selectConnectedMetadataLabels = (snapshot: ConnectedMetadataCatalogSnapshot) => snapshot.labelsByKey;
 export const selectConnectedMetadataAcknowledgements = (snapshot: ConnectedMetadataCatalogSnapshot) => snapshot.acknowledgementsByKey;
-export function useConnectedMetadataCatalog(scope?: ServerAccountScope | null): ConnectedMetadataCatalogSnapshot;
-export function useConnectedMetadataCatalog<T>(scope: ServerAccountScope | null | undefined, selector: (snapshot: ConnectedMetadataCatalogSnapshot) => T): T;
-export function useConnectedMetadataCatalog<T>(requestedScope?: ServerAccountScope | null, selector?: (snapshot: ConnectedMetadataCatalogSnapshot) => T) {
+export type ConnectedMetadataCatalogDemandOptions = Readonly<{ enabled?: boolean }>;
+export function useConnectedMetadataCatalog(scope?: ServerAccountScope | null, selector?: undefined, options?: ConnectedMetadataCatalogDemandOptions): ConnectedMetadataCatalogSnapshot;
+export function useConnectedMetadataCatalog<T>(scope: ServerAccountScope | null | undefined, selector: (snapshot: ConnectedMetadataCatalogSnapshot) => T, options?: ConnectedMetadataCatalogDemandOptions): T;
+export function useConnectedMetadataCatalog<T>(requestedScope?: ServerAccountScope | null, selector?: (snapshot: ConnectedMetadataCatalogSnapshot) => T, options?: ConnectedMetadataCatalogDemandOptions) {
     const activeServer = useActiveServerSnapshot();
     const activeScope = useActiveServerAccountScope(requestedScope?.serverId ?? activeServer.serverId);
     const selectedScope = requestedScope === undefined ? activeScope : requestedScope;
@@ -22,6 +23,7 @@ export function useConnectedMetadataCatalog<T>(requestedScope?: ServerAccountSco
         return selector ? selector(snapshot) : snapshot;
     }, [scope, selector]);
     const snapshot = React.useSyncExternalStore(subscribeConnectedMetadataCatalog, read, read);
-    React.useEffect(() => scope ? observeConnectedMetadataCatalog(scope) : undefined, [scope]);
+    const enabled = options?.enabled !== false;
+    React.useEffect(() => scope && enabled ? observeConnectedMetadataCatalog(scope) : undefined, [scope, enabled]);
     return snapshot;
 }

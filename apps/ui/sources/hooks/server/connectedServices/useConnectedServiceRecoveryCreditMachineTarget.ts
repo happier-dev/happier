@@ -177,7 +177,7 @@ export function useConnectedServiceRecoveryCreditMachineTarget(params: Readonly<
 }>): string | null {
     const sessions = useSessions();
     const machines = useActiveMachineFacts();
-    const profile = useProfile();
+    const connectedServicesV2 = useProfile(profile => profile.connectedServicesV2, ['connectedServicesV2']);
     const activeServer = useActiveServerSnapshot();
     const activeScope = useActiveServerAccountScope();
     const accountScope = selectActiveServerAccountScopeForServer(activeScope, activeServer.serverId);
@@ -189,6 +189,6 @@ export function useConnectedServiceRecoveryCreditMachineTarget(params: Readonly<
         profileId: params.profileId,
         sessions,
         machines,
-        connectedServicesV2: profile.connectedServicesV2 ?? [],
-    }), [accountScope, machines, params.profileId, params.serviceId, profile.connectedServicesV2, reachabilityRevision, sessions]);
+        connectedServicesV2: connectedServicesV2 ?? [],
+    }), [accountScope, machines, params.profileId, params.serviceId, connectedServicesV2, reachabilityRevision, sessions]);
 }

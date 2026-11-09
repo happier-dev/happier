@@ -322,7 +322,7 @@ function ConnectAccountSheetLeaf(
           catalog={model.catalog}
           onTargetChange={model.setTarget}
           onClose={model.close}
-          onConnected={(account) => model.onConnected(account)}
+          onConnected={(account, _serviceKey, facts) => model.onConnected(account, facts)}
           targetSelection={targetSelection}
           initialMachineTarget={props.request.initialMachineTarget}
           onMachineRequirementChange={model.onMachineRequirementChange}

@@ -82,6 +82,72 @@ async function flushAsyncTurns(turns = 8): Promise<void> {
 }
 
 describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
+    it.each([
+        { label: 'fresh', stale: false, producerPending: false, reads: 0 },
+        { label: 'stale', stale: true, producerPending: false, reads: 1 },
+        { label: 'producer-pending', stale: false, producerPending: true, reads: 1 },
+    ])('PC-5 reattaches a $label cached snapshot using only necessary reads', async ({ stale, producerPending, reads }) => {
+        const store = await import('@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore');
+        const context = buildContext('server-a', 1);
+        const key = store.buildQualifiedQuotaSnapshotScopeKey(context);
+        const snapshot = { v: 1, ref, activeAccountId: 'provider-work', fetchedAt: Date.now() - (stale ? 60_001 : 0),
+            staleAfterMs: 60_000, planLabel: null, accountLabel: null, meters: [] };
+        getQuotaMock.mockResolvedValue({ ref, sourceResolution,
+            ...(producerPending ? { metadata: { refreshRequestedAt: Date.now() } } : {}),
+        });
+        snapshotFixture.mockReturnValue(snapshot);
+        store.loadQualifiedQuotaSnapshotOnce(key, context);
+        await vi.waitFor(() => expect(store.getQualifiedQuotaSnapshotEntry(key).read).toBe(true));
+        const heldView = store.getQualifiedQuotaSnapshotEntry(key);
+        const held = heldView.snapshot;
+        expect(held).toEqual(snapshot);
+        getQuotaMock.mockClear();
+        const listener = vi.fn();
+        const unsubscribe = store.subscribeQualifiedQuotaSnapshotEntry(key, listener);
+
+        const release = store.retainQualifiedQuotaSnapshotPolling(key, context);
+        await flushAsyncTurns();
+        expect(getQuotaMock).toHaveBeenCalledTimes(reads);
+        expect(store.getQualifiedQuotaSnapshotEntry(key).snapshot).toBe(held);
+        expect(listener).not.toHaveBeenCalled();
+        expect(store.getQualifiedQuotaSnapshotEntry(key)).toBe(heldView);
+        release();
+        unsubscribe();
+    });
+
+    it('PC-5 retries a failed cached read on reopen and preserves foreground recovery', async () => {
+        const store = await import('@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore');
+        const context = buildContext('server-a', 1);
+        const key = store.buildQualifiedQuotaSnapshotScopeKey(context);
+        const snapshot = { v: 1, ref, activeAccountId: 'provider-work', fetchedAt: Date.now(), staleAfterMs: 60_000,
+            planLabel: null, accountLabel: null, meters: [] };
+        getQuotaMock.mockResolvedValue({ ref, sourceResolution });
+        snapshotFixture.mockReturnValue(snapshot);
+        store.loadQualifiedQuotaSnapshotOnce(key, context);
+        await vi.waitFor(() => expect(store.getQualifiedQuotaSnapshotEntry(key).read).toBe(true));
+        const held = store.getQualifiedQuotaSnapshotEntry(key).snapshot;
+        expect(held).toEqual(snapshot);
+        getQuotaMock.mockResolvedValue(new Response('{}', { status: 400 }));
+        await store.reloadQualifiedQuotaSnapshotAfterRecovery(context);
+        expect(store.getQualifiedQuotaSnapshotEntry(key).error).not.toBeNull();
+        expect(store.getQualifiedQuotaSnapshotEntry(key).snapshot).toBe(held);
+        getQuotaMock.mockClear();
+        getQuotaMock.mockResolvedValue({ ref, sourceResolution });
+
+        const release = store.retainQualifiedQuotaSnapshotPolling(key, context);
+        await vi.waitFor(() => expect(getQuotaMock).toHaveBeenCalledTimes(1));
+        await flushAsyncTurns();
+        expect(store.getQualifiedQuotaSnapshotEntry(key).error).toBeNull();
+        expect(store.getQualifiedQuotaSnapshotEntry(key).snapshot).toBe(held);
+
+        setRuntimeActive(false);
+        setRuntimeActive(true);
+        await flushAsyncTurns();
+        expect(getQuotaMock).toHaveBeenCalledTimes(2);
+        expect(store.getQualifiedQuotaSnapshotEntry(key).snapshot).toBe(held);
+        release();
+    });
+
     it('keeps settled retain and release quiet, preserving the view and equal snapshot through reload', async () => {
         const store = await import('@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore');
         const context = buildContext('server-a', 1);
@@ -104,7 +170,7 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
         expect(listener).not.toHaveBeenCalled();
         await store.reloadQualifiedQuotaSnapshotAfterRecovery(context);
         expect(store.getQualifiedQuotaSnapshotEntry(key).snapshot).toBe(before.snapshot);
-        expect(listener).toHaveBeenCalledTimes(2);
+        expect(listener).not.toHaveBeenCalled();
         expect(store.getQualifiedQuotaSnapshotEntry(key).loading).toBe(false);
         unsubscribe();
     });

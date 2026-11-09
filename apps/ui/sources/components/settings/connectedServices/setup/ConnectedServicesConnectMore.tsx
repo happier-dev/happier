@@ -23,6 +23,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { getConnectedServiceSetupPresentation } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { presentConnectSheet } from './ConnectedServiceSetupModal';
+import type { ConnectedAccountSetupFacts } from '../account/useConnectedAccountSetupCompletion';
 
 import { homeConnectServiceStepId } from '../home/selectHomeConnectInvitations';
 import { ConnectedServiceMark, formatAgentNames } from '../ConnectedServiceMark';
@@ -52,7 +53,7 @@ export type ConnectedServicesConnectMoreProps = Readonly<{
     request: ConnectedServiceSetupTarget | null;
     onRequestHandled: () => void;
     /** The panel has closed on a new or re-signed account: its row settles (A5). */
-    onConnected: (account: QualifiedConnectedAccountRef, serviceKey: string) => void;
+    onConnected: (account: QualifiedConnectedAccountRef, serviceKey: string, facts?: ConnectedAccountSetupFacts) => void;
     /** A panel is open: rows step their own fix down to secondary. */
     onOpenChange?: (open: boolean) => void;
     /** First run only: services are still arriving. */
@@ -99,7 +100,7 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
         const service = target.kind === 'catalog' ? undefined : parseQualifiedPluginContributionKey(target.serviceKey) ?? undefined;
         fireAndForget(presentConnectSheet({ scope, service, ...(anchor ? { anchor } : {}), ...(props.targetSelection ? { targetSelection: props.targetSelection } : {}), ...(target.kind === 'reconnect' && service
             ? { intent: 'reconnect', account: { service, accountId: target.accountId } } : {}) }).then(result => {
-            if (result.kind !== 'dismissed') onConnected(result.account, buildQualifiedPluginContributionKey(result.account.service));
+            if (result.kind !== 'dismissed') onConnected(result.account, buildQualifiedPluginContributionKey(result.account.service), result);
         }), { tag: 'ConnectedServicesConnectMore.connect' });
     }, [onConnected, props.targetSelection, scope]);
 
@@ -131,9 +132,9 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
         onRequestHandled();
     }, [onRequestHandled, phone, props.renderServiceFlow, request, openSheet]);
 
-    const settle = React.useCallback((account: QualifiedConnectedAccountRef, serviceKey: string) => {
+    const settle = React.useCallback((account: QualifiedConnectedAccountRef, serviceKey: string, facts?: ConnectedAccountSetupFacts) => {
         setOpenId(null);
-        onConnected(account, serviceKey);
+        onConnected(account, serviceKey, facts);
     }, [onConnected]);
 
     const renderPanel = ({ close }: Readonly<{ close: () => void }>) => (

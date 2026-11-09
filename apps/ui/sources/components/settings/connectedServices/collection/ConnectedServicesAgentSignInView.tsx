@@ -16,7 +16,7 @@ import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCred
 import { Modal } from '@/modal';
 import { presentConnectSheet } from '../setup/ConnectedServiceSetupModal';
 import { ConnectedAccountSettled } from '../setup/ConnectedAccountSettled';
-import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import type { ConnectedAccountSetupCompletion } from '../account/useConnectedAccountSetupCompletion';
 import { canExecuteConnectedServiceAction, getLegacyConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { useActiveServerAccountScope, useSetting } from '@/sync/store/hooks';
 import { useSettingsValues } from '@/sync/store/settingsReadHooks';
@@ -50,7 +50,7 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
     const activeAccountScope = useActiveServerAccountScope(activeServer.serverId);
     const acknowledgementExecution = useMountedActionExecution(activeAccountScope);
     const index = useConnectedServicesIndex({ agents: 'load' });
-    const [settled, setSettled] = React.useState<QualifiedConnectedAccountRef | null>(null);
+    const [settled, setSettled] = React.useState<ConnectedAccountSetupCompletion | null>(null);
     const { agentEntries, qualifiedAccounts, qualifiedGroups } = index;
     const settings = useSettingsValues(['connectedServicesDefaultProfileByServiceId']);
     const labelsByKey = useConnectedMetadataCatalog(activeAccountScope, selectConnectedMetadataLabels);
@@ -100,7 +100,7 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
             return;
         }
         const result = await presentConnectSheet({ scope: activeAccountScope, service: entry.service, ...(anchor ? { anchor } : {}) });
-        if (result.kind !== 'dismissed') setSettled(result.account);
+        if (result.kind !== 'dismissed') setSettled(result);
     }, [activeAccountScope, index.transport]);
 
     return (
@@ -112,7 +112,7 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
                 description={t('connectedServicesSettings.usageDescription')}
                 alwaysShowTitle
             />
-            {settled ? <ConnectedAccountSettled account={settled} model={index.indexModel} agents={agentEntries}
+            {settled ? <ConnectedAccountSettled account={settled.account} completion={settled} model={index.indexModel} agents={agentEntries}
                 machineId={index.appShellProjection.machineId ?? undefined} onDismiss={() => setSettled(null)} /> : null}
             <SettingSection section={CONNECTED_SERVICES_SETTINGS.sectionRefs.usage}>
                 <ItemGroup title={t('connectedServicesSettings.agentDefaultsTitle')} description={t('connectedServicesSettings.agentDefaultsDescription')}>

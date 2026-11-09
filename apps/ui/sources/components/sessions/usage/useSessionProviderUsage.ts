@@ -113,7 +113,7 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
   const accountProfile = useProfile((profile) => ({
     connectedServicesV2: profile?.connectedServicesV2,
     connectedAccountGroupsV4: profile?.connectedAccountGroupsV4,
-  }));
+  }), ['connectedServicesV2', 'connectedAccountGroupsV4']);
   const connectedAccountTransport = resolveConnectedAccountUiNegotiation(
     useServerFeaturesSnapshotForServerId(serverId),
   );

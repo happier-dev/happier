@@ -34,6 +34,8 @@ export function resolveProjectedConnectedAccountServiceKeys(
 
 export function buildQualifiedConnectedAccountProfileOptionsByServiceId(params: Readonly<{
     accounts: ReadonlyArray<QualifiedConnectedAccountProfileV4>;
+    /** Peer names preserve list disambiguation when projecting only selected accounts. */
+    presentationAccounts?: ReadonlyArray<QualifiedConnectedAccountProfileV4>;
     supportedServiceIds: ReadonlyArray<ConnectedAccountServiceKey>;
     labelsByKey: Record<string, string | undefined>;
     presentIdentity?: ConnectedAccountIdentityPresenter;
@@ -43,7 +45,7 @@ export function buildQualifiedConnectedAccountProfileOptionsByServiceId(params: 
     const supported = new Set<string>(params.supportedServiceIds);
     const options: Record<string, ConnectedServicesProfileOption[]> = {};
     // Name the visible list together, once: isolated projections cannot distinguish matching names.
-    const names = params.presentIdentity ? presentConnectedAccountNames(params.accounts.flatMap(account => {
+    const names = params.presentIdentity ? presentConnectedAccountNames((params.presentationAccounts ?? params.accounts).flatMap(account => {
         const serviceKey = buildQualifiedPluginContributionKey(account.ref.service);
         if (!supported.has(serviceKey)) return [];
         return [{

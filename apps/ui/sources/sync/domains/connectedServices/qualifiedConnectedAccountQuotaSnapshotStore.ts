@@ -19,6 +19,7 @@ import {
 } from '@/components/settings/connectedServices/connectedServiceSettingsErrors';
 import { getUsageProjectionNextReadAtMs, observeUsageProjection } from '@/sync/api/account/usageQueryInvalidation';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readQuotaProfileChanges } from './quotaProfileChanges';
 
 import {
     readQualifiedConnectedAccountQuota,
@@ -104,12 +105,14 @@ function ensureProfileChanges(): void {
         const old = previous;
         previous = next;
         if (old?.connectedAccountsV4 === next.connectedAccountsV4) return;
+        const readChange = readQuotaProfileChanges(old?.connectedAccountsV4 ?? [], next.connectedAccountsV4);
         for (const [key, entry] of entries) {
             const context = entry.pollContext;
             if (!context || state.profileScope?.serverId !== context.serverBasis.serverId
                 || state.profileScope.accountId !== parseToken(context.credentials.token)) continue;
-            const before = old?.connectedAccountsV4.find(account => sameQualifiedConnectedAccountRef(account.ref, context.ref));
-            const after = next.connectedAccountsV4.find(account => sameQualifiedConnectedAccountRef(account.ref, context.ref));
+            const change = readChange(context.ref);
+            if (!change) continue;
+            const { before, after } = change;
             const requiresOrganization = getConnectedServiceUsageIdentity(context.ref.service)?.requiredContext === 'organization'
                 || Boolean(entry.snapshot?.providerOrganizationId || before?.providerIdentity?.organizationId || after?.providerIdentity?.organizationId);
             const replacementIdentityUnknown = before?.credentialRevision !== after?.credentialRevision
@@ -200,7 +203,7 @@ function hasPollingDemand(key: string, entry: InternalEntry): boolean {
     return entry.retainCount > 0 || (entry.refreshing && (listenersByKey.get(key)?.size ?? 0) > 0);
 }
 
-function reconcilePolling(key: string, initialReadCompleted = false): void {
+function reconcilePolling(key: string, initialReadCompleted?: boolean): void {
     const entry = entries.get(key);
     if (!entry) return;
     const context = entry.pollContext;
@@ -211,7 +214,9 @@ function reconcilePolling(key: string, initialReadCompleted = false): void {
     }
     if (!entry.observation) entry.observation = observeUsageProjection({
         serverId: context.serverBasis.serverId,
-        initialReadCompleted,
+        initialReadCompleted: initialReadCompleted ?? Boolean(entry.view.read && entry.snapshot
+            && entry.error === null && !entry.producerRefreshPending
+            && Date.now() <= entry.snapshot.fetchedAt + entry.snapshot.staleAfterMs),
         readRecordId: () => entry.usageRecordId,
         read: () => { entry.loadAttempted = true; return runLoad(key, context); },
         busy: () => Boolean(entry.loadPromise || entry.refreshPromise),
@@ -248,7 +253,7 @@ async function runLoad(
 ): Promise<QualifiedConnectedAccountQuotaSnapshotV4 | null> {
     const entry = getOrCreateEntry(key);
     if (entry.loadPromise) return entry.loadPromise;
-    entry.loading = true;
+    entry.loading = !entry.view.read || entry.refreshing;
     entry.error = null;
     publish(key, entry);
 

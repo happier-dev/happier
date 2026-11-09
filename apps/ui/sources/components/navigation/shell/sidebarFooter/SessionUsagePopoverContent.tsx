@@ -153,8 +153,7 @@ export function SessionUsagePopoverContent(props: Readonly<{
     const router = useRouter();
     const handlers = useUsagePopoverHandlers({ close: props.close, router });
     const data = useUsagePopoverData();
-    const profile = useProfile();
-    const groups = profile.connectedAccountGroupsV4;
+    const groups = useProfile(profile => profile.connectedAccountGroupsV4, ['connectedAccountGroupsV4']);
     const { onUseReset } = props;
     const resetPending = props.resetPending === true;
     const resetAction = React.useMemo(

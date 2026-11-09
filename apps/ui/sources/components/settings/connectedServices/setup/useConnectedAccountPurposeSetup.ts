@@ -17,6 +17,7 @@ import { projectConnectedServiceRegistryEntries, type ConnectedServiceRegistrySn
 import { connectedAccountPurposeServiceTargets } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { t } from '@/text';
+import type { ConnectedAccountSetupFacts } from '../account/useConnectedAccountSetupCompletion';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { readConnectedServiceSettingsErrorDetailsCode, readConnectedServiceSettingsErrorRequestId,
     resolveConnectedServiceSettingsErrorMessage } from '../connectedServiceSettingsErrors';
@@ -32,14 +33,15 @@ function presentPurposeSetupFailure(error: unknown): void {
 export function useConnectedAccountPurposeSetup(input: Readonly<{
     request: ConnectedAccountPurposeSetupRequest | null;
     selectedTarget?: QualifiedConnectedAccountPurposeBindingTargetV1 | null;
-    onSelected?: (account: QualifiedConnectedAccountRef, kind: 'selected' | 'connected') => void | Promise<void>;
-    onSettled?: (account: QualifiedConnectedAccountRef, kind: 'selected' | 'connected') => void | Promise<void>;
+    onSelected?: (account: QualifiedConnectedAccountRef, kind: 'selected' | 'connected', facts?: ConnectedAccountSetupFacts) => void | Promise<void>;
+    onSettled?: (account: QualifiedConnectedAccountRef, kind: 'selected' | 'connected', facts?: ConnectedAccountSetupFacts) => void | Promise<void>;
     onClose: () => void;
 }>) {
     const { request } = input;
     const viewer = useActiveServerAccountScope();
     const profile = useProfile(profile => request ? ({ id: profile.id, connectedAccountsV4: profile.connectedAccountsV4,
-        connectedAccountGroupsV4: profile.connectedAccountGroupsV4 }) : null);
+        connectedAccountGroupsV4: profile.connectedAccountGroupsV4 }) : null,
+        request ? ['id', 'connectedAccountsV4', 'connectedAccountGroupsV4'] : []);
     const { catalog: purposeCatalog, mutateDefaults, execution } = useConnectedAccountPurposeDefaults(undefined,
         { enabled: Boolean(request) && !input.onSelected });
     const lifetime = React.useMemo(() => captureActiveServerAccountScopeLifetime(), [viewer]);
@@ -81,7 +83,7 @@ export function useConnectedAccountPurposeSetup(input: Readonly<{
         return { ...state, entries: projectConnectedServiceRegistryEntries(state) };
     }, [request, accountRequest, accountSelection?.kind, machineRuntime.phase, connectedAccountProjection]);
     const select = async (next: QualifiedConnectedAccountPurposeBindingTargetV1 | null,
-        kind: 'selected' | 'connected' = 'selected'): Promise<QualifiedConnectedAccountRef | null> => {
+        kind: 'selected' | 'connected' = 'selected', facts?: ConnectedAccountSetupFacts): Promise<QualifiedConnectedAccountRef | null> => {
         if (!request) return null;
         try {
             const selected = resolveConnectedAccountPurposeSetupSelectedAccount({ request,
@@ -89,12 +91,12 @@ export function useConnectedAccountPurposeSetup(input: Readonly<{
                 profile: getStorage().getState().profile, target: next });
             if (lifetime?.isCurrent() !== true) throw new ConnectedAccountCatalogOperationError('scope-retired');
             if (!selected || !next) throw new ConnectedAccountCatalogOperationError('connected_account_purpose_unavailable');
-            if (input.onSelected) await input.onSelected(selected.ref, kind);
+            if (input.onSelected) await input.onSelected(selected.ref, kind, facts);
             else {
                 if (!declaration || declaration.consumerKind === 'machineProvisioner') throw new ConnectedAccountCatalogOperationError('connected_account_purpose_unavailable');
                 await mutateDefaults({ kind: 'resource', input: { machineId: request.machineId, purpose: request.purpose, target: next } });
                 if (lifetime?.isCurrent()) {
-                    if (input.onSettled) await input.onSettled(selected.ref, kind);
+                    if (input.onSettled) await input.onSettled(selected.ref, kind, facts);
                     else input.onClose();
                 }
             }
@@ -104,13 +106,13 @@ export function useConnectedAccountPurposeSetup(input: Readonly<{
             return null;
         }
     };
-    const onConnected = (account: QualifiedConnectedAccountRef) => {
+    const onConnected = (account: QualifiedConnectedAccountRef, facts?: ConnectedAccountSetupFacts) => {
         // Authentication settling refreshes the canonical Account inventory before selection.
         void (async () => {
             try {
                 if (!lifetime?.isCurrent()) return;
                 await getSyncSingleton().refreshProfile();
-                if (lifetime.isCurrent()) await select({ kind: 'account', account }, 'connected');
+                if (lifetime.isCurrent()) await select({ kind: 'account', account }, 'connected', facts);
             } catch (error) { presentPurposeSetupFailure(error); }
         })();
     };

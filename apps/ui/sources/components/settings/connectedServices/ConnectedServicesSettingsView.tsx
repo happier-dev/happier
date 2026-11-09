@@ -57,6 +57,7 @@ import { resolveConnectedServicesIndexRoot } from './collection/connectedService
 import type { ConnectedServicesIndexSheet } from './model/buildConnectedServicesIndexModel';
 import { useConnectedServicesIndex } from './model/useConnectedServicesIndex';
 import { ConnectedAccountSettled } from './setup/ConnectedAccountSettled';
+import type { ConnectedAccountSetupCompletion, ConnectedAccountSetupFacts } from './account/useConnectedAccountSetupCompletion';
 import { ConnectedServicesConnectMore } from './setup/ConnectedServicesConnectMore';
 import { readConnectedServiceSetupResult } from './setup/connectMoreBlocks';
 import { presentConnectSheet, type ConnectSheetAccountRequest } from './setup/ConnectedServiceSetupModal';
@@ -134,15 +135,18 @@ const ConnectedServicesSettingsBody = React.memo(function ConnectedServicesSetti
     if (service) return { service, ...(requestedAccountId ? { account: { service, accountId: requestedAccountId } } : {}) };
     return connectParam && !serviceParam ? {} : null;
   }, [connectParam, requestedAccountId, requestedLocalId, requestedPluginId, serviceParam]);
-  const [settled, setSettled] = React.useState<Readonly<{ serviceKey: string; account: QualifiedConnectedAccountRef }> | null>(null);
-  const settleAccount = React.useCallback((account: QualifiedConnectedAccountRef) => {
-    setSettled({ serviceKey: buildQualifiedPluginContributionKey(account.service), account });
+  const [settled, setSettled] = React.useState<(ConnectedAccountSetupCompletion & Readonly<{ serviceKey: string }>) | null>(null);
+  const settleAccount = React.useCallback((account: QualifiedConnectedAccountRef, facts?: ConnectedAccountSetupFacts) => {
+    setSettled({ ...facts, serviceKey: buildQualifiedPluginContributionKey(account.service), account });
   }, []);
+  const settleFromPanel = React.useCallback((account: QualifiedConnectedAccountRef, _serviceKey: string, facts?: ConnectedAccountSetupFacts) => {
+    settleAccount(account, facts);
+  }, [settleAccount]);
   React.useEffect(() => {
     if (!legacyConnectRequest) return;
     // The presenter captures the active Account lifetime and dismisses on retirement.
     fireAndForget(presentConnectSheet(legacyConnectRequest).then(result => {
-      if (result.kind !== 'dismissed') settleAccount(result.account);
+      if (result.kind !== 'dismissed') settleAccount(result.account, result);
     }), { tag: 'ConnectedServices.legacyConnect' });
     if (connectParam) router.setParams({ connect: undefined, service: undefined, view: 'all' });
   }, [connectParam, legacyConnectRequest, router, settleAccount]);
@@ -223,7 +227,7 @@ const ConnectedServicesSettingsBody = React.memo(function ConnectedServicesSetti
       model={indexModel}
       targetSelection={index.targetSelection}
       layout={firstRun ? 'firstRun' : 'section'}
-      onConnected={settleAccount}
+      onConnected={settleFromPanel}
       onOpenChange={setSetupOpen}
       loading={projectionLoading}
     />
@@ -371,6 +375,7 @@ const ConnectedServicesSettingsBody = React.memo(function ConnectedServicesSetti
         node: (
           <ConnectedAccountSettled
             account={settled.account}
+            completion={settled}
             model={indexModel}
             agents={agentEntries}
             machineId={appShellProjection.machineId ?? undefined}
@@ -406,13 +411,13 @@ const ConnectedServicesSettingsBody = React.memo(function ConnectedServicesSetti
       onAddAccount={(sheet, anchor?: PopoverAnchor) => {
         fireAndForget(presentConnectSheet({ scope: activeAccountScope, intent: 'add', service: sheet.service,
           ...(anchor ? { anchor } : {}) }).then((result) => {
-          if (result.kind !== 'dismissed') settleAccount(result.account);
+          if (result.kind !== 'dismissed') settleAccount(result.account, result);
         }), { tag: 'ConnectedServices.addAccount' });
       }}
       onSignInAgain={(sheet, accountId, anchor?: PopoverAnchor) => {
         fireAndForget(presentConnectSheet({ scope: activeAccountScope, intent: 'reconnect', service: sheet.service, account: { service: sheet.service, accountId },
           ...(anchor ? { anchor } : {}) }).then((result) => {
-          if (result.kind !== 'dismissed') settleAccount(result.account);
+          if (result.kind !== 'dismissed') settleAccount(result.account, result);
         }), { tag: 'ConnectedServices.reconnect' });
       }}
       onOpenAccount={openAccount}

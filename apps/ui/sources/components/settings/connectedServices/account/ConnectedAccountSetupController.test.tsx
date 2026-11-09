@@ -2645,6 +2645,19 @@ describe('ConnectedAccountSetupController real ownership', () => {
         }
     });
 
+    it('publishes the actual completion key fact before the new account enters inventory', async () => {
+        const connected = { service, accountId: 'new-account-before-inventory' };
+        handleAuthentication = command => command.operation === 'submitManual'
+            ? { status: 'connected', attemptId: 'created-key', account: connected, includesApiKey: true }
+            : { status: 'awaitingManual', attemptId: 'created-key' };
+        await installNativeConfigurationAttemptBoundary();
+        const screen = await manualScreen();
+        await act(async () => screen.changeTextByTestId('connected-account-manual:token', 'synthetic-setup-key'));
+        await screen.pressByTestIdAsync('connected-account-manual:submit');
+        await vi.waitFor(() => expect(onConnected).toHaveBeenCalledWith(connected, { includesApiKey: true }));
+        expect(storage.getState().profile.connectedAccountsV4.some(account => account.ref.accountId === connected.accountId)).toBe(false);
+    });
+
     it.each(['route', 'machine', 'account', 'server', 'unmount'] as const)('ignores a terminal late reply after %s retirement', async (retirement) => {
         const pending = deferredReply();
         let issued = false;

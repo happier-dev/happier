@@ -17,8 +17,9 @@ import type { DaemonNpmRegistryProfileSnapshotV1 } from '@happier-dev/protocol/r
 import type { PluginUiOpenConnectedAccountsResultV1 } from '@happier-dev/protocol/plugins/ui/client';
 
 import { ConnectSheetContent } from './ConnectSheetContent';
+import type { ConnectedAccountSetupFacts } from '../account/useConnectedAccountSetupCompletion';
 
-export type ConnectSheetAccountResult = Exclude<PluginUiOpenConnectedAccountsResultV1, undefined>;
+export type ConnectSheetAccountResult = Exclude<PluginUiOpenConnectedAccountsResultV1, undefined> & ConnectedAccountSetupFacts;
 export type ConnectSheetKeyResult = Readonly<{ kind: 'connected' | 'selected'; secretRef: string }>
     | Readonly<{ kind: 'dismissed' }>;
 export type ConnectSheetAccountRequest = Readonly<{

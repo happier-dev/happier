@@ -220,7 +220,7 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
         connectedAccountsV4: profile.connectedAccountsV4,
         connectedServicesV2: profile.connectedServicesV2,
         connectedAccountGroupsV4: profile.connectedAccountGroupsV4,
-    }));
+    }), ['connectedAccountsV4', 'connectedServicesV2', 'connectedAccountGroupsV4']);
     const quotaSettings = useSettingsValues([
         'connectedServicesQuotaPinnedMeterIdsByKey',
         'connectedServicesQuotaSummaryStrategyByKey',

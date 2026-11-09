@@ -361,8 +361,8 @@ describe('ConnectedServicesSettingsView', () => {
         let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
         try {
             screen = await renderScreen(<ConnectedServicesSettingsView />);
-            expect(screen.findAllByType(Item).length).toBeGreaterThan(0);
             await flushHookEffects({ cycles: 3, turns: 3, advanceTimersMs: 20 });
+            expect(screen.findByTestId('connected-services-account:happier.agent.codex/openai-codex:work')).not.toBeNull();
             const fires = census.readFires();
             const requests = { http: homes.requests.length, machine: machineRpcRequests.length };
             await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
@@ -842,7 +842,7 @@ describe('ConnectedServicesSettingsView', () => {
         const { ConnectedAccountSettled } = await import('./setup/ConnectedAccountSettled');
         const { ConnectedServiceAuthGroupPolicyV2Schema } = await import('@happier-dev/protocol/connect/connected-service-schemas');
         const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
-        const connected = { service, accountId: 'work' };
+        const connected = { service, accountId: 'new-account-before-inventory' };
         const mutations = { mutating: false, patch: vi.fn(), patchMember: vi.fn(), addMember: vi.fn(),
             removeMember: vi.fn(), setActiveAccount: vi.fn(), delete: vi.fn() };
         const screen = await renderScreen(surface === 'rail' ? <ConnectedServicesRail />
@@ -866,11 +866,12 @@ describe('ConnectedServicesSettingsView', () => {
         expect(screen.tree.findAllByType(ConnectedAccountSettled)).toHaveLength(0);
         await act(async () => { pending = open(); });
         const before = purposeBoundary?.writes.length ?? 0;
-        await act(async () => { modalShowSpy.mock.calls.at(-1)![0].props?.onResult({ kind: 'connected', account: connected }); });
+        await act(async () => { modalShowSpy.mock.calls.at(-1)![0].props?.onResult({ kind: 'connected', account: connected, includesApiKey: true }); });
         await pending;
         const settlement = screen.tree.findAllByType(ConnectedAccountSettled);
         expect(settlement).toHaveLength(1);
         expect(settlement[0].props.account).toEqual(connected);
+        expect(screen.findHostByTestId('connected-services-settle:included-api-key')).not.toBeNull();
         await act(async () => { settlement[0].props.onDismiss(); });
         expect(screen.tree.findAllByType(ConnectedAccountSettled)).toHaveLength(0);
         expect(mutations.addMember).not.toHaveBeenCalled();

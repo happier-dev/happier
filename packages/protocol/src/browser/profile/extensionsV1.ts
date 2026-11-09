@@ -2,17 +2,16 @@ import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { RegistryProvenanceV1Schema } from '../../registries/registryItemsV1.js';
 import { RegistryUpstreamV1Schema } from '../../registries/registryUpstreamV1.js';
+import { BrowserExtensionIdV1Schema, BrowserExtensionWebStoreSourceV1Schema } from './extensionSourceV1.js';
+
+export {
+  BrowserExtensionIdV1Schema,
+  BrowserExtensionWebStoreSourceV1Schema,
+  type BrowserExtensionIdV1,
+  type BrowserExtensionWebStoreSourceV1,
+} from './extensionSourceV1.js';
 
 const Text = lazyZodSchema(() => z.string().check(z.minLength(1)));
-
-/** Chromium derives these 32 a–p characters from the extension's public key. */
-export const BrowserExtensionIdV1Schema = lazyZodSchema(() => z.string().check(z.regex(/^[a-p]{32}$/)));
-export type BrowserExtensionIdV1 = z.infer<typeof BrowserExtensionIdV1Schema>;
-
-export const BrowserExtensionWebStoreSourceV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('webStore'), extensionId: BrowserExtensionIdV1Schema,
-}));
-export type BrowserExtensionWebStoreSourceV1 = z.infer<typeof BrowserExtensionWebStoreSourceV1Schema>;
 
 export const BrowserExtensionSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   BrowserExtensionWebStoreSourceV1Schema,

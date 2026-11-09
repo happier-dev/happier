@@ -38,11 +38,14 @@ import { Typography } from '@/constants/Typography';
 import { PoolUsageFreshness } from '@/components/settings/connectedServices/pools/PoolUsageFreshness';
 import { SessionModelSourceBrowseHandoffContext } from '@/components/sessions/modelPicker/SessionModelSourceBrowseHandoff';
 import type { SessionRoute } from '@/providers/session/resolveSessionRoutePresentation';
+import { useNewSessionConnectedServiceOptions, type NewSessionConnectedServiceOptionsInput } from '../modules/useNewSessionConnectedServiceOptions';
 
 export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
     supportedServiceIds: ReadonlyArray<ConnectedAccountServiceKey>;
     profileOptionsByServiceId: ConnectedServicesProfileOptionsByServiceId;
     groupOptionsByServiceId: ConnectedServicesAccountGroupOptionsByServiceId;
+    /** Present only when this mounted picker owns its Account inventory demand. */
+    inventoryInput?: NewSessionConnectedServiceOptionsInput;
     bindingsByServiceId: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>;
     bindingsKnown?: boolean;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
@@ -111,6 +114,9 @@ function SettingsActionIcon() {
 
 export function NewSessionConnectedServicesSelectionContent(props: NewSessionConnectedServicesSelectionContentProps) {
     const styles = stylesheet;
+    const inventory = useNewSessionConnectedServiceOptions(props.inventoryInput ?? null);
+    const profileOptionsByServiceId = props.inventoryInput ? inventory.profileOptionsByServiceId : props.profileOptionsByServiceId;
+    const groupOptionsByServiceId = props.inventoryInput ? inventory.groupOptionsByServiceId : props.groupOptionsByServiceId;
     const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
     const sourceBrowse = React.useContext(SessionModelSourceBrowseHandoffContext)?.browse;
     const nativeAgentTargetKey = props.nativeAgentTargetKey ?? props.routeSources?.agentTargetKey;
@@ -130,7 +136,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
         const next: ConnectedServiceQuotaProfileRefInput[] = [];
         for (const serviceId of props.supportedServiceIds) {
             const service = parseQualifiedPluginContributionKey(serviceId);
-            const options = props.profileOptionsByServiceId[serviceId] ?? [];
+            const options = profileOptionsByServiceId[serviceId] ?? [];
             for (const option of options) {
                 if (!isConnectedServiceProfileOptionSelectable(option)) continue;
                 const profileId = option.profileId.trim();
@@ -139,7 +145,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
             }
         }
         return next;
-    }, [props.profileOptionsByServiceId, props.supportedServiceIds]);
+    }, [profileOptionsByServiceId, props.supportedServiceIds]);
 
     const { snapshotsByKey: quotaSnapshotsByKey, errorsByKey: quotaErrorsByKey } = useConnectedServiceQuotaBadgeState(requestedProfiles, { fetchPolicy: 'cache_only' });
 
@@ -205,8 +211,8 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
     const listModel = React.useMemo(() => {
         return buildNewSessionConnectedServicesSelectionListModel({
             supportedServiceIds: props.supportedServiceIds,
-            profileOptionsByServiceId: props.profileOptionsByServiceId,
-            groupOptionsByServiceId: props.groupOptionsByServiceId,
+            profileOptionsByServiceId,
+            groupOptionsByServiceId,
             bindingsByServiceId: props.bindingsByServiceId,
             bindingsKnown: props.bindingsKnown,
             teamCredentialResources: props.teamCredentialResources,
@@ -244,7 +250,8 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
         props.allowDefaultProfileFallback,
         props.defaultProfileIdByServiceId,
         props.includeNativeAuthOption,
-        props.profileOptionsByServiceId,
+        profileOptionsByServiceId,
+        groupOptionsByServiceId,
         props.teamCredentialResources,
         props.teamCredentialResourceStatusByKey,
         props.teamNameById,

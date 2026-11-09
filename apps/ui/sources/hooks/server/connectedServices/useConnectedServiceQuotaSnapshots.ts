@@ -168,7 +168,7 @@ export function useConnectedServiceQuotaSnapshots(
     const serverFeatures = useServerFeaturesRuntimeSnapshot({
         enabled: quotasEnabled,
     });
-    const profile = useProfile((profile) => ({ connectedAccountsV4: profile.connectedAccountsV4 }));
+    const profile = useProfile((profile) => ({ connectedAccountsV4: profile.connectedAccountsV4 }), ['connectedAccountsV4']);
     const credentialScope =
         quotasEnabled && credentials && activeServer.serverId
             ? [

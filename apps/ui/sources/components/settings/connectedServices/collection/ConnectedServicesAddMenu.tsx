@@ -12,6 +12,7 @@ import { t } from '@/text';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { presentConnectSheet } from '../setup/ConnectedServiceSetupModal';
+import type { ConnectedAccountSetupFacts } from '../account/useConnectedAccountSetupCompletion';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { useVoiceProviderRegistryRevision } from '@/voice/registry/useVoiceProviderRegistryRevision';
 import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -102,7 +103,7 @@ export const ConnectedServicesAddMenu = React.memo(
       model: ConnectedServicesIndexModel;
       gatewayFacts: IndexGatewayFacts;
       onOpen: (href: NonNullable<ConnectedServicesAddChoice['href']>) => void;
-      onConnected?: (account: QualifiedConnectedAccountRef) => void;
+      onConnected?: (account: QualifiedConnectedAccountRef, facts?: ConnectedAccountSetupFacts) => void;
       renderTrigger?: (toggle: () => void) => React.ReactNode;
       /**
        * One section's own "+" (Agent accounts, Code and tools, or Gateways when several contributions qualify):
@@ -247,7 +248,7 @@ export const ConnectedServicesAddMenu = React.memo(
           const choice = choices.find((candidate) => candidate.key === id);
           if (choice?.kind === 'account') {
             fireAndForget(presentConnectSheet({ scope, service: choice.service, ...(selection?.anchor ? { anchor: selection.anchor } : {}) }).then((result) => {
-              if (result.kind !== 'dismissed') props.onConnected?.(result.account);
+              if (result.kind !== 'dismissed') props.onConnected?.(result.account, result);
             }), { tag: 'ConnectedServicesAddMenu.connect' });
           } else if (choice?.kind === 'key') {
             fireAndForget(presentConnectSheet({ scope, service: choice.service, bindingTarget: choice.bindingTarget,

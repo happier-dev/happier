@@ -17,6 +17,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 
 import type { ConnectedServicesIndexModel } from '../model/buildConnectedServicesIndexModel';
+import type { ConnectedAccountSetupFacts } from '../account/useConnectedAccountSetupCompletion';
 import type { useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
 import { selectConnectedAccountSettleOffer, type ConnectedAccountSettleOffer } from './selectConnectedAccountSettleOffer';
 import { suggestAgentDefaultForNewAccount } from './suggestAgentDefaultForNewAccount';
@@ -38,6 +39,7 @@ function sameService(left: Readonly<{ pluginId: string; localId: string }>, righ
  */
 export function ConnectedAccountSettled(props: Readonly<{
     account: QualifiedConnectedAccountRef;
+    completion?: ConnectedAccountSetupFacts;
     model: ConnectedServicesIndexModel;
     agents: AgentEntries;
     machineId?: string;
@@ -111,7 +113,7 @@ export function ConnectedAccountSettled(props: Readonly<{
     ) : null;
     return <>
         <ConnectedAccountActionApprovalNotice execution={execution} testID="connected-services-settle-approval-pending" />
-        <ConnectedAccountSettledView identity={identity} includedApiKey={profile?.includesApiKey} offer={offer} primaryAction={primaryAction} onDismiss={onDismiss} testID={props.testID} />
+        <ConnectedAccountSettledView identity={identity} includedApiKey={props.completion?.includesApiKey ?? profile?.includesApiKey} offer={offer} primaryAction={primaryAction} onDismiss={onDismiss} testID={props.testID} />
     </>;
 }
 

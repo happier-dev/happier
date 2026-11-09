@@ -91,7 +91,7 @@ import { ConnectedAccountDeviceForm } from './ConnectedAccountDeviceForm';
 import { ConnectedAccountManualForm } from './ConnectedAccountManualForm';
 import { ConnectedAccountOAuthForm } from './ConnectedAccountOAuthForm';
 import { ConnectedAccountSetupStepCue, type ConnectedAccountSetupStep } from './ConnectedAccountSetupStepCue';
-import { useConnectedAccountSetupCompletion } from './useConnectedAccountSetupCompletion';
+import { useConnectedAccountSetupCompletion, type ConnectedAccountSetupFacts } from './useConnectedAccountSetupCompletion';
 import { useConnectedAccountServiceDescription } from './useConnectedAccountServiceDescription';
 import {
     ConnectedAccountServiceContent,
@@ -216,7 +216,7 @@ type ConnectedAccountServiceControllerProps = Readonly<{
 /** What a setup panel asks the controller for, and how it hears back. */
 export type ConnectedAccountSetupPanelIntent = Readonly<{
     intent: Readonly<{ kind: 'add' }> | Readonly<{ kind: 'reconnect'; accountId: string }>;
-    onConnected: (account: QualifiedConnectedAccountRef) => void;
+    onConnected: (account: QualifiedConnectedAccountRef, facts?: ConnectedAccountSetupFacts) => void;
     modeId?: string | null;
     onModeChange?: (modeId: string) => void;
     /** The registered selected mode, not its display kind, decides Machine demand. */
@@ -241,7 +241,7 @@ const ConnectedAccountServiceController = React.memo(
         id: profile.id,
         connectedAccountsV4: profile.connectedAccountsV4,
         connectedServicesV2: profile.connectedServicesV2,
-    }));
+    }), ['id', 'connectedAccountsV4', 'connectedServicesV2']);
     const activeServerId = asStringParam(activeServer.serverId);
     const activeServerGeneration = activeServer.generation;
     const nativeSetup = controllerProps.panel !== undefined;
@@ -519,7 +519,7 @@ const ConnectedAccountServiceController = React.memo(
     ), [isAccountControllerCurrent, getLifecycleSignal]);
     const { completed: setupCompleted, complete: completeSetup, reset: resetSetupCompletion } = useConnectedAccountSetupCompletion({
         isCurrent: isControllerCurrent,
-        onConnected: account => panelRef.current?.onConnected(account),
+        onConnected: (account, facts) => facts ? panelRef.current?.onConnected(account, facts) : panelRef.current?.onConnected(account),
     });
     const actionExecution = useMountedActionExecution('scope' in accountLifetime ? accountLifetime.scope : null);
     const executeAction = actionExecution.execute;
@@ -935,7 +935,7 @@ const ConnectedAccountServiceController = React.memo(
             draftDisplayNameRef.current = null;
             setAttempt(null);
             setConfiguration(null);
-            completeSetup(response.account);
+            completeSetup(response.account, response.includesApiKey ? { includesApiKey: response.includesApiKey } : undefined);
             // The new account joins the Collection; the setup flow closes.
             await refreshDescription();
             return;

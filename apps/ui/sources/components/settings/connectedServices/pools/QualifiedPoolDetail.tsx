@@ -15,6 +15,7 @@ import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-d
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { presentConnectSheet } from '../setup/ConnectedServiceSetupModal';
 import { ConnectedAccountSettled } from '../setup/ConnectedAccountSettled';
+import type { ConnectedAccountSetupCompletion, ConnectedAccountSetupFacts } from '../account/useConnectedAccountSetupCompletion';
 import { useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
 import { useConnectedServicesAgents } from '../model/useConnectedServicesAgents';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
@@ -44,11 +45,11 @@ import {
  * `useQualifiedConnectedAccountGroups`.
  */
 export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
-    props: Omit<QualifiedPoolDetailViewProps, 'poolSettings' | 'memberQuotaByAccountId' | 'presentIdentity' | 'agentDefaults' | 'gatewayUsage' | 'presentGatewayTarget' | 'onOpenGateway' | 'onOpenGatewayDraft' | 'onOpenAccount' | 'now' | 'onResetLabel' | 'onSetLabel' | 'onCheckStale'>,
+    props: Omit<QualifiedPoolDetailViewProps, 'poolSettings' | 'memberQuotaByAccountId' | 'presentIdentity' | 'agentDefaults' | 'gatewayUsage' | 'presentGatewayTarget' | 'onOpenGateway' | 'onOpenGatewayDraft' | 'onOpenAccount' | 'now' | 'onResetLabel' | 'onSetLabel'>,
 ) {
     const router = useRouter();
     const scope = useActiveServerAccountScope();
-    const [settled, setSettled] = React.useState<QualifiedConnectedAccountRef | null>(null);
+    const [settled, setSettled] = React.useState<ConnectedAccountSetupCompletion | null>(null);
     const { present } = useConnectedAccountIdentityPrivacy();
     const { group } = props;
     const refs = React.useMemo(() => group.members.map((member) => ({ ref: member.ref })), [group.members]);
@@ -65,13 +66,6 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
         }
         return byAccountId;
     }, [quotas.errorsByKey, quotas.loadingByKey, quotas.profiles, quotas.snapshotsByKey]);
-    // The page's one on-demand check for members whose readings are old when it opens.
-    const { profiles: quotaProfiles, refresh: refreshQuotas } = quotas;
-    const checkStale = React.useCallback((accountIds: readonly string[]) => {
-        const keys = quotaProfiles.flatMap((profile) => profile.kind === 'qualified' && accountIds.includes(profile.ref.accountId) ? [profile.key] : []);
-        if (keys.length > 0) fireAndForget(refreshQuotas(keys), { tag: 'QualifiedPoolDetail.checkStale' });
-    }, [quotaProfiles, refreshQuotas]);
-
     const target = React.useMemo<Extract<QualifiedConnectedAccountPurposeBindingTargetV1, { kind: 'group' }>>(() => ({
         kind: 'group',
         service: group.ref.service,
@@ -87,7 +81,10 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
     const gatewayUsage = usePoolGatewayChoices({ target, enabled: providersEnabled, resolveTarget: providerTarget.resolveCurrentTarget,
         accountServerId: providerTarget.accountServerId, accountAddressAvailable: providerTarget.accountAddressAvailable });
 
-    const profile = useProfile();
+    const profile = useProfile(profile => ({
+        connectedAccountsV4: profile.connectedAccountsV4,
+        connectedAccountGroupsV4: profile.connectedAccountGroupsV4,
+    }), ['connectedAccountsV4', 'connectedAccountGroupsV4']);
     const { labelsByKey, serviceLabel } = props;
     // The account or pool a gateway draws on today, named as this page names its own accounts.
     const presentGatewayTarget = React.useCallback((held: QualifiedConnectedAccountPurposeBindingTargetV1) => (
@@ -136,7 +133,7 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
         <QualifiedPoolDetailView
             {...props}
             poolSettings={poolSettings}
-            settled={settled ? <PoolConnectedAccountSettled account={settled} onDismiss={() => setSettled(null)} /> : null}
+            settled={settled ? <PoolConnectedAccountSettled account={settled.account} completion={settled} onDismiss={() => setSettled(null)} /> : null}
             memberQuotaByAccountId={memberQuotaByAccountId}
             presentIdentity={present}
             agentDefaults={agentDefaults}
@@ -148,13 +145,12 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
                 if (result !== true) fireAndForget(result, { tag: 'QualifiedPoolDetail.openGatewayDraft' });
             }}
             onOpenAccount={openAccount}
-            onCheckStale={checkStale}
             onResetLabel={resetLabel}
             onSetLabel={setLabel}
             legacyServiceId={getQualifiedConnectedServiceRegistryEntry(service)?.legacyServiceId ?? null}
             onConnectAccount={(anchor) => {
                 fireAndForget(presentConnectSheet({ scope, service, ...(anchor ? { anchor } : {}) }).then(result => {
-                    if (result.kind !== 'dismissed') setSettled(result.account);
+                    if (result.kind !== 'dismissed') setSettled(result);
                 }), { tag: 'QualifiedPoolDetail.connect' });
             }}
         />
@@ -162,7 +158,7 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
     );
 });
 
-function PoolConnectedAccountSettled(props: Readonly<{ account: QualifiedConnectedAccountRef; onDismiss: () => void }>) {
+function PoolConnectedAccountSettled(props: Readonly<{ account: QualifiedConnectedAccountRef; completion?: ConnectedAccountSetupFacts; onDismiss: () => void }>) {
     const index = useConnectedServicesIndex({ agents: 'cached', serviceKey: buildQualifiedPluginContributionKey(props.account.service) });
     return <ConnectedAccountSettled {...props} model={index.indexModel} agents={index.agentEntries}
         machineId={index.appShellProjection.machineId ?? undefined} />;

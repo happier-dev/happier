@@ -114,6 +114,37 @@ describe('qualified quota current credential organization', () => {
         expect(store.getQualifiedQuotaSnapshotEntry(key).snapshot).toBeNull();
     });
 
+    it('PC-4 visits only changed account references when an account array is replaced', async () => {
+        installUsageDescriptor(false);
+        const baseline = profile('org-a');
+        let referenceReads = 0;
+        const accounts = Array.from({ length: 200 }, (_, index) => {
+            const accountRef = { ...ref, accountId: `account-${index}` };
+            return { ...baseline.connectedAccountsV4[0]!, get ref() { referenceReads++; return accountRef; } };
+        });
+        storage.setState({ profile: { ...baseline, connectedAccountsV4: accounts } });
+        const { providerOrganizationId: _organizationId, ...accountSnapshot } = snapshot;
+        boundary.read.mockImplementation(async accountRef => Response.json(quotaTestResponse({ ...accountSnapshot, ref: accountRef })));
+        const contexts = accounts.slice(0, 100).map(account => boundary.context(account.ref));
+        const keys = contexts.map(context => store.buildQualifiedQuotaSnapshotScopeKey(context));
+        contexts.forEach((context, index) => store.loadQualifiedQuotaSnapshotOnce(keys[index]!, context));
+        await vi.waitFor(() => expect(keys.every(key => store.getQualifiedQuotaSnapshotEntry(key).read)).toBe(true));
+        expect(keys.every(key => store.getQualifiedQuotaSnapshotEntry(key).snapshot !== null)).toBe(true);
+        const held = keys.map(key => store.getQualifiedQuotaSnapshotEntry(key));
+
+        referenceReads = 0;
+        storage.setState({ profile: { ...baseline, connectedAccountsV4: [...accounts] } });
+        expect(referenceReads).toBe(0);
+        keys.forEach((key, index) => expect(store.getQualifiedQuotaSnapshotEntry(key)).toBe(held[index]));
+
+        const changed = { ...accounts[0]!, providerIdentity: { accountId: 'provider-work', organizationId: 'org-b' } };
+        referenceReads = 0;
+        storage.setState({ profile: { ...baseline, connectedAccountsV4: [changed, ...accounts.slice(1)] } });
+        expect(referenceReads).toBeLessThanOrEqual(1);
+        expect(store.getQualifiedQuotaSnapshotEntry(keys[0]!).snapshot).toBeNull();
+        keys.slice(1).forEach((key, index) => expect(store.getQualifiedQuotaSnapshotEntry(key)).toBe(held[index + 1]));
+    });
+
     it.each(['same', 'changed', 'unknown'] as const)('handles a non-organization Profile replacement with %s user identity', async change => {
         installUsageDescriptor(false);
         organizationId = null;

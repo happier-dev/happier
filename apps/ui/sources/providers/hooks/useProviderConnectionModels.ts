@@ -21,7 +21,7 @@ export function useProviderConnectionModels(input: Readonly<{
     serverId: string | null;
     connectionId: string;
 }>) {
-    const { describeProviderConnectionModels, ready, pendingApproval, accountScope: { resolution, binding } } = useProviderActionClient(input.serverId);
+    const { describeProviderConnectionModels, refreshProviderConnectionModels, ready, pendingApproval, accountScope: { resolution, binding } } = useProviderActionClient(input.serverId);
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const [error, setError] = React.useState<ProviderErrorV1 | null>(null);
     const [loading, setLoading] = React.useState(false);
@@ -70,7 +70,7 @@ export function useProviderConnectionModels(input: Readonly<{
         return () => registration?.dispose();
     }, [accountLifetime]);
 
-    const refreshWithResult = React.useCallback(async () => {
+    const refreshWithResult = React.useCallback(async (forceRefresh = false) => {
         if (!activeRef.current) return null;
         const requestGeneration = ++generation.current;
         const requestStillCurrent = (): boolean => (
@@ -105,11 +105,14 @@ export function useProviderConnectionModels(input: Readonly<{
         setLoading(true);
         const publish = beginProviderConnectionModelsRead(binding.scope, binding.credentialKey, queryKey);
         try {
-            const result = await describeProviderConnectionModels({
+            const request = {
                 ...(input.machineId ? { machineId: input.machineId } : {}),
                 serverId: input.serverId,
                 connectionId: input.connectionId,
-            }, { signal: controller.signal });
+            };
+            const result = forceRefresh && input.machineId
+                ? await refreshProviderConnectionModels({ ...request, machineId: input.machineId }, { signal: controller.signal })
+                : await describeProviderConnectionModels(request, { signal: controller.signal });
             if (generation.current !== requestGeneration || !requestStillCurrent()) return null;
             if (result.status === 'success') {
                 stateAccountLifetimeRef.current = accountLifetime;
@@ -138,8 +141,9 @@ export function useProviderConnectionModels(input: Readonly<{
             if (pendingRead.current === controller) pendingRead.current = null;
             if (generation.current === requestGeneration && requestStillCurrent()) setLoading(false);
         }
-    }, [accountLifetime, binding, describeProviderConnectionModels, ready, input.connectionId, input.enabled, input.machineId, input.serverId, queryKey, scopeKey]);
+    }, [accountLifetime, binding, describeProviderConnectionModels, refreshProviderConnectionModels, ready, input.connectionId, input.enabled, input.machineId, input.serverId, queryKey, scopeKey]);
 
+    const forceRefresh = React.useCallback(() => refreshWithResult(true), [refreshWithResult]);
     const refresh = React.useCallback(async (): Promise<void> => {
         await refreshWithResult();
     }, [refreshWithResult]);
@@ -166,6 +170,8 @@ export function useProviderConnectionModels(input: Readonly<{
     const stateMatchesScope = stateScopeKey === scopeKey
         && stateAccountLifetime === accountLifetime;
     return {
+        snapshot: data ?? null,
+        forceRefresh,
         models: data?.models ?? EMPTY_MODELS,
         connectionRevision: data?.connectionRevision ?? null,
         manualModelPolicy: data?.manualModelPolicy ?? null,

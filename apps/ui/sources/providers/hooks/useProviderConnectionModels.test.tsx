@@ -26,6 +26,38 @@ const { useFileEditorAiSuggestionSource } = await import('./useFileEditorAiSugge
 const { FilesEditorAiSuggestionsV1Schema } = await import('@happier-dev/protocol/account/settings/accountSettings');
 
 describe('useProviderConnectionModels', () => {
+    it('preserves an absent catalog, an observed empty catalog, and exact model capabilities', async () => {
+        let resolveRead!: (value: unknown) => void;
+        describeProviderConnectionModels.mockImplementationOnce(() => new Promise(resolve => { resolveRead = resolve; }));
+        const hook = await renderHook(() => useProviderConnectionModels({
+            enabled: true, machineId: 'machine-a', serverId, connectionId: 'pc_a',
+        }));
+        await flushHookEffects();
+        expect(hook.getCurrent().snapshot).toBeNull();
+        await act(async () => {
+            resolveRead({ status: 'success', connectionId: 'pc_a', connectionRevision: 1,
+                manualModelPolicy: 'catalog-only', modelLoadAction: 'descriptor_absent', catalogObserved: false, models: [],
+                sourceCatalogs: [{ purpose: 'test-upstream', catalogObserved: false, models: [] }] });
+        });
+        expect(hook.getCurrent().snapshot).toMatchObject({ catalogObserved: false, models: [],
+            sourceCatalogs: [{ purpose: 'test-upstream', catalogObserved: false, models: [] }] });
+        describeProviderConnectionModels.mockResolvedValueOnce({ status: 'success', connectionId: 'pc_a', connectionRevision: 1,
+            manualModelPolicy: 'catalog-only', modelLoadAction: 'descriptor_absent', catalogObserved: true, models: [],
+            sourceCatalogs: [{ purpose: 'test-upstream', catalogObserved: true, models: [] }] });
+        await act(async () => { await hook.getCurrent().refresh(); });
+        expect(hook.getCurrent().snapshot).toMatchObject({ catalogObserved: true, models: [],
+            sourceCatalogs: [{ purpose: 'test-upstream', catalogObserved: true, models: [] }] });
+        describeProviderConnectionModels.mockResolvedValueOnce({
+            status: 'success', connectionId: 'pc_a', connectionRevision: 1,
+            manualModelPolicy: 'catalog-only', modelLoadAction: 'descriptor_absent',
+            models: [{ id: 'restricted-model', source: 'probe', stale: false, loadState: 'unknown', visibility: 'visible',
+                descriptor: { id: 'restricted-model', name: 'Restricted model', capabilities: { toolRoundTrips: 'unsupported' } } }],
+        });
+        await act(async () => { await hook.getCurrent().refresh(); });
+        expect(hook.getCurrent().snapshot?.models[0]?.descriptor?.capabilities).toEqual({ toolRoundTrips: 'unsupported' });
+        await hook.unmount();
+    });
+
     it('reads both selected editor models from one exact catalog, with operation-specific admission and no substitution', async () => {
         const models = OLLAMA_PROVIDER_CONTRIBUTION.catalog.staticModels.map(model => ({
             id: model.id, source: 'static', stale: false, loadState: 'unknown', visibility: 'visible',

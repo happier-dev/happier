@@ -831,31 +831,6 @@ describe('QualifiedPoolDetailView', () => {
         expect(screen.findAllByType(SurfaceAsOfLabel)).toHaveLength(0);
     });
 
-    it('asks once for a check when it opens with an old reading, and never again while open', async () => {
-        const onCheckStale = vi.fn();
-        const memberQuotaByAccountId = quota({
-            work: snapshot('work', [{ id: '5h', label: 'Session', left: 86, resetsInMs: 90 * MIN }], { fetchedAt: NOW - 20 * MIN }),
-            backup: snapshot('backup', [{ id: '5h', label: 'Session', left: 0, resetsInMs: 30 * MIN }]),
-        });
-        const { screen } = await renderPoolDetail({}, { memberQuotaByAccountId, onCheckStale });
-        expect(onCheckStale.mock.calls).toEqual([[['work']]]);
-        const currentProps = screen.findAllByType(QualifiedPoolDetailView)[0]!.props;
-        await screen.update(<QualifiedPoolDetailView {...currentProps} now={NOW + 30 * MIN} memberQuotaByAccountId={{ ...memberQuotaByAccountId }} />);
-        expect(onCheckStale).toHaveBeenCalledTimes(1);
-    });
-
-    it('does not ask for a check when it opens with current readings, even as they age while open', async () => {
-        const onCheckStale = vi.fn();
-        const memberQuotaByAccountId = quota({
-            work: snapshot('work', [{ id: '5h', label: 'Session', left: 86, resetsInMs: 90 * MIN }]),
-            backup: snapshot('backup', [{ id: '5h', label: 'Session', left: 0, resetsInMs: 30 * MIN }]),
-        });
-        const { screen } = await renderPoolDetail({}, { memberQuotaByAccountId, onCheckStale });
-        const currentProps = screen.findAllByType(QualifiedPoolDetailView)[0]!.props;
-        await screen.update(<QualifiedPoolDetailView {...currentProps} now={NOW + 30 * MIN} memberQuotaByAccountId={{ ...memberQuotaByAccountId }} />);
-        expect(onCheckStale).not.toHaveBeenCalled();
-    });
-
     it('keeps settled capacity as the active reading ages during a refresh, then accepts fresh room', async () => {
         const memberQuotaByAccountId = quota({
             work: snapshot('work', [{ id: '5h', label: 'Session', left: 86, resetsInMs: 90 * MIN }], { staleAfterMs: 2 * MIN }),

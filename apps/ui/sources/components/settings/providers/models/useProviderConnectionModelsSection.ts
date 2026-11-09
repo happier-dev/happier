@@ -52,6 +52,8 @@ export function useProviderConnectionModelsSection(input: Readonly<{
         & Partial<Pick<DaemonProviderConnectionViewV1, 'runtime'>>) | null;
     enabled: boolean;
     active?: boolean;
+    /** A collapsed summary can retain counts without acquiring the full catalog. */
+    catalogActive?: boolean;
     machineId: string | null;
     serverId: string | null;
     initiatingLifetime?: ServerAccountScopeLifetime | null;
@@ -63,7 +65,7 @@ export function useProviderConnectionModelsSection(input: Readonly<{
     const { connectionId, connection, enabled, machineId, serverId, resolveCurrentTarget } = input;
     const { mutateProviderModelSettings, probeProviderConnection, pendingApproval, accountScope: { resolution } } = useProviderActionClient(serverId, input.initiatingLifetime);
     const addressedScope = input.initiatingLifetime !== null && resolution.kind === 'bound' ? resolution.scope : null;
-    const catalog = useProviderConnectionModels({ enabled, active: input.active, machineId, serverId, connectionId });
+    const catalog = useProviderConnectionModels({ enabled, active: input.active !== false && input.catalogActive !== false, machineId, serverId, connectionId });
     const accountCatalogCount = useProviderCatalogCounts(serverId, input.declarationContext,
         { enabled: enabled && input.active !== false })?.[connectionId] ?? null;
     const [showHidden, setShowHidden] = React.useState(false);
@@ -135,6 +137,17 @@ export function useProviderConnectionModelsSection(input: Readonly<{
     const accountLifetime = useRetireProviderStateOnAccountChange(discardAccountScopedManualModelState, addressedScope);
     const accountStillCurrent = React.useCallback(
         () => accountLifetime?.isCurrent() ?? true, [accountLifetime]);
+
+    const catalogUnobserved = catalog.snapshot !== null && catalog.models.length === 0
+        && (catalog.snapshot.sourceCatalogs
+            ? catalog.snapshot.sourceCatalogs.length === 0 || catalog.snapshot.sourceCatalogs.some(source => !source.catalogObserved)
+            : catalog.snapshot.catalogObserved === false);
+    const catalogModels = React.useMemo(() => catalog.snapshot === null || catalogUnobserved ? null
+        : catalog.models.map(model => model.descriptor ?? { id: model.id, name: model.name ?? model.id }),
+    [catalog.models, catalog.snapshot, catalogUnobserved]);
+    const unobservedCatalogError = React.useMemo(() => catalogUnobserved
+        ? createProviderErrorV1('provider_catalog_unavailable', { connectionId, ...(machineId ? { machineId } : {}) }) : null,
+    [catalogUnobserved, connectionId, machineId]);
 
     const groups = React.useMemo<readonly ProviderModelManagerGroup[]>(() => connection ? [{
         connectionId,
@@ -461,6 +474,12 @@ export function useProviderConnectionModelsSection(input: Readonly<{
         pendingProbe.current = controller;
         setRefreshingCatalog(true);
         try {
+            if (catalog.snapshot?.sourceCatalogs !== undefined) {
+                const result = await catalog.forceRefresh();
+                if (result?.status === 'error') showError(result.error, { retry: refreshCatalog });
+                else if (result?.status === 'success') setOperationError(null);
+                return;
+            }
             const result = await probeProviderConnection({
                 machineId: target.machineId,
                 serverId: target.serverId,
@@ -487,16 +506,20 @@ export function useProviderConnectionModelsSection(input: Readonly<{
                 if (accountStillCurrent()) setRefreshingCatalog(false);
             }
         }
-    }, [accountStillCurrent, catalog.refresh, connectionId, input.active, machineId, probeProviderConnection, refreshingCatalog, resolveCurrentTarget, showError, showTransportError]);
+    }, [accountStillCurrent, catalog.forceRefresh, catalog.refresh, catalog.snapshot, connectionId, input.active, machineId, probeProviderConnection, refreshingCatalog, resolveCurrentTarget, showError, showTransportError]);
 
     const retryCatalog = React.useCallback(async (): Promise<void> => {
         if (!accountStillCurrent()) return;
         await catalog.refresh();
     }, [accountStillCurrent, catalog.refresh]);
-    const displayError = operationError?.error ?? generationSettings.error ?? catalog.error;
+    const displayError = operationError?.error ?? generationSettings.error ?? catalog.error ?? unobservedCatalogError;
 
     return {
         groups,
+        catalogSnapshot: catalog.snapshot,
+        catalogModels,
+        catalogLoading: catalog.loading,
+        catalogError: catalog.error,
         pendingApproval: generationSettings.pendingApproval ?? pendingApproval ?? catalog.pendingApproval ?? modelLoad.pendingApproval,
         initialLoading: catalog.loading,
         modelCount: catalog.models.length,
@@ -504,11 +527,11 @@ export function useProviderConnectionModelsSection(input: Readonly<{
         manualModelPolicy: catalog.manualModelPolicy,
         error: displayError,
         errorRetry: operationError?.retry ?? generationSettings.retry
-            ?? (!operationError && !generationSettings.error && displayError ? retryCatalog : undefined),
+            ?? (!operationError && !generationSettings.error && displayError ? unobservedCatalogError ? refreshCatalog : retryCatalog : undefined),
         errorLoadModel: operationError?.loadModel,
         errorReviewCurrentState: operationError?.reviewCurrentState
             ?? (generationSettings.error?.code === 'provider_rpc_mutation_outcome_unknown' ? reviewCurrentState : undefined),
-        canRefreshCatalog: machineId !== null && connection !== null && connection.probeCapability !== 'none',
+        canRefreshCatalog: machineId !== null && connection !== null && (catalog.snapshot?.sourceCatalogs !== undefined || connection.probeCapability !== 'none'),
         refreshingCatalog,
         showHidden,
         loadingModelKey: modelLoad.loadingModelKey,

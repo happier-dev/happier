@@ -1255,7 +1255,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
     const setChromeBack = chromePublisher?.setBack;
     // A phone's band draws the page's pushed detail's way back, beside the Machine (one row, never two).
     const publishChromeBack = React.useMemo(() => !chromeShowsTitle || setChromeBack === undefined ? undefined
-        : (press: (() => void) | null) => { setChromeBack(press === null ? null : <DefaultBackButton onPress={press} />); },
+        : (press: (() => void) | null, label?: string) => { setChromeBack(press === null ? null : <DefaultBackButton onPress={press} label={label} />); },
     [chromeShowsTitle, setChromeBack]);
     const BackControl = useNavigationBackControl();
     const columnMaxWidthPx = useLayoutMaxWidth();
@@ -2965,7 +2965,7 @@ function PluginSurfaceHostMount(props: Readonly<(
     }, []);
     const readActionInputAnchor = React.useCallback(() => pressTriggerAnchor.current, []);
     const openConnectedAccounts = React.useCallback(async (request: PluginUiOpenConnectedAccountsRequestV1) => {
-        return presentConnectSheet({
+        const result = await presentConnectSheet({
             scope: accountLifetime?.scope ?? null,
             anchor: pressTriggerAnchor.current,
             ...(machineId && serverId ? { initialMachineTarget: {
@@ -2979,6 +2979,7 @@ function PluginSurfaceHostMount(props: Readonly<(
             ...(request.service ? { service: request.service,
                 ...(request.accountId ? { account: { service: request.service, accountId: request.accountId } } : {}) } : {}),
         });
+        return result.kind === 'dismissed' ? { kind: result.kind } : { kind: result.kind, account: result.account };
     }, [accountLifetime, machineId, serverId]);
     const controllerBindingWithConnectedAccounts = React.useMemo<BoundPluginSurfaceBinding>(() => Object.freeze({
         ...(controllerBinding ?? {}),

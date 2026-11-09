@@ -42,6 +42,7 @@ import type { PopoverAnchor } from '@/components/ui/popover/_types';
 import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { presentConnectSheet } from '../setup/ConnectedServiceSetupModal';
 import { ConnectedAccountSettled } from '../setup/ConnectedAccountSettled';
+import type { ConnectedAccountSetupCompletion, ConnectedAccountSetupFacts } from '../account/useConnectedAccountSetupCompletion';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedServicesGatewaysUnavailableLine, useConnectedServicesGatewaysUnavailable } from '../index/ConnectedServicesGatewaysGroup';
@@ -762,8 +763,8 @@ export const ConnectedServicesRail = React.memo(function ConnectedServicesRail(p
     const { theme } = useUnistyles();
     const providersEnabled = useFeatureEnabled('providers');
     const { indexModel, agentEntries, appShellProjection, registryReadFailure, gateways, gatewaysLoading, addGateway, gatewayUnavailable, retryGateways, gatewayContributionChoice, gatewayCountsByContributionKey } = useConnectedServicesIndex({ agents: 'load', gateways: providersEnabled });
-    const [settled, setSettled] = React.useState<QualifiedConnectedAccountRef | null>(null);
-    const onConnected = React.useCallback((account: QualifiedConnectedAccountRef) => setSettled(account), []);
+    const [settled, setSettled] = React.useState<ConnectedAccountSetupCompletion | null>(null);
+    const onConnected = React.useCallback((account: QualifiedConnectedAccountRef, facts?: ConnectedAccountSetupFacts) => setSettled({ ...facts, account }), []);
     const gatewayFacts = React.useMemo(() => ({ gateways, addGateway, gatewayContributionChoice, gatewayCountsByContributionKey }),
         [addGateway, gatewayContributionChoice, gatewayCountsByContributionKey, gateways]);
     const gatewaysUnavailable = useConnectedServicesGatewaysUnavailable(gatewayUnavailable, retryGateways);
@@ -788,7 +789,7 @@ export const ConnectedServicesRail = React.memo(function ConnectedServicesRail(p
     // Stable while the menu's facts are, so the phone's navigation bar is not re-published per render.
     const onConnect = React.useCallback((anchor?: PopoverAnchor) => {
         fireAndForget(presentConnectSheet({ scope, ...(anchor ? { anchor } : {}) }).then(result => {
-            if (result.kind !== 'dismissed') onConnected(result.account);
+            if (result.kind !== 'dismissed') onConnected(result.account, result);
         }), { tag: 'ConnectedServicesRail.connect' });
     }, [onConnected, scope]);
     const renderConnect = React.useCallback((renderTrigger: (onPress: () => void) => React.ReactElement) => (
@@ -814,8 +815,8 @@ export const ConnectedServicesRail = React.memo(function ConnectedServicesRail(p
             onSetIdentitiesHidden={privacy.setHidden}
             onConnect={onConnect}
             settled={settled ? {
-                serviceKey: buildQualifiedPluginContributionKey(settled.service),
-                content: <ConnectedAccountSettled account={settled} model={indexModel} agents={agentEntries}
+                serviceKey: buildQualifiedPluginContributionKey(settled.account.service),
+                content: <ConnectedAccountSettled account={settled.account} completion={settled} model={indexModel} agents={agentEntries}
                     machineId={appShellProjection.machineId ?? undefined} onDismiss={() => setSettled(null)} />,
             } : null}
             renderConnect={renderConnect}
@@ -829,7 +830,7 @@ export const ConnectedServicesRail = React.memo(function ConnectedServicesRail(p
             onOpenAccount={(sheet, accountId) => open(buildConnectedAccountSettingsRoute(sheet.service, { kind: 'account', accountId }), 'ConnectedServicesRail.account')}
             onAddAccount={(sheet, anchor?: PopoverAnchor) => {
                 fireAndForget(presentConnectSheet({ scope, intent: 'add', service: sheet.service, ...(anchor ? { anchor } : {}) }).then(result => {
-                    if (result.kind !== 'dismissed') onConnected(result.account);
+                    if (result.kind !== 'dismissed') onConnected(result.account, result);
                 }), {
                     tag: 'ConnectedServicesRail.addAccount',
                 });

@@ -7,6 +7,7 @@ import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { resolveConnectedServiceSettingsErrorMessage } from '@/components/settings/connectedServices/connectedServiceSettingsErrors';
 import { __resetQualifiedConnectedAccountQuotaSnapshotStore } from '@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore';
+import { reloadQualifiedQuotaSnapshotAfterRecovery } from '@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore';
 import { createQualifiedQuotaTestHarness, quotaTestRef as ref, quotaTestSnapshot as snapshot, quotaTestResponse, quotaTestProviderUsageSnapshot } from './qualifiedConnectedAccountQuotaTestHarness';
 import { projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { useQualifiedConnectedAccountQuota } from './useQualifiedConnectedAccountQuota';
@@ -41,6 +42,38 @@ describe('useQualifiedConnectedAccountQuota', () => {
         __resetQualifiedConnectedAccountQuotaSnapshotStore();
         await boundary?.dispose();
         vi.restoreAllMocks();
+    });
+
+    it('PC-3 keeps 100 mounted meters quiet through equal background refreshes and delivers a real change', async () => {
+        let commits = 0;
+        const readings: Array<ReturnType<typeof useQualifiedConnectedAccountQuota>> = [];
+        function Meter({ index }: Readonly<{ index: number }>) {
+            const quota = useQualifiedConnectedAccountQuota(ref);
+            React.useEffect(() => { commits++; readings[index] = quota; });
+            return null;
+        }
+        function Grid({ children }: React.PropsWithChildren) {
+            return <Wrapper>{children}{Array.from({ length: 100 }, (_, index) => <Meter key={index} index={index} />)}</Wrapper>;
+        }
+        await renderHook(() => undefined, { wrapper: Grid });
+        await vi.waitFor(() => expect(readings).toHaveLength(100));
+        await vi.waitFor(() => expect(readings.every(quota => quota.snapshot !== null)).toBe(true));
+        await flushHookEffects();
+        const held = readings[0]!.snapshot;
+        commits = 0;
+        await act(async () => {
+            await reloadQualifiedQuotaSnapshotAfterRecovery(boundary.context());
+        });
+        expect(commits).toBe(0);
+        readings.forEach(quota => expect(quota.snapshot).toBe(held));
+
+        const changed = { ...snapshot, fetchedAt: 2, planLabel: 'Changed plan' };
+        boundary.read.mockImplementation(async () => Response.json(quotaTestResponse(changed)));
+        await act(async () => {
+            await reloadQualifiedQuotaSnapshotAfterRecovery(boundary.context());
+        });
+        expect(commits).toBe(100);
+        readings.forEach(quota => expect(quota.snapshot?.planLabel).toBe('Changed plan'));
     });
 
     it.each([

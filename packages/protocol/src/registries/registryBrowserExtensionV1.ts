@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { BrowserExtensionWebStoreSourceV1Schema } from '../browser/profile/extensionsV1.js';
+import { BrowserExtensionWebStoreSourceV1Schema } from '../browser/profile/extensionSourceV1.js';
 
 /** Catalogs reference Web Store packages; direct unpacked imports belong to browser Actions. */
 export const RegistryBrowserExtensionV1Schema = BrowserExtensionWebStoreSourceV1Schema;

@@ -124,6 +124,7 @@ export function useProviderActionClient(serverId: string | null | readonly (stri
             probeProviderDraft: bind(client.probeProviderDraft),
             describeProviderModels: bind(client.describeProviderModels),
             describeProviderConnectionModels: bind(client.describeProviderConnectionModels),
+            refreshProviderConnectionModels: bind(client.refreshProviderConnectionModels),
             loadProviderModel: bind(client.loadProviderModel),
             cancelProviderModelLoad: bind(client.cancelProviderModelLoad),
             mutateProviderModelSettings: bind(client.mutateProviderModelSettings),

@@ -126,6 +126,12 @@ export const describeProviderModels = async (input: ProviderActionInput<'provide
     if (result.status === 'success' && 'connectionId' in result) throw createProviderErrorV1('provider_rpc_response_invalid');
     return result;
 };
+export const refreshProviderConnectionModels = async (input: Readonly<{ machineId: string; connectionId: string; serverId: string | null }>, approval?: ProviderActionApprovalOptions) => {
+    const { serverId, ...request } = input;
+    const result = await invoke('providers.models.refresh', { ...request, forceRefresh: true }, outputs['providers.models.refresh'], { serverId }, approval);
+    if (result.status === 'success' && !('connectionId' in result)) throw createProviderErrorV1('provider_rpc_response_invalid');
+    return result;
+};
 export const describeProviderConnectionModels = async (input: ProviderActionInput<'providers.models.list'> & Readonly<{ serverId: string | null }>, approval?: ProviderActionApprovalOptions) => {
     const { serverId, ...request } = input;
     return invoke('providers.models.list', request, outputs['providers.models.list'], { serverId }, approval);

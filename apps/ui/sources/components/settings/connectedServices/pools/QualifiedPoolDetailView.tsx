@@ -164,8 +164,6 @@ export type QualifiedPoolDetailViewProps = Readonly<{
     onResetLabel?: () => void;
     /** Updates only this pool's personal label through the presentation Action owner. */
     onSetLabel?: (label: string) => Promise<boolean>;
-    /** Asked once when the page opens with old readings: the on-demand check for those members. */
-    onCheckStale?: (accountIds: readonly string[]) => void;
     onConnectAccount?: (anchor?: PopoverAnchor) => void;
     settled?: React.ReactNode;
     sharedWithTeamsAdministration?: React.ReactNode;
@@ -566,17 +564,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
     // ── Left across the pool ──
     const loadingEnabled = enabledMembers.some((member) => memberQuota[member.ref.accountId]?.loading === true
         && !memberQuota[member.ref.accountId]?.snapshot);
-    const { asOf: poolAsOf, notAnswering, staleMemberIds } = freshness;
-    // One check when the page opens with old readings; nothing polls while it stays open.
-    const checkedOnOpen = React.useRef(false);
-    const hasReading = poolAsOf !== null;
-    const staleOnOpen = staleMemberIds.join('\n');
-    const onCheckStale = props.onCheckStale;
-    React.useEffect(() => {
-        if (checkedOnOpen.current || !hasReading) return;
-        checkedOnOpen.current = true;
-        if (staleOnOpen) onCheckStale?.(staleOnOpen.split('\n'));
-    }, [hasReading, onCheckStale, staleOnOpen]);
+    const { asOf: poolAsOf, notAnswering } = freshness;
     const roomLine = usage.room.total > 0
         ? [
             t('connectedServicesPool.roomCount', { count: usage.room.withRoom, total: usage.room.total }),

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -28,6 +29,7 @@ import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountS
 import { t } from '@/text';
 
 import { ConnectedAccountSetupController } from '../account/ConnectedAccountServiceView';
+import type { ConnectedAccountSetupFacts } from '../account/useConnectedAccountSetupCompletion';
 import { ConnectedServiceMark, formatAgentNames } from '../ConnectedServiceMark';
 import type { ConnectedServicesIndexSection } from '../model/buildConnectedServicesIndexModel';
 import { connectedServiceSetupCategory, connectedServiceSetupCategoryTitle, type ConnectedServiceSetupCategory } from './buildConnectedServiceSetupCatalog';
@@ -64,7 +66,7 @@ export type ConnectedServiceSetupPanelProps = Readonly<{
     onTargetChange: (target: ConnectedServiceSetupTarget) => void;
     onClose: () => void;
     /** The new or re-signed account: the panel's host settles it into its row. */
-    onConnected?: (account: QualifiedConnectedAccountRef, serviceKey: string) => void;
+    onConnected?: (account: QualifiedConnectedAccountRef, serviceKey: string, facts?: ConnectedAccountSetupFacts) => void;
     /** Renders one service's flow; the live panel runs the service's controller (a fixture preview passes its own). */
     renderServiceFlow?: (entry: ConnectedServiceSetupCatalogEntry, target: ConnectedServiceSetupTarget) => React.ReactNode;
     /** A host's canonical selection input (dev frames supply a non-executable presentation fixture). */
@@ -198,6 +200,7 @@ function ConnectedServiceSetupGroup(props: Readonly<{
  * service page runs.
  */
 export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSetupPanel(props: ConnectedServiceSetupPanelProps) {
+    const localizePluginText = useProjectedPluginLocalizedTextResolver();
     const { theme } = useUnistyles();
     const router = useRouter();
     const phone = useDeviceType() === 'phone';
@@ -277,8 +280,11 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
 
     const { title, purpose } = presentConnectedServiceSetupHeading({ selected, targetKind: target.kind, scope, chrome: props.chrome, machineRequired });
 
-    const handleConnected = React.useCallback((account: QualifiedConnectedAccountRef) => {
-        if (selectedKey) onConnected?.(account, selectedKey);
+    const handleConnected = React.useCallback((account: QualifiedConnectedAccountRef, facts?: ConnectedAccountSetupFacts) => {
+        if (selectedKey) {
+            if (facts) onConnected?.(account, selectedKey, facts);
+            else onConnected?.(account, selectedKey);
+        }
     }, [onConnected, selectedKey]);
     const reconnectAccountId = target.kind === 'reconnect' ? target.accountId : null;
     const controllerPanel = React.useMemo(() => ({
@@ -309,6 +315,7 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
         renderTile: ({ open }) => (
             <ConnectedServiceCatalogBlock
                 entry={candidate}
+                localizePluginText={localizePluginText}
                 layout={phone ? 'row' : 'card'}
                 showCount={scope === 'all'}
                 onConnect={open}

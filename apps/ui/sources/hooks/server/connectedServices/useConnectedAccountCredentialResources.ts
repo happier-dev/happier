@@ -31,7 +31,7 @@ export function useConnectedAccountCredentialResources(account: QualifiedConnect
     profile: QualifiedConnectedAccountProfileV4 | null;
     resources: readonly ConnectedAccountCredentialResource[];
 }> {
-    const profiles = useProfile(profile => profile.connectedAccountsV4);
+    const profiles = useProfile(profile => profile.connectedAccountsV4, ['connectedAccountsV4']);
     const scope = useActiveServerAccountScope();
     const labelsByKey = useConnectedMetadataCatalog(scope, selectConnectedMetadataLabels);
     const profile = profiles.find(profile => sameQualifiedConnectedAccountRef(profile.ref, account)) ?? null;

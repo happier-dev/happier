@@ -77,7 +77,7 @@ export function ConnectedServiceGatewayPage(props: GatewayPageProps = {}) {
             machines={machines.map(row => ({ machineId: row.target.machineId, displayName: row.displayName, online: row.online }))}
             reachability="not_checked"
             onChangePlacement={gatewayPlacement => onChange({ ...deployment, gatewayPlacement })}
-            helperModels={deployment.roleModels ?? undefined} modelRoles={modelRoles} models={[]}
+            helperModels={deployment.roleModels ?? undefined} modelRoles={modelRoles} models={null}
             onChangeHelperModels={roleModels => onChange({ ...deployment, roleModels })}
             disabled={disabled} nameRow={null} pickerRows={null}
         />}

@@ -3,7 +3,9 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QualifiedConnectedAccountProfileV4Schema} from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { QualifiedConnectedAccountQuotaSnapshotV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
-import { createRootLayoutFeaturesResponse, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { QualifiedConnectedAccountGroupV4Schema, type QualifiedConnectedAccountGroupV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { ConnectedServiceAuthGroupPolicyV2Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { createRootLayoutFeaturesResponse, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -14,10 +16,12 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { __resetConnectedServiceQuotaSnapshotStore } from './connectedServiceQuotaSnapshotStore';
 import { __resetQualifiedConnectedAccountQuotaSnapshotStore } from '@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore';
+import { buildQualifiedQuotaSnapshotScopeKey, getQualifiedQuotaSnapshotEntry, loadQualifiedQuotaSnapshotOnce } from '@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore';
 import { createQualifiedQuotaTestHarness, quotaTestRef as ref, quotaTestSnapshot, quotaTestResponse,
     quotaTestProviderUsageSnapshot, quotaTestProviderUsageResponse } from './qualifiedConnectedAccountQuotaTestHarness';
 import { useConnectedServiceQuotaSnapshots } from './useConnectedServiceQuotaSnapshots';
 import { useQualifiedConnectedAccountQuota } from './useQualifiedConnectedAccountQuota';
+import { useQualifiedConnectedAccountGroups } from './useQualifiedConnectedAccountGroups';
 import { useProviderAccountUsageSnapshots } from './useProviderAccountUsageSnapshots';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
@@ -40,6 +44,7 @@ const profileInput = [{ serviceId: 'anthropic', profileId: 'work' }] as const;
 
 describe('useConnectedServiceQuotaSnapshots V4 transport', () => {
     let boundary: Awaited<ReturnType<typeof createQualifiedQuotaTestHarness>>;
+    let selectedPool: QualifiedConnectedAccountGroupV4 | undefined;
     function Wrapper({ children }: React.PropsWithChildren) {
         return React.createElement(InjectedAuthProvider, { credentials: boundary.account.credentials, children });
     }
@@ -89,7 +94,13 @@ describe('useConnectedServiceQuotaSnapshots V4 transport', () => {
         __resetConnectedServiceQuotaSnapshotStore();
         __resetQualifiedConnectedAccountQuotaSnapshotStore();
         resetServerFeaturesClientForTests();
-        boundary = await createQualifiedQuotaTestHarness();
+        selectedPool = undefined;
+        boundary = await createQualifiedQuotaTestHarness({ request: async input => {
+            if (new URL(String(input)).pathname === '/v4/connect/qualified/group' && selectedPool) {
+                return Response.json({ group: selectedPool });
+            }
+            return null;
+        } });
         installAccountProfile();
         installFeatures();
         await selectFixtureHome();
@@ -143,6 +154,76 @@ describe('useConnectedServiceQuotaSnapshots V4 transport', () => {
         expect(hook.getCurrent().snapshotsByKey['anthropic/work']?.fetchedAt).toBe(fresh.fetchedAt);
     });
 
+    it('PC-5 opens 20 cached pool members with reads only for stale keys and retries a failed member', async () => {
+        const { QualifiedPoolDetail } = await import('@/components/settings/connectedServices/pools/QualifiedPoolDetail');
+        const now = Date.now();
+        const members = Array.from({ length: 20 }, (_, index) => ({ ref: { ...ref, accountId: `member-${index}` } }));
+        selectedPool = QualifiedConnectedAccountGroupV4Schema.parse({
+            v: 1, ref: { service: ref.service, groupId: 'pool-members' }, displayName: 'Pool members',
+            policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({}), activeConnectedAccountId: null,
+            incarnation: 'group-row:pool-members', generation: 1, runtimeStateRevision: 1, state: {},
+            members: members.map((member, index) => ({ v: 1, connectedAccountId: member.ref.accountId,
+                priority: index, enabled: true, state: {}, createdAt: 0, updatedAt: 0 })),
+            createdAt: 0, updatedAt: 0,
+        });
+        const snapshots = new Map(members.map((member, index) => [member.ref.accountId, {
+            ...snapshot, ref: member.ref, fetchedAt: index < 3 ? now - 120_000 : now,
+        }]));
+        boundary.read.mockImplementation(async accountRef => Response.json(quotaTestResponse(snapshots.get(accountRef.accountId)!)));
+        const keys = members.map(member => {
+            const context = boundary.context(member.ref);
+            const key = buildQualifiedQuotaSnapshotScopeKey(context);
+            loadQualifiedQuotaSnapshotOnce(key, context);
+            return key;
+        });
+        await vi.waitFor(() => expect(keys.every(key => getQualifiedQuotaSnapshotEntry(key).read)).toBe(true));
+        boundary.read.mockClear();
+        boundary.read.mockImplementation(async accountRef => {
+            if (accountRef.accountId === 'member-0') return Response.json({ error: 'unavailable' }, { status: 400 });
+            return Response.json(quotaTestResponse({ ...snapshots.get(accountRef.accountId)!, fetchedAt: now }));
+        });
+
+        const poolAccounts = members.map(member => QualifiedConnectedAccountProfileV4Schema.parse({
+            ...storage.getState().profile.connectedAccountsV4[0]!, ref: member.ref,
+        }));
+        function SelectedPoolPage() {
+            const groups = useQualifiedConnectedAccountGroups({
+                serverId: getActiveServerSnapshot().serverId, service: ref.service, selectedGroupId: 'pool-members',
+            });
+            const group = groups.groups.find(value => value.ref.groupId === 'pool-members');
+            return group ? React.createElement(QualifiedPoolDetail, {
+                group, accounts: poolAccounts, serviceLabel: 'Pool accounts', mutations: groups,
+            }) : null;
+        }
+        const groupReads = () => boundary.requests.filter(request => request.path === '/v4/connect/qualified/group');
+        const opened = await renderScreen(React.createElement(Wrapper, { children: React.createElement(SelectedPoolPage) }));
+        await vi.waitFor(() => expect(storage.getState().profile.connectedAccountGroupsV4
+            .find(group => group.ref.groupId === 'pool-members')?.members).toHaveLength(20));
+        await flushHookEffects({ cycles: 8, turns: 8 });
+        expect(groupReads()).toHaveLength(1);
+        expect(boundary.requests.filter(request => request.path === '/v4/connect/qualified/groups')).toEqual([]);
+        expect(boundary.refresh).not.toHaveBeenCalled();
+        expect(boundary.read.mock.calls.map(([accountRef]) => accountRef.accountId).sort()).toEqual(['member-0', 'member-1', 'member-2']);
+        expect(getQualifiedQuotaSnapshotEntry(keys[0]!).error).not.toBeNull();
+        expect(getQualifiedQuotaSnapshotEntry(keys[0]!).snapshot).not.toBeNull();
+        await opened.unmount();
+
+        boundary.read.mockClear();
+        boundary.read.mockImplementation(async accountRef => Response.json(quotaTestResponse({ ...snapshots.get(accountRef.accountId)!, fetchedAt: now })));
+        await renderScreen(React.createElement(Wrapper, { children: React.createElement(SelectedPoolPage) }));
+        await vi.waitFor(() => expect(groupReads()).toHaveLength(2));
+        await flushHookEffects({ cycles: 8, turns: 8 });
+        expect(boundary.read.mock.calls.map(([accountRef]) => accountRef.accountId)).toEqual(['member-0']);
+        expect(getQualifiedQuotaSnapshotEntry(keys[0]!).error).toBeNull();
+
+        boundary.read.mockClear();
+        await act(async () => publishHomeAccountChange(getActiveServerSnapshot().serverId,
+            [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }));
+        await flushHookEffects({ cycles: 8, turns: 8 });
+        expect(boundary.read).toHaveBeenCalledTimes(20);
+        expect(boundary.refresh).not.toHaveBeenCalled();
+    });
+
     it('shares visible summary and Session quota demand, retains facts on reopen, and revalidates once', async () => {
         const { useUsageSummary } = await import('@/components/hub/usage/useUsageSummary');
         const summary = await renderHook(() => useUsageSummary({ load: 'visible' }), { wrapper: Wrapper });
@@ -159,7 +240,7 @@ describe('useConnectedServiceQuotaSnapshots V4 transport', () => {
         expect(boundary.read).toHaveBeenCalledTimes(2);
         const joined = await renderHook(() => useConnectedServiceQuotaSnapshots(profileInput), { wrapper: Wrapper });
         await flushHookEffects({ cycles: 8, turns: 8 });
-        expect(joined.getCurrent().loadingByKey['anthropic/work']).toBe(true);
+        expect(joined.getCurrent().loadingByKey['anthropic/work']).toBe(false);
         expect(boundary.read).toHaveBeenCalledTimes(2);
         await act(async () => { finish(Response.json(quotaTestResponse(fresh))); });
         await flushHookEffects({ cycles: 8, turns: 8 });

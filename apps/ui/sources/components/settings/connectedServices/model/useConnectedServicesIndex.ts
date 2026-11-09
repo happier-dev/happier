@@ -171,13 +171,15 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
         : profile.connectedServicesV2.filter(service => {
             const entry = getLegacyConnectedServiceRegistryEntry(service.serviceId);
             return entry.service && buildQualifiedPluginContributionKey(entry.service) === options.serviceKey;
-        }));
+        }), ['connectedServicesV2']);
     const qualifiedAccounts = useProfile(profile => transport !== 'advertised-v4' ? NO_ACCOUNTS
         : options.serviceKey === undefined ? profile.connectedAccountsV4
-            : profile.connectedAccountsV4.filter(account => buildQualifiedPluginContributionKey(account.ref.service) === options.serviceKey));
+            : profile.connectedAccountsV4.filter(account => buildQualifiedPluginContributionKey(account.ref.service) === options.serviceKey),
+        transport === 'advertised-v4' ? ['connectedAccountsV4'] : []);
     const qualifiedGroups = useProfile(profile => transport !== 'advertised-v4' ? NO_ACCOUNTS
         : options.serviceKey === undefined ? profile.connectedAccountGroupsV4
-            : profile.connectedAccountGroupsV4.filter(group => buildQualifiedPluginContributionKey(group.ref.service) === options.serviceKey));
+            : profile.connectedAccountGroupsV4.filter(group => buildQualifiedPluginContributionKey(group.ref.service) === options.serviceKey),
+        transport === 'advertised-v4' ? ['connectedAccountGroupsV4'] : []);
     const registryEntries = React.useMemo(() => options.serviceKey === undefined ? registrySnapshot.entries
         : registrySnapshot.entries.filter(entry => entry.service
             && buildQualifiedPluginContributionKey(entry.service) === options.serviceKey), [registrySnapshot.entries, options.serviceKey]);
