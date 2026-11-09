@@ -12,6 +12,9 @@ export function projectOrdinaryPluginSessionLiveCapabilities(params: Readonly<{
     permissionHandler: params.live.permissionHandler,
     interactions: params.interactions,
     readPermissionMode: params.live.readPermissionMode,
+    ...(params.live.applyPermissionModeIntent
+      ? { applyPermissionModeIntent: params.live.applyPermissionModeIntent }
+      : {}),
     ...(params.live.createMediaService
       ? { media: params.live.createMediaService(() => true) }
       : {}),

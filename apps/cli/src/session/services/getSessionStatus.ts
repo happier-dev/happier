@@ -1,6 +1,6 @@
 import type { SessionAwarenessProjectionV1, SessionStatusResult } from '@happier-dev/protocol';
 import { AgentStateSchema } from '@happier-dev/session-core/state';
-import { listPendingRequests, readSharedMetadataActionConfirmationState } from '@happier-dev/session-core/pending';
+import { listPendingRequests, projectSessionStatusPendingRequestsV1, readSharedMetadataActionConfirmationState } from '@happier-dev/session-core/pending';
 import { projectCliSessionAwarenessV1 } from '@/cli/output/session/sessionAwareness';
 import type { StoredCredentials } from '@/persistence';
 import { summarizeSessionRecord, type SessionSummary } from '@/cli/output/session/sessionSummary';
@@ -19,16 +19,18 @@ import type { SessionReadinessV1 } from '@happier-dev/protocol/sessions/control/
 import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import type { QualifiedConnectedAccountPurposeTeamResourceSelectionV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { SessionEffectiveAccessV1Schema, readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { ensureSessionDisplayProjectionAfterOwnerRead } from '@/session/metadata/updateSessionMetadataWithRetry';
 import type { SessionAcceptedWorkspaceV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveAgentExecutionTargetFromSessionMetadata } from '@happier-dev/agents/runtime/identity/resolveAgentIdFromSessionMetadata';
+import { evaluateAgentSessionCompactionAvailability, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
 export type GetSessionStatusResult =
   | Readonly<{ ok: true; session: SessionSummary; agentState: AgentStateSummary | null; awareness: SessionAwarenessProjectionV1; readiness?: SessionReadinessV1;
       connectedServices?: SessionStatusResult['connectedServices'];
       acceptedWorkspace?: SessionAcceptedWorkspaceV1;
       agentTarget?: SessionStatusResult['agentTarget'];
+      compaction: NonNullable<SessionStatusResult['compaction']>;
       pendingRequests: SessionStatusResult['pendingRequests'] }>
   | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported' | 'encryption_material_unavailable'; candidates?: string[] }>;
 
@@ -151,18 +153,18 @@ export async function getSessionStatus(params: Readonly<{
     recipientEnvelopeReadiness: sessionTarget.accountEncryptionCurrentness.recipientEnvelopeReadiness,
     rawSession: sessionTarget.rawSession,
   });
-  const pendingRequests = openedAgentState.success ? listPendingRequests({
+  const effectiveAccess = SessionEffectiveAccessV1Schema.safeParse(sessionTarget.rawSession.effectiveAccess);
+  const permissionRelationship = effectiveAccess.success
+    ? effectiveAccess.data.level === 'owner' ? 'owner' as const : 'sharedApprover' as const
+    : null;
+  const pendingRequests = openedAgentState.success ? projectSessionStatusPendingRequestsV1(listPendingRequests({
     sessionId: sessionTarget.sessionId,
     active: sessionTarget.rawSession.active,
     agentState: openedAgentState.data,
+    permissionRelationship,
     actionConfirmations: readSharedMetadataActionConfirmationState(presentation.metadata, sessionTarget.rawSession.metadataLayoutVersion),
     presentationCompletedRequests: null,
     projected: null,
-  }).map(request => ({
-    requestId: request.id,
-    ...(request.turnId ? { turnId: request.turnId } : {}),
-    kind: request.kind,
-    tool: request.tool,
   })) : null;
 
   const ownerMetadata = tryDecryptSessionOwnerMetadataView({ credentials: params.credentials,
@@ -178,6 +180,9 @@ export async function getSessionStatus(params: Readonly<{
 
   return {
     ok: true,
+    compaction: evaluateAgentSessionCompactionAvailability({
+      agentId: resolveAgentIdFromSessionMetadata(ownerMetadata) ?? '', metadata: ownerMetadata,
+    }),
     ...(agentTarget ? { agentTarget } : {}),
     ...(acceptedWorkspace ? { acceptedWorkspace } : {}),
     ...(connectedServices.success ? { connectedServices: projectConnectedServiceBindingsForChild(connectedServices.data) } : {}),

@@ -1,10 +1,11 @@
+import { NativePermissionChoiceAnswerV1Schema, NativePermissionChoicesV1Schema, type NativePermissionChoiceAnswerV1, type NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { readRunScopedExecutionPermissionRequestIdentity } from '@happier-dev/protocol/execution/runs/runPrimitives';
 import { deepEqual } from '@/utils/deterministicJson';
 import { logger } from '@/ui/logger';
 import { isAgentStructuredQuestionRequest, isDurableAgentStructuredQuestionRequest } from './requestKind';
 import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import type { SessionQuestionContextV1, SessionQuestionHandlerV1 } from '@happier-dev/protocol/sessions/permissions/v1';
-import type { StructuredQuestionAnswersV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
+import type { StructuredQuestionAnswerDetailsV1, StructuredQuestionAnswersV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 import type {
     AgentStateOutstandingRequest,
     AgentStateRequestCompletion,
@@ -29,6 +30,7 @@ import {
 } from './permissionRequestOwner';
 
 export type PermissionRequestCoordinatorRequest = Readonly<{
+    nativeChoices?: NativePermissionChoicesV1 | null;
     questionV1?: SessionQuestionContextV1;
     currentHandler?: SessionQuestionHandlerV1;
     requestId: string;
@@ -50,6 +52,7 @@ export type PermissionRequestCoordinatorRequest = Readonly<{
 }>;
 
 export type PermissionRequestCoordinatorContext = Readonly<{
+    nativeChoices?: NativePermissionChoicesV1 | null;
     questionV1?: SessionQuestionContextV1;
     currentHandler?: SessionQuestionHandlerV1;
     requestId: string;
@@ -73,6 +76,7 @@ export type PermissionRequestCoordinatorContext = Readonly<{
 export type PermissionRequestCoordinatorCompletedRequest = Readonly<{
     answeredBy?: SessionQuestionHandlerV1;
     structuredAnswersV1?: StructuredQuestionAnswersV1;
+    answerDetails?: StructuredQuestionAnswerDetailsV1;
     status: string;
     decision?: string;
     reason?: string;
@@ -92,6 +96,7 @@ export type PermissionRequestCoordinatorCompletion<TResult> = Readonly<{
 export type PermissionRequestCoordinatorStore = Readonly<{
     changeQuestionHandler?(params: AgentStateQuestionHandlerChange): Promise<boolean>;
     publishRequest(params: Readonly<{
+        nativeChoices?: NativePermissionChoicesV1 | null;
         questionV1?: SessionQuestionContextV1;
         currentHandler?: SessionQuestionHandlerV1;
         requestId: string;
@@ -115,6 +120,7 @@ export type PermissionRequestCoordinatorStore = Readonly<{
     completeRequest(params: Readonly<{
         answeredBy?: SessionQuestionHandlerV1;
         structuredAnswersV1?: StructuredQuestionAnswersV1;
+        answerDetails?: StructuredQuestionAnswerDetailsV1;
         requestId: string;
         status: string;
         decision?: string;
@@ -127,6 +133,7 @@ export type PermissionRequestCoordinatorStore = Readonly<{
         applicationAcknowledged?: AgentStateRequestApplication;
         observedRetirement?: true;
         fallback?: Readonly<{
+            nativeChoices?: NativePermissionChoicesV1 | null;
             questionV1?: SessionQuestionContextV1;
             currentHandler?: SessionQuestionHandlerV1;
             toolName: string;
@@ -197,6 +204,7 @@ type PendingPermissionWaiter<TResult> = {
 };
 
 type PendingPermissionRequest<TResult> = {
+    nativeChoices?: NativePermissionChoicesV1 | null;
     questionV1?: SessionQuestionContextV1;
     currentHandler?: SessionQuestionHandlerV1;
     requestId: string;
@@ -225,6 +233,7 @@ type PendingPermissionRequest<TResult> = {
 };
 
 type CachedPermissionDecision<TResult> = {
+    nativeChoices?: NativePermissionChoicesV1 | null;
     result: TResult;
     toolName: string;
     toolInput: unknown;
@@ -291,6 +300,7 @@ export class PermissionRequestCoordinator<TResult> {
             if (entry.completionPersistence && entry.waiters.size === 0) {
                 return Promise.reject(createPermissionRequestAbortError());
             }
+            this.updateNativeChoices(entry, request);
             entry.status = 'live';
             return this.attachWaiter(entry, options?.signal);
         }
@@ -314,6 +324,7 @@ export class PermissionRequestCoordinator<TResult> {
                 );
             }
             entry = createPendingRequestFromOutstanding<TResult>(outstanding, request.lifetime);
+            this.updateNativeChoices(entry, request);
             this.pendingRequests.set(request.requestId, entry);
             return this.attachWaiter(entry, options?.signal);
         }
@@ -322,6 +333,7 @@ export class PermissionRequestCoordinator<TResult> {
         entry = {
             requestId: request.requestId,
             toolName: request.toolName,
+            ...(typeof request.nativeChoices !== 'undefined' ? { nativeChoices: request.nativeChoices } : {}),
             toolInput: request.toolInput,
             createdAt: request.createdAt ?? Date.now(),
             ...(request.questionV1 ? { questionV1: request.questionV1 } : {}),
@@ -350,13 +362,14 @@ export class PermissionRequestCoordinator<TResult> {
             this.store.publishRequest({
                 requestId: entry.requestId,
                 toolName: entry.toolName,
+                ...(typeof entry.nativeChoices !== 'undefined' ? { nativeChoices: entry.nativeChoices } : {}),
                 toolInput: entry.toolInput,
                 createdAt: entry.createdAt,
                 ...(entry.questionV1 ? { questionV1: entry.questionV1 } : {}),
                 ...(entry.currentHandler ? { currentHandler: entry.currentHandler } : {}),
                 ...(entry.mcpTool ? { mcpTool: entry.mcpTool } : {}),
                 ...(typeof entry.turnId === 'string' ? { turnId: entry.turnId } : {}),
-                lifetime: entry.lifetime,
+                ...(entry.lifetime === 'occurrence' ? { lifetime: entry.lifetime } : {}),
                 ...(typeof entry.kind === 'string' ? { kind: entry.kind } : {}),
                 ...(typeof entry.source === 'string' ? { source: entry.source } : {}),
                 ...(entry.responseTarget ? { responseTarget: entry.responseTarget } : {}),
@@ -373,6 +386,12 @@ export class PermissionRequestCoordinator<TResult> {
         return this.attachWaiter(entry, options?.signal);
     }
 
+    private updateNativeChoices(entry: PendingPermissionRequest<TResult>, request: PermissionRequestCoordinatorRequest): void {
+        if (request.nativeChoices === undefined || deepEqual(entry.nativeChoices, request.nativeChoices)) return;
+        this.store.publishRequest({ ...request, createdAt: entry.createdAt });
+        entry.nativeChoices = request.nativeChoices;
+    }
+
     getResponseContext(requestId: string): PermissionRequestCoordinatorContext | null {
         this.pruneDetachedRecords();
 
@@ -384,9 +403,12 @@ export class PermissionRequestCoordinator<TResult> {
             // Preserve an existing first-answer claim, which that persistence cannot cancel.
             if (entry.completionPersistence && entry.waiters.size === 0
                 && this.store.hasPermissionResponseClaim?.(requestId) !== true) return null;
+            const persisted = this.store.readOutstandingRequest(requestId);
+            const nativeChoices = persisted?.nativeChoices !== undefined ? persisted.nativeChoices : entry.nativeChoices;
             return {
                 requestId,
                 toolName: entry.toolName,
+                ...(typeof nativeChoices !== 'undefined' ? { nativeChoices } : {}),
                 toolInput: entry.toolInput,
                 createdAt: entry.createdAt,
                 ...(entry.questionV1 ? { questionV1: entry.questionV1 } : {}),
@@ -414,6 +436,7 @@ export class PermissionRequestCoordinator<TResult> {
         return {
             requestId,
             toolName: outstanding.toolName,
+            ...(typeof outstanding.nativeChoices !== 'undefined' ? { nativeChoices: outstanding.nativeChoices } : {}),
             toolInput: outstanding.toolInput,
             createdAt: outstanding.createdAt,
             ...(outstanding.questionV1 ? { questionV1: outstanding.questionV1 } : {}),
@@ -572,7 +595,7 @@ export class PermissionRequestCoordinator<TResult> {
                     await this.store.recoverAppliedCompletions?.();
                     return await retained.acknowledgement;
                 }
-                if (entry.cancelReason) return false;
+                if (entry.cancelReason || (completion.completedRequest.isCurrent && !completion.completedRequest.isCurrent())) return false;
                 const application = params.acknowledgeDecisionApplication
                     ? this.store.captureRequestApplication?.(entry.requestId) : null;
                 if (params.acknowledgeDecisionApplication && this.store.captureRequestApplication && !application) return false;
@@ -592,6 +615,7 @@ export class PermissionRequestCoordinator<TResult> {
                     ...(application ? { applicationAcknowledged: application } : {}),
                     fallback: {
                         toolName: entry.toolName,
+                        ...(typeof entry.nativeChoices !== 'undefined' ? { nativeChoices: entry.nativeChoices } : {}),
                         toolInput: entry.toolInput,
                         createdAt: entry.createdAt,
                         ...(entry.questionV1 ? { questionV1: entry.questionV1 } : {}),
@@ -712,6 +736,7 @@ export class PermissionRequestCoordinator<TResult> {
             this.cachedDecisions.set(entry.requestId, {
                 result: result,
                 toolName: entry.toolName,
+                ...(typeof entry.nativeChoices !== 'undefined' ? { nativeChoices: entry.nativeChoices } : {}),
                 toolInput: entry.toolInput,
                 lifetime: entry.lifetime,
                 ...(typeof entry.turnId === 'string' ? { turnId: entry.turnId } : {}),
@@ -763,6 +788,7 @@ export class PermissionRequestCoordinator<TResult> {
                         reason,
                         fallback: {
                             toolName: entry.toolName,
+                            ...(typeof entry.nativeChoices !== 'undefined' ? { nativeChoices: entry.nativeChoices } : {}),
                             toolInput: entry.toolInput,
                             createdAt: entry.createdAt,
                             ...(entry.questionV1 ? { questionV1: entry.questionV1 } : {}),
@@ -1014,6 +1040,7 @@ export class PermissionRequestCoordinator<TResult> {
             fallback: {
                 toolName: entry.toolName,
                 ...(entry.mcpTool ? { mcpTool: entry.mcpTool } : {}),
+                ...(typeof entry.nativeChoices !== 'undefined' ? { nativeChoices: entry.nativeChoices } : {}),
                 toolInput: entry.toolInput,
                 createdAt: entry.createdAt,
                 ...(entry.questionV1 ? { questionV1: entry.questionV1 } : {}),
@@ -1086,6 +1113,7 @@ function isCompatibleCachedDecision<TResult>(
     return cached.toolName === request.toolName
         && cached.lifetime === (request.lifetime ?? 'turn')
         && deepEqual(cached.toolInput, request.toolInput)
+        && deepEqual(cached.nativeChoices, request.nativeChoices)
         && deepEqual(cached.responseTarget ?? null, request.responseTarget ?? null)
         && turnIdsEqual(cached.turnId, request.turnId)
         && permissionSourcesEqual(cached.source, request.source)
@@ -1150,6 +1178,7 @@ function createPendingRequestFromOutstanding<TResult>(
         requestId: outstanding.requestId,
         toolName: outstanding.toolName,
         ...(outstanding.mcpTool ? { mcpTool: outstanding.mcpTool } : {}),
+        ...(typeof outstanding.nativeChoices !== 'undefined' ? { nativeChoices: outstanding.nativeChoices } : {}),
         toolInput: outstanding.toolInput,
         createdAt: outstanding.createdAt,
         ...(outstanding.questionV1 ? { questionV1: outstanding.questionV1 } : {}),

@@ -6,9 +6,15 @@ import type {
   SessionPermissionFollowUpPromptIntent as SessionPermissionFollowUpPromptIntentV1,
 } from '@happier-dev/plugin-sdk/sessions';
 import type { SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
+import type { NativePermissionChoicesV1, NativePermissionChoiceAnswerV1, SessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 
 export type AcpPermissionDecisionResult = Readonly<{
   decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
+  nativeChoice?: NativePermissionChoiceAnswerV1;
+  mode?: SessionPermissionRespondRpcParamsV1['mode'];
+  allowedTools?: readonly string[];
+  updatedPermissions?: unknown;
+  execPolicyAmendment?: SessionPermissionRespondRpcParamsV1['execPolicyAmendment'];
   rationale?: string;
   followUpPrompt?: SessionPermissionFollowUpPromptIntentV1;
 }>;
@@ -20,6 +26,7 @@ export type AcpPermissionDecisionResult = Readonly<{
 export type AcpPermissionCausalAuthority = SessionInputCausalPermissionAuthorityV1;
 
 export type AcpPermissionCallContext = Readonly<{
+  nativeChoices?: NativePermissionChoicesV1;
   /** Cancellation of this exact native ACP request, independent of its turn. */
   signal?: AbortSignal;
   /** Host-only child Run policy input; never an admitted user-input authority. */

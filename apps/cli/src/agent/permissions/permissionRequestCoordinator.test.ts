@@ -372,13 +372,13 @@ describe('PermissionRequestCoordinator', () => {
         }
     });
 
-    it('rejoins occurrence questions without losing causal turn custody or surviving occurrence retirement', async () => {
+    it.each(['turn', 'occurrence'] as const)('rejoins %s lifetime requests with their original turn custody and retirement boundary', async (lifetime) => {
         const { coordinator, session, store } = createHarness();
         const request = {
             ...bashRequest,
             requestId: 'occurrence-rejoin',
             turnId: 'turn-1',
-            lifetime: 'occurrence',
+            ...(lifetime === 'occurrence' ? { lifetime } : {}),
             owner: { kind: 'plugin', pluginId: 'plugin-a' },
         } as const;
         const original = coordinator.requestDecision(request).catch(() => null);
@@ -388,8 +388,12 @@ describe('PermissionRequestCoordinator', () => {
         const reattached = reloaded.requestDecision(request).catch(() => null);
         try {
             await reloaded.cancelByPluginTurn('plugin-a', 'turn-1', 'turn ended');
-            expect(await settledState(reattached)).toBe('pending');
-            expect(session.agentState.requests?.[request.requestId]?.turnId).toBe('turn-1');
+            if (lifetime === 'occurrence') {
+                expect(await settledState(reattached)).toBe('pending');
+                expect(session.agentState.requests?.[request.requestId]?.turnId).toBe('turn-1');
+            } else {
+                await expect(reattached).resolves.toBeNull();
+            }
             await reloaded.cancelByPlugin('plugin-a', 'occurrence retired');
             await expect(reattached).resolves.toBeNull();
             expect(session.agentState.requests?.[request.requestId]).toBeUndefined();

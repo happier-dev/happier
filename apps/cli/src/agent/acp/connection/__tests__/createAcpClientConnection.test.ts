@@ -25,6 +25,140 @@ const stringValueParams = {
 };
 
 describe('createAcpClientConnection', () => {
+  it.each(['allow_once', 'reject_always'] as const)('cancels native permission options when no approval owner is available (%s)', async (kind) => {
+    const handlerContext = createLegacyHandlerContextFixture();
+    const handlers = createAcpClientHandlers({
+      onSessionUpdate() {}, transport: handlerContext.transport, emit() {},
+      createHandlerContext: () => handlerContext,
+      getToolNameContext: () => ({ recentPromptHadChangeTitle: false, toolCallCountSincePrompt: 0 }),
+      getActiveSessionId: () => 'missing-owner',
+      capturePermissionRequest: () => ({ scope: 'turn', isCurrent: () => true, cancel: async () => undefined }),
+      emitPermissionResponse: async () => undefined, clearTrackedToolCall() {},
+      incrementToolCallCountSincePrompt() {}, toolCalls: handlerContext.toolCalls,
+      lastSelectedPermissionOptionIdByToolCallId: new Map(),
+    });
+    const testAgent = agent({ name: 'missing-permission-owner-agent' })
+      .onRequest('test/native-no-owner', (params) => params, async (context) => {
+        return await context.client.request(methods.client.session.requestPermission, {
+          sessionId: 'missing-owner',
+          toolCall: { toolCallId: 'native-tool', title: 'Native operation', kind: 'other' },
+          options: [{ optionId: 'opaque:option', name: 'Native operation', kind }],
+        });
+      });
+    const connection = createAcpClientConnection({ name: 'missing-permission-owner-client', transport: testAgent, handlers });
+    try {
+      await expect(connection.peer.requestExtension('test/native-no-owner', {}))
+        .resolves.toEqual({ outcome: { outcome: 'cancelled' } });
+    } finally {
+      connection.close();
+      await connection.closed;
+    }
+  });
+
+  it.each([
+    { kind: 'allow_once', relationship: 'owner' },
+    { kind: 'allow_always', relationship: 'owner' },
+    { kind: 'allow_always', relationship: 'sharedApprover' },
+    { kind: 'allow_always', relationship: null },
+  ] as const)('returns the exact native permission option through the approval owner ($kind, $relationship)', async ({ kind, relationship }) => {
+    // Session persistence and authenticated RPC are external boundaries; approval owners stay real.
+    const session = {
+      sessionId: 'native-acp-choice',
+      rpcHandlerManager: new ServerBoundPermissionRpcHandlerManager('native-acp-choice'),
+      state: { requests: {}, completedRequests: {} } as AgentState,
+      getAgentStateSnapshot() { return this.state; },
+      getMetadataSnapshot() { return null; },
+      updateAgentState(update: (state: AgentState) => AgentState) {
+        this.state = update(this.state);
+        return this.state;
+      },
+    };
+    const hostPermissionHandler = new ProviderEnforcedPermissionHandler(
+      session as unknown as ApiSessionClient,
+      { logPrefix: '[ACP native choice test]', getWorkspaceWrites: () => 'allow' },
+    );
+    const lifetime = new AbortController();
+    const currentSession = createNativeAgentCurrentSessionUiServices({
+      permissionHandler: hostPermissionHandler,
+      pluginId: 'happier.agent.test', contributionId: 'test', runtimeId: 'test',
+      sessionId: session.sessionId, occurrenceId: 'native-occurrence',
+      isCurrent: () => true, signal: lifetime.signal,
+    });
+    const permissionHandler = createPublicAcpPermissionHandler({
+      interactions: currentSession.interactions, signal: lifetime.signal,
+      resolveRequestId: (toolCallId) => `turn-1:${toolCallId}`,
+      resolveTurnId: () => 'turn-1',
+      resolveCausalPermissionAuthority: () => ({
+        kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default',
+      }),
+    });
+    const handlerContext = createLegacyHandlerContextFixture();
+    const handlers = createAcpClientHandlers({
+      onSessionUpdate() {}, transport: handlerContext.transport, emit() {}, permissionHandler,
+      createHandlerContext: () => handlerContext,
+      getToolNameContext: () => ({ recentPromptHadChangeTitle: false, toolCallCountSincePrompt: 0 }),
+      getActiveSessionId: () => session.sessionId,
+      capturePermissionRequest: () => ({ scope: 'turn', isCurrent: () => true, cancel: async () => undefined }),
+      emitPermissionResponse: async () => undefined, clearTrackedToolCall() {},
+      incrementToolCallCountSincePrompt() {}, toolCalls: handlerContext.toolCalls,
+      lastSelectedPermissionOptionIdByToolCallId: new Map(),
+    });
+    const testAgent = agent({ name: 'native-permission-agent' })
+      .onRequest('test/native-permission', (params) => params, async (context) => {
+        const response = context.client.request(methods.client.session.requestPermission, {
+          sessionId: session.sessionId,
+          toolCall: { toolCallId: 'native-tool', title: 'Native operation', kind: 'other' },
+          options: [
+            { optionId: 'opaque:first', name: 'First operation', kind: 'allow_once' },
+            { optionId: 'opaque:second', name: 'Second operation', kind },
+            { optionId: 'opaque:deny', name: 'Decline operation', kind: 'reject_once' },
+          ],
+        });
+        try {
+          await expect.poll(() => Object.keys(session.state.requests ?? {}).length).toBe(1);
+          const [id] = Object.keys(session.state.requests ?? {});
+          const pending = session.state.requests?.[id];
+          expect(pending?.nativeChoices?.choices.map((choice) => choice.id)).toEqual([
+            'opaque:first', 'opaque:second', 'opaque:deny',
+          ]);
+          const nativeChoice = { requirementId: pending!.nativeChoices!.requirementId, choiceId: 'opaque:second' };
+          const answer = { id, turnId: pending?.turnId, nativeChoice };
+          const respond = session.rpcHandlerManager.handlers.get('session.permission.respond')!;
+          if (kind === 'allow_always' && relationship !== 'owner') {
+            const result = await respond(answer, relationship ? {
+              signal: lifetime.signal,
+              authorization: {
+                kind: 'session.permission.respond', sessionId: session.sessionId,
+                actor: { kind: 'accountUser', accountId: 'shared-account', relationship },
+              },
+            } : { signal: lifetime.signal });
+            expect(result).toMatchObject({
+              ok: false,
+              errorCode: relationship ? 'permission_response_invalid' : 'permission_actor_unattributable',
+            });
+            expect(session.state.requests?.[id]?.nativeChoices).toEqual(pending?.nativeChoices);
+            expect(session.state.completedRequests?.[id]).toBeUndefined();
+          }
+          await expect(respond(answer)).resolves.toBeUndefined();
+          await expect(response).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'opaque:second' } });
+          expect(session.state.completedRequests?.[id]?.nativeChoice).toEqual(nativeChoice);
+          expect(Object.keys(session.state.requests ?? {})).toHaveLength(0);
+          return {};
+        } finally {
+          await permissionHandler.abortPendingRequestsAndFlush?.('test cleanup');
+          await response.catch(() => undefined);
+        }
+      });
+    const connection = createAcpClientConnection({ name: 'native-permission-client', transport: testAgent, handlers });
+    try {
+      await expect(connection.peer.requestExtension('test/native-permission', {})).resolves.toEqual({});
+    } finally {
+      lifetime.abort();
+      connection.close();
+      await connection.closed;
+    }
+  });
+
   it('preserves the standard tool name through SDK notification decoding', async () => {
     // fx 0.0.14 raw frame, 2026-10-27: E-fx-live-probe.md §3.
     const update = { sessionUpdate: 'tool_call', toolCallId: '<T1>', name: 'write_file',
@@ -69,6 +203,9 @@ describe('createAcpClientConnection', () => {
         if (Object.keys(this.state.requests ?? {}).length > 0) resolvePresented();
         return this.state;
       },
+      async updateAgentStateRequestSettlement(update: (state: AgentState) => AgentState) {
+        this.state = update(this.state);
+      },
     };
     const hostPermissionHandler = new ProviderEnforcedPermissionHandler(
       session as unknown as ApiSessionClient,
@@ -106,14 +243,17 @@ describe('createAcpClientConnection', () => {
     });
     const testAgent = agent({ name: 'elicitation-cancellation-agent' })
       .onRequest('test/elicit', (params) => params, async (context) => {
+        const cancellation = new AbortController();
         const response = context.client.request(methods.client.elicitation.create, {
           mode: 'form', sessionId: session.sessionId, message: 'Continue?',
           requestedSchema: { type: 'object', properties: {} },
-        });
+        }, { cancellationSignal: cancellation.signal });
         try {
           await presented;
-          await context.client.notify(methods.protocol.cancelRequest, { requestId: 0 });
-          await expect.poll(() => Object.keys(session.state.requests ?? {})).toEqual([]);
+          cancellation.abort();
+          await expect.poll(() => Object.keys(session.state.requests ?? {}), {
+            message: 'Cancelled ACP elicitation must leave the pending set',
+          }).toEqual([]);
           await expect(response).resolves.toEqual({ action: 'cancel' });
           expect(lifetime.signal.aborted).toBe(false);
 
@@ -122,11 +262,22 @@ describe('createAcpClientConnection', () => {
               mode: 'form', sessionId: session.sessionId, message: 'Try again?',
               requestedSchema: { type: 'object', properties: {} },
             });
-            await expect.poll(() => Object.keys(session.state.requests ?? {}).length).toBe(1);
+            await expect.poll(() => Object.keys(session.state.requests ?? {}).length, {
+              message: `ACP elicitation ${choice} must become pending`,
+            }).toBe(1);
             const [id] = Object.keys(session.state.requests ?? {});
             const respond = session.rpcHandlerManager.handlers.get('session.user_action.answer');
             expect(respond).toBeDefined();
-            expect(await respond?.({ id, approved: true, answers: { confirmation: [choice] } })).toBeUndefined();
+            expect(await respond?.({
+              id, turnId: session.state.requests?.[id]?.turnId,
+              approved: true, answers: { confirmation: [choice] },
+            }, {
+              signal: lifetime.signal,
+              authorization: {
+                kind: 'session.permission.respond', sessionId: session.sessionId,
+                actor: { kind: 'accountUser', accountId: 'account-owner', relationship: 'owner' },
+              },
+            })).toBeUndefined();
             await expect(nextResponse).resolves.toEqual(choice === 'confirm'
               ? { action: 'accept', content: {} }
               : { action: 'decline' });

@@ -1,5 +1,5 @@
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
-import { PluginAgentSessionCompactionCapabilityV2Schema, type AgentSessionCompactionCapability } from '@happier-dev/protocol/plugins/agents';
+import { PluginAgentSessionCompactionCapabilityV2Schema, type AgentSessionCompactionCapability, type AgentSessionCompactionAvailabilityV1 } from '@happier-dev/protocol/plugins/agents';
 
 import {
   isBundledAgentId,
@@ -54,23 +54,39 @@ export function evaluateAgentSessionCompactionCapability(params: Readonly<{
   accountSettings?: Record<string, unknown> | null;
   declaredCapability?: AgentSessionCompactionCapability | null;
 }>): AgentSessionCompactionCapability | null {
+  return resolveAgentSessionCompactionCapability(params).capability;
+}
+
+export function evaluateAgentSessionCompactionAvailability(
+  params: Parameters<typeof evaluateAgentSessionCompactionCapability>[0],
+): AgentSessionCompactionAvailabilityV1 {
+  const resolved = resolveAgentSessionCompactionCapability(params);
+  if (!resolved.known) return { status: 'unknown' };
+  return resolved.capability?.manual === true
+    ? { status: 'supported' }
+    : { status: 'unsupported', reason: 'unsupported' };
+}
+
+function resolveAgentSessionCompactionCapability(
+  params: Parameters<typeof evaluateAgentSessionCompactionCapability>[0],
+): Readonly<{ capability: AgentSessionCompactionCapability | null; known: boolean }> {
   if (params.metadata && typeof params.metadata === 'object' && !Array.isArray(params.metadata)) {
     const publication = (params.metadata as Readonly<Record<string, unknown>>).agentRuntimeCapabilitiesV1;
     if (publication && typeof publication === 'object' && !Array.isArray(publication)) {
       const capabilities = (publication as Readonly<Record<string, unknown>>).sessionCapabilities;
       if (capabilities !== undefined) {
-        if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities)) return null;
+        if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities)) return { capability: null, known: true };
         const descriptor = (capabilities as Readonly<Record<string, unknown>>).compaction;
-        if (descriptor == null) return null;
+        if (descriptor == null) return { capability: null, known: true };
         const parsed = PluginAgentSessionCompactionCapabilityV2Schema.safeParse(descriptor);
-        return parsed.success ? parsed.data : null;
+        return { capability: parsed.success ? parsed.data : null, known: true };
       }
     }
   }
-  if (params.declaredCapability !== undefined) return params.declaredCapability;
-  if (!isBundledAgentId(params.agentId)) return null;
+  if (params.declaredCapability !== undefined) return { capability: params.declaredCapability, known: true };
+  if (!isBundledAgentId(params.agentId)) return { capability: null, known: false };
   const surface = resolveAgentRuntimeControlSurfaceForSession(params);
-  return surface?.sessionCapabilities.compaction ?? null;
+  return { capability: surface?.sessionCapabilities.compaction ?? null, known: surface != null };
 }
 
 export function getAgentSessionCapability(agentId: AgentId, capability: AgentSessionCapabilityKey): AgentSessionCapabilitySupportLevel {

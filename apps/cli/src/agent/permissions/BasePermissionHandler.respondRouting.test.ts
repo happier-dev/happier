@@ -7,7 +7,11 @@ import { createSessionActionConfirmationAdapter } from '@/session/actions/approv
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { ServerBoundPermissionRpcHandlerManager } from './testkit/serverBoundPermissionRpcHandlerManager';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import type { PermissionResult } from './BasePermissionHandler';
 import { abortPendingAcpPermissionRequests } from '@/agent/acp/permissions/permissionFinalization';
+import { SessionActionConfirmationsV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionActionConfirmationsV1';
+import { readSharedMetadataActionConfirmationState } from '@happier-dev/session-core/pending';
 
 beforeEach(() => {
   resetActiveAccountSettingsSnapshotForTests();
@@ -62,6 +66,26 @@ class FakeSession {
 }
 
 describe('BasePermissionHandler permission-response routing (gap 28/29)', () => {
+  it('preserves selected answers, custom text and notes through RPC application and completed state', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as never, { logPrefix: '[Question details]' });
+    let applied: PermissionResult | undefined;
+    const pending = handler.handleToolCall('detailed-question', 'AskUserQuestion', {
+      questions: [{ question: 'Choose?', options: [{ label: 'Yes', description: 'Continue' }], multiSelect: true,
+        allowCustom: true, allowNote: true }],
+    }, { acknowledgeDecisionApplication: async result => { applied = result; } });
+    const answers = { 'Choose?': ['Yes'] };
+    const answerDetails = { 'Choose?': { freeText: 'A custom alternative', note: 'Keep the selected answer too' } };
+    await vi.waitFor(() => expect(session.agentState.requests['detailed-question']).toBeDefined());
+    const rpc = session.rpcHandlerManager.handlers.get('session.user_action.answer')!;
+    await expect(rpc({ id: 'detailed-question', approved: true, answers, answerDetails })).resolves.toBeUndefined();
+    await expect(pending).resolves.toMatchObject({ decision: 'approved', answers, answerDetails });
+    expect(applied).toMatchObject({ decision: 'approved', answers, answerDetails });
+    expect(session.agentState.completedRequests['detailed-question']).toMatchObject({
+      status: 'approved', structuredAnswersV1: answers, answerDetails,
+    });
+  });
+
   it('withdraws an open native question on explicit foreground Stop', async () => {
     const session = new FakeSession();
     const handler = new ProviderEnforcedPermissionHandler(session as never, { logPrefix: '[Stop]' });
@@ -181,6 +205,13 @@ describe('BasePermissionHandler permission-response routing (gap 28/29)', () => 
       .then((result) => { resolvedDecision = result?.decision; });
     await vi.waitFor(() => expect(initialStore.listOutstandingRequests()).toHaveLength(1));
     const requestId = initialStore.listOutstandingRequests()[0]!.requestId;
+    // Retained metadata preserves its presentation kind across handler replacement.
+    const retained = SessionActionConfirmationsV1Schema.parse({
+      v: 1, requests: session.agentState.requests, completedRequests: {},
+    });
+    expect(retained.requests[requestId]?.kind).toBe('user_action');
+    session.agentState = readSharedMetadataActionConfirmationState({ actionConfirmationsV1: retained }, 1);
+    expect(session.agentState.requests[requestId]).toBeDefined();
     const currentHandler = new ProviderEnforcedPermissionHandler(session as never, { logPrefix: '[Current]' });
     const rpc = session.rpcHandlerManager.handlers.get('session.permission.respond')!;
     if (completion === 'approve') {
@@ -479,4 +510,200 @@ describe('BasePermissionHandler permission-response routing (gap 28/29)', () => 
     await replacement.reset();
   });
 
+});
+
+const nativeChoicesFixture = {
+  requirementId: 'native-requirement', source: 'native-test',
+  origin: { sessionId: 'native-parent', subagentId: 'child' },
+  choices: [
+    { id: 'opaque-once', label: 'Run this operation', decision: 'approved', scope: 'once', allowsFeedback: true, response: { approved: true, decision: 'approved' } },
+    { id: 'opaque-session', label: 'Allow this Session', decision: 'approved_for_session', scope: 'session', response: { approved: true, decision: 'approved_for_session' } },
+    { id: 'opaque-save', label: 'Save local rule', decision: 'approved', scope: 'localPersistent', response: { approved: true, decision: 'approved' } },
+    { id: 'opaque-stop', label: 'Stop native work', decision: 'abort', scope: 'once', response: { approved: false, decision: 'abort' } },
+  ],
+} as const satisfies NativePermissionChoicesV1;
+
+class NativeChoicesHandler extends ProviderEnforcedPermissionHandler {
+  requestNative(acknowledgeDecisionApplication?: (result: PermissionResult) => Promise<void>, nativeChoices: NativePermissionChoicesV1 = nativeChoicesFixture) {
+    return this.handleToolCall('native-pending', 'NativeTool', {}, {
+      nativeChoices, acknowledgeDecisionApplication,
+    });
+  }
+}
+
+function sharedApproverContext(sessionId: string) {
+  return { signal: new AbortController().signal, authorization: {
+    kind: 'session.permission.respond', sessionId,
+    actor: { kind: 'accountUser', accountId: 'shared-user', relationship: 'sharedApprover' },
+  } };
+}
+
+describe('native offered permission ingress', () => {
+  it('keeps the native offer pending when another request grants the same tool for the Session', async () => {
+    const session = new FakeSession();
+    const handler = new NativeChoicesHandler(session as never, { logPrefix: '[Native allowlist]' });
+    const native = handler.requestNative();
+    void native.catch(() => undefined);
+    const legacy = handler.handleToolCall('legacy-grant', 'NativeTool', {});
+    void legacy.catch(() => undefined);
+    try {
+      await vi.waitFor(() => expect(session.agentState.requests['legacy-grant']).toBeDefined());
+      const rpc = session.rpcHandlerManager.handlers.get('session.permission.respond')!;
+      await expect(rpc({ id: 'legacy-grant', approved: true, decision: 'approved_for_session', allowedTools: ['NativeTool'] }))
+        .resolves.toBeUndefined();
+      await expect(legacy).resolves.toMatchObject({ decision: 'approved_for_session' });
+      await new Promise(resolve => setImmediate(resolve));
+      expect(session.agentState.requests['native-pending']).toMatchObject({ nativeChoices: nativeChoicesFixture });
+      expect(session.agentState.completedRequests['native-pending']).toBeUndefined();
+      await expect(rpc({ id: 'native-pending', nativeChoice: { requirementId: 'native-requirement', choiceId: 'opaque-once' } }))
+        .resolves.toBeUndefined();
+      await expect(native).resolves.toMatchObject({ nativeChoice: { choiceId: 'opaque-once' } });
+    } finally { await handler.reset(); }
+  });
+  it.each(['permission', 'session.permission.respond'])('requires a current offered answer on %s and keeps refusals pending', async (route) => {
+    const session = new FakeSession();
+    session.agentState.requests.pending = { tool: 'NativeTool', arguments: {}, createdAt: 1, nativeChoices: nativeChoicesFixture };
+    new NativeChoicesHandler(session as never, { logPrefix: '[Native]' });
+    const rpc = session.rpcHandlerManager.handlers.get(route)!;
+    for (const nativeChoice of [undefined,
+      { requirementId: 'old-requirement', choiceId: 'opaque-once' },
+      { requirementId: 'native-requirement', choiceId: 'unoffered' }]) {
+      await expect(rpc({ id: 'pending', ...(nativeChoice ? { nativeChoice } : { approved: true }) }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'permission_response_invalid' });
+      expect(session.agentState.requests.pending).toBeDefined();
+      expect(session.agentState.completedRequests.pending).toBeUndefined();
+    }
+  });
+
+  it('does not downgrade malformed native metadata to legacy approval', async () => {
+    const session = new FakeSession();
+    session.agentState.requests.pending = { tool: 'NativeTool', arguments: {}, createdAt: 1,
+      nativeChoices: { requirementId: 'broken' } };
+    new NativeChoicesHandler(session as never, { logPrefix: '[Native]' });
+    await expect(session.rpcHandlerManager.handlers.get('permission')!({ id: 'pending', approved: true }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'permission_response_invalid' });
+    expect(session.agentState.requests.pending).toBeDefined();
+  });
+
+  it('uses the stored offered outcome for an opaque native answer', async () => {
+    const session = new FakeSession();
+    session.agentState.requests.pending = { tool: 'NativeTool', arguments: {}, createdAt: 1, nativeChoices: nativeChoicesFixture };
+    new NativeChoicesHandler(session as never, { logPrefix: '[Native]' });
+    await expect(session.rpcHandlerManager.handlers.get('permission')!({ id: 'pending',
+      nativeChoice: { requirementId: 'native-requirement', choiceId: 'opaque-stop' },
+      approved: true, decision: 'approved_for_session', mode: 'bypassPermissions', allowedTools: ['NativeTool'] })).resolves.toBeUndefined();
+    expect(session.agentState.completedRequests.pending).toMatchObject({ status: 'denied', decision: 'abort' });
+  });
+
+  it.each(['opaque-once', 'opaque-session', 'opaque-save'])('enforces owner-only durable native scope for %s', async (choiceId) => {
+    const session = new FakeSession();
+    session.agentState.requests.pending = { tool: 'NativeTool', arguments: {}, createdAt: 1, nativeChoices: nativeChoicesFixture };
+    new NativeChoicesHandler(session as never, { logPrefix: '[Native]' });
+    const result = await session.rpcHandlerManager.handlers.get('session.permission.respond')!({ id: 'pending',
+      nativeChoice: { requirementId: 'native-requirement', choiceId } }, sharedApproverContext(session.sessionId));
+    if (choiceId === 'opaque-save') {
+      expect(result).toMatchObject({ ok: false, errorCode: 'permission_response_invalid' });
+      expect(session.agentState.requests.pending).toBeDefined();
+    } else {
+      expect(result).toBeUndefined();
+      expect(session.agentState.requests.pending).toBeUndefined();
+    }
+  });
+
+  it.each([
+    { mode: 'acceptEdits' },
+    { allowedTools: ['NativeTool'] },
+    { updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits' }] },
+    { execPolicyAmendment: { command: ['echo', 'hi'] } },
+  ] as const)('requires the owner for a durable offered payload even at once scope: %j', async response => {
+    const session = new FakeSession();
+    const choices = { ...nativeChoicesFixture, choices: [{ id: 'durable', label: 'Grant',
+      scope: 'once', decision: 'approved', response: { approved: true, decision: 'approved', ...response } }] };
+    session.agentState.requests.pending = { tool: 'NativeTool', arguments: {}, createdAt: 1, nativeChoices: choices };
+    new NativeChoicesHandler(session as never, { logPrefix: '[Native]' });
+    const result = await session.rpcHandlerManager.handlers.get('session.permission.respond')!({ id: 'pending',
+      nativeChoice: { requirementId: 'native-requirement', choiceId: 'durable' } }, sharedApproverContext(session.sessionId));
+    expect(result).toMatchObject({ ok: false, errorCode: 'permission_response_invalid' });
+    expect(session.agentState.requests.pending).toBeDefined();
+    const ownerSession = new FakeSession();
+    ownerSession.agentState.requests.pending = { tool: 'NativeTool', arguments: {}, createdAt: 1, nativeChoices: choices };
+    new NativeChoicesHandler(ownerSession as never, { logPrefix: '[NativeOwner]' });
+    await expect(ownerSession.rpcHandlerManager.handlers.get('session.permission.respond')!({ id: 'pending',
+      nativeChoice: { requirementId: 'native-requirement', choiceId: 'durable' } })).resolves.toBeUndefined();
+    expect(ownerSession.agentState.completedRequests.pending).toMatchObject({ decision: 'approved' });
+  });
+
+  it('publishes a replacement native offer on the existing pending request', async () => {
+    const session = new FakeSession();
+    const handler = new NativeChoicesHandler(session as never, { logPrefix: '[NativeReplacement]' });
+    const original = handler.requestNative();
+    void original.catch(() => undefined);
+    try {
+      await vi.waitFor(() => expect(session.agentState.requests['native-pending']?.nativeChoices?.requirementId).toBe('native-requirement'));
+      const replacement = handler.requestNative(undefined, { ...nativeChoicesFixture, requirementId: 'new-offer' });
+      void replacement.catch(() => undefined);
+      await vi.waitFor(() => expect(session.agentState.requests['native-pending']?.nativeChoices?.requirementId).toBe('new-offer'));
+      const rpc = session.rpcHandlerManager.handlers.get('permission')!;
+      await expect(rpc({ id: 'native-pending', nativeChoice: { requirementId: 'native-requirement', choiceId: 'opaque-once' } }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'permission_response_invalid' });
+      await expect(rpc({ id: 'native-pending', nativeChoice: { requirementId: 'new-offer', choiceId: 'opaque-once' } }))
+        .resolves.toBeUndefined();
+      await expect(replacement).resolves.toMatchObject({ nativeChoice: { requirementId: 'new-offer' } });
+    } finally { await handler.reset(); }
+  });
+
+  it('uses the replaced requirement after reconstruction and refuses feedback unless offered', async () => {
+    const session = new FakeSession();
+    const handler = new NativeChoicesHandler(session as never, { logPrefix: '[Native]' });
+    let applications = 0;
+    const pending = handler.requestNative(async () => { applications += 1; });
+    await vi.waitFor(() => expect(session.agentState.requests['native-pending']).toBeDefined());
+    session.agentState.requests['native-pending'] = { ...session.agentState.requests['native-pending'],
+      nativeChoices: { ...nativeChoicesFixture, requirementId: 'replacement' } };
+    const rpc = session.rpcHandlerManager.handlers.get('permission')!;
+    for (const nativeChoice of [
+      { requirementId: 'native-requirement', choiceId: 'opaque-once' },
+      { requirementId: 'replacement', choiceId: 'opaque-session', feedback: 'unoffered feedback' },
+    ]) {
+      await expect(rpc({ id: 'native-pending', nativeChoice })).resolves.toMatchObject({ ok: false, errorCode: 'permission_response_invalid' });
+    }
+    expect(applications).toBe(0);
+    expect(session.agentState.requests['native-pending']).toBeDefined();
+    await expect(rpc({ id: 'native-pending', nativeChoice: { requirementId: 'replacement', choiceId: 'opaque-once' } }))
+      .resolves.toBeUndefined();
+    await expect(pending).resolves.toMatchObject({ nativeChoice: { requirementId: 'replacement' } });
+    expect(applications).toBe(1);
+    await handler.reset();
+  });
+
+  it('preserves the choice through publication and awaits native application, leaving native rejection pending', async () => {
+    const session = new FakeSession();
+    const handler = new NativeChoicesHandler(session as never, { logPrefix: '[Native]' });
+    handler.setPermissionMode('yolo');
+    let release!: () => void;
+    let rejectApplication = true;
+    const applied: PermissionResult[] = [];
+    const pending = handler.requestNative(async result => {
+      applied.push(result);
+      if (rejectApplication) throw new Error('native refused');
+      await new Promise<void>(resolve => { release = resolve; });
+    });
+    await vi.waitFor(() => expect(session.agentState.requests['native-pending']?.nativeChoices).toEqual(nativeChoicesFixture));
+    const answer = { id: 'native-pending',
+      nativeChoice: { requirementId: 'native-requirement', choiceId: 'opaque-once', feedback: 'apply this operation' } };
+    const rpc = session.rpcHandlerManager.handlers.get('session.permission.respond')!;
+    await expect(rpc(answer)).rejects.toThrow('native refused');
+    expect(session.agentState.requests['native-pending']).toBeDefined();
+    rejectApplication = false;
+    let returned = false;
+    const response = Promise.resolve(rpc(answer)).then(result => { returned = true; return result; });
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    expect(returned).toBe(false);
+    expect(session.agentState.completedRequests['native-pending']).toBeUndefined();
+    release();
+    await expect(response).resolves.toBeUndefined();
+    await expect(pending).resolves.toMatchObject({ decision: 'approved', nativeChoice: answer.nativeChoice });
+    expect(applied).toHaveLength(2);
+    await handler.reset();
+  });
 });

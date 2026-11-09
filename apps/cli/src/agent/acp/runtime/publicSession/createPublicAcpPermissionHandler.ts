@@ -139,13 +139,14 @@ export function createPublicAcpPermissionHandler(params: Readonly<{
             input: parsedInput.data,
           }),
           allowSessionPersistence: true,
+          ...(context?.nativeChoices ? { nativeChoices: context.nativeChoices } : {}),
         }, {
           signal: AbortSignal.any([params.signal, controller.signal]),
           ...(custody.permissionContext ? { permissionContext: custody.permissionContext } : {}),
         });
 
         if (result.status === 'declined') {
-          return Object.freeze({ decision: 'denied' as const });
+          return Object.freeze({ decision: 'denied' as const, ...(result.nativeChoice ? { nativeChoice: result.nativeChoice } : {}) });
         }
         if (result.status !== 'approved') {
           return abortDecision();
@@ -153,6 +154,7 @@ export function createPublicAcpPermissionHandler(params: Readonly<{
 
         return Object.freeze({
           decision: result.persistence === 'session' ? 'approved_for_session' as const : 'approved' as const,
+          ...(result.nativeChoice ? { nativeChoice: result.nativeChoice } : {}),
         });
       } catch (error) {
         return abortDecision(error instanceof Error ? error.message : undefined);
@@ -180,6 +182,12 @@ export function createPublicAcpPermissionHandler(params: Readonly<{
         return Object.freeze({ action: 'cancel' as const });
       }
 
+      // ACP cancellation withdraws this native request; it does not detach a durable Session question.
+      const permissionContext = Object.freeze({
+        ...custody.permissionContext,
+        origin: 'host_occurrence_question' as const,
+        lifetime: 'occurrence' as const,
+      });
       let schema: ReturnType<typeof parseAcpElicitationFormSchema>;
       let interaction: ReturnType<typeof mcpElicitationFormRequest>;
       try {
@@ -205,7 +213,7 @@ export function createPublicAcpPermissionHandler(params: Readonly<{
             interaction,
             {
               signal,
-              ...(custody.permissionContext ? { permissionContext: custody.permissionContext } : {}),
+              permissionContext,
             },
           );
           if (signal.aborted) return Object.freeze({ action: 'cancel' as const });
@@ -222,7 +230,7 @@ export function createPublicAcpPermissionHandler(params: Readonly<{
           interaction,
           {
             signal,
-            ...(custody.permissionContext ? { permissionContext: custody.permissionContext } : {}),
+            permissionContext,
           },
         );
         if (signal.aborted || result.status !== 'answered') {

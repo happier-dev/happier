@@ -38,7 +38,7 @@ export function isHostOccurrenceQuestion(toolName: string, context: AcpPermissio
     && isAgentStructuredQuestionToolName(toolName);
 }
 
-export function resolveAgentRequestKind(toolName: string): AgentRequestKind {
+export function resolveAgentRequestKind(toolName: string, requestKind?: unknown): AgentRequestKind {
   const normalized = typeof toolName === 'string' ? toolName.trim() : '';
-  return resolveProtocolAgentRequestKind({ toolName: normalized });
+  return resolveProtocolAgentRequestKind({ toolName: normalized, requestKind });
 }

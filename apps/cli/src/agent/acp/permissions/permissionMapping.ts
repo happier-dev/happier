@@ -1,16 +1,31 @@
-export type PermissionOptionKind =
-  | 'allow_once'
-  | 'allow_always'
-  | 'reject_once'
-  | 'reject_always'
-  | string;
+import type { PermissionOption } from '@agentclientprotocol/sdk';
+import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 
-export type PermissionDecision =
-  | 'approved'
-  | 'approved_for_session'
-  | 'approved_execpolicy_amendment'
-  | 'denied'
-  | 'abort';
+/** ACP 1.2.1's "always" kinds are provider-owned lasting decisions, not host tool grants. */
+export function createAcpNativePermissionChoices(
+  requirementId: string,
+  options: readonly PermissionOption[],
+): NativePermissionChoicesV1 {
+  return {
+    requirementId,
+    source: 'acp',
+    choices: options.map((option) => {
+      const approved = option.kind === 'allow_once' || option.kind === 'allow_always';
+      const decision = approved ? 'approved' as const : 'denied' as const;
+      return {
+        id: option.optionId,
+        label: option.name,
+        scope: option.kind === 'allow_always' || option.kind === 'reject_always' ? 'localPersistent' : 'once',
+        decision,
+        response: { approved, decision },
+      };
+    }),
+  };
+}
+
+export type PermissionOptionKind = PermissionOption['kind'] | string;
+
+export type PermissionDecision = NativePermissionChoicesV1['choices'][number]['decision'];
 
 export type PermissionOptionLike = {
   optionId?: string;

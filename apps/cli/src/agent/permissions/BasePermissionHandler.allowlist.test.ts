@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { SESSION_REMOTE_PERMISSION_ACTIVE_GRANTS_MAX } from '@happier-dev/protocol';
 import { SessionPermissionRemotePendingListOutputV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
 import { createDeferred } from '@/testkit/async/deferred';
+import type { NativePermissionChoiceAnswerV1, NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { BasePermissionHandler, type PermissionResult } from './BasePermissionHandler';
 import type {
   PermissionMediationRecordStore,
@@ -202,6 +203,9 @@ function startBlockedRemoteSettlement(params: Readonly<{
   pauseAfterCreate?: boolean;
   pauseAfterInitialRead?: boolean;
   pauseBeforeCompletion?: boolean;
+  nativeChoices?: NativePermissionChoicesV1;
+  nativeChoice?: NativePermissionChoiceAnswerV1;
+  acknowledgeDecisionApplication?: (result: PermissionResult) => Promise<void>;
 }>) {
   const completionSession = params.pauseBeforeCompletion ? new PostClaimCompletionDeferredSession() : null;
   const session = completionSession ?? new FakeSession();
@@ -268,6 +272,8 @@ function startBlockedRemoteSettlement(params: Readonly<{
   } as const;
   const pending = handler.request(params.requestId, 'Bash', { command: ['bash', '-lc', 'echo race'] }, {
     ...(params.source ? { source: params.source } : {}),
+    ...(params.nativeChoices ? { nativeChoices: params.nativeChoices } : {}),
+    ...(params.acknowledgeDecisionApplication ? { acknowledgeDecisionApplication: params.acknowledgeDecisionApplication } : {}),
     ...(params.owner ? { owner: params.owner } : {}),
     ...(params.signal ? { signal: params.signal } : {}),
     causalPermissionContext: {
@@ -290,6 +296,7 @@ function startBlockedRemoteSettlement(params: Readonly<{
     decision: 'allow',
     scope: params.scope ?? 'request',
     mediator: { pluginId: 'happier.channels', contributionLocalId: 'discord' },
+    ...(params.nativeChoice ? { nativeChoice: params.nativeChoice } : {}),
   } as const;
   const remote = handler.respondToMediatedPendingPermission(response);
 
@@ -5499,5 +5506,82 @@ describe('BasePermissionHandler allowlist', () => {
       await pendingRejected;
       process.off('unhandledRejection', onUnhandled);
     }
+  });
+});
+
+
+describe('remote native offered permission admission', () => {
+  const choices = {
+    requirementId: 'remote-native', source: 'native-test', choices: [
+      { id: 'run-opaque', label: 'Run once', scope: 'once', decision: 'approved', response: { approved: true, decision: 'approved' } },
+      { id: 'save-opaque', label: 'Save locally', scope: 'localPersistent', decision: 'approved', response: { approved: true, decision: 'approved' } },
+    ],
+  } as const satisfies NativePermissionChoicesV1;
+
+  it.each([undefined,
+    { requirementId: 'old-requirement', choiceId: 'run-opaque' },
+    { requirementId: 'remote-native', choiceId: 'save-opaque' },
+  ])('refuses missing, stale or durable native answers before creating a mediation record: %j', async nativeChoice => {
+    const fixture = startBlockedRemoteSettlement({ requestId: 'native-remote-refused', nativeChoices: choices, nativeChoice });
+    const pendingOutcome = fixture.pending.then(() => undefined, () => undefined);
+    fixture.releaseRowCreate.resolve();
+    try {
+      await expect(fixture.remote).resolves.toMatchObject({ status: 'rejected' });
+      expect(fixture.recordStore.createExpectedAbsent).not.toHaveBeenCalled();
+      expect(fixture.session.agentState.requests['native-remote-refused']).toBeDefined();
+    } finally {
+      await fixture.handler.reset();
+      await pendingOutcome;
+    }
+  });
+
+  it('leaves a replacement native requirement answerable when an admitted old choice replays', async () => {
+    const applied: PermissionResult[] = [];
+    const fixture = startBlockedRemoteSettlement({ requestId: 'native-remote-replaced', nativeChoices: choices,
+      nativeChoice: { requirementId: 'remote-native', choiceId: 'run-opaque' },
+      acknowledgeDecisionApplication: async result => { applied.push(result); },
+    });
+    void fixture.pending.catch(() => undefined);
+    try {
+      await fixture.rowCreateStarted.promise;
+      const replacement = fixture.handler.request(fixture.response.requestId, 'Bash', { command: ['bash', '-lc', 'echo race'] }, {
+        nativeChoices: { ...choices, requirementId: 'replacement-native' },
+        acknowledgeDecisionApplication: async (result: PermissionResult) => { applied.push(result); },
+        causalPermissionContext: { turnId: fixture.response.turnId, causalPermissionAuthority: {
+          kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default', sourceAuthority: fixture.sourceAuthority,
+        } },
+      });
+      void replacement.catch(() => undefined);
+      fixture.releaseRowCreate.resolve();
+      await expect(fixture.remote).resolves.toMatchObject({ status: 'rejected' });
+      expect(applied).toEqual([]);
+      expect(fixture.session.agentState.requests[fixture.response.requestId]?.nativeChoices?.requirementId).toBe('replacement-native');
+      await expect(fixture.session.rpcHandlerManager.handlers.get('session.permission.respond')!({
+        id: fixture.response.requestId, turnId: fixture.response.turnId,
+        nativeChoice: { requirementId: 'replacement-native', choiceId: 'run-opaque' },
+      }, serverStampedPermissionContextForSession(fixture.session.sessionId))).resolves.toBeUndefined();
+      await expect(replacement).resolves.toMatchObject({ nativeChoice: { requirementId: 'replacement-native' } });
+      expect(applied).toHaveLength(1);
+    } finally {
+      fixture.releaseRowCreate.resolve();
+      await fixture.handler.reset();
+    }
+  });
+
+  it('persists the selected native identity and applies it once before reporting remote success', async () => {
+    const applied: PermissionResult[] = [];
+    const fixture = startBlockedRemoteSettlement({ requestId: 'native-remote-applied', nativeChoices: choices,
+      nativeChoice: { requirementId: 'remote-native', choiceId: 'run-opaque' },
+      acknowledgeDecisionApplication: async result => { applied.push(result); },
+    });
+    await fixture.rowCreateStarted.promise;
+    expect(applied).toEqual([]);
+    fixture.releaseRowCreate.resolve();
+    await expect(fixture.remote).resolves.toMatchObject({ status: 'applied' });
+    await expect(fixture.pending).resolves.toMatchObject({ decision: 'approved', nativeChoice: fixture.response.nativeChoice });
+    expect(fixture.readStored()?.record).toMatchObject({ nativeChoice: fixture.response.nativeChoice });
+    await expect(fixture.handler.respondToMediatedPendingPermission(fixture.response)).resolves.toMatchObject({ status: 'alreadyApplied' });
+    expect(applied).toHaveLength(1);
+    await fixture.handler.reset();
   });
 });

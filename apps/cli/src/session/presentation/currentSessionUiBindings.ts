@@ -1,5 +1,6 @@
 import type { HostCurrentSessionUiServices } from '@/agent/runtime/state/currentSessionUiTypes';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import type { PermissionResult } from '@/agent/permissions/BasePermissionHandler';
 import type { SessionMediaService } from '@happier-dev/plugin-sdk/sessions';
 
 export type CurrentSessionCapabilityBinding = Readonly<{
@@ -14,6 +15,7 @@ export type CurrentSessionCapabilityBinding = Readonly<{
     | 'revokeMediatedPermissionGrant'
   >;
   readPermissionMode: () => string;
+  applyPermissionModeIntent?: (mode: NonNullable<PermissionResult['mode']>) => Promise<void>;
   createMediaService?(
     authorizeSourceRoot: (canonicalRoot: string) => boolean | Promise<boolean>,
   ): SessionMediaService;
