@@ -41,6 +41,7 @@ test('killProcessTree delegates Windows cleanup to the bounded async tree-termin
   const boundary = {
     platform: 'win32',
     isPidAlive: () => leaderAlive,
+    observePidLiveness: () => ({ status: leaderAlive ? 'alive' : 'dead' }),
     kill: () => {
       directLeaderSignalCount += 1;
       leaderAlive = false;
@@ -68,6 +69,30 @@ test('killProcessTree delegates Windows cleanup to the bounded async tree-termin
   assert.equal(directLeaderSignalCount, 0, 'tree traversal must start before any leader-only signal');
   assert.deepEqual(await pending, { ok: false, signal: 'SIGKILL' });
   assert.equal(taskkillChildKillCount, 1, 'hung taskkill must be terminated at the bound');
+});
+
+test('killProcessTree dispatches POSIX fatal cleanup before the caller can exit', async () => {
+  let groupAlive = true;
+  const signals = [];
+  const pending = killProcessTree({ pid: 4245 }, 'SIGTERM', {
+    graceMs: 50,
+    boundary: {
+      platform: 'linux',
+      kill: (pid, signal) => {
+        if (signal === 0) {
+          if (groupAlive) return;
+          const error = new Error('ESRCH');
+          error.code = 'ESRCH';
+          throw error;
+        }
+        signals.push({ pid, signal });
+        groupAlive = false;
+      },
+    },
+  });
+
+  assert.deepEqual(signals, [{ pid: -4245, signal: 'SIGTERM' }]);
+  assert.deepEqual(await pending, { ok: true, signal: 'SIGTERM' });
 });
 
 test('killProcessTree does not claim Windows tree cleanup after the tracked process has exited', async () => {

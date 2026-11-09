@@ -1444,7 +1444,7 @@ async function runFailedStartWithRealCleanup(serverDir, { platform, boundary, bo
   const killOptions = [];
   const start = startDevServer(createOwnershipStartParams(serverDir, []), {
     ensureDepsInstalledImpl: async () => {},
-    ownershipBoundary: boundary,
+    ownershipBoundary: { ...boundary, platform },
     pmSpawnScriptImpl: async () => ({ pid: 201, exitCode: null }),
     waitForServerReadyImpl: async () => {},
     proveSpawnedServerOwnershipImpl: async () => {

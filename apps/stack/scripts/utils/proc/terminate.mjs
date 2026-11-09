@@ -230,7 +230,13 @@ export async function terminateProcessGroup(
     processInstanceFingerprint,
     boundary,
   );
-  const initialIdentity = await observeGroupIdentity();
+  const identityRequired = Boolean(String(processInstanceFingerprint ?? '').trim());
+  // Fatal-exit cleanup cannot await before dispatching its first owned-tree signal. Keep the
+  // identity-free spawned-child path synchronous through that signal while retaining the awaited
+  // fingerprint guard for callers that supplied an expected process instance.
+  const initialIdentity = identityRequired
+    ? await observeGroupIdentity()
+    : { status: 'not_required' };
   if (initialIdentity.status === 'mismatch' || initialIdentity.status === 'inconclusive') {
     return { ok: false, reason: initialIdentity.reason };
   }
@@ -242,7 +248,9 @@ export async function terminateProcessGroup(
     const treeKilled = await forceKillWindowsProcessTree(n, Math.min(2_000, perSignalMs), boundary);
     const exited = await waitForExit(n, Math.min(400, perSignalMs), boundary);
     if (exited && !treeKilled) return await proveExitedWindowsTree(n, leaderFingerprint, boundary);
-    const finalIdentity = await observeGroupIdentity();
+    const finalIdentity = identityRequired
+      ? await observeGroupIdentity()
+      : { status: 'not_required' };
     if (!exited && (finalIdentity.status === 'mismatch' || finalIdentity.status === 'inconclusive')) {
       return { ok: false, reason: finalIdentity.reason, signal: 'SIGKILL' };
     }
@@ -256,7 +264,9 @@ export async function terminateProcessGroup(
 
   for (const sig of sequence) {
     // eslint-disable-next-line no-await-in-loop
-    const identity = await observeGroupIdentity();
+    const identity = identityRequired
+      ? await observeGroupIdentity()
+      : { status: 'not_required' };
     if (identity.status === 'mismatch' || identity.status === 'inconclusive') {
       return { ok: false, reason: identity.reason, signal: sig };
     }
@@ -265,7 +275,9 @@ export async function terminateProcessGroup(
     const exited = await waitForExit(n, sig === 'SIGKILL' ? Math.min(400, perSignalMs) : perSignalMs, boundary);
     if (exited) return { ok: true, signal: sig };
     // eslint-disable-next-line no-await-in-loop
-    const afterSignalIdentity = await observeGroupIdentity();
+    const afterSignalIdentity = identityRequired
+      ? await observeGroupIdentity()
+      : { status: 'not_required' };
     if (afterSignalIdentity.status === 'mismatch' || afterSignalIdentity.status === 'inconclusive') {
       return { ok: false, reason: afterSignalIdentity.reason, signal: sig };
     }

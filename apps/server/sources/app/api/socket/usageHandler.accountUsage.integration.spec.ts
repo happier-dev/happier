@@ -15,7 +15,7 @@ vi.mock("@/app/events/eventRouter", () => ({
     buildUsageEphemeral: vi.fn(() => ({ type: "usage" })),
 }));
 
-vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
+vi.mock("@/utils/logging/log", () => ({ debug: vi.fn(), log: vi.fn(), warn: vi.fn() }));
 vi.mock("@/app/monitoring/metrics2", () => ({
     usageReportWritesCounter: { inc: usageReportWritesCounterInc },
 }));

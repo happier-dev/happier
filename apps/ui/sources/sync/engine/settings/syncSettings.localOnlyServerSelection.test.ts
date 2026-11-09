@@ -283,25 +283,16 @@ describe('syncSettings local-only server-selection settings', () => {
             );
         (encryptionStub.decryptRaw as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
 
-        await syncSettings({
+        await expect(syncSettings({
             credentials,
             encryption: encryptionStub,
             pendingSettings: {},
             clearPendingSettings: () => {},
-        });
+        })).rejects.toThrow('Failed to open encrypted account settings');
 
         expect(mocks.serverFetch).toHaveBeenCalledTimes(2);
         expect(encryptionStub.encryptRaw).not.toHaveBeenCalled();
-        expect(mocks.storageState.applySettings).toHaveBeenCalledWith(
-            expect.objectContaining({
-                analyticsOptOut: false,
-                serverSelectionGroups: undefined,
-                serverSelectionActiveTargetKind: undefined,
-                serverSelectionActiveTargetId: undefined,
-                terminalConnectLegacySecretExportEnabled: false,
-            }),
-            12,
-        );
+        expect(mocks.storageState.applySettings).not.toHaveBeenCalled();
     });
 
     it('does not rewrite when GET ciphertext is decryptable', async () => {
