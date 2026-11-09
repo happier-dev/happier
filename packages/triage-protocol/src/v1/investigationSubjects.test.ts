@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { TriageEntryRefV1Schema } from './identity.js';
+import { TriageFailureSubjectV1Schema } from './sessionHandoff.js';
 import { TRIAGE_NATIVE_INVESTIGATION_KINDS_V1, triageFailureSubjectEntryV1, triageHealthAlertEntryV1 } from './investigationSubjects.js';
 
 describe('native investigation subject identity', () => {
+    it('keeps a Workflow Run on its exact Home and Run through the shared failure handoff', () => {
+        const subject = TriageFailureSubjectV1Schema.parse({ kind: 'workflowRun', serverId: 'home', runId: 'run' });
+        const original = triageFailureSubjectEntryV1(subject);
+        expect(original.entryRef).toMatchObject({ kindId: 'workflow-run', entryId: 'run' });
+        expect(TriageEntryRefV1Schema.parse(original.entryRef)).toEqual(original.entryRef);
+        expect(triageFailureSubjectEntryV1(TriageFailureSubjectV1Schema.parse({ ...subject, serverId: 'other-home' })).entryRef)
+            .not.toEqual(original.entryRef);
+        expect(TRIAGE_NATIVE_INVESTIGATION_KINDS_V1.map(kind => kind.id)).toContain(original.entryRef.kindId);
+    });
     it('separates receipt identity by Home, Environment and deployment without a placement identity', () => {
         const subject = { kind: 'deploymentReceipt', serverId: 'home', environmentId: 'environment', deploymentId: 'receipt' } as const;
         const original = triageFailureSubjectEntryV1(subject);

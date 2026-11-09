@@ -36,13 +36,13 @@ export {
 } from './observations.js';
 export type { TriageEntryStateV1, TriageEntryRelationsV1, TriageTaskFieldV1, TriageTaskCapabilitiesV1, TriageTaskTransitionRequiredFieldV1 } from './observations.js';
 export {
-    TriageTaskFieldsV1Schema, TriageTaskCreateFieldsV1Schema,
+    TriageTaskFieldChoicesV1Schema, TriageTaskFieldsV1Schema, TriageTaskCreateFieldsV1Schema,
     TriageTaskCreateInputV1Schema, TriageTaskEditInputV1Schema, TriageTaskTransitionInputV1Schema,
     TriageTaskCreateConnectedAccountInputV1Schema, TriageTaskEditConnectedAccountInputV1Schema,
     TriageTaskTransitionConnectedAccountInputV1Schema, TriageTaskWriteResultV1Schema,
     TriageTaskTransitionFieldValuesV1Schema,
 } from './tasks.js';
-export type { TriageTaskFieldsV1, TriageTaskCreateFieldsV1, TriageTaskCreateInputV1, TriageTaskEditInputV1, TriageTaskTransitionInputV1, TriageTaskWriteResultV1, TriageTaskTransitionFieldValuesV1 } from './tasks.js';
+export type { TriageTaskFieldChoicesV1, TriageTaskFieldsV1, TriageTaskCreateFieldsV1, TriageTaskCreateInputV1, TriageTaskEditInputV1, TriageTaskTransitionInputV1, TriageTaskWriteResultV1, TriageTaskTransitionFieldValuesV1 } from './tasks.js';
 export {
     INTERNAL_TASK_SOURCE_V1,
     internalTaskLocalRefV1,
@@ -377,7 +377,7 @@ export { TriageActionIdV1Schema } from './identity.js';
 export { TRIAGE_NATIVE_INVESTIGATION_KINDS_V1, triageFailureSubjectActionSubjectV1, triageFailureSubjectEntryV1,
     triageHealthAlertEntryV1 } from './investigationSubjects.js';
 export type { TriageInvestigationSubjectEntryV1 } from './investigationSubjects.js';
-export { TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1, DEPLOYMENT_FIX_DEPLOY_ACTION_ID_V1, DEPLOYMENT_SET_UP_ACTION_ID_V1,
+export { TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1, DEPLOYMENT_FIX_DEPLOY_ACTION_ID_V1, DEPLOYMENT_SET_UP_ACTION_ID_V1, WORKFLOW_INVESTIGATE_RUN_ACTION_ID_V1,
     TriageAgentActionDeclarationV1Schema, TriageAgentActionsContributionProtocolV1, TriageAgentActionsContributionPointV1 } from './subjectActions.js';
 export type { TriageSubjectActionDeclarationV1 } from './subjectActions.js';
 export { TRIAGE_APP_PAGE_LOCAL_ID_V1, TRIAGE_APP_PAGE_DESTINATION_V1, TriageActionEditorLaunchInputV1Schema,

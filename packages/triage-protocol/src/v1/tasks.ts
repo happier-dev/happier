@@ -31,6 +31,20 @@ const taskFields = {
 } as const;
 export const TriageTaskFieldsV1Schema = defineProtocolObject(taskFields, { policy: 'closed' });
 export type TriageTaskFieldsV1 = ReturnType<typeof TriageTaskFieldsV1Schema.parse>;
+const taskFieldChoice = defineProtocolObject({
+    id: TriageIdentifierV1ProtocolSchema,
+    label: defineProtocolString({ minLength: 1, pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1 }),
+}, { policy: 'closed' });
+/**
+ * What a task's name-valued fields can be set to, from the source's own directory, for the exact read that asked.
+ * A present list is complete; an omitted field means the source has no directory for it or could not read one, so
+ * the field keeps typed names.
+ */
+export const TriageTaskFieldChoicesV1Schema = defineProtocolObject({
+    assigneeIds: defineProtocolArray(taskFieldChoice).optional(),
+    labelIds: defineProtocolArray(taskFieldChoice).optional(),
+}, { policy: 'closed' });
+export type TriageTaskFieldChoicesV1 = ReturnType<typeof TriageTaskFieldChoicesV1Schema.parse>;
 export const TriageTaskCreateFieldsV1Schema = defineProtocolObject({
     ...taskFields, title: defineProtocolString({ minLength: 1 }),
 }, { policy: 'closed' });

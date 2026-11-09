@@ -207,6 +207,7 @@ export const TRIAGE_ACTION_SUBJECTS_V1 = [
     ...TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1,
     'deploymentReceipt',
     'deploymentEnvironment',
+    'workflowRun',
 ] as const;
 
 /**

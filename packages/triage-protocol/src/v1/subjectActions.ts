@@ -55,6 +55,7 @@ export type TriageSubjectActionDeclarationV1 = Readonly<
 
 export const DEPLOYMENT_FIX_DEPLOY_ACTION_ID_V1 = 'deployments.fix-deploy';
 export const DEPLOYMENT_SET_UP_ACTION_ID_V1 = 'deployments.set-up';
+export const WORKFLOW_INVESTIGATE_RUN_ACTION_ID_V1 = 'workflows.investigate-run';
 
 /** Subject owners append their records; order is the default display order after Triage's built-ins. */
 export const TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1: readonly TriageSubjectActionDeclarationV1[] = Object.freeze([
@@ -73,6 +74,14 @@ export const TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1: readonly TriageSubjectAction
         workspaceMode: 'repository',
         launchMode: 'review',
         instruction: 'Set up this environment for this project. Work out what it needs to run, prepare the deployment configuration, and show me what is ready and what still needs my input before deploying.',
+    },
+    {
+        actionId: WORKFLOW_INVESTIGATE_RUN_ACTION_ID_V1,
+        label: 'Investigate this Run',
+        appliesTo: ['workflowRun'],
+        workspaceMode: 'reference_only',
+        launchMode: 'review',
+        instruction: 'Investigate this failed Workflow Run. Read the Run and its failed steps, explain what caused the failure, and propose the next step.',
     },
 ] as const satisfies readonly TriageSubjectActionDeclarationV1[]);
 

@@ -83,6 +83,7 @@ describe('typed failure subjects through the existing investigation owner', () =
         { kind: 'service', target: { kind: 'host', page: 'environment', environment: target.environment, targetLinkId: 'link' } },
         { kind: 'domain', serverId: 'server-a', environmentId: 'environment', domainId: 'domain-a' },
         { kind: 'deploymentEnvironment', serverId: 'server-a', environmentId: 'environment' },
+        { kind: 'workflowRun', serverId: 'server-a', runId: 'failed-run' },
     ];
     it.each(subjects)('keeps exact reference evidence without joining service establishment ($kind)', async subject => {
         const reads: Array<{ id: string; input: JsonValue }> = [];
@@ -94,6 +95,11 @@ describe('typed failure subjects through the existing investigation owner', () =
                     throw new PluginError({ code: 'plugin_managed_service_unavailable' });
                 }
                 if (id === 'projects.list') return { items: [], truncated: false };
+                if (id === 'workflow.run.get') return { run: { id: 'failed-run', machineId: 'machine-a',
+                    state: 'failed', revision: 3, createdAt: '2026-11-09T00:00:00.000Z' },
+                    acceptedContext: { workspaceTarget: { project: { machineId: 'machine-a', workspaceRefId: 'workspace-a',
+                        directory: '/project', checkoutRootPath: '/project' } } },
+                    result: 'PRIVATE LOG MUST NOT BE COPIED' };
                 if (id === 'deployments.receipts.get') return { ok: true, deployment: {
                     id: 'deployment-a', environmentId: 'environment', operation: 'deploy', state: 'failed', actionOperationId: 'deployment-operation',
                     revision: 3, requestedAtMs: 100, startedAtMs: 110, settledAtMs: 120,
@@ -134,6 +140,14 @@ describe('typed failure subjects through the existing investigation owner', () =
         } else if (subject.kind === 'deploymentEnvironment') {
             expect(result?.kind === 'ready' && JSON.parse(result.evidence.text)).toMatchObject({ read: {
                 actionId: 'deployments.environments.get', input: { serverId: 'server-a', environmentId: 'environment' } } });
+        } else if (subject.kind === 'workflowRun') {
+            expect(result?.kind === 'ready' && result.workspace).toBeUndefined();
+            expect(result?.kind === 'ready' && JSON.parse(result.evidence.text)).toMatchObject({ read: {
+                actionId: 'workflow.run.get', input: { runId: 'failed-run' }, retained: { state: 'failed', revision: 3 },
+            } });
+            expect(await readTriageHealthAlertHandoffV1(host, handoff, new AbortController().signal)).toMatchObject({
+                workspace: { serverId: 'server-a', machineId: 'machine-a', workspaceId: 'workspace-a', rootPath: '/project' },
+            });
         } else if (subject.kind === 'managedMachineOperation' || subject.kind === 'backupRun') {
             expect(result?.kind === 'ready' && JSON.parse(result.evidence.text)).toMatchObject({ read: {
                 retained: { createdAt: 100, startedAt: 110, settledAt: 120 },
@@ -142,6 +156,28 @@ describe('typed failure subjects through the existing investigation owner', () =
         expect(JSON.stringify(result)).not.toContain('PRIVATE LOG');
         expect(reads.some(read => read.id === 'localServices.launcher.snapshot')).toBe(false);
         expect(reads.some(read => /spawn|send|restart|rollback|exec$/.test(read.id))).toBe(false);
+    });
+
+    it.each(['differentRun', 'foreignHome', 'mismatchedEvidence', 'cancelled'] as const)(
+        'does not turn an unbound Workflow Run reference into an investigation (%s)', async state => {
+        const subject = { kind: 'workflowRun', serverId: 'server-a', runId: 'failed-run' } as const;
+        const reads: string[] = [];
+        const cancellation = new AbortController();
+        if (state === 'cancelled') cancellation.abort();
+        const host = {
+            context: async () => ({ accountScope: { serverId: state === 'foreignHome' ? 'other-home' : 'server-a', accountId: 'account-a' } }),
+            executeAction: async (id: string) => {
+                reads.push(id);
+                if (id === 'workflow.run.get') return { run: { id: 'another-run', machineId: 'machine-a' } };
+                throw new Error(`Unexpected read ${id}`);
+            },
+        };
+        const handoff = TriageSessionHandoffInputV1Schema.parse({ task: 'investigate', configuredActionId: 'investigate',
+            context: { kind: 'failure', subject },
+            evidence: [{ kind: 'failure', subject: state === 'mismatchedEvidence' ? { ...subject, runId: 'injected-run' } : subject }],
+            sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery: 'configured' });
+        expect(await readTriageHealthAlertHandoffV1(host, handoff, cancellation.signal)).toBeNull();
+        expect(reads).toEqual(state === 'differentRun' ? ['workflow.run.get'] : []);
     });
 });
 

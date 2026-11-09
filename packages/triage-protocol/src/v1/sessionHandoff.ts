@@ -40,6 +40,7 @@ const healthPlacement = {
  * `deploymentEnvironment` is the Environment a setup action starts from, re-read through the same owner.
  */
 export const TriageFailureSubjectV1Schema = defineProtocolUnion([
+    defineProtocolObject({ kind: defineProtocolLiteral('workflowRun'), serverId: text, runId: text }, closed),
     defineProtocolObject({ kind: defineProtocolLiteral('deploymentReceipt'), serverId: text, environmentId: text, deploymentId: text }, closed),
     defineProtocolObject({ kind: defineProtocolLiteral('managedMachineOperation'), operation: ProjectExecutionOperationRefV1ProtocolSchema }, closed),
     defineProtocolObject({ kind: defineProtocolLiteral('backupRun'), operation: ProjectExecutionOperationRefV1ProtocolSchema }, closed),

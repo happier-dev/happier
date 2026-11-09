@@ -8,6 +8,7 @@ const kinds = {
     service: { id: 'native-service', workflowSubject: 'other', displayName: 'Service' },
     domain: { id: 'native-domain', workflowSubject: 'other', displayName: 'Domain' },
     deploymentEnvironment: { id: 'deployment-environment', workflowSubject: 'other', displayName: 'Environment' },
+    workflowRun: { id: 'workflow-run', workflowSubject: 'other', displayName: 'Workflow Run' },
     healthNotice: { id: 'health-notice', workflowSubject: 'other', displayName: 'Health notice' },
 } as const;
 
@@ -34,6 +35,8 @@ export function triageFailureSubjectEntryV1(subject: TriageFailureSubjectV1): Tr
             return entry(kinds.domain, [subject.serverId, subject.environmentId], subject.domainId);
         case 'deploymentEnvironment':
             return entry(kinds.deploymentEnvironment, [subject.serverId], subject.environmentId);
+        case 'workflowRun':
+            return entry(kinds.workflowRun, [subject.serverId], subject.runId);
         case 'service': {
             const target = subject.target;
             return target.page === 'machine_service'
@@ -45,7 +48,7 @@ export function triageFailureSubjectEntryV1(subject: TriageFailureSubjectV1): Tr
 
 /** The action subject a native record's own configured records name; other native records have only `other`. */
 export function triageFailureSubjectActionSubjectV1(subject: TriageFailureSubjectV1): TriageActionSubjectV1 | undefined {
-    return subject.kind === 'deploymentReceipt' || subject.kind === 'deploymentEnvironment' ? subject.kind : undefined;
+    return subject.kind === 'deploymentReceipt' || subject.kind === 'deploymentEnvironment' || subject.kind === 'workflowRun' ? subject.kind : undefined;
 }
 
 /** Notice identity stays with its retained Artifact; a current binding cannot identify its old receipt. */

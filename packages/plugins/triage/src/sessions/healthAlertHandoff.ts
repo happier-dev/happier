@@ -120,10 +120,11 @@ async function readFailureSubject(
         && (context.workspace.serverId !== selected.serverId || context.workspace.machineId !== selected.machineId))) return null;
     // The host Action dispatcher admits and validates these DTOs. These are
     // authenticated read results, not caller-authored evidence or authority.
-    const read = async <K extends 'deployments.receipts.get' | 'deployments.environments.get' | 'deployments.domains.get' | 'action.operations.get'>(
+    const read = async <K extends 'deployments.receipts.get' | 'deployments.environments.get' | 'deployments.domains.get' | 'action.operations.get' | 'workflow.run.get'>(
         id: K, value: PluginActionInputById[K],
     ) => await host.executeAction(id, value as JsonReadInput, { signal }) as PluginActionResultById[K];
     let affected: { serverId: string; machineId: string } | undefined;
+    let workspace = context.workspace;
     let projectSourceId: string | undefined;
     const environmentPlacement = async (environmentId: string) => {
         const result = await read('deployments.environments.get', { serverId, environmentId });
@@ -136,6 +137,21 @@ async function readFailureSubject(
     // The receipt's own title for the composer chip, as its page says it; unknown → the generic reference label.
     let receiptTitle: string | undefined;
     switch (subject.kind) {
+        case 'workflowRun': {
+            const address = { runId: subject.runId };
+            const result = await read('workflow.run.get', address);
+            if (result.run.id !== subject.runId) return null;
+            affected = { serverId, machineId: result.run.machineId };
+            const project = result.acceptedContext.workspaceTarget.project;
+            if (!workspace && project.workspaceRefId && (!selected || selected.machineId === project.machineId)) {
+                workspace = { serverId, machineId: project.machineId, workspaceId: project.workspaceRefId, rootPath: project.directory };
+            }
+            reference = { actionId: 'workflow.run.get', input: address, retained: {
+                state: result.run.state, revision: result.run.revision,
+                createdAt: result.run.createdAt, finishedAt: result.run.finishedAt,
+            } };
+            break;
+        }
         case 'deploymentReceipt': {
             const { kind: _kind, ...address } = subject;
             const result = await read('deployments.receipts.get', address);
@@ -197,12 +213,13 @@ async function readFailureSubject(
         }
     }
     if (signal.aborted) return null;
-    const placement = await resolveInvestigationPlacement(host, serverId, selected ?? affected, context.workspace,
+    const placement = await resolveInvestigationPlacement(host, serverId, selected ?? affected, workspace,
         selected ? undefined : projectSourceId, signal);
     if (!placement) return null;
     return { ...placement,
         evidence: { source: { kind: 'alert' as const, label: subject.kind === 'deploymentEnvironment' ? 'Environment reference'
-            : subject.kind === 'deploymentReceipt' ? receiptTitle ?? 'Deployment reference' : 'Failure reference' }, author: { kind: 'process' as const },
+            : subject.kind === 'deploymentReceipt' ? receiptTitle ?? 'Deployment reference'
+                : subject.kind === 'workflowRun' ? 'Workflow Run reference' : 'Failure reference' }, author: { kind: 'process' as const },
             text: JSON.stringify({ subject, read: reference }) } };
 }
 
