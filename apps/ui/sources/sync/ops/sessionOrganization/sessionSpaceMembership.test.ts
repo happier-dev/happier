@@ -4,7 +4,10 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { CreateOrUpdateSessionOrganizationTagRequestSchema } from '@happier-dev/protocol/sessions/organization/mutations';
 import type { SessionOrganizationTag } from '@happier-dev/protocol/sessions/organization/tags';
-import { CollectionSpacesV1Schema } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import type { AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { V2SessionRecord } from '@happier-dev/protocol/sessions/control/contract';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
@@ -15,13 +18,33 @@ await loadSyncSingletonForTests();
 // time to the first operation's timeout.
 await import('@/sync/ops/actions/scopedHomeActionExecutor');
 await import('@/sync/ops/actions/defaultActionExecutor');
-const [{ createClientActionReverseDispatcher }, { createCliActionExecutorFromCredentials }, { createActionSettingsProvider },
-    { createUiClientActionReverseHandler }] = await Promise.all([
-    import('../../../../../cli/src/session/actions/clientActionReverseDispatch'),
-    import('../../../../../cli/src/session/actions/createCliActionExecutorFromCredentials'),
-    import('../../../../../cli/src/settings/actionsSettingsProvider'),
-    import('@/sync/ops/actions/clientActionReverseDispatch'),
-]);
+// The real CLI executor runs in this composed test, but its Node-only daemon
+// graph belongs to the CLI compiler program (as in testkit/browserDaemonRuntime).
+const { createClientActionReverseDispatcher } = await vi.importActual<{
+    createClientActionReverseDispatcher(getClient: () => Readonly<{
+        hasConnectedClientRpcHandler(method: string): boolean;
+        callConnectedClientRpc(method: string, payload: unknown, options: Readonly<{ onIssued(): void }>):
+            Promise<Readonly<{ ok: true; result: unknown }> | Readonly<{ ok: false; errorCode: string }>>;
+    }>): NonNullable<ActionExecutorDeps['clientActionExecute']>;
+}>('../../../../../cli/src/session/actions/clientActionReverseDispatch');
+const { createActionSettingsProvider } = await vi.importActual<{
+    createActionSettingsProvider(input: Readonly<{ getAccountSettings(): AccountSettings }>): Readonly<{
+        getAccountSettings(): AccountSettings;
+        getActionsSettings(): AccountSettings['actionsSettingsV1'];
+    }>;
+}>('../../../../../cli/src/settings/actionsSettingsProvider');
+const { createUiClientActionReverseHandler } = await import('@/sync/ops/actions/clientActionReverseDispatch');
+const { createCliActionExecutorFromCredentials } = await vi.importActual<{
+    createCliActionExecutorFromCredentials(input: Readonly<{
+        credentials: Readonly<{ token: string; encryption: null; credentialProvenance: 'stored_session' }>;
+        serverId: string;
+        serverApiUrl: string;
+        serverIdentityId: string;
+        machineId: string;
+        actionsSettingsProvider: ReturnType<typeof createActionSettingsProvider>;
+        clientActionExecute: NonNullable<ActionExecutorDeps['clientActionExecute']>;
+    }>): Pick<ReturnType<typeof createActionExecutor>, 'execute'>;
+}>('../../../../../cli/src/session/actions/createCliActionExecutorFromCredentials');
 describe('Space membership through the Action front door', () => {
     it('uses held membership tags for repeated Add, Move, Remove and New without snapshot reads', async () => {
         const f = await fixture();
@@ -40,8 +63,9 @@ describe('Space membership through the Action front door', () => {
         expect(snapshots()).toHaveLength(before);
     });
 
-    it('overlapping first Add and New preparations return the same accepted catalog membership tag', async () => {
+    it('overlapping first preparations remain valid relations without an Account-settings write', async () => {
         const f = await fixture();
+        const settings = f.read().raw;
         let release!: () => void;
         const bothSnapshots = new Promise<void>(resolve => { release = resolve; });
         let reads = 0;
@@ -57,23 +81,32 @@ describe('Space membership through the Action front door', () => {
             serverId: f.serverId, expectedAccountId: f.accountId });
         const [first, second] = await Promise.all([ensure(), ensure()]);
         expect(first).toMatchObject({ ok: true });
-        expect(second).toEqual(first);
-        const spaces = (await import('@happier-dev/protocol/collections/spaces/collectionSpacesV1')).resolveCollectionSpacesV1(
-            CollectionSpacesV1Schema.parse(f.read().raw.collectionSpacesV1), 'sessionWork');
-        expect(spaces.find(space => space.id === 'a')?.membership?.tags).toEqual([
-            { ...f.target, tagId: first.ok ? first.tagId : '' },
-        ]);
-        expect(f.read().assigned).toEqual(['ordinary']);
+        expect(second).toMatchObject({ ok: true });
+        if (!first.ok || !second.ok) throw new Error('Missing prepared membership');
+        const tags = f.read().tags.filter(tag => [first.tagId, second.tagId].includes(tag.tagId));
+        expect(tags).toHaveLength(2);
+        for (const tag of tags) expect(tag.display).toEqual({ t: 'plain', v: {
+            kind: 'space_membership', spaceId: 'a', spaceSettingsTarget: f.target,
+        } });
+        expect(f.read().raw).toEqual(settings);
+        f.read().assigned.push(first.tagId, second.tagId);
+        expect(await f.execute('session.space_membership.set', f.input('b', 'move', 'a'), f.context)).toMatchObject({ ok: true });
+        expect(f.read().assigned).not.toContain(first.tagId);
+        expect(f.read().assigned).not.toContain(second.tagId);
+        expect(f.read().assigned).toHaveLength(2);
     });
     it('continues the CLI and background Agent through the answering Account client and honors the standard refusal policy', async () => {
         const f = await fixture();
-        const { createSessionRecordFixture } = await import('../../../../../cli/src/testkit/backends/sessionFixtures');
+        const { createSessionRecordFixture } = await vi.importActual<{
+            createSessionRecordFixture(overrides: Partial<V2SessionRecord>): V2SessionRecord;
+        }>('../../../../../cli/src/testkit/backends/sessionFixtures');
         const background = createSessionRecordFixture({ id: 'background', active: true, encryptionMode: 'plain',
             machineId: 'membership-machine', metadata: JSON.stringify({ machineId: 'membership-machine', path: '/repo' }) });
         homes.answer(f.serverId, 'POST /v2/sessions/lookup-by-tags', { body: { sessions: [background] } });
         homes.answer(f.serverId, 'GET /v2/sessions/background', { body: { session: background } });
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const credentials = await TokenStorage.getCredentialsForServerUrl('https://membership.example');
+        if (!credentials) throw new Error('Expected the plaintext Membership fixture credentials');
         const receive = createUiClientActionReverseHandler({ serverId: f.serverId, accountId: f.accountId, isCurrent: () => true });
         const methods: string[] = [];
         const reverse = createClientActionReverseDispatcher(() => ({ hasConnectedClientRpcHandler: method => method === RPC_METHODS.UI_ACTION_EXECUTE,
@@ -93,7 +126,8 @@ describe('Space membership through the Action front door', () => {
         };
         axios.defaults.adapter = adapter;
         try {
-            const cli = createCliActionExecutorFromCredentials({ credentials: credentials!, serverId: f.serverId,
+            const cli = createCliActionExecutorFromCredentials({
+                credentials: { token: credentials.token, encryption: null, credentialProvenance: 'stored_session' }, serverId: f.serverId,
                 serverApiUrl: 'https://membership.example', serverIdentityId: 'srv_membership', machineId: 'membership-machine',
                 actionsSettingsProvider: createActionSettingsProvider({ getAccountSettings: () => accountSettingsParse(f.read().raw) }), clientActionExecute: reverse });
             const cliResult = await cli.execute('session.space_membership.set', f.input('a'), {
@@ -113,6 +147,34 @@ describe('Space membership through the Action front door', () => {
             expect(f.read().assigned).toEqual(before);
         } finally { axios.defaults.adapter = prior; }
     });
+    it('dispatches reachable menu Add, explicit Move and Remove through the same semantic Action executor', async () => {
+        const f = await fixture();
+        const { resolveSessionListSpaceMembershipDrop } = await import('@/components/sessions/shell/drag/resolveSessionListEntityDrop');
+        const { buildSessionSpaceMembershipMenu } = await import('@/components/sessions/organization/sessionSpaceMembershipMenu');
+        const menu = buildSessionSpaceMembershipMenu([{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]);
+        const leafIds = (items: typeof menu.items): string[] => items.flatMap(item => item.submenu ? leafIds(item.submenu.items) : [item.id]);
+        const choices = leafIds(menu.items).flatMap(id => menu.choices.get(id) ?? []);
+        const selected = [choices.find(choice => choice.operation === 'add' && choice.spaceId === 'a'),
+            choices.find(choice => choice.operation === 'move' && choice.spaceId === 'b' && choice.sourceSpaceId === 'a'),
+            choices.find(choice => choice.operation === 'remove' && choice.spaceId === 'b')];
+        const context = { scope: f.target, latestItems: [{ type: 'session' as const, sessionId: 's', serverId: f.serverId,
+            storageKind: 'persisted' as const, groupKey: 'project', groupKind: 'project' as const, folderId: null }],
+        sessionListGroupOrderV1: {}, setSessionListGroupOrderV1: async () => { throw new Error('Membership never reorders hierarchy'); },
+        spaceMembershipTargets: ['a', 'b'].map(spaceId => ({ spaceId, spaceSettingsTarget: f.target, name: spaceId })) };
+        const item = { kind: 'session' as const, scope: f.target, address: { serverId: f.serverId, sessionId: 's' } };
+        for (const choice of selected) {
+            if (!choice) throw new Error('Expected a reachable menu choice');
+            const input = { ...choice, sessionId: 's', spaceSettingsTarget: f.target };
+            const admission = resolveSessionListSpaceMembershipDrop({ item, input, context,
+                preview: (name, operation) => ({ verb: operation, target: name }), reason: code => ({ code, message: code }) });
+            expect(admission.status).toBe('allowed');
+            if (admission.status !== 'allowed') throw new Error('Expected an admitted Space destination');
+            expect(admission.effect.actionId).toBe('session.space_membership.set');
+            expect(await f.execute('session.space_membership.set', admission.effect.input, f.context)).toMatchObject({ ok: true });
+        }
+        expect(f.read().assigned).toEqual(['ordinary']);
+    });
+
     it('adds, moves and removes only explicit memberships while ordinary label edits preserve private tags', async () => {
         const f = await fixture();
         const first = await f.execute('session.space_membership.set', f.input('a'), f.context);
@@ -160,8 +222,9 @@ describe('Space membership through the Action front door', () => {
         expect(f.read().assigned).toEqual(['ordinary']);
     });
 
-    it('seals an own-Home membership tag with the existing E2EE envelope and qualifies the catalog association', async () => {
+    it('seals a cross-Home tag relation with the existing E2EE envelope without changing catalog settings', async () => {
         const f = await fixture();
+        const settings = f.read().raw;
         const accountId = 'encrypted-owner';
         const credentials = { token: createAccountTokenForTests(accountId), secret: Buffer.alloc(32, 7).toString('base64url') };
         const serverId = await homes.addHome({ name: 'Encrypted destination', serverUrl: 'https://encrypted-member.example',
@@ -184,9 +247,7 @@ describe('Space membership through the Action front door', () => {
         const { openSessionOrganizationTagDisplay } = await import('./sessionOrganizationDisplayEnvelope');
         const opened = await openSessionOrganizationTagDisplay({ credentials, tag: written! });
         expect(opened.displayState).toEqual({ status: 'available', value: { kind: 'space_membership', spaceId: 'a', spaceSettingsTarget: f.target } });
-        expect(f.read().raw).toMatchObject({ collectionSpacesV1: { spaces: expect.arrayContaining([
-            expect.objectContaining({ id: 'a', membership: { mode: 'filter_or_manual', tags: [{ serverId, accountId, tagId: opened.tagId }] } }),
-        ]) } });
+        expect(f.read().raw).toEqual(settings);
         expect(f.read().assigned).toEqual(['ordinary']);
     });
 });

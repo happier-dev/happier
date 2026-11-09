@@ -3,11 +3,9 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { resolveCollectionSpacesV1, type CollectionSpaceV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { settingsParse } from '@/sync/domains/settings/settings';
-import { loadLocalSettings } from '@/sync/domains/state/settingsPersistence';
-import { invokeCollectionSpaceSetting } from '@/components/settings/session/collectionSpaceSettings';
 import { readCollectionSpaceDefaultV1 } from '@/components/settings/session/collectionSpaceDefaults';
-import { buildSessionOrganizationServerKey, readSessionOrganizationSpaceMembership, type UiSessionOrganizationTag } from '@/sync/domains/session/organization';
+import { buildSessionOrganizationServerKey, type UiSessionOrganizationTag } from '@/sync/domains/session/organization';
+import { isSessionOrganizationTagForSpace } from '@/sync/domains/session/organization/spaceMembership';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { fetchAndApplySessionOrganizationSnapshot } from './fetchSessionOrganizationSnapshot';
 import { createSessionOrganizationOpaqueId } from './sessionOrganizationIdAllocation';
@@ -26,16 +24,10 @@ function failure(error: unknown, signal?: AbortSignal): Failure {
 function sameHome(left: string, right: string): boolean {
     return areServerProfileIdentifiersEquivalent(left, right);
 }
-function ownsCatalogTag(tag: UiSessionOrganizationTag, target: SessionSpaceMembershipTargetV1): boolean {
-    const identity = readSessionOrganizationSpaceMembership(tag);
-    return tag.archivedAt === null && identity?.spaceId === target.spaceId
-        && identity.spaceSettingsTarget.accountId === target.spaceSettingsTarget.accountId
-        && sameHome(identity.spaceSettingsTarget.serverId, target.spaceSettingsTarget.serverId);
-}
 
 async function readSpaces(catalog: LazyActionAccountContext) {
     const settings = await catalog.readSettings();
-    const basis = readCollectionSpaceDefaultV1('sessionWork', settings, loadLocalSettings());
+    const basis = readCollectionSpaceDefaultV1('sessionWork', settings);
     return resolveCollectionSpacesV1(settings.collectionSpacesV1, 'sessionWork', { name: basis.name, filter: basis.filter });
 }
 
@@ -55,22 +47,29 @@ async function readAssociatedTag(destination: LazyActionAccountContext, tagId: s
     return held ?? (await readTags(destination))?.find(tag => tag.tagId === tagId);
 }
 
-async function ensureTag(target: SessionSpaceMembershipTargetV1, space: CollectionSpaceV1<'sessionWork'>,
-    catalog: LazyActionAccountContext, destination: LazyActionAccountContext): Promise<Readonly<{ ok: true; tagId: string }> | Failure> {
+async function readSpaceTags(target: SessionSpaceMembershipTargetV1, space: CollectionSpaceV1<'sessionWork'>,
+    destination: LazyActionAccountContext): Promise<Readonly<{ ok: true; tags: readonly UiSessionOrganizationTag[] }> | Failure> {
     const association = space.membership?.tags.find(tag => tag.accountId === destination.accountId
         && sameHome(tag.serverId, destination.serverId));
-    let tag = association ? await readAssociatedTag(destination, association.tagId) : undefined;
+    const tag = association ? await readAssociatedTag(destination, association.tagId) : undefined;
     // An association to unavailable or mismatched content cannot become an ordinary tag write.
-    if (association && (!tag || !ownsCatalogTag(tag, target))) return unavailable();
-    let tags: readonly UiSessionOrganizationTag[] = [];
+    if (association && (!tag || !isSessionOrganizationTagForSpace(tag, target))) return unavailable();
+    const held = getStorage().getState().sessionOrganizationTagsByTagKey;
+    const members = Object.values(held).filter(tag => held[buildSessionOrganizationServerKey(destination.serverId, tag.tagId)] === tag
+        && isSessionOrganizationTagForSpace(tag, target));
+    if (members.length) return { ok: true, tags: members };
+    const snapshot = await readTags(destination);
+    return snapshot ? { ok: true, tags: snapshot.filter(tag => isSessionOrganizationTagForSpace(tag, target)) } : unavailable();
+}
+
+async function ensureTag(target: SessionSpaceMembershipTargetV1, space: CollectionSpaceV1<'sessionWork'>,
+    destination: LazyActionAccountContext): Promise<Readonly<{ ok: true; tagId: string }> | Failure> {
+    const members = await readSpaceTags(target, space, destination);
+    if (!members.ok) return members;
+    let tag = members.tags[0];
     if (!tag) {
-        const snapshot = await readTags(destination);
-        if (!snapshot) return unavailable();
-        tags = snapshot;
-        tag = tags.find(tag => ownsCatalogTag(tag, target));
-    }
-    if (!tag) {
-        const tagId = createSessionOrganizationOpaqueId({ prefix: 'tag', usedIds: new Set(tags.map(tag => tag.tagId)) });
+        const tagId = createSessionOrganizationOpaqueId({ prefix: 'tag', usedIds: new Set(Object.values(
+            getStorage().getState().sessionOrganizationTagsByTagKey).map(tag => tag.tagId)) });
         tag = await upsertSessionTag({ credentials: destination.credentials, serverId: destination.serverId,
             requestAtEndpoint: destination.request, assertCurrent: destination.assertCurrent,
             request: { tagId, tagKey: tagId, sortKey: null, display: { t: 'plain', v: {
@@ -78,32 +77,7 @@ async function ensureTag(target: SessionSpaceMembershipTargetV1, space: Collecti
             } } },
         });
     }
-    const tagId = tag.tagId;
-    if (!association) {
-        const accepted = await invokeCollectionSpaceSetting('sessionWork', {
-            accountScope: { serverId: catalog.serverId, accountId: catalog.accountId },
-            isCurrent: catalog.accountLifetime.isCurrent, readSettings: catalog.readSettings, readLocalSettings: loadLocalSettings,
-            input: { kind: 'collection_space', entityKind: 'sessionWork', mutation: { op: 'associateTag', spaceId: target.spaceId,
-                tag: { serverId: destination.serverId, accountId: destination.accountId, tagId } } },
-            mutateSettings: async (mutate, options) => { await catalog.mutateRawSettings(raw => {
-                const delta = mutate(settingsParse(raw));
-                return delta ? { ...raw, ...delta } : { ...raw };
-            }, options); },
-        });
-        if (accepted.status !== 'completed') return unavailable(accepted.reason);
-        const acceptedSpace = accepted.value.spaces.find(space => space.entityKind === 'sessionWork' && space.id === target.spaceId);
-        const winner = acceptedSpace?.entityKind === 'sessionWork' ? acceptedSpace.membership?.tags.find(tag =>
-            tag.accountId === destination.accountId && sameHome(tag.serverId, destination.serverId)) : undefined;
-        if (!winner) return unavailable();
-        if (winner.tagId !== tagId) {
-            // Another first preparation can win the existing settings CAS. Its tag may
-            // have been created after our snapshot; open it through the same envelope owner.
-            const winnerTags = tags.some(tag => tag.tagId === winner.tagId) ? tags : await readTags(destination);
-            const winnerTag = winnerTags?.find(tag => tag.tagId === winner.tagId);
-            return winnerTag && ownsCatalogTag(winnerTag, target) ? { ok: true, tagId: winner.tagId } : unavailable();
-        }
-    }
-    return { ok: true, tagId };
+    return { ok: true, tagId: tag.tagId };
 }
 
 async function withCatalog<T>(target: SessionSpaceMembershipTargetV1, destination: LazyActionAccountContext,
@@ -131,7 +105,7 @@ export async function ensureSessionSpaceMembershipTag(params: SessionSpaceMember
         return await withCatalog(params, destination, params.signal, async catalog => {
             const space = (await readSpaces(catalog)).find(space => space.id === params.spaceId);
             if (!space) return unavailable('space_not_found');
-            return ensureTag(params, space, catalog, ownDestination);
+            return ensureTag(params, space, ownDestination);
         });
     } catch (error) { return failure(error, params.signal); }
     finally { destination?.dispose(); }
@@ -155,15 +129,13 @@ export async function setSessionSpaceMembership(args: Readonly<{ input: SessionS
             const space = spaces.find(space => space.id === input.spaceId);
             const source = input.operation === 'move' ? spaces.find(space => space.id === input.sourceSpaceId) : space;
             if (!space || input.operation === 'move' && !source) return unavailable('space_not_found');
-            const sourceAssociation = source?.membership?.tags.find(tag => tag.accountId === ownDestination.accountId
-                && sameHome(tag.serverId, ownDestination.serverId));
-            const sourceTag = sourceAssociation ? await readAssociatedTag(ownDestination, sourceAssociation.tagId) : undefined;
-            if (sourceAssociation && (!sourceTag || !ownsCatalogTag(sourceTag, { ...input, spaceId: source!.id }))) return unavailable();
-            const added = input.operation === 'remove' ? null : await ensureTag(input, space, catalog, ownDestination);
+            const sourceTags = input.operation === 'add' || !source ? { ok: true as const, tags: [] }
+                : await readSpaceTags({ ...input, spaceId: source.id }, source, ownDestination);
+            if (!sourceTags.ok) return sourceTags;
+            const added = input.operation === 'remove' ? null : await ensureTag(input, space, ownDestination);
             if (added && !added.ok) return added;
             const addTagIds = added?.ok ? [added.tagId] : [];
-            const removeTagIds = input.operation !== 'add' && sourceAssociation && !addTagIds.includes(sourceAssociation.tagId)
-                ? [sourceAssociation.tagId] : [];
+            const removeTagIds = sourceTags.tags.map(tag => tag.tagId).filter(tagId => !addTagIds.includes(tagId));
             ownDestination.assertCurrent();
             const response = await setSessionTagAssignments({ credentials: ownDestination.credentials,
                 serverId: ownDestination.serverId, requestAtEndpoint: ownDestination.request,

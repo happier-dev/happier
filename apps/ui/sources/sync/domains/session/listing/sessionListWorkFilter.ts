@@ -167,21 +167,27 @@ export function compileSessionListSpaceFilter(
     const smart = compileSessionListRowLocalFilter(space.filter, serverId, undefined, false);
     const smartProven = compileSessionListRowLocalFilter(space.filter, serverId,
         space.filter.sections?.include.filter(section => areServerProfileIdentifiersEquivalent(section.serverId, serverId)).map(section => section.sectionId));
-    const membershipTagByAccount = new Map(space.membership.tags.filter(tag => areServerProfileIdentifiersEquivalent(tag.serverId, serverId))
-        .map(tag => [tag.accountId, tag.tagId] as const));
+    const membershipTagsByAccount = new Map<string, Set<string>>();
+    for (const tag of space.membership.tags) {
+        if (!areServerProfileIdentifiersEquivalent(tag.serverId, serverId)) continue;
+        let ids = membershipTagsByAccount.get(tag.accountId);
+        if (!ids) { ids = new Set(); membershipTagsByAccount.set(tag.accountId, ids); }
+        ids.add(tag.tagId);
+    }
     return (row, options) => {
         const outer = refinement(row, options);
         if (outer === 'miss') return outer;
-        const tagId = options.viewerAccountId === undefined ? undefined : membershipTagByAccount.get(options.viewerAccountId);
+        const tagIds = options.viewerAccountId === undefined ? undefined : membershipTagsByAccount.get(options.viewerAccountId);
         const heldTags = options.tagIds ?? row?.viewer?.tagIds;
-        const manual = tagId === undefined ? 'miss' : heldTags === undefined ? 'unavailable' : heldTags.includes(tagId) ? 'match' : 'miss';
+        const manual = tagIds === undefined ? 'miss' : heldTags === undefined ? 'unavailable'
+            : heldTags.some(tagId => tagIds.has(tagId)) ? 'match' : 'miss';
         let member: SessionListFilterMatchV1 = manual;
         if (space.membership.mode !== 'manual_only' && space.filter.show !== 'runs' && manual !== 'match') {
             // A page admitted outside its manual branch proved the smart structural
             // selectors. After a local removal from a manual page, retain unknown
             // smart facts until the existing query invalidation replaces the page.
             const pageTags = row?.viewer?.tagIds;
-            const pageProvedSmart = tagId === undefined || pageTags !== undefined && !pageTags.includes(tagId);
+            const pageProvedSmart = tagIds === undefined || pageTags !== undefined && !pageTags.some(tagId => tagIds.has(tagId));
             const result = (pageProvedSmart ? smartProven : smart)(row, { ...options, tagIds: heldTags });
             member = result === 'match' ? 'match' : result === 'unavailable' || manual === 'unavailable' ? 'unavailable' : 'miss';
         }

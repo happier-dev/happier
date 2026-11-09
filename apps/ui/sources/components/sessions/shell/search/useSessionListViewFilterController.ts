@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { useSessionListSelectionState } from '@/hooks/session/useSessionListSelectionState';
 import { listServerProfiles, resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
@@ -36,6 +37,8 @@ import {
 } from './useSessionListViewFilters';
 import { toStoredSessionListFilter } from './storedSessionListFilter';
 import type { SessionListSpaceMembership } from '@/sync/domains/session/listing/sessionListWorkFilter';
+import { getStorage } from '@/sync/domains/state/storageStore';
+import { projectSessionSpaceMemberships, selectSessionSpaceMembershipTags } from '@/sync/domains/session/organization/spaceMembership';
 
 export type SessionListCorpusStorage = 'active' | 'archived';
 export type SessionListCorpusPresentation = 'semantic_query' | 'legacy_owner_or_direct';
@@ -153,19 +156,26 @@ export function useSessionListViewFilterController(
     }, [fixedShow, mountedHomeServerIds, teamId, teamServerId, viewContext.kind]);
     const defaultSpaceName = t('sessionsList.filtersMyWork');
     const defaultSpaceFilter = React.useMemo(() => toStoredSessionListFilter(context.defaults), [context.defaults]);
-    const { spaces, selectedSpaceId, selectedSpace, activeSpace, spacesEnabled, spacesReady, spaceSettingsScope, spaceAccountScopeKey, admittedSpaces, savedSpace }
+    const { spaces: catalogSpaces, selectedSpaceId, selectedSpace: catalogSelectedSpace, activeSpace: catalogActiveSpace, spacesEnabled, spacesReady, spaceSettingsScope, spaceAccountScopeKey, admittedSpaces, savedSpace }
         = useCollectionSpaceBinding('sessionWork', { defaultName: defaultSpaceName, defaultFilter: defaultSpaceFilter });
+    const credentialServerIds = React.useMemo(() => viewContext.kind === 'team'
+        ? [viewContext.team.serverId]
+        : authoritativeHomeServerIds,
+    [authoritativeHomeServerIds, viewContext]);
+    const accountScopeResolutions = useServerCredentialAccountScopeResolutions(credentialServerIds);
+    const viewerAccountIdByServerId = React.useMemo(() => new Map([...accountScopeResolutions].flatMap(([serverId, resolution]) =>
+        resolution.kind === 'bound' ? [[serverId, resolution.scope.accountId] as const] : [])), [accountScopeResolutions]);
+    const membershipTags = getStorage()(useShallow(state => selectSessionSpaceMembershipTags(state.sessionOrganizationTagsByTagKey, spaceSettingsScope)));
+    const spaces = React.useMemo(() => projectSessionSpaceMemberships(catalogSpaces, membershipTags, viewerAccountIdByServerId),
+        [catalogSpaces, membershipTags, viewerAccountIdByServerId]);
+    const selectedSpace = spaces.find(space => space.id === catalogSelectedSpace?.id) ?? null;
+    const activeSpace = spaces.find(space => space.id === catalogActiveSpace?.id) ?? null;
     const contextDefaultFilters = React.useMemo(() => normalizeSessionListViewFilters(context.defaults, viewContext, fixedShow,
         corpusStorage === 'archived' ? true : undefined), [context.defaults, corpusStorage, fixedShow, teamId, teamServerId, viewContext.kind]);
     const defaultFilters = React.useMemo(() => activeSpace
         ? normalizeSessionListViewFilters({ ...activeSpace.filter, searchQuery: '' }, viewContext, fixedShow, corpusStorage === 'archived' ? true : undefined)
         : contextDefaultFilters, [activeSpace, contextDefaultFilters, corpusStorage, fixedShow, teamId, teamServerId, viewContext.kind]);
     const retainedContextKey = corpusStorage === 'archived' ? `${context.contextKey}:archived` : context.contextKey;
-    const credentialServerIds = React.useMemo(() => viewContext.kind === 'team'
-        ? [viewContext.team.serverId]
-        : authoritativeHomeServerIds,
-    [authoritativeHomeServerIds, viewContext]);
-    const accountScopeResolutions = useServerCredentialAccountScopeResolutions(credentialServerIds);
     const participatingServerIds = viewContext.kind === 'team'
         ? [viewContext.team.serverId]
         : mountedHomeServerIds;
@@ -197,8 +207,6 @@ export function useSessionListViewFilterController(
     const spaceMembership = React.useMemo<SessionListSpaceMembership | undefined>(() => activeSpace?.membership
         ? { filter: activeSpace.filter, membership: activeSpace.membership } : undefined, [activeSpace]);
     const displayFilters = spaceMembership ? retained.refinements : retained.filters;
-    const viewerAccountIdByServerId = React.useMemo(() => new Map([...accountScopeResolutions].flatMap(([serverId, resolution]) =>
-        resolution.kind === 'bound' ? [[serverId, resolution.scope.accountId] as const] : [])), [accountScopeResolutions]);
     // Admission is decided per exact Home. One capable Home mounts the filtered
     // corpus for the whole surface; the remaining Homes contribute their own
     // truthful loading, disabled, unsupported or offline state instead of

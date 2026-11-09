@@ -4,6 +4,24 @@ import { fixture } from './sessionSpaceMembership.testHelpers';
 const { setSessionSpaceMembership, ensureSessionSpaceMembershipTag } = await import('./sessionSpaceMembership');
 
 describe('Space membership with a cold organization projection', () => {
+    it('adds, moves and removes using tag relations without writing Account settings', async () => {
+        const f = await fixture();
+        const settings = f.read().raw;
+        expect(await setSessionSpaceMembership({ input: f.input('a'), context: f.context })).toMatchObject({ ok: true });
+        const first = f.read().assigned.find(tagId => tagId !== 'ordinary');
+        expect(first).toBeDefined();
+        expect(f.read().raw).toEqual(settings);
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        getStorage().getState().clearSessionOrganizationForServer(f.serverId);
+        expect(await setSessionSpaceMembership({ input: f.input('b', 'move', 'a'), context: f.context })).toMatchObject({ ok: true });
+        expect(f.read().assigned).not.toContain(first);
+        expect(f.read().assigned).toHaveLength(2);
+        getStorage().getState().clearSessionOrganizationForServer(f.serverId);
+        expect(await setSessionSpaceMembership({ input: f.input('b', 'remove'), context: f.context })).toMatchObject({ ok: true });
+        expect(f.read().assigned).toEqual(['ordinary']);
+        expect(f.read().raw).toEqual(settings);
+    });
+
     it.each(['add', 'remove', 'move'] as const)('resolves persisted membership through the reader for cold %s', async operation => {
         const f = await fixture();
         const a = f.seedAssociated('a', { assigned: operation !== 'add' });
