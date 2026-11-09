@@ -132,6 +132,41 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
         });
     });
 
+    it.each(['removed', 'suspended'] as const)('makes a %s custodian publication unavailable to the Team while preserving custodian management', async withdrawal => {
+        await seedAccounts();
+        const team = await db.team.create({ data: { name: 'Former Team' } });
+        const retainedTeam = await db.team.create({ data: { name: 'Current Team' } });
+        for (const teamId of [team.id, retainedTeam.id]) await db.teamMembership.createMany({ data: [
+            { teamId, accountId, role: 'admin' },
+            { teamId, accountId: otherAccountId, role: 'member' },
+        ] });
+        await withPoolRoutes(async app => {
+            const definition = { poolId, name: 'Published builders', audience: { kind: 'team', teamId: team.id },
+                members: [{ machineId, priorityTier: 0, enabled: true }] };
+            const retainedPoolId = '589396c1-a343-4d42-83e6-27d90bbc2e16';
+            expect((await app.inject({ method: 'POST', url: '/v1/machines/pools/create', headers, payload: definition })).statusCode).toBe(200);
+            expect((await app.inject({ method: 'POST', url: '/v1/machines/pools/create', headers, payload: {
+                ...definition, poolId: retainedPoolId, audience: { kind: 'team', teamId: retainedTeam.id },
+            } })).statusCode).toBe(200);
+            expect((await app.inject({ method: 'POST', url: '/v1/machines/pools/get', headers: otherHeaders, payload: { poolId } })).statusCode).toBe(200);
+            if (withdrawal === 'removed') await db.teamMembership.delete({ where: { teamId_accountId: { teamId: team.id, accountId } } });
+            else await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId } }, data: { status: 'suspended' } });
+            const unavailable = await app.inject({ method: 'POST', url: '/v1/machines/pools/get', headers: otherHeaders, payload: { poolId } });
+            expect(unavailable.statusCode).toBe(404);
+            expect(unavailable.json()).toEqual({ code: 'pool_not_found' });
+            const listed = await app.inject({ method: 'POST', url: '/v1/machines/pools/list', headers: otherHeaders, payload: {} });
+            expect(listed.json().pools.map((pool: { pool: { id: string } }) => pool.pool.id)).toEqual([retainedPoolId]);
+            expect(listed.json().pools[0]).toMatchObject({ pool: { members: [] }, access: { canViewMembers: false } });
+            expect(JSON.stringify(listed.json())).not.toContain(machineId);
+            const ownerRead = await app.inject({ method: 'POST', url: '/v1/machines/pools/get', headers, payload: { poolId } });
+            expect(ownerRead.statusCode).toBe(200);
+            expect(ownerRead.json()).toMatchObject({ pool: { members: [{ machineId }] }, access: { canManage: true, canViewMembers: true } });
+            expect((await app.inject({ method: 'POST', url: '/v1/machines/pools/update', headers, payload: {
+                ...definition, name: 'Still owned', expectedRevision: 0,
+            } })).statusCode).toBe(200);
+        });
+    });
+
     it('publishes sharing and withdrawal to both audiences and refuses a non-admin Team publication', async () => {
         await seedAccounts();
         const team = await db.team.create({ data: { name: 'Build team' } });

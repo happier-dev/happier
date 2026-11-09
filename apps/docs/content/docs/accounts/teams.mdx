@@ -89,8 +89,11 @@ that has not been observed is shown as unknown; an executor can refuse creation
 if it is missing. If no eligible controller is available, Happier reports that
 creation is unavailable. It does not wait for capacity or silently try another
 controller after creation starts. Removing a member or withdrawing delegation
-prevents their next creation request; work already admitted keeps its existing
-lifecycle.
+prevents their next creation request. If a Pool or preset controller's custodian
+leaves the Team or loses active membership, remaining members cannot start new
+delegated creations using that custodian's compute or Connected Accounts. Their
+published Pool becomes unavailable to the Team. Work already admitted keeps its
+existing lifecycle, and the custodian retains their own compute access.
 
 These controls are unreleased 0.3 development features. See
 [Machine Pools](/apps/daemon#machine-pools) for availability and exact-target behavior.

@@ -835,6 +835,12 @@ decides management, ordinary resolution and roster visibility. The Account remai
 the custodian. Active Team members receive the public summary with no members and
 unknown availability, never a controller grant or direct Pool dispatch permission.
 The existing Team actor and resource audience owners decide membership and sharing.
+A custodian who leaves or loses active Team membership withdraws the Pool from
+other Team members' reads. New delegated preset acquisition, for either a Pool
+or an exact controller, also requires that controller's custodian to remain an
+active member of the preset's Team. The admission owner decides this once; work
+already admitted keeps its existing lifecycle and the custodian retains their
+own compute authority.
 Member state can be `connected`, `offline`, `revoked`, `replaced`, `temporary`, or
 `unknown`; an unavailable observation is not rewritten as offline. Pool-level
 availability is the separate `{ state: 'known', connectedCount, enabledCount }` or

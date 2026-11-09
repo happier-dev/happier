@@ -8,6 +8,7 @@ import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGua
 import { db, isPrismaUniqueConstraintError } from "@/storage/db";
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
+import { readActiveTeamMembershipsInTx } from '@/app/teams/actorContext';
 import {
     getMachineDaemonPresenceInventory,
     classifyMachineDaemonPresence,
@@ -180,7 +181,10 @@ export async function listMachinePools(params: Readonly<{
             const rows = await tx.machinePool.findMany({ where: { teamId: { in: [...ids] }, accountId: { not: params.accountId } } });
             shared.push(...rows.map(pool => ({ ...pool, members: [] })));
         }
-        return [...owned, ...shared].sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id));
+        const activeCustodians = await readActiveTeamMembershipsInTx(tx, { memberships: shared.flatMap(pool => pool.teamId
+            ? [{ teamId: pool.teamId, accountId: pool.accountId }] : []) });
+        const available = shared.filter(pool => pool.teamId && activeCustodians.get(pool.teamId)?.has(pool.accountId));
+        return [...owned, ...available].sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id));
     });
     const inventory = await inventoryFor(params.accountId, params.io, stored.filter(pool => pool.accountId === params.accountId));
     return stored.map(pool => projectPool(pool, inventory, pool.accountId === params.accountId

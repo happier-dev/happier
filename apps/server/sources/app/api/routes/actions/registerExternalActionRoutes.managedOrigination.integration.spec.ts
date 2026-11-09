@@ -1508,6 +1508,49 @@ describe('ordinary Account managed Action origination', () => {
         } finally { await instance.close(); }
     });
 
+    it.each(['exact', 'pool'] as const)('refuses a delegated Team %s preset after its custodian leaves while preserving owned acquire', async targetKind => {
+        const controller = await fixture(true);
+        const requester = await fixture(true);
+        const team = await db.team.create({ data: { name: 'Custodian withdrawal' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: controller.account.id, role: 'owner' },
+            { teamId: team.id, accountId: requester.account.id, role: 'member' },
+        ] });
+        const pool = targetKind === 'pool' ? await db.machinePool.create({ data: {
+            id: crypto.randomUUID(), accountId: controller.account.id, teamId: team.id, name: 'Published compute',
+            members: { create: { machineId: controller.controller.machineId, priorityTier: 0 } },
+        } }) : null;
+        const presetId = crypto.randomUUID();
+        expect(await createMachinePreset({ accountId: controller.account.id,
+            authentication: { authenticationAuthority: 'present_user' }, input: {
+                id: presetId, homeId, name: 'Delegated guest', owner: { kind: 'team', teamId: team.id },
+                launch: controller.input.selection.launch,
+                ...(pool ? { controllerPoolId: pool.id } : { controller: controller.controller }),
+                teamAcquireDelegated: true, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            } })).toMatchObject({ kind: 'saved' });
+        const input = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: controller.input.enrollmentIdentity,
+            selection: { kind: 'preset', homeId, id: presetId, revision: 0 }, controller: controller.controller,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const instance = await app(async () => { throw new Error('Authorization issuance must not dispatch acquisition'); });
+        const issue = (token: string, acquireInput: typeof input) => instance.inject({ method: 'POST',
+            url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.acquire'),
+            headers: { authorization: `Bearer ${token}` }, payload: { v: 1,
+                machineId: controller.controller.machineId, envelope: { v: 1, requestId: crypto.randomUUID(),
+                    target: { kind: 'machine', machineId: controller.controller.machineId }, input: acquireInput } } });
+        try {
+            const active = await issue(requester.token, input);
+            expect(active.statusCode, active.body).toBe(200);
+            await db.teamMembership.delete({ where: { teamId_accountId: { teamId: team.id, accountId: controller.account.id } } });
+            const removed = await issue(requester.token, input);
+            expect(removed.statusCode, removed.body).toBe(409);
+            expect(removed.json(), removed.body).toMatchObject({ error: 'invalid_request', code: 'target_unavailable' });
+            // Leaving the Team withdraws delegation, not the custodian's own compute authority.
+            const owned = await issue(controller.token, controller.input);
+            expect(owned.statusCode, owned.body).toBe(200);
+            expect(await resolveMachineAccess({ actorAccountId: requester.account.id, machineId: controller.controller.machineId })).toBeNull();
+        } finally { await instance.close(); }
+    });
+
     it.each(['machines.managed.inspect', 'machines.managed.bootstrap.retry', 'action.operations.list', 'action.operations.get'] as const)(
         'authorizes only the creator resource for sealed %s recovery on the custodian controller', async actionId => {
         const controller = await fixture(true);
@@ -2138,6 +2181,36 @@ describe('ordinary Account managed Action origination', () => {
                 headers: { authorization: `Bearer ${selected.token}` }, payload: miswired });
             expect(response.statusCode).toBe(400);
             expect(response.json()).toEqual({ error: 'invalid_request', code: 'invalid_envelope', requestId: selected.requestId });
+            expect(await db.managedMachine.count({ where: { admittedActionRequestId: selected.requestId } })).toBe(0);
+        } finally { await instance.close(); }
+    });
+
+    it('answers a reached preset limit with its own refusal through a sealed acquire, not a missing target', async () => {
+        const selected = await fixture(true, 'e2ee');
+        const preset = await db.managedMachinePreset.create({ data: { homeId, custodianAccountId: selected.account.id,
+            name: 'Capped', launch: selected.input.selection.launch, setup: {}, revision: 1, simultaneousMaximum: 1,
+            controllerMachineId: selected.controller.machineId, controllerInstallationId: selected.controller.installationId } });
+        await db.managedMachine.create({ data: { homeId, custodianAccountId: selected.account.id,
+            controllerMachineId: selected.controller.machineId, controllerInstallationId: selected.controller.installationId,
+            admittedActionRequestId: crypto.randomUUID(), admittedInput: { enrollmentAccountId: selected.account.id },
+            presetId: preset.id, presetRevision: 1, launch: selected.input.selection.launch, allocation: 'bound',
+            resource: { contributionRef: selected.input.selection.launch.provider, schemaVersion: 1, value: { id: 'first' } },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+        const input = ManagedAcquireInputV1Schema.parse({ ...selected.input,
+            selection: { kind: 'preset', homeId, id: preset.id, revision: 1 }, controller: selected.controller,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const sealed = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId, accountId: selected.account.id,
+            actionId: 'machines.managed.acquire', requestId: selected.requestId,
+            target: { kind: 'machine', machineId: selected.controller.machineId },
+            authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch } },
+            input, material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) },
+            randomBytes: length => new Uint8Array(length).fill(2) });
+        const instance = await app(async () => { throw new Error('A refused admission must not reach a daemon'); });
+        try {
+            const response = await instance.inject({ method: 'POST', url: '/v1/actions/machines.managed.acquire',
+                headers: { authorization: `Bearer ${selected.token}` }, payload: sealed });
+            expect(response.statusCode, response.body).toBe(409);
+            expect(response.json(), response.body).toMatchObject({ code: 'preset_limit_reached' });
             expect(await db.managedMachine.count({ where: { admittedActionRequestId: selected.requestId } })).toBe(0);
         } finally { await instance.close(); }
     });

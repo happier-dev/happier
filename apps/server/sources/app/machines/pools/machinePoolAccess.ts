@@ -2,6 +2,7 @@ import type { MachinePoolAccessV1, MachinePoolAudienceV1 } from '@happier-dev/pr
 import type { Tx } from '@/storage/inTx';
 import {
     resolveTeamActorContextInTx, resolveTeamActorContextsInTx,
+    readActiveTeamMembershipsInTx,
     qualifyTeamOperationAuthenticationInTx, qualifyTeamOperationAuthenticationsInTx,
     type TeamOperationAuthenticationContext,
 } from '@/app/teams/actorContext';
@@ -22,7 +23,9 @@ export async function resolveMachinePoolAccessInTx(tx: Tx, actor: MachinePoolAct
     pool: MachinePoolIdentity): Promise<MachinePoolAccessV1 | null> {
     if (actor.accountId === pool.accountId) return CUSTODIAN_POOL_ACCESS;
     if (!pool.teamId) return null;
-    return await canReadMachinePoolTeamInTx(tx, actor, pool.teamId) ? TEAM_POOL_ACCESS : null;
+    if (!await canReadMachinePoolTeamInTx(tx, actor, pool.teamId)) return null;
+    const active = await readActiveTeamMembershipsInTx(tx, { memberships: [{ teamId: pool.teamId, accountId: pool.accountId }] });
+    return active.get(pool.teamId)?.has(pool.accountId) ? TEAM_POOL_ACCESS : null;
 }
 
 export async function canReadMachinePoolTeamInTx(tx: Tx, actor: MachinePoolActor, teamId: string): Promise<boolean> {
