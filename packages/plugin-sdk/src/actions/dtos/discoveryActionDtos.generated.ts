@@ -639,7 +639,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -648,14 +648,14 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     })[] | {
                         kind: 'input';
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -664,7 +664,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     check: {
@@ -673,7 +673,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         } | {
                             kind: 'template';
                             value: string;
@@ -682,14 +682,14 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             }>;
                         })[] | {
                             kind: 'input';
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         } | {
                             kind: 'template';
                             value: string;
@@ -698,7 +698,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             }>;
                         };
                         executable: string;
@@ -708,8 +708,12 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }> | undefined;
+                    } | {
+                        kind: 'audit';
+                        rules: string[];
+                        state?: 'absent' | 'present' | undefined;
                     } | {
                         kind: 'kernel';
                         capability: string;
@@ -718,7 +722,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         } | {
                             kind: 'template';
                             value: string;
@@ -727,7 +731,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             }>;
                         };
                     } | {
@@ -744,61 +748,6 @@ export type DiscoveryActionResultById = {
                     affects?: 'dockerEngine' | 'none' | undefined | {
                         services: string[];
                     };
-                    requiredFacts?: ({
-                        kind: 'administrator';
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'init';
-                        system: 'launchd' | 'systemd' | 'windowsScm';
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
-                    } | {
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | undefined;
-                    } | {
-                        kind: 'packageManager';
-                        manager: string;
-                    } | {
-                        kind: 'path';
-                        path: string;
-                    })[] | undefined;
-                    review?: undefined | {
-                        title: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                        description?: string | undefined | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                    };
-                    when?: ({
-                        checkId: string;
-                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
-                        ifInput?: InputPredicate | undefined;
-                    } | {
-                        input: InputPredicate;
-                    })[] | undefined;
-                } | {
-                    kind: 'firewall';
-                    rules: string;
-                    id: string;
-                    exposures?: undefined | {
-                        requirementId: string;
-                        hostAddress: string;
-                        hostPort: number;
-                        protocol: 'tcp' | 'udp';
-                        exposure: 'loopback' | 'privateNetwork' | 'public';
-                        containerPort?: number | undefined;
-                        providerId?: string | undefined;
-                        networkIdentity?: string | undefined;
-                    }[];
                     requiredFacts?: ({
                         kind: 'administrator';
                     } | {
@@ -1046,7 +995,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1055,14 +1004,30 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     packages: ({
                         kind: 'input';
                         path: string;
                     } | {
-                        name: string;
+                        name: string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            }>;
+                        };
                         version?: string | undefined;
                         kind?: 'cask' | 'formula' | undefined;
                         source?: string | undefined;
@@ -1072,7 +1037,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1081,7 +1046,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     kind: 'package';
@@ -1134,7 +1099,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1143,7 +1108,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     members: (string | {
@@ -1151,7 +1116,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1160,7 +1125,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     })[];
                     kind: 'group';
@@ -1171,7 +1136,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         } | {
                             kind: 'template';
                             value: string;
@@ -1180,7 +1145,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             }>;
                         };
                         kind: 'journalReadGroup';
@@ -1233,7 +1198,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1242,7 +1207,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     owner: string | {
@@ -1250,7 +1215,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1259,7 +1224,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     group: string | {
@@ -1267,7 +1232,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1276,7 +1241,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     mode: number | {
@@ -1284,7 +1249,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1293,7 +1258,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     kind: 'directory';
@@ -1303,7 +1268,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1312,7 +1277,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     preserveExistingOwnership?: true | undefined;
@@ -1364,7 +1329,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1373,7 +1338,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     owner: string | {
@@ -1381,7 +1346,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1390,7 +1355,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     group: string | {
@@ -1398,7 +1363,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1407,7 +1372,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     mode: number | {
@@ -1415,7 +1380,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1424,27 +1389,18 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     kind: 'file';
                     id: string;
                     content?: undefined | {
-                        kind: 'iniKeys';
-                        sections: Record<string, Record<string, string>>;
-                    } | {
-                        kind: 'jsonMerge';
-                        value: Record<string, JSONType>;
-                    } | {
-                        kind: 'secretGrant';
-                        grantRef: string;
-                    } | {
-                        value: string | {
+                        grantRef: string | {
                             kind: 'input';
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         } | {
                             kind: 'template';
                             value: string;
@@ -1453,7 +1409,83 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            }>;
+                        };
+                        kind: 'secretGrant';
+                    } | {
+                        kind: 'iniKeys';
+                        sections: Record<string, Record<string, string>>;
+                    } | {
+                        kind: 'secretGrant';
+                        credentialSelection: {
+                            credentialRefs: {
+                                credentialRef: {
+                                    kind: 'connectedAccount';
+                                    account: {
+                                        service: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        accountId: string;
+                                    };
+                                } | {
+                                    ref: string | {
+                                        kind: 'input';
+                                        path: string;
+                                    };
+                                    resourceRevision: number | {
+                                        kind: 'input';
+                                        path: string;
+                                    };
+                                    kind: 'savedSecret';
+                                };
+                                purpose: string;
+                            }[];
+                            provider: {
+                                kind: 'builtin';
+                                id: string;
+                            } | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            config: JsonValue;
+                        };
+                    } | {
+                        value: Record<string, JSONType> | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            }>;
+                        };
+                        kind: 'jsonMerge';
+                    } | {
+                        value: string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             }>;
                         };
                         kind: 'literal';
@@ -1463,7 +1495,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                         kind: 'template';
                         value: string;
@@ -1476,7 +1508,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             } | {
                                 kind: 'template';
                                 value: string;
@@ -1485,7 +1517,7 @@ export type DiscoveryActionResultById = {
                                     path: string;
                                 } | {
                                     kind: 'targetFact';
-                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                                 }>;
                             };
                             kind: 'literal';
@@ -1495,7 +1527,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             }>;
                             kind: 'template';
                             value: string;
@@ -1508,7 +1540,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             } | {
                                 kind: 'template';
                                 value: string;
@@ -1517,7 +1549,7 @@ export type DiscoveryActionResultById = {
                                     path: string;
                                 } | {
                                     kind: 'targetFact';
-                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                                 }>;
                             };
                             host: string | {
@@ -1525,7 +1557,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             } | {
                                 kind: 'template';
                                 value: string;
@@ -1534,7 +1566,7 @@ export type DiscoveryActionResultById = {
                                     path: string;
                                 } | {
                                     kind: 'targetFact';
-                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                                 }>;
                             };
                             address: string | {
@@ -1542,7 +1574,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             } | {
                                 kind: 'template';
                                 value: string;
@@ -1551,11 +1583,104 @@ export type DiscoveryActionResultById = {
                                     path: string;
                                 } | {
                                     kind: 'targetFact';
-                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                                 }>;
                             };
+                            expected?: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            }> | undefined;
                         }[];
                         kind: 'sshd';
+                    } | {
+                        jails: Record<string, {
+                            maxRetry: number | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            };
+                            findTimeSeconds: number | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            };
+                            banTimeSeconds: number | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            };
+                            port?: number | undefined | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            };
+                        }>;
+                        kind: 'fail2ban';
+                    } | {
+                        kind: 'audit';
+                        rules: string[];
+                        state?: 'absent' | 'present' | undefined;
                     } | {
                         kind: 'caddy';
                     } | {
@@ -1572,7 +1697,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             } | {
                                 kind: 'template';
                                 value: string;
@@ -1581,7 +1706,7 @@ export type DiscoveryActionResultById = {
                                     path: string;
                                 } | {
                                     kind: 'targetFact';
-                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                                 }>;
                             };
                             host: string | {
@@ -1589,7 +1714,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             } | {
                                 kind: 'template';
                                 value: string;
@@ -1598,7 +1723,7 @@ export type DiscoveryActionResultById = {
                                     path: string;
                                 } | {
                                     kind: 'targetFact';
-                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                                 }>;
                             };
                             address: string | {
@@ -1606,7 +1731,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             } | {
                                 kind: 'template';
                                 value: string;
@@ -1615,11 +1740,104 @@ export type DiscoveryActionResultById = {
                                     path: string;
                                 } | {
                                     kind: 'targetFact';
-                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                                 }>;
                             };
+                            expected?: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            }> | undefined;
                         }[];
                         kind: 'sshd';
+                    } | {
+                        jails: Record<string, {
+                            maxRetry: number | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            };
+                            findTimeSeconds: number | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            };
+                            banTimeSeconds: number | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            };
+                            port?: number | undefined | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            };
+                        }>;
+                        kind: 'fail2ban';
+                    } | {
+                        kind: 'audit';
+                        rules: string[];
+                        state?: 'absent' | 'present' | undefined;
                     } | {
                         kind: 'caddy';
                     } | {
@@ -1630,10 +1848,107 @@ export type DiscoveryActionResultById = {
                         kind: 'sudoers';
                     };
                     state?: 'absent' | 'present' | undefined;
+                    lifetime?: 'invocation' | undefined;
                     ownershipMarker?: string | undefined;
                     onChange?: undefined | {
                         serviceStepId: string;
                         action: 'reload' | 'restart';
+                    };
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    rules: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                        }>;
+                    };
+                    kind: 'firewall';
+                    id: string;
+                    exposures?: ({
+                        exposure: 'loopback' | 'public';
+                        requirementId: string;
+                        hostAddress: string;
+                        hostPort: number;
+                        protocol: 'tcp' | 'udp';
+                        providerId?: undefined;
+                        networkIdentity?: undefined;
+                        containerPort?: number | undefined;
+                    } | {
+                        exposure: 'privateNetwork';
+                        providerId: string;
+                        networkIdentity: string;
+                        requirementId: string;
+                        hostAddress: string;
+                        hostPort: number;
+                        protocol: 'tcp' | 'udp';
+                        containerPort?: number | undefined;
+                    })[] | undefined | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                        }>;
                     };
                     requiredFacts?: ({
                         kind: 'administrator';
@@ -1682,7 +1997,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1691,13 +2006,13 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     kind: 'serviceUnit';
-                    enabled: boolean;
                     running: boolean;
                     id: string;
+                    enabled?: boolean | undefined;
                     requiredFacts?: ({
                         kind: 'administrator';
                     } | {
@@ -1745,7 +2060,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1754,7 +2069,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     kind: 'user';
@@ -1764,7 +2079,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1773,7 +2088,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     shell?: string | undefined | {
@@ -1781,7 +2096,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1790,7 +2105,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     ownershipMarker?: string | undefined | {
@@ -1798,7 +2113,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1807,7 +2122,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     system?: boolean | undefined;
@@ -1971,7 +2286,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1980,14 +2295,14 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     })[] | {
                         kind: 'input';
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -1996,7 +2311,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     check: {
@@ -2005,7 +2320,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         } | {
                             kind: 'template';
                             value: string;
@@ -2014,14 +2329,14 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             }>;
                         })[] | {
                             kind: 'input';
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         } | {
                             kind: 'template';
                             value: string;
@@ -2030,7 +2345,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             }>;
                         };
                         executable: string;
@@ -2040,8 +2355,12 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }> | undefined;
+                    } | {
+                        kind: 'audit';
+                        rules: string[];
+                        state?: 'absent' | 'present' | undefined;
                     } | {
                         kind: 'kernel';
                         capability: string;
@@ -2050,7 +2369,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         } | {
                             kind: 'template';
                             value: string;
@@ -2059,7 +2378,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             }>;
                         };
                     } | {
@@ -2119,7 +2438,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -2128,7 +2447,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                 } | {
@@ -2137,7 +2456,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -2146,14 +2465,30 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     packages: ({
                         kind: 'input';
                         path: string;
                     } | {
-                        name: string;
+                        name: string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            }>;
+                        };
                         version?: string | undefined;
                         kind?: 'cask' | 'formula' | undefined;
                         source?: string | undefined;
@@ -2163,7 +2498,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -2172,7 +2507,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     kind: 'package';
@@ -2219,7 +2554,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -2228,14 +2563,14 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     })[] | {
                         kind: 'input';
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -2244,7 +2579,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     check: {
@@ -2253,7 +2588,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         } | {
                             kind: 'template';
                             value: string;
@@ -2262,14 +2597,14 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             }>;
                         })[] | {
                             kind: 'input';
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         } | {
                             kind: 'template';
                             value: string;
@@ -2278,7 +2613,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             }>;
                         };
                         executable: string;
@@ -2288,8 +2623,12 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }> | undefined;
+                    } | {
+                        kind: 'audit';
+                        rules: string[];
+                        state?: 'absent' | 'present' | undefined;
                     } | {
                         kind: 'kernel';
                         capability: string;
@@ -2298,7 +2637,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         } | {
                             kind: 'template';
                             value: string;
@@ -2307,7 +2646,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             }>;
                         };
                     } | {
@@ -2324,61 +2663,6 @@ export type DiscoveryActionResultById = {
                     affects?: 'dockerEngine' | 'none' | undefined | {
                         services: string[];
                     };
-                    requiredFacts?: ({
-                        kind: 'administrator';
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'init';
-                        system: 'launchd' | 'systemd' | 'windowsScm';
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
-                    } | {
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | undefined;
-                    } | {
-                        kind: 'packageManager';
-                        manager: string;
-                    } | {
-                        kind: 'path';
-                        path: string;
-                    })[] | undefined;
-                    review?: undefined | {
-                        title: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                        description?: string | undefined | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                    };
-                    when?: ({
-                        checkId: string;
-                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
-                        ifInput?: InputPredicate | undefined;
-                    } | {
-                        input: InputPredicate;
-                    })[] | undefined;
-                } | {
-                    kind: 'firewall';
-                    rules: string;
-                    id: string;
-                    exposures?: undefined | {
-                        requirementId: string;
-                        hostAddress: string;
-                        hostPort: number;
-                        protocol: 'tcp' | 'udp';
-                        exposure: 'loopback' | 'privateNetwork' | 'public';
-                        containerPort?: number | undefined;
-                        providerId?: string | undefined;
-                        networkIdentity?: string | undefined;
-                    }[];
                     requiredFacts?: ({
                         kind: 'administrator';
                     } | {
@@ -2626,7 +2910,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -2635,14 +2919,30 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     packages: ({
                         kind: 'input';
                         path: string;
                     } | {
-                        name: string;
+                        name: string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            }>;
+                        };
                         version?: string | undefined;
                         kind?: 'cask' | 'formula' | undefined;
                         source?: string | undefined;
@@ -2652,7 +2952,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -2661,7 +2961,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     kind: 'package';
@@ -2714,7 +3014,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -2723,7 +3023,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     members: (string | {
@@ -2731,7 +3031,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -2740,7 +3040,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     })[];
                     kind: 'group';
@@ -2751,7 +3051,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         } | {
                             kind: 'template';
                             value: string;
@@ -2760,7 +3060,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             }>;
                         };
                         kind: 'journalReadGroup';
@@ -2813,7 +3113,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -2822,7 +3122,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     owner: string | {
@@ -2830,7 +3130,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -2839,7 +3139,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     group: string | {
@@ -2847,7 +3147,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -2856,7 +3156,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     mode: number | {
@@ -2864,7 +3164,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -2873,7 +3173,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     kind: 'directory';
@@ -2883,7 +3183,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -2892,7 +3192,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     preserveExistingOwnership?: true | undefined;
@@ -2944,7 +3244,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -2953,7 +3253,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     owner: string | {
@@ -2961,7 +3261,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -2970,7 +3270,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     group: string | {
@@ -2978,7 +3278,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -2987,7 +3287,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     mode: number | {
@@ -2995,7 +3295,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -3004,27 +3304,18 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     kind: 'file';
                     id: string;
                     content?: undefined | {
-                        kind: 'iniKeys';
-                        sections: Record<string, Record<string, string>>;
-                    } | {
-                        kind: 'jsonMerge';
-                        value: Record<string, JSONType>;
-                    } | {
-                        kind: 'secretGrant';
-                        grantRef: string;
-                    } | {
-                        value: string | {
+                        grantRef: string | {
                             kind: 'input';
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         } | {
                             kind: 'template';
                             value: string;
@@ -3033,7 +3324,83 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            }>;
+                        };
+                        kind: 'secretGrant';
+                    } | {
+                        kind: 'iniKeys';
+                        sections: Record<string, Record<string, string>>;
+                    } | {
+                        kind: 'secretGrant';
+                        credentialSelection: {
+                            credentialRefs: {
+                                credentialRef: {
+                                    kind: 'connectedAccount';
+                                    account: {
+                                        service: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        accountId: string;
+                                    };
+                                } | {
+                                    ref: string | {
+                                        kind: 'input';
+                                        path: string;
+                                    };
+                                    resourceRevision: number | {
+                                        kind: 'input';
+                                        path: string;
+                                    };
+                                    kind: 'savedSecret';
+                                };
+                                purpose: string;
+                            }[];
+                            provider: {
+                                kind: 'builtin';
+                                id: string;
+                            } | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            config: JsonValue;
+                        };
+                    } | {
+                        value: Record<string, JSONType> | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            }>;
+                        };
+                        kind: 'jsonMerge';
+                    } | {
+                        value: string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             }>;
                         };
                         kind: 'literal';
@@ -3043,7 +3410,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                         kind: 'template';
                         value: string;
@@ -3056,7 +3423,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             } | {
                                 kind: 'template';
                                 value: string;
@@ -3065,7 +3432,7 @@ export type DiscoveryActionResultById = {
                                     path: string;
                                 } | {
                                     kind: 'targetFact';
-                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                                 }>;
                             };
                             kind: 'literal';
@@ -3075,7 +3442,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             }>;
                             kind: 'template';
                             value: string;
@@ -3088,7 +3455,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             } | {
                                 kind: 'template';
                                 value: string;
@@ -3097,7 +3464,7 @@ export type DiscoveryActionResultById = {
                                     path: string;
                                 } | {
                                     kind: 'targetFact';
-                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                                 }>;
                             };
                             host: string | {
@@ -3105,7 +3472,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             } | {
                                 kind: 'template';
                                 value: string;
@@ -3114,7 +3481,7 @@ export type DiscoveryActionResultById = {
                                     path: string;
                                 } | {
                                     kind: 'targetFact';
-                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                                 }>;
                             };
                             address: string | {
@@ -3122,7 +3489,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             } | {
                                 kind: 'template';
                                 value: string;
@@ -3131,11 +3498,104 @@ export type DiscoveryActionResultById = {
                                     path: string;
                                 } | {
                                     kind: 'targetFact';
-                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                                 }>;
                             };
+                            expected?: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            }> | undefined;
                         }[];
                         kind: 'sshd';
+                    } | {
+                        jails: Record<string, {
+                            maxRetry: number | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            };
+                            findTimeSeconds: number | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            };
+                            banTimeSeconds: number | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            };
+                            port?: number | undefined | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            };
+                        }>;
+                        kind: 'fail2ban';
+                    } | {
+                        kind: 'audit';
+                        rules: string[];
+                        state?: 'absent' | 'present' | undefined;
                     } | {
                         kind: 'caddy';
                     } | {
@@ -3152,7 +3612,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             } | {
                                 kind: 'template';
                                 value: string;
@@ -3161,7 +3621,7 @@ export type DiscoveryActionResultById = {
                                     path: string;
                                 } | {
                                     kind: 'targetFact';
-                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                                 }>;
                             };
                             host: string | {
@@ -3169,7 +3629,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             } | {
                                 kind: 'template';
                                 value: string;
@@ -3178,7 +3638,7 @@ export type DiscoveryActionResultById = {
                                     path: string;
                                 } | {
                                     kind: 'targetFact';
-                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                                 }>;
                             };
                             address: string | {
@@ -3186,7 +3646,7 @@ export type DiscoveryActionResultById = {
                                 path: string;
                             } | {
                                 kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                             } | {
                                 kind: 'template';
                                 value: string;
@@ -3195,11 +3655,104 @@ export type DiscoveryActionResultById = {
                                     path: string;
                                 } | {
                                     kind: 'targetFact';
-                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                                 }>;
                             };
+                            expected?: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            }> | undefined;
                         }[];
                         kind: 'sshd';
+                    } | {
+                        jails: Record<string, {
+                            maxRetry: number | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            };
+                            findTimeSeconds: number | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            };
+                            banTimeSeconds: number | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            };
+                            port?: number | undefined | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                                }>;
+                            };
+                        }>;
+                        kind: 'fail2ban';
+                    } | {
+                        kind: 'audit';
+                        rules: string[];
+                        state?: 'absent' | 'present' | undefined;
                     } | {
                         kind: 'caddy';
                     } | {
@@ -3210,10 +3763,107 @@ export type DiscoveryActionResultById = {
                         kind: 'sudoers';
                     };
                     state?: 'absent' | 'present' | undefined;
+                    lifetime?: 'invocation' | undefined;
                     ownershipMarker?: string | undefined;
                     onChange?: undefined | {
                         serviceStepId: string;
                         action: 'reload' | 'restart';
+                    };
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    rules: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                        }>;
+                    };
+                    kind: 'firewall';
+                    id: string;
+                    exposures?: ({
+                        exposure: 'loopback' | 'public';
+                        requirementId: string;
+                        hostAddress: string;
+                        hostPort: number;
+                        protocol: 'tcp' | 'udp';
+                        providerId?: undefined;
+                        networkIdentity?: undefined;
+                        containerPort?: number | undefined;
+                    } | {
+                        exposure: 'privateNetwork';
+                        providerId: string;
+                        networkIdentity: string;
+                        requirementId: string;
+                        hostAddress: string;
+                        hostPort: number;
+                        protocol: 'tcp' | 'udp';
+                        containerPort?: number | undefined;
+                    })[] | undefined | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
+                        }>;
                     };
                     requiredFacts?: ({
                         kind: 'administrator';
@@ -3262,7 +3912,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -3271,13 +3921,13 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     kind: 'serviceUnit';
-                    enabled: boolean;
                     running: boolean;
                     id: string;
+                    enabled?: boolean | undefined;
                     requiredFacts?: ({
                         kind: 'administrator';
                     } | {
@@ -3325,7 +3975,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -3334,7 +3984,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     kind: 'user';
@@ -3344,7 +3994,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -3353,7 +4003,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     shell?: string | undefined | {
@@ -3361,7 +4011,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -3370,7 +4020,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     ownershipMarker?: string | undefined | {
@@ -3378,7 +4028,7 @@ export type DiscoveryActionResultById = {
                         path: string;
                     } | {
                         kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                        fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
                         kind: 'template';
                         value: string;
@@ -3387,7 +4037,7 @@ export type DiscoveryActionResultById = {
                             path: string;
                         } | {
                             kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                            fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
                     system?: boolean | undefined;

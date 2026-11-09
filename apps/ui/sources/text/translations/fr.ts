@@ -1,3 +1,4 @@
+import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
 import { deploymentOverviewTranslations } from './deploymentOverviewTranslations';
@@ -5592,7 +5593,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
         remoteAlerts: {
             title: "Alertes de session lorsque l’app est fermée",
             accountTitle: "Autoriser les alertes de session à distance",
-            disclosure: "Autorise ce Home à lire tes catégories d’alertes, heures calmes et fuseau horaire, limites d’aperçu et préférences sonores pour envoyer les alertes autorisées lorsque l’app est fermée. Le contenu des sessions et les clés de chiffrement ne sont pas partagés.",
+            disclosure: "Laisse ce Home t’alerter de tes sessions quand l’app est fermée. Il lit seulement tes types d’alertes, heures calmes et fuseau horaire, limites d’aperçu et sons, jamais le contenu des sessions ni les clés de chiffrement.",
             footer: "Sans ce consentement, les notifications existantes du propriétaire et les mises à jour au premier plan restent disponibles. Les modifications à distance nécessitent une connexion ; les alertes déjà envoyées ne peuvent pas être rappelées.",
             deviceTitle: "Recevoir sur cet appareil",
             deviceSubtitle: "Concerne uniquement les alertes de session à distance sur cet appareil.",
@@ -5654,8 +5655,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     },
     push: {
       title: "Notifications push",
-      footer: ({ home }: { home: string }) => `Le consentement push est synchronisé pour ${home}. Les autorisations et réglages de l’appareil s’appliquent à tout cet appareil.`,
-      enabledSubtitle: ({ home }: { home: string }) => `Autoriser les notifications push de ${home}`,
+      footer: ({ home }: { home: string }) => `${home} te prévient sur ton téléphone et tes ordinateurs quand Happier est fermé.`,
+      enabledSubtitle: ({ home }: { home: string }) => `Désactivé, coupe les alertes de ${home} et tous les types ci-dessous.`,
       troubleshootTitle: "Diagnostic",
       troubleshootSubtitle: "Voir les permissions et les appareils enregistrés",
     },
@@ -6723,6 +6724,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
 
   settingsAppearance: {
     ...paneArrangementTranslations['fr'],
+    chatLinks: chatLinksTranslations['fr'],
     needsYouHighlight: needsYouHighlightTranslations['fr'],
     workingIndicator: workingIndicatorTranslations['fr'],
     visualEffects: {
@@ -7175,6 +7177,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
         "Happier n’arrive pas à joindre le daemon sur cette machine. Il est peut-être hors ligne, en cours de démarrage ou déconnecté du Home.",
       agentIsolationMemberSetupAskManager: "Demandez à une personne qui gère la machine de configurer des utilisateurs séparés pour vous.",
       agentIsolationMemberSetupOpenSecurity: "Ouvrez la page Sécurité de cette machine pour vérifier la configuration des utilisateurs séparés.",
+      pluginCodeUnreadableAskManager: "Le code des plugins n’est pas accessible à votre utilisateur séparé. Demandez à un gestionnaire de la machine de configurer les utilisateurs séparés et de redémarrer Happier sur la machine, puis réessayez.",
+      pluginCodeUnreadableOpenSecurity: "Le code des plugins n’est pas accessible à votre utilisateur séparé. Ouvrez la page Sécurité de cette machine et configurez les utilisateurs séparés, puis redémarrez Happier sur la machine et réessayez.",
       agentIsolationUnavailable:
         "L’isolement des agents n’est pas prêt sur cette machine. Demande au propriétaire de la machine de vérifier sa configuration, puis réessaie.",
       tryAgain: "Réessaie",
@@ -7963,6 +7967,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
         statusBlocked: "Bloqué",
         setTitle: "Définir un objectif",
         setSubtitle: "Donne un cap à cette session pour que l’agent reste sur les rails.",
+        setSubtitleStarts: "L'agent s'y met dès que tu le définis.",
         addBudget: "+ Ajouter une limite de budget (optionnel)",
         removeBudget: "Retirer le budget",
         noUsageYet: "Aucune utilisation",
@@ -8031,6 +8036,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     },
         pendingActivation: {
     held: { title: "Arrêtée par vous", body: "Votre message reste en attente jusqu’à ce que vous repreniez cette session." },
+    held_offline: { title: "Arrêtée par vous", body: "Cette machine est hors ligne. Votre message reste en attente ; renvoyez-le ou reprenez dès son retour." },
             waiting_offline: { title: 'Message en attente pour cette machine', body: 'Il sera traité lorsque cette machine et son daemon seront de nouveau en ligne.' },
             waiting: { title: 'Reprise en attente', body: 'Ton message est bien en attente pendant que le démon reprend cette session.' },
             failed: { title: 'Impossible de reprendre la session', body: 'Ton message est toujours bien en attente. Réessaie quand tu es prêt.' },
@@ -11645,6 +11651,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
       management: {
         createProfile: 'Créer un profil',
         selectProfile: 'Sélectionner un profil',
+selectWarning: "Changer de profil ferme les onglets du navigateur de cette session et rouvre cette page avec le profil sélectionné.",
+deleteWarning: "Les connexions et données des sites enregistrées dans ce profil sont supprimées, et les navigateurs qui l’utilisent sont fermés.",
         revokePermission: 'Révoquer l’autorisation',
         clearStorage: 'Vider le stockage',
       },

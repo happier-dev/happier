@@ -1,6 +1,5 @@
 import { BrowserViewTargetV1Schema, type BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
-import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import type { LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 
 import { resolvePluginBrowserPolicyDecision } from '@/sync/domains/plugins/browser/policy';
@@ -20,6 +19,7 @@ import {
 } from '@/sync/domains/local/services/serviceRow';
 
 import type { BrowserRecentTarget } from './recents';
+import { readBrowserLoopbackAddressPort } from '../shell/address';
 
 /** `failed` and `ready` are the workspace's declared Services that are not running (Local services' own sections). */
 export type BrowserLaunchpadSection = 'running' | 'failed' | 'ready' | 'plugin' | 'recent' | 'unavailable';
@@ -269,17 +269,6 @@ export function selectRunningServiceForEndedPreview(
     return selectServiceForEndedPreview(running, ended);
 }
 
-function readLoopbackPort(address: string | null | undefined): string | null {
-    if (!address) return null;
-    try {
-        const parsed = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(address) ? address : `http://${address}`);
-        if (!isLoopbackHostname(parsed.hostname)) return null;
-        return parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
-    } catch {
-        return null;
-    }
-}
-
 /**
  * The running Service preview a typed localhost address names. In a Session, `localhost:PORT` is the
  * Session Machine's port, and a registered preview of that port opens through its preview route.
@@ -288,11 +277,11 @@ export function selectLaunchpadServiceRowForAddress(
     rows: readonly BrowserLaunchpadRow[],
     url: string,
 ): BrowserLaunchpadRow | null {
-    const port = readLoopbackPort(url);
+    const port = readBrowserLoopbackAddressPort(url);
     if (!port) return null;
     return rows.find((row) => row.section === 'running' && row.disabledReason === null
         && row.target?.kind === 'localServicePreview'
-        && readLoopbackPort(row.serviceRow?.target.endpointUrl ?? row.target.display?.addressLabel) === port) ?? null;
+        && readBrowserLoopbackAddressPort(row.serviceRow?.target.endpointUrl ?? row.target.display?.addressLabel) === port) ?? null;
 }
 
 /** Same identity match for current Services facts, including a failed replacement occurrence. */

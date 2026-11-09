@@ -3,15 +3,17 @@ import type { RemoteViewerClipboardShortcut } from '@happier-dev/plugin-ui/prese
 
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { beginClipboardWriteFromUi, getClipboardStringSafe, setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { beginClipboardWriteFromUi, getClipboardStringSafe } from '@/utils/ui/clipboard';
 
 type RemoteClipboard = Readonly<{
     read(action: 'copy' | 'cut'): Promise<string>;
     write(text: string): Promise<void>;
 }>;
+type ClipboardWriter = (text: string) => Promise<boolean>;
 
 /** Browser and Computer share the local OS boundary, including WebKit's gesture-bound write. */
-export async function transferRemoteViewerClipboard(action: 'copy' | 'cut' | 'paste', remote: RemoteClipboard): Promise<void> {
+export async function transferRemoteViewerClipboard(action: 'copy' | 'cut' | 'paste', remote: RemoteClipboard,
+    writeClipboard: ClipboardWriter): Promise<void> {
     const webWrite = action !== 'paste' && Platform.OS === 'web' ? beginClipboardWriteFromUi('text/plain') : null;
     try {
         if (action === 'paste') {
@@ -20,7 +22,7 @@ export async function transferRemoteViewerClipboard(action: 'copy' | 'cut' | 'pa
             await remote.write(text);
         } else {
             const text = await remote.read(action);
-            const copied = webWrite ? await webWrite.write(new Blob([text], { type: 'text/plain' })) : await setClipboardStringSafe(text);
+            const copied = webWrite ? await webWrite.write(new Blob([text], { type: 'text/plain' })) : await writeClipboard(text);
             if (!copied) throw new Error('clipboard_unavailable');
         }
     } catch (error) {
@@ -29,10 +31,10 @@ export async function transferRemoteViewerClipboard(action: 'copy' | 'cut' | 'pa
     }
 }
 
-export function createRemoteViewerClipboardShortcut(remote: RemoteClipboard): RemoteViewerClipboardShortcut {
+export function createRemoteViewerClipboardShortcut(remote: RemoteClipboard, writeClipboard: ClipboardWriter): RemoteViewerClipboardShortcut {
     return async action => {
         try {
-            await transferRemoteViewerClipboard(action, remote);
+            await transferRemoteViewerClipboard(action, remote, writeClipboard);
             return { ok: true };
         } catch (error) {
             Modal.alert(t('common.error'), t('errors.operationFailed'));

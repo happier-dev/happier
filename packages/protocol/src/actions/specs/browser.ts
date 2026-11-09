@@ -1,7 +1,11 @@
+import { BROWSER_RECORDING_ACTION_IDS_V1 } from '../recordingActionIds.js';
+import { createRecordingActionSpecFamily } from './recording.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { BROWSER_EXTENSION_ACTION_INPUT_SCHEMAS, BROWSER_EXTENSION_ACTION_OUTPUT_SCHEMAS } from '../browserExtensionActions.js';
 import { BrowserProfileLoginsImportV1Schema, BrowserProfileLoginsImportResultV1Schema } from '../../browser/profile/loginsV1.js';
 import { z } from 'zod/mini';
+import { BrowserProfileV1Schema } from '../../browser/profile/v1.js';
+import { isPortableRelativePath } from '../../filesystem/portablePathSegment.js';
 
 import type { RuntimeActionIdV1 } from '../actionIds.js';
 import type { ActionInputFieldHint } from '../actionInputHints.js';
@@ -55,14 +59,10 @@ import {
   BrowserRecordingSessionV1Schema,
   DaemonBrowserRecordingCancelInputV1Schema,
   DaemonBrowserRecordingCleanupInputV1Schema,
-  DaemonBrowserRecordingCleanupResultV1Schema,
   DaemonBrowserRecordingListInputV1Schema,
   DaemonBrowserRecordingStartInputV1Schema,
-  DaemonBrowserRecordingStartResultV1Schema,
   DaemonBrowserRecordingStatusInputV1Schema,
   DaemonBrowserRecordingStopInputV1Schema,
-  DaemonBrowserRecordingStopResultV1Schema,
-  DaemonBrowserRecordingTerminalResultV1Schema,
 } from '../../browser/recording/v1.js';
 import type { RuntimeActionSpecFamily } from './common.js';
 import { BrowserViewTargetV1Schema } from '../../browser/target/v1.js';
@@ -90,13 +90,6 @@ const BrowserDiagnosticsResumeResultV1Schema = lazyZodSchema(() => z.strictObjec
   viewId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
 }));
 
-const BrowserRecordingAttachToComposerResultV1Schema = lazyZodSchema(() => z.strictObject({
-  ok: z.literal(true),
-  attachmentId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
-}));
-
-const BrowserRecordingListResultV1Schema = lazyZodSchema(() => z.array(BrowserRecordingSessionV1Schema));
-
 const BrowserSandboxInstallInputV1Schema = lazyZodSchema(() => z.strictObject({ machineId: z.string().check(z.trim(), z.minLength(1)) }));
 const BrowserSandboxInstallResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('installed') }),
@@ -107,6 +100,36 @@ const BrowserSandboxInstallResultV1Schema = lazyZodSchema(() => z.discriminatedU
 ]));
 
 type BrowserRuntimeActionId = Extract<RuntimeActionIdV1, `browser.${string}`>;
+
+const BrowserProfileMachineInputSchema = lazyZodSchema(() => z.strictObject({
+  machineId: z.string().check(z.trim(), z.minLength(1)),
+}));
+const BrowserProfileTargetInputSchema = lazyZodSchema(() => z.extend(BrowserProfileMachineInputSchema, {
+  profileId: BrowserProfileV1Schema.shape.profileId.check(z.refine(value => isPortableRelativePath(value) && !value.includes('/'))),
+}));
+const BrowserProfileCreateInputSchema = lazyZodSchema(() => z.extend(BrowserProfileTargetInputSchema, {
+  displayName: BrowserProfileV1Schema.shape.displayName,
+}));
+const BrowserProfileUnavailableSchema = lazyZodSchema(() => z.strictObject({
+  status: z.literal('unavailable'),
+  code: z.enum(['managed_browser_required', 'profile_not_found', 'profile_exists', 'profile_unavailable', 'profile_purge_failed']),
+}));
+const BrowserProfileListResultSchema = lazyZodSchema(() => z.union([
+  z.strictObject({ status: z.literal('ready'), profiles: z.array(BrowserProfileV1Schema) }), BrowserProfileUnavailableSchema,
+]));
+const BrowserProfileCreateResultSchema = lazyZodSchema(() => z.union([
+  z.strictObject({ status: z.literal('created'), profile: BrowserProfileV1Schema }), BrowserProfileUnavailableSchema,
+]));
+const BrowserProfileDeleteResultSchema = lazyZodSchema(() => z.union([
+  z.strictObject({ status: z.literal('deleted'), profileId: BrowserProfileV1Schema.shape.profileId }), BrowserProfileUnavailableSchema,
+]));
+const BrowserProfileSelectInputSchema = lazyZodSchema(() => z.extend(BrowserOpenViewCommandV1Schema, {
+  machineId: BrowserProfileMachineInputSchema.shape.machineId,
+  profileId: BrowserProfileTargetInputSchema.shape.profileId,
+}));
+const BrowserProfileSelectResultSchema = lazyZodSchema(() => z.union([
+  BrowserCommandDispatchResultV1Schema, BrowserProfileUnavailableSchema,
+]));
 
 function createBrowserAutomationActionInputSchema<
   const TActionKind extends BrowserAutomationActionKindV1,
@@ -185,7 +208,19 @@ function draftHintFields(field: ActionInputFieldHint): readonly ActionInputField
   ];
 }
 
+/** A saved browser profile lives on one Machine; install can also start a newly named profile. */
+const BROWSER_EXTENSION_PROFILE_HINT_FIELDS: readonly ActionInputFieldHint[] = [
+  { path: 'machineId', title: 'Machine', widget: 'select', required: true, optionsSourceId: 'sessions.spawn.machines.available' },
+  { path: 'profileId', title: 'Browser profile', widget: 'select', required: true, optionsSourceId: 'browser.profiles.available' },
+];
+
 export const BROWSER_RUNTIME_ACTION_INPUT_HINT_FIELDS: Readonly<Partial<Record<RuntimeActionIdV1, readonly ActionInputFieldHint[]>>> = {
+  'browser.extensions.list': [BROWSER_EXTENSION_PROFILE_HINT_FIELDS[0]!, { ...BROWSER_EXTENSION_PROFILE_HINT_FIELDS[1]!, required: false }],
+  'browser.extensions.install': [BROWSER_EXTENSION_PROFILE_HINT_FIELDS[0]!, { ...BROWSER_EXTENSION_PROFILE_HINT_FIELDS[1]!, allowCustomValue: true }],
+  'browser.extensions.update': BROWSER_EXTENSION_PROFILE_HINT_FIELDS,
+  'browser.extensions.enable': BROWSER_EXTENSION_PROFILE_HINT_FIELDS,
+  'browser.extensions.disable': BROWSER_EXTENSION_PROFILE_HINT_FIELDS,
+  'browser.extensions.remove': BROWSER_EXTENSION_PROFILE_HINT_FIELDS,
   'browser.view.openDevtools': [
     { path: 'browserSessionId', title: 'Browser session', widget: 'text', required: true },
     { path: 'viewId', title: 'Browser view', widget: 'text', required: true },
@@ -194,7 +229,18 @@ export const BROWSER_RUNTIME_ACTION_INPUT_HINT_FIELDS: Readonly<Partial<Record<R
   'browser.context.annotation.setDraftComment': draftHintFields({ path: 'comment', title: 'Comment (null clears)', widget: 'text', required: true }),
 };
 
+const browserRecording = createRecordingActionSpecFamily({ ids: BROWSER_RECORDING_ACTION_IDS_V1, subject: 'browser', session: BrowserRecordingSessionV1Schema,
+  inputs: { start: DaemonBrowserRecordingStartInputV1Schema, stop: DaemonBrowserRecordingStopInputV1Schema,
+    cancel: DaemonBrowserRecordingCancelInputV1Schema, status: DaemonBrowserRecordingStatusInputV1Schema,
+    list: DaemonBrowserRecordingListInputV1Schema, discard: DaemonBrowserRecordingCancelInputV1Schema,
+    cleanupExpired: DaemonBrowserRecordingCleanupInputV1Schema, attachToComposer: RuntimeBrowserRecordingAttachInputSchema },
+});
+
 export const BROWSER_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
+  'browser.profile.list': 'List browser profiles',
+  'browser.profile.create': 'Create browser profile',
+  'browser.profile.select': 'Select browser profile',
+  'browser.profile.delete': 'Delete browser profile',
   'browser.extensions.list': 'List browser extensions',
   'browser.extensions.install': 'Install browser extension',
   'browser.extensions.update': 'Update browser extension',
@@ -270,14 +316,7 @@ export const BROWSER_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeActio
   'browser.automation.download': 'Read browser download',
   'browser.automation.getInteractionState': 'Get browser interaction state',
   'browser.automation.drag': 'Drag between browser elements',
-  'browser.recording.start': 'Start browser recording',
-  'browser.recording.stop': 'Stop browser recording',
-  'browser.recording.cancel': 'Cancel browser recording',
-  'browser.recording.status': 'Get browser recording status',
-  'browser.recording.listForView': 'List browser recordings for view',
-  'browser.recording.discard': 'Discard browser recording',
-  'browser.recording.cleanupExpired': 'Clean up expired browser recordings',
-  'browser.recording.attachToComposer': 'Attach browser recording to composer',
+  ...browserRecording.titles,
 });
 
 export const BROWSER_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
@@ -371,6 +410,11 @@ export const BROWSER_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<Runtim
  * its exact Zod input/output carrier in generated API and Plugin maps.
  */
 export const BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
+  'browser.profile.list': BrowserProfileMachineInputSchema,
+  'browser.profile.create': BrowserProfileCreateInputSchema,
+  'browser.profile.select': BrowserProfileSelectInputSchema,
+  'browser.profile.delete': BrowserProfileTargetInputSchema,
+  ...browserRecording.inputSchemas,
   ...BROWSER_EXTENSION_ACTION_INPUT_SCHEMAS,
   'browser.profile.logins.import': BrowserProfileLoginsImportV1Schema,
   'browser.sandbox.install': BrowserSandboxInstallInputV1Schema,
@@ -380,6 +424,7 @@ export const BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
     scopeId: z.string().check(z.trim(), z.minLength(1)),
     commandId: BrowserOpenViewCommandV1Schema.shape.commandId,
     target: BrowserViewTargetV1Schema,
+    engineOverride: BrowserOpenViewCommandV1Schema.shape.engineOverride,
   })),
   'browser.view.open': BrowserOpenViewCommandV1Schema,
   'browser.view.list': DaemonBrowserViewListRequestV1Schema,
@@ -445,19 +490,15 @@ export const BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
   'browser.automation.download': createBrowserAutomationActionInputSchema('download'),
   'browser.automation.getInteractionState': createBrowserAutomationActionInputSchema('getInteractionState'),
   'browser.automation.drag': createBrowserAutomationActionInputSchema('drag'),
-  'browser.recording.start': DaemonBrowserRecordingStartInputV1Schema,
-  'browser.recording.stop': DaemonBrowserRecordingStopInputV1Schema,
-  'browser.recording.cancel': DaemonBrowserRecordingCancelInputV1Schema,
-  'browser.recording.status': DaemonBrowserRecordingStatusInputV1Schema,
-  'browser.recording.listForView': DaemonBrowserRecordingListInputV1Schema,
-  'browser.recording.discard': DaemonBrowserRecordingCancelInputV1Schema,
-  'browser.recording.cleanupExpired': DaemonBrowserRecordingCleanupInputV1Schema,
-  'browser.recording.attachToComposer': RuntimeBrowserRecordingAttachInputSchema,
 } as const satisfies Readonly<Record<BrowserRuntimeActionId, z.ZodMiniType>>);
 
 // Keep declaration emission tied to the named schemas rather than expanding
 // every nested Browser context/diagnostic schema into this lookup's declaration.
 const browserRuntimeOutputGeneralSchemas: Readonly<typeof BROWSER_EXTENSION_ACTION_OUTPUT_SCHEMAS & {
+  'browser.profile.list': typeof BrowserProfileListResultSchema;
+  'browser.profile.create': typeof BrowserProfileCreateResultSchema;
+  'browser.profile.select': typeof BrowserProfileSelectResultSchema;
+  'browser.profile.delete': typeof BrowserProfileDeleteResultSchema;
   'browser.profile.logins.import': typeof BrowserProfileLoginsImportResultV1Schema;
   'browser.sandbox.install': typeof BrowserSandboxInstallResultV1Schema;
   'browser.control.takeControl': z.ZodMiniUnion<readonly [typeof BrowserCommandDispatchResultV1Schema, typeof BrowserAutomationInterruptedResultV1Schema]>;
@@ -498,6 +539,10 @@ const browserRuntimeOutputGeneralSchemas: Readonly<typeof BROWSER_EXTENSION_ACTI
   'browser.context.attachToAgentTurn': typeof BrowserContextAttachmentV1Schema;
   'browser.context.clear': typeof BrowserContextRouteResultV1Schema;
 }> = {
+  'browser.profile.list': BrowserProfileListResultSchema,
+  'browser.profile.create': BrowserProfileCreateResultSchema,
+  'browser.profile.select': BrowserProfileSelectResultSchema,
+  'browser.profile.delete': BrowserProfileDeleteResultSchema,
   ...BROWSER_EXTENSION_ACTION_OUTPUT_SCHEMAS,
   'browser.profile.logins.import': BrowserProfileLoginsImportResultV1Schema,
   'browser.sandbox.install': BrowserSandboxInstallResultV1Schema,
@@ -569,19 +614,12 @@ const browserRuntimeOutputAutomationSchemas = {
   'browser.automation.download': BrowserAutomationActionResultV1Schema,
   'browser.automation.getInteractionState': BrowserAutomationActionResultV1Schema,
   'browser.automation.drag': BrowserAutomationActionResultV1Schema,
-  'browser.recording.start': DaemonBrowserRecordingStartResultV1Schema,
-  'browser.recording.stop': DaemonBrowserRecordingStopResultV1Schema,
-  'browser.recording.cancel': DaemonBrowserRecordingTerminalResultV1Schema,
-  'browser.recording.status': z.nullable(BrowserRecordingSessionV1Schema),
-  'browser.recording.listForView': BrowserRecordingListResultV1Schema,
-  'browser.recording.discard': DaemonBrowserRecordingTerminalResultV1Schema,
-  'browser.recording.cleanupExpired': DaemonBrowserRecordingCleanupResultV1Schema,
-  'browser.recording.attachToComposer': BrowserRecordingAttachToComposerResultV1Schema,
 } as const;
 
 export const BROWSER_RUNTIME_ACTION_OUTPUT_SCHEMAS: Readonly<
-  typeof browserRuntimeOutputGeneralSchemas & typeof browserRuntimeOutputAutomationSchemas
+  typeof browserRecording.outputSchemas & typeof browserRuntimeOutputGeneralSchemas & typeof browserRuntimeOutputAutomationSchemas
 > = Object.freeze({
+  ...browserRecording.outputSchemas,
   ...browserRuntimeOutputGeneralSchemas,
   ...browserRuntimeOutputAutomationSchemas,
 } as const satisfies Readonly<Record<BrowserRuntimeActionId, z.ZodMiniType>>);
@@ -619,9 +657,13 @@ export const BROWSER_RUNTIME_ACTION_SPEC_FAMILY: Readonly<{
   outputSchemas: typeof BROWSER_RUNTIME_ACTION_OUTPUT_SCHEMAS;
 }> = Object.freeze({
   confirmationFacts: {
-    'browser.recording.discard': { confirmVerb: { key: 'common.discard', fallback: 'Discard' }, irreversible: true },
+    ...browserRecording.confirmationFacts,
   },
   approvalPolicies: {
+    'browser.profile.create': { agentDefault: 'authority', uiConfirmation: 'direct' },
+    'browser.profile.select': { agentDefault: 'authority', uiConfirmation: 'direct' },
+    'browser.profile.delete': { agentDefault: 'authority', uiConfirmation: 'direct' },
+    ...browserRecording.approvalPolicies,
     'browser.extensions.install': { agentDefault: 'authority' },
     'browser.extensions.update': { agentDefault: 'authority' },
     'browser.extensions.enable': { agentDefault: 'authority' },
@@ -643,7 +685,6 @@ export const BROWSER_RUNTIME_ACTION_SPEC_FAMILY: Readonly<{
     'browser.context.annotation.attachDraft': { agentDefault: 'egress' },
     'browser.context.attachToComposer': { agentDefault: 'egress' },
     'browser.context.attachToAgentTurn': { agentDefault: 'egress' },
-    'browser.recording.attachToComposer': { agentDefault: 'egress' },
   },
   approvalTechnicalInputPaths: BROWSER_APPROVAL_TECHNICAL_INPUT_PATHS,
   titles: BROWSER_RUNTIME_ACTION_TITLES,

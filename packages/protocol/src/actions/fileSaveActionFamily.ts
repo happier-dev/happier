@@ -3,10 +3,18 @@ import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { DeploymentStageLogsReadInputV1Schema } from '../deployments/deploymentReadsV1.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 
+const BrowserDownloadReferenceSchema = z.strictObject({
+  machineId: z.string().check(z.minLength(1)),
+  browserSessionId: z.string().check(z.minLength(1)),
+  viewId: z.string().check(z.minLength(1)),
+  downloadId: z.string().check(z.minLength(1)),
+});
+
 export const FileSaveInputSchema = z.strictObject({
   fileName: z.string().check(z.minLength(1)),
   source: z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('text'), text: z.string() }),
+    z.strictObject({ kind: z.literal('browserDownload'), reference: BrowserDownloadReferenceSchema }),
     z.strictObject({ kind: z.literal('deploymentLog'),
       reference: z.omit(DeploymentStageLogsReadInputV1Schema, { cursor: true, tail: true }) }),
   ]),
@@ -16,8 +24,8 @@ export const FileSaveResultSchema = z.strictObject({ status: z.enum(['saved', 'c
 
 function createFileSaveActionSpecs() {
   return [{
-    id: 'files.save', title: 'Save a text file',
-    description: 'Save supplied text or a complete masked deployment step log on the answering client. Deployment log references reuse deployments.logs.read; clientId selects the answering app. Refuses without a client file handoff.',
+    id: 'files.save', title: 'Save a file',
+    description: 'Save supplied text, a complete masked deployment step log, or a completed Browser download on the answering client. Browser references use the mounted viewer and preserve binary bytes. Deployment log references reuse deployments.logs.read; clientId selects the answering app. Refuses without a client file handoff.',
     approval: { result: 'required' }, safety: 'safe', sideEffectClass: 'write',
     requiredAuthority: 'account_automation', executionPlacement: 'client', placements: [],
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
@@ -26,7 +34,7 @@ function createFileSaveActionSpecs() {
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputSchema: FileSaveInputSchema, outputSchema: FileSaveResultSchema,
     approvalInputCustody: 'live_only', projectObservationInput: () => ({}),
-    approvalPresentation: { summary: () => 'Save a text file on the answering device. Its content stays private to this live invocation.' },
+    approvalPresentation: { summary: () => 'Save a file on the answering device. Its content stays private to this live invocation.' },
   }] as const satisfies readonly PreNormalizedActionSpec[];
 }
 

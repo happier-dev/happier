@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Platform, Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import type { PeerMediationObservabilityScopeV1 } from '@happier-dev/protocol';
 
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -12,7 +11,7 @@ import { DetailsSplitWorkspace } from '@/components/appShell/panes/details/works
 import { PluginDetailsPaneOverlay } from '@/components/appShell/panes/details/surfaces/PluginDetailsPaneOverlay';
 import { DetailsSurfaceFallback } from '@/components/appShell/panes/details/surfaces/DetailsSurfaceFallback';
 import { DETAILS_TAB_STRIP_METRICS } from '@/components/appShell/panes/details/header/detailsTabHeaderMetrics';
-import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
+import { SurfaceStateSizeProvider, useSurfaceStateCardSize } from '@/components/ui/surfaces/surfaceStateSize';
 import type { DetailsTab, DetailsTabState } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import {
     DetailsSurfaceHost,
@@ -38,7 +37,6 @@ import {
 } from './surfaces/sessionDetailsSurfaceRegistry';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import type { LocalServiceLauncherState } from '@/sync/domains/local/services/launch';
-import type { PeerMediationObservabilityUiStore } from '@/sync/domains/machines/peer/mediation/observability';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import type { BrowserShellRecordingState } from '@/components/browser/BrowserShell';
 import {
@@ -49,7 +47,6 @@ import {
 import { resolveBrowserSurfacePlatform } from '@/components/browser/surfaces/useBrowserSurfaceHostProps';
 import { useOpenBrowserTargetInWorkspace } from '@/components/browser/surfaces/useOpenBrowserTargetInWorkspace';
 import { useSessionDetailsPanelPluginRuntime } from './useSessionDetailsPanelPluginRuntime';
-import { usePeerMediationObservabilityStore } from '@/sync/domains/machines/peer/mediation/observability/usePeerMediationObservabilityStore';
 import type { SimulatorPreviewSurfaceRuntime } from '@/sync/domains/devices/simulator/useSimulatorPreviewRuntime';
 import { useSimulatorPreviewLiveSurface } from '@/components/devices/simulator/relay/useSimulatorPreviewLiveSurface';
 import { useSimulatorLiveStreamRelaySocket } from '@/components/devices/simulator/relay/useSimulatorLiveStreamRelaySocket';
@@ -63,13 +60,14 @@ import {
 } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
 import { useSessionBoardFeatureEnabled } from '@/components/sessions/board/useSessionBoardFeatureEnabled';
 import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
-import type { SessionBoardPrimaryMountResolver } from '@/sync/domains/session/board';
 import { SESSION_BOARD_DESTINATION } from '@/components/sessions/board/sessionBoardDestination';
 import { useMountedSessionBoardController } from '@/components/sessions/board/SessionBoardControllerProvider';
 import { isSessionBoardVisibleInDetails } from '@/components/sessions/board/sessionBoardDetailsVisibility';
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import { useWorkspaceFileWriteTabPresentation } from '@/components/workspaces/files/useWorkspaceFileWriteTabPresentation';
 import { TrackCapsule, TrackInputBoundary, useSessionTrack } from '@/components/sessions/files/track/SessionTrack';
+import { useAppPaneContext } from '@/components/appShell/panes/AppPaneContext';
+import { PhoneDetailsStartContext } from '@/components/appShell/panes/details/PhoneDetailsStartSheet';
 
 export type SessionDetailsPanelProps = Readonly<{
     sessionId: string;
@@ -95,19 +93,23 @@ export type SessionDetailsPanelProps = Readonly<{
     pluginUiProjection?: PluginUiProjectionModel | null;
     localServicePreviewState?: LocalServicePreviewState | null;
     localServiceLauncherState?: LocalServiceLauncherState | null;
-    peerMediationObservabilityState?: PeerMediationObservabilityUiStore | null;
-    peerMediationObservabilityScope?: PeerMediationObservabilityScopeV1 | null;
     simulatorPreview?: SimulatorPreviewSurfaceRuntime | null;
     platform?: LocalServicePreviewPlatform;
     browserProductModels?: BrowserSurfaceProductModels | null;
     browserRecording?: BrowserShellRecordingState | null;
     nowMs?: () => number;
     /** One executable-mount decision derived by the enclosing Session shell. */
-    resolveBoardPrimaryHost?: SessionBoardPrimaryMountResolver;
 }>;
 
 export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) => {
+    const inStartSheet = React.useContext(PhoneDetailsStartContext) !== null;
+    const startIsPresented = useAppPaneContext(value => value.detailsStartScopeId === props.scopeId);
+    return startIsPresented && !inStartSheet ? null : <SessionDetailsPanelContent {...props} />;
+});
+
+const SessionDetailsPanelContent = React.memo((props: SessionDetailsPanelProps) => {
     const { theme } = useUnistyles();
+    const inheritedStateSize = useSurfaceStateCardSize();
     const insets = useChromeSafeAreaInsets();
     const pane = useAppPaneScope(props.scopeId);
     const { open: openWorkspaceFile } = useWorkspaceFileOpener();
@@ -125,7 +127,6 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         routeServerId: props.routeServerId,
         paneSurfaceScope: props.paneSurfaceScope,
         pluginUiProjection: props.pluginUiProjection,
-        peerMediationObservabilityScope: props.peerMediationObservabilityScope,
         platform: props.platform,
     });
     const session = useSessionViewShellSession(props.sessionId, pluginRuntime.serverId);
@@ -137,18 +138,8 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         () => resolvePluginUiRuntimeFormFactor({ deviceType }),
         [deviceType],
     );
-    const livePeerMediationObservabilityState = usePeerMediationObservabilityStore({
-        scope: pluginRuntime.peerMediationObservabilityScope,
-        source: 'server',
-        serverId: pluginRuntime.serverId,
-        enabled: props.peerMediationObservabilityState === undefined,
-    });
     const localServicePreviewState = props.localServicePreviewState;
     const localServiceLauncherState = props.localServiceLauncherState;
-    const peerMediationObservabilityState =
-        props.peerMediationObservabilityState !== undefined
-            ? props.peerMediationObservabilityState
-            : livePeerMediationObservabilityState;
     // Live `server_relay` ingestion (Phase 8.1b): resolve the host machine's relay socket
     // and thread decoded frames into the simulator preview view-model. The socket hook is
     // gated behind the `devices.simulatorPreview` decision, so this stays inert until that
@@ -300,6 +291,10 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         platform: resolveBrowserSurfacePlatform(pluginRuntime.platform),
         browserProfile: browserProductModels?.browserProfile?.profile,
         localServicePreviewState,
+        localServiceAddressScope: pluginRuntime.machineId ? {
+            machineId: pluginRuntime.machineId, sessionId: props.sessionId,
+            ...(fileWriteScope?.rootPath ? { scope: 'workspace', workspaceRoot: fileWriteScope.rootPath } : {}),
+        } : undefined,
     });
     const detailsSurfaceRenderers = React.useMemo(() => session ? createSessionDetailsSurfaceRenderers({
             onOpenTarget: openBrowserViewTarget,
@@ -317,22 +312,18 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
             callerHostedHtmlRuntime,
             localServicePreviewState,
             localServiceLauncherState,
-            peerMediationObservabilityState,
-            peerMediationObservabilityScope: pluginRuntime.peerMediationObservabilityScope,
             simulatorPreview,
             platform: pluginRuntime.platform,
             formFactor: pluginRuntimeFormFactor,
             productModels: browserProductModels,
             browserRecording,
             nowMs: props.nowMs,
-            requestClose,
             openFileTab,
             getStartEditingFileHandler,
             sessionScreenTestIdsEnabled,
             closeDetailsTab,
             openDetailsTab,
             boardHost: pane.scopeState?.mainHidden === true ? 'focusedDetails' : 'details',
-            resolveBoardPrimaryHost: props.resolveBoardPrimaryHost,
         }) : [], [
         openBrowserViewTarget,
         browserProductModels,
@@ -343,12 +334,9 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         closeDetailsTab,
         openDetailsTab,
         pane.scopeState?.mainHidden,
-        props.resolveBoardPrimaryHost,
-        peerMediationObservabilityState,
         pluginRuntime.machineId,
         pluginRuntime.interactionEnabled,
         pluginRuntime.phase,
-        pluginRuntime.peerMediationObservabilityScope,
         pluginRuntime.platform,
         pluginRuntimeFormFactor,
         pluginRuntime.pluginUiProjection,
@@ -361,7 +349,6 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         props.scopeId,
         props.sessionId,
         session,
-        requestClose,
         sessionScreenTestIdsEnabled,
         simulatorPreview,
     ]);
@@ -493,8 +480,9 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         showHeaderActions && closeButtonAtStart ? closeButton : null
     ), [closeButton, closeButtonAtStart, showHeaderActions]);
 
-    // Launchers and workspace chrome ride on the strip; a single tab's own header (a peek) keeps
-    // only the pane's controls (lab `session-D`: ⤢ and ×).
+    // What must stay reachable rides with the pane's controls, into a single tab's own header too: Track
+    // follows the agent's write (nothing while no write is in flight, so it never holds a header's row),
+    // and the right-pane toggle is the pane's own.
     const renderLiveActions = React.useCallback(() => {
         const trackCapsule = track.target ? <TrackCapsule track={track} /> : null;
         const rightPaneToggle = showHeaderActions && showRightPaneToggle ? (
@@ -588,14 +576,15 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
             renderStripActions={renderStripActions}
             renderLiveActions={renderLiveActions}
             renderHeaderActions={renderHeaderActions}
+            closeLastTab={props.onRequestClose ?? null}
             renderEmptyState={renderEmptyState}
         />
     );
     // The pushed phone route recomposes every tab's header and state for the phone (details lab 2).
     const tracked = <TrackInputBoundary track={track}>{workspace}</TrackInputBoundary>;
-    const presented = props.presentation === 'screen' && deviceType === 'phone'
-        ? <SurfaceStateSizeProvider size="phone">{tracked}</SurfaceStateSizeProvider>
-        : tracked;
+    const presented = <SurfaceStateSizeProvider size={props.presentation === 'screen' && deviceType === 'phone' ? 'phone' : inheritedStateSize}>
+        {tracked}
+    </SurfaceStateSizeProvider>;
     // A retained viewer source (a Computer or Browser tab) binds nothing without the Session's
     // admitted Home/Account authority. Inside the Session shell it is inherited; a Details route or
     // phone scene rendered outside it takes this panel's own runtime authority.

@@ -95,8 +95,8 @@ export type MachineAgentIsolationActionResultById = {
                 };
             };
             setup?: undefined | {
-                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                 outcome: 'not_applied';
+                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                 failure?: undefined | {
                     kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
                     reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
@@ -151,8 +151,8 @@ export type MachineAgentIsolationActionResultById = {
                 };
             };
             setup?: undefined | {
-                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                 outcome: 'not_applied';
+                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                 failure?: undefined | {
                     kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
                     reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
@@ -255,8 +255,8 @@ export type MachineAgentIsolationActionResultById = {
                 };
             };
             setup?: undefined | {
-                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                 outcome: 'not_applied';
+                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                 failure?: undefined | {
                     kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
                     reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
@@ -311,8 +311,8 @@ export type MachineAgentIsolationActionResultById = {
                 };
             };
             setup?: undefined | {
-                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                 outcome: 'not_applied';
+                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                 failure?: undefined | {
                     kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
                     reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
@@ -430,8 +430,8 @@ export type MachineAgentIsolationActionResultById = {
                 };
             };
             setup?: undefined | {
-                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                 outcome: 'not_applied';
+                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                 failure?: undefined | {
                     kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
                     reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
@@ -564,8 +564,8 @@ export type MachineAgentIsolationActionResultById = {
                     };
                 };
                 setup?: undefined | {
-                    reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                     outcome: 'not_applied';
+                    reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                     failure?: undefined | {
                         kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
                         reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
@@ -635,8 +635,8 @@ export type MachineAgentIsolationActionResultById = {
                 };
             };
             setup?: undefined | {
-                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                 outcome: 'not_applied';
+                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                 failure?: undefined | {
                     kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
                     reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;

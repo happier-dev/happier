@@ -17,6 +17,11 @@ export function isSessionSpawnNewActionIdV1(actionId: string): actionId is typeo
 export const SESSION_OPEN_ACTION_ID_V1 = 'session.open' as const;
 export const SESSION_MESSAGE_SEND_ACTION_ID_V1 = 'session.message.send' as const;
 
+/** Native Service Stop consumes only its exact handle; Ask stays with the original Account. */
+export function isLocalServiceStopActionIdV1(actionId: unknown): actionId is 'localServices.actions.stopManaged' {
+  return actionId === 'localServices.actions.stopManaged';
+}
+
 /** Preserve the private deciding or new-Session invocation on same-Account delivery. */
 export function requiresOriginalAccountInvocationMachineProofV1(actionId: string): boolean {
   return actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 || actionId === 'approval.request.decide';
@@ -37,20 +42,12 @@ export function isWorkspaceSyncRelationshipControlActionId(actionId: string): ac
 
 /** Actions that exercise the separately granted approval-decision authority. */
 export const DECISION_ACTION_IDS = ['approval.request.decide', 'session.permission.respond'] as const;
-export const BROWSER_EXTENSION_MUTATION_ACTION_IDS = [
-  'browser.extensions.install', 'browser.extensions.update', 'browser.extensions.enable', 'browser.extensions.disable', 'browser.extensions.remove',
-] as const;
-export const BROWSER_EXTENSION_ACTION_IDS = [
-  'browser.extensions.list', ...BROWSER_EXTENSION_MUTATION_ACTION_IDS,
-  'browser.extensions.openActionPopup', 'browser.extensions.openOptions',
-] as const;
-export type BrowserExtensionActionIdV1 = typeof BROWSER_EXTENSION_ACTION_IDS[number];
-export function isBrowserExtensionActionIdV1(actionId: string): actionId is BrowserExtensionActionIdV1 {
-  return (BROWSER_EXTENSION_ACTION_IDS as readonly string[]).includes(actionId);
-}
-export function isBrowserExtensionMutationActionIdV1(actionId: string): boolean {
-  return (BROWSER_EXTENSION_MUTATION_ACTION_IDS as readonly string[]).includes(actionId);
-}
+import { BROWSER_EXTENSION_ACTION_IDS, BROWSER_PROFILE_ACTION_IDS } from './actionIdsBrowser.js';
+export {
+  BROWSER_EXTENSION_ACTION_IDS, BROWSER_EXTENSION_MUTATION_ACTION_IDS,
+  isBrowserExtensionActionIdV1, isBrowserExtensionMutationActionIdV1, type BrowserExtensionActionIdV1,
+  BROWSER_PROFILE_ACTION_IDS, BROWSER_PROFILE_MUTATION_ACTION_IDS, isBrowserProfileActionIdV1,
+} from './actionIdsBrowser.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DEPLOYMENT_ACTION_IDS_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { CODE_INTELLIGENCE_ACTION_IDS } from './codeIntelligenceActionIdsV1.js';
@@ -207,6 +204,9 @@ export function isSessionOrganizationAppearanceActionId(value: string): value is
   return (SESSION_ORGANIZATION_APPEARANCE_ACTION_IDS as readonly string[]).includes(value);
 }
 export const ACCOUNT_API_TOKENS_LIST_ACTION_ID_V1 = 'account.apiTokens.list' as const;
+
+/** Ordered host Actions promoted in the Workflow step picker. */
+export const WORKFLOW_STEP_PROMOTED_ACTION_IDS_V1: readonly string[] = ['notifications.notify_me', 'review.start'];
 
 export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   deployments: DEPLOYMENT_ACTION_IDS_V1,
@@ -626,6 +626,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'bugreport.uploadArtifact',
   ],
   browser_control: [
+    ...BROWSER_PROFILE_ACTION_IDS,
     ...BROWSER_EXTENSION_ACTION_IDS,
     'browser.profile.logins.import',
     'browser.view.list',

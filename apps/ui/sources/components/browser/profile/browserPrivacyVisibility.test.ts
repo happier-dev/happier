@@ -61,6 +61,6 @@ describe('shouldSurfaceBrowserPrivacy (B-RC5)', () => {
     });
 
     it('is true when management actions are available', () => {
-        expect(shouldSurfaceBrowserPrivacy(defaultModel({ management: {} }))).toBe(true);
+        expect(shouldSurfaceBrowserPrivacy(defaultModel({ management: { source: { scope: { serverId: 'home', accountId: 'owner' }, machineId: 'machine' } } }))).toBe(true);
     });
 });

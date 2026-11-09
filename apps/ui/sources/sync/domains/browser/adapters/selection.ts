@@ -5,6 +5,7 @@ import type {
     BrowserTargetPolicyDecisionV1,
     BrowserViewTargetKindV1,
     BrowserViewTargetV1,
+    BrowserCommandV1,
 } from '@happier-dev/protocol';
 
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
@@ -22,6 +23,8 @@ import {
     type DesktopWebViewNativeAvailability,
 } from './desktopWebView';
 import type { BrowserAdapterPlatform } from './engines';
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
+import { readBrowserLoopbackAddressPort } from '../shell/address';
 
 export type BrowserAdapterSelection =
     | Readonly<{
@@ -57,7 +60,17 @@ export type BrowserAdapterSelection =
       }>;
 
 /** A person's explicit choice for this open only; never a setting or a remembered preference. */
-export type BrowserOpenEngineOverride = 'managed' | 'embedded';
+export type BrowserOpenEngineOverride = NonNullable<Extract<BrowserCommandV1, { kind: 'openView' }>['engineOverride']>;
+
+/** Machine localhost never escapes to the answering device's browser. Address admission
+ * then chooses a running Service before the managed Browser through the shared resolver. */
+export function selectChatLinkEngineOverride(
+    target: BrowserViewTargetV1,
+    preference: LocalSettings['chatLinkOpenLocation'],
+): BrowserOpenEngineOverride | undefined {
+    if (target.kind === 'externalUrl' && readBrowserLoopbackAddressPort(target.url)) return 'managed';
+    return preference === 'browser' ? undefined : preference;
+}
 
 export type SelectBrowserTargetAdapterInput = Readonly<{
     target: BrowserViewTargetV1;

@@ -1,27 +1,27 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { StyleSheet } from 'react-native-unistyles';
+import type { BrowserPermissionStateV1 } from '@happier-dev/protocol/browser/permissions/v1';
 import type {
-    BrowserPermissionGrantV1,
-    BrowserPermissionStateV1,
     BrowserProfileStorageModeV1,
-    BrowserProfileV1,
+    BrowserProfileV1} from '@happier-dev/protocol/browser/profile/v1';
+import type {
     BrowserStoragePartitionV1,
     BrowserStoragePersistenceV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/storage/v1';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
 import { BROWSER_CHROME_WIDTH } from '../browserChromeDensity';
+import { BrowserProfileManagement, type BrowserProfileManagementModel } from './BrowserProfileManagement';
+export type { BrowserProfileManagementModel } from './BrowserProfileManagement';
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        alignItems: 'center',
+        flexDirection: 'column',
+        flexShrink: 1,
         gap: theme.space.s6,
         minHeight: 34,
         minWidth: 0,
@@ -41,7 +41,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     value: {
         color: theme.colors.text.primary,
     },
-    actionRow: {
+    facts: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         alignItems: 'center',
@@ -52,16 +52,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.disabled,
     },
 }));
-
-export type BrowserProfileManagementModel = Readonly<{
-    availableProfiles?: readonly BrowserProfileV1[];
-    permissionGrants?: readonly BrowserPermissionGrantV1[];
-    storagePartitions?: readonly BrowserStoragePartitionV1[];
-    onCreateProfile?: () => void;
-    onSelectProfile?: (profileId: string) => void;
-    onRevokePermissionGrant?: (grantId: string) => void;
-    onClearStoragePartition?: (partitionId: string) => void;
-}>;
 
 export type BrowserProfileStatusModel = Readonly<{
     profile: BrowserProfileV1 | null;
@@ -135,102 +125,6 @@ function Segment(props: Readonly<{
     );
 }
 
-/** A profile operation: the canonical small secondary button (pressed, hover, focus and disabled). */
-function ActionButton(props: Readonly<{
-    label: string;
-    testID: string;
-    disabled?: boolean;
-    onPress?: () => void;
-}>): React.ReactElement {
-    return (
-        <RoundButton
-            size="small"
-            display="secondary"
-            title={props.label}
-            disabled={props.disabled === true || !props.onPress}
-            onPress={props.onPress}
-            testID={props.testID}
-        />
-    );
-}
-
-function unavailableTestId(testID: string, available: boolean): string {
-    return available ? testID : `${testID}-unavailable`;
-}
-
-function BrowserProfileManagementActions(props: Readonly<{
-    management: BrowserProfileManagementModel;
-    testID: string;
-}>): React.ReactElement {
-    const profiles = props.management.availableProfiles ?? [];
-    const permissionGrants = props.management.permissionGrants ?? [];
-    const storagePartitions = props.management.storagePartitions ?? [];
-    const canCreateProfile = Boolean(props.management.onCreateProfile);
-    const canSelectProfile = Boolean(props.management.onSelectProfile);
-    const canRevokePermission = Boolean(props.management.onRevokePermissionGrant);
-    const canClearStorage = Boolean(props.management.onClearStoragePartition);
-
-    return (
-        <View testID={`${props.testID}-management`} style={stylesheet.actionRow}>
-            <ActionButton
-                testID={unavailableTestId(`${props.testID}-profile-create`, canCreateProfile)}
-                label={t('browserShell.profile.management.createProfile')}
-                disabled={!canCreateProfile}
-                onPress={props.management.onCreateProfile}
-            />
-            {profiles.map((profile) => (
-                <ActionButton
-                    key={profile.profileId}
-                    testID={unavailableTestId(
-                        `${props.testID}-profile-select-${profile.profileId}`,
-                        canSelectProfile,
-                    )}
-                    label={profile.displayName ?? t('browserShell.profile.management.selectProfile')}
-                    disabled={!canSelectProfile}
-                    onPress={props.management.onSelectProfile
-                        ? () => props.management.onSelectProfile?.(profile.profileId)
-                        : undefined}
-                />
-            ))}
-            {profiles.length === 0 ? (
-                <ActionButton
-                    testID={`${props.testID}-profile-select-unavailable`}
-                    label={t('browserShell.profile.management.selectProfile')}
-                    disabled
-                />
-            ) : null}
-            {permissionGrants.map((grant) => (
-                <ActionButton
-                    key={grant.id}
-                    testID={unavailableTestId(
-                        `${props.testID}-permission-revoke-${grant.id}`,
-                        canRevokePermission,
-                    )}
-                    label={t('browserShell.profile.management.revokePermission')}
-                    disabled={!canRevokePermission}
-                    onPress={props.management.onRevokePermissionGrant
-                        ? () => props.management.onRevokePermissionGrant?.(grant.id)
-                        : undefined}
-                />
-            ))}
-            {storagePartitions.map((partition) => (
-                <ActionButton
-                    key={partition.partitionId}
-                    testID={unavailableTestId(
-                        `${props.testID}-storage-clear-${partition.partitionId}`,
-                        canClearStorage,
-                    )}
-                    label={t('browserShell.profile.management.clearStorage')}
-                    disabled={!canClearStorage}
-                    onPress={props.management.onClearStoragePartition
-                        ? () => props.management.onClearStoragePartition?.(partition.partitionId)
-                        : undefined}
-                />
-            ))}
-        </View>
-    );
-}
-
 export function BrowserProfileStatus(props: Readonly<{
     model: BrowserProfileStatusModel;
     testID?: string;
@@ -242,6 +136,7 @@ export function BrowserProfileStatus(props: Readonly<{
 
     return (
         <View testID={testID} style={stylesheet.root} accessibilityLabel={t('browserShell.profile.title')}>
+            <View style={stylesheet.facts}>
             <Segment
                 testID={`${testID}-mode-${mode ?? 'unavailable'}`}
                 label={t('browserShell.profile.modeLabel')}
@@ -259,10 +154,12 @@ export function BrowserProfileStatus(props: Readonly<{
                 label={t('browserShell.profile.permissionsLabel')}
                 value={permissionLabel(props.model)}
             />
+            </View>
             {props.model.management ? (
-                <BrowserProfileManagementActions
+                <BrowserProfileManagement
+                    key={JSON.stringify([props.model.management.source.scope.serverId, props.model.management.source.scope.accountId, props.model.management.source.machineId])}
                     testID={testID}
-                    management={props.model.management}
+                    model={props.model.management}
                 />
             ) : null}
         </View>

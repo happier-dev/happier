@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { LocalServiceLaunchTargetV1 } from '@happier-dev/protocol';
+import type { LocalServiceLaunchTargetV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import { BrowserWorkspaceOpenResultV1Schema } from '@happier-dev/protocol/browser/control/v1';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -81,6 +81,8 @@ export function useServicesOpenInBrowser(
         scope: input.scope,
         platform,
         localServicePreviewState,
+        localServiceAddressScope: input.machineId ? { machineId: input.machineId,
+            ...(input.sessionId ? { sessionId: input.sessionId } : {}) } : undefined,
     });
     const currentOpener = React.useRef(onOpenTarget);
     currentOpener.current = onOpenTarget;
@@ -103,5 +105,7 @@ export function useServicesOpenInBrowser(
         platform,
         serverId: input.serverId,
         sessionId: input.sessionId,
-    }), [input.serverId, input.sessionId, openAndFollowCommit, platform]);
+        accountLifetime,
+        credentialKey: mountedAction.binding?.credentialKey,
+    }), [accountLifetime, input.serverId, input.sessionId, mountedAction.binding?.credentialKey, openAndFollowCommit, platform]);
 }

@@ -2291,6 +2291,47 @@ describe('BrowserSurfaceHost', () => {
         expect(screen.findByTestId('browser-surface-address')?.props.value).toBe('first.test');
     });
 
+    it('keeps the workspace tab when a profile switch closes and reopens its logical view in one receipt', async () => {
+        const { BrowserSurfaceHost } = await import('./BrowserSurfaceHost');
+        const { BrowserShell } = await import('../BrowserShell');
+        const { readRegisteredBrowserRuntimeControlAdapter } = await import('@/sync/domains/browser/actions/runtimeControlRegistry');
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('Browser test Account was not restored');
+        const streamedTarget = { kind: 'streamedBrowser' as const, targetId: 'profile-stream', streamId: 'profile-stream' };
+        const initialBrowserState = openBrowserTarget(createBrowserViewState(), streamedTarget, {
+            browserSessionId: 'session_1', viewId: 'agent-view', platform: 'web',
+        });
+        const original = initialBrowserState.viewsById['agent-view']!;
+        const onCloseTab = vi.fn();
+        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId="session_1" platform="web"
+            initialBrowserState={initialBrowserState} onCloseTab={onCloseTab}
+            pluginBrowserActionContext={{ sessionId: 'session_1', machineId: 'machine_1', serverId: scope.serverId }}
+            productModels={{ browserProfile: { profile: sessionBrowserProfile } }}
+            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
+            browserFeatureDecision={enabledBrowserDecision} testID="browser-surface" />);
+        const control = readRegisteredBrowserRuntimeControlAdapter('session_1', 'agent-view');
+        expect(control).toBeDefined();
+        const selectedProfile = { profileId: 'saved-work', displayName: 'Work', storageMode: 'user' as const,
+            owner: { kind: 'user' as const, id: 'saved-work' }, cleanupOnSessionClose: false };
+        const selection = screen.findByType(BrowserShell).props.browserProfile.management.source.selection;
+        await screen.pressByTestIdAsync('browser-surface-privacy');
+        expect(screen.findByTestId('browser-surface-privacy-status-mode-session')).toBeTruthy();
+        await act(async () => selection.onSelected(selectedProfile, [
+            { kind: 'viewClosed', eventId: 'switch-close', browserSessionId: 'session_1', viewId: 'agent-view', occurredAt: 1000 },
+            { kind: 'sessionCreated', eventId: 'switch-profile', browserSessionId: 'session_1', profileId: selectedProfile.profileId, occurredAt: 1001 },
+            { kind: 'viewOpened', eventId: 'switch-open', browserSessionId: 'session_1', viewId: 'agent-view', occurredAt: 1001,
+                platform: 'web', target: streamedTarget, adapterKind: original.adapterKind, engineKind: original.engineKind,
+                adapterCapabilities: original.adapterCapabilities },
+        ]));
+        expect(control?.readState()?.viewsById['agent-view']).toBeDefined();
+        expect(onCloseTab).not.toHaveBeenCalled();
+        expect(screen.findByTestId('browser-surface-privacy-status-mode-user')).toBeTruthy();
+        await act(async () => control?.applyDaemonEvents?.([{ kind: 'sessionCreated', eventId: 'other-profile',
+            browserSessionId: 'session_1', profileId: 'other-profile', occurredAt: 1002 }]));
+        expect(screen.findByTestId('browser-surface-privacy-status-mode-session')).toBeTruthy();
+        await screen.unmount();
+    });
+
     it.each(['machine', 'local'] as const)('releases the closed frozen source through the %s Action ingress while focus changes retain it', async (ingress) => {
         const { BrowserSurfaceHost } = await import('./BrowserSurfaceHost');
         const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');

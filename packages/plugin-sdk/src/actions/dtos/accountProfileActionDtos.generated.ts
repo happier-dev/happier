@@ -2671,6 +2671,20 @@ export type AccountProfileActionResultById = {
                 };
             };
             state: 'published';
+            metadata: {
+                bio?: string | undefined;
+                links?: undefined | {
+                    label: string;
+                    url: string;
+                }[];
+                projects?: undefined | {
+                    label: string;
+                    url: string;
+                }[];
+                avatar?: undefined | {
+                    kind: 'account' | 'planet';
+                };
+            };
             snapshot: {
                 v: 1;
                 computedAtMs: number;
@@ -2878,20 +2892,6 @@ export type AccountProfileActionResultById = {
                         };
                     };
                 }[];
-            };
-            metadata: {
-                bio?: string | undefined;
-                links?: undefined | {
-                    label: string;
-                    url: string;
-                }[];
-                projects?: undefined | {
-                    label: string;
-                    url: string;
-                }[];
-                avatar?: undefined | {
-                    kind: 'account' | 'planet';
-                };
             };
             layout: {
                 v: 1;

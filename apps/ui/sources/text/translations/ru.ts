@@ -1,3 +1,4 @@
+import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
 import { deploymentOverviewTranslations } from './deploymentOverviewTranslations';
@@ -5492,7 +5493,7 @@ export const ru: TranslationStructure = {
         remoteAlerts: {
             title: "Оповещения о сессиях при закрытом приложении",
             accountTitle: "Разрешить удалённые оповещения о сессиях",
-            disclosure: "Разрешите этому Home читать категории оповещений, часы тишины и часовой пояс, ограничения предпросмотра и настройки звука, чтобы отправлять разрешённые оповещения при закрытом приложении. Содержимое сессий и ключи шифрования не передаются.",
+            disclosure: "Разрешите этому Home сообщать о сессиях, пока приложение закрыто. Он читает только типы уведомлений, тихие часы и часовой пояс, лимиты предпросмотра и звуки, но никогда не содержимое сессий и не ключи шифрования.",
             footer: "Без этого согласия существующие уведомления владельца и обновления в открытом приложении остаются доступны. Для удалённых изменений нужно подключение; уже отправленные оповещения нельзя отозвать.",
             deviceTitle: "Получать на этом устройстве",
             deviceSubtitle: "Только удалённые оповещения о сессиях на этом устройстве.",
@@ -5510,8 +5511,8 @@ export const ru: TranslationStructure = {
         },
     push: {
       title: "Push-уведомления",
-      footer: ({ home }: { home: string }) => `Согласие на push синхронизируется для ${home}. Разрешения и настройки устройства действуют на всём устройстве.`,
-      enabledSubtitle: ({ home }: { home: string }) => `Разрешить push-уведомления от ${home}`,
+      footer: ({ home }: { home: string }) => `${home} отправляет уведомления на телефон и компьютеры, пока Happier закрыт.`,
+      enabledSubtitle: ({ home }: { home: string }) => `Если выключено, уведомления от ${home} и все типы ниже не приходят.`,
       troubleshootTitle: "Устранение неполадок",
       troubleshootSubtitle: "Проверить разрешения и зарегистрированные устройства",
     },
@@ -6653,6 +6654,7 @@ export const ru: TranslationStructure = {
 
   settingsAppearance: {
     ...paneArrangementTranslations['ru'],
+    chatLinks: chatLinksTranslations['ru'],
     needsYouHighlight: needsYouHighlightTranslations['ru'],
     workingIndicator: workingIndicatorTranslations['ru'],
     visualEffects: {
@@ -7106,6 +7108,8 @@ export const ru: TranslationStructure = {
         "Happier не может подключиться к демону на этой машине. Он может быть офлайн, ещё запускаться или быть отключён от Home.",
       agentIsolationMemberSetupAskManager: "Попросите управляющего машиной настроить для вас отдельных пользователей.",
       agentIsolationMemberSetupOpenSecurity: "Откройте страницу «Безопасность» этой машины, чтобы проверить настройку отдельных пользователей.",
+      pluginCodeUnreadableAskManager: "Код плагинов недоступен вашему отдельному пользователю. Попросите управляющего машиной настроить отдельных пользователей и перезапустить Happier на машине, затем повторите попытку.",
+      pluginCodeUnreadableOpenSecurity: "Код плагинов недоступен вашему отдельному пользователю. Откройте страницу «Безопасность» этой машины и настройте отдельных пользователей, затем перезапустите Happier на машине и повторите попытку.",
       agentIsolationUnavailable:
         "Изоляция агентов на этой машине не готова. Попросите владельца машины проверить настройки и повторите попытку.",
       tryAgain: "Пожалуйста, попробуйте снова",
@@ -8573,6 +8577,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
         statusBlocked: "Заблокировано",
         setTitle: "Задайте цель",
         setSubtitle: "Задайте фокус сессии, чтобы агент не отклонялся от цели.",
+        setSubtitleStarts: 'Агент начнёт, как только вы его зададите.',
         addBudget: "+ Добавить лимит бюджета (необязательно)",
         removeBudget: "Убрать бюджет",
         noUsageYet: "Пока нет расхода",
@@ -8641,6 +8646,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
     },
         pendingActivation: {
     held: { title: "Остановлено вами", body: "Сообщение останется в очереди, пока вы не возобновите этот сеанс." },
+    held_offline: { title: "Остановлено вами", body: "Эта машина не в сети. Сообщение останется в очереди; отправьте снова или возобновите, когда она вернётся." },
             waiting_offline: { title: 'Сообщение в очереди для этой машины', body: 'Оно будет обработано, когда эта машина и её daemon снова будут онлайн.' },
             waiting: { title: 'Ожидание возобновления', body: 'Ваше сообщение сохранено в очереди, пока daemon возобновляет эту сессию.' },
             failed: { title: 'Не удалось возобновить сессию', body: 'Ваше сообщение по-прежнему сохранено в очереди. Повторите попытку, когда будете готовы.' },
@@ -11658,6 +11664,8 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       management: {
         createProfile: 'Новый профиль',
         selectProfile: 'Выбрать профиль',
+selectWarning: "При смене профиля вкладки браузера этой сессии закроются, а эта страница откроется заново с выбранным профилем.",
+deleteWarning: "Сохранённые входы и данные сайтов профиля будут удалены, а использующие его браузеры — закрыты.",
         revokePermission: 'Отозвать',
         clearStorage: 'Очистить хранилище',
       },

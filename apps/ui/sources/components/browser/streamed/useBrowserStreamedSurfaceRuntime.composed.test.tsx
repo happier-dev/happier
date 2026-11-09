@@ -1,11 +1,11 @@
-import { BrowserAutomationActionResultV1Schema } from '@happier-dev/protocol/browser/automation/v1';
 // Cross-app composition keeps the real daemon/server path in this test without
 // adding their source and package-local aliases to the UI compiler program.
 import * as React from 'react';
+import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { BrowserEventBatchV1Schema, BrowserEventV1Schema } from '@happier-dev/protocol/browser/events/v1';
-import { MachineLiveStreamDecodedEnvelopeV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
-import { createBrowserSidecarCdpControlAdapterFactory } from '../../../../../cli/src/daemon/browser/sidecar/controlAdapterFactory';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { act } from 'react-test-renderer';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,12 +13,13 @@ import { flushHookEffects, invokeTestInstanceHandler, renderHook, renderScreen, 
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { buildBrowserAdapterCapabilities } from '@/sync/domains/browser/adapters/capabilities';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
-import type { MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol';
+import type { MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { encodeBase64 } from '@/encryption/base64';
 import { applyBrowserControlEvent, createBrowserControlState } from '@/sync/domains/browser/control';
 import { BrowserContextItemV1Schema } from '@happier-dev/protocol/browser/context/v1';
-import type { BrowserContextCapabilities } from '@happier-dev/protocol';
-import { createBrowserContextState } from '@/sync/domains/browser/context/state';
+import { BrowserEventBatchV1Schema, BrowserEventV1Schema } from '@happier-dev/protocol/browser/events/v1';
+import { BrowserAutomationActionResultV1Schema } from '@happier-dev/protocol/browser/automation/v1';
+import { MachineLiveStreamDecodedEnvelopeV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { createManagedChromiumBrowserAnnotationCaptureProvider } from '@/sync/domains/browser/context/managedChromiumAnnotationProvider';
 import { useBrowserAnnotationController } from '@/components/browser/annotation/useBrowserAnnotationController';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
@@ -27,13 +28,14 @@ import { DirectRouteGrantScopeV1Schema } from '@happier-dev/protocol/machines/pe
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { DaemonMachineLiveStreamRelayStartRequestV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/relayStartRpcV1';
 import { MachineLiveStreamRelayAuthorizationV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import { createMachineLiveStreamRelayAuthorizationSigningInputV1, MACHINE_LIVE_STREAM_SOCKET_EVENT } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { openMachineLiveStreamEnvelopeV1, sealMachineLiveStreamEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
 import tweetnacl from 'tweetnacl';
 import { selectBrowserCopresence } from '@/sync/domains/browser/automation/copresence';
 import { createBrowserSidecarCdpControlAdapter, type BrowserSidecarCdpEventSubscriber, type BrowserSidecarCdpControlTransport } from '../../../../../cli/src/daemon/browser/sidecar/controlAdapter';
+import { createBrowserSidecarCdpControlAdapterFactory } from '../../../../../cli/src/daemon/browser/sidecar/controlAdapterFactory';
 import { createBrowserAutomationDaemonService } from '../../../../../cli/src/daemon/browser/automation/service';
 import { createBrowserAutomationCdpAdapter } from '../../../../../cli/src/daemon/browser/automation/adapters/cdp';
 import { createControlAdapterAutomationTransport } from '../../../../../cli/src/daemon/browser/automation/adapters/controlBridge';
@@ -42,6 +44,10 @@ import { registerBrowserLiveCapture } from '../../../../../cli/src/daemon/browse
 import { createMachineLiveStreamCaptureRegistry } from '../../../../../cli/src/daemon/peer/mediation/stream/captureRegistry';
 import { createDaemonMachineLiveStreamCaptureAdapter } from '../../../../../cli/src/daemon/peer/mediation/stream/captureAdapter';
 import { createMachineLiveStreamRelayTerminator } from '../../../../../cli/src/daemon/peer/mediation/stream/relay';
+import { createProductBrowserSidecarControlAdapterFactory } from '../../../../../cli/src/daemon/browser/sidecar/productSource';
+import { createBrowserSidecarLaunchOwnerControlAdapterFactory } from '../../../../../cli/src/daemon/browser/sidecar/launchOwner';
+import { createBrowserProfileStore } from '../../../../../cli/src/daemon/browser/profiles/store';
+import { createBrowserStoragePartitionOwner } from '../../../../../cli/src/daemon/browser/storage/partitions';
 import { createBrowserDaemonControlBroker } from '../../../../../cli/src/daemon/browser/control/broker';
 import { RuntimeActionIdV1Schema } from '@happier-dev/protocol/actions/actionIds';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
@@ -78,14 +84,16 @@ const boundary = vi.hoisted(() => ({
     discoveryError: null as string | null,
     /** Holds daemon discovery open until released, to observe the wait before it answers. */
     discoveryGate: null as Promise<void> | null,
+    watchViews: null as ((input: { payload?: unknown; signal?: AbortSignal }) => Promise<unknown>) | null,
     disconnect: vi.fn(async () => undefined),
     relaySend: null as ((raw: unknown) => void) | null,
     maxFrameBytes: undefined as number | undefined,
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
-    machineRpcWithServerScope: async (input: { method: string; payload?: unknown }) => {
+    machineRpcWithServerScope: async (input: { method: string; payload?: unknown; signal?: AbortSignal }) => {
         boundary.requests.push(input);
+        if (input.method === 'daemon.browser.view.watch' && boundary.watchViews) return boundary.watchViews(input);
         if (input.method === 'daemon.browser.view.list' && boundary.discoveryGate) await boundary.discoveryGate;
         if (input.method === 'daemon.browser.view.list') return boundary.discoveryError
             ? { error: 'Browser prerequisite', errorCode: boundary.discoveryError }
@@ -114,6 +122,7 @@ const { BrowserShell } = await import('../BrowserShell');
 const { BrowserStreamedTarget } = await import('../adapters/BrowserStreamedTarget');
 const { LiveStreamPlayer } = await import('@/components/stream/LiveStreamPlayer');
 const { useSessionBrowserContextRuntime } = await import('@/components/sessions/browser/sessionBrowserContextRuntime');
+const transferRuntime = await import('@/sync/domains/transfers/runtime/transferRuntime');
 afterAll(async () => { await network.dispose(); webLocks.restore(); webStorage.restore(); });
 
 async function waitForStreamAdmission(): Promise<void> {
@@ -171,6 +180,61 @@ function daemonView(captureSource?: Record<string, unknown>) {
 }
 
 describe('useBrowserStreamedSurfaceRuntime', () => {
+    it('adopts daemon-opened views through scoped change push and releases hidden observation without polling', async () => {
+        const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
+        const broker = createBrowserDaemonControlBroker();
+        const transport = { openPage: async () => ({ targetId: 'push-page', sessionId: 'push-cdp' }),
+            dispatchPageCommand: async () => ({}), dispatchBrowserCommand: async () => ({}) };
+        const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'push-session', sidecarId: 'push-sidecar', transport });
+        const unrelated = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'other-session', sidecarId: 'other-sidecar', transport });
+        broker.registerAdapter(adapter);
+        broker.registerAdapter(unrelated);
+        let active = 0;
+        const snapshot = () => broker.listViews('push-session').map(view => ({ ...view, captureSource: {
+            v: 1, sourceId: view.sourceId, sourceKind: 'browser', supportedCodecs: ['image.mjpeg'],
+            inputMode: 'shared', sidebands: [], health: { status: 'available' },
+        } }));
+        boundary.views = [];
+        boundary.watchViews = async ({ payload, signal }) => {
+            const request = payload as { browserSessionId: string; knownViewIds: string[] };
+            expect(request.browserSessionId).toBe('push-session');
+            active += 1;
+            try {
+                await broker.watchViews({ ...request, signal });
+                return { protocolVersion: 1, views: snapshot() };
+            } finally { active -= 1; }
+        };
+        let state = createBrowserControlState();
+        const hook = await renderHook(({ enabled }: { enabled: boolean }) => useBrowserStreamedSurfaceRuntime({
+            browserSessionId: 'push-session', view: null, machineId: 'machine_1', serverId, enabled,
+            onBrowserEvent: event => { state = applyBrowserControlEvent(state, event); },
+        }), { initialProps: { enabled: true } });
+        try {
+            await flushHookEffects();
+            const requestsBefore = boundary.requests.length;
+            await unrelated.dispatchCommand({ kind: 'openView', commandId: 'unrelated-open', browserSessionId: 'other-session',
+                viewId: 'other-view', platform: 'web', target: { kind: 'externalUrl', targetId: 'other', url: 'https://other.test' } });
+            await flushHookEffects();
+            expect(boundary.requests).toHaveLength(requestsBefore);
+            await act(async () => { await adapter.dispatchCommand({ kind: 'openView', commandId: 'approved-open',
+                browserSessionId: 'push-session', viewId: 'approved-view', platform: 'web',
+                target: { kind: 'externalUrl', targetId: 'approved', url: 'https://approved.test' } }); });
+            await flushHookEffects();
+            expect(state.viewsById['approved-view']).toMatchObject({ browserSessionId: 'push-session', engineKind: 'streamedSurface' });
+            expect(active).toBe(1);
+            expect(boundary.requests).toContainEqual(expect.objectContaining({ method: RPC_METHODS.DAEMON_BROWSER_VIEW_WATCH,
+                machineId: 'machine_1', serverId, accountId: home.accountId, operationTimeoutMs: null }));
+            expect(boundary.requests.filter(request => (request as { method: string }).method === RPC_METHODS.DAEMON_BROWSER_VIEW_LIST)).toHaveLength(1);
+            expect(boundary.requests.filter(request => (request as { method: string }).method === 'daemon.browser.view.watch')).toHaveLength(2);
+            await hook.rerender({ enabled: false });
+            await flushHookEffects();
+            expect(active).toBe(0);
+            const requestsWhileHidden = boundary.requests.length;
+            await adapter.dispatchCommand({ kind: 'closeView', commandId: 'hidden-close', browserSessionId: 'push-session', viewId: 'approved-view' });
+            await flushHookEffects();
+            expect(boundary.requests).toHaveLength(requestsWhileHidden);
+        } finally { await hook.unmount(); boundary.watchViews = null; adapter.dispose(); unrelated.dispose(); }
+    });
     beforeEach(async () => {
         network.resetRequests();
         await network.addHome(home.serverUrl, home.accountId);
@@ -327,13 +391,19 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
 
     it('reports the managed-browser prerequisite before any view exists, so an empty Session Browser can explain it', async () => {
         boundary.discoveryError = 'managed_package_missing';
+        boundary.watchViews = async () => ({ error: 'Unknown method', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
         const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
         const hook = await renderHook(() => useBrowserStreamedSurfaceRuntime({
             view: null, browserSessionId: 'browser_session_1', machineId: 'machine_1', serverId,
         }));
         await flushHookEffects({ cycles: 4, turns: 4 });
         expect(hook.getCurrent()).toMatchObject({ unavailableReason: 'managed_package_missing', playerState: null });
+        const reads = boundary.requests.length;
+        await flushHookEffects();
+        expect(boundary.requests).toHaveLength(reads);
+        expect(boundary.requests.filter(request => (request as { method: string }).method === RPC_METHODS.DAEMON_BROWSER_VIEW_WATCH)).toHaveLength(1);
         await hook.unmount();
+        boundary.watchViews = null;
     });
 
     it('reports the typed first open before any view exists, and keeps Connecting for a dispatched open until discovery settles', async () => {
@@ -393,52 +463,149 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         await failed.unmount();
     });
 
+    it('discovers the real managed Session profile so an Action-opened view can offer Start recording', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-recording-profile-'));
+        const profiles = createBrowserProfileStore({ storageRootDirectory: directory,
+            partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: directory }) });
+        const factory = createProductBrowserSidecarControlAdapterFactory({ platform: 'linux', profileStore: profiles,
+            resolveManagedCandidate: async () => ({ source: 'managedBrowserPackage', executablePath: '/managed/chrome',
+                discoveryKind: 'managedRuntime', available: true, provenance: { origin: 'managed_package',
+                    pinnedVersion: '127.0.6533.88', channel: 'stable', integrityDigest: `sha256:${'a'.repeat(64)}`, license: 'BSD-3-Clause' } }),
+            createLaunchOwnerFactory: input => createBrowserSidecarLaunchOwnerControlAdapterFactory({ ...input,
+                // Only the Chromium process and its CDP connection are system boundaries.
+                spawnProcess: () => {
+                    const child = new EventEmitter();
+                    const stderr = new EventEmitter();
+                    queueMicrotask(() => stderr.emit('data', 'DevTools listening on ws://127.0.0.1:9444/devtools/browser/test\n'));
+                    return Object.assign(child, { pid: 123, stderr,
+                        kill: () => { child.emit('exit', 0, 'SIGTERM'); return true; } });
+                },
+                connectTransport: async () => ({ transport: { openPage: async () => ({ targetId: 'page', sessionId: 'cdp' }),
+                    dispatchPageCommand: async () => ({}), dispatchBrowserCommand: async () => ({ success: true }),
+                    subscribeCdpEvents: () => () => {} } }),
+            }) });
+        const runtime = await factory({ machineId: 'machine_1' });
+        if (!runtime.ok || !runtime.contextCapture) throw new Error('Managed runtime unavailable');
+        const registry = createMachineLiveStreamCaptureRegistry();
+        const producer = createBrowserCdpScreencastProducer({ contextCapture: runtime.contextCapture });
+        const registration = registerBrowserLiveCapture({ registry, contextCapture: runtime.contextCapture, producer, automation: () => null });
+        const broker = createBrowserDaemonControlBroker();
+        broker.registerAdapter(runtime.adapter);
+        const routes = createBrowserDaemonControlRoutes({ broker, captureRegistry: registry });
+        let unmount: (() => Promise<void>) | undefined;
+        try {
+            const opened = await routes.dispatchCommand({ kind: 'openView', commandId: 'action-open', browserSessionId: view.browserSessionId,
+                viewId: view.viewId, platform: 'web', target: view.target, focus: true });
+            expect(opened.status).toBe('dispatched');
+            boundary.views = [...routes.listViews(view.browserSessionId)];
+            const profile = profiles.listProfiles()[0];
+            if (!profile) throw new Error('Managed profile missing');
+            const { recordingCapabilities } = resolveBrowserRecordingStartContext({ hasCdpScreencast: true,
+                hasFrameEncoder: true, hasNativeViewCapture: false, hasLiveStreamCaptureRegistry: false })({
+                browserSessionId: view.browserSessionId, viewId: view.viewId, profileId: profile.profileId,
+                targetKind: 'externalUrl', adapterKind: 'chromiumSidecar', renderEngineKind: 'streamedSurface',
+                captureKind: 'cdpScreencast', fidelity: 'cdp', navigationGeneration: 0,
+                mimeType: 'video/webm', retentionClass: 'preSend' });
+            const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
+            const hook = await renderHook(() => {
+                const [state, setState] = React.useState(createBrowserControlState);
+                const activeView = state.viewsById[view.viewId] ?? null;
+                useBrowserStreamedSurfaceRuntime({ view: activeView, browserSessionId: view.browserSessionId,
+                    machineId: 'machine_1', serverId,
+                    onBrowserEvent: event => setState(previous => applyBrowserControlEvent(previous, event)) });
+                const control = resolveBrowserRecordingControl({ view: activeView,
+                    profileId: state.sessionsById[view.browserSessionId]?.profileId ?? null,
+                    state: createBrowserRecordingState(), recordingCapabilities, enabled: true });
+                return { state, control };
+            });
+            unmount = () => hook.unmount();
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            expect(hook.getCurrent().state.sessionsById[view.browserSessionId]?.profileId).toBe(profile.profileId);
+            expect(hook.getCurrent().control.unavailable).toBeNull();
+            expect(hook.getCurrent().control.startRequest).toMatchObject({ profileId: profile.profileId,
+                adapterKind: 'chromiumSidecar', captureKind: 'cdpScreencast', mimeType: 'video/webm' });
+            expect(opened.status === 'dispatched' && opened.events).toContainEqual(expect.objectContaining({
+                kind: 'sessionCreated', profileId: profile.profileId, browserSessionId: view.browserSessionId }));
+        } finally {
+            await unmount?.();
+            registration.dispose();
+            await runtime.dispose?.();
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
     it('discovers the session Chromium view on web and retains its annotation capture route before a view is seeded', async () => {
         boundary.views = [daemonView({ v: 1, sourceId: 'browser-view-key-1', sourceKind: 'browser',
             supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } })];
         boundary.captureResult = BrowserContextItemV1Schema.parse({ v: 1, kind: 'browserScreenshot',
             contextId: 'captured', sourceViewId: 'view_1', sourceAdapterKind: 'chromiumSidecar', fidelity: 'cdp',
             capturedAtMs: 1, navigationGeneration: 0, lifecycleState: 'available', redactionLevel: 'none',
-            media: { mediaId: 'capture_1', mediaKind: 'image', width: 800, height: 600, sizeBytes: 100,
-                file: { sessionId: 'browser_session_1', storage: 'session', path: 'images/capture.png', sha256: 'a'.repeat(64), mimeType: 'image/png' } } });
-        const captureProvider = createManagedChromiumBrowserAnnotationCaptureProvider({ machineId: 'machine_1', serverId });
-        const contextCapabilities = { enabled: true, available: true,
-            supportedContextKinds: ['browserPageReference', 'browserAnnotation'], supportedAdapterKinds: ['chromiumSidecar'],
-            screenshot: { supported: true, requiresAttachmentUploads: true }, text: { maxSelectionChars: 2048, maxSummaryChars: 8192 },
-            disabledReasons: [], policyDeniedReasons: [] } satisfies BrowserContextCapabilities;
-        const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
-        const hook = await renderHook(() => {
-            const [state, setState] = React.useState(createBrowserControlState);
-            const [context, setContext] = React.useState(createBrowserContextState);
-            const activeView = state.viewsById.view_1 ?? null;
-            useBrowserStreamedSurfaceRuntime({ view: activeView, machineId: 'machine_1', serverId,
-                browserSessionId: 'browser_session_1',
-                onBrowserEvent: event => setState(previous => applyBrowserControlEvent(previous, event)) });
-            const annotation = useBrowserAnnotationController({ activeView,
-                activeViewNavigationKey: activeView ? `${activeView.viewId}:${activeView.navigationGeneration}` : '',
-                browserContext: { state: context, onStateChange: setContext, contextCapabilities,
-                    enabled: true, browserDiagnosticsEnabled: true, attachmentsUploadsEnabled: true,
-                    annotationCaptureProvider: captureProvider, managedAnnotationCaptureProvider: true } });
-            return { state, context, annotation };
+            viewport: { width: 400, height: 300 },
+            media: { mediaId: 'capture_1', mediaKind: 'image', width: 800, height: 600, sizeBytes: 4,
+                file: { sessionId: 'browser_session_1', storage: 'daemon', path: 'images/capture.png', sha256: 'a'.repeat(64), mimeType: 'image/png' } } });
+        const captureProvider = createManagedChromiumBrowserAnnotationCaptureProvider({ machineId: 'machine_1', serverId,
+            machineHappyHomeDir: '/machine-home' });
+        // Only the pixel transfer and browser URL APIs are replaced; the Session host, Action
+        // executor, managed capture provider and shared frozen-draft owner remain real.
+        const download = vi.spyOn(transferRuntime, 'downloadDaemonWorkspaceFileToDestination').mockImplementation(async ({ destination }) => {
+            await destination.writeBytes(new Uint8Array([137, 80, 78, 71]));
+            await destination.close();
+            return { ok: true };
         });
-        await flushHookEffects({ cycles: 6, turns: 6 });
-        expect(hook.getCurrent().state.viewsById.view_1).toMatchObject({ browserSessionId: 'browser_session_1', adapterKind: 'chromiumSidecar',
-            target: { kind: 'streamedBrowser', streamId: 'browser-view-key-1' }, engineKind: 'streamedSurface',
-            adapterCapabilities: { supportsStreamingDisplay: true, navigation: { canNavigate: true } } });
-        expect(boundary.requests).toContainEqual(expect.objectContaining({
-            payload: { machineId: 'machine_1', browserSessionId: 'browser_session_1' },
-        }));
-        expect(hook.getCurrent().annotation.captureCapability).toEqual({ available: true, fidelity: 'cdp' });
-        await act(async () => { hook.getCurrent().annotation.start(); });
-        expect(hook.getCurrent().annotation.editorActive).toBe(true);
-        await act(async () => { await hook.getCurrent().annotation.capture(); });
-        expect(hook.getCurrent().context.attachmentOrder).toHaveLength(1);
-        expect(boundary.requests).toContainEqual(expect.objectContaining({ method: 'daemon.browser.context.dispatch',
-            payload: expect.objectContaining({ machineId: 'machine_1', actionId: 'browser.context.captureScreenshot',
-                input: expect.objectContaining({ browserSessionId: 'browser_session_1', viewId: 'view_1' }) }) }));
-        await act(async () => { hook.getCurrent().annotation.cancel(); });
-        expect(hook.getCurrent().annotation.editorActive).toBe(false);
-        await hook.unmount();
+        const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:unseeded-browser');
+        const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+        const accountScope = { serverId, accountId: home.accountId };
+        const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
+        let unmount: (() => Promise<void>) | undefined;
+        try {
+            const hook = await renderHook(() => {
+                const [state, setState] = React.useState(createBrowserControlState);
+                const activeView = state.viewsById.view_1 ?? null;
+                useBrowserStreamedSurfaceRuntime({ view: activeView, machineId: 'machine_1', serverId,
+                    browserSessionId: 'browser_session_1',
+                    onBrowserEvent: event => setState(previous => applyBrowserControlEvent(previous, event)) });
+                const runtime = useSessionBrowserContextRuntime({ enabled: true, sessionId: 'session_1', accountScope,
+                    attachmentsUploadsEnabled: true, annotationCaptureProvider: captureProvider });
+                if (!runtime) throw new Error('Session browser context missing');
+                const annotation = useBrowserAnnotationController({ activeView,
+                    activeViewNavigationKey: activeView ? `${activeView.viewId}:${activeView.navigationGeneration}` : '',
+                    browserContext: { ...runtime.browserShellContext, managedAnnotationCaptureProvider: true } });
+                return { state, context: runtime.state, annotation };
+            });
+            unmount = () => hook.unmount();
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            expect(hook.getCurrent().state.viewsById.view_1).toMatchObject({ browserSessionId: 'browser_session_1', adapterKind: 'chromiumSidecar',
+                target: { kind: 'streamedBrowser', streamId: 'browser-view-key-1' }, engineKind: 'streamedSurface',
+                adapterCapabilities: { supportsStreamingDisplay: true, navigation: { canNavigate: true } } });
+            expect(boundary.requests).toContainEqual(expect.objectContaining({
+                payload: { machineId: 'machine_1', browserSessionId: 'browser_session_1' },
+            }));
+            expect(hook.getCurrent().annotation.captureCapability).toEqual({ available: true, fidelity: 'cdp' });
+            await act(async () => { hook.getCurrent().annotation.start(); });
+            await waitForTestEvent(hook.subscribe, () => hook.getCurrent().annotation, annotation => !annotation.capturePending);
+            expect(hook.getCurrent().annotation.editorActive).toBe(true);
+            expect(hook.getCurrent().annotation.draft).toMatchObject({ source: {
+                uri: 'data:image/png;base64,iVBORw==', width: 800, height: 600, scale: 2,
+            }, document: { image: { width: 800, height: 600, scale: 2 }, marks: [] } });
+            // Starting freezes once; only Attach may flatten/upload and append composer context.
+            expect(hook.getCurrent().context.attachmentOrder).toHaveLength(0);
+            expect(download).toHaveBeenCalledOnce();
+            expect(download).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'machine_1', serverId, rootPath: '/machine-home' }));
+            expect(revokeObjectURL).toHaveBeenCalledWith('blob:unseeded-browser');
+            expect(boundary.requests).toContainEqual(expect.objectContaining({ method: 'daemon.browser.context.dispatch',
+                payload: expect.objectContaining({ machineId: 'machine_1', actionId: 'browser.context.captureScreenshot',
+                    input: expect.objectContaining({ browserSessionId: 'browser_session_1', viewId: 'view_1' }) }) }));
+            expect(boundary.requests.filter(request => (request as { method: string }).method === 'daemon.browser.context.dispatch')).toHaveLength(1);
+            await act(async () => { hook.getCurrent().annotation.cancel(); });
+            await waitForTestEvent(hook.subscribe, () => hook.getCurrent().annotation, annotation => !annotation.editorActive);
+            expect(hook.getCurrent().annotation.editorActive).toBe(false);
+            expect(hook.getCurrent().annotation.draft).toBeNull();
+        } finally {
+            await unmount?.();
+            download.mockRestore();
+            createObjectURL.mockRestore();
+            revokeObjectURL.mockRestore();
+        }
     });
 
     it('reports the agent\'s browser unavailable when the daemon has no capture source for the view (never guessed)', async () => {
@@ -481,7 +648,16 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             keepAliveAboveRouter={presentation === 'retained'} presentationSlotId="perf-stream"
             policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
             pluginBrowserActionContext={{ sessionId: view.browserSessionId, machineId: 'machine_1', serverId }} />;
-        const screen = await renderScreen(<RetainedPresentationSlotsProvider>{host}</RetainedPresentationSlotsProvider>);
+        const screen = await renderScreen(<RetainedPresentationSlotsProvider>{host}</RetainedPresentationSlotsProvider>, {
+            // Native layout must place the retained picture before presentation
+            // demand can subscribe to its capture source through the real binder.
+            createNodeMock: element => element.props.testID === 'browser-keepalive-placeholder-perf-stream'
+                ? { measureInWindow: (publish: (x: number, y: number, width: number, height: number) => void) => publish(0, 0, 780, 493) }
+                : null,
+        });
+        if (presentation === 'retained') await act(async () => {
+            invokeTestInstanceHandler(screen.findHostByTestId('browser-keepalive-placeholder-perf-stream'), 'onLayout');
+        });
         await flushHookEffects({ cycles: 6, turns: 6 });
         await waitForStreamAdmission();
         const streamId: string = screen.findByType(BrowserStreamedTarget).props.runtime.input.streamId;
@@ -527,8 +703,12 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         const controller = { kind: 'controllerChanged', eventId: 'human', occurredAt: 1, browserSessionId: view.browserSessionId,
             viewId: view.viewId, navigationGeneration: 0,
             state: { browserSessionId: view.browserSessionId, viewId: view.viewId, controller: 'human', controlEpoch: 3 } };
-        const metadata = (events: readonly unknown[], targetStreamId = streamId): MachineLiveStreamRelayEnvelopeV1 => {
-            const bytes = new TextEncoder().encode(JSON.stringify({ v: 1, events }));
+        const hints = { viewport: { width: 390, height: 844, deviceScaleFactor: 3 },
+            viewerInput: { controlling: true, controlEpoch: 3 },
+            editableTarget: { editable: true, inputMode: 'email', multiline: false, secret: false } };
+        const metadata = (events: readonly unknown[], targetStreamId = streamId,
+            viewerHints: Record<string, unknown> = hints): MachineLiveStreamRelayEnvelopeV1 => {
+            const bytes = new TextEncoder().encode(JSON.stringify({ v: 1, events, ...viewerHints }));
             return { v: 1, sourceMachineId: 'machine_1', targetMachineId: 'machine_1', message: { kind: 'frame', frame: {
                 v: 1, streamId: targetStreamId, sequence: 1, timestampMs: 1, codecId: 'image.mjpeg', payloadKind: 'metadata',
                 payloadEncoding: 'binary_base64', payloadBase64: encodeBase64(bytes), payloadSizeBytes: bytes.byteLength,
@@ -536,9 +716,21 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         };
         await act(async () => { for (const listener of boundary.listeners) listener(metadata([controller], 'foreign-stream')); });
         expect(state.viewsById[view.viewId].automationController).toBeUndefined();
+        expect(hook.getCurrent()?.input).not.toMatchObject(hints);
         await act(async () => { for (const listener of boundary.listeners) listener(metadata([controller])); });
         expect(state.viewsById[view.viewId].automationController).toMatchObject({ controller: 'human', controlEpoch: 3 });
+        expect(hook.getCurrent()?.input).toMatchObject(hints);
         expect(hook.getCurrent()?.playerState).toBe(before);
+        // Equal geometry can still change the deliberate mode shown in the toolbar.
+        await act(async () => { for (const listener of boundary.listeners) listener(metadata([], streamId,
+            { ...hints, viewport: { ...hints.viewport, emulation: { kind: 'preset', presetId: 'phone' } } })); });
+        expect(hook.getCurrent()?.input?.viewport?.emulation).toEqual({ kind: 'preset', presetId: 'phone' });
+        await act(async () => { for (const listener of boundary.listeners) listener(metadata([], streamId,
+            { ...hints, viewport: { ...hints.viewport, emulation: { kind: 'fitViewer' } } })); });
+        expect(hook.getCurrent()?.input?.viewport?.emulation).toEqual({ kind: 'fitViewer' });
+        await act(async () => { for (const listener of boundary.listeners) listener(metadata([controller], streamId,
+            { viewerInput: { controlling: false, controlEpoch: 4 }, viewport: hints.viewport })); });
+        expect(hook.getCurrent()?.input?.editableTarget).toBeNull();
         await act(async () => { for (const listener of boundary.listeners) listener(metadata([{ kind: 'viewClosed', eventId: 'close', occurredAt: 2,
             browserSessionId: view.browserSessionId, viewId: view.viewId }])); });
         expect(state.viewsById[view.viewId]).toBeUndefined();
@@ -546,7 +738,155 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         expect(boundary.listeners.size).toBe(0);
     });
 
-    it('saves all binary download ranges through the web downloads owner using the negotiated frame budget', async () => {
+    it.each(['target-destroyed', 'capture-terminal-first', 'capture-unavailable', 'discovery-failed'] as const)('returns workspace selection only for a removed popup after native capture termination (%s)', async closePath => {
+        const removed = closePath === 'target-destroyed' || closePath === 'capture-terminal-first';
+        const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
+        let rejectFrameAck: ((error: Error) => void) | undefined;
+        const created = await createBrowserSidecarCdpControlAdapterFactory({
+            browserSessionId: view.browserSessionId, sidecarId: 'popup-sidecar',
+            pipe: { readable: new PassThrough(), writable: new PassThrough() },
+            connectTransport: async () => ({ transport: {
+                openPage: async () => ({ targetId: 'popup-target', sessionId: 'popup-cdp' }),
+                dispatchPageCommand: async command => {
+                    if (closePath !== 'target-destroyed' && command.method === 'Page.screencastFrameAck') {
+                        return await new Promise((_, reject) => { rejectFrameAck = reject; });
+                    }
+                    return {};
+                },
+                dispatchBrowserCommand: async () => ({ success: true }),
+                subscribeCdpEvents: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+            } }),
+        })({ machineId: 'machine_1' });
+        if (!created.ok || !created.contextCapture) throw new Error('Missing popup CDP owner');
+        const producer = createBrowserCdpScreencastProducer({ contextCapture: created.contextCapture });
+        const registry = createMachineLiveStreamCaptureRegistry();
+        const registration = registerBrowserLiveCapture({ registry, contextCapture: created.contextCapture, producer, automation: () => null });
+        const produced: MachineLiveStreamRelayEnvelopeV1[] = [];
+        const relay = createMachineLiveStreamRelayTerminator({ machineId: 'machine_1', nowMs: Date.now,
+            captureAdapter: createDaemonMachineLiveStreamCaptureAdapter(registry), emitEnvelope: envelope => {
+                produced.push(envelope);
+                for (const listener of boundary.listeners) listener(envelope);
+            } });
+        const child = { browserSessionId: view.browserSessionId, viewId: 'popup' };
+        await created.adapter.dispatchCommand({ kind: 'openView', commandId: 'open-popup', focus: true,
+            ...child, platform: 'web', target: view.target });
+        const childSource = registry.resolve({ sourceId: browserViewKey(child) });
+        if (!childSource.ok) throw new Error('Missing popup capture source');
+        const { createBrowserWorkspaceOpeningFixture } = await import('@/dev/testkit/fixtures/browserWorkspaceOpening');
+        const { applyCloseDetailsTab, applyOpenDetailsTab, createEmptyPaneDetailsState } = await import('@/components/appShell/panes/details/workspace/detailsWorkspaceReducer');
+        const { resolveBrowserViewTargetOpenTab } = await import('../surfaces/openBrowserTargetInWorkspace');
+        const parentTab = resolveBrowserViewTargetOpenTab({ scope: 'sessionDetails', platform: 'web' }, view.target).tab;
+        let details = applyOpenDetailsTab(createEmptyPaneDetailsState(), { tab: parentTab, openAs: 'pinned' });
+        let openedTabs = 0;
+        let discoveryReadsWhenClosed: number | undefined;
+        const discoveryReadCount = () => boundary.requests.filter(request => typeof request === 'object' && request !== null
+            && 'method' in request && request.method === 'daemon.browser.view.list').length;
+        const opener = createBrowserWorkspaceOpeningFixture({ scope: 'sessionDetails', platform: 'web',
+            browserFeatureDecision: { featureId: 'browser', state: 'enabled', blockedBy: null,
+                blockerCode: 'none', diagnostics: [], evaluatedAt: 1, scope: { scopeKind: 'runtime' } },
+            openDetailsTab: tab => { openedTabs++; details = applyOpenDetailsTab(details, { tab, openAs: 'pinned' }); } });
+        const source = { v: 1, sourceId: 'browser-view-key-1', sourceKind: 'browser',
+            supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } };
+        boundary.views = [daemonView(source)];
+        const parentOpened = BrowserEventV1Schema.parse({ kind: 'viewOpened', browserSessionId: view.browserSessionId,
+            viewId: view.viewId, eventId: 'parent-open', occurredAt: 1, platform: 'web', adapterKind: 'chromiumSidecar',
+            engineKind: 'streamedSurface', target: view.target, adapterCapabilities: view.adapterCapabilities });
+        const initialBrowserState = applyBrowserControlEvent(createBrowserControlState(), parentOpened);
+        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId={view.browserSessionId} platform="web"
+            initialBrowserState={initialBrowserState}
+            pluginBrowserActionContext={{ machineId: 'machine_1', serverId, sessionId: 'session_1' }}
+            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
+            onOpenTarget={opener.open} testID="popup-host" />);
+        try {
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            await waitForStreamAdmission();
+            const start = boundary.requests.find((request): request is { method: string; payload: unknown } =>
+                typeof request === 'object' && request !== null && 'method' in request && request.method === RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START);
+            const { startRequest } = DaemonMachineLiveStreamRelayStartRequestV1Schema.parse(start?.payload);
+            const parent = daemonView(source);
+            const opened = { ...parentOpened, viewId: 'popup', openerViewId: view.viewId,
+                eventId: 'popup-open', currentUrl: 'https://example.test/popup' };
+            const popupView = { ...parent, ...child, sourceId: browserViewKey(child), events: [opened],
+                captureSource: childSource.source.capabilities };
+            boundary.views = [parent, popupView];
+            const bytes = new TextEncoder().encode(JSON.stringify({ v: 1, events: [opened] }));
+            await act(async () => {
+                for (const listener of boundary.listeners) listener({ v: 1, sourceMachineId: 'machine_1', targetMachineId: 'machine_1',
+                    message: { kind: 'frame', frame: { v: 1, streamId: startRequest.streamId, sequence: 1, timestampMs: 1,
+                        codecId: 'image.mjpeg', payloadKind: 'metadata', payloadEncoding: 'binary_base64',
+                        payloadBase64: encodeBase64(bytes), payloadSizeBytes: bytes.byteLength } } });
+            });
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            expect(openedTabs).toBe(1);
+            const group = details.groupsById[details.focusedGroupId!];
+            const tab = details.tabsByKey[group.activeTabKey!];
+            expect(tab.key).not.toBe(parentTab.key);
+            expect(group.tabKeys).toEqual([parentTab.key, tab.key]);
+            expect(tab.resource).toMatchObject({ browserSessionId: view.browserSessionId, viewId: 'popup',
+                target: { kind: 'streamedBrowser', streamId: browserViewKey(child), daemonView: child } });
+            expect(boundary.requests.filter(request => typeof request === 'object' && request !== null
+                && 'method' in request && request.method === 'daemon.browser.view.list')).toHaveLength(2);
+            await screen.update(<BrowserSurfaceHost key="popup" browserSessionId={view.browserSessionId} platform="web"
+                initialBrowserState={applyBrowserControlEvent(createBrowserControlState(), opened)}
+                pluginBrowserActionContext={{ machineId: 'machine_1', serverId, sessionId: 'session_1' }}
+                policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
+                onOpenTarget={opener.open} onCloseTab={() => {
+                    discoveryReadsWhenClosed = discoveryReadCount();
+                    details = applyCloseDetailsTab(details, tab.key);
+                }}
+                testID="popup-host" />);
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            const popupStart = boundary.requests.filter((request): request is { method: string; payload: unknown } =>
+                typeof request === 'object' && request !== null && 'method' in request
+                && request.method === RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START).at(-1);
+            const popupStream = DaemonMachineLiveStreamRelayStartRequestV1Schema.parse(popupStart?.payload).startRequest.streamId;
+            expect(popupStream).not.toBe(startRequest.streamId);
+            boundary.relaySend = raw => { relay.applyControl(MachineLiveStreamDecodedEnvelopeV1Schema.parse(raw)); };
+            await act(async () => {
+                expect(await relay.start(DaemonMachineLiveStreamRelayStartRequestV1Schema.parse(popupStart?.payload).startRequest, 'present_user'))
+                    .toMatchObject({ ok: true });
+            });
+            const discoveryReadsBeforeClose = discoveryReadCount();
+            boundary.views = closePath === 'capture-unavailable' ? [parent, { ...popupView, captureSource: undefined }] : [parent];
+            if (closePath === 'discovery-failed') boundary.discoveryError = 'request_failed';
+            await act(async () => {
+                if (closePath !== 'target-destroyed') {
+                    for (const listener of [...listeners]) listener({ method: 'Page.screencastFrame', sessionId: 'popup-cdp',
+                        params: { sessionId: 1, data: 'AQID', metadata: { deviceWidth: 400, deviceHeight: 200 } } });
+                    if (!rejectFrameAck) throw new Error('Missing native frame acknowledgement');
+                    rejectFrameAck(new Error('Target closed'));
+                    await Promise.resolve(); await Promise.resolve();
+                }
+                // Chromium reports window.close() through Target.targetDestroyed. Do not inject
+                // viewClosed into the UI: real capture/relay teardown determines what survives.
+                if (removed) for (const listener of [...listeners]) listener({ method: 'Target.targetDestroyed', params: { targetId: 'popup-target' } });
+            });
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            expect(produced).toContainEqual(expect.objectContaining({ message: { kind: 'receipt', receipt: expect.objectContaining({
+                reasonCode: 'capture_source_unavailable', terminal: true,
+            }) } }));
+            const closeMetadata = produced.flatMap(envelope => {
+                if (envelope.message.kind !== 'frame' || envelope.message.frame.payloadKind !== 'metadata') return [];
+                return BrowserEventBatchV1Schema.parse(JSON.parse(Buffer.from(envelope.message.frame.payloadBase64, 'base64').toString('utf8')))
+                    .events.filter(event => event.kind === 'viewClosed');
+            });
+            expect(closeMetadata).toHaveLength(closePath === 'target-destroyed' ? 1 : 0);
+            if (removed) expect(details.tabsByKey[tab.key]).toBeUndefined();
+            else expect(details.tabsByKey[tab.key]).toBeDefined();
+            expect(details.groupsById[details.focusedGroupId!].activeTabKey).toBe(removed ? parentTab.key : tab.key);
+            expect(details.tabsByKey[parentTab.key]).toBeDefined();
+            if (closePath !== 'target-destroyed') {
+                // One reconciliation decides closure. Selecting the opener can then discover its
+                // own source; retained/error tabs must not keep retrying the unavailable capture.
+                expect(removed ? discoveryReadsWhenClosed : discoveryReadCount()).toBe(discoveryReadsBeforeClose + 1);
+            }
+        } finally {
+            boundary.relaySend = null;
+            await screen.unmount(); opener.dispose(); await relay.dispose(); registration.dispose(); await producer.dispose(); await created.dispose?.();
+        }
+    });
+
+    it('saves all binary download ranges through files.save from the mounted web viewer using its negotiated frame budget', async () => {
         boundary.maxFrameBytes = 8000;
         boundary.views = [daemonView({ v: 1, sourceId: 'browser-view-key-1', sourceKind: 'browser',
             supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } })];
@@ -558,14 +898,29 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         });
         const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
         vi.stubGlobal('document', { createElement: () => ({ click, style: {}, remove() {} }), body: { appendChild() {} } });
-        const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
-        const hook = await renderHook(() => useBrowserStreamedSurfaceRuntime({ view, machineId: 'machine_1', serverId }));
+        const { BrowserPageInteractions } = await import('./BrowserPageInteractions');
+        const opened = BrowserEventV1Schema.parse({ kind: 'viewOpened', eventId: 'download-open', occurredAt: 1,
+            browserSessionId: view.browserSessionId, viewId: view.viewId, target: view.target,
+            platform: view.platform, adapterKind: view.adapterKind, engineKind: view.engineKind,
+            adapterCapabilities: view.adapterCapabilities, currentUrl: view.currentUrl });
+        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId={view.browserSessionId} platform="web"
+            initialBrowserState={applyBrowserControlEvent(createBrowserControlState(), opened)}
+            pluginBrowserActionContext={{ machineId: 'machine_1', serverId, sessionId: 'session_1' }}
+            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }} />);
         try {
             await flushHookEffects({ cycles: 6, turns: 6 });
             await waitForStreamAdmission();
-            const streamId = hook.getCurrent()?.input?.streamId;
-            if (!streamId) throw new Error('stream missing');
+            const start = boundary.requests.find((request): request is { method: string; payload: unknown } =>
+                typeof request === 'object' && request !== null && 'method' in request && request.method === RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START);
+            const { startRequest } = DaemonMachineLiveStreamRelayStartRequestV1Schema.parse(start?.payload);
+            const streamId = startRequest.streamId;
             let sequence = 1;
+            await act(async () => {
+                for (const listener of boundary.listeners) listener({ v: 1, sourceMachineId: 'machine_1', targetMachineId: 'machine_1',
+                    message: { kind: 'frame', frame: { v: 1, streamId, sequence: sequence++, timestampMs: 1,
+                        codecId: 'image.mjpeg', payloadKind: 'image_keyframe', payloadEncoding: 'binary_base64',
+                        payloadBase64: encodeBase64(new Uint8Array([1, 2, 3])), payloadSizeBytes: 3 } } });
+            });
             const deliver = (batch: Record<string, unknown>) => {
                 const bytes = new TextEncoder().encode(JSON.stringify({ v: 1, events: [], ...batch }));
                 for (const listener of boundary.listeners) listener({ v: 1, sourceMachineId: 'machine_1', targetMachineId: 'machine_1',
@@ -590,13 +945,14 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                     interactionResult: { kind: 'download', downloadId: 'binary', name: 'binary.dat', offset: event.offset,
                         dataBase64: encodeBase64(chunk), eof: event.offset + chunk.length === bytes.length } }) });
             };
-            expect(hook.getCurrent()?.input?.saveDownload).toBeTypeOf('function');
-            await act(async () => { await hook.getCurrent()?.input?.saveDownload?.('binary'); });
+            const interactions = screen.findByType(BrowserPageInteractions);
+            expect(interactions.props.onSaveDownload).toBeTypeOf('function');
+            await act(async () => { await interactions.props.onSaveDownload(interactions.props.interaction.downloads[0]); });
             expect(requested).toEqual([8000, 8000, 8000]);
             expect(click).toHaveBeenCalledOnce();
             expect(blobs).toHaveLength(1);
             expect(new Uint8Array(await blobs[0].arrayBuffer())).toEqual(bytes);
-        } finally { await hook.unmount(); createUrl.mockRestore(); revoke.mockRestore(); vi.unstubAllGlobals(); }
+        } finally { await screen.unmount(); createUrl.mockRestore(); revoke.mockRestore(); vi.unstubAllGlobals(); }
     });
 
     it('relays controlling-viewer copy, cut and paste through clipboard input and the system clipboard', async () => {
@@ -694,6 +1050,138 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             serverId,
         }));
         expect(hook.getCurrent()).toBeNull();
+    });
+
+    it.each(['hover', 'wheel', 'modifiers', 'alert', 'confirm', 'prompt'] as const)('delivers viewer %s through the real input layer and stream runtime to CDP', async kind => {
+        const frames: FrameRequestCallback[] = [];
+        if (kind === 'hover') {
+            vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+            vi.stubGlobal('cancelAnimationFrame', () => {});
+        }
+        // The renderer's native node is an OS boundary. Keep actual event subscription/dispatch.
+        const wheelTarget = Object.assign(new EventTarget(), { focus() {},
+            getBoundingClientRect: () => ({ left: 0, top: 0 }) });
+        const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
+        const commands: Array<{ method: string; params?: Record<string, unknown> }> = [];
+        let openDialog = false;
+        let finishDialogClick: (() => void) | undefined;
+        const emit = (method: string, params: Record<string, unknown>) => {
+            for (const listener of [...listeners]) listener({ method, sessionId: 'cdp-page', params });
+        };
+        // Only Chromium/CDP and the file/network boundaries above are substituted.
+        const transport = {
+            openPage: async () => ({ targetId: 'page', sessionId: 'cdp-page' }),
+            dispatchPageCommand: async (command: (typeof commands)[number]) => {
+                commands.push(command);
+                if (command.method === 'Runtime.evaluate') return { result: { value: 'complete' } };
+                if (openDialog && command.method === 'Input.dispatchMouseEvent' && command.params?.type === 'mouseReleased') {
+                    openDialog = false;
+                    emit('Page.javascriptDialogOpening', { type: kind, message: 'A page question', defaultPrompt: 'guest' });
+                    // Real Chromium keeps dispatchMouseEvent pending until the dialog is answered.
+                    await new Promise<void>(resolve => { finishDialogClick = resolve; });
+                }
+                if (command.method === 'Page.handleJavaScriptDialog') { finishDialogClick?.(); emit('Page.javascriptDialogClosed', {}); }
+                return {};
+            },
+            dispatchBrowserCommand: async () => ({ success: true }),
+            subscribeCdpEvents: (listener: BrowserSidecarCdpEventSubscriber) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+        };
+        const created = await createBrowserSidecarCdpControlAdapterFactory({ browserSessionId: view.browserSessionId, sidecarId: 'sidecar',
+            endpointSource: { kind: 'devtoolsStderr', stderr: 'DevTools listening on ws://127.0.0.1:9222/devtools/browser/test' },
+            connectTransport: async () => ({ transport }) })({ machineId: 'machine_1' });
+        if (!created.ok || !created.contextCapture) throw new Error('Missing CDP owner');
+        const contextCapture = created.contextCapture;
+        const automation = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({
+            transport: createControlAdapterAutomationTransport({ adapter: created.adapter, contextCapture }),
+        }) });
+        const producer = createBrowserCdpScreencastProducer({ contextCapture });
+        const registry = createMachineLiveStreamCaptureRegistry();
+        const registration = registerBrowserLiveCapture({ registry, contextCapture, producer, automation: () => automation });
+        const relay = createMachineLiveStreamRelayTerminator({ machineId: 'machine_1', nowMs: Date.now,
+            captureAdapter: createDaemonMachineLiveStreamCaptureAdapter(registry), emitEnvelope: envelope => {
+                for (const listener of boundary.listeners) listener(envelope);
+            } });
+        const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
+        function Probe() {
+            const runtime = useBrowserStreamedSurfaceRuntime({ view, machineId: 'machine_1', serverId });
+            return <BrowserStreamedTarget runtime={runtime} agentName="Agent" testID="input-contract" />;
+        }
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        try {
+            await created.adapter.dispatchCommand({ kind: 'openView', commandId: 'open', focus: true,
+                browserSessionId: view.browserSessionId, viewId: view.viewId, platform: 'web', target: view.target });
+            const sourceId = browserViewKey(view);
+            const source = registry.resolve({ sourceId });
+            if (!source.ok) throw new Error('Missing capture');
+            boundary.views = [{ ...daemonView(source.source.capabilities), sourceId }];
+            boundary.relaySend = raw => { relay.applyControl(MachineLiveStreamDecodedEnvelopeV1Schema.parse(raw)); };
+            screen = await renderScreen(<Probe />, { createNodeMock: element =>
+                element.props.testID === 'input-contract-input-capture' ? wheelTarget : null });
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            await waitForStreamAdmission();
+            const call = boundary.requests.find(request => (request as { method: string }).method === RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START);
+            const { startRequest } = DaemonMachineLiveStreamRelayStartRequestV1Schema.parse((call as { payload: unknown }).payload);
+            await act(async () => { expect(await relay.start(startRequest, 'present_user')).toMatchObject({ ok: true }); });
+            await act(async () => { emit('Page.screencastFrame', { sessionId: 1, data: 'AQID', metadata: { deviceWidth: 400, deviceHeight: 200 } }); });
+            await act(async () => { screen?.findHostByTestId('input-contract-live')?.props.onLayout({ nativeEvent: { layout: { width: 800, height: 400 } } }); });
+            const capture = () => screen!.findHostByTestId('input-contract-input-capture')!;
+            const click = async () => act(async () => {
+                capture().props.onFocus();
+                capture().props.onResponderGrant({ nativeEvent: { locationX: 400, locationY: 200, timestamp: 1 } });
+                capture().props.onResponderRelease({ nativeEvent: { locationX: 400, locationY: 200, timestamp: 2 } });
+            });
+            const hover = () => wheelTarget.dispatchEvent(Object.assign(new Event('pointermove'),
+                { clientX: 100, clientY: 100, pointerType: 'mouse', buttons: 0 }));
+            if (kind === 'hover') {
+                await act(async () => {
+                    hover();
+                    for (const frame of frames.splice(0)) frame(0);
+                });
+                expect(commands.filter(command => command.method === 'Input.dispatchMouseEvent')).toEqual([]);
+                expect(automation.getStatus(view).controller).not.toBe('human');
+            }
+            await click();
+            await vi.waitFor(() => expect(automation.getStatus(view).controller).toBe('human'));
+            await flushHookEffects();
+            commands.length = 0;
+            if (kind === 'hover') {
+                await act(async () => { hover(); hover(); });
+                // Advance a browser frame, including work scheduled by the real player and status UI.
+                await act(async () => { for (const frame of frames.splice(0)) frame(0); });
+                await vi.waitFor(() => expect(commands.filter(command => command.method === 'Input.dispatchMouseEvent')
+                    .map(command => command.params)).toEqual([{ type: 'mouseMoved', x: 50, y: 50 }]));
+            } else if (kind === 'wheel') {
+                const wheel = Object.assign(new Event('wheel', { cancelable: true }),
+                    { clientX: 400, clientY: 200, deltaX: 12, deltaY: 420, deltaMode: 0 });
+                await act(async () => { wheelTarget.dispatchEvent(wheel); });
+                expect(wheel.defaultPrevented).toBe(true);
+                await vi.waitFor(() => expect(commands).toContainEqual(expect.objectContaining({ method: 'Input.dispatchMouseEvent',
+                    params: expect.objectContaining({ type: 'mouseWheel', x: 200, y: 100, deltaX: 12, deltaY: 420 }) })));
+            } else if (kind === 'modifiers') {
+                await act(async () => capture().props.onKeyDown({ key: 'a', ctrlKey: true, shiftKey: true, preventDefault() {}, stopPropagation() {} }));
+                await vi.waitFor(() => expect(commands).toContainEqual(expect.objectContaining({ method: 'Input.dispatchKeyEvent',
+                    params: expect.objectContaining({ type: 'keyDown', key: 'a', modifiers: 10 }) })));
+                expect(commands.some(command => command.method === 'Input.insertText')).toBe(false);
+            } else {
+                openDialog = true;
+                await click();
+                // Single taps wait for the shared double-tap recognizer before reaching Chromium.
+                await vi.waitFor(() => expect(commands).toContainEqual(expect.objectContaining({ method: 'Input.dispatchMouseEvent',
+                    params: expect.objectContaining({ type: 'mouseReleased' }) })));
+                await flushHookEffects({ cycles: 4, turns: 4 });
+                expect(commands.filter(command => command.method === 'Page.handleJavaScriptDialog')).toEqual([]);
+                expect(screen.findHostByTestId('input-contract-interaction-dialog')).not.toBeNull();
+                if (kind === 'prompt') await act(async () => screen!.changeTextByTestId('input-contract-interaction-dialog-input', 'chosen answer'));
+                await screen.pressByTestIdAsync('input-contract-interaction-dialog-ok');
+                await vi.waitFor(() => expect(commands).toContainEqual(expect.objectContaining({ method: 'Page.handleJavaScriptDialog',
+                    params: { accept: true, ...(kind === 'prompt' ? { promptText: 'chosen answer' } : {}) } })));
+            }
+        } finally {
+            if (kind === 'hover') vi.unstubAllGlobals();
+            finishDialogClick?.();
+            boundary.relaySend = null;
+            await screen?.unmount(); await relay.dispose(); registration.dispose(); await producer.dispose(); automation.dispose(); await created.dispose?.();
+        }
     });
 
     it('delivers three static-page clicks and their terminal metadata through registration, relay and viewer to the cursor', async () => {
@@ -1116,153 +1604,4 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         await hook.unmount();
         expect(boundary.listeners.size).toBe(0);
     });
-    it.each(['target-destroyed', 'capture-terminal-first', 'capture-unavailable', 'discovery-failed'] as const)('returns workspace selection only for a removed popup after native capture termination (%s)', async closePath => {
-        const removed = closePath === 'target-destroyed' || closePath === 'capture-terminal-first';
-        const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
-        let rejectFrameAck: ((error: Error) => void) | undefined;
-        const created = await createBrowserSidecarCdpControlAdapterFactory({
-            browserSessionId: view.browserSessionId, sidecarId: 'popup-sidecar',
-            pipe: { readable: new PassThrough(), writable: new PassThrough() },
-            connectTransport: async () => ({ transport: {
-                openPage: async () => ({ targetId: 'popup-target', sessionId: 'popup-cdp' }),
-                dispatchPageCommand: async command => {
-                    if (closePath !== 'target-destroyed' && command.method === 'Page.screencastFrameAck') {
-                        return await new Promise((_, reject) => { rejectFrameAck = reject; });
-                    }
-                    return {};
-                },
-                dispatchBrowserCommand: async () => ({ success: true }),
-                subscribeCdpEvents: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-            } }),
-        })({ machineId: 'machine_1' });
-        if (!created.ok || !created.contextCapture) throw new Error('Missing popup CDP owner');
-        const producer = createBrowserCdpScreencastProducer({ contextCapture: created.contextCapture });
-        const registry = createMachineLiveStreamCaptureRegistry();
-        const registration = registerBrowserLiveCapture({ registry, contextCapture: created.contextCapture, producer, automation: () => null });
-        const produced: MachineLiveStreamRelayEnvelopeV1[] = [];
-        const relay = createMachineLiveStreamRelayTerminator({ machineId: 'machine_1', nowMs: Date.now,
-            captureAdapter: createDaemonMachineLiveStreamCaptureAdapter(registry), emitEnvelope: envelope => {
-                produced.push(envelope);
-                for (const listener of boundary.listeners) listener(envelope);
-            } });
-        const child = { browserSessionId: view.browserSessionId, viewId: 'popup' };
-        await created.adapter.dispatchCommand({ kind: 'openView', commandId: 'open-popup', focus: true,
-            ...child, platform: 'web', target: view.target });
-        const childSource = registry.resolve({ sourceId: browserViewKey(child) });
-        if (!childSource.ok) throw new Error('Missing popup capture source');
-        const { createBrowserWorkspaceOpeningFixture } = await import('@/dev/testkit/fixtures/browserWorkspaceOpening');
-        const { applyCloseDetailsTab, applyOpenDetailsTab, createEmptyPaneDetailsState } = await import('@/components/appShell/panes/details/workspace/detailsWorkspaceReducer');
-        const { resolveBrowserViewTargetOpenTab } = await import('../surfaces/openBrowserTargetInWorkspace');
-        const parentTab = resolveBrowserViewTargetOpenTab({ scope: 'sessionDetails', platform: 'web' }, view.target).tab;
-        let details = applyOpenDetailsTab(createEmptyPaneDetailsState(), { tab: parentTab, openAs: 'pinned' });
-        let openedTabs = 0;
-        let discoveryReadsWhenClosed: number | undefined;
-        const discoveryReadCount = () => boundary.requests.filter(request => typeof request === 'object' && request !== null
-            && 'method' in request && request.method === 'daemon.browser.view.list').length;
-        const opener = createBrowserWorkspaceOpeningFixture({ scope: 'sessionDetails', platform: 'web',
-            browserFeatureDecision: { featureId: 'browser', state: 'enabled', blockedBy: null,
-                blockerCode: 'none', diagnostics: [], evaluatedAt: 1, scope: { scopeKind: 'runtime' } },
-            openDetailsTab: tab => { openedTabs++; details = applyOpenDetailsTab(details, { tab, openAs: 'pinned' }); } });
-        const source = { v: 1, sourceId: 'browser-view-key-1', sourceKind: 'browser',
-            supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } };
-        boundary.views = [daemonView(source)];
-        const parentOpened = BrowserEventV1Schema.parse({ kind: 'viewOpened', browserSessionId: view.browserSessionId,
-            viewId: view.viewId, eventId: 'parent-open', occurredAt: 1, platform: 'web', adapterKind: 'chromiumSidecar',
-            engineKind: 'streamedSurface', target: view.target, adapterCapabilities: view.adapterCapabilities });
-        const initialBrowserState = applyBrowserControlEvent(createBrowserControlState(), parentOpened);
-        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId={view.browserSessionId} platform="web"
-            initialBrowserState={initialBrowserState}
-            pluginBrowserActionContext={{ machineId: 'machine_1', serverId, sessionId: 'session_1' }}
-            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
-            onOpenTarget={opener.open} testID="popup-host" />);
-        try {
-            await flushHookEffects({ cycles: 6, turns: 6 });
-            await waitForStreamAdmission();
-            const start = boundary.requests.find((request): request is { method: string; payload: unknown } =>
-                typeof request === 'object' && request !== null && 'method' in request && request.method === RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START);
-            const { startRequest } = DaemonMachineLiveStreamRelayStartRequestV1Schema.parse(start?.payload);
-            const parent = daemonView(source);
-            const opened = { ...parentOpened, viewId: 'popup', openerViewId: view.viewId,
-                eventId: 'popup-open', currentUrl: 'https://example.test/popup' };
-            const popupView = { ...parent, ...child, sourceId: browserViewKey(child), events: [opened],
-                captureSource: childSource.source.capabilities };
-            boundary.views = [parent, popupView];
-            const bytes = new TextEncoder().encode(JSON.stringify({ v: 1, events: [opened] }));
-            await act(async () => {
-                for (const listener of boundary.listeners) listener({ v: 1, sourceMachineId: 'machine_1', targetMachineId: 'machine_1',
-                    message: { kind: 'frame', frame: { v: 1, streamId: startRequest.streamId, sequence: 1, timestampMs: 1,
-                        codecId: 'image.mjpeg', payloadKind: 'metadata', payloadEncoding: 'binary_base64',
-                        payloadBase64: encodeBase64(bytes), payloadSizeBytes: bytes.byteLength } } });
-            });
-            await flushHookEffects({ cycles: 6, turns: 6 });
-            expect(openedTabs).toBe(1);
-            const group = details.groupsById[details.focusedGroupId!];
-            const tab = details.tabsByKey[group.activeTabKey!];
-            expect(tab.key).not.toBe(parentTab.key);
-            expect(group.tabKeys).toEqual([parentTab.key, tab.key]);
-            expect(tab.resource).toMatchObject({ browserSessionId: view.browserSessionId, viewId: 'popup',
-                target: { kind: 'streamedBrowser', streamId: browserViewKey(child), daemonView: child } });
-            expect(boundary.requests.filter(request => typeof request === 'object' && request !== null
-                && 'method' in request && request.method === 'daemon.browser.view.list')).toHaveLength(2);
-            await screen.update(<BrowserSurfaceHost key="popup" browserSessionId={view.browserSessionId} platform="web"
-                initialBrowserState={applyBrowserControlEvent(createBrowserControlState(), opened)}
-                pluginBrowserActionContext={{ machineId: 'machine_1', serverId, sessionId: 'session_1' }}
-                policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
-                onOpenTarget={opener.open} onCloseTab={() => {
-                    discoveryReadsWhenClosed = discoveryReadCount();
-                    details = applyCloseDetailsTab(details, tab.key);
-                }}
-                testID="popup-host" />);
-            await flushHookEffects({ cycles: 6, turns: 6 });
-            const popupStart = boundary.requests.filter((request): request is { method: string; payload: unknown } =>
-                typeof request === 'object' && request !== null && 'method' in request
-                && request.method === RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START).at(-1);
-            const popupStream = DaemonMachineLiveStreamRelayStartRequestV1Schema.parse(popupStart?.payload).startRequest.streamId;
-            expect(popupStream).not.toBe(startRequest.streamId);
-            boundary.relaySend = raw => { relay.applyControl(MachineLiveStreamDecodedEnvelopeV1Schema.parse(raw)); };
-            await act(async () => {
-                expect(await relay.start(DaemonMachineLiveStreamRelayStartRequestV1Schema.parse(popupStart?.payload).startRequest, 'present_user'))
-                    .toMatchObject({ ok: true });
-            });
-            const discoveryReadsBeforeClose = discoveryReadCount();
-            boundary.views = closePath === 'capture-unavailable' ? [parent, { ...popupView, captureSource: undefined }] : [parent];
-            if (closePath === 'discovery-failed') boundary.discoveryError = 'request_failed';
-            await act(async () => {
-                if (closePath !== 'target-destroyed') {
-                    for (const listener of [...listeners]) listener({ method: 'Page.screencastFrame', sessionId: 'popup-cdp',
-                        params: { sessionId: 1, data: 'AQID', metadata: { deviceWidth: 400, deviceHeight: 200 } } });
-                    if (!rejectFrameAck) throw new Error('Missing native frame acknowledgement');
-                    rejectFrameAck(new Error('Target closed'));
-                    await Promise.resolve(); await Promise.resolve();
-                }
-                // Chromium reports window.close() through Target.targetDestroyed. Do not inject
-                // viewClosed into the UI: real capture/relay teardown determines what survives.
-                if (removed) for (const listener of [...listeners]) listener({ method: 'Target.targetDestroyed', params: { targetId: 'popup-target' } });
-            });
-            await flushHookEffects({ cycles: 6, turns: 6 });
-            expect(produced).toContainEqual(expect.objectContaining({ message: { kind: 'receipt', receipt: expect.objectContaining({
-                reasonCode: 'capture_source_unavailable', terminal: true,
-            }) } }));
-            const closeMetadata = produced.flatMap(envelope => {
-                if (envelope.message.kind !== 'frame' || envelope.message.frame.payloadKind !== 'metadata') return [];
-                return BrowserEventBatchV1Schema.parse(JSON.parse(Buffer.from(envelope.message.frame.payloadBase64, 'base64').toString('utf8')))
-                    .events.filter(event => event.kind === 'viewClosed');
-            });
-            expect(closeMetadata).toHaveLength(closePath === 'target-destroyed' ? 1 : 0);
-            if (removed) expect(details.tabsByKey[tab.key]).toBeUndefined();
-            else expect(details.tabsByKey[tab.key]).toBeDefined();
-            expect(details.groupsById[details.focusedGroupId!].activeTabKey).toBe(removed ? parentTab.key : tab.key);
-            expect(details.tabsByKey[parentTab.key]).toBeDefined();
-            if (closePath !== 'target-destroyed') {
-                // One reconciliation decides closure. Selecting the opener can then discover its
-                // own source; retained/error tabs must not keep retrying the unavailable capture.
-                expect(removed ? discoveryReadsWhenClosed : discoveryReadCount()).toBe(discoveryReadsBeforeClose + 1);
-            }
-        } finally {
-            boundary.relaySend = null;
-            await screen.unmount(); opener.dispose(); await relay.dispose(); registration.dispose(); await producer.dispose(); await created.dispose?.();
-        }
-    });
-
-
 });

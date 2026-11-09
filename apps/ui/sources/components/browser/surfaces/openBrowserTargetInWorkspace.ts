@@ -32,6 +32,7 @@ import type { DesktopWebViewNativeAvailability } from '@/sync/domains/browser/ad
 import {
     openBrowserExternalTabSelection,
     selectBrowserTargetAdapter,
+    type BrowserOpenEngineOverride,
 } from '@/sync/domains/browser/adapters/selection';
 import { evaluateBrowserTargetPolicy } from '@/sync/domains/browser/policy/evaluate';
 import { resolveLocalBrowserProfile } from '@/sync/domains/browser/profiles/localBrowserProfile';
@@ -39,12 +40,16 @@ import {
     createBrowserViewState,
     openBrowserTarget,
     resolveBrowserViewIdForTarget,
+    resolveBrowserDaemonStreamTarget,
 } from '@/sync/domains/browser/store';
+import { isDaemonAuthoritativeBrowserView } from '@/sync/domains/browser/control/commands';
+import { listBrowserDaemonViewsViaMachineRpc } from '@/sync/domains/browser/control/machineRpc';
 import type { BrowserViewState } from '@/sync/domains/browser/types';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import { selectLocalServicePreviewByBrowserTarget } from '@/sync/domains/local/services/preview/store';
 import { getLocalServicePreviewState } from '@/sync/domains/local/services/preview/sharedStore';
 import { resolveLocalServiceBrowserTarget } from '@/sync/domains/local/services/preview/resolveLaunchTarget';
+import type { BrowserAddressFacts } from '@/sync/domains/browser/actions/address';
 
 import {
     createBrowserViewDetailsTab,
@@ -77,7 +82,7 @@ export type ResolveBrowserViewTargetOpenInput = Readonly<{
     browserProfile?: BrowserProfileV1 | null;
     desktopWebViewAvailability?: DesktopWebViewNativeAvailability | null;
     allowExternalUrlBrowsing?: boolean;
-}>;
+}> & BrowserAddressFacts;
 
 export type CreateOpenBrowserTargetInWorkspaceDeps = ResolveBrowserViewTargetOpenInput & Readonly<{
     scopeId: string;
@@ -130,6 +135,7 @@ export type BrowserViewTargetReplacementInput = Readonly<{
     browserSessionId: string;
     viewId: string;
     currentUrl?: string | null;
+    engineOverride?: BrowserOpenEngineOverride;
 }>;
 
 /**
@@ -186,7 +192,9 @@ export function resolveBrowserTargetOpenOptions(params: Readonly<{
     platform: BrowserPlatformV1;
     currentUrl?: string;
     currentUrlExpiresAt?: number;
+    engineOverride?: BrowserOpenEngineOverride;
 }>): Parameters<typeof openBrowserTarget>[2] {
+    const engineOptions = params.engineOverride ? { engineOverride: params.engineOverride } : {};
     if (params.target.kind === 'externalUrl') {
         const targetPolicyDecision = evaluateBrowserTargetPolicy({
             target: params.target,
@@ -201,6 +209,7 @@ export function resolveBrowserTargetOpenOptions(params: Readonly<{
             browserSessionId: params.browserSessionId,
             ...(params.viewId ? { viewId: params.viewId } : {}),
             platform: params.platform,
+            ...engineOptions,
             targetPolicyDecision,
             desktopWebViewAvailability: params.desktopWebViewAvailability,
             ...(params.currentUrl ? { currentUrl: params.currentUrl } : {}),
@@ -213,6 +222,7 @@ export function resolveBrowserTargetOpenOptions(params: Readonly<{
             browserSessionId: params.browserSessionId,
             ...(params.viewId ? { viewId: params.viewId } : {}),
             platform: params.platform,
+            ...engineOptions,
             desktopWebViewAvailability: params.desktopWebViewAvailability,
             ...(params.currentUrl ? { currentUrl: params.currentUrl } : {}),
             ...(params.currentUrlExpiresAt !== undefined ? { currentUrlExpiresAt: params.currentUrlExpiresAt } : {}),
@@ -229,6 +239,7 @@ export function resolveBrowserTargetOpenOptions(params: Readonly<{
         browserSessionId: params.browserSessionId,
         ...(params.viewId ? { viewId: params.viewId } : {}),
         platform: params.platform,
+        ...engineOptions,
         desktopWebViewAvailability: params.desktopWebViewAvailability,
         ...(currentUrl ? { currentUrl } : {}),
         ...(currentUrlExpiresAt !== undefined ? { currentUrlExpiresAt } : {}),
@@ -277,6 +288,7 @@ function resolveOpenOptions(
             platform,
             targetPolicyDecision: options.targetPolicyDecision,
             desktopWebViewAvailability,
+            ...(options.engineOverride ? { engineOverride: options.engineOverride } : {}),
             ...(options.currentUrl ? { currentUrl: options.currentUrl } : {}),
             ...(options.currentUrlExpiresAt !== undefined ? { currentUrlExpiresAt: options.currentUrlExpiresAt } : {}),
         }
@@ -289,6 +301,7 @@ function resolveOpenOptions(
             desktopWebViewAvailability,
             allowExternalUrlBrowsing: input.allowExternalUrlBrowsing,
             platform,
+            ...(options?.engineOverride ? { engineOverride: options.engineOverride } : {}),
             ...(options?.currentUrl ? { currentUrl: options.currentUrl } : {}),
             ...(options?.currentUrlExpiresAt !== undefined ? { currentUrlExpiresAt: options.currentUrlExpiresAt } : {}),
         });
@@ -314,7 +327,8 @@ export function resolveBrowserViewTargetOpenTab(
     // It carries the same `browserSessionId`/`viewId` the renderer derives the content record under,
     // so the tab the host later mounts and the live record agree on identity. The tab seam is
     // URL-free: the live URL/expiry live on the resolver-derived record, not on the resource.
-    const tab = createBrowserViewDetailsTab({ target, browserSessionId, viewId });
+    const tab = createBrowserViewDetailsTab({ target, browserSessionId, viewId,
+        ...(options?.engineOverride ? { engineOverride: options.engineOverride } : {}) });
     return {
         tab,
         browserSessionId,
@@ -354,6 +368,7 @@ export function createOpenBrowserTargetInWorkspace(
     const runtimeAdapter: BrowserRuntimeWorkspaceOpeningAdapter = {
         scopeId: deps.scopeId,
         accountLifetime: deps.accountLifetime,
+        readAddressFacts: () => deps.readOpenFacts?.() ?? deps,
         open: async (request, context, presentation) => {
             const current = () => deps.accountLifetime?.isCurrent() === true
                 && deps.isCurrent?.() !== false && !context.signal?.aborted;
@@ -368,15 +383,18 @@ export function createOpenBrowserTargetInWorkspace(
                     machineId: target.machineId, serverId: deps.accountLifetime?.scope.serverId,
                     accountId: deps.accountLifetime?.scope.accountId,
                 }) } : workspaceFacts;
-            const resolved = resolveBrowserViewTargetOpenTab(facts, target);
+            const resolved = resolveBrowserViewTargetOpenTab(facts, target, { engineOverride: request.engineOverride });
             // Launchpad policy/URL options are presentation hints, not authority. UI and Agent
             // resolve the same current workspace facts after approval, at this one selector.
             const openOptions = resolveOpenOptions(facts, target, undefined, resolved.browserSessionId);
             const selection = selectBrowserTargetAdapter({
                 target,
+                engineOverride: request.engineOverride,
                 platform: openOptions.platform,
                 targetPolicyDecision: openOptions.targetPolicyDecision,
                 desktopWebViewAvailability: openOptions.desktopWebViewAvailability,
+                managedBrowserAvailable: presentation?.managedBrowserAvailable === true
+                    && Boolean(facts.localServiceAddressScope?.machineId && facts.localServiceAddressScope.sessionId),
             });
             if (!selection.ok) return { ok: false, errorCode: 'runtime_action_disabled',
                 error: 'runtime_action_disabled:browser:browser_adapter_unavailable' };
@@ -384,6 +402,32 @@ export function createOpenBrowserTargetInWorkspace(
             if (selection.outcome === 'openExternalTab') {
                 if (!await openBrowserExternalTabSelection(selection)) return { ok: false,
                     errorCode: 'runtime_action_disabled', error: 'runtime_action_disabled:browser:browser_adapter_unavailable' };
+            } else if (selection.outcome === 'managedBrowser') {
+                const route = facts.localServiceAddressScope;
+                if (!route?.machineId || !route.sessionId || !presentation?.executeControl) return unavailable();
+                const opened = await presentation.executeControl({ actionId: 'browser.view.open', input: {
+                    kind: 'openView', commandId: request.commandId, browserSessionId: route.sessionId,
+                    viewId: resolved.viewId, target, platform: openOptions.platform, currentUrl: selection.url,
+                    ...(request.engineOverride ? { engineOverride: request.engineOverride } : {}), focus: true,
+                }, context: { ...context, defaultSessionId: route.sessionId,
+                    externalActionTarget: { kind: 'machine', machineId: route.machineId } } });
+                const dispatched = BrowserCommandDispatchResultV1Schema.safeParse(opened);
+                if (!dispatched.success || dispatched.data.status !== 'dispatched') return opened;
+                if (!current()) return unavailable();
+                const discovery = await listBrowserDaemonViewsViaMachineRpc({ machineId: route.machineId,
+                    serverId: deps.accountLifetime!.scope.serverId, accountId: deps.accountLifetime!.scope.accountId,
+                    browserSessionId: route.sessionId, signal: context.signal });
+                if (!current()) return unavailable();
+                if (!discovery.ok) return { ok: false, errorCode: 'runtime_action_disabled',
+                    error: `runtime_action_disabled:browser:${discovery.reason}` };
+                const daemonView = discovery.views.find(view => view.viewId === resolved.viewId);
+                const streamTarget = daemonView ? resolveBrowserDaemonStreamTarget(daemonView) : null;
+                if (!streamTarget) return unavailable();
+                const streamTab = createBrowserViewDetailsTab({ target: streamTarget, engineOverride: request.engineOverride });
+                // The pane still owns the same logical page; daemon discovery owns its content identity.
+                deps.openDetailsTab({ ...streamTab, key: resolved.tab.key }, { intent: 'default',
+                    ...(presentation.openerRegion ? { origin: presentation.openerRegion } : {}) });
+                deps.onRememberRecentTarget?.(target);
             } else {
                 const control = readRegisteredBrowserRuntimeControlAdapter(resolved.browserSessionId, resolved.viewId, deps.accountLifetime?.scope);
                 const view = control?.readState()?.viewsById[resolved.viewId];
@@ -391,7 +435,8 @@ export function createOpenBrowserTargetInWorkspace(
                 // engine owns the current document, so updating the tab alone cannot return
                 // a page that has navigated away to the Service's freshly resolved address.
                 const retryPreview = target.kind === 'localServicePreview' && view?.loadingState === 'failed';
-                const returnToTarget = view && (retryPreview || view.target.kind !== target.kind || view.target.targetId !== target.targetId
+                const switchToEmbedded = request.engineOverride === 'embedded' && isDaemonAuthoritativeBrowserView(view);
+                const returnToTarget = view && (switchToEmbedded || retryPreview || view.target.kind !== target.kind || view.target.targetId !== target.targetId
                     || (resolved.currentUrl
                         ? view.currentUrl !== resolved.currentUrl || view.pendingUrl !== null
                         : target.kind === 'localServicePreview' && (view.currentUrl !== null || view.pendingUrl !== null)));
@@ -401,6 +446,7 @@ export function createOpenBrowserTargetInWorkspace(
                     const reopen = { actionId: 'browser.view.open', input: {
                         kind: 'openView', commandId: request.commandId, browserSessionId: resolved.browserSessionId,
                         viewId: resolved.viewId, target, platform: openOptions.platform,
+                        ...(request.engineOverride ? { engineOverride: request.engineOverride } : {}),
                         currentUrl: resolved.currentUrl, currentUrlExpiresAt: resolved.currentUrlExpiresAt, focus: true,
                     } } as const;
                     // A failed retained preview also owns a latched access refusal. Reuse
@@ -429,7 +475,7 @@ export function createOpenBrowserTargetInWorkspace(
                 outcome: selection.outcome === 'openExternalTab' ? 'externalTab' : 'workspaceTab' });
         },
     };
-    const open = async (target: BrowserViewTargetV1): Promise<ActionExecuteResult> => {
+    const open = async (target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions): Promise<ActionExecuteResult> => {
         if (!deps.accountLifetime?.isCurrent() || deps.isCurrent?.() === false || deps.signal?.aborted) return unavailable();
         const execute = deps.actionExecute ?? (await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')).createFrontDoorActionExecute();
         const commandId = `workspace-open:${Date.now()}:${++workspaceOpenSequence}`;
@@ -438,7 +484,8 @@ export function createOpenBrowserTargetInWorkspace(
         const releaseClaim = region ? claimBrowserRuntimeWorkspaceOpenRegion({ scope: deps.accountLifetime.scope,
             scopeId: runtimeAdapter.scopeId, commandId, region }) : () => {};
         try {
-            return await execute('browser.workspace.open', { scopeId: runtimeAdapter.scopeId, commandId, target },
+            return await execute('browser.workspace.open', { scopeId: runtimeAdapter.scopeId, commandId, target,
+                ...(options?.engineOverride ? { engineOverride: options.engineOverride } : {}) },
                 { surface: 'ui', authority: 'present_user', serverId: deps.accountLifetime?.scope.serverId,
                     expectedAccountId: deps.accountLifetime?.scope.accountId, signal: deps.signal });
         } finally {

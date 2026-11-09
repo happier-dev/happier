@@ -1,7 +1,7 @@
 import type { BrowserAutomationActionRequestV1 } from '../browser/automation/v1.js';
 import { BrowserHttpUrlV1Schema } from '../browser/url.js';
 import type { MachineAccessRoleV1 } from '../machines/machineAccessV1.js';
-import { isBrowserExtensionMutationActionIdV1 } from './actionIds.js';
+import { isBrowserExtensionMutationActionIdV1, isBrowserProfileActionIdV1 } from './actionIds.js';
 
 /** Shared browser Action admission policy, consumed at server and Session ingress.
  * The server can decide Action-level custody without content. When navigation
@@ -9,7 +9,7 @@ import { isBrowserExtensionMutationActionIdV1 } from './actionIds.js';
  * Input validation/defaults and Chromium's redirect policy retain their owners.
  */
 export function requiredMachineRoleForBrowserAction(actionId: string, input?: unknown): MachineAccessRoleV1 {
-  if (isBrowserExtensionMutationActionIdV1(actionId)
+  if (isBrowserExtensionMutationActionIdV1(actionId) || isBrowserProfileActionIdV1(actionId)
     || actionId === 'browser.profile.logins.import' || actionId === 'browser.sandbox.install') return 'manage';
   if (actionId !== 'browser.automation.navigate') return 'use';
 

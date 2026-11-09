@@ -20,6 +20,23 @@ UPDATE_AUTOMATION_VERB_MATRIX=1 ../../apps/stack/bin/hstack-exec --local -- \
 
 ## Controller and cancellation (development source)
 
+Managed Browser profile custody is decided by the product-side profile owner.
+Requesters without Manage access cannot command an existing persistent-profile
+browser, including navigation, close, target changes, Take control and Hand back;
+commands return `profile_policy_denied` before controller changes or native effects.
+Runtime automation, diagnostics, context and recording Actions naming that Browser
+Session consume the same refusal before reaching their producers. Raw context,
+diagnostics (including detail and watches) and recording RPCs use the same
+predicate through shared raw admission. Recording IDs and lists use the stored
+view and profile even after browser closure or profile changes; global
+diagnostics and retention cleanup project only allowed targets.
+Saved context IDs use their captured source and native profile for attachment,
+clear and replacement, including after close or reopen. Selecting another view
+does not change the saved context's custody or prevent valid attachment by ID.
+The same predicate hides persistent-profile views from list and watch discovery.
+Their ephemeral Session browser remains usable, and owners and Manage requesters
+retain full profile control.
+
 Browser address and navigation shortcuts use the existing keyboard command owner, including
 user rebindings. Native desktop guests, same-origin iframes and cooperative preview frames
 forward only its active Browser command signatures; composition and unrelated page keys stay
@@ -89,6 +106,15 @@ The operation scope comes from the installed requester's verified Machine admiss
 daemon custodian or a caller-supplied Account id. Approval acceptance retains that private
 requester custody until the original open settles. The requester can observe its operation;
 another Account cannot read it or publish its snapshot through the custodian's channel.
+
+The presented Session Browser also observes the broker's native view membership over
+`daemon.browser.view.watch`, using the same Account/Machine transport and redacted
+discovery projection as `daemon.browser.view.list`. This observation exists before
+Chromium installation, so an Inbox-approved open becomes discoverable without a
+local Action operation snapshot. One initial list is followed by one parked wait per
+presented Browser host, rearmed after a membership change. Hidden hosts cancel the
+wait; unrelated Sessions do not wake it. Older daemons keep one-shot discovery and
+the existing retry path. There is no polling, extra view registry or revision owner.
 
 Protocol's `daemon/browserProjection.ts` owns contributed Browser entry identities and
 rendering-shape normalization. The daemon producer uses those shared identities and types;
@@ -172,6 +198,20 @@ The resolved desktop adapter may hand an allowed target to the system browser, w
 reported if the OS refuses. The Action is client-placed, dangerous and Ask-first by default for
 Agents; no mounted Browser view is fabricated to dispatch it. This is unreleased development
 source, not composed-live or native-platform certification.
+
+The unreleased 0.3 workspace and view-open/retarget inputs accept an optional typed
+`engineOverride` (`embedded` or `managed`). The existing adapter selector decides
+availability; an explicit managed refusal remains a refusal. Workspace resources carry
+the choice through the renderer's initial open and retained-view reopen. The daemon
+refuses embedded opens before acquiring a managed runtime.
+
+Workspace opens and address-intent `browser.navigate` share the Browser address resolver:
+a matching running Service opens through its existing preview owner; other addresses
+keep the ordinary Browser adapter route. `navigationIntent: 'target'` retains low-level
+navigation within a known target. Chat links and the address bar consume this owner.
+Saved-profile list/create/select/delete Actions use the daemon's existing profile store
+and control owner; the profile popover dispatches those same Actions. Native Browser and
+Computer viewer copy uses `clipboard.write`, including the answering device's Off/Ask policy.
 
 Workspace opening resolves a known device-local Home profile through the canonical Home identity
 before selecting the captured Account owner. Approval replay keeps the same Account and lifetime
@@ -807,7 +847,9 @@ Only actions declared by `INJECTED_PAGE_AUTOMATION_ACTIONS` enter the installed 
   preserve their modifier set instead of inserting the shortcut's letter. At the CDP boundary,
   letters, digits and named navigation keys also carry their virtual key code so Chromium's
   native editor can perform selection and shortcuts.
-  Viewer Save retrieves completed download ranges into the existing web/native download sink;
+  Viewer Save dispatches `files.save` with `source.kind: 'browserDownload'` and the exact
+  Machine/BrowserSession/view/download reference. The admitted answering-client owner
+  retrieves completed binary ranges into the existing web/native download sink;
   the content codec supplies the negotiated frame budget, including encrypted-envelope overhead.
   Startup, recovery and incremental browser metadata use that same payload allowance.
   A metadata envelope that cannot fit ends capture with `max_frame_bytes_exceeded`;

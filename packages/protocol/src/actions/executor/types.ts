@@ -145,6 +145,7 @@ import type {
   SessionTranscriptGetResult,
 } from '../actionSpecs.js';
 import type { HomeDomainActionIdV1 } from '../homeDomainActionFamily.js';
+import type { AdmittedActionInputById } from '../actionSpecs.js';
 import type { WorkspaceActionId } from '../workspaceActionFamily.js';
 import type { OpenProjectInputV1, OpenProjectResultV1 } from '../../projects/openProjectV1.js';
 import type { SessionTerminalActionId } from '../sessionTerminalActionFamily.js';
@@ -172,6 +173,7 @@ import type { SearchConversationsInputV1 } from '../actionSpecs.js';
 import type {
   ApprovalExecutionOriginV1,
   ApprovalRequest,
+  CurrentApprovalRequest,
   ApprovalRequestV2,
   ApprovalRequestOriginV1,
 } from '../../approvals/approvalRequestV1.js';
@@ -1865,6 +1867,7 @@ export type ActionExecutorDeps = Readonly<{
   workspaceSyncConflictResolve?: (args: Readonly<{
     actionReceiptId: string;
     input: WorkspaceSyncConflictResolveActionInputV1;
+    context?: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<WorkspaceSyncConflictResolutionResultV1>;
   /**
@@ -1909,14 +1912,17 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<WorkspaceSyncRelationshipFlushActionOutputV1 | unknown>;
   workspaceSyncRelationshipsList?: (args: Readonly<{
     input: WorkspaceSyncRelationshipsListActionInputV1;
+    context?: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<WorkspaceSyncRelationshipsListActionOutputV1>;
   workspaceSyncConflictsList?: (args: Readonly<{
     input: WorkspaceSyncConflictsListActionInputV1;
+    context?: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<WorkspaceSyncConflictPageV1>;
   workspaceSyncConflictInspect?: (args: Readonly<{
     input: WorkspaceSyncConflictInspectActionInputV1;
+    context?: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<WorkspaceSyncConflictInspectActionOutputV1>;
   sessionSpawnNew?: (args: SessionSpawnNewInputV2 & SessionCreateOriginFieldsV1 & Readonly<{
@@ -2186,7 +2192,11 @@ export type ActionExecutorDeps = Readonly<{
     context?: ActionExecutorContext;
     effectActionId?: 'machines.agents.install.status';
   }) => Promise<DaemonAgentInstallReadResponse | ActionExecuteFailure>;
-  machineAgentInstallCancel?: (args: DaemonAgentInstallCancelRequest & { machineId: string; serverId?: string; signal?: AbortSignal }) => Promise<DaemonAgentInstallCancelResponse>;
+  machineAgentInstallCancel?: (args: DaemonAgentInstallCancelRequest & {
+    machineId: string; serverId?: string; signal?: AbortSignal;
+    context?: ActionExecutorContext;
+    effectActionId?: 'machines.agents.install.cancel';
+  }) => Promise<DaemonAgentInstallCancelResponse | ActionExecuteFailure>;
   agentsModelsList?: (args: Readonly<{
     purpose?: 'scm_diff_summary';
     discoveryTargetKey?: string;
@@ -2687,7 +2697,7 @@ export type ActionExecutorDeps = Readonly<{
     /** Open caller-originated or result-publication requests for one exact Workflow Run. */
     workflowRunId?: string | null;
   }>) => Promise<ApprovalQueueListResultV1>;
-  approvalsCreate?: (args: Readonly<{ request: ApprovalRequest; serverId?: string | null }>) => Promise<{ artifactId: string; request?: ApprovalRequest }>;
+  approvalsCreate?: (args: Readonly<{ request: CurrentApprovalRequest; serverId?: string | null }>) => Promise<{ artifactId: string; request?: ApprovalRequest }>;
   approvalsGet?: (args: Readonly<{ artifactId: string; serverId?: string | null }>) => Promise<ParsedApprovalArtifactBodyV1['request'] | null>;
   approvalsUpdate?: (args: Readonly<{ artifactId: string; request: ApprovalRequest; serverId?: string | null; context?: ActionExecutorContext;
     /** Lifecycle basis observed by the settling owner, checked before the existing Artifact revision CAS. */
@@ -3035,9 +3045,19 @@ export type ActionExecutorDeps = Readonly<{
     context: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<unknown>;
+  /** Exact Machine transport; the retained Run owner authorizes and deletes detached history. */
+  detachedSessionDelete?: (args: Readonly<{
+    input: Extract<AdmittedActionInputById['session.delete'], { runId: string }>;
+    context: ActionExecutorContext;
+  }>) => Promise<unknown>;
   /** Mounted person leaf; secret material never crosses the Action result boundary. */
   savedSecretRevealAction?: (args: Readonly<{
     input: import('../../account/settings/savedSecretResourceActionsV1.js').SharedSavedSecretRevealInputV1;
+    context: ActionExecutorContext;
+  }>) => Promise<unknown>;
+  /** Client Account encryption custody; public results contain no envelopes or values. */
+  savedSecretRepairAction?: (args: Readonly<{
+    input: import('../../account/settings/savedSecretResourceActionsV1.js').SharedSavedSecretRepairInputV1;
     context: ActionExecutorContext;
   }>) => Promise<unknown>;
   /** Client encryption custody; no envelope material crosses this public Action boundary. */
@@ -3120,6 +3140,13 @@ export type ActionExecutorDeps = Readonly<{
   saveClientFile?: (args: Readonly<{ bytes: Uint8Array; fileName: string; signal?: AbortSignal }>) => Promise<
     Readonly<{ status: 'saved' | 'canceled' }> | ActionExecuteFailure
   >;
+
+  /** Completed Browser bytes stream through the answering client's existing platform sink. */
+  saveClientBrowserDownload?: (args: Readonly<{
+    reference: Extract<import('../fileSaveActionFamily.js').FileSaveInput['source'], { kind: 'browserDownload' }>['reference'];
+    fileName: string;
+    signal?: AbortSignal;
+  }>) => Promise<Readonly<{ status: 'saved' | 'canceled' }> | ActionExecuteFailure>;
 
   /** The answering client's platform clipboard boundary; copied text never enters observation records. */
   clipboardWrite?: (args: Readonly<{ text: string; signal?: AbortSignal }>) => Promise<

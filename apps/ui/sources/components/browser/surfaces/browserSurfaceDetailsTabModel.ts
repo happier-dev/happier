@@ -1,4 +1,6 @@
 import { BrowserViewTargetV1Schema, type BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
+import { BrowserOpenViewCommandV1Schema } from '@happier-dev/protocol/browser/control/v1';
+import type { BrowserOpenEngineOverride } from '@/sync/domains/browser/adapters/selection';
 
 import type { DetailsTab, DetailsTabState } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import type { DetailsTabPresentation } from '@/components/appShell/panes/details/workspace/DetailsTabStrip';
@@ -106,6 +108,7 @@ export type BrowserViewDetailsResource = Readonly<{
     browserSessionId: string;
     viewId: string;
     target: BrowserViewTargetV1;
+    engineOverride?: BrowserOpenEngineOverride;
     /** Previews retain only path/query/hash, never a credential or device-local listener origin. */
     currentUrl?: string;
 }>;
@@ -138,6 +141,7 @@ export function createBrowserViewDetailsTab(params: Readonly<{
     viewId?: string;
     scope?: string;
     currentUrl?: string | null;
+    engineOverride?: BrowserOpenEngineOverride;
 }>): DetailsTab {
     const scopePart = params.scope ?? 'details';
     const { browserSessionId, viewId } = resolveBrowserViewIdentityForTarget(params.target, {
@@ -157,6 +161,7 @@ export function createBrowserViewDetailsTab(params: Readonly<{
             browserSessionId,
             viewId,
             target: params.target,
+            ...(params.engineOverride ? { engineOverride: params.engineOverride } : {}),
             ...(currentUrl ? { currentUrl } : {}),
         } satisfies BrowserViewDetailsResource,
     };
@@ -183,11 +188,13 @@ export function readBrowserViewDetailsResource(value: unknown): BrowserViewDetai
         return null;
     }
     const currentUrl = normalizeRestoredLocation(parsedTarget.data, resource.currentUrl);
+    const engineOverride = BrowserOpenViewCommandV1Schema.shape.engineOverride.safeParse(resource.engineOverride);
     return {
         kind: 'browser-view',
         browserSessionId: resource.browserSessionId,
         viewId: resource.viewId,
         target: parsedTarget.data,
+        ...(engineOverride.success && engineOverride.data ? { engineOverride: engineOverride.data } : {}),
         ...(currentUrl ? { currentUrl } : {}),
     };
 }

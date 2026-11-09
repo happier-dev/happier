@@ -1,3 +1,4 @@
+import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
 import { deploymentOverviewTranslations } from './deploymentOverviewTranslations';
@@ -5492,7 +5493,7 @@ export const zhHans: TranslationStructure = {
         remoteAlerts: {
             title: "应用关闭时的会话提醒",
             accountTitle: "允许远程会话提醒",
-            disclosure: "允许此Home读取您的提醒类别、免打扰时段和时区、预览限制及声音偏好，以便在应用关闭时发送获准的提醒。不会共享会话内容和加密密钥。",
+            disclosure: "让此 Home 在应用关闭时提醒你会话动态。它只读取提醒类型、勿扰时段与时区、预览限制和声音，绝不读取会话内容或加密密钥。",
             footer: "即使不同意，现有的所有者通知和前台更新仍可使用。远程更改需要网络连接；已发送的提醒无法撤回。",
             deviceTitle: "在此设备上接收",
             deviceSubtitle: "仅适用于此设备上的远程会话提醒。",
@@ -5554,8 +5555,8 @@ export const zhHans: TranslationStructure = {
     },
     push: {
       title: "推送通知",
-      footer: ({ home }: { home: string }) => `${home} 的推送许可会同步保存。设备通知权限和覆盖设置适用于整台设备。`,
-      enabledSubtitle: ({ home }: { home: string }) => `允许来自 ${home} 的推送通知`,
+      footer: ({ home }: { home: string }) => `Happier 关闭时，${home} 会通知你的手机和电脑。`,
+      enabledSubtitle: ({ home }: { home: string }) => `关闭后，将停止 ${home} 的通知及下方所有类型。`,
       troubleshootTitle: "故障排查",
       troubleshootSubtitle: "查看权限和已注册设备",
     },
@@ -6641,6 +6642,7 @@ export const zhHans: TranslationStructure = {
 
   settingsAppearance: {
     ...paneArrangementTranslations['zh-Hans'],
+    chatLinks: chatLinksTranslations['zh-Hans'],
     needsYouHighlight: needsYouHighlightTranslations['zh-Hans'],
     workingIndicator: workingIndicatorTranslations['zh-Hans'],
     visualEffects: {
@@ -7070,6 +7072,8 @@ export const zhHans: TranslationStructure = {
         "Happier 无法连接到此机器上的守护进程。它可能离线、仍在启动，或与Home断开连接。",
       agentIsolationMemberSetupAskManager: "请让机器管理员为你设置独立用户。",
       agentIsolationMemberSetupOpenSecurity: "打开此机器的“安全”页面，检查独立用户设置。",
+      pluginCodeUnreadableAskManager: "你的独立用户无法访问插件代码。请让机器管理员配置独立用户并重启机器上的 Happier，然后重试。",
+      pluginCodeUnreadableOpenSecurity: "你的独立用户无法访问插件代码。请打开此机器的“安全”页面，配置独立用户，然后重启机器上的 Happier 并重试。",
       agentIsolationUnavailable:
         "这台机器上的智能体隔离尚未就绪。请让机器所有者检查设置，然后重试。",
       tryAgain: "请重试",
@@ -7810,6 +7814,7 @@ export const zhHans: TranslationStructure = {
         statusBlocked: "已阻塞",
         setTitle: "设定目标",
         setSubtitle: "为该会话设定一个重点，让智能体保持专注。",
+        setSubtitleStarts: '设置后智能体会立即开始。',
         addBudget: "+ 添加预算上限（可选）",
         removeBudget: "移除预算",
         noUsageYet: "暂无使用",
@@ -7878,6 +7883,7 @@ export const zhHans: TranslationStructure = {
     },
         pendingActivation: {
     held: { title: "已由你停止", body: "在你恢复此会话之前，消息会一直保留在队列中。" },
+    held_offline: { title: "已由你停止", body: "此机器已离线。消息会保留在队列中；机器恢复后请重新发送或恢复。" },
             waiting_offline: { title: '消息已加入此机器的队列', body: '这台机器及其守护进程恢复在线后，消息将被处理。' },
             waiting: { title: '等待恢复', body: '守护进程恢复此会话时，你的消息会安全地保留在队列中。' },
             failed: { title: '无法恢复会话', body: '你的消息仍安全地保留在队列中。准备好后请重试。' },
@@ -11441,6 +11447,8 @@ export const zhHans: TranslationStructure = {
       management: {
         createProfile: '新建配置文件',
         selectProfile: '选择配置文件',
+selectWarning: "切换配置文件会关闭此会话的浏览器标签页，并使用所选配置文件重新打开此页面。",
+deleteWarning: "这会删除配置文件中保存的登录信息和网站数据，并关闭正在使用它的浏览器。",
         revokePermission: '撤销',
         clearStorage: '清除存储',
       },

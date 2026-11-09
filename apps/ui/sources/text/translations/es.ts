@@ -1,3 +1,4 @@
+import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
 import { deploymentOverviewTranslations } from './deploymentOverviewTranslations';
@@ -5756,7 +5757,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
         remoteAlerts: {
             title: "Alertas de sesión con la app cerrada",
             accountTitle: "Permitir alertas de sesión remotas",
-            disclosure: "Permite que este Home lea tus categorías de alertas, horas de silencio y zona horaria, límites de vista previa y preferencias de sonido para enviar alertas permitidas con la app cerrada. No se comparten el contenido de las sesiones ni las claves de cifrado.",
+            disclosure: "Deja que este Home te avise de las sesiones con la app cerrada. Solo lee tus tipos de aviso, horas de silencio y zona horaria, límites de vista previa y sonidos, nunca el contenido de las sesiones ni las claves de cifrado.",
             footer: "Sin este consentimiento, las notificaciones existentes del propietario y las actualizaciones en primer plano siguen disponibles. Los cambios remotos necesitan conexión; las alertas ya enviadas no se pueden retirar.",
             deviceTitle: "Recibir en este dispositivo",
             deviceSubtitle: "Solo afecta a las alertas de sesión remotas en este dispositivo.",
@@ -5818,8 +5819,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     },
     push: {
       title: "Notificaciones push",
-      footer: ({ home }: { home: string }) => `El consentimiento push se sincroniza para ${home}. Los permisos y ajustes del dispositivo se aplican a todo este dispositivo.`,
-      enabledSubtitle: ({ home }: { home: string }) => `Permitir notificaciones push de ${home}`,
+      footer: ({ home }: { home: string }) => `${home} te avisa en el teléfono y los ordenadores mientras Happier está cerrado.`,
+      enabledSubtitle: ({ home }: { home: string }) => `Desactivado, detiene los avisos de ${home} y todos los tipos de abajo.`,
       troubleshootTitle: "Solucionar problemas",
       troubleshootSubtitle: "Ver permisos y dispositivos registrados",
     },
@@ -6887,6 +6888,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
 
   settingsAppearance: {
     ...paneArrangementTranslations['es'],
+    chatLinks: chatLinksTranslations['es'],
     needsYouHighlight: needsYouHighlightTranslations['es'],
     workingIndicator: workingIndicatorTranslations['es'],
     visualEffects: {
@@ -7346,6 +7348,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
         "Happier no puede comunicarse con el daemon en esta máquina. Puede estar sin conexión, iniciándose o desconectado del Home.",
       agentIsolationMemberSetupAskManager: "Pide a alguien que administre la máquina que configure usuarios separados para ti.",
       agentIsolationMemberSetupOpenSecurity: "Abre la página Seguridad de esta máquina para revisar la configuración de usuarios separados.",
+      pluginCodeUnreadableAskManager: "Tu usuario separado no puede acceder al código de los plugins. Pide a un administrador de la máquina que configure usuarios separados y reinicie Happier en la máquina; después, inténtalo de nuevo.",
+      pluginCodeUnreadableOpenSecurity: "Tu usuario separado no puede acceder al código de los plugins. Abre la página Seguridad de esta máquina y configura usuarios separados; después, reinicia Happier en la máquina e inténtalo de nuevo.",
       agentIsolationUnavailable:
         "El aislamiento de agentes no está listo en esta máquina. Pide al propietario de la máquina que revise la configuración y vuelve a intentarlo.",
       tryAgain: "Intenta de nuevo",
@@ -8123,6 +8127,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
         statusBlocked: "Bloqueado",
         setTitle: "Define un objetivo",
         setSubtitle: "Da un enfoque a esta sesión para que el agente no se desvíe.",
+        setSubtitleStarts: 'El agente empieza en cuanto lo fijes.',
         addBudget: "+ Añadir un límite de presupuesto (opcional)",
         removeBudget: "Quitar presupuesto",
         noUsageYet: "Sin uso todavía",
@@ -8191,6 +8196,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     },
         pendingActivation: {
     held: { title: "Detenida por ti", body: "Tu mensaje queda en cola hasta que reanudes esta sesión." },
+    held_offline: { title: "Detenida por ti", body: "Esta máquina está sin conexión. Tu mensaje queda en cola; envía de nuevo o reanuda cuando vuelva." },
             waiting_offline: { title: 'Mensaje en cola para esta máquina', body: 'Se procesará cuando esta máquina y su daemon vuelvan a estar en línea.' },
             waiting: { title: 'Esperando para reanudar', body: 'Tu mensaje está guardado en cola mientras el daemon reanuda esta sesión.' },
             failed: { title: 'No se pudo reanudar la sesión', body: 'Tu mensaje sigue guardado en cola. Vuelve a intentarlo cuando quieras.' },
@@ -11807,6 +11813,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
       management: {
         createProfile: 'Nuevo perfil',
         selectProfile: 'Seleccionar perfil',
+selectWarning: "Cambiar de perfil cierra las pestañas del navegador de esta sesión y vuelve a abrir esta página con el perfil seleccionado.",
+deleteWarning: "Se borran los inicios de sesión y datos de sitios guardados en el perfil y se cierran los navegadores que lo usan.",
         revokePermission: 'Revocar',
         clearStorage: 'Borrar almacenamiento',
       },

@@ -88,11 +88,11 @@ export type InternalTasksActionInputById = {
             title: string;
             owner?: string | undefined;
             state?: 'backlog' | 'canceled' | 'completed' | 'started' | 'unstarted' | undefined;
-            labels?: string[] | undefined;
             links?: undefined | {
                 url: string;
                 title?: string | undefined;
             }[];
+            labels?: string[] | undefined;
             notes?: string | undefined;
             dueAt?: number | undefined;
             blockedBy?: (Readonly<{

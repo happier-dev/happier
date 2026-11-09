@@ -8,6 +8,7 @@ import { getActionNewWorkFeatureId, getActionRequiredServerFeatureId } from './a
 describe('getActionRequiredServerFeatureId', () => {
   it('gates new optional work while retaining existing-resource access and cleanup', () => {
     expect(getActionNewWorkFeatureId('browser.view.open')).toBe('browser');
+    expect(getActionNewWorkFeatureId('browser.profile.select')).toBe('browser');
     expect(getActionNewWorkFeatureId('devices.simulator.lease.acquire')).toBe('devices');
     expect(getActionNewWorkFeatureId('discussion.create')).toBe('sessions.conversations');
     expect(getActionNewWorkFeatureId('discussion.second_opinion.start')).toBe('sessions.conversations');
@@ -90,6 +91,7 @@ describe('getActionRequiredServerFeatureId', () => {
     expect(getActionRequiredServerFeatureId('workflow.run.start')).toBe('workflows');
     expect(getActionRequiredServerFeatureId('workflow.definition.get')).toBe('workflows');
     expect(getActionRequiredServerFeatureId('workflow.unknown')).toBeNull();
+    expect(getActionRequiredServerFeatureId('discussion.create')).toBe('sessions.conversations');
     expect(getActionRequiredServerFeatureId('discussion.list')).toBe('sessions.conversations');
     expect(getActionRequiredServerFeatureId('discussion.post')).toBe('sessions.conversations');
     expect(getActionRequiredServerFeatureId('session.board.get')).toBeNull();

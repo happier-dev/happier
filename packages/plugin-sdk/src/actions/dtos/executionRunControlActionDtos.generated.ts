@@ -6638,6 +6638,19 @@ export type ExecutionRunControlActionResultById = {
             t: 'error';
             error: string;
             errorCode?: string | undefined;
+            usageLimitRecovery?: undefined | {
+                authSelectionKind: 'group' | 'native' | 'profile';
+                v: 1;
+                status: 'armed' | 'cancelled' | 'checking' | 'exhausted' | 'paused' | 'waiting';
+                resetAtMs: null | number;
+                issueFingerprint: string;
+                armedAtMs: number;
+                nextCheckAtMs: null | number;
+                attemptCount: number;
+                maxAttempts: number;
+                lastProbeError: null | string;
+            };
+            usageLimitResetAtMs?: null | number | undefined;
         } | {
             t: 'voice_output';
             output: {

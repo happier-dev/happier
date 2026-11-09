@@ -69,7 +69,7 @@ export function getActionNewWorkFeatureId(
     case 'scm.reviewWorkspace.materializePrepared': case 'scm.pullRequest.runStacked':
     case 'scm.repository.clone': case 'scm.repository.init': case 'scm.hostingRepository.publish':
       return 'scm.writeOperations';
-    case 'browser.view.open': case 'browser.workspace.open':
+    case 'browser.view.open': case 'browser.workspace.open': case 'browser.profile.select':
       return 'browser';
     case 'devices.simulator.lease.acquire':
       return 'devices';

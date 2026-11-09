@@ -877,16 +877,25 @@ export type WorkflowAuthoringActionInputById = {
     } & {
         clientId?: string | undefined;
     };
-    readonly "workflow.run.review.draft.set": {
+    readonly "workflow.run.review.draft.set": ({
+        operation: 'clear' | 'show_newer';
         runId: string;
         expectedContentRevision: string;
-        value: unknown;
         scope: {
             serverId: string;
             accountId: string;
         };
         draftId: string;
-    } & {
+    } | {
+        value: unknown;
+        runId: string;
+        expectedContentRevision: string;
+        scope: {
+            serverId: string;
+            accountId: string;
+        };
+        draftId: string;
+    }) & {
         clientId?: string | undefined;
     };
 };

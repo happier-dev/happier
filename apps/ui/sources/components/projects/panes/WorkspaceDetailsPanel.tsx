@@ -58,6 +58,7 @@ import { buildActiveDetailsRouteParams, parseSessionPaneUrlState } from '@/compo
 import { buildProjectRouteHref } from '@/components/projects/detail/projectRouteState';
 import { EmptyEditorPage } from '@/components/workspaces/files/EmptyEditorPage';
 import { useWorkspaceFileWriteTabPresentation } from '@/components/workspaces/files/useWorkspaceFileWriteTabPresentation';
+import { useProjectContext } from '@/components/projects/useProjectContext';
 
 export type WorkspaceDetailsPanelHeaderActionRenderParams = Readonly<{
     iconButtonStyle: Readonly<Record<string, unknown>>;
@@ -67,6 +68,7 @@ export type WorkspaceDetailsPanelHeaderActionRenderParams = Readonly<{
 export type WorkspaceDetailsPanelProps = Readonly<{
     workspaceRef: WorkspaceRefV1;
     scopeId: string;
+    /** A destination window presents one retained tab using this same scoped renderer. */
     destinationTab?: DetailsTabState | null;
     activeRootPath?: string;
     activeWorktreeId?: string | null;
@@ -111,6 +113,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         });
         return result.kind === 'resolved' ? result.ref : null;
     }, [effectiveRootPath, props.workspaceRef, workspaceRefs]);
+    const projectContext = useProjectContext({ serverId: props.workspaceRef.serverId, projectRef: props.workspaceRef, activeCheckout: selectedWorkspaceRef });
     const filesController = useProjectSurfaceController({ scopeId: props.scopeId, workspaceRef: props.workspaceRef, activeRootPath: effectiveRootPath, activeWorktreeId: props.activeWorktreeId });
     const navigateFiles = React.useCallback(() => {
         if (deviceType === 'phone') filesController.navigateToSurface('browse');
@@ -311,8 +314,11 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         scopeId: props.scopeId, scope: 'workspaceDetails', accountLifetime: scopedPluginProjection.accountLifetime,
         openDetailsTab: pane.openDetailsTab, platform: resolveBrowserSurfacePlatform(props.platform),
         browserProfile: props.browserProductModels?.browserProfile?.profile,
+        localServiceAddressScope: { machineId: props.workspaceRef.machineId,
+            scope: 'workspace', workspaceRoot: effectiveRootPath },
     });
     const detailsSurfaceRenderers = React.useMemo(() => createWorkspaceDetailsSurfaceRenderers({
+        projectContext,
         localServiceLauncherState: props.localServiceLauncherState,
         localServicePreviewServerId: props.workspaceRef.serverId,
         onOpenTarget: openBrowserViewTarget,
@@ -345,6 +351,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         nowMs: props.nowMs,
     }), [
         revealInFilesTree,
+        projectContext,
         openBrowserViewTarget,
         openChanges,
         deviceType,
@@ -399,7 +406,9 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                 overlay={overlay}
                 callbacks={detailsSurfaceCallbacks}
                 mount={{
-                    projectId: props.workspaceRef.id,
+                    projectId: projectContext.target?.checkout?.id,
+                    projectContext,
+                    policyContext: projectContext.policyContext,
                     machineId: props.workspaceRef.machineId,
                     serverId: props.workspaceRef.serverId,
                     platform: pluginSurfacePlatform,
@@ -411,6 +420,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         );
     }, [
         pluginSurfacePlatform,
+        projectContext,
         pluginSurfaceFormFactor,
         scopedPluginProjection.phase,
         detailsSurfaceCallbacks,
@@ -479,7 +489,6 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         effectiveRootPath,
         newSession.open,
     ]);
-
     // A pending approval must stay in sight: it rides with the pane's controls, into a single tab's header too.
     const { approvalNotice } = newSession;
     const renderLiveActions = React.useCallback(() => approvalNotice, [approvalNotice]);

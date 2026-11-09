@@ -1,4 +1,6 @@
-import { ACTION_ID_FAMILIES_V1, isBrowserExtensionActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_ID_FAMILIES_V1, isBrowserExtensionActionIdV1, isBrowserProfileActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import type { PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
+import { executeBrowserProfileAction } from '../profiles/actions';
 import type { BrowserExtensionActionInputV1 } from '@happier-dev/protocol/actions';
 import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
 import { BrowserCommandV1Schema, BrowserOpenViewInProgressV1Schema, type DaemonBrowserViewListRequestV1, type DaemonBrowserViewListResponseV1 } from '@happier-dev/protocol/browser/control/v1';
@@ -17,7 +19,7 @@ import { executeManagedChromiumSandboxInstall } from '../sidecar/sandbox';
 import type {
   BrowserRecordingAttachToComposerInput,
   BrowserRecordingAttachToComposerResult,
-} from '../recording/attachToComposer';
+} from '../../recording/attachToComposer';
 
 export type BrowserDaemonRuntimeActionDisabledReason =
   | 'browser_action_unbacked'
@@ -106,6 +108,12 @@ const invalidParametersResult = {
   error: 'invalid_parameters',
 } as const satisfies BrowserDaemonRuntimeActionFailure;
 
+const sessionAccessDeniedResult = {
+  ok: false,
+  errorCode: 'permission_denied',
+  error: 'This browser belongs to another Session. Use that Session to control it.',
+} as const satisfies BrowserDaemonRuntimeActionFailure;
+
 function browserRuntimeActionDisabledResult(
   reason: BrowserDaemonRuntimeActionDisabledReason,
 ): BrowserDaemonRuntimeActionFailure {
@@ -145,26 +153,35 @@ async function executeBrowserControlAction(
   args: RuntimeActionExecuteArgs,
   input: CreateBrowserDaemonRuntimeActionExecutorInput,
 ): Promise<unknown> {
-  const parsed = parseRuntimeActionInput(args);
-  if (!parsed.ok) return parsed.result;
-
+  if (isBrowserProfileActionIdV1(args.actionId)) {
+    const control = input.control ?? input.resolveControl?.();
+    if (!control?.profiles) return { status: 'unavailable', code: 'managed_browser_required' };
+    return executeBrowserProfileAction(control.profiles, args.actionId,
+      args.input as PublicActionInputById[typeof args.actionId], control, args.context);
+  }
   if (isBrowserExtensionActionIdV1(args.actionId)) {
     const control = input.control ?? input.resolveControl?.();
     if (!control?.extensions) return { status: 'unavailable', code: 'managed_browser_required' };
-    return await control.extensions.execute(args.actionId, parsed.input as BrowserExtensionActionInputV1, args.context);
+    return await control.extensions.execute(args.actionId, args.input as BrowserExtensionActionInputV1, args.context);
   }
 
   if (args.actionId === 'browser.view.list') {
     const control = input.control ?? input.resolveControl?.();
     if (!control) return browserRuntimeActionDisabledResult('browser_control_route_unavailable');
     // The Action spec above already parsed the canonical list request.
-    const request = parsed.input as DaemonBrowserViewListRequestV1;
-    return { protocolVersion: 1, views: [...control.listViews(request.browserSessionId)] } satisfies DaemonBrowserViewListResponseV1;
+    const request = args.input as DaemonBrowserViewListRequestV1;
+    return { protocolVersion: 1, views: [...control.listViews(request.browserSessionId, args.context)] } satisfies DaemonBrowserViewListResponseV1;
   }
 
-  const command = BrowserCommandV1Schema.safeParse(parsed.input);
+  const command = BrowserCommandV1Schema.safeParse(args.input);
   if (!command.success) {
     return invalidParametersResult;
+  }
+
+  if ((command.data.kind === 'openView' || command.data.kind === 'setTarget')
+    && command.data.engineOverride === 'embedded') {
+    return { v: 1, commandId: command.data.commandId, status: 'failed',
+      error: { code: 'unsupported_command', message: 'Embedded pages open through browser.workspace.open.', retryable: false } };
   }
 
   let control = input.control ?? input.resolveControl?.();
@@ -240,9 +257,7 @@ async function executeBrowserRecordingAttachAction(
   if (!recordingAttach) {
     return browserRuntimeActionDisabledResult('browser_recording_route_unavailable');
   }
-  const parsed = parseRuntimeActionInput(args);
-  if (!parsed.ok) return parsed.result;
-  const record = parsed.input as Readonly<{ recordingId?: unknown; sessionId?: unknown }>;
+  const record = args.input as Readonly<{ recordingId?: unknown; sessionId?: unknown }>;
   const recordingId = typeof record.recordingId === 'string' ? record.recordingId.trim() : '';
   if (!recordingId) {
     return invalidParametersResult;
@@ -265,13 +280,6 @@ export function createBrowserDaemonRuntimeActionExecutor(
       return await fallback(args);
     }
 
-    // This identity scopes the Session's daemon browser workspace. UI-owned panes have their
-    // own Browser identity and authenticated reverse room, not the Happier Session's identity.
-    const sessionId = args.context.defaultSessionId;
-    const browserSessionId = args.input && typeof args.input === 'object' && !Array.isArray(args.input)
-      ? (args.input as Record<string, unknown>).browserSessionId : undefined;
-    const sessionBrowserMismatch = Boolean(sessionId && typeof browserSessionId === 'string' && browserSessionId !== sessionId);
-
     if (args.actionId === 'browser.sandbox.install') {
       return await executeManagedChromiumSandboxInstall(args);
     }
@@ -281,42 +289,60 @@ export function createBrowserDaemonRuntimeActionExecutor(
       return browserRuntimeActionDisabledResult('browser_automation_route_unavailable');
     }
 
+    const parsed = parseRuntimeActionInput(args);
+    if (!parsed.ok) return parsed.result;
+    args = { ...args, input: parsed.input };
+    // Use the canonical schema's normalized identity for custody and dispatch.
+    const sessionId = args.context.defaultSessionId;
+    const actionInput = args.input && typeof args.input === 'object' && !Array.isArray(args.input)
+      ? args.input as Record<string, unknown> : {};
+    const recording = BROWSER_RECORDING_ACTION_IDS.has(args.actionId) && typeof actionInput.recordingId === 'string'
+      ? await input.recording?.getRecordingStatus?.({ recordingId: actionInput.recordingId }) : undefined;
+    const browserSessionId = recording?.browserSessionId ?? actionInput.browserSessionId;
+    const sessionBrowserMismatch = Boolean(sessionId && typeof browserSessionId === 'string' && browserSessionId !== sessionId);
+    // Control dispatch and discovery already consume this owner's decision. All
+    // other session-owned Browser Actions must do so before their route effects.
+    const control = input.control ?? input.resolveControl?.();
+    if (!BROWSER_CONTROL_ACTION_IDS.has(args.actionId)) {
+      const targets = BROWSER_CONTEXT_ACTION_IDS.has(args.actionId) && input.context?.resolveAccessTargets
+        ? input.context.resolveAccessTargets(args.actionId, args.input)
+        : typeof browserSessionId === 'string' ? [{ browserSessionId, ...(recording ? { existingProfile: recording } : {}) }] : [];
+      for (const target of targets) {
+        const failure = control?.getCommandAccessFailure?.({ commandId: args.actionId, ...target }, args.context);
+        if (failure) return { ok: false, errorCode: failure.error.code, error: failure.error.message };
+      }
+    }
+
     if (BROWSER_AUTOMATION_ACTION_IDS.has(args.actionId)) {
-      const parsed = parseRuntimeActionInput(args);
-      if (!parsed.ok) return parsed.result;
-      const view = parsed.input as Readonly<{ browserSessionId: string; viewId: string }>;
+      const view = args.input as Readonly<{ browserSessionId: string; viewId: string }>;
       if (input.ownsAutomationView && !input.ownsAutomationView(view)) {
         return input.uiAutomation
-          ? await input.uiAutomation({ ...args, input: parsed.input })
+          ? await input.uiAutomation(args)
           : browserRuntimeActionDisabledResult('browser_ui_automation_unavailable');
       }
-      if (sessionBrowserMismatch) return invalidParametersResult;
+      if (sessionBrowserMismatch) return sessionAccessDeniedResult;
       return await executeBrowserAutomationAction(args, input);
     }
     if (BROWSER_CONTROL_ACTION_IDS.has(args.actionId)) {
       // Client view effects belong to the exact answering client's mounted page,
       // not to the Machine's BrowserCommand broker or its system browser.
       if (args.actionId === 'browser.view.openExternal' || args.actionId === 'browser.view.openDevtools') {
-        const parsed = parseRuntimeActionInput(args);
-        if (!parsed.ok) return parsed.result;
         return input.uiAutomation
-          ? await input.uiAutomation({ ...args, input: parsed.input })
+          ? await input.uiAutomation(args)
           : browserRuntimeActionDisabledResult('browser_ui_automation_unavailable');
       }
       if ((EXISTING_VIEW_BROWSER_CONTROL_ACTION_IDS as readonly string[]).includes(args.actionId)) {
-        const parsed = parseRuntimeActionInput(args);
-        if (!parsed.ok) return parsed.result;
-        const view = parsed.input as Readonly<{ browserSessionId: string; viewId: string }>;
+        const view = args.input as Readonly<{ browserSessionId: string; viewId: string }>;
         if (input.ownsAutomationView && !input.ownsAutomationView(view)) {
-          return input.uiAutomation
-            ? await input.uiAutomation({ ...args, input: parsed.input })
-            : browserRuntimeActionDisabledResult('browser_ui_automation_unavailable');
+          // Mounted-page dispatch needs an invoking Session. Without that route,
+          // let the lifecycle owner settle an absent managed view as view_not_found.
+          if (input.uiAutomation && args.context.defaultSessionId) return await input.uiAutomation(args);
         }
       }
-      if (!featureGate.isEnabled('browser.sidecar')) {
+      if ((!isBrowserProfileActionIdV1(args.actionId) || args.actionId === 'browser.profile.select') && !featureGate.isEnabled('browser.sidecar')) {
         return browserRuntimeActionDisabledResult('browser_sidecar_disabled');
       }
-      if (sessionBrowserMismatch) return invalidParametersResult;
+      if (sessionBrowserMismatch) return sessionAccessDeniedResult;
       return await executeBrowserControlAction(args, input);
     }
     if (BROWSER_DIAGNOSTICS_ACTION_IDS.has(args.actionId)) {
@@ -324,21 +350,19 @@ export function createBrowserDaemonRuntimeActionExecutor(
         return browserRuntimeActionDisabledResult('browser_diagnostics_route_unavailable');
       }
       if ((MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS as readonly string[]).includes(args.actionId)) {
-        const parsed = parseRuntimeActionInput(args);
-        if (!parsed.ok) return parsed.result;
-        const view = parsed.input as Readonly<{ browserSessionId: string; viewId: string }>;
+        const view = args.input as Readonly<{ browserSessionId: string; viewId: string }>;
         if (input.ownsAutomationView && !input.ownsAutomationView(view)) {
-          return input.uiAutomation ? await input.uiAutomation({ ...args, input: parsed.input })
+          return input.uiAutomation ? await input.uiAutomation(args)
             : browserRuntimeActionDisabledResult('browser_ui_automation_unavailable');
         }
       }
-      if (sessionBrowserMismatch) return invalidParametersResult;
+      if (sessionBrowserMismatch) return sessionAccessDeniedResult;
       if (!input.diagnostics) {
         return browserRuntimeActionDisabledResult('browser_diagnostics_route_unavailable');
       }
       return await input.diagnostics.dispatch(args.actionId, args.input);
     }
-    if (sessionBrowserMismatch) return invalidParametersResult;
+    if (sessionBrowserMismatch) return sessionAccessDeniedResult;
     if (BROWSER_CONTEXT_ACTION_IDS.has(args.actionId)) {
       if (!featureGate.isEnabled('browser.context')) {
         return browserRuntimeActionDisabledResult('browser_context_route_unavailable');
@@ -358,7 +382,11 @@ export function createBrowserDaemonRuntimeActionExecutor(
       if (!input.recording) {
         return browserRuntimeActionDisabledResult('browser_recording_route_unavailable');
       }
-      return await input.recording.dispatch(args.actionId, args.input);
+      return await input.recording.dispatch(args.actionId, args.input, args.context, {
+        includeRecording: target => !control?.getCommandAccessFailure?.({
+          commandId: args.actionId, browserSessionId: target.browserSessionId, existingProfile: target,
+        }, args.context),
+      });
     }
     return browserRuntimeActionDisabledResult('browser_action_unbacked');
   };

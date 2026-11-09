@@ -13,9 +13,12 @@ import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/
 import {
     readClaimedBrowserRuntimeWorkspaceOpenRegion,
     readRegisteredBrowserRuntimeWorkspaceOpeningAdapter,
+    readRegisteredBrowserRuntimeControlAdapter,
     type BrowserWorkspaceOpenerRegion,
 } from './runtimeControlRegistry';
 import { MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
+import { resolveBrowserAddressTarget, shouldRetargetBrowserViewForAddressNavigation, type BrowserAddressFacts } from './address';
+import { resolveExternalUrlTargetFromInput } from '../shell/address';
 
 import {
     dispatchBrowserControlCommand,
@@ -67,6 +70,9 @@ export type BrowserRuntimeControlAdapter = Readonly<{
     /** Exact mounted owner; workspace reopens must not borrow a same-id view from another Home. */
     accountLifetime?: ServerAccountScopeLifetime | null;
     readState: () => BrowserControlState | null | undefined;
+    readAddressFacts?: () => BrowserAddressFacts;
+    /** Completed download handoff stays with the mounted viewer's admitted stream. */
+    saveDownload?: (input: Readonly<{ machineId: string; viewId: string; downloadId: string; fileName: string; signal?: AbortSignal }>) => Promise<Readonly<{ status: 'saved' | 'canceled' }>>;
     /** Resolve preview access through its current Service facts and existing Home admission. */
     resolveOpenExternalUrl?: (view: BrowserControlViewState, signal?: AbortSignal) => Promise<BrowserOpenExternalUrlResult>;
     applyDispatchResult: (result: BrowserControlCommandDispatchResult) => void | Promise<void>;
@@ -87,10 +93,12 @@ export type BrowserRuntimeDiagnosticsAdapter = Readonly<{ execute: RuntimeAction
 export type BrowserRuntimeWorkspaceOpeningAdapter = Readonly<{
     scopeId: string;
     accountLifetime: ServerAccountScopeLifetime | null;
+    readAddressFacts?: () => BrowserAddressFacts;
     open: (
         input: PublicActionInputById['browser.workspace.open'],
         context: ActionExecutorContext,
-        presentation?: Readonly<{ openerRegion: BrowserWorkspaceOpenerRegion }>,
+        presentation?: Readonly<{ openerRegion?: BrowserWorkspaceOpenerRegion;
+            executeControl: RuntimeActionExecute; managedBrowserAvailable: boolean }>,
     ) => Promise<unknown>;
 }>;
 
@@ -257,7 +265,7 @@ function serializeBrowserControlActionResult(
 
 async function executeBrowserControlAction(
     args: RuntimeActionExecuteArgs,
-    input: Pick<CreateBrowserRuntimeActionExecutorInput, 'control' | 'resolveControl' | 'automation' | 'resolveAutomation' | 'executeOnMachine'>,
+    input: Pick<CreateBrowserRuntimeActionExecutorInput, 'control' | 'resolveControl' | 'automation' | 'resolveAutomation' | 'executeOnMachine' | 'fallback'>,
 ): Promise<unknown> {
     if (args.actionId === 'browser.workspace.open') {
         // Input is parsed by the catalog schema, not a second workspace parser.
@@ -276,7 +284,18 @@ async function executeBrowserControlAction(
             return browserRuntimeActionDisabledResult('browser_view_unavailable');
         }
         const openerRegion = readClaimedBrowserRuntimeWorkspaceOpenRegion(lifetime.scope, request.scopeId, request.commandId);
-        return await owner.open(request, args.context, openerRegion ? { openerRegion } : undefined);
+        const resolved = await resolveBrowserAddressTarget({ target: request.target,
+            facts: owner.readAddressFacts?.(), accountLifetime: lifetime, context: args.context,
+            execute: input.fallback ?? createUnavailableRuntimeActionExecutor() });
+        if (resolved.status === 'failed') return resolved.result;
+        return await owner.open({ ...request, target: resolved.target }, args.context, {
+            ...(openerRegion ? { openerRegion } : {}),
+            executeControl: controlArgs => executeBrowserControlAction(controlArgs, { ...input,
+                resolveControl: input.resolveControl ?? (view => readRegisteredBrowserRuntimeControlAdapter(
+                    view.browserSessionId, view.viewId, lifetime.scope)),
+            }),
+            managedBrowserAvailable: input.executeOnMachine !== undefined,
+        });
     }
 
     if (args.actionId === 'browser.view.openDevtools') {
@@ -339,11 +358,22 @@ async function executeBrowserControlAction(
     // A Machine-targeted open creates the daemon-owned Browser before any viewer exists.
     // Mounted in-app engines supply their control explicitly and retain their local policy owner.
     const machineTarget = args.context.externalActionTarget;
-    if (command.data.kind === 'openView' && !input.control && machineTarget?.kind === 'machine') {
+    const control = input.control ?? input.resolveControl?.(command.data) ?? undefined;
+    if (command.data.kind === 'openView' && control && command.data.target.kind === 'externalUrl') {
+        const resolved = await resolveBrowserAddressTarget({ target: command.data.target,
+            facts: control.readAddressFacts?.(), accountLifetime: control.accountLifetime, context: args.context,
+            execute: input.fallback ?? createUnavailableRuntimeActionExecutor() });
+        if (resolved.status === 'failed') return resolved.result;
+        if (resolved.target.kind === 'localServicePreview') {
+            return await executeBrowserControlAction({ ...args, input: {
+                ...command.data, target: resolved.target, currentUrl: resolved.currentUrl,
+            } }, { ...input, control });
+        }
+    }
+    if (command.data.kind === 'openView' && !control && machineTarget?.kind === 'machine') {
         return await executeBrowserMachineAction(args, command.data, input.executeOnMachine);
     }
 
-    const control = input.control ?? input.resolveControl?.(command.data) ?? undefined;
     if (!control) {
         return await executeBrowserMachineAction(args, command.data, input.executeOnMachine, 'browser_control_unavailable');
     }
@@ -356,8 +386,34 @@ async function executeBrowserControlAction(
     if (command.data.kind !== 'openView' && 'viewId' in command.data && !view) {
         return await executeBrowserMachineAction(args, command.data, input.executeOnMachine, 'browser_control_unavailable');
     }
+    if (command.data.kind === 'navigate' && command.data.navigationIntent !== 'target'
+        && view?.browserSessionId === command.data.browserSessionId) {
+        const target = resolveExternalUrlTargetFromInput(command.data.url);
+        if (target) {
+            const resolved = await resolveBrowserAddressTarget({ target, facts: control.readAddressFacts?.(),
+                accountLifetime: control.accountLifetime, context: args.context,
+                execute: input.fallback ?? createUnavailableRuntimeActionExecutor() });
+            if (resolved.status === 'failed') return resolved.result;
+            if (resolved.target.kind === 'localServicePreview') {
+                return await executeBrowserControlAction({ ...args, actionId: 'browser.view.open', input: {
+                    kind: 'openView', commandId: command.data.commandId, browserSessionId: command.data.browserSessionId,
+                    viewId: command.data.viewId, target: resolved.target, platform: view.platform,
+                    currentUrl: resolved.currentUrl, focus: true,
+                } }, { ...input, control });
+            }
+            if (!isDaemonAuthoritativeBrowserView(view) && target.kind === 'externalUrl'
+                && shouldRetargetBrowserViewForAddressNavigation(view, target)) {
+                return await executeBrowserControlAction({ ...args, actionId: 'browser.target.set', input: {
+                    kind: 'setTarget', commandId: command.data.commandId, browserSessionId: command.data.browserSessionId,
+                    viewId: command.data.viewId, target, currentUrl: target.url,
+                } }, { ...input, control });
+            }
+        }
+    }
     if (view?.browserSessionId === command.data.browserSessionId
-        && isDaemonAuthoritativeBrowserView(view) && machineTarget?.kind === 'machine') {
+        && isDaemonAuthoritativeBrowserView(view) && machineTarget?.kind === 'machine'
+        && !((command.data.kind === 'openView' || command.data.kind === 'setTarget')
+            && command.data.engineOverride === 'embedded')) {
         return await executeBrowserMachineAction(args, command.data, input.executeOnMachine, 'browser_control_route_unavailable', control);
     }
 
@@ -384,7 +440,8 @@ async function executeBrowserControlAction(
             input.executeOnMachine, 'browser_control_route_unavailable', control);
         const refused = (typeof opened === 'object' && opened !== null && 'ok' in opened && opened.ok === false)
             || BrowserCommandDispatchResultV1Schema.safeParse(opened).data?.status === 'failed';
-        if (!refused) return opened;
+        if (!refused || ((command.data.kind === 'openView' || command.data.kind === 'setTarget')
+            && command.data.engineOverride === 'managed')) return opened;
         result = dispatchBrowserControlCommand(state, command.data, {
             ...control.readDispatchOptions?.(command.data),
             clientControlService: (input.automation ?? input.resolveAutomation?.(command.data))?.controlService ?? undefined,

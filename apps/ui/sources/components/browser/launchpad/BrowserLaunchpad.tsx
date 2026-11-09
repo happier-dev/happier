@@ -280,8 +280,6 @@ export function BrowserLaunchpad(props: Readonly<{
      * where it stands alone (the phone page, the Session viewer).
      */
     urlEntry?: boolean;
-    /** The shell's address decision: opens the running Service preview a typed localhost port names. */
-    openServicePreviewForAddress?: (url: string) => boolean;
     testID?: string;
 }>): React.ReactElement {
     const testID = props.testID ?? 'browser-launchpad';
@@ -371,13 +369,11 @@ export function BrowserLaunchpad(props: Readonly<{
     // The URL entry submits a normalized http(s) URL; turning it into a target is the launchpad's
     // job because the seam it delegates to is target-shaped. One normalizer, one target builder.
     const handleSubmitUrl = React.useCallback((url: string) => {
-        // The page's one address decision: a running Service preview of a typed localhost port first.
-        if (props.openServicePreviewForAddress?.(url) === true) return;
         const target = resolveExternalUrlTargetFromInput(url);
         if (!target) return;
         // Navigate the CURRENT tab in place (turn the new-tab page INTO the page) — never a sibling tab.
         props.onNavigateInPlace?.(target, { platform: props.platform });
-    }, [props.openServicePreviewForAddress, props.onNavigateInPlace, props.platform]);
+    }, [props.onNavigateInPlace, props.platform]);
 
     const hasRows = resolvedRows.length > 0;
     const refreshReason = props.refreshStatus === 'error'

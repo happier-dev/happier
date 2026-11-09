@@ -5,6 +5,19 @@ import {
 
 import type { BrowserControlViewState } from '../control';
 import { withoutPreviewAdmission } from '@/sync/domains/local/services/preview/url';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
+
+/** The Machine-local endpoint identity shared by address resolution and Service suggestions. */
+export function readBrowserLoopbackAddressPort(address: string | null | undefined): string | null {
+    if (!address) return null;
+    try {
+        const parsed = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(address) ? address : `http://${address}`);
+        if (!isLoopbackHostname(parsed.hostname)) return null;
+        return parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
+    } catch {
+        return null;
+    }
+}
 
 export type BrowserAddressNormalizationOptions = Readonly<{
     /** A `{query}` template; omitted means the default engine below. */
@@ -200,4 +213,16 @@ function selectBrowserPreviewDisplayAddress(view: BrowserControlViewState): stri
     // A page reported as a bare path (`/`, `/dashboard`) is on the preview's own host.
     if (url.startsWith('/')) return url === '/' ? host : `${host}${url}`;
     return formatBrowserDisplayUrl(withoutPreviewAdmission(url), { displayHost: host }) || host;
+}
+
+/**
+ * What a view's address field holds. A relay preview that has no absolute address yet, or never had
+ * one (refused, Can't reach), names the preview's own display address rather than a bare `/` or
+ * an empty field. The last-page title belongs only to recovery, never the address field.
+ */
+export function selectBrowserViewAddress(view: BrowserControlViewState | null): string | null {
+    if (!view) return null;
+    const url = view.pendingUrl ?? view.currentUrl;
+    if (view.target.kind !== 'localServicePreview' || parseOrigin(url)) return url;
+    return selectBrowserPreviewDisplayAddress(view) ?? url;
 }

@@ -1,3 +1,4 @@
+import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { BROWSER_LOGIN_APP_BOUND_ENCRYPTION_MESSAGE_V1 } from '@happier-dev/protocol/browser/profile/v1';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
@@ -6220,7 +6221,7 @@ const enSettingsNotifications = {
     title: 'Closed-app session alerts',
     accountTitle: 'Allow remote session alerts',
     disclosure:
-      'Allow this Home to read your alert categories, quiet hours and time zone, preview limits, and sound preferences so it can send permitted alerts while the app is closed. Session content and encryption keys are not shared.',
+      "Let this Home alert you about sessions while the app is closed. It only reads your alert types, quiet hours and time zone, preview limits and sounds, never session content or encryption keys.",
     footer:
       'Without this consent, existing owner notifications and foreground updates remain available. Remote changes require a connection; alerts already sent cannot be recalled.',
     deviceTitle: 'Receive on this device',
@@ -6380,9 +6381,9 @@ const enSettingsNotifications = {
   push: {
     title: 'Push notifications',
     footer: ({ home }: { home: string }) =>
-      `Push consent is synced for ${home}. Device notification permissions and overrides apply across this device.`,
+      `${home} reaches your phone and computers while Happier is closed.`,
     enabledSubtitle: ({ home }: { home: string }) =>
-      `Allow push notifications from ${home}`,
+      `Off stops alerts from ${home} and every type below.`,
     troubleshootTitle: 'Troubleshoot',
     troubleshootSubtitle: 'View permissions and registered devices',
   },
@@ -8076,6 +8077,7 @@ const enInstrument = {
 
 const enSettingsAppearance = {
   ...paneArrangementTranslations['en'],
+  chatLinks: chatLinksTranslations['en'],
   needsYouHighlight: needsYouHighlightTranslations['en'],
   workingIndicator: workingIndicatorTranslations['en'],
   pageDescription: 'Theme, text, layout and motion.',
@@ -8562,6 +8564,8 @@ const enErrors = {
     'Happier can’t reach the daemon on this machine. It may be offline, still starting, or disconnected from the Home.',
   agentIsolationMemberSetupAskManager: "Ask a Machine manager to set up separate users for you.",
   agentIsolationMemberSetupOpenSecurity: "Open this Machine’s Security page to inspect separate-user setup for you.",
+  pluginCodeUnreadableAskManager: "Plugin code isn’t available to your separate user. Ask a Machine manager to run separate-user setup and restart Happier on the Machine, then try again.",
+  pluginCodeUnreadableOpenSecurity: "Plugin code isn’t available to your separate user. Open this Machine’s Security page and run separate-user setup, then restart Happier on the Machine and try again.",
   agentIsolationUnavailable:
     'Agent isolation isn’t ready on this machine. Ask the machine owner to check its setup, then try again.',
   tryAgain: 'Please try again',
@@ -9511,6 +9515,7 @@ const enSession = {
       set: 'Set goal',
       setTitle: 'Set a goal',
       setSubtitle: 'Give this session a focus so the agent stays on track.',
+      setSubtitleStarts: 'The agent starts on it as soon as you set it.',
       addBudget: '+ Add a budget limit (optional)',
       removeBudget: 'Remove budget',
       noUsageYet: 'No usage yet',
@@ -9635,6 +9640,7 @@ const enSession = {
   },
   pendingActivation: {
     held: { title: "Stopped by you", body: "Your message stays queued until you resume this session." },
+    held_offline: { title: "Stopped by you", body: "This machine is offline. Your message stays queued; send again or resume once it is back." },
     waiting_offline: {
       title: 'Message queued for this machine',
       body: 'It will be processed when this machine and its daemon are back online.',
@@ -13619,6 +13625,8 @@ const enBrowserShell = {
     management: {
       createProfile: 'Create profile',
       selectProfile: 'Select profile',
+selectWarning: "Switching profiles closes this session’s browser tabs and reopens this page with the selected profile.",
+deleteWarning: "This deletes the profile’s saved sign-ins and site data, and closes any browser using it.",
       revokePermission: 'Revoke permission',
       clearStorage: 'Clear storage',
     },

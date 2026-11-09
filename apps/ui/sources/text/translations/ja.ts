@@ -1,3 +1,4 @@
+import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
 import { deploymentOverviewTranslations } from './deploymentOverviewTranslations';
@@ -6078,7 +6079,7 @@ localTailscale: {
         remoteAlerts: {
             title: "アプリ終了中のセッション通知",
             accountTitle: "リモートセッション通知を許可",
-            disclosure: "アプリを閉じている間も許可された通知を送信できるよう、このHomeに通知カテゴリ、通知を控える時間帯とタイムゾーン、プレビューの制限、サウンド設定の読み取りを許可します。セッションの内容や暗号化キーは共有されません。",
+            disclosure: "アプリを閉じている間も、この Home からセッションを通知します。読み取るのは通知の種類、おやすみ時間とタイムゾーン、プレビューの上限、サウンドだけで、セッションの内容や暗号鍵は読み取りません。",
             footer: "同意しない場合も、既存の所有者向け通知とアプリ使用中の更新は利用できます。リモートへの変更反映には接続が必要です。送信済みの通知は取り消せません。",
             deviceTitle: "このデバイスで受信",
             deviceSubtitle: "このデバイスのリモートセッション通知のみに適用されます。",
@@ -6140,8 +6141,8 @@ localTailscale: {
     },
     push: {
       title: "プッシュ通知",
-      footer: ({ home }: { home: string }) => `プッシュ通知の同意は ${home} に同期されます。端末の通知権限と設定はこの端末全体に適用されます。`,
-      enabledSubtitle: ({ home }: { home: string }) => `${home} からのプッシュ通知を許可`,
+      footer: ({ home }: { home: string }) => `Happier を閉じている間、${home} からスマートフォンとコンピューターに通知します。`,
+      enabledSubtitle: ({ home }: { home: string }) => `オフにすると ${home} からの通知と下の種類がすべて止まります。`,
       troubleshootTitle: "トラブルシューティング",
       troubleshootSubtitle: "権限と登録済みデバイスを確認",
     },
@@ -7209,6 +7210,7 @@ localTailscale: {
 
   settingsAppearance: {
     ...paneArrangementTranslations['ja'],
+    chatLinks: chatLinksTranslations['ja'],
     needsYouHighlight: needsYouHighlightTranslations['ja'],
     workingIndicator: workingIndicatorTranslations['ja'],
     visualEffects: {
@@ -7656,6 +7658,8 @@ localTailscale: {
         "このマシン上のデーモンに接続できません。オフライン、起動中、またはHomeから切断されている可能性があります。",
       agentIsolationMemberSetupAskManager: "マシン管理者に、個別ユーザーの設定を依頼してください。",
       agentIsolationMemberSetupOpenSecurity: "このマシンの「セキュリティ」ページを開き、個別ユーザーの設定を確認してください。",
+      pluginCodeUnreadableAskManager: "個別ユーザーからプラグインのコードにアクセスできません。マシンの管理者に個別ユーザーの設定とマシン上の Happier の再起動を依頼してから、もう一度お試しください。",
+      pluginCodeUnreadableOpenSecurity: "個別ユーザーからプラグインのコードにアクセスできません。このマシンの「セキュリティ」ページで個別ユーザーを設定し、マシン上の Happier を再起動してから、もう一度お試しください。",
       agentIsolationUnavailable:
         "このマシンではエージェントの分離の準備ができていません。マシンの所有者に設定の確認を依頼してから、もう一度お試しください。",
       tryAgain: "再試行してください",
@@ -8427,6 +8431,7 @@ localTailscale: {
         statusBlocked: "ブロック中",
         setTitle: "目標を設定",
         setSubtitle: "セッションに焦点を定めて、エージェントが軌道を外れないようにします。",
+        setSubtitleStarts: '設定するとすぐにエージェントが取りかかります。',
         addBudget: "+ 予算の上限を追加（任意）",
         removeBudget: "予算を削除",
         noUsageYet: "まだ使用なし",
@@ -8495,6 +8500,7 @@ localTailscale: {
     },
         pendingActivation: {
     held: { title: "あなたが停止しました", body: "このセッションを再開するまで、メッセージはキューに保持されます。" },
+    held_offline: { title: "あなたが停止しました", body: "このマシンはオフラインです。メッセージはキューに保持されます。復帰後に再送信するか再開してください。" },
             waiting_offline: { title: 'このマシン用にメッセージをキューへ保存しました', body: 'このマシンとデーモンがオンラインに戻ると処理されます。' },
             waiting: { title: '再開を待っています', body: 'デーモンがこのセッションを再開する間、メッセージは安全にキューへ保存されています。' },
             failed: { title: 'セッションを再開できませんでした', body: 'メッセージは引き続き安全にキューへ保存されています。準備ができたら再試行してください。' },
@@ -12102,6 +12108,8 @@ localTailscale: {
       management: {
         createProfile: '新規プロファイル',
         selectProfile: 'プロファイルを選択',
+selectWarning: "プロファイルを切り替えると、このセッションのブラウザータブを閉じ、選択したプロファイルでこのページを開き直します。",
+deleteWarning: "このプロファイルに保存されたログイン情報とサイトデータを削除し、使用中のブラウザーを閉じます。",
         revokePermission: '取り消す',
         clearStorage: 'ストレージを消去',
       },

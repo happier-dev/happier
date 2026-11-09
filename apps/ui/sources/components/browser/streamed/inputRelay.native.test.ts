@@ -26,16 +26,21 @@ vi.mock('expo-file-system', () => {
     return { Directory, File, Paths: { cache: 'file:///cache' } };
 });
 
-import { createBrowserStreamInputRelay, saveBrowserStreamDownload } from './inputRelay';
+import { createBrowserStreamInputRelay } from './inputRelay';
+import { saveBrowserDownloadRanges } from '@/sync/runtime/files/browserDownload';
 
 describe('native browser download delivery', () => {
     beforeEach(() => { native.files.clear(); native.shared.length = 0; });
-    it.each([false, true])('hands off complete bytes and cleans a disconnected partial file (disconnect=%s)', async disconnected => {
+    it.each(['saved', 'disconnected', 'canceled'] as const)('hands off complete bytes or cleans an interrupted partial file (%s)', async outcome => {
         let sequence = 0;
+        const controller = new AbortController();
         const bytes = new Uint8Array([0, 255, 128, 13, 10, 42]);
         const relay = createBrowserStreamInputRelay({ streamId: 'viewer', nextSequence: () => sequence++, send: (event, eventId) => {
             if (event.kind !== 'download') throw new Error('unexpected input');
-            if (disconnected && event.offset > 0) { queueMicrotask(() => relay.dispose()); return; }
+            if (outcome !== 'saved' && event.offset > 0) {
+                queueMicrotask(() => outcome === 'disconnected' ? relay.dispose() : controller.abort(new Error('download_canceled')));
+                return;
+            }
             const chunk = bytes.slice(event.offset, event.offset + 2);
             relay.accept(BrowserAutomationActionResultV1Schema.parse({ v: 1, automationRequestId: eventId, status: 'succeeded',
                 durationMs: 1, adapterKind: 'chromiumSidecar', fidelity: 'cdp', trustedInput: true,
@@ -43,11 +48,11 @@ describe('native browser download delivery', () => {
                 interactionResult: { kind: 'download', downloadId: 'binary', name: 'binary.dat', offset: event.offset,
                     dataBase64: encodeBase64(chunk), eof: event.offset + chunk.length === bytes.length } }));
         } });
-        const saving = saveBrowserStreamDownload({ download: { downloadId: 'binary', name: 'binary.dat', state: 'completed', receivedBytes: bytes.length, totalBytes: bytes.length },
-            maxFrameBytes: 1024, request: relay.request });
-        if (disconnected) await expect(saving).rejects.toThrow('stream_closed');
+        const saving = saveBrowserDownloadRanges({ download: { downloadId: 'binary', name: 'binary.dat', state: 'completed', receivedBytes: bytes.length, totalBytes: bytes.length },
+            maxFrameBytes: 1024, request: relay.request, signal: controller.signal });
+        if (outcome !== 'saved') await expect(saving).rejects.toThrow(outcome === 'disconnected' ? 'stream_closed' : 'download_canceled');
         else await saving;
-        expect(native.shared).toEqual(disconnected ? [] : [Array.from(bytes)]);
+        expect(native.shared).toEqual(outcome === 'saved' ? [Array.from(bytes)] : []);
         expect(native.files.size).toBe(0);
         relay.dispose();
     });

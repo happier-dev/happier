@@ -1,3 +1,4 @@
+import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
 import { deploymentOverviewTranslations } from './deploymentOverviewTranslations';
@@ -5602,7 +5603,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
         remoteAlerts: {
             title: "Alerty sesji przy zamkniętej aplikacji",
             accountTitle: "Zezwól na zdalne alerty sesji",
-            disclosure: "Zezwól temu Home na odczyt kategorii alertów, godzin ciszy i strefy czasowej, ograniczeń podglądu oraz preferencji dźwięku, aby mógł wysyłać dozwolone alerty przy zamkniętej aplikacji. Treść sesji i klucze szyfrowania nie są udostępniane.",
+            disclosure: "Pozwól temu Home powiadamiać o sesjach, gdy aplikacja jest zamknięta. Odczytuje tylko typy powiadomień, godziny ciszy i strefę czasową, limity podglądu i dźwięki, nigdy treści sesji ani kluczy szyfrowania.",
             footer: "Bez tej zgody dotychczasowe powiadomienia właściciela i aktualizacje na pierwszym planie pozostają dostępne. Zdalne zmiany wymagają połączenia; wysłanych alertów nie można wycofać.",
             deviceTitle: "Odbieraj na tym urządzeniu",
             deviceSubtitle: "Dotyczy tylko zdalnych alertów sesji na tym urządzeniu.",
@@ -5664,8 +5665,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     },
     push: {
       title: "Powiadomienia push",
-      footer: ({ home }: { home: string }) => `Zgoda na push jest synchronizowana dla ${home}. Uprawnienia i ustawienia urządzenia dotyczą całego urządzenia.`,
-      enabledSubtitle: ({ home }: { home: string }) => `Zezwól na powiadomienia push z ${home}`,
+      footer: ({ home }: { home: string }) => `${home} powiadamia na telefonie i komputerach, gdy Happier jest zamknięty.`,
+      enabledSubtitle: ({ home }: { home: string }) => `Wyłączenie zatrzymuje powiadomienia z ${home} i wszystkie typy poniżej.`,
       troubleshootTitle: "Rozwiązywanie problemów",
       troubleshootSubtitle: "Sprawdź uprawnienia i zarejestrowane urządzenia",
     },
@@ -6737,6 +6738,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
 
   settingsAppearance: {
     ...paneArrangementTranslations['pl'],
+    chatLinks: chatLinksTranslations['pl'],
     needsYouHighlight: needsYouHighlightTranslations['pl'],
     workingIndicator: workingIndicatorTranslations['pl'],
     visualEffects: {
@@ -7192,6 +7194,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
         "Happier nie może połączyć się z demonem na tej maszynie. Może być offline, w trakcie uruchamiania lub odłączony od Home.",
       agentIsolationMemberSetupAskManager: "Poproś osobę zarządzającą maszyną o skonfigurowanie dla Ciebie oddzielnych użytkowników.",
       agentIsolationMemberSetupOpenSecurity: "Otwórz stronę Zabezpieczenia tej maszyny, aby sprawdzić konfigurację oddzielnych użytkowników.",
+      pluginCodeUnreadableAskManager: "Twoje oddzielne konto użytkownika nie ma dostępu do kodu wtyczek. Poproś administratora maszyny o skonfigurowanie oddzielnych użytkowników i ponowne uruchomienie Happier na maszynie, a następnie spróbuj ponownie.",
+      pluginCodeUnreadableOpenSecurity: "Twoje oddzielne konto użytkownika nie ma dostępu do kodu wtyczek. Otwórz stronę Zabezpieczenia tej maszyny i skonfiguruj oddzielnych użytkowników, a następnie uruchom ponownie Happier na maszynie i spróbuj ponownie.",
       agentIsolationUnavailable:
         "Izolacja agentów nie jest gotowa na tej maszynie. Poproś właściciela maszyny o sprawdzenie konfiguracji i spróbuj ponownie.",
       tryAgain: "Spróbuj ponownie",
@@ -7959,6 +7963,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
         statusBlocked: "Zablokowany",
         setTitle: "Ustaw cel",
         setSubtitle: "Nadaj sesji cel, aby agent trzymał się tematu.",
+        setSubtitleStarts: 'Agent zacznie, gdy tylko go ustawisz.',
         addBudget: "+ Dodaj limit budżetu (opcjonalnie)",
         removeBudget: "Usuń budżet",
         noUsageYet: "Brak zużycia",
@@ -8027,6 +8032,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     },
         pendingActivation: {
     held: { title: "Zatrzymana przez Ciebie", body: "Wiadomość pozostanie w kolejce, dopóki nie wznowisz tej sesji." },
+    held_offline: { title: "Zatrzymana przez Ciebie", body: "Ta maszyna jest offline. Wiadomość pozostaje w kolejce; wyślij ponownie lub wznów, gdy wróci." },
             waiting_offline: { title: 'Wiadomość w kolejce dla tej maszyny', body: 'Zostanie przetworzona, gdy ta maszyna i jej daemon znów będą online.' },
             waiting: { title: 'Oczekiwanie na wznowienie', body: 'Wiadomość jest bezpiecznie w kolejce, gdy daemon wznawia tę sesję.' },
             failed: { title: 'Nie udało się wznowić sesji', body: 'Wiadomość nadal jest bezpiecznie w kolejce. Spróbuj ponownie, gdy chcesz.' },
@@ -11636,6 +11642,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       management: {
         createProfile: 'Nowy profil',
         selectProfile: 'Wybierz profil',
+selectWarning: "Zmiana profilu zamyka karty przeglądarki tej sesji i ponownie otwiera tę stronę z wybranym profilem.",
+deleteWarning: "Spowoduje to usunięcie zapisanych logowań i danych witryn profilu oraz zamknięcie używających go przeglądarek.",
         revokePermission: 'Cofnij',
         clearStorage: 'Wyczyść pamięć',
       },

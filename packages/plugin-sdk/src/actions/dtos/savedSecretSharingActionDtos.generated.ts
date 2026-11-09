@@ -2111,6 +2111,12 @@ export type SavedSecretSharingActionInputById = {
             };
         }[];
     };
+    readonly "secrets.shared.repair": {
+        resourceId: string;
+        expectedRevision: number;
+    } & {
+        clientId?: string | undefined;
+    };
 };
 export type SavedSecretSharingActionResultById = {
     readonly "secrets.shared.list": {
@@ -2236,5 +2242,10 @@ export type SavedSecretSharingActionResultById = {
     };
     readonly "secrets.shared.delete": {
         resourceId: string;
+    };
+    readonly "secrets.shared.repair": {
+        resourceId: string;
+        revision: number;
+        status: 'complete' | 'incomplete';
     };
 };

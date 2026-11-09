@@ -19,7 +19,7 @@ import type {
 import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 
 import { BrowserLaunchpad } from '@/components/browser/launchpad';
-import { openLaunchpadServicePreview, resolveAgentBrowserPrerequisite } from '@/components/browser/launchpad/BrowserLaunchpad';
+import { resolveAgentBrowserPrerequisite } from '@/components/browser/launchpad/BrowserLaunchpad';
 import { useBrowserStreamedChrome } from '@/components/browser/streamed/BrowserStreamedSurfaceScope';
 import type {
     BrowserControlState,
@@ -65,7 +65,7 @@ import {
     selectBrowserViewAddress,
     selectBrowserViewDisplayHost,
 } from '@/sync/domains/browser/shell';
-import { selectLaunchpadServiceRowForAddress, type BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
+import { type BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
 import { canOpenDesktopBrowserDevtools, type DesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/desktopWebView';
 import { selectBrowserTargetAdapter } from '@/sync/domains/browser/adapters/selection';
 import { evaluateBrowserTargetPolicy } from '@/sync/domains/browser/policy/evaluate';
@@ -334,17 +334,6 @@ export function BrowserShell(props: Readonly<{
      * external surfaces (Services rows, session-header button).
      */
     onNavigateInPlace?: OpenBrowserViewTarget;
-    /**
-     * Lets the surface owner decide whether a typed address in an active view should replace the
-     * view target (for example local-preview -> external URL) instead of issuing an in-target
-     * navigation command. BrowserShell owns input capture; BrowserSurfaceHost owns target policy
-     * and control-state mutation.
-     */
-    onNavigateActiveViewInPlace?: (input: Readonly<{
-        view: BrowserControlViewState;
-        url: string;
-        platform: BrowserPlatformV1;
-    }>) => boolean;
     browserFeatureDecision?: FeatureDecision | null;
     desktopWebViewAvailability?: DesktopWebViewNativeAvailability | null;
     allowExternalUrlBrowsing?: boolean;
@@ -468,26 +457,7 @@ export function BrowserShell(props: Readonly<{
         });
     }, [activeView?.browserSessionId, activeView?.viewId, props.onCommand]);
 
-    // Every address entry on this page (launchpad, toolbar, an open page) makes one decision first: in a
-    // Session, `localhost:PORT` names the Machine's port, and a running Service preview of it opens
-    // through the preview route. Anything else goes to the engine selector.
-    const onNavigateInPlaceForPreview = props.onNavigateInPlace;
-    const openServicePreviewForAddress = React.useCallback((url: string): boolean => {
-        if (!onNavigateInPlaceForPreview) return false;
-        const row = selectLaunchpadServiceRowForAddress(launchpadRows, url);
-        if (row?.target?.kind !== 'localServicePreview') return false;
-        void openLaunchpadServicePreview({ title: row.title, target: row.target }, {
-            onOpenTarget: onNavigateInPlaceForPreview,
-            platform: props.platform,
-            serverId: props.localServicePreviewServerId,
-            accountLifetime: previewController.accountLifetime,
-            credentialKey: previewController.credentialKey,
-        });
-        return true;
-    }, [launchpadRows, onNavigateInPlaceForPreview, props.platform, props.localServicePreviewServerId,
-        previewController.accountLifetime, previewController.credentialKey]);
     const dispatchNavigate = React.useCallback((url: string) => {
-        if (openServicePreviewForAddress(url)) return;
         if (!activeView) {
             // B-1: with no active view the toolbar address bar is the NEW-TAB entry point — a typed
             // address opens the first view IN PLACE through the SAME `onNavigateInPlace` seam the
@@ -501,13 +471,6 @@ export function BrowserShell(props: Readonly<{
             onNavigateInPlace(target, { platform: props.platform });
             return;
         }
-        if (props.onNavigateActiveViewInPlace?.({
-            view: activeView,
-            url,
-            platform: props.platform,
-        }) === true) {
-            return;
-        }
         props.onCommand({
             kind: 'navigate',
             commandId: createCommandId('navigate', activeView.viewId),
@@ -515,7 +478,7 @@ export function BrowserShell(props: Readonly<{
             viewId: activeView.viewId,
             url,
         });
-    }, [activeView, openServicePreviewForAddress, props]);
+    }, [activeView, props]);
 
     const desktopNativeDevtoolsAvailable = Boolean(props.onOpenDevtools)
         && canOpenDesktopBrowserDevtools(activeView, props.desktopWebViewAvailability);
@@ -908,7 +871,6 @@ export function BrowserShell(props: Readonly<{
                             props.onAllowBrowserSandbox)}
                         onOpenTarget={props.onOpenTarget}
                         onNavigateInPlace={props.onNavigateInPlace}
-                        openServicePreviewForAddress={openServicePreviewForAddress}
                         // The wide chrome's address bar is this page's one address field; a phone page
                         // and the Session viewer draw no chrome, so the launchpad brings its own.
                         urlEntry={phone || inViewer}

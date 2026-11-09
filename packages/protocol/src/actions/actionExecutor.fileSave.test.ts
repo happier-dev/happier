@@ -10,6 +10,17 @@ const context = { surface: 'ui', authority: 'present_user', runtimeAccountId: 'o
   actionCaller: { kind: 'host' } } as const;
 
 describe('client file save Action', () => {
+  it('hands a completed Browser download to the answering client without text conversion', async () => {
+    const reference = { machineId: 'machine', browserSessionId: 'browser', viewId: 'view', downloadId: 'download' };
+    const saves: unknown[] = [];
+    const actions = createActionExecutor({
+      saveClientBrowserDownload: async args => { saves.push(args); return { status: 'saved' }; },
+    } as ActionExecutorDeps);
+    expect(await actions.execute('files.save', { fileName: 'binary.dat', source: { kind: 'browserDownload', reference } }, context))
+      .toEqual({ ok: true, result: { status: 'saved' } });
+    expect(saves).toEqual([{ reference, fileName: 'binary.dat' }]);
+  });
+
   it('exports finite deployment pages through the existing masked reader for UI and automation', async () => {
     const actionId = ActionIdSchema.parse('files.save');
     for (const surface of ['ui', 'agent', 'mcp', 'cli'] as const) {

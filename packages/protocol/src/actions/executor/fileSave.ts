@@ -7,6 +7,13 @@ import { executeDeploymentAction } from './deploymentAction.js';
 
 /** One admitted file handoff. Deployment bytes come only from the existing masked reader. */
 export async function executeFileSave(input: FileSaveInput, context: ActionExecutorContext, deps: ActionExecutorDeps): Promise<ActionExecuteResult> {
+  if (input.source.kind === 'browserDownload') {
+    if (!deps.saveClientBrowserDownload) return { ok: false, errorCode: 'client_required', error: 'client_required' };
+    context.signal?.throwIfAborted();
+    const result = await deps.saveClientBrowserDownload({ reference: input.source.reference, fileName: input.fileName,
+      ...(context.signal ? { signal: context.signal } : {}) });
+    return readActionFailureEnvelope(result) ?? { ok: true, result };
+  }
   if (!deps.saveClientFile) return { ok: false, errorCode: 'client_required', error: 'client_required' };
   let text: string;
   if (input.source.kind === 'text') text = input.source.text;

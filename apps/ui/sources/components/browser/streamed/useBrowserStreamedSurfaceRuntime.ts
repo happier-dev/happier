@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { createRemoteViewerClipboardShortcut } from '@/components/stream/remoteViewerClipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import type {
     BrowserDaemonViewV1} from '@happier-dev/protocol/browser/control/v1';
 import type {
@@ -19,7 +20,7 @@ import { useSimulatorRelayIngestion, type SimulatorRelayTransport } from '@/comp
 import { useMachineLiveStreamRelaySocket } from '@/components/stream/useMachineLiveStreamRelaySocket';
 import { useMachineLiveStreamId } from '@/components/stream/useMachineLiveStreamId';
 import { isDaemonAuthoritativeBrowserView } from '@/sync/domains/browser/control/commands';
-import { listBrowserDaemonViewsViaMachineRpc, type BrowserDaemonControlDispatchClientResult } from '@/sync/domains/browser/control/machineRpc';
+import { listBrowserDaemonViewsViaMachineRpc, watchBrowserDaemonViewsViaMachineRpc, type BrowserDaemonControlDispatchClientResult } from '@/sync/domains/browser/control/machineRpc';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
 import { resolveBrowserDaemonStreamTarget } from '@/sync/domains/browser/store';
 import { retainShallow } from '@/sync/domains/state/structuralSharing';
@@ -28,7 +29,10 @@ import type { BrowserOpenFirstUse } from '@/sync/domains/browser/firstUse/browse
 import type { BrowserStreamedSurfaceRuntime } from '../adapters/BrowserStreamedTarget';
 import { BrowserStreamedSurfaceScope } from './BrowserStreamedSurfaceScope';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { createBrowserStreamInputRelay, saveBrowserStreamDownload } from './inputRelay';
+import { createBrowserStreamInputRelay } from './inputRelay';
+import { saveBrowserDownloadRanges } from '@/sync/runtime/files/browserDownload';
+import { requestSaveFile } from '@/sync/runtime/files/requestSaveFile';
+import type { BrowserRuntimeControlAdapter } from '@/sync/domains/browser/actions/runtimeActionExecutor';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { applyBrowserDiscoveryEvent, reconcileBrowserDiscovery } from './discovery';
@@ -77,6 +81,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     /** The Session's latest Machine-targeted open, read from the typed Action operation owner. */
     firstUse?: BrowserOpenFirstUse | null;
     onBrowserEvent?: (event: BrowserEventV1) => void;
+    onDownloadOwnerChange?: (owner: BrowserRuntimeControlAdapter['saveDownload'] | null) => void;
 }>): BrowserStreamedSurfaceRuntime | null {
     const view = input.view && isDaemonAuthoritativeBrowserView(input.view) ? input.view : null;
     const machineId = input.machineId?.trim() ?? '';
@@ -84,6 +89,8 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     const browserSessionId = view?.browserSessionId ?? input.browserSessionId ?? null;
     const viewId = view?.viewId ?? null;
     const {binding: accountBinding} = useServerCredentialAccountScopeBinding(serverId);
+    const writeClipboard = useClipboardWrite(accountBinding?.scope ?? null, { enabled: input.enabled !== false });
+    const viewerKey = accountBinding && viewId ? JSON.stringify([accountBinding.serverId, accountBinding.accountId, machineId, browserSessionId, viewId]) : undefined;
     const [discovery, setDiscovery] = React.useState<Discovery>({ status: 'idle' });
     const [attempt, setAttempt] = React.useState(0);
     const [viewerMetadata, setViewerMetadata] = React.useState<Readonly<{
@@ -127,14 +134,30 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
         if (!discoveryAccountId || input.enabled === false) return undefined;
         const abort = new AbortController();
         setDiscovery(previous => previous.status === 'ready' ? previous : { status: 'discovering' });
-        void listBrowserDaemonViewsViaMachineRpc({ machineId, serverId, browserSessionId, signal: abort.signal })
-            .then((result) => {
-                if (abort.signal.aborted) return;
-                if (!result.ok) { setDiscovery({ status: 'failed', reason: result.reason }); return; }
-                const views = result.views.filter(candidate => candidate.browserSessionId === browserSessionId);
+        void (async () => {
+            const scope = { machineId, serverId, accountId: discoveryAccountId, browserSessionId, signal: abort.signal };
+            const result = await listBrowserDaemonViewsViaMachineRpc(scope);
+            if (abort.signal.aborted) return;
+            let views: readonly BrowserDaemonViewV1[] = [];
+            if (result.ok) {
+                views = result.views.filter(candidate => candidate.browserSessionId === browserSessionId);
                 reconcileClosedView(views);
                 reconcileDiscoveredViews(views);
-            });
+            } else setDiscovery({ status: 'failed', reason: result.reason });
+            // The broker is observable before Chromium is installed. Approval replay can
+            // open its first view without publishing an operation into this client's store.
+            while (!abort.signal.aborted) {
+                const changed = await watchBrowserDaemonViewsViaMachineRpc({ ...scope,
+                    knownViewIds: views.map(view => view.viewId) });
+                if (abort.signal.aborted) return;
+                // An older daemon has only one-shot discovery. Keep that result and
+                // its existing user retry path; an unavailable watch never polls.
+                if (!changed.ok) return;
+                views = changed.views.filter(candidate => candidate.browserSessionId === browserSessionId);
+                reconcileClosedView(views);
+                reconcileDiscoveredViews(views);
+            }
+        })();
         return () => abort.abort();
     }, [attempt, browserSessionId, discoveryAccountId, input.enabled, input.refreshKey, machineId, reconcileClosedView, reconcileDiscoveredViews, serverId, viewId]);
 
@@ -255,13 +278,24 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     inputRelayRef.current = inputRelay;
     React.useEffect(() => () => inputRelay?.dispose(), [inputRelay]);
     const sendInput = inputRelay?.send;
-    const saveDownload = React.useMemo(() => inputRelay ? async (downloadId: string) => {
+    const saveDownloadFile = useEventCallback(async (args: Parameters<NonNullable<BrowserRuntimeControlAdapter['saveDownload']>>[0]) => {
+        const download = metadata?.interaction?.downloads.find(candidate => candidate.downloadId === args.downloadId);
+        if (!inputRelay || args.machineId !== machineId || args.viewId !== viewId || !download) throw new Error('browser_download_unavailable');
+        return saveBrowserDownloadRanges({ download, fileName: args.fileName, signal: args.signal,
+            request: inputRelay.request, maxFrameBytes: ingestion.negotiatedCaps?.maxFrameBytes });
+    });
+    const onDownloadOwnerChange = input.onDownloadOwnerChange;
+    React.useEffect(() => {
+        onDownloadOwnerChange?.(inputRelay && viewId ? saveDownloadFile : null);
+        return () => onDownloadOwnerChange?.(null);
+    }, [inputRelay, onDownloadOwnerChange, saveDownloadFile, viewId]);
+    const saveDownload = useEventCallback(async (downloadId: string) => {
         const download = metadata?.interaction?.downloads.find(candidate => candidate.downloadId === downloadId);
-        if (download?.state !== 'completed') return;
-        try { await saveBrowserStreamDownload({ download, request: inputRelay.request,
-            maxFrameBytes: ingestion.negotiatedCaps?.maxFrameBytes }); }
-        catch { Modal.alert(t('common.error'), t('errors.operationFailed')); }
-    } : undefined, [ingestion.negotiatedCaps?.maxFrameBytes, inputRelay, metadata?.interaction]);
+        if (!download || !viewId || !browserSessionId || !accountBinding) return;
+        const status = await requestSaveFile({ fileName: download.name, source: { kind: 'browserDownload',
+            reference: { machineId, browserSessionId, viewId, downloadId } } }, accountBinding.scope);
+        if (status === 'failed') Modal.alert(t('common.error'), t('errors.operationFailed'));
+    });
     const clipboardShortcut = React.useMemo(() => inputRelay && metadata?.viewerInput?.controlling
         ? createRemoteViewerClipboardShortcut({
             write: async text => { await inputRelay.request({ kind: 'clipboard', action: 'paste', text }); },
@@ -270,7 +304,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
                 if (result?.kind !== 'clipboard') throw new Error('clipboard_unavailable');
                 return result.text;
             },
-        }) : undefined, [inputRelay, metadata?.viewerInput?.controlling]);
+        }, writeClipboard) : undefined, [inputRelay, metadata?.viewerInput?.controlling, writeClipboard]);
     const retry = React.useCallback(() => setAttempt((current) => current + 1), []);
     const machineName = input.machineName ?? null;
     const unavailableReason = discovery.status === 'failed' ? discovery.reason : undefined;
@@ -300,9 +334,9 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
             playerState,
             onRetry: retry,
             input: sendControl && sourceId && streamId
-                ? { sourceId, streamId, send: sendControl, ...metadata, ...(sendInput ? { sendInput } : {}),
+                ? { sourceId, streamId, viewerKey, send: sendControl, ...metadata, ...(sendInput ? { sendInput } : {}),
                     saveDownload, clipboardShortcut }
                 : null,
         };
-    }, [clipboardShortcut, discovery.status, firstUse, firstUseTargetUrl, machineName, metadata, playerState, retry, saveDownload, sendControl, sendInput, socket, sourceId, streamId, unavailableReason, view]);
+    }, [clipboardShortcut, discovery.status, firstUse, firstUseTargetUrl, machineName, metadata, playerState, retry, saveDownload, sendControl, sendInput, socket, sourceId, streamId, unavailableReason, view, viewerKey]);
 }

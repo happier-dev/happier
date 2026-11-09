@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 
-import { RuntimeActionIdV1Schema, isBrowserExtensionActionIdV1, type RuntimeActionIdV1 } from '../actionIds.js';
+import { RuntimeActionIdV1Schema, isBrowserExtensionActionIdV1, isBrowserProfileActionIdV1, type RuntimeActionIdV1 } from '../actionIds.js';
 import type { PreNormalizedActionSpec, PreNormalizedActionSurfaces } from '../actionSpecs.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS } from '../../browser/automation/reverseDispatchV1.js';
@@ -59,6 +59,9 @@ function mergeRuntimeActionTextMaps(
 
 const RUNTIME_ACTION_TITLES = mergeRuntimeActionTextMaps((family) => family.titles);
 const RUNTIME_ACTION_DESCRIPTIONS = mergeRuntimeActionTextMaps((family) => family.descriptions);
+const RUNTIME_ACTION_ORIGINAL_EXECUTION: NonNullable<RuntimeActionSpecFamily['originalExecution']> = Object.freeze(
+  Object.assign({}, ...RUNTIME_ACTION_SPEC_FAMILIES.map((family: RuntimeActionSpecFamily) => family.originalExecution ?? {})),
+);
 const RUNTIME_ACTION_CONFIRMATION_FACTS: NonNullable<RuntimeActionSpecFamily['confirmationFacts']> = Object.freeze(
   Object.assign({}, ...RUNTIME_ACTION_SPEC_FAMILIES.map((family: RuntimeActionSpecFamily) => family.confirmationFacts ?? {})),
 );
@@ -154,6 +157,7 @@ function createRuntimeActionSpecFor<
     executionPlacement: actionId === 'browser.workspace.open' || actionId === 'devices.simulator.input.orientation'
       ? 'client' : actionId === 'browser.recording.attachToComposer' ? 'session' : 'machine',
     title,
+    ...(RUNTIME_ACTION_ORIGINAL_EXECUTION[actionId] ? { originalExecution: RUNTIME_ACTION_ORIGINAL_EXECUTION[actionId] } : {}),
     ...RUNTIME_ACTION_CONFIRMATION_FACTS[actionId],
     description: executorReal ? humanDescription : RUNTIME_ACTION_PROJECTION_CONTRACT_DESCRIPTION,
     safety: RUNTIME_DANGER_ACTION_IDS.has(actionId) ? 'danger' : 'safe',
@@ -162,6 +166,7 @@ function createRuntimeActionSpecFor<
       ...resolveRuntimeActionSurfaces(actionId),
       ...(actionId === 'browser.profile.logins.import' ? { rpc: true, cli: true } : {}),
       ...(isBrowserExtensionActionIdV1(actionId) ? { rpc: true, cli: true } : {}),
+      ...(isBrowserProfileActionIdV1(actionId) ? { rpc: true, cli: true } : {}),
       ...(actionId === 'localServices.launcher.start' || controlRpcMethod ? { rpc: !requiresAnsweringClient, cli: !requiresAnsweringClient, voice: !requiresAnsweringClient } : {}),
       ...(domainRpc ? { cli: true, voice: true } : {}),
       ...(actionId === 'projects.service.relocate' && executorReal ? { cli: true } : {}),
@@ -173,6 +178,7 @@ function createRuntimeActionSpecFor<
     ...(actionId === 'browser.profile.logins.import' ? {
       bindings: { mcpToolName: 'browser_profile_logins_import' } } : {}),
     ...(isBrowserExtensionActionIdV1(actionId) ? { bindings: { mcpToolName: actionId.replaceAll('.', '_') } } : {}),
+    ...(isBrowserProfileActionIdV1(actionId) ? { bindings: { mcpToolName: actionId.replaceAll('.', '_') } } : {}),
     ...((BROWSER_ANNOTATION_HOST_ACTION_IDS as readonly string[]).includes(actionId)
       ? { executionPlacement: 'client' as const } : {}),
     ...(actionId === 'browser.context.attachToComposer' ? {

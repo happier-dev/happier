@@ -8,7 +8,7 @@ import {
     createDetailsSurfacePaneCallbacks,
     type DetailsSurfaceScopeV1,
 } from '@/components/appShell/panes/details/surfaces';
-import type { BrowserPlatformV1 } from '@happier-dev/protocol';
+import type { BrowserPlatformV1 } from '@happier-dev/protocol/browser/view/v1';
 import type { BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
@@ -94,10 +94,6 @@ export function BrowserScopedWorkspace(props: Readonly<{
         pane.openDetailsTab(createBrowserLaunchpadDetailsTab(), { intent: 'pinned' });
     }, [pane]);
     const onOpenNewTab = stripCollapsed && pageOpen ? openLaunchpad : undefined;
-    const closeDetailsTab = pane.closeDetailsTab;
-    const selectedTabKey = selectedTab?.key ?? null;
-    const onCloseTab = React.useMemo(() => stripCollapsed && pageOpen && selectedTabKey
-        ? () => closeDetailsTab(selectedTabKey) : undefined, [closeDetailsTab, pageOpen, selectedTabKey, stripCollapsed]);
 
     const openBrowserViewTarget = useOpenBrowserTargetInWorkspace({
         scopeId: props.scopeId,
@@ -107,6 +103,13 @@ export function BrowserScopedWorkspace(props: Readonly<{
         platform: props.platform,
         browserProfile: props.productModels?.browserProfile?.profile,
         localServicePreviewState: props.localServicePreviewState,
+        localServiceTargets: props.localServiceTargets,
+        launchpadRows: props.launchpadRows,
+        localServiceAddressScope: props.scope.kind !== 'global' && props.scope.machineId ? {
+            machineId: props.scope.machineId,
+            ...(props.scope.kind === 'session' ? { sessionId: props.scope.sessionId } : {}),
+            ...(props.scope.rootPath ? { scope: 'workspace', workspaceRoot: props.scope.rootPath } : {}),
+        } : undefined,
     });
 
     const renderers = React.useMemo(() => [
@@ -133,11 +136,9 @@ export function BrowserScopedWorkspace(props: Readonly<{
             productModels: props.productModels ?? undefined,
             onOpenTarget: openBrowserViewTarget,
             onOpenNewTab,
-            onCloseTab,
         }),
     ], [
         onOpenNewTab,
-        onCloseTab,
         openBrowserViewTarget,
         props.launchpadRefreshError,
         props.onRefreshLaunchpad,
@@ -166,7 +167,10 @@ export function BrowserScopedWorkspace(props: Readonly<{
         closeTab: pane.closeDetailsTab,
         pinTab: pane.pinDetailsTab,
         unpinTab: pane.unpinDetailsTab,
-        replaceTab: pane.replaceDetailsTab,
+        replaceTab: (tabKey, tab, options) => pane.replaceDetailsTab(tabKey, tab, {
+            ...options,
+            openIfMissing: tabKey === BROWSER_LAUNCHPAD_DETAILS_TAB_KEY,
+        }),
     }), [
         pane.closeDetailsTab,
         pane.openDetailsTab,

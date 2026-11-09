@@ -1,3 +1,4 @@
+import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
 import { deploymentOverviewTranslations } from './deploymentOverviewTranslations';
@@ -5945,7 +5946,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
         remoteAlerts: {
             title: "Avvisi di sessione ad app chiusa",
             accountTitle: "Consenti avvisi di sessione remoti",
-            disclosure: "Consenti a questo Home di leggere categorie di avvisi, orari di silenzio e fuso orario, limiti delle anteprime e preferenze audio per inviare gli avvisi consentiti quando l’app è chiusa. Il contenuto delle sessioni e le chiavi di crittografia non vengono condivisi.",
+            disclosure: "Lascia che questo Home ti avvisi delle sessioni ad app chiusa. Legge solo i tuoi tipi di avviso, le ore di silenzio e il fuso orario, i limiti di anteprima e i suoni, mai il contenuto delle sessioni o le chiavi di cifratura.",
             footer: "Senza questo consenso, le notifiche esistenti del proprietario e gli aggiornamenti in primo piano restano disponibili. Le modifiche remote richiedono una connessione; gli avvisi già inviati non possono essere ritirati.",
             deviceTitle: "Ricevi su questo dispositivo",
             deviceSubtitle: "Si applica solo agli avvisi di sessione remoti su questo dispositivo.",
@@ -6008,8 +6009,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     },
     push: {
       title: "Notifiche push",
-      footer: ({ home }: { home: string }) => `Il consenso push viene sincronizzato per ${home}. Autorizzazioni e preferenze del dispositivo valgono per l’intero dispositivo.`,
-      enabledSubtitle: ({ home }: { home: string }) => `Consenti notifiche push da ${home}`,
+      footer: ({ home }: { home: string }) => `${home} ti avvisa su telefono e computer mentre Happier è chiuso.`,
+      enabledSubtitle: ({ home }: { home: string }) => `Disattivato, ferma gli avvisi da ${home} e tutti i tipi qui sotto.`,
       troubleshootTitle: "Risoluzione problemi",
       troubleshootSubtitle: "Vedi permessi e dispositivi registrati",
     },
@@ -7110,6 +7111,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
 
   settingsAppearance: {
     ...paneArrangementTranslations['it'],
+    chatLinks: chatLinksTranslations['it'],
     needsYouHighlight: needsYouHighlightTranslations['it'],
     workingIndicator: workingIndicatorTranslations['it'],
     visualEffects: {
@@ -7569,6 +7571,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
         "Happier non riesce a raggiungere il daemon su questa macchina. Potrebbe essere offline, in avvio o disconnesso dall’Home.",
       agentIsolationMemberSetupAskManager: "Chiedi a chi gestisce la macchina di configurare utenti separati per te.",
       agentIsolationMemberSetupOpenSecurity: "Apri la pagina Sicurezza di questa macchina per controllare la configurazione degli utenti separati.",
+      pluginCodeUnreadableAskManager: "Il tuo utente separato non può accedere al codice dei plugin. Chiedi a un gestore della macchina di configurare utenti separati e riavviare Happier sulla macchina, poi riprova.",
+      pluginCodeUnreadableOpenSecurity: "Il tuo utente separato non può accedere al codice dei plugin. Apri la pagina Sicurezza di questa macchina e configura utenti separati, poi riavvia Happier sulla macchina e riprova.",
       agentIsolationUnavailable:
         "L’isolamento degli agenti non è pronto su questa macchina. Chiedi al proprietario della macchina di controllare la configurazione, poi riprova.",
       tryAgain: "Per favore riprova",
@@ -8346,6 +8350,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
         statusBlocked: "Bloccato",
         setTitle: "Imposta un obiettivo",
         setSubtitle: "Dai un focus a questa sessione così l’agente resta in carreggiata.",
+        setSubtitleStarts: "L'agente inizia non appena lo imposti.",
         addBudget: "+ Aggiungi un limite di budget (opzionale)",
         removeBudget: "Rimuovi budget",
         noUsageYet: "Ancora nessun utilizzo",
@@ -8414,6 +8419,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     },
         pendingActivation: {
     held: { title: "Interrotta da te", body: "Il messaggio resta in coda finché non riprendi questa sessione." },
+    held_offline: { title: "Interrotta da te", body: "Questa macchina è offline. Il messaggio resta in coda; invia di nuovo o riprendi quando torna disponibile." },
             waiting_offline: { title: 'Messaggio in coda per questa macchina', body: 'Verrà elaborato quando questa macchina e il relativo daemon torneranno online.' },
             waiting: { title: 'In attesa di ripresa', body: 'Il messaggio è al sicuro nella coda mentre il daemon riprende questa sessione.' },
             failed: { title: 'Impossibile riprendere la sessione', body: 'Il messaggio è ancora al sicuro nella coda. Riprova quando vuoi.' },
@@ -12026,6 +12032,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
       management: {
         createProfile: 'Nuovo profilo',
         selectProfile: 'Seleziona profilo',
+selectWarning: "Il cambio di profilo chiude le schede del browser di questa sessione e riapre questa pagina con il profilo selezionato.",
+deleteWarning: "Le credenziali e i dati dei siti salvati nel profilo vengono eliminati e i browser che lo usano vengono chiusi.",
         revokePermission: 'Revoca',
         clearStorage: 'Cancella archiviazione',
       },

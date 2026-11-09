@@ -201,9 +201,9 @@ export type DocCollaborationActionResultById = {
         artifact: {
             updatedAt: number;
             header: Record<string, JsonValue>;
-            createdAt: number;
             access: 'admin' | 'edit' | 'owner' | 'view';
             artifactId: string;
+            createdAt: number;
             seq: number;
             ownerAccountId: string;
             publicAudience: 'none' | 'retained' | 'unknown';

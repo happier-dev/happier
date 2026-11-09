@@ -8,6 +8,7 @@ import type {
 } from "@happier-dev/protocol";
 
 import type { DesktopWebViewNativeAvailability } from "./adapters/desktopWebView";
+import type { BrowserOpenEngineOverride } from './adapters/selection';
 import type { BrowserViewState } from "./types";
 import { createBrowserControlState } from "./control/reducer";
 import { dispatchBrowserControlCommand } from "./control/commands";
@@ -69,6 +70,7 @@ export function openBrowserTarget(
         targetPolicyDecision?: BrowserTargetPolicyDecisionV1 | null;
         desktopWebViewAvailability?: DesktopWebViewNativeAvailability | null;
         nativeViewCaptureHandlerRegistered?: boolean;
+        engineOverride?: BrowserOpenEngineOverride;
     }>,
 ): BrowserViewState {
     const identity = resolveBrowserViewIdentityForTarget(target, options);
@@ -78,6 +80,7 @@ export function openBrowserTarget(
         ...identity,
         target,
         platform: options.platform,
+        ...(options.engineOverride ? { engineOverride: options.engineOverride } : {}),
         currentUrl: options.currentUrl ?? resolveInitialCurrentUrl(target),
         currentUrlExpiresAt: options.currentUrlExpiresAt,
         focus: true,

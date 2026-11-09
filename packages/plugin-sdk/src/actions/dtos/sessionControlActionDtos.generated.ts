@@ -1219,6 +1219,9 @@ export type SessionControlActionInputById = {
         alsoArchiveReports?: boolean | undefined;
     };
     readonly "session.delete": {
+        machineId: string;
+        runId: string;
+    } | {
         sessionId: string;
     };
     readonly "session.section.set": {

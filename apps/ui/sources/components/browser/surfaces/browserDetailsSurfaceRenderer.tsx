@@ -1,6 +1,8 @@
 import type { BrowserProfileV1 } from '@happier-dev/protocol/browser/profile/v1';
 import { BrowserViewTargetV1Schema, type BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 import type { BrowserPlatformV1 } from '@happier-dev/protocol/browser/view/v1';
+import { BrowserOpenViewCommandV1Schema } from '@happier-dev/protocol/browser/control/v1';
+import type { BrowserOpenEngineOverride } from '@/sync/domains/browser/adapters/selection';
 import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
 import * as React from 'react';
 
@@ -17,8 +19,8 @@ import {
 import {
     resolveBrowserTargetOpenOptions,
     resolveBrowserViewTargetReplacementTab,
+    type OpenBrowserViewTarget,
 } from './openBrowserTargetInWorkspace';
-import type { BrowserLaunchpadOpenTargetOptions } from '@/components/browser/launchpad/BrowserLaunchpad';
 import type { BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
 import type { BrowserPreviewProxyDiagnosticsProjection } from '@/sync/domains/browser/diagnostics';
 import type { BrowserControlState } from '@/sync/domains/browser/control';
@@ -60,6 +62,7 @@ export type BrowserDetailsSurfaceResource = Readonly<{
     platform?: unknown;
     currentUrl?: unknown;
     currentUrlExpiresAt?: unknown;
+    engineOverride?: unknown;
 }>;
 
 type BrowserDetailsSurfaceViewTargetChange = Readonly<{
@@ -89,10 +92,16 @@ export type BrowserDetailsSurfaceRendererOptions = Readonly<{
     pluginBrowserActionSessionId?: string | null;
     platform?: BrowserPlatformV1;
     launchpadRows?: readonly BrowserLaunchpadRow[];
+    localServiceTargets?: readonly import('@/sync/domains/local/services/launch').LocalServiceLaunchTarget[];
     launchpadRefreshStatus?: 'idle' | 'refreshing' | 'error';
     launchpadRefreshError?: string | null;
     onRefreshLaunchpad?: () => void;
-    onOpenTarget?: (target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => void;
+    onOpenTarget?: OpenBrowserViewTarget;
+    /**
+     * A phone page with no tab strip (lab Qp): the strip's + moves into the page's ⋯, with its ×
+     * (the page's Close tab).
+     */
+    onOpenNewTab?: () => void;
     productModels?: BrowserSurfaceProductModels;
     browserFeatureDecision?: FeatureDecision | null;
     desktopWebViewAvailability?: DesktopWebViewNativeAvailability | null;
@@ -137,6 +146,7 @@ function createInitialBrowserState(params: Readonly<{
     platform: BrowserPlatformV1;
     currentUrl?: string;
     currentUrlExpiresAt?: number;
+    engineOverride?: BrowserOpenEngineOverride;
 }>): BrowserControlState {
     const target = params.target;
     if (!target) {
@@ -156,6 +166,7 @@ function createInitialBrowserState(params: Readonly<{
         platform: params.platform,
         currentUrl: params.currentUrl,
         currentUrlExpiresAt: params.currentUrlExpiresAt,
+        engineOverride: params.engineOverride,
     }));
 }
 
@@ -181,10 +192,17 @@ export function BrowserDetailsSurface(props: Readonly<{
     pluginBrowserActionSessionId?: string | null;
     platform?: BrowserPlatformV1;
     launchpadRows?: readonly BrowserLaunchpadRow[];
+    localServiceTargets?: readonly import('@/sync/domains/local/services/launch').LocalServiceLaunchTarget[];
     launchpadRefreshStatus?: 'idle' | 'refreshing' | 'error';
     launchpadRefreshError?: string | null;
     onRefreshLaunchpad?: () => void;
-    onOpenTarget?: (target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => void;
+    onOpenTarget?: OpenBrowserViewTarget;
+    /**
+     * A phone page with no tab strip (lab Qp): the strip's + and × move into the page's ⋯, and the
+     * page's own Close tab closes this tab rather than only its view.
+     */
+    onOpenNewTab?: () => void;
+    onCloseTab?: () => void;
     productModels?: BrowserSurfaceProductModels;
     browserFeatureDecision?: FeatureDecision | null;
     desktopWebViewAvailability?: DesktopWebViewNativeAvailability | null;
@@ -230,6 +248,8 @@ export function BrowserDetailsSurface(props: Readonly<{
     const viewId = readOptionalString(props.resource.viewId);
     const currentUrl = readOptionalString(props.resource.currentUrl);
     const currentUrlExpiresAt = readOptionalNumber(props.resource.currentUrlExpiresAt);
+    const parsedEngineOverride = BrowserOpenViewCommandV1Schema.shape.engineOverride.safeParse(props.resource.engineOverride);
+    const engineOverride = parsedEngineOverride.success ? parsedEngineOverride.data : undefined;
     const targetIdentity = React.useMemo(
         () => (target ? JSON.stringify(target) : 'launchpad'),
         [target],
@@ -274,6 +294,7 @@ export function BrowserDetailsSurface(props: Readonly<{
         desktopWebViewAvailability?.available === true ? 'desktop-webview-available' : 'desktop-webview-unavailable',
         desktopWebViewAvailability?.disabledReasons.join(',') ?? 'no-native-reason',
         props.allowExternalUrlBrowsing === false ? 'external-disabled' : 'external-enabled',
+        engineOverride ?? 'default-engine',
     ].join(':');
     const initialBrowserState = React.useMemo(
         () => createInitialBrowserState({
@@ -288,11 +309,13 @@ export function BrowserDetailsSurface(props: Readonly<{
             platform,
             currentUrl,
             currentUrlExpiresAt,
+            engineOverride,
         }),
         [
             browserSessionId,
             currentUrl,
             currentUrlExpiresAt,
+            engineOverride,
             browserFeatureDecision,
             browserProfile,
             desktopWebViewAvailability,
@@ -327,10 +350,16 @@ export function BrowserDetailsSurface(props: Readonly<{
             }}
             productModels={productModels}
             launchpadRows={props.launchpadRows ?? liveFeed.feed.rows}
+            localServiceTargets={props.localServiceTargets ?? liveFeed.feed.localServiceTargets}
+            localServiceAddressScope={props.machineId ? { machineId: props.machineId,
+                ...(props.sessionId ? { sessionId: props.sessionId } : {}),
+                ...(props.workspaceRoot ? { scope: 'workspace', workspaceRoot: props.workspaceRoot } : {}) } : undefined}
             launchpadRefreshStatus={props.launchpadRefreshStatus ?? liveFeed.feed.refreshStatus}
             launchpadRefreshError={props.launchpadRefreshError === undefined ? liveFeed.feed.refreshError : props.launchpadRefreshError}
             onRefreshLaunchpad={props.onRefreshLaunchpad ?? liveFeed.onRefreshLaunchpad}
             onOpenTarget={props.onOpenTarget}
+            onOpenNewTab={props.onOpenNewTab}
+            onCloseTab={props.onCloseTab}
             browserFeatureDecision={browserFeatureDecision}
             desktopWebViewAvailability={desktopWebViewAvailability}
             allowExternalUrlBrowsing={props.allowExternalUrlBrowsing}
@@ -390,6 +419,7 @@ export function createBrowserViewDetailsSurfaceRenderer(
                     browserSessionId: viewResource!.browserSessionId,
                     viewId: viewResource!.viewId,
                     currentUrl: viewResource!.currentUrl,
+                    engineOverride: viewResource!.engineOverride,
                 };
             const handleViewTargetChange = (viewResource || launchpadResource) && input.callbacks.replaceTab
                 ? (change: BrowserDetailsSurfaceViewTargetChange) => {
@@ -448,10 +478,14 @@ export function createBrowserViewDetailsSurfaceRenderer(
                     desktopWebViewAvailability={options.desktopWebViewAvailability}
                     allowExternalUrlBrowsing={options.allowExternalUrlBrowsing}
                     launchpadRows={options.launchpadRows}
+                    localServiceTargets={options.localServiceTargets}
                     launchpadRefreshStatus={options.launchpadRefreshStatus}
                     launchpadRefreshError={options.launchpadRefreshError}
                     onRefreshLaunchpad={options.onRefreshLaunchpad}
                     onOpenTarget={options.onOpenTarget}
+                    onOpenNewTab={options.onOpenNewTab}
+                    // The page's Close tab is the strip's ×: the Details host closes this tab, view and all.
+                    onCloseTab={input.callbacks.closeTab ? () => input.callbacks.closeTab?.(input.tab.key) : undefined}
                     onViewTargetChange={handleViewTargetChange}
                     onViewStateChange={handleViewStateChange}
                     nowMs={options.nowMs}

@@ -72,6 +72,7 @@ export type MachinePresetsActionInputById = {
         };
         setup?: unknown;
         wakeOnAcceptedMessage?: boolean | undefined;
+        controllerPoolId?: string | undefined;
         controllerDisplayName?: string | undefined;
         teamAcquireDelegated?: boolean | undefined;
         simultaneousLimit?: undefined | {
@@ -113,6 +114,7 @@ export type MachinePresetsActionInputById = {
                 machineId: string;
                 installationId: string;
             };
+            controllerPoolId?: null | string | undefined;
             controllerDisplayName?: null | string | undefined;
             setup?: unknown;
             retention?: null | undefined | {
@@ -184,6 +186,7 @@ export type MachinePresetsActionResultById = {
                 machineId: string;
                 installationId: string;
             };
+            controllerPoolId?: string | undefined;
             controllerDisplayName?: string | undefined;
             setup?: Readonly<{
                 toolchain?: undefined | {
@@ -250,12 +253,6 @@ export type MachinePresetsActionResultById = {
             teamAcquireDelegated?: boolean | undefined;
             delegatedAcquire?: undefined | {
                 kind: 'ready';
-                controller: {
-                    installationPublicKey: string;
-                    custodian: {
-                        accountId: string;
-                    };
-                };
                 provisioner: {
                     id: string;
                     title: string | {
@@ -737,6 +734,12 @@ export type MachinePresetsActionResultById = {
                         id: string;
                         revision: number;
                         name?: string | undefined;
+                    };
+                };
+                controller?: undefined | {
+                    installationPublicKey: string;
+                    custodian: {
+                        accountId: string;
                     };
                 };
             } | {
@@ -796,6 +799,7 @@ export type MachinePresetsActionResultById = {
                 machineId: string;
                 installationId: string;
             };
+            controllerPoolId?: string | undefined;
             controllerDisplayName?: string | undefined;
             setup?: Readonly<{
                 toolchain?: undefined | {
@@ -862,12 +866,6 @@ export type MachinePresetsActionResultById = {
             teamAcquireDelegated?: boolean | undefined;
             delegatedAcquire?: undefined | {
                 kind: 'ready';
-                controller: {
-                    installationPublicKey: string;
-                    custodian: {
-                        accountId: string;
-                    };
-                };
                 provisioner: {
                     id: string;
                     title: string | {
@@ -1349,6 +1347,12 @@ export type MachinePresetsActionResultById = {
                         id: string;
                         revision: number;
                         name?: string | undefined;
+                    };
+                };
+                controller?: undefined | {
+                    installationPublicKey: string;
+                    custodian: {
+                        accountId: string;
                     };
                 };
             } | {
@@ -1413,6 +1417,7 @@ export type MachinePresetsActionResultById = {
                 machineId: string;
                 installationId: string;
             };
+            controllerPoolId?: string | undefined;
             controllerDisplayName?: string | undefined;
             setup?: Readonly<{
                 toolchain?: undefined | {
@@ -1479,12 +1484,6 @@ export type MachinePresetsActionResultById = {
             teamAcquireDelegated?: boolean | undefined;
             delegatedAcquire?: undefined | {
                 kind: 'ready';
-                controller: {
-                    installationPublicKey: string;
-                    custodian: {
-                        accountId: string;
-                    };
-                };
                 provisioner: {
                     id: string;
                     title: string | {
@@ -1966,6 +1965,12 @@ export type MachinePresetsActionResultById = {
                         id: string;
                         revision: number;
                         name?: string | undefined;
+                    };
+                };
+                controller?: undefined | {
+                    installationPublicKey: string;
+                    custodian: {
+                        accountId: string;
                     };
                 };
             } | {
@@ -2027,6 +2032,7 @@ export type MachinePresetsActionResultById = {
                 machineId: string;
                 installationId: string;
             };
+            controllerPoolId?: string | undefined;
             controllerDisplayName?: string | undefined;
             setup?: Readonly<{
                 toolchain?: undefined | {
@@ -2093,12 +2099,6 @@ export type MachinePresetsActionResultById = {
             teamAcquireDelegated?: boolean | undefined;
             delegatedAcquire?: undefined | {
                 kind: 'ready';
-                controller: {
-                    installationPublicKey: string;
-                    custodian: {
-                        accountId: string;
-                    };
-                };
                 provisioner: {
                     id: string;
                     title: string | {
@@ -2580,6 +2580,12 @@ export type MachinePresetsActionResultById = {
                         id: string;
                         revision: number;
                         name?: string | undefined;
+                    };
+                };
+                controller?: undefined | {
+                    installationPublicKey: string;
+                    custodian: {
+                        accountId: string;
                     };
                 };
             } | {
@@ -2641,6 +2647,7 @@ export type MachinePresetsActionResultById = {
                 machineId: string;
                 installationId: string;
             };
+            controllerPoolId?: string | undefined;
             controllerDisplayName?: string | undefined;
             setup?: Readonly<{
                 toolchain?: undefined | {
@@ -2707,12 +2714,6 @@ export type MachinePresetsActionResultById = {
             teamAcquireDelegated?: boolean | undefined;
             delegatedAcquire?: undefined | {
                 kind: 'ready';
-                controller: {
-                    installationPublicKey: string;
-                    custodian: {
-                        accountId: string;
-                    };
-                };
                 provisioner: {
                     id: string;
                     title: string | {
@@ -3194,6 +3195,12 @@ export type MachinePresetsActionResultById = {
                         id: string;
                         revision: number;
                         name?: string | undefined;
+                    };
+                };
+                controller?: undefined | {
+                    installationPublicKey: string;
+                    custodian: {
+                        accountId: string;
                     };
                 };
             } | {
@@ -3255,6 +3262,7 @@ export type MachinePresetsActionResultById = {
                 machineId: string;
                 installationId: string;
             };
+            controllerPoolId?: string | undefined;
             controllerDisplayName?: string | undefined;
             setup?: Readonly<{
                 toolchain?: undefined | {
@@ -3321,12 +3329,6 @@ export type MachinePresetsActionResultById = {
             teamAcquireDelegated?: boolean | undefined;
             delegatedAcquire?: undefined | {
                 kind: 'ready';
-                controller: {
-                    installationPublicKey: string;
-                    custodian: {
-                        accountId: string;
-                    };
-                };
                 provisioner: {
                     id: string;
                     title: string | {
@@ -3808,6 +3810,12 @@ export type MachinePresetsActionResultById = {
                         id: string;
                         revision: number;
                         name?: string | undefined;
+                    };
+                };
+                controller?: undefined | {
+                    installationPublicKey: string;
+                    custodian: {
+                        accountId: string;
                     };
                 };
             } | {

@@ -43,6 +43,7 @@ export const BrowserOpenViewCommandV1Schema = lazyZodSchema(() => z.extend(Brows
   kind: z.literal('openView'),
   target: BrowserViewTargetV1Schema,
   platform: BrowserPlatformV1Schema,
+  engineOverride: z.optional(z.enum(['managed', 'embedded'])),
   currentUrl: z.optional(BrowserHttpUrlV1Schema),
   currentUrlExpiresAt: z.optional(z.number().check(z.int(), z.nonnegative())),
   focus: z._default(z.optional(z.boolean()), true),
@@ -61,6 +62,7 @@ export const BrowserFocusViewCommandV1Schema = lazyZodSchema(() => z.extend(Brow
 export const BrowserNavigateCommandV1Schema = lazyZodSchema(() => z.extend(BrowserViewCommandBaseV1Schema, {
   kind: z.literal('navigate'),
   url: BrowserHttpUrlV1Schema,
+  navigationIntent: z.optional(z.enum(['address', 'target'])),
 }));
 
 export const BrowserGoBackCommandV1Schema = lazyZodSchema(() => z.extend(BrowserViewCommandBaseV1Schema, {
@@ -82,12 +84,12 @@ export const BrowserStopCommandV1Schema = lazyZodSchema(() => z.extend(BrowserVi
 export const BrowserSetTargetCommandV1Schema = lazyZodSchema(() => z.extend(BrowserViewCommandBaseV1Schema, {
   kind: z.literal('setTarget'),
   target: BrowserViewTargetV1Schema,
+  engineOverride: BrowserOpenViewCommandV1Schema.shape.engineOverride,
   currentUrl: z.optional(BrowserHttpUrlV1Schema),
 }));
 
 export const BrowserTakeControlCommandV1Schema = lazyZodSchema(() => z.extend(BrowserViewCommandBaseV1Schema, { kind: z.literal('takeControl') }));
 export const BrowserHandBackCommandV1Schema = lazyZodSchema(() => z.extend(BrowserViewCommandBaseV1Schema, { kind: z.literal('handBack') }));
-
 export const BrowserSetViewportCommandV1Schema = lazyZodSchema(() => z.extend(BrowserViewCommandBaseV1Schema, {
   kind: z.literal('setViewport'), emulation: BrowserViewportEmulationV1Schema,
 }));
@@ -114,6 +116,7 @@ export const BrowserCommandErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'command_malformed',
   'feature_disabled',
   'permission_denied',
+  'profile_policy_denied',
   'policy_unavailable',
   'waiting_for_memory',
   'session_not_found',
@@ -220,3 +223,9 @@ export const DaemonBrowserViewListResponseV1Schema = lazyZodSchema(() => z.stric
   views: z.array(BrowserDaemonViewV1Schema),
 }));
 export type DaemonBrowserViewListResponseV1 = z.infer<typeof DaemonBrowserViewListResponseV1Schema>;
+
+/** Park on native view membership; the empty set is observable before Chromium is installed. */
+export const DaemonBrowserViewWatchRequestV1Schema = lazyZodSchema(() => z.extend(DaemonBrowserViewListRequestV1Schema, {
+  knownViewIds: z.array(IdSchema),
+}));
+export type DaemonBrowserViewWatchRequestV1 = z.infer<typeof DaemonBrowserViewWatchRequestV1Schema>;

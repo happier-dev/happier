@@ -13,17 +13,18 @@ describe('remote viewer clipboard transfer', () => {
         vi.doMock('expo-clipboard', () => ({ getStringAsync: async () => local,
             setStringAsync: async (text: string) => { local = text; return true; } }));
         const { transferRemoteViewerClipboard, createRemoteViewerClipboardShortcut } = await import('./remoteViewerClipboard');
+        const { setClipboardStringSafe } = await import('@/utils/ui/clipboard');
         let remote = 'remote 👋';
         const transport = { read: async () => remote, write: async (text: string) => { remote = text; } };
-        await transferRemoteViewerClipboard('copy', transport);
+        await transferRemoteViewerClipboard('copy', transport, setClipboardStringSafe);
         expect(local).toBe('remote 👋');
         local = 'local 日本';
-        await transferRemoteViewerClipboard('paste', transport);
+        await transferRemoteViewerClipboard('paste', transport, setClipboardStringSafe);
         expect(remote).toBe('local 日本');
-        await expect(transferRemoteViewerClipboard('copy', { ...transport, read: async () => { throw new Error('clipboard_not_supported'); } }))
+        await expect(transferRemoteViewerClipboard('copy', { ...transport, read: async () => { throw new Error('clipboard_not_supported'); } }, setClipboardStringSafe))
             .rejects.toThrow('clipboard_not_supported');
         expect(local).toBe('local 日本');
-        const shortcut = createRemoteViewerClipboardShortcut({ ...transport, read: async () => { throw new Error('clipboard_not_supported'); } });
+        const shortcut = createRemoteViewerClipboardShortcut({ ...transport, read: async () => { throw new Error('clipboard_not_supported'); } }, setClipboardStringSafe);
         expect(await shortcut('copy')).toEqual({ ok: false, reason: 'clipboard_not_supported' });
         expect(local).toBe('local 日本');
     });
@@ -40,9 +41,11 @@ describe('remote viewer clipboard transfer', () => {
         vi.stubGlobal('ClipboardItem', class { constructor(content: Record<string, Promise<Blob>>) { supplied = content['text/plain']; } });
         vi.stubGlobal('navigator', { clipboard: { write: async () => { order.push('platform-write'); } } });
         const { transferRemoteViewerClipboard } = await import('./remoteViewerClipboard');
-        const transfer = transferRemoteViewerClipboard('copy', { read: async () => { order.push('remote-read'); return 'remote'; }, write: async () => {} });
+        const writer = vi.fn(async () => false);
+        const transfer = transferRemoteViewerClipboard('copy', { read: async () => { order.push('remote-read'); return 'remote'; }, write: async () => {} }, writer);
         expect(order).toEqual(['platform-write', 'remote-read']);
         await transfer;
         expect(await (await supplied).text()).toBe('remote');
+        expect(writer).not.toHaveBeenCalled();
     });
 });

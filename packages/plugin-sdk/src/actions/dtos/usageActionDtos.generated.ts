@@ -7522,7 +7522,6 @@ export type UsageActionResultById = {
                             value: {
                                 path: 'legacy' | 'native' | 'runtime' | 'unknown';
                                 source: string;
-                                execution: 'happier' | 'outside' | 'unknown';
                                 tokens: {
                                     input: number;
                                     output: number;
@@ -7532,6 +7531,7 @@ export type UsageActionResultById = {
                                     total: number;
                                 };
                                 eventCount: number;
+                                execution: 'happier' | 'outside' | 'unknown';
                             };
                             population: {
                                 groups: {
@@ -9747,8 +9747,8 @@ export type UsageActionResultById = {
                         v: 1;
                         source: 'cached' | 'connectedServiceProbe' | 'manual' | 'providerHttp' | 'proxy' | 'runtimeSignal' | 'unknown';
                         state: 'error_last_known_good' | 'loaded_data' | 'loaded_empty' | 'not_loaded' | 'stale_data';
-                        confidence: 'confirmed' | 'estimated' | 'unknown';
                         providerId: string;
+                        confidence: 'confirmed' | 'estimated' | 'unknown';
                         recordId: string;
                         staleAfterMs: number;
                         recordKey: {
@@ -9816,8 +9816,8 @@ export type UsageActionResultById = {
                         modelId?: null | string | undefined;
                         source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
                         scope?: 'daily' | 'five_hour' | 'model' | 'monthly' | 'primary' | 'requests' | 'rolling' | 'secondary' | 'session' | 'seven_day' | 'tokens' | 'unknown' | 'weekly' | undefined;
-                        confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                         providerLimitId?: string | undefined;
+                        confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                         currency?: string | undefined;
                         resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
                         windowDurationMs?: number | undefined;
@@ -11783,7 +11783,6 @@ export type UsageActionResultById = {
                                 value: {
                                     path: 'legacy' | 'native' | 'runtime' | 'unknown';
                                     source: string;
-                                    execution: 'happier' | 'outside' | 'unknown';
                                     tokens: {
                                         input: number;
                                         output: number;
@@ -11793,6 +11792,7 @@ export type UsageActionResultById = {
                                         total: number;
                                     };
                                     eventCount: number;
+                                    execution: 'happier' | 'outside' | 'unknown';
                                 };
                                 population: {
                                     groups: {
@@ -14683,15 +14683,15 @@ export type UsageActionResultById = {
                         } | {
                             kind: 'prepared_session';
                             input: {
+                                executionTarget: {
+                                    serverId: string;
+                                    machineId: string;
+                                };
                                 directory: {
                                     kind: 'managed';
                                 } | {
                                     kind: 'path';
                                     path: string;
-                                };
-                                executionTarget: {
-                                    serverId: string;
-                                    machineId: string;
                                 };
                                 agentTarget: {
                                     kind: 'agent';
@@ -14788,15 +14788,15 @@ export type UsageActionResultById = {
                                 } | {
                                     kind: 'prepared_session';
                                     input: {
+                                        executionTarget: {
+                                            serverId: string;
+                                            machineId: string;
+                                        };
                                         directory: {
                                             kind: 'managed';
                                         } | {
                                             kind: 'path';
                                             path: string;
-                                        };
-                                        executionTarget: {
-                                            serverId: string;
-                                            machineId: string;
                                         };
                                         agentTarget: {
                                             kind: 'agent';
@@ -15010,15 +15010,15 @@ export type UsageActionResultById = {
                     } | {
                         kind: 'prepared_session';
                         input: {
+                            executionTarget: {
+                                serverId: string;
+                                machineId: string;
+                            };
                             directory: {
                                 kind: 'managed';
                             } | {
                                 kind: 'path';
                                 path: string;
-                            };
-                            executionTarget: {
-                                serverId: string;
-                                machineId: string;
                             };
                             agentTarget: {
                                 kind: 'agent';
@@ -15115,15 +15115,15 @@ export type UsageActionResultById = {
                             } | {
                                 kind: 'prepared_session';
                                 input: {
+                                    executionTarget: {
+                                        serverId: string;
+                                        machineId: string;
+                                    };
                                     directory: {
                                         kind: 'managed';
                                     } | {
                                         kind: 'path';
                                         path: string;
-                                    };
-                                    executionTarget: {
-                                        serverId: string;
-                                        machineId: string;
                                     };
                                     agentTarget: {
                                         kind: 'agent';
@@ -15700,15 +15700,15 @@ export type UsageActionResultById = {
         } | {
             kind: 'prepared_session';
             input: {
+                executionTarget: {
+                    serverId: string;
+                    machineId: string;
+                };
                 directory: {
                     kind: 'managed';
                 } | {
                     kind: 'path';
                     path: string;
-                };
-                executionTarget: {
-                    serverId: string;
-                    machineId: string;
                 };
                 agentTarget: {
                     kind: 'agent';

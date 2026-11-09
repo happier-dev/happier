@@ -278,8 +278,8 @@ export type OperationOutputActionResultById = {
                             };
                         };
                         setup?: undefined | {
-                            reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                             outcome: 'not_applied';
+                            reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                             failure?: undefined | {
                                 kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
                                 reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
@@ -423,6 +423,68 @@ export type OperationOutputActionResultById = {
                         kind: 'stored';
                         contentRevision: number;
                         composeDigest: string;
+                    };
+                    requiredFact?: string | undefined;
+                    remedy?: string | undefined;
+                    failure?: undefined | {
+                        environmentId: string;
+                        domainId: string;
+                        step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
+                        requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
+                        remedy?: string | undefined;
+                        operation?: undefined | {
+                            serverId: string;
+                            machineId: string;
+                            operationId: string;
+                        };
+                    } | {
+                        environmentId: string;
+                        domainId: string;
+                        step: 'native_execution';
+                        providerOutput?: string | undefined;
+                        requiredFact?: string | undefined;
+                        failure?: undefined | {
+                            kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                            reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                            stepId?: string | undefined;
+                            phase?: 'apply' | 'check' | undefined;
+                            requiredFact?: string | undefined;
+                            remedy?: string | undefined;
+                            nativeCommand?: undefined | {
+                                command: 'apt-get';
+                                phase: 'install' | 'update';
+                                exitCode: null | number;
+                                category: 'command_failed' | 'package_configuration_failed' | 'package_manager_busy' | 'package_unavailable';
+                            };
+                        } | {
+                            kind: 'native_effect_failed' | 'native_observation_unavailable';
+                            reason: 'native_effect_failed' | 'port_in_use' | 'required_fact_unavailable';
+                            requiredFact: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks';
+                            errorCode?: string | undefined;
+                            stepId?: 'caddy-container-create' | 'caddy-container-network-connect' | 'caddy-container-rm' | 'caddy-container-start' | 'caddy-container-stop' | 'caddy-container-wait' | 'caddy-public-port' | undefined;
+                            nativeCommand?: undefined | {
+                                command: 'docker';
+                                phase: 'create' | 'network-connect' | 'rm' | 'start' | 'stop' | 'wait';
+                                exitCode: null | number;
+                            };
+                            containerExitCode?: number | undefined;
+                            containerError?: 'container_start_failed' | 'port_in_use' | undefined;
+                            port?: number | undefined;
+                        };
+                        remedy?: string | undefined;
+                        operation?: undefined | {
+                            serverId: string;
+                            machineId: string;
+                            operationId: string;
+                        };
+                    } | {
+                        environmentId: string;
+                        domainId: string;
+                        step: 'removeDomain';
+                        partial: true;
+                        requiredFact: string;
+                        remedy: string;
+                        domainHostname?: string | undefined;
                     };
                     deployment?: undefined | {
                         deploymentId: string;
@@ -1375,8 +1437,8 @@ export type OperationOutputActionResultById = {
                             };
                         };
                         setup?: undefined | {
-                            reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                             outcome: 'not_applied';
+                            reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                             failure?: undefined | {
                                 kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
                                 reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
@@ -1614,8 +1676,8 @@ export type OperationOutputActionResultById = {
                             };
                         };
                         setup?: undefined | {
-                            reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                             outcome: 'not_applied';
+                            reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                             failure?: undefined | {
                                 kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
                                 reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
@@ -1759,6 +1821,68 @@ export type OperationOutputActionResultById = {
                         kind: 'stored';
                         contentRevision: number;
                         composeDigest: string;
+                    };
+                    requiredFact?: string | undefined;
+                    remedy?: string | undefined;
+                    failure?: undefined | {
+                        environmentId: string;
+                        domainId: string;
+                        step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
+                        requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
+                        remedy?: string | undefined;
+                        operation?: undefined | {
+                            serverId: string;
+                            machineId: string;
+                            operationId: string;
+                        };
+                    } | {
+                        environmentId: string;
+                        domainId: string;
+                        step: 'native_execution';
+                        providerOutput?: string | undefined;
+                        requiredFact?: string | undefined;
+                        failure?: undefined | {
+                            kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                            reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                            stepId?: string | undefined;
+                            phase?: 'apply' | 'check' | undefined;
+                            requiredFact?: string | undefined;
+                            remedy?: string | undefined;
+                            nativeCommand?: undefined | {
+                                command: 'apt-get';
+                                phase: 'install' | 'update';
+                                exitCode: null | number;
+                                category: 'command_failed' | 'package_configuration_failed' | 'package_manager_busy' | 'package_unavailable';
+                            };
+                        } | {
+                            kind: 'native_effect_failed' | 'native_observation_unavailable';
+                            reason: 'native_effect_failed' | 'port_in_use' | 'required_fact_unavailable';
+                            requiredFact: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks';
+                            errorCode?: string | undefined;
+                            stepId?: 'caddy-container-create' | 'caddy-container-network-connect' | 'caddy-container-rm' | 'caddy-container-start' | 'caddy-container-stop' | 'caddy-container-wait' | 'caddy-public-port' | undefined;
+                            nativeCommand?: undefined | {
+                                command: 'docker';
+                                phase: 'create' | 'network-connect' | 'rm' | 'start' | 'stop' | 'wait';
+                                exitCode: null | number;
+                            };
+                            containerExitCode?: number | undefined;
+                            containerError?: 'container_start_failed' | 'port_in_use' | undefined;
+                            port?: number | undefined;
+                        };
+                        remedy?: string | undefined;
+                        operation?: undefined | {
+                            serverId: string;
+                            machineId: string;
+                            operationId: string;
+                        };
+                    } | {
+                        environmentId: string;
+                        domainId: string;
+                        step: 'removeDomain';
+                        partial: true;
+                        requiredFact: string;
+                        remedy: string;
+                        domainHostname?: string | undefined;
                     };
                     deployment?: undefined | {
                         deploymentId: string;
@@ -2711,8 +2835,8 @@ export type OperationOutputActionResultById = {
                             };
                         };
                         setup?: undefined | {
-                            reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                             outcome: 'not_applied';
+                            reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                             failure?: undefined | {
                                 kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
                                 reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;

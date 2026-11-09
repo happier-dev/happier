@@ -2,6 +2,7 @@ import type {
     BrowserCommandV1} from '@happier-dev/protocol/browser/control/v1';
 import type {
     BrowserEventV1} from '@happier-dev/protocol/browser/events/v1';
+import type { BrowserProfileV1 } from '@happier-dev/protocol/browser/profile/v1';
 import type {
     BrowserPlatformV1} from '@happier-dev/protocol/browser/view/v1';
 import type {
@@ -16,7 +17,6 @@ import { randomUUID } from '@/platform/randomUUID';
 
 import { BrowserShell } from '@/components/browser/BrowserShell';
 import type { BrowserDaemonControlCommandSender } from '@/sync/domains/browser/control/machineRpc';
-import { isDaemonAuthoritativeBrowserView } from '@/sync/domains/browser/control/commands';
 import { useBrowserAutomationRuntime } from '@/components/browser/automation/useBrowserAutomationRuntime';
 import { BrowserStreamedSurfaceRuntimeHost } from '@/components/browser/streamed/useBrowserStreamedSurfaceRuntime';
 import { useBrowserDiagnosticsRuntime } from '@/components/browser/diagnostics/useBrowserDiagnosticsRuntime';
@@ -34,11 +34,10 @@ import {
     type BrowserViewLifecycleSignal,
     type BrowserViewLifecycleTarget,
 } from '@/sync/domains/browser/control';
-import { resolveExternalUrlTargetFromInput } from '@/sync/domains/browser/shell';
-import { isLocalServicePreviewAddress } from '@/sync/domains/local/services/preview/url';
 import { registerBrowserRuntimeControlAdapter } from '@/sync/domains/browser/actions/runtimeControlRegistry';
 import { closeBrowserAnnotationView } from '@/sync/domains/browser/context/annotationDraft';
 import type { BrowserRuntimeControlAdapter } from '@/sync/domains/browser/actions/runtimeActionExecutor';
+import type { BrowserAddressFacts } from '@/sync/domains/browser/actions/address';
 import { browserControlActionId } from '@/sync/domains/browser/actions/controlActionId';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { SessionViewerSourceAccountScopeProvider, useSessionViewerSourceAccountLifetime } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
@@ -95,6 +94,8 @@ import { CurrentUiContextBridge, useCurrentUiContextMountPublisher, useOptionalC
 type BrowserSurfaceState = Readonly<{
     browserState: BrowserControlState;
     navigationEffect: BrowserControlCommandEffect | null;
+    /** Metadata from selection's receipt; sessionsById remains the active-profile authority. */
+    profileMetadata?: BrowserProfileV1;
 }>;
 
 export type BrowserSurfacePolicyDecisionV1 = Readonly<{
@@ -185,26 +186,6 @@ function resolveUrlOrigin(value: string | null | undefined): string | null {
     }
 }
 
-function shouldRetargetActiveViewForAddressNavigation(input: Readonly<{
-    view: BrowserControlViewState;
-    target: Extract<BrowserViewTargetV1, { kind: 'externalUrl' }>;
-}>): boolean {
-    const target = input.target;
-    if (input.view.target.kind === target.kind) {
-        return false;
-    }
-    if (input.view.target.kind === 'localServicePreview'
-        && isLocalServicePreviewAddress(target.url, input.view.target.display?.addressLabel)) {
-        return false;
-    }
-    const currentOrigin = resolveUrlOrigin(input.view.pendingUrl ?? input.view.currentUrl);
-    const targetOrigin = resolveUrlOrigin(target.url);
-    if (currentOrigin && targetOrigin && currentOrigin === targetOrigin) {
-        return false;
-    }
-    return true;
-}
-
 function decisionEnabled(decision: ReturnType<typeof useFeatureDecision>): boolean {
     return decision?.state === 'enabled';
 }
@@ -244,6 +225,7 @@ type BrowserSurfaceHostProps = Readonly<{
     policy?: BrowserSurfacePolicyDecisionV1;
     launchpadRows?: readonly BrowserLaunchpadRow[];
     localServiceTargets?: React.ComponentProps<typeof BrowserShell>['localServiceTargets'];
+    localServiceAddressScope?: BrowserAddressFacts['localServiceAddressScope'];
     launchpadRefreshStatus?: 'idle' | 'refreshing' | 'error';
     launchpadRefreshError?: string | null;
     onRefreshLaunchpad?: () => void;
@@ -404,7 +386,9 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     });
     const localServicePreviewState = props.localServicePreviewState === undefined ? previewController.state : props.localServicePreviewState;
     const openExternalFacts = { localServiceTargets: props.localServiceTargets, launchpadRows: props.launchpadRows,
-        previewState: localServicePreviewState, serverId: props.localServicePreviewServerId };
+        previewState: localServicePreviewState, serverId: props.localServicePreviewServerId,
+        localServiceAddressScope: props.localServiceAddressScope ?? (browserMachineId && presenceSessionId
+            ? { machineId: browserMachineId, sessionId: presenceSessionId } : undefined) };
     const openExternalFactsRef = React.useRef(openExternalFacts);
     openExternalFactsRef.current = openExternalFacts;
     const openExternalAvailability = selectBrowserOpenExternalAvailability({ ...openExternalFacts, view: focusedView });
@@ -423,7 +407,7 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     }, [focusedView?.browserSessionId, focusedView?.viewId, focusedView?.title, focusedView?.currentUrl, props.onViewStateChange, resetKey]);
     const annotationContextRef = React.useRef(props.browserContext ?? props.productModels?.browserContext);
     annotationContextRef.current = props.browserContext ?? props.productModels?.browserContext;
-    const releaseClosedView = React.useCallback((view: Readonly<{ browserSessionId: string; viewId: string }>) => {
+    const releaseClosedView = React.useCallback((view: Readonly<{ browserSessionId: string; viewId: string }>, closeTab = true) => {
         const context = annotationContextRef.current;
         if (context) {
             const state = context.readState?.() ?? context.state;
@@ -431,19 +415,23 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
             if (next !== state) context.onStateChange(next);
         }
         // The workspace owns tab selection and restores its previous tab when this one closes.
-        if (view.viewId === focusedView?.viewId && view.browserSessionId === focusedView.browserSessionId) props.onCloseTab?.();
+        if (closeTab && view.viewId === focusedView?.viewId && view.browserSessionId === focusedView.browserSessionId) props.onCloseTab?.();
     }, [focusedView?.browserSessionId, focusedView?.viewId, props.onCloseTab]);
-    const applyDaemonEvents = React.useCallback((events: readonly BrowserEventV1[]) => {
+    const applyDaemonEvents = React.useCallback((events: readonly BrowserEventV1[], profileMetadata?: BrowserProfileV1) => {
         const current = surfaceStateRef.current;
+        const closedViews: Array<Readonly<{ browserSessionId: string; viewId: string }>> = [];
         const browserState = events.reduce((state, event) => {
             const next = applyBrowserControlEvent(state, event);
             if (event.kind === 'viewClosed' && state.viewsById[event.viewId] && !next.viewsById[event.viewId]) {
-                releaseClosedView(state.viewsById[event.viewId]!);
+                closedViews.push(state.viewsById[event.viewId]!);
             }
             return next;
         }, current.browserState);
-        if (browserState === current.browserState) return;
-        const next = { ...current, browserState };
+        // Profile selection replaces the engine behind the same logical view in one receipt.
+        // Release its old annotation source, while the final projection owns workspace closure.
+        for (const view of closedViews) releaseClosedView(view, !browserState.viewsById[view.viewId]);
+        if (browserState === current.browserState && !profileMetadata) return;
+        const next = { ...current, browserState, ...(profileMetadata ? { profileMetadata } : {}) };
         surfaceStateRef.current = next;
         setSurfaceState(next);
     }, [releaseClosedView]);
@@ -524,14 +512,25 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     // host-local default so the launchpad's external-URL rows resolve as allowed (rather than
     // disabled on `profile_missing`) and a typed/opened URL seeds a navigating view. An explicitly
     // supplied profile (e.g. a daemon/session one) still wins.
-    const browserProfile = resolveLocalBrowserProfile(mergedProductModels?.browserProfile?.profile ?? null);
-    const productModels = mergedProductModels?.browserProfile?.profile === browserProfile
-        ? mergedProductModels
-        : {
+    const profileMetadata = surfaceState.profileMetadata;
+    const activeProfileId = focusedView ? surfaceState.browserState.sessionsById[focusedView.browserSessionId]?.profileId : undefined;
+    const browserProfile = resolveLocalBrowserProfile(profileMetadata && profileMetadata.profileId === activeProfileId
+        ? profileMetadata : mergedProductModels?.browserProfile?.profile ?? null);
+    const profileManagement = React.useMemo(() => browserOperationScope && browserMachineId ? { source: {
+        scope: browserOperationScope, machineId: browserMachineId,
+        ...(focusedView ? { selection: {
+            command: { kind: 'openView' as const, browserSessionId: focusedView.browserSessionId, viewId: focusedView.viewId,
+                platform: focusedView.platform, target: focusedView.target,
+                ...(focusedView.currentUrl ? { currentUrl: focusedView.currentUrl } : {}), focus: true },
+            onSelected: (profile: BrowserProfileV1, events: readonly BrowserEventV1[]) => applyDaemonEvents(events, profile),
+        } } : {}),
+    } } : undefined, [applyDaemonEvents, browserMachineId, browserOperationScope, focusedView]);
+    const productModels = {
             ...(mergedProductModels ?? {}),
             browserProfile: {
                 ...(mergedProductModels?.browserProfile ?? {}),
                 profile: browserProfile,
+                management: mergedProductModels?.browserProfile?.management ?? profileManagement,
             },
         };
     const pluginBrowserPolicyContext = React.useMemo(
@@ -622,6 +621,7 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     const applyRuntimeDispatchResult = React.useCallback((result: BrowserControlCommandDispatchResult) => {
         if (!isBrowserActionCurrent()) return;
         const next = {
+            ...surfaceStateRef.current,
             browserState: result.state,
             navigationEffect: selectNavigationEffect(result.effects),
         };
@@ -645,9 +645,18 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     const sendDaemonCommand = React.useMemo(() => daemonCommandSender
         ? (command: BrowserCommandV1) => daemonCommandSender(command, receiveDaemonEvents)
         : undefined, [daemonCommandSender, receiveDaemonEvents]);
+    const downloadOwnerRef = React.useRef<BrowserRuntimeControlAdapter['saveDownload'] | null>(null);
+    const onDownloadOwnerChange = React.useCallback((owner: BrowserRuntimeControlAdapter['saveDownload'] | null) => {
+        downloadOwnerRef.current = owner;
+    }, []);
     const runtimeControlAdapter = React.useMemo<BrowserRuntimeControlAdapter>(() => ({
         accountLifetime: browserActionAccountLifetime,
         readState: () => isBrowserActionCurrent() && !browserActionFactsRef.current.unavailableReason ? surfaceStateRef.current.browserState : null,
+        readAddressFacts: () => openExternalFactsRef.current,
+        saveDownload: async args => {
+            if (!downloadOwnerRef.current) throw new Error('browser_download_unavailable');
+            return downloadOwnerRef.current(args);
+        },
         resolveOpenExternalUrl: async (view, signal) => {
             if (!isBrowserActionCurrent() || !browserActionAccountLifetime) return { ok: false, reasonCode: 'browser_view_unavailable' };
             return resolveBrowserOpenExternalUrl({ ...openExternalFactsRef.current, view,
@@ -667,11 +676,8 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
         },
         ...(sendDaemonCommand ? { sendDaemonCommand } : {}),
     }), [browserActionAccountLifetime, isBrowserActionCurrent, applyRuntimeDispatchResult, receiveDaemonEvents, sendDaemonCommand]);
-    const createBrowserActionExecute = React.useCallback((engineOverride?: BrowserOpenEngineOverride) => createFrontDoorActionExecute(undefined, {
-        runtimeActions: { browserControl: engineOverride ? {
-            ...runtimeControlAdapter,
-            readDispatchOptions: command => ({ ...runtimeControlAdapter.readDispatchOptions?.(command), engineOverride }),
-        } : runtimeControlAdapter, browserAutomation: runtimeAutomationAdapter },
+    const createBrowserActionExecute = React.useCallback(() => createFrontDoorActionExecute(undefined, {
+        runtimeActions: { browserControl: runtimeControlAdapter, browserAutomation: runtimeAutomationAdapter },
         isActionEnabled: () => isBrowserActionCurrent() && !browserActionFactsRef.current.unavailableReason,
     }), [runtimeControlAdapter, runtimeAutomationAdapter, isBrowserActionCurrent]);
     const executeBrowserAction = React.useMemo(() => createBrowserActionExecute(), [createBrowserActionExecute]);
@@ -745,13 +751,14 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
         unavailableReason]);
 
     const onCommand = React.useCallback((command: BrowserCommandV1, engineOverride?: BrowserOpenEngineOverride) =>
-        (engineOverride ? createBrowserActionExecute(engineOverride) : executeBrowserAction)(browserControlActionId(command), command, {
+        executeBrowserAction(browserControlActionId(command),
+            engineOverride && (command.kind === 'openView' || command.kind === 'setTarget') ? { ...command, engineOverride } : command, {
         surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
         serverId: browserActionAccountLifetime?.scope.serverId,
         expectedAccountId: browserActionAccountLifetime?.scope.accountId,
         defaultSessionId: props.pluginBrowserActionContext?.sessionId ?? undefined,
         externalActionTarget: browserActionTarget,
-    }), [createBrowserActionExecute, executeBrowserAction, browserActionAccountLifetime, props.pluginBrowserActionContext?.sessionId, browserActionTarget]);
+    }), [executeBrowserAction, browserActionAccountLifetime, props.pluginBrowserActionContext?.sessionId, browserActionTarget]);
 
     // The Machine that runs this browser receives the sign-ins; the sheet reads its sources only while open.
     const onImportLogins = React.useMemo(() => (browserOperationScope && browserMachineId
@@ -822,6 +829,7 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
                 return current;
             }
             const next = {
+                ...current,
                 browserState,
                 navigationEffect: current.navigationEffect,
             };
@@ -845,41 +853,13 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
             currentUrl: options?.currentUrl ?? resolveInitialCurrentUrl(target),
             currentUrlExpiresAt: options?.currentUrlExpiresAt,
             focus: true,
-        }, options?.engineOverride);
+            ...(options?.engineOverride ? { engineOverride: options.engineOverride } : {}),
+        });
     }, [
         onCommand,
         props.browserSessionId,
         props.platform,
     ]);
-
-    const navigateActiveViewInPlace = React.useCallback((input: Readonly<{
-        view: BrowserControlViewState;
-        url: string;
-        platform: BrowserPlatformV1;
-    }>) => {
-        // The source/view identity remains the same across daemon navigation. A local retarget
-        // would replace the streamed projection and bypass the daemon navigation sink.
-        if (isDaemonAuthoritativeBrowserView(input.view)) return false;
-        const target = resolveExternalUrlTargetFromInput(input.url);
-        if (
-            !target
-            || target.kind !== 'externalUrl'
-            || !shouldRetargetActiveViewForAddressNavigation({ view: input.view, target })
-        ) {
-            return false;
-        }
-        void onCommand({
-            kind: 'setTarget',
-            commandId: `browser_command:${input.view.viewId}:setTarget:${Date.now()}`,
-            browserSessionId: input.view.browserSessionId,
-            viewId: input.view.viewId,
-            target,
-            currentUrl: target.url,
-        });
-        // The retarget attempt owns this submission even when refused: never fall through to
-        // another navigation Action that could bypass the refused target decision.
-        return true;
-    }, [onCommand]);
 
     const onOpenTarget = props.onOpenTarget ?? navigateCurrentTabInPlace;
     const resolveContributedAction = React.useMemo(
@@ -948,6 +928,7 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
             machineName: browserMachineName,
             firstUse,
             onBrowserEvent: receiveBrowserEvent,
+            onDownloadOwnerChange,
         }}>
             <BrowserShell
                 agent={browserAgent}
@@ -975,7 +956,6 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
                 onOpenNewTab={props.onOpenNewTab}
                 onCloseTab={props.onCloseTab}
                 onNavigateInPlace={navigateCurrentTabInPlace}
-                onNavigateActiveViewInPlace={navigateActiveViewInPlace}
                 browserFeatureDecision={browserFeatureDecision}
                 desktopWebViewAvailability={desktopWebViewAvailability}
                 allowExternalUrlBrowsing={props.allowExternalUrlBrowsing}

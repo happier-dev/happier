@@ -659,6 +659,8 @@ export type MachineStorageActionResultById = {
                 inUse: boolean;
             };
             childCount: number;
+            verdict: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe';
+            collectable: boolean;
             parentId?: string | undefined;
             nameBytes?: string | undefined;
             deltaSincePrevious?: number | undefined;
@@ -704,6 +706,8 @@ export type MachineStorageActionResultById = {
                 inUse: boolean;
             };
             childCount: number;
+            verdict: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe';
+            collectable: boolean;
             parentId?: string | undefined;
             nameBytes?: string | undefined;
             deltaSincePrevious?: number | undefined;
@@ -742,6 +746,8 @@ export type MachineStorageActionResultById = {
                     inUse: boolean;
                 };
                 childCount: number;
+                verdict: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe';
+                collectable: boolean;
                 parentId?: string | undefined;
                 nameBytes?: string | undefined;
                 deltaSincePrevious?: number | undefined;
@@ -777,6 +783,8 @@ export type MachineStorageActionResultById = {
                         inUse: boolean;
                     };
                     childCount: number;
+                    verdict: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe';
+                    collectable: boolean;
                     parentId?: string | undefined;
                     nameBytes?: string | undefined;
                     deltaSincePrevious?: number | undefined;
@@ -811,6 +819,8 @@ export type MachineStorageActionResultById = {
                         inUse: boolean;
                     };
                     childCount: number;
+                    verdict: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe';
+                    collectable: boolean;
                     parentId?: string | undefined;
                     nameBytes?: string | undefined;
                     deltaSincePrevious?: number | undefined;
@@ -845,6 +855,8 @@ export type MachineStorageActionResultById = {
                         inUse: boolean;
                     };
                     childCount: number;
+                    verdict: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe';
+                    collectable: boolean;
                     parentId?: string | undefined;
                     nameBytes?: string | undefined;
                     deltaSincePrevious?: number | undefined;
@@ -879,6 +891,8 @@ export type MachineStorageActionResultById = {
                         inUse: boolean;
                     };
                     childCount: number;
+                    verdict: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe';
+                    collectable: boolean;
                     parentId?: string | undefined;
                     nameBytes?: string | undefined;
                     deltaSincePrevious?: number | undefined;

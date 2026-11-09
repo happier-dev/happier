@@ -1417,8 +1417,8 @@ export type WorkflowsActionInputById = {
             serverId: string;
             machineId: string;
             environmentId: string;
-            deploymentId: string;
             targetLinkId: string;
+            deploymentId: string;
             configRevision: number;
             installationId: string;
         };
@@ -11423,6 +11423,7 @@ export type WorkflowsActionResultById = {
                     everyMs: number;
                     timezone: null | string;
                 };
+                nextRunAt?: null | number | undefined;
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
             } | {
@@ -11498,6 +11499,7 @@ export type WorkflowsActionResultById = {
                     everyMs: number;
                     timezone: null | string;
                 };
+                nextRunAt?: null | number | undefined;
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
             } | {

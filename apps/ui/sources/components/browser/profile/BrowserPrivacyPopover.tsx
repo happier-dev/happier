@@ -14,6 +14,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     body: {
         padding: theme.space.s10,
         minWidth: 0,
+        flexShrink: 1,
     },
 }));
 
@@ -63,8 +64,8 @@ export function BrowserPrivacyPopover(props: Readonly<{
                     portal={MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS}
                 >
                     {({ maxHeight }) => (
-                        <FloatingOverlay maxHeight={maxHeight} surfaceChrome="theme">
-                            <View testID={`${props.testID}-panel`} style={stylesheet.body}>
+                        <FloatingOverlay maxHeight={maxHeight} surfaceChrome="theme" scrollEnabled={!props.model.management}>
+                            <View testID={`${props.testID}-panel`} style={[stylesheet.body, { maxHeight }]}>
                                 <BrowserProfileStatus
                                     testID={`${props.testID}-status`}
                                     model={props.model}

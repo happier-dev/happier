@@ -182,7 +182,7 @@ function dispatchOpenViewCommand(
     options: BrowserControlCommandDispatchOptions,
 ): BrowserControlCommandDispatchResult {
     const selectedAdapter = selectBrowserTargetAdapter({
-        engineOverride: options.engineOverride,
+        engineOverride: command.engineOverride ?? options.engineOverride,
         target: command.target,
         platform: command.platform,
         targetPolicyDecision: options.targetPolicyDecision,
@@ -259,6 +259,7 @@ function applyLocalSetTargetIntent(
     const selectedAdapter = selectBrowserTargetAdapter({
         target: command.target,
         platform: view.platform,
+        engineOverride: command.engineOverride ?? options.engineOverride,
         targetPolicyDecision: options.targetPolicyDecision,
         desktopWebViewAvailability: options.desktopWebViewAvailability,
         nativeViewCaptureHandlerRegistered: options.nativeViewCaptureHandlerRegistered,
@@ -269,6 +270,7 @@ function applyLocalSetTargetIntent(
         return { state, effects: [{ kind: 'managedBrowserOpen', command: {
             kind: 'openView', commandId: command.commandId, browserSessionId: options.managedBrowserSessionId,
             viewId: command.viewId, target: command.target, platform: view.platform,
+            engineOverride: command.engineOverride,
             currentUrl: command.currentUrl ?? selectedAdapter.url, focus: true,
         } }] };
     }
@@ -361,7 +363,7 @@ export function dispatchBrowserControlCommand(
     }
 
     if (command.kind === 'setTarget') {
-        if (isDaemonAuthoritativeView(state, command.viewId)) {
+        if (isDaemonAuthoritativeView(state, command.viewId) && command.engineOverride !== 'embedded') {
             options.sendDaemonCommand?.(command);
             return {
                 state,
@@ -407,7 +409,8 @@ export function dispatchBrowserControlCommand(
 
     // A new external address entered for an embedded page reopens this view in the managed Browser,
     // the same open the selector decides for a fresh view (web, owner ruling 2026-11-07).
-    if (command.kind === 'navigate' && options.managedBrowserSessionId && isClientRenderedBrowserEngine(view.engineKind)) {
+    if (command.kind === 'navigate' && command.navigationIntent !== 'target'
+        && options.managedBrowserSessionId && isClientRenderedBrowserEngine(view.engineKind)) {
         const target = resolveExternalUrlTargetFromInput(command.url);
         const selection = target ? selectBrowserTargetAdapter({ target, platform: view.platform,
             targetPolicyDecision: options.targetPolicyDecision, managedBrowserAvailable: true }) : null;

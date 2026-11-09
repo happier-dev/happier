@@ -2896,6 +2896,17 @@ export type BotTemplatesActionResultById = {
                 httpStatus?: number | undefined;
                 providerErrorMessage?: string | undefined;
             };
+            pluginCodeRefusal?: undefined | {
+                remedy: {
+                    kind: 'ask_machine_manager';
+                } | {
+                    kind: 'open_machine_security';
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                };
+            };
             agentIsolationRefusal?: undefined | {
                 reason: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'member_setup_required' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
                 phase: 'native_execution_preparation' | 'native_identity_binding';

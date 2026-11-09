@@ -1,4 +1,5 @@
-import { BROWSER_EXTENSION_MUTATION_ACTION_IDS, type RuntimeActionIdV1 } from './actionIds.js';
+import type { RuntimeActionIdV1 } from './actionIds.js';
+import { BROWSER_EXTENSION_MUTATION_ACTION_IDS, BROWSER_PROFILE_MUTATION_ACTION_IDS } from './actionIdsBrowser.js';
 
 // Side-effect danger SSOT: the actions whose `sideEffectClass` is `'danger'` (the highest
 // host-effect class). This is intentionally NARROWER than the SAFETY danger SSOT below: navigation
@@ -7,6 +8,7 @@ import { BROWSER_EXTENSION_MUTATION_ACTION_IDS, type RuntimeActionIdV1 } from '.
 // `destructive` host effect). Do not widen this set to drive the consent floor - use the safety set.
 export const RUNTIME_SIDE_EFFECT_DANGER_ACTION_IDS: ReadonlySet<RuntimeActionIdV1> = new Set<RuntimeActionIdV1>([
   ...BROWSER_EXTENSION_MUTATION_ACTION_IDS,
+  ...BROWSER_PROFILE_MUTATION_ACTION_IDS,
   'browser.profile.logins.import',
   'projects.service.relocate',
   'browser.sandbox.install',
@@ -35,8 +37,8 @@ export const RUNTIME_SIDE_EFFECT_DANGER_ACTION_IDS: ReadonlySet<RuntimeActionIdV
 // (the agent-browser consent hole - CON-1/CON-2). Read-only browser verbs
 // (`status`/`snapshot`/`semanticSnapshot`/`queryElements`/`waitFor`/`timeline.get`/
 // `view.focus`/`target.set`/`elementPicker.*`) stay `safe` and agent-allowed without consent.
-// `cancelActive` is also safe for this danger floor, but requires a present user because it takes
-// control away from an in-flight requester.
+// `cancelActive` is safe for this danger classification; its configurable authority approval
+// default belongs to the Action spec and canonical approval policy.
 export const RUNTIME_DANGER_ACTION_IDS: ReadonlySet<RuntimeActionIdV1> = new Set<RuntimeActionIdV1>([
   'computer.input',
   'computer.secret.fill',

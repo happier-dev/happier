@@ -7,14 +7,22 @@ export type ClientFilesActionInputById = {
     readonly "files.save": {
         fileName: string;
         source: {
+            kind: 'browserDownload';
+            reference: {
+                machineId: string;
+                browserSessionId: string;
+                viewId: string;
+                downloadId: string;
+            };
+        } | {
             kind: 'deploymentLog';
             reference: {
                 kind: 'build';
                 serverId: string;
                 machineId: string;
                 environmentId: string;
-                deploymentId: string;
                 targetLinkId: string;
+                deploymentId: string;
                 installationId: string;
                 ref?: string | undefined;
             };

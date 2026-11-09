@@ -464,6 +464,10 @@ export type MachineReachabilityActionInputById = {
                             unsatisfiedExitCodes: number[];
                             stdoutJson?: unknown;
                         } | {
+                            kind: 'audit';
+                            rules: string[];
+                            state?: 'absent' | 'present' | undefined;
+                        } | {
                             kind: 'kernel';
                             capability: string;
                             architectures?: string[] | undefined;
@@ -520,16 +524,25 @@ export type MachineReachabilityActionInputById = {
                         kind: 'firewall';
                         rules: string;
                         id: string;
-                        exposures?: undefined | {
+                        exposures?: ({
+                            exposure: 'loopback' | 'public';
                             requirementId: string;
                             hostAddress: string;
                             hostPort: number;
                             protocol: 'tcp' | 'udp';
-                            exposure: 'loopback' | 'privateNetwork' | 'public';
+                            providerId?: undefined;
+                            networkIdentity?: undefined;
                             containerPort?: number | undefined;
-                            providerId?: string | undefined;
-                            networkIdentity?: string | undefined;
-                        }[];
+                        } | {
+                            exposure: 'privateNetwork';
+                            providerId: string;
+                            networkIdentity: string;
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            containerPort?: number | undefined;
+                        })[] | undefined;
                         requiredFacts?: ({
                             kind: 'administrator';
                         } | {
@@ -823,9 +836,9 @@ export type MachineReachabilityActionInputById = {
                     } | {
                         kind: 'serviceUnit';
                         unit: string;
-                        enabled: boolean;
                         running: boolean;
                         id: string;
+                        enabled?: boolean | undefined;
                         requiredFacts?: ({
                             kind: 'administrator';
                         } | {
@@ -998,6 +1011,7 @@ export type MachineReachabilityActionInputById = {
                         path: string;
                         id: string;
                         state?: 'absent' | 'present' | undefined;
+                        lifetime?: 'invocation' | undefined;
                         content?: undefined | {
                             kind: 'iniKeys';
                             sections: Record<string, Record<string, string>>;
@@ -1018,9 +1032,21 @@ export type MachineReachabilityActionInputById = {
                         expectedContentDigest?: string | undefined;
                         ownershipMarker?: string | undefined;
                         validate?: 'docker' | 'sudoers' | undefined | {
+                            kind: 'audit';
+                            rules: string[];
+                            state?: 'absent' | 'present' | undefined;
+                        } | {
                             kind: 'caddy';
                         } | {
                             kind: 'docker';
+                        } | {
+                            kind: 'fail2ban';
+                            jails: Record<string, {
+                                maxRetry: number;
+                                findTimeSeconds: number;
+                                banTimeSeconds: number;
+                                port?: number | undefined;
+                            }>;
                         } | {
                             kind: 'nft';
                         } | {
@@ -1029,14 +1055,27 @@ export type MachineReachabilityActionInputById = {
                                 user: string;
                                 host: string;
                                 address: string;
+                                expected?: Record<string, string> | undefined;
                             }[];
                         } | {
                             kind: 'sudoers';
                         };
                         probe?: undefined | {
+                            kind: 'audit';
+                            rules: string[];
+                            state?: 'absent' | 'present' | undefined;
+                        } | {
                             kind: 'caddy';
                         } | {
                             kind: 'docker';
+                        } | {
+                            kind: 'fail2ban';
+                            jails: Record<string, {
+                                maxRetry: number;
+                                findTimeSeconds: number;
+                                banTimeSeconds: number;
+                                port?: number | undefined;
+                            }>;
                         } | {
                             kind: 'nft';
                         } | {
@@ -1045,6 +1084,7 @@ export type MachineReachabilityActionInputById = {
                                 user: string;
                                 host: string;
                                 address: string;
+                                expected?: Record<string, string> | undefined;
                             }[];
                         } | {
                             kind: 'sudoers';
@@ -1101,6 +1141,10 @@ export type MachineReachabilityActionInputById = {
                             args: string[];
                             unsatisfiedExitCodes: number[];
                             stdoutJson?: unknown;
+                        } | {
+                            kind: 'audit';
+                            rules: string[];
+                            state?: 'absent' | 'present' | undefined;
                         } | {
                             kind: 'kernel';
                             capability: string;
@@ -1241,26 +1285,44 @@ export type MachineReachabilityActionInputById = {
                     v: 1;
                     kind: 'preserveSsh' | 'retainSsh';
                     caddy: {
-                        publicBindings?: undefined | {
+                        publicBindings?: ({
+                            exposure: 'loopback' | 'public';
                             requirementId: string;
                             hostAddress: string;
                             hostPort: number;
                             protocol: 'tcp' | 'udp';
-                            exposure: 'loopback' | 'privateNetwork' | 'public';
+                            providerId?: undefined;
+                            networkIdentity?: undefined;
                             containerPort?: number | undefined;
-                            providerId?: string | undefined;
-                            networkIdentity?: string | undefined;
-                        }[];
+                        } | {
+                            exposure: 'privateNetwork';
+                            providerId: string;
+                            networkIdentity: string;
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            containerPort?: number | undefined;
+                        })[] | undefined;
                         privateBinding?: undefined | {
                             exposure: {
+                                exposure: 'loopback' | 'public';
                                 requirementId: string;
                                 hostAddress: string;
                                 hostPort: number;
                                 protocol: 'tcp' | 'udp';
-                                exposure: 'loopback' | 'privateNetwork' | 'public';
+                                providerId?: undefined;
+                                networkIdentity?: undefined;
                                 containerPort?: number | undefined;
-                                providerId?: string | undefined;
-                                networkIdentity?: string | undefined;
+                            } | {
+                                exposure: 'privateNetwork';
+                                providerId: string;
+                                networkIdentity: string;
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
                             };
                             interfaceName: string;
                             sourceRanges: string[];
@@ -1728,6 +1790,10 @@ export type MachineReachabilityActionResultById = {
                                 unsatisfiedExitCodes: number[];
                                 stdoutJson?: InputPredicate | undefined;
                             } | {
+                                kind: 'audit';
+                                rules: string[];
+                                state?: 'absent' | 'present' | undefined;
+                            } | {
                                 kind: 'kernel';
                                 capability: string;
                                 architectures?: string[] | undefined;
@@ -1784,16 +1850,25 @@ export type MachineReachabilityActionResultById = {
                             kind: 'firewall';
                             rules: string;
                             id: string;
-                            exposures?: undefined | {
+                            exposures?: ({
+                                exposure: 'loopback' | 'public';
                                 requirementId: string;
                                 hostAddress: string;
                                 hostPort: number;
                                 protocol: 'tcp' | 'udp';
-                                exposure: 'loopback' | 'privateNetwork' | 'public';
+                                providerId?: undefined;
+                                networkIdentity?: undefined;
                                 containerPort?: number | undefined;
-                                providerId?: string | undefined;
-                                networkIdentity?: string | undefined;
-                            }[];
+                            } | {
+                                exposure: 'privateNetwork';
+                                providerId: string;
+                                networkIdentity: string;
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            })[] | undefined;
                             requiredFacts?: ({
                                 kind: 'administrator';
                             } | {
@@ -2087,9 +2162,9 @@ export type MachineReachabilityActionResultById = {
                         } | {
                             kind: 'serviceUnit';
                             unit: string;
-                            enabled: boolean;
                             running: boolean;
                             id: string;
+                            enabled?: boolean | undefined;
                             requiredFacts?: ({
                                 kind: 'administrator';
                             } | {
@@ -2262,6 +2337,7 @@ export type MachineReachabilityActionResultById = {
                             path: string;
                             id: string;
                             state?: 'absent' | 'present' | undefined;
+                            lifetime?: 'invocation' | undefined;
                             content?: undefined | {
                                 kind: 'iniKeys';
                                 sections: Record<string, Record<string, string>>;
@@ -2282,9 +2358,21 @@ export type MachineReachabilityActionResultById = {
                             expectedContentDigest?: string | undefined;
                             ownershipMarker?: string | undefined;
                             validate?: 'docker' | 'sudoers' | undefined | {
+                                kind: 'audit';
+                                rules: string[];
+                                state?: 'absent' | 'present' | undefined;
+                            } | {
                                 kind: 'caddy';
                             } | {
                                 kind: 'docker';
+                            } | {
+                                kind: 'fail2ban';
+                                jails: Record<string, {
+                                    maxRetry: number;
+                                    findTimeSeconds: number;
+                                    banTimeSeconds: number;
+                                    port?: number | undefined;
+                                }>;
                             } | {
                                 kind: 'nft';
                             } | {
@@ -2293,14 +2381,27 @@ export type MachineReachabilityActionResultById = {
                                     user: string;
                                     host: string;
                                     address: string;
+                                    expected?: Record<string, string> | undefined;
                                 }[];
                             } | {
                                 kind: 'sudoers';
                             };
                             probe?: undefined | {
+                                kind: 'audit';
+                                rules: string[];
+                                state?: 'absent' | 'present' | undefined;
+                            } | {
                                 kind: 'caddy';
                             } | {
                                 kind: 'docker';
+                            } | {
+                                kind: 'fail2ban';
+                                jails: Record<string, {
+                                    maxRetry: number;
+                                    findTimeSeconds: number;
+                                    banTimeSeconds: number;
+                                    port?: number | undefined;
+                                }>;
                             } | {
                                 kind: 'nft';
                             } | {
@@ -2309,6 +2410,7 @@ export type MachineReachabilityActionResultById = {
                                     user: string;
                                     host: string;
                                     address: string;
+                                    expected?: Record<string, string> | undefined;
                                 }[];
                             } | {
                                 kind: 'sudoers';
@@ -2365,6 +2467,10 @@ export type MachineReachabilityActionResultById = {
                                 args: string[];
                                 unsatisfiedExitCodes: number[];
                                 stdoutJson?: InputPredicate | undefined;
+                            } | {
+                                kind: 'audit';
+                                rules: string[];
+                                state?: 'absent' | 'present' | undefined;
                             } | {
                                 kind: 'kernel';
                                 capability: string;
@@ -2505,26 +2611,44 @@ export type MachineReachabilityActionResultById = {
                         v: 1;
                         kind: 'preserveSsh' | 'retainSsh';
                         caddy: {
-                            publicBindings?: undefined | {
+                            publicBindings?: ({
+                                exposure: 'loopback' | 'public';
                                 requirementId: string;
                                 hostAddress: string;
                                 hostPort: number;
                                 protocol: 'tcp' | 'udp';
-                                exposure: 'loopback' | 'privateNetwork' | 'public';
+                                providerId?: undefined;
+                                networkIdentity?: undefined;
                                 containerPort?: number | undefined;
-                                providerId?: string | undefined;
-                                networkIdentity?: string | undefined;
-                            }[];
+                            } | {
+                                exposure: 'privateNetwork';
+                                providerId: string;
+                                networkIdentity: string;
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            })[] | undefined;
                             privateBinding?: undefined | {
                                 exposure: {
+                                    exposure: 'loopback' | 'public';
                                     requirementId: string;
                                     hostAddress: string;
                                     hostPort: number;
                                     protocol: 'tcp' | 'udp';
-                                    exposure: 'loopback' | 'privateNetwork' | 'public';
+                                    providerId?: undefined;
+                                    networkIdentity?: undefined;
                                     containerPort?: number | undefined;
-                                    providerId?: string | undefined;
-                                    networkIdentity?: string | undefined;
+                                } | {
+                                    exposure: 'privateNetwork';
+                                    providerId: string;
+                                    networkIdentity: string;
+                                    requirementId: string;
+                                    hostAddress: string;
+                                    hostPort: number;
+                                    protocol: 'tcp' | 'udp';
+                                    containerPort?: number | undefined;
                                 };
                                 interfaceName: string;
                                 sourceRanges: string[];

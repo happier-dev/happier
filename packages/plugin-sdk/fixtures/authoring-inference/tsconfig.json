@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
+    "jsx": "react-jsx",
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "lib": ["ES2022", "DOM"],
@@ -26,5 +27,5 @@
       "@happier-dev/plugin-sdk/voice/speech": ["../../src/voice/speech.ts"]
     }
   },
-  "include": ["accountCollections.ts", "actions.ts", "agentRuntimeSurfaces.ts", "index.ts", "languageServers.ts", "managedProvider.ts", "machineAccess.ts", "machineProvisioners.ts", "promptAsset.ts", "projectWorkers.ts", "publicServices.ts", "run.ts", "targetedContributions.ts", "testing.ts", "workflowTriggers.ts"]
+  "include": ["accountCollections.ts", "actions.ts", "browser.ts", "agentRuntimeSurfaces.ts", "index.ts", "languageServers.ts", "managedProvider.ts", "machineAccess.ts", "machineProvisioners.ts", "providerEndpointPolicies.ts", "providerEndpointPolicyEditor.tsx", "promptAsset.ts", "projectWorkers.ts", "publicServices.ts", "run.ts", "sessionRecap.ts", "targetedContributions.ts", "testing.ts", "workflowTriggers.ts"]
 }

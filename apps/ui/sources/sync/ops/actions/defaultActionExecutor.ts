@@ -172,9 +172,7 @@ import { createUiAccountAction, resolveUiAccountActionFallbackMachineId } from '
 import { executeAdmittedClientActionChildAtMachine, type AdmittedClientActionParent } from './admittedClientActionChild';
 import { isWorkflowHostAdmittedChildActionIdV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { buildMachineAgentInventoryDescriptors } from '@/agents/machineAgents/machineAgentCatalog';
-import {
-  readAgentInstallJobRpc,
-} from '@/agents/machineAgents/installJobs/api';
+import { DaemonAgentInstallReadResponseSchema, DaemonAgentInstallCancelResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import {
   SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1,
   sessionBoardActionUsesLayoutV1,
@@ -261,7 +259,7 @@ import { createBugReportSubmitAction } from './bugReportSubmitAction';
 import { executeAppUpdateAction } from '@/updates/appUpdateActionRuntime';
 import { createUpdatesAction, readCurrentMachineUpdateItem } from '@/updates/updatesActionRuntime';
 import { startMachineAgentItemUpdate } from '@/updates/machineUpdateRuns';
-import { cancelMachineAgentInstallJob, startAgentInstallJob } from '@/agents/machineAgents/installJobs/installJobStore';
+import { startAgentInstallJob } from '@/agents/machineAgents/installJobs/installJobStore';
 import { executeExternalSessionBrowseAction } from './externalSessionBrowseAction';
 import { createUiConnectedServiceAction } from './connectedServiceActionDeps';
 import { createUiUsageActionPorts } from './usageActionDeps';
@@ -1523,6 +1521,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     saveClientFile: async args => {
       const { saveClientFile } = await import('@/sync/runtime/files/saveFileBytes');
       return saveClientFile(args);
+    },
+    saveClientBrowserDownload: async args => {
+      if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      const { saveBrowserDownload } = await import('@/sync/runtime/files/browserDownload');
+      return saveBrowserDownload(args, accountContext.accountLifetime.scope);
     },
     externalUrlOpen: async ({ url, signal }) => {
       throwIfAborted(signal);
@@ -3530,6 +3533,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     ...(opts?.teamMembershipHistoryAction ?? capturedFamilyPorts?.teamMembershipHistoryAction
       ? { teamMembershipHistoryAction: opts?.teamMembershipHistoryAction ?? capturedFamilyPorts!.teamMembershipHistoryAction } : {}),
     ...(opts?.savedSecretRevealAction ? { savedSecretRevealAction: opts.savedSecretRevealAction } : {}),
+    ...(capturedFamilyPorts ? { savedSecretRepairAction: capturedFamilyPorts.savedSecretRepairAction } : {}),
     homeRuntimeTaskRpc: async ({ machineId, method, request, context }) => {
       if (!accountContext) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
       accountContext.assertCurrent();
@@ -3812,13 +3816,16 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             ...(request.definitionId === undefined ? {} : { definitionId: request.definitionId }) }, request.intent, options);
       return { ok: true, jobId: job.jobId };
     },
-    machineAgentInstallRead: async ({ machineId, serverId, signal, ...request }) =>
-      await readAgentInstallJobRpc({ machineId, serverId, signal }, request),
-    machineAgentInstallCancel: async ({ machineId, signal, jobId }) => {
-      if (!accountContext) throw new Error('not_authenticated');
-      accountContext.assertCurrent();
-      throwIfAborted(signal);
-      return await cancelMachineAgentInstallJob({ ...accountContext.accountLifetime.scope, machineId }, jobId);
+    machineAgentInstallRead: async ({ machineId, jobId, cursor, waitForTerminal, context }) => {
+      if (!context) throw new Error('not_authenticated');
+      const result = await executeMachineOwnedAction({ actionId: 'machines.agents.install.status', context,
+        input: { machineId, jobId, cursor, ...(waitForTerminal === undefined ? {} : { waitForTerminal }) } });
+      return readActionFailureEnvelope(result) ?? DaemonAgentInstallReadResponseSchema.parse(result);
+    },
+    machineAgentInstallCancel: async ({ machineId, jobId, context }) => {
+      if (!context) throw new Error('not_authenticated');
+      const result = await executeMachineOwnedAction({ actionId: 'machines.agents.install.cancel', context, input: { machineId, jobId } });
+      return readActionFailureEnvelope(result) ?? DaemonAgentInstallCancelResponseSchema.parse(result);
     },
     agentsModelsList: async (args) => {
       if (args.purpose === 'scm_diff_summary') {
@@ -5111,6 +5118,7 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext,
   discussionAction: NonNullable<ActionExecutorDeps['discussionAction']>;
   homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']>;
   teamMembershipHistoryAction: NonNullable<ActionExecutorDeps['teamMembershipHistoryAction']>;
+  savedSecretRepairAction: NonNullable<ActionExecutorDeps['savedSecretRepairAction']>;
 }> {
   const scope = { serverId: account.serverId, accountId: account.accountId };
   const isCurrent = (): boolean => {
@@ -5170,6 +5178,12 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext,
         }
       }
       return result;
+    },
+    savedSecretRepairAction: async ({ input }) => {
+      account.assertCurrent();
+      const { repairApprovedSavedSecretResourceEnvelopesBestEffort } = await import('@/sync/ops/settings/savedSecretResourceOperations');
+      const complete = await repairApprovedSavedSecretResourceEnvelopesBestEffort({ scope, ...input });
+      return { resourceId: input.resourceId, revision: input.expectedRevision, status: complete ? 'complete' : 'incomplete' };
     },
     teamMembershipHistoryAction: async (args) => {
       account.assertCurrent();

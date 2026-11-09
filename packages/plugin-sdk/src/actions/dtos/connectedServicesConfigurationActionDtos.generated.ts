@@ -733,61 +733,6 @@ export type ConnectedServicesConfigurationActionInputById = {
             };
         };
     };
-    readonly "connectedServices.disclosure.set": {
-        subject: {
-            kind: 'account';
-            account: {
-                service: {
-                    pluginId: string;
-                    localId: string;
-                };
-                accountId: string;
-            };
-        } | {
-            kind: 'group-member';
-            group: {
-                service: {
-                    pluginId: 'happier';
-                    localId: 'mcp-sign-in';
-                } | {
-                    pluginId: string;
-                    localId: string;
-                };
-                groupId: string;
-            };
-            accountId: string;
-        };
-        collapsed: boolean;
-    } & {
-        clientId?: string | undefined;
-    };
-    readonly "connectedServices.disclosure.reset": {
-        subject: {
-            kind: 'account';
-            account: {
-                service: {
-                    pluginId: string;
-                    localId: string;
-                };
-                accountId: string;
-            };
-        } | {
-            kind: 'group-member';
-            group: {
-                service: {
-                    pluginId: 'happier';
-                    localId: 'mcp-sign-in';
-                } | {
-                    pluginId: string;
-                    localId: string;
-                };
-                groupId: string;
-            };
-            accountId: string;
-        };
-    } & {
-        clientId?: string | undefined;
-    };
 };
 export type ConnectedServicesConfigurationActionResultById = {
     readonly "connectedServices.accounts.credentials.save": {
@@ -5344,8 +5289,8 @@ export type ConnectedServicesConfigurationActionResultById = {
                 v: 1;
                 source: 'cached' | 'connectedServiceProbe' | 'manual' | 'providerHttp' | 'proxy' | 'runtimeSignal' | 'unknown';
                 state: 'error_last_known_good' | 'loaded_data' | 'loaded_empty' | 'not_loaded' | 'stale_data';
-                confidence: 'confirmed' | 'estimated' | 'unknown';
                 providerId: string;
+                confidence: 'confirmed' | 'estimated' | 'unknown';
                 recordId: string;
                 staleAfterMs: number;
                 recordKey: {
@@ -5413,8 +5358,8 @@ export type ConnectedServicesConfigurationActionResultById = {
                 modelId?: null | string | undefined;
                 source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
                 scope?: 'daily' | 'five_hour' | 'model' | 'monthly' | 'primary' | 'requests' | 'rolling' | 'secondary' | 'session' | 'seven_day' | 'tokens' | 'unknown' | 'weekly' | undefined;
-                confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                 providerLimitId?: string | undefined;
+                confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                 currency?: string | undefined;
                 resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
                 windowDurationMs?: number | undefined;
@@ -6584,12 +6529,6 @@ export type ConnectedServicesConfigurationActionResultById = {
         applied: true;
     };
     readonly "connectedServices.acknowledgements.reset": {
-        applied: true;
-    };
-    readonly "connectedServices.disclosure.set": {
-        applied: true;
-    };
-    readonly "connectedServices.disclosure.reset": {
         applied: true;
     };
 };

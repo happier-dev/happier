@@ -16,6 +16,7 @@ import { useComputerSessionControl } from './useComputerSessionControl';
 import { useComputerDriverRepair } from './useComputerDriverRepair';
 import { useEscapeTakesControl } from './useEscapeTakesControl';
 import { createRemoteViewerClipboardShortcut } from '@/components/stream/remoteViewerClipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 
 /**
  * The controlled Computer body model, currently consumed by the Details pane. A shared
@@ -44,6 +45,7 @@ export function useComputerScreen(props: Readonly<{
     const { scope, accountLifetime } = props;
     const serverId = scope.serverId ?? accountLifetime?.scope.serverId ?? null;
     const enabled = props.enabled ?? true;
+    const writeClipboard = useClipboardWrite(accountLifetime?.scope ?? serverId, { enabled });
     const control = useComputerSessionControl({ scope, refreshKey: props.refreshKey, enabled, accountLifetime, execute: props.execute });
     const clipboardOperation = control.clipboard;
     const clipboardShortcut = React.useMemo(() => createRemoteViewerClipboardShortcut({
@@ -58,7 +60,7 @@ export function useComputerScreen(props: Readonly<{
             if (result.text === undefined) throw new Error('clipboard_text_unavailable');
             return result.text;
         },
-    }), [clipboardOperation]);
+    }, writeClipboard), [clipboardOperation, writeClipboard]);
     const driverRepair = useComputerDriverRepair(scope, accountLifetime, control.refresh);
     const stream = useComputerScreenStream({
         scope,
