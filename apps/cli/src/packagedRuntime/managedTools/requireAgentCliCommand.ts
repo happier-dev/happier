@@ -10,13 +10,22 @@ export type AgentCliResolutionOptions = Readonly<{
   catalogSnapshot?: ReturnType<typeof readAgentCatalogSnapshot>;
 }>;
 
-export function resolveAgentCliRuntimeSpecForLookupId(agentId: string, opts: AgentCliResolutionOptions = {}) {
-  if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(agentId)) {
+export function resolveAgentCliRuntimeSpecForLookupId(lookupId: string, opts: AgentCliResolutionOptions = {}) {
+  if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(lookupId)) {
     return legacyCustomAcpCompat.getLegacyCustomAcpAgentCliRuntimeSpec();
   }
-  const runtimeSpec = (opts.catalogSnapshot ?? readAgentCatalogSnapshot()).agentDefinitionsById.get(agentId)?.runtimeSpec;
+  const snapshot = opts.catalogSnapshot ?? readAgentCatalogSnapshot();
+  const runtimeSpec = snapshot.agentDefinitionsById.get(lookupId)?.runtimeSpec;
   if (runtimeSpec) return runtimeSpec;
-  throw new Error(`Missing agent CLI runtime metadata for '${agentId}'`);
+  // Daemon prerequisites name the declared tool, while managed installations
+  // are keyed by the Agent runtime. Consume the same catalog binding as Exec.
+  for (const agent of snapshot.agentDefinitionsById.values()) {
+    const toolId = agent.catalogEntry?.agentCliSystemTool?.toolId;
+    if (toolId && (lookupId === toolId || lookupId === `${agent.pluginId}/${toolId}`)) {
+      if (agent.runtimeSpec) return agent.runtimeSpec;
+    }
+  }
+  throw new Error(`Missing agent CLI runtime metadata for '${lookupId}'`);
 }
 
 export function buildMissingAgentCliCommandErrorMessage(

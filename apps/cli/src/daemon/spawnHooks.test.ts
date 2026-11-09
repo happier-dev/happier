@@ -4,6 +4,10 @@ import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+import { resolveAgentCliManagedCommandPathForRuntime } from '@happier-dev/cli-common/agents';
+import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
+
+import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 
 import {
   InstallableDependencyDescriptorSchema,
@@ -18,6 +22,41 @@ function readSource(path: string): string {
 }
 
 describe('daemon spawn hook substrate', () => {
+  it('resolves every declared Agent CLI tool through its canonical runtime without PATH', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-preflight-managed-tools-'));
+    try {
+      const snapshot = readAgentCatalogSnapshot();
+      const agents = [...snapshot.agentDefinitionsById.values()].filter((agent) => (
+        agent.runtimeSpec && agent.catalogEntry?.agentCliSystemTool
+      ));
+      expect(agents.some((agent) => agent.id === 'ohMyPi')).toBe(true);
+      for (const agent of agents) {
+        const runtimeSpec = agent.runtimeSpec!;
+        const managed = Boolean(runtimeSpec.managedInstall);
+        const command = managed
+          ? resolveAgentCliManagedCommandPathForRuntime(runtimeSpec, { happyHomeDir: root })
+          : join(root, 'overrides', agent.id.replaceAll('/', '_'), process.platform === 'win32' ? 'fixture.cmd' : 'fixture');
+        await mkdir(dirname(command), { recursive: true });
+        await writeFile(command, '#!/bin/sh\nexit 0\n');
+        await chmod(command, 0o755);
+        const context = daemonSpawnHooks.createDaemonSpawnToolResolutionContext({
+          processEnv: { PATH: '', HAPPIER_HOME_DIR: root, HAPPIER_JS_RUNTIME_PATH: process.execPath,
+            ...(managed ? {} : { [resolveAgentCliOverrideEnvKey(runtimeSpec.id)]: command }) },
+        });
+        const toolId = agent.catalogEntry!.agentCliSystemTool!.toolId;
+        for (const lookupId of [toolId, `${agent.pluginId}/${toolId}`]) {
+          const resolved = await context.resolveSystemTool({
+            toolId: lookupId, reason: 'Declared managed Agent prerequisite',
+          });
+          expect(resolved, `${agent.id}: ${lookupId}`).toMatchObject({ ok: true, source: managed ? 'managed' : 'user_config' });
+          if (resolved.ok) expect([resolved.command, ...resolved.args]).toContain(command);
+        }
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('resolves a declared absolute system tool without PATH', async () => {
     const context = daemonSpawnHooks.createDaemonSpawnToolResolutionContext({ processEnv: { PATH: '' } });
     await expect(context.resolveSystemTool({

@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
@@ -61,6 +62,7 @@ import { resolveExistingSessionHandoffState } from '@/session/handoff/agentBundl
 import { requiresAgentSessionCli } from '@/agent/catalog/runtimeEntry';
 import { resolveAgentCliRuntimeSpecForLookupId } from '@/packagedRuntime/managedTools/requireAgentCliCommand';
 import { resolveMemberRunnableAgentCliLaunch, type MemberAgentCliLaunchContext } from '@/plugins/runtime/exec/system/tools/agentCliBinding';
+import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
 
 type ResolveSpawnChildEnvironmentSuccess = {
   ok: true;
@@ -346,6 +348,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
   const createToolResolutionContext = (signal?: AbortSignal) =>
     createDaemonSpawnToolResolutionContext({
       processEnv: params.processEnv,
+      ...(params.pluginRuntimeRegistry ? { catalogSnapshot: params.pluginRuntimeRegistry.contributes } : {}),
       ...(signal ? { signal } : {}),
       installablesRegistry: () => resolveSpawnHookInstallablesRegistry(
         params.happyHomeDir,
@@ -814,15 +817,35 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     ).some(({ purpose }) => purpose.consumer.pluginId === agentIdentity.pluginId
       && purpose.consumer.localId === agentIdentity.localId);
     const acceptedTeamBinding = params.acceptedTeamCredentialBinding;
-    const hasAcceptedTeamBrokerInference = Boolean(params.options.existingSessionId
+    const retainedModel = readSessionModelSelectionV2FromMetadata(params.existingSessionMetadata);
+    if (params.options.existingSessionId && retainedModel?.ref.source === 'team_resource'
+      && (acceptedTeamBinding?.slot.kind !== 'provider_model'
+        || acceptedTeamBinding.resourceId !== retainedModel.ref.resourceId
+        || acceptedTeamBinding.teamId !== retainedModel.ref.teamId
+        || acceptedTeamBinding.deliveryMode !== retainedModel.ref.deliveryMode
+        || !isDeepStrictEqual(acceptedTeamBinding.nativeDelivery ?? null, retainedModel.ref.nativeDelivery ?? null)
+        || (retainedModel.ref.deliveryMode === 'vendor-native' && (!retainedModel.ref.nativeDelivery || !acceptedTeamBinding.nativeDelivery))
+        || (retainedModel.ref.deliveryMode === 'direct' && !params.providerBindingContext))) {
+      return {
+        ok: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: 'team_credential_provider_binding_unavailable',
+        agentId: resolvedAgentId,
+        cleanupOnFailure,
+        cleanupOnExit,
+        ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
+      };
+    }
+    const hasAcceptedTeamPinnedInference = Boolean(params.options.existingSessionId
       && acceptedTeamBinding?.slot.kind === 'provider_model'
       && acceptedTeamBinding.resourceId !== null
-      && acceptedTeamBinding.deliveryMode === 'brokered');
+      && (acceptedTeamBinding.deliveryMode === 'brokered'
+        || (acceptedTeamBinding.deliveryMode === 'vendor-native' && acceptedTeamBinding.nativeDelivery)));
     // The admitted Provider route owns credential transport. External bindings
     // materialize above; managed bindings materialize after Session admission.
     // Qualified Connected Account request-auth also owns its transport; none
     // of these routes require the Agent's unrelated native sign-in.
-    const auth = !agentCliLaunchSpec || params.providerBindingContext || hasConnectedAccountRequestAuth || hasAcceptedTeamBrokerInference
+    const auth = !agentCliLaunchSpec || params.providerBindingContext || hasConnectedAccountRequestAuth || hasAcceptedTeamPinnedInference
       ? null
       : await detectNativeAgentCliAuthStatus({
         agentId: resolvedAgentId,

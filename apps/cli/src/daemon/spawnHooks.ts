@@ -4,7 +4,6 @@ import { access } from 'node:fs/promises';
 import type { Readable } from 'node:stream';
 import { TextDecoder } from 'node:util';
 
-import { isBundledAgentId } from '@happier-dev/agents';
 import type {
   AgentDaemonResolvedToolV1,
   AgentDaemonRunToolResultV1,
@@ -21,7 +20,11 @@ import { BUILT_IN_INSTALLABLES_REGISTRY } from '@happier-dev/protocol/installabl
 import { trimBugReportTextHeadToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 import type { InstallableKey, InstallablesRegistry } from '@happier-dev/protocol';
 
-import { resolveAgentCliCommand } from '@/packagedRuntime/managedTools/agentCliResolution';
+import { resolveAgentCliCommandForRuntime } from '@/packagedRuntime/managedTools/agentCliResolution';
+import {
+  resolveAgentCliRuntimeSpecForLookupId,
+  type AgentCliResolutionOptions,
+} from '@/packagedRuntime/managedTools/requireAgentCliCommand';
 import { buildAgentCliLaunchSpecFromResolution } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 import { getRuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
@@ -74,11 +77,13 @@ function toDaemonToolSource(source: 'override' | 'system' | 'managed'): Extract<
 function resolveProviderCliTool(input: Readonly<{
   toolId: string;
   processEnv: ProcessEnvInput;
+  catalogSnapshot?: AgentCliResolutionOptions['catalogSnapshot'];
 }>): Extract<DaemonResolvedToolV1, { ok: true }> | null {
-  // `resolveAgentCliCommand` reads the generated bundled CLI runtime table.
-  if (!isBundledAgentId(input.toolId)) return null;
   try {
-    const resolved = resolveAgentCliCommand(input.toolId, { processEnv: input.processEnv });
+    const runtimeSpec = resolveAgentCliRuntimeSpecForLookupId(input.toolId, {
+      catalogSnapshot: input.catalogSnapshot,
+    });
+    const resolved = resolveAgentCliCommandForRuntime(runtimeSpec, { processEnv: input.processEnv });
     if (!resolved) return null;
     const launch = buildAgentCliLaunchSpecFromResolution(resolved, { processEnv: input.processEnv });
     if (!launch) return null;
@@ -135,6 +140,7 @@ export function createDaemonSpawnToolResolutionContext(params: Readonly<{
   processEnv: ProcessEnvInput;
   signal?: AbortSignal;
   installablesRegistry?: InstallablesRegistrySource;
+  catalogSnapshot?: AgentCliResolutionOptions['catalogSnapshot'];
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;
 }>): DaemonSpawnToolResolutionContextV1 {
@@ -165,6 +171,7 @@ export function createDaemonSpawnToolResolutionContext(params: Readonly<{
       const providerCliTool = resolveProviderCliTool({
         toolId: input.toolId,
         processEnv: params.processEnv,
+        catalogSnapshot: params.catalogSnapshot,
       });
       if (providerCliTool) {
         diagnostics.info({
@@ -205,6 +212,7 @@ export function createDaemonSpawnToolResolutionContext(params: Readonly<{
         const providerCliTool = resolveProviderCliTool({
           toolId: input.toolId,
           processEnv: env,
+          catalogSnapshot: params.catalogSnapshot,
         });
         if (providerCliTool) {
           diagnostics.info({
