@@ -119,3 +119,73 @@ it('keeps filter consumers quiet through Machine runtime changes while names, lo
             machineListStatusByServerId: original.machineListStatusByServerId });
     }
 });
+
+it('D21 names accounting-only Project choices from the opened Project owner and preserves Machine distinctions', async () => {
+    const previous = storage.getState();
+    const serverId = getActiveServerSnapshot().serverId;
+    const scope = { serverId, accountId: 'd21-account' };
+    const keys = ['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64), 'd'.repeat(64)];
+    const machines = ['3ca2700f-c0a8-440f-be06-cb4f3f51cb01', 'eadc2422-b42b-478d-97b1-af9b530d5f08']
+        .map(id => {
+            const machine = createMachineFixture({ id });
+            return { ...machine, metadata: machine.metadata && { ...machine.metadata, host: 'Shared host', displayName: 'Shared host' } };
+        });
+    const { WorkspaceRefV1Schema } = await import('@/sync/domains/workspaces/workspaceRefModel');
+    const refs = machines.map((machine, index) => WorkspaceRefV1Schema.parse({ id: `d21-checkout-${index}`,
+        projectKey: keys[index], serverId, machineId: machine.id, rootPath: '/work/happier', createdAtMs: 0 }));
+    const { createProjectAccountRowCipherV1 } = await import('@happier-dev/protocol/projects/projectAccountRowCipherV1');
+    const { createProjectAccountRowsSync } = await import('@/sync/engine/projects/projectAccountRowsSync');
+    const { t } = await import('@/text');
+    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null });
+    const rows = [...refs.map(ref => {
+        const key = { kind: 'workspace-ref' as const, serverId, id: ref.id };
+        return { key, revision: 1, content: cipher.seal({ key, value: ref }) };
+    }), ...keys.slice(2).map((projectKey, index) => {
+        const key = { kind: 'project-organization' as const, serverId, projectKey };
+        return { key, revision: 1, content: cipher.seal({ key, value: { label: index === 0 ? 'Native project' : projectKey } }) };
+    })];
+    const owner = createProjectAccountRowsSync({ scope, cipher, isCurrent: () => true,
+        transport: { read: async () => { throw new Error('Project names use the census'); },
+            list: async () => ({ status: 'listed', coverage: 'complete', rows }),
+            mutate: async () => { throw new Error('Reading Project names cannot mutate'); } },
+        apply: (...args) => storage.getState().applyProjectAccountRowsForScope(scope, ...args) });
+    const query = normalizeUsageQuery({ projects: [keys[3]!] });
+    const base = resolveUsagePageAggregation({ queries: [query] }).results[0]!;
+    // The real filter inventory requests accounting only, without Work/Session evidence.
+    const slices = [{ ...base, accounting: { v: 1 as const,
+        totals: { eventCount: 0, tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+            cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } },
+        breakdowns: { project: [refs[0]!.id, keys[0]!, keys[1]!, keys[2]!, keys[3]!].map(key => ({ key,
+            ...(key === keys[3] ? { label: 'Stale accounting name' } : {}), eventCount: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+            cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } })) } } }];
+    storage.setState({ profileScope: scope, machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
+        machineListByServerId: {}, machineListStatusByServerId: {} });
+    storage.getState().activateProjectAccountRowsScope(scope);
+    const hook = await renderHook(() => {
+        const page = useUsageWidgetPageContext({ authority: null, initialFilters: { period: '7days', metric: 'tokens',
+            costMode: 'auto', focus: null, scope: readUsageWidgetPageScope(query) } });
+        return useUsageWidgetPageFilters(page, slices, false, serverId).find(filter => filter.field === 'projects')!;
+    });
+    try {
+        await act(async () => { await owner.refresh(); });
+        const options = hook.getCurrent().options.slice(1);
+        expect(options.map(option => option.id)).toEqual(keys);
+        const names = resolveMachineDisplayNames(machines);
+        for (const [index, machine] of machines.entries()) {
+            expect(options[index]!.label).toContain('happier');
+            expect(options[index]!.subtitle).toBe(names.get(machine.id));
+        }
+        expect(options[0]!.subtitle).not.toBe(options[1]!.subtitle);
+        expect(options[2]!.label).toBe('Native project');
+        expect(options[3]!.label).toBe(t('usage.board.work.unknownProject'));
+        for (const option of options) expect(`${option.label} ${option.subtitle ?? ''}`).not.toMatch(/[a-f\d]{64}/i);
+        expect(hook.getCurrent().selected).toEqual([keys[3]]);
+        await act(async () => storage.getState().setProjectAccountRowsStatusForScope(scope, 'locked'));
+        for (const option of hook.getCurrent().options.slice(1).filter(option => option.id !== keys[3])) {
+            expect(option.label).toBe(t('usage.board.work.unknownProject'));
+        }
+        await act(async () => storage.getState().setProjectAccountRowsStatusForScope(scope, 'ready'));
+        expect(hook.getCurrent().options.find(option => option.id === keys[2])!.label).toBe('Native project');
+    } finally { await hook.unmount(); storage.setState(previous, true); }
+});

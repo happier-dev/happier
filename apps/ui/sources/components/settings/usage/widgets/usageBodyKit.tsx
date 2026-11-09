@@ -136,33 +136,61 @@ export function useUsageProjectAnchorOf(serverId: string): Readonly<{ joinedKey:
   }, [joinedKey, serverId]);
 }
 
-/** Names stay in the opened Account projection; accounting carries only the Project anchor. */
-export function useUsageProjectLabels(serverId: string): ReadonlyMap<string, string> {
+type UsageProjectNameFact = Readonly<{ key: string; label?: string; machineIds?: readonly string[] }>;
+const NO_PROJECT_NAME_FACTS: readonly UsageProjectNameFact[] = [];
+
+/** Names and checkout context stay in the opened Account projection; accounting carries Project anchors. */
+export function useUsageProjectNames(serverId: string, fallbacks: readonly UsageProjectNameFact[] = NO_PROJECT_NAME_FACTS): Readonly<{
+  labels: ReadonlyMap<string, string>;
+  machineIds: ReadonlyMap<string, readonly string[]>;
+  label: (key: string | null) => string;
+}> {
   const rows = useProjectAccountRows();
   return React.useMemo(() => {
     const labels = new Map<string, string>();
-    if (!rows || rows.status === 'locked' || rows.status === 'refused'
-      || !areServerProfileIdentifiersEquivalent(rows.scope.serverId, serverId)) return labels;
-    const projection = projectProjectListV1({ serverId, workspaceRefs: rows.workspaceRefs,
-      organizations: rows.organizations, normalizeServerId: resolveServerProfileScopeIdForIdentifier });
-    const groups = [...projection.projectGroups, ...projection.hiddenProjectGroups];
-    const refs = groups.flatMap(group => {
-      const ref = group.items[0];
-      const label = rows.organizations.find(row => row.key.projectKey === group.projectKey.projectKey)?.value.label;
-      return ref ? [{ ...ref, ...(label ? { label } : {}) }] : [];
-    });
-    for (const group of groups) {
-      const ref = refs.find(ref => ref.id === group.items[0]?.id && ref.serverId === group.items[0]?.serverId);
-      if (ref) labels.set(group.projectKey.projectKey, resolveWorkspaceRefDisplayName(ref, refs));
+    const machineIds = new Map<string, readonly string[]>();
+    const name = (key: string, label: string | undefined) => {
+      const display = label?.trim();
+      // Protected rows can retain an opaque identity as their label too. Decide
+      // human readability once for the ledger and every Project filter choice.
+      if (display && display !== key && !/^[a-f\d]{32,}$/i.test(display)) labels.set(key, display);
+      else labels.delete(key);
+    };
+    for (const row of fallbacks) {
+      name(row.key, row.label);
+      if (row.machineIds) machineIds.set(row.key, row.machineIds);
     }
-    // The opened snapshot supplies Home/Account authority. Native opaque keys
-    // retain their producing CLI profile namespace, which is not a UI Home id
-    // or routing grant; join those keys only within this admitted snapshot.
-    for (const row of rows.organizations) {
-      if (row.value.label && !labels.has(row.key.projectKey)) labels.set(row.key.projectKey, row.value.label);
+    if (rows && rows.status !== 'locked' && rows.status !== 'refused'
+      && areServerProfileIdentifiersEquivalent(rows.scope.serverId, serverId)) {
+      const projection = projectProjectListV1({ serverId, workspaceRefs: rows.workspaceRefs,
+        organizations: rows.organizations, normalizeServerId: resolveServerProfileScopeIdForIdentifier });
+      const groups = [...projection.projectGroups, ...projection.hiddenProjectGroups];
+      const refs = groups.flatMap(group => {
+        const ref = group.items[0];
+        const label = rows.organizations.find(row => row.key.projectKey === group.projectKey.projectKey)?.value.label;
+        return ref ? [{ ...ref, ...(label ? { label } : {}) }] : [];
+      });
+      for (const group of groups) {
+        const key = group.projectKey.projectKey;
+        const ref = refs.find(ref => ref.id === group.items[0]?.id && ref.serverId === group.items[0]?.serverId);
+        if (ref) name(key, resolveWorkspaceRefDisplayName(ref, refs));
+        machineIds.set(key, [...new Set([...(machineIds.get(key) ?? []), ...group.items.map(ref => ref.machineId)])]);
+      }
+      // Native keys retain their producing CLI namespace, admitted by this
+      // opened Account snapshot. It supplies names, never routing authority.
+      for (const row of rows.organizations) {
+        if (!groups.some(group => group.projectKey.projectKey === row.key.projectKey)) name(row.key.projectKey, row.value.label);
+      }
     }
-    return labels;
-  }, [rows, serverId]);
+    return { labels, machineIds, label: (key: string | null) => key === null
+      ? t('usage.board.work.unknownProject') : labels.get(key) ?? t('usage.board.work.unknownProject') };
+  }, [rows, serverId, fallbacks]);
+}
+
+/** Preserve the Machine owner's collision-aware names wherever Work/Project context is shown. */
+export function usageMachinePlace(ids: readonly string[], machineNames: Readonly<Record<string, string>>): string {
+  const names = [...new Set(ids.map(id => machineNames[id]).filter((name): name is string => name !== undefined))];
+  return names.length > 2 ? t('usage.board.page.machinesCount', { count: names.length }) : names.join(', ');
 }
 
 /** The incumbent UI projection of A facts for this slice (A owns the numbers, this only shapes them). */

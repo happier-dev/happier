@@ -10,7 +10,7 @@ import { t } from '@/text';
 import type { UsageWidgetPageContextState } from './useUsageWidgetPageContext';
 import { toggleUsageScopeSelection } from './usageWidgetPageContext';
 import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
-import { readUsageCoverageGaps, useUsageProjectAnchorOf, usageAgentTitle, usageSourceTitle, usageCoverageDescription } from './widgets/usageBodyKit';
+import { readUsageCoverageGaps, useUsageProjectAnchorOf, useUsageProjectNames, usageMachinePlace, usageAgentTitle, usageSourceTitle, usageCoverageDescription } from './widgets/usageBodyKit';
 import { useUsageWidgetBatchInventorySelection } from './widgets/usageWidgetBatch';
 
 export const USAGE_SCOPE_FILTER_ALL = '\u0000all';
@@ -65,8 +65,24 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fal
     // Usage stamped by a checkout before it joined a Project is offered under that Project (owner 11-08).
     const projectAnchorOf = useUsageProjectAnchorOf(serverId);
     const { scope, setScope } = page;
+    const selectProjectFacts = React.useCallback((inventory: UsageQueryResultSlice | null) => {
+        const slices = sessionScoped ? [] : inventory ? [inventory] : fallbackSlices;
+        const locations = new Map<string, Set<string>>();
+        for (const slice of slices) for (const row of slice.accounting?.contributions ?? []) {
+            if (!row.projectKey || !row.machineId) continue;
+            const key = projectAnchorOf.resolve(row.projectKey);
+            const ids = locations.get(key) ?? new Set<string>();
+            ids.add(row.machineId);
+            locations.set(key, ids);
+        }
+        return [...readUsageScopeOptions(slices, 'projects', scope.projects, projectAnchorOf.resolve)]
+            .map(([key, label]) => ({ key, label, machineIds: [...locations.get(key) ?? []] }));
+    }, [sessionScoped, fallbackSlices, scope.projects, projectAnchorOf]);
+    const projectFacts = useUsageWidgetBatchInventorySelection(selectProjectFacts, sameStrictJsonValue);
+    const projectNames = useUsageProjectNames(serverId, projectFacts);
     const selectMachineIds = React.useCallback((inventory: UsageQueryResultSlice | null) => sessionScoped ? []
-        : [...readUsageScopeOptions(inventory ? [inventory] : fallbackSlices, 'machines', scope.machines).keys()], [sessionScoped, fallbackSlices, scope.machines]);
+        : [...new Set([...readUsageScopeOptions(inventory ? [inventory] : fallbackSlices, 'machines', scope.machines).keys(),
+            ...[...projectNames.machineIds.values()].flat()])], [sessionScoped, fallbackSlices, scope.machines, projectNames.machineIds]);
     const referencedMachineIds = useUsageWidgetBatchInventorySelection(selectMachineIds, sameStrictJsonValue);
     // Filters consume names, not Machine runtime/presence. Select the canonical
     // display strings so those publications cannot invalidate every chart's drill.
@@ -95,7 +111,8 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fal
                     return { id, label: field === 'agents' ? usageAgentTitle(id, fallback)
                         : field === 'machines' ? machineNames[id] ?? getMachineDisplayName({ id, absence: 'unlisted' })
                         : field === 'sources' ? sentenceCase(usageSourceTitle(id, fallback))
-                        : fallback,
+                        : projectNames.label(id),
+                        ...(field === 'projects' ? { subtitle: usageMachinePlace(projectNames.machineIds.get(id) ?? [], machineNames) || undefined } : {}),
                         ...(sourceAgentId ? { agentId: sourceAgentId } : {}),
                         // Where it was read and how it is counted (lab d2filter-SRC); coverage is said once, on
                         // "All sources", so a source with a gap carries the dot and, failing other facts, the short fact.
@@ -106,7 +123,7 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fal
                 return setScope({ [field]: id === USAGE_SCOPE_FILTER_ALL ? [] : toggleUsageScopeSelection(selected, id, listed) }, callerContext);
             } };
         });
-    }, [machineNames, projectAnchorOf, scope, setScope, sessionScoped, fallbackSlices]);
+    }, [machineNames, projectAnchorOf, projectNames, scope, setScope, sessionScoped, fallbackSlices]);
     const filters = useUsageWidgetBatchInventorySelection(selectFilters, sameFilters);
     // Retain the rendered choices, rather than intermediate selector reads
     // that React can coalesce during one Resource publication.

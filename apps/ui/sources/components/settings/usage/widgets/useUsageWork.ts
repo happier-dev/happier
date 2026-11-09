@@ -17,7 +17,7 @@ import {
   type UsageWorkSummary,
   type UsageWorkMoneyBasis,
 } from './usageWorkPresentation';
-import { useUsageAnalyticsView, useUsageProjectAnchorOf, useUsageProjectLabels } from './usageBodyKit';
+import { useUsageAnalyticsView, useUsageProjectAnchorOf, useUsageProjectNames, usageMachinePlace } from './usageBodyKit';
 import { readUsageWidgetPageScope, readUsageWidgetQueryOverrides } from '../usageWidgetPageContext';
 import { buildUsageRouteParams } from '../usageRouteParams';
 import { usageCostKindPhrase } from '../usageCostPresentation';
@@ -40,16 +40,8 @@ export function useUsageWork(
   const metric = UsageAccountingMetricSchema.parse(query.metric);
   const work = slice.work;
   const view = useUsageAnalyticsView(slice, query);
-  const protectedProjectLabels = useUsageProjectLabels(serverId);
-  const projectLabels = React.useMemo(() => new Map([
-    ...(view?.breakdowns.projects ?? []).flatMap(row => row.label ? [[row.key, row.label] as const] : []),
-    ...protectedProjectLabels,
-  ].flatMap(([key, label]) => {
-    const display = label.trim();
-    // Protected rows can retain an opaque identity as their label too.
-    // Apply one display policy to every source before classifying named work.
-    return display && display !== key && !/^[a-f\d]{32,}$/i.test(display) ? [[key, display] as const] : [];
-  })), [view?.breakdowns.projects, protectedProjectLabels]);
+  const projectNames = useUsageProjectNames(serverId, view?.breakdowns.projects);
+  const projectLabels = projectNames.labels;
   const namedProjectKeys = React.useMemo(() => new Set(projectLabels.keys()), [projectLabels]);
   // Usage stamped by a checkout before it joined a Project counts under that Project (owner 11-08).
   const anchorOf = useUsageProjectAnchorOf(serverId);
@@ -99,16 +91,12 @@ export function useUsageWork(
   const selectedMachineNames = useAllMachines(React.useCallback(machines => Object.fromEntries(resolveMachineDisplayNames([...machines,
     ...(summary?.projects ?? []).flatMap(row => row.machineIds).concat((summary?.sessions ?? []).flatMap(row => row.machineIds))
       .filter(id => !machines.some(machine => machine.id === id)).map(id => ({ id, absence: 'unlisted' as const }))])), [summary]));
-  const machineNames = React.useMemo(() => new Map(Object.entries(selectedMachineNames)), [selectedMachineNames]);
   // Fact lines retain the Machine owner's distinction between same-named registrations.
-  const machinePlace = React.useCallback((ids: readonly string[]) => {
-    const names = [...new Set(ids.map(id => machineNames.get(id)).filter((name): name is string => name !== undefined))];
-    return names.length > 2 ? t('usage.board.page.machinesCount', { count: names.length }) : names.join(', ');
-  }, [machineNames]);
+  const machinePlace = React.useCallback((ids: readonly string[]) =>
+    usageMachinePlace(ids, selectedMachineNames), [selectedMachineNames]);
   // Two rows never read alike: a Project name several share keeps its name whole; where it ran is a separate fact the
   // row carries on its own line, so a narrow screen never truncates the part that tells the rows apart.
-  const projectName = React.useCallback((projectKey: string | null) => projectKey === null
-    ? t('usage.board.work.unknownProject') : projectLabels.get(projectKey) ?? t('usage.board.work.unknownProject'), [projectLabels]);
+  const projectName = projectNames.label;
   const projectPlaces = React.useMemo(() => new Map((summary?.projects ?? []).map(row =>
     [row.projectKey, row.projectKey === null ? '' : machinePlace(row.machineIds)] as const)), [summary, machinePlace]);
   const projectPlace = React.useCallback((projectKey: string | null) => projectPlaces.get(projectKey) ?? '', [projectPlaces]);

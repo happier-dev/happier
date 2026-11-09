@@ -549,10 +549,10 @@ describe('Work and Coach widget bodies', () => {
         profileScope: storage.getState().profileScope, rows: storage.getState().projectAccountRows,
       })).toContainEqual(expect.objectContaining({ key: rowKey, value: { label: 'Human project' } }));
       expect(screen.getTextContent()).toContain('Human project');
-      const { useUsageProjectLabels } = await import('./usageBodyKit');
-      const labels = await renderHook(() => useUsageProjectLabels(scope.serverId));
-      expect(labels.getCurrent().get(rowKey.projectKey)).toBe('Human project');
-      expect(labels.getCurrent().get(twinKey.projectKey)).toBe('Human project');
+      const { useUsageProjectNames } = await import('./usageBodyKit');
+      const labels = await renderHook(() => useUsageProjectNames(scope.serverId));
+      expect(labels.getCurrent().labels.get(rowKey.projectKey)).toBe('Human project');
+      expect(labels.getCurrent().labels.get(twinKey.projectKey)).toBe('Human project');
       await labels.unmount();
       expect(screen.getTextContent()).not.toContain(opaque);
       const hook = await renderHook(() => useUsageWork(workSlice, query, scope.serverId));
