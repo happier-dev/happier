@@ -32,8 +32,8 @@ export function createSetupOperationSnapshot(reference: SetupReference, plans: r
         return { ...retained, state, ...(failureCause ? { failureCause } : {}) };
       });
     } else if (event.type === 'machine.setup.result' && data.status !== 'applied') {
-      // Native execution can fail before emitting verification. The running row
-      // disambiguates repeated ids across plans; preflight failures have progress.
+      // Native execution can fail during a started check or apply before emitting
+      // its observation. The running row disambiguates repeated ids across plans.
       steps = steps.map(step => step.state === 'running' && step.stepId === data.stepId
         ? { ...step, state: data.status === 'cancelled' ? 'cancelled' : 'failed',
           ...(typeof data.reason === 'string' ? { failureCause: data.reason } : {}) } : step);

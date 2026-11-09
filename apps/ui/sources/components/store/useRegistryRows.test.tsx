@@ -97,3 +97,28 @@ it('keeps editorial category and row positions when catalog summaries arrive in 
     expect(positions()).toEqual({ groups: [...before.groups, 'From Catalog'],
         rows: [...before.rows, 'mcpServer|catalog|wordpress'] });
 });
+
+it('keeps the curated exact version for opening and adding after a newer listing arrives', async () => {
+    const curation = discovery(['a']).map(page => ({ ...page, discovery: { ...page.discovery,
+        items: page.discovery.items.map(entry => ({ ...entry, reference: { ...entry.reference, version: '1' } })),
+    } }));
+    const open = vi.fn();
+    const add = vi.fn();
+    const hook = await renderHook((items: readonly RegistryCatalogItemSummary[]) => useRegistryRows(
+        { items, curation, curatedKind: 'mcpServer' }, open, sourceTitle, undefined, add), { initialProps: [] });
+    await hook.rerender([{ ...item('a'), version: '2' }]);
+    expect(hook.getCurrent().rows).toHaveLength(1);
+    hook.getCurrent().rows[0]!.open();
+    hook.getCurrent().rows[0]!.add?.();
+    expect(open).toHaveBeenCalledWith(expect.objectContaining({ itemId: 'a', version: '1' }));
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ itemId: 'a', version: '1' }));
+    const pinned = hook.getCurrent().rows[0];
+    await hook.rerender([item('a')]);
+    expect(hook.getCurrent().rows[0]).toBe(pinned);
+    hook.getCurrent().rows[0]!.open();
+    expect(open).toHaveBeenLastCalledWith(expect.objectContaining({ version: '1' }));
+    const exact = { ...item('a'), version: '1' };
+    await hook.rerender([exact]);
+    hook.getCurrent().rows[0]!.open();
+    expect(open).toHaveBeenLastCalledWith(exact);
+});

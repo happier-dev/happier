@@ -10,7 +10,7 @@ const preset = (id: string, items: ManagedMachinePresetV1['setup'] extends infer
 
 describe('projectAddToPresetChoices', () => {
     it('marks a preset that already sets up the same recipe, at any revision, as already in it', () => {
-        const rows = [preset('research', [{ ...chrome, selection: { ...chrome.selection, ref: { ...chrome.selection.ref, revision: '1' } } }]), preset('shop', [])];
+        const rows = [preset('research', [{ ...chrome, kind: 'setupRecipe', selection: { ...chrome.selection, ref: { ...chrome.selection.ref, revision: '1' } } }]), preset('shop', [])];
         const choices = projectAddToPresetChoices(rows.map(p => ({ serverId: 's1', preset: p })), chrome);
         expect(choices.map(c => [c.preset.id, c.contains])).toEqual([['research', true], ['shop', false]]);
     });

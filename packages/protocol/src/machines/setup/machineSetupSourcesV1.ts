@@ -3,7 +3,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
-import { MachineSetupV1Schema, mergeMachineSetupsV1, readMachineSetupAppIdentityV1, type MachineSetupV1, type MachinePresetItemV1 } from '../managed/machineSetupV1.js';
+import { MachineSetupV1Schema, mergeMachineSetupsV1, readMachineSetupAppIdentityV1, readMachineSetupRecipeIdentityV1, type MachineSetupV1, type MachinePresetItemV1 } from '../managed/machineSetupV1.js';
 import { MachineRecipeReferenceV1Schema, type MachineRecipeReferenceV1 } from './machineRecipeV1.js';
 import { StoredAppPresetInputV1Schema, type StoredAppPresetInputV1 } from '../../deployments/storedAppInputV1.js';
 import { WorkflowRunIdV1Schema } from '../../workflows/workflowIdsV1.js';
@@ -79,9 +79,6 @@ type SetupItem = Exclude<MachinePresetItemV1, { kind: 'app' }>;
 export function machineSetupItemKeyV1(item: SetupItem): string {
   return createCanonicalJsonSigningInput(item);
 }
-function recipeIdentity(item: SetupItem): string {
-  return JSON.stringify([item.selection.ref.pluginId, item.selection.ref.recipeId]);
-}
 /** Selected recipes keep their coordinates in the full certified source copies. */
 export function selectMachineSetupRecipeItemsV1(setups: readonly MachineSetupV1[],
   exclusions: readonly MachineSetupExclusionV1[], executionSources?: readonly MachineSetupV1[]):
@@ -148,7 +145,7 @@ export function reviewMachineSetupSourceChangeV1(input: Readonly<{
 }>): Readonly<{ ok: true; sources: MachineSetupSourceV1; detached: readonly MachineSetupDetachedItemV1[] }>
   | Readonly<{ ok: false; errorCode: 'plan_changed' | 'remove_unsupported'; error: string }> {
   const proposed = new Set(input.proposedSources.flatMap(source => (source.setup.items ?? [])
-    .flatMap(item => item.kind === 'app' ? [] : [recipeIdentity(item)])));
+    .flatMap(item => item.kind === 'app' ? [] : [readMachineSetupRecipeIdentityV1(item.selection.ref)])));
   const selected = new Set(input.removeItemKeys ?? []);
   if (selected.size !== (input.removeItemKeys ?? []).length) return { ok: false, errorCode: 'plan_changed', error: 'plan_changed' };
   const seen = new Set<string>();
@@ -160,8 +157,9 @@ export function reviewMachineSetupSourceChangeV1(input: Readonly<{
     const carriedToDirect = source.kind !== 'direct' && input.proposedSources.some(copy => copy.kind === 'direct'
       && copy.setup.items?.some(candidate => candidate.kind !== 'app' && machineSetupItemKeyV1(candidate) === itemKey))
       && !input.proposedSources.some(copy => copy.kind !== 'direct'
-        && copy.setup.items?.some(candidate => candidate.kind !== 'app' && recipeIdentity(candidate) === recipeIdentity(item)));
-    if (proposed.has(recipeIdentity(item)) && !carriedToDirect) continue;
+        && copy.setup.items?.some(candidate => candidate.kind !== 'app'
+          && readMachineSetupRecipeIdentityV1(candidate.selection.ref) === readMachineSetupRecipeIdentityV1(item.selection.ref)));
+    if (proposed.has(readMachineSetupRecipeIdentityV1(item.selection.ref)) && !carriedToDirect) continue;
     if (seen.has(itemKey)) continue;
     seen.add(itemKey);
     const first = firstPresentByKey.get(itemKey);

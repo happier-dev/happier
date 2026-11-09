@@ -34,7 +34,7 @@ import { useStoreDirectoryState } from '@/components/settings/plugins/model/useP
 import { useMcpAdded, useSkillAdded, useAgentAdded, useProviderAdded } from './catalog/storeAdded';
 import { useStoreOpenReference } from './catalog/useStoreOpenReference';
 import { StoreItemMark } from './catalog/StoreItemMark';
-import { StoreRegistryIdentityProvider } from './catalog/StoreRegistryIdentity';
+import { hydrateStoreRegistryIdentity, StoreRegistryIdentityProvider } from './catalog/StoreRegistryIdentity';
 import { StoreListingPaneHost, useOpenStoreListing, useStoreListingSelection } from './StoreListing';
 import { StoreBrowserExtensionLinkResult } from './StoreBrowserExtensionLinkResult';
 import { readWebStoreExtensionId } from './catalog/storeBrowserExtensions';
@@ -357,8 +357,8 @@ export function useRegistryRows(
       item: RegistryCatalogItemSummary; group: string; added: boolean; addable: boolean; row: DirectoryRow;
     }>>();
     const loaded = new Map(list.items.map(item => [curatedIdentity(item), item]));
-    // Hydration replaces a curated summary in its editorial slot; it never appends that row elsewhere.
-    const items = [...curatedItems.map(item => loaded.get(curatedIdentity(item)) ?? item),
+    // Hydration retains the authored pin in its editorial slot; it never appends that row elsewhere.
+    const items = [...curatedItems.map(item => hydrateStoreRegistryIdentity(item, loaded.get(curatedIdentity(item)))),
       ...list.items.filter(item => !curatedByIdentity.has(curatedIdentity(item)))];
     const rows = items.map((item): DirectoryRow => {
       const identity = JSON.stringify([item.sourceId, item.itemId]);
@@ -407,9 +407,10 @@ export function useRegistryRows(
         added,
         // The item's one mark (its listing's artwork, else its kind glyph), as Discover and Search draw it.
         // Curation carries no artwork: a curated row reads it the way Discover does, until its catalog page arrives.
-        mark: !loaded.has(identity) ? <StoreDiscoverItemMark size={ROW_MARK_PX} item={{ key: identity, id: item.itemId, sourceId: item.sourceId,
+        mark: loaded.get(identity) !== item ? <StoreDiscoverItemMark size={ROW_MARK_PX} item={{ key: identity, id: item.itemId, sourceId: item.sourceId,
           kind: item.kind, title: item.title, description: null,
-          reference: { type: 'registryItem', kind: item.kind, sourceId: item.sourceId, itemId: item.itemId } }} />
+          reference: { type: 'registryItem', kind: item.kind, sourceId: item.sourceId, itemId: item.itemId,
+            ...(item.version === undefined ? {} : { version: item.version }) } }} />
           : <StoreItemMark facts={{ kind: item.kind, title: item.title, brand: item.brandMark }} size={ROW_MARK_PX} />,
       };
       next.set(key, { item, group: group.key, added, addable, row });

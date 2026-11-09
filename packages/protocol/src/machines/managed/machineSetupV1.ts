@@ -5,7 +5,7 @@ import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { SecretReferenceOverlayV1Schema } from '../../profiles/secretReferenceOverlayV1.js';
 import { MachineRecipeSelectionV1Schema, MachineRecipeImpactV1Schema, MachineSetupScriptCheckV1Schema,
-  type MachineRecipeSelectionV1 } from '../setup/machineRecipeV1.js';
+  type MachineRecipeReferenceV1, type MachineRecipeSelectionV1 } from '../setup/machineRecipeV1.js';
 import { StoredAppPresetInputV1Schema, type StoredAppPresetInputV1 } from '../../deployments/storedAppInputV1.js';
 
 export type MachinePresetItemV1 =
@@ -18,6 +18,11 @@ export const MachinePresetItemV1Schema: z.ZodMiniType<MachinePresetItemV1> = laz
   z.strictObject({ kind: z.literal('app'), definition: StoredAppPresetInputV1Schema,
     authoredKey: z.optional(z.string().check(z.trim(), z.minLength(1))) }),
 ]));
+
+/** Recipe kind and pinned revision do not change which recipe a Setup already contains. */
+export function readMachineSetupRecipeIdentityV1(ref: Pick<MachineRecipeReferenceV1, 'pluginId' | 'recipeId'>): string {
+  return JSON.stringify([ref.pluginId, ref.recipeId]);
+}
 
 /** A catalog pin changes a deployment version, not which authored app it is. */
 export function readMachineSetupAppIdentityV1(item: Extract<MachinePresetItemV1, { kind: 'app' }>): string | undefined {
@@ -102,7 +107,7 @@ export function mergeMachineSetupsV1(setups: readonly MachineSetupV1[]):
         if (apps.has(key)) return conflict;
         apps.add(key);
       } else {
-        const key = JSON.stringify([item.selection.ref.pluginId, item.selection.ref.recipeId]);
+        const key = readMachineSetupRecipeIdentityV1(item.selection.ref);
         const previous = byRecipe.get(key);
         if (previous) {
           if (!sameStrictJsonValue(previous, item)) return conflict;

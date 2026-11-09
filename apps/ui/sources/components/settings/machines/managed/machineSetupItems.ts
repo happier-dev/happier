@@ -1,5 +1,5 @@
 import { isSameActionInputOptionValue } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
-import { mergeMachineSetupsV1, type MachinePresetItemV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { mergeMachineSetupsV1, readMachineSetupRecipeIdentityV1, type MachinePresetItemV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { MachineRecipeReferenceV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { InputOptionValue } from '@happier-dev/protocol/inputs/inputFields';
 
@@ -70,11 +70,12 @@ export function renameMachineSetupApp<T extends Items>(
   );
 }
 
-/** The offered Software choices (`machines.setup.software.available`) an item is named from: native value, title, purpose. */
-export type MachineSetupSoftwareOffer = Readonly<{ value: InputOptionValue; label: string; description?: string | null; icon?: string }>;
+/** Declared Setup recipes an item is named from: native value, title, purpose and mark. */
+export type MachineSetupRecipeOffer = Readonly<{ value: InputOptionValue; label: string; description?: string | null; icon?: string }>;
 
-const sameRecipe = (value: unknown, ref: MachineRecipeReferenceV1) => !!value && typeof value === 'object'
-  && (value as { pluginId?: unknown }).pluginId === ref.pluginId && (value as { recipeId?: unknown }).recipeId === ref.recipeId;
+const sameRecipe = (value: InputOptionValue, ref: MachineRecipeReferenceV1) => !!value && typeof value === 'object'
+  && !Array.isArray(value) && typeof value.pluginId === 'string' && typeof value.recipeId === 'string'
+  && readMachineSetupRecipeIdentityV1({ pluginId: value.pluginId, recipeId: value.recipeId }) === readMachineSetupRecipeIdentityV1(ref);
 
 /**
  * An item's name and purpose. A recipe resolves against the offer with its identical native value; a retired revision
@@ -83,7 +84,7 @@ const sameRecipe = (value: unknown, ref: MachineRecipeReferenceV1) => !!value &&
  */
 export function machineSetupItemPresentation(
   item: MachinePresetItemV1,
-  offers: readonly MachineSetupSoftwareOffer[] | null,
+  offers: readonly MachineSetupRecipeOffer[] | null,
 ): Readonly<{ title: string; description?: string; icon?: string; offered: boolean | null }> {
   if (item.kind === 'app') return { title: item.definition.name, offered: null };
   const ref = item.selection.ref;
