@@ -21,6 +21,7 @@ import {
   ActionOperationSnapshotPushV1Schema,
   projectActionOperationSnapshotForV1Reader,
   readActionOperationTerminalResultV1,
+  projectActionOperationListSnapshotV1,
 } from './v1.js';
 
 const baseSnapshot = {
@@ -36,6 +37,15 @@ const baseSnapshot = {
 } as const;
 
 describe('Action operation v1 contract', () => {
+  it.each(['succeeded', 'failed', 'cancelled'] as const)('omits only terminal result from the %s list projection', state => {
+    const full = { ...baseSnapshot, state, startedAt: 110, settledAt: 120,
+      result: { retained: true } };
+    const { result: _result, ...summary } = full;
+    expect(projectActionOperationListSnapshotV1(full)).toEqual(summary);
+    expect(projectActionOperationListSnapshotV1(summary)).toBe(summary);
+    const active = { ...full, state: 'running' as const, settledAt: undefined };
+    expect(projectActionOperationListSnapshotV1(active)).toBe(active);
+  });
   it('recovers failed and cancelled restore steps from the retained terminal receipt', () => {
     const result = { steps: [{ id: 'restore', status: 'failed' }] };
     const failed = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'deployments.backups.restore',

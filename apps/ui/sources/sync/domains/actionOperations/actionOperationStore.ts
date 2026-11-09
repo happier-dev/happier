@@ -1,4 +1,4 @@
-import { canAdvanceActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { canAdvanceActionOperationSnapshotV1, projectActionOperationListSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { createActionOperationAcknowledgementPersistence } from './actionOperationAcknowledgements';
 import { createWorkerStatusChanges } from './workerStatusChanges';
 import { type ServerAccountScope } from '../scope/serverAccountScope';
@@ -64,7 +64,7 @@ export type ActionOperationStore = Readonly<{
     subscribe(listener: () => void): () => void;
     readWorkerStatusRevision(scope: ServerAccountScope, machineId: string): number;
     subscribeWorkerStatus(scope: ServerAccountScope, machineIds: readonly string[], listener: () => void): () => void;
-    mergeSnapshots(input: Readonly<{ serverId: string | null; snapshots: readonly ActionOperationSnapshotV1[] }>): void;
+    mergeSnapshots(input: Readonly<{ serverId: string | null; snapshots: readonly ActionOperationSnapshotV1[]; snapshotComplete?: true }>): void;
     reobserveMachineAgentIsolation(input: Readonly<{
         serverId: string; accountId: string; machineId: string; operationId: string;
         recovery: NonNullable<QualifiedActionOperation['agentIsolationRecovery']>;
@@ -210,8 +210,15 @@ export function createActionOperationStore(): ActionOperationStore {
                     dismissedUnavailableOperationKeys.delete(incomingOperationKey);
                 }
                 const current = (operationsByKey ?? state.operationsByKey).get(incomingOperationKey);
-                if (!canMergeSnapshot(current?.snapshot, snapshot)) continue;
-                seenAtByOperationKey = bindPredecessorSeenRevision(incoming, seenAtByOperationKey);
+                // A list and a full read describe the same immutable revision. Only
+                // enrich its omitted result/provenance; never replace changed facts.
+                const completeUpgrade = input.snapshotComplete && current && !current.snapshotComplete
+                    && current.snapshot.revision === snapshot.revision
+                    && (sameStrictJsonValue(current.snapshot, snapshot)
+                        || sameStrictJsonValue(current.snapshot, projectActionOperationListSnapshotV1(snapshot)));
+                if (!completeUpgrade && !canMergeSnapshot(current?.snapshot, snapshot)) continue;
+                const qualified = input.snapshotComplete ? Object.freeze({ ...incoming, snapshotComplete: true as const }) : incoming;
+                seenAtByOperationKey = bindPredecessorSeenRevision(qualified, seenAtByOperationKey);
                 // A new revision of the uncertain old receipt cannot erase a
                 // fresh Machine CHECK. Terminal/review or scope changes retire it.
                 const recovery = snapshot.actionId === 'machines.agentIsolation.set'
@@ -219,7 +226,7 @@ export function createActionOperationStore(): ActionOperationStore {
                     && current?.snapshot.scope.accountId === snapshot.scope.accountId
                     && current.snapshot.scope.machineId === snapshot.scope.machineId ? current.agentIsolationRecovery : undefined;
                 operationsByKey ??= new Map(state.operationsByKey);
-                operationsByKey.set(incomingOperationKey, recovery ? Object.freeze({ ...incoming, agentIsolationRecovery: recovery }) : incoming);
+                operationsByKey.set(incomingOperationKey, recovery ? Object.freeze({ ...qualified, agentIsolationRecovery: recovery }) : qualified);
                 if ((machineObservationByKey ?? state.machineObservationByKey).get(incomingMachineKey) !== 'available') {
                     machineObservationByKey ??= new Map(state.machineObservationByKey);
                     machineObservationByKey.set(incomingMachineKey, 'available');

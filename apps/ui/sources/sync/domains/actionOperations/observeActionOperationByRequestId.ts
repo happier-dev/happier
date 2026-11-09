@@ -20,6 +20,7 @@ export function observeActionOperationByRequestId(input: Readonly<{
         let reading = false;
         let changedWhileReading = false;
         let retained: ActionOperationSnapshotV1 | null = null;
+        let retainedComplete = false;
         const readController = new AbortController();
         const releases: Array<() => void> = [];
         const matches = (operation: ActionOperationSnapshotV1) => operation.actionId === input.requestIdentity.actionId
@@ -34,9 +35,9 @@ export function observeActionOperationByRequestId(input: Readonly<{
         };
         const read = async () => {
             if (finished) return;
-            // Reconciled pushes can settle an outstanding terminal read whose reply
-            // was lost. List summaries omit result and still need the full record.
-            if (retained && isActionOperationTerminal(retained.state) && retained.result !== undefined) {
+            // Full reconciled records settle even failures without a result.
+            // List summaries still need the owner read, including at the same revision.
+            if (retained && retainedComplete && isActionOperationTerminal(retained.state)) {
                 finish(retained);
                 return;
             }
@@ -58,7 +59,7 @@ export function observeActionOperationByRequestId(input: Readonly<{
                     operationId: selected.operationId, waitForTerminal: true });
                 if (finished) return;
                 if (read.kind === 'not_found') {
-                    if (retained?.revision === selected.revision) retained = null;
+                    if (retained?.revision === selected.revision) { retained = null; retainedComplete = false; }
                     return;
                 }
                 if (!matches(read.operation) || read.operation.operationId !== selected.operationId) { finish(null); return; }
@@ -80,9 +81,10 @@ export function observeActionOperationByRequestId(input: Readonly<{
         releases.push(() => input.signal?.removeEventListener('abort', abort));
         if (input.signal?.aborted) { finish(null); return; }
         const releaseObservation = subscribeActionOperationByRequestId({ ...input, requestId: input.requestIdentity.requestId,
-            onUpdate: operation => {
+            onUpdate: (operation, complete) => {
                 if (!matches(operation)) return;
                 retained = operation;
+                retainedComplete = complete;
                 void read();
             } });
         // Subscription immediately publishes a retained result when one exists.

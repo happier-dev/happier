@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { projectActionOperationListSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectCommandSourceV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -47,6 +48,57 @@ function operation(overrides: Partial<ActionOperationSnapshotV1> = {}): ActionOp
 }
 
 describe('action operation store', () => {
+    it.each(['succeeded', 'failed', 'cancelled'] as const)(
+        'publishes a complete %s snapshot at the summary revision and never downgrades it to a later summary', state => {
+            const store = createActionOperationStore();
+            const full = operation({ actionId: 'deployments.backups.restore', requestId: 'restore-request', state,
+                startedAt: 110, settledAt: 200,
+                ...(state === 'succeeded' ? { result: { kind: 'restored', verified: true, nextAction: 'Inspect', evidence: {} } }
+                    : state === 'failed' ? { error: { errorCode: 'restore_failed', error: 'restore_failed' } } : {}) });
+            const summary = projectActionOperationListSnapshotV1(full);
+            const read = () => store.getSnapshot().operationsByKey.get(actionOperationAddressKey(operationAddress(full.operationId)));
+            const observations: boolean[] = [];
+            store.subscribe(() => observations.push(read()?.snapshotComplete === true));
+            merge(store, [summary]);
+            expect(read()?.snapshotComplete).toBeUndefined();
+            store.mergeSnapshots({ serverId: SERVER_ID, snapshots: [full], snapshotComplete: true });
+            expect(read()).toMatchObject({ snapshot: full, snapshotComplete: true });
+            expect(observations).toEqual([false, true]);
+            const completed = store.getSnapshot();
+            merge(store, [summary]);
+            store.mergeSnapshots({ serverId: SERVER_ID, snapshots: [full], snapshotComplete: true });
+            expect(store.getSnapshot()).toBe(completed);
+            expect(observations).toEqual([false, true]);
+        });
+
+    it.each([
+        { title: 'Changed lifecycle fact' },
+        { requestId: 'another-request' },
+        { scope: { accountId: 'another-account', machineId: 'machine-a', sessionId: 'session-a' } },
+    ])('rejects same-revision completeness that changes retained facts: %j', changes => {
+        const store = createActionOperationStore();
+        const full = operation({ state: 'succeeded', settledAt: 200, requestId: 'original-request', result: { accepted: true } });
+        const summary = projectActionOperationListSnapshotV1(full);
+        merge(store, [summary]);
+        const before = store.getSnapshot();
+        store.mergeSnapshots({ serverId: SERVER_ID, snapshots: [{ ...full, ...changes }], snapshotComplete: true });
+        expect(store.getSnapshot()).toBe(before);
+        expect(before.operationsByKey.get(actionOperationAddressKey(operationAddress(full.operationId))))
+            .toMatchObject({ snapshot: summary });
+    });
+
+    it('upgrades an identical unmarked full receipt without allowing same-revision result replacement', () => {
+        const store = createActionOperationStore();
+        const full = operation({ state: 'succeeded', settledAt: 200, result: { accepted: true } });
+        merge(store, [full]);
+        const before = store.getSnapshot();
+        store.mergeSnapshots({ serverId: SERVER_ID, snapshots: [{ ...full, result: { accepted: false } }], snapshotComplete: true });
+        expect(store.getSnapshot()).toBe(before);
+        store.mergeSnapshots({ serverId: SERVER_ID, snapshots: [full], snapshotComplete: true });
+        const retained = store.getSnapshot().operationsByKey.get(actionOperationAddressKey(operationAddress(full.operationId)));
+        expect(retained?.snapshot).toBe(full);
+        expect(retained?.snapshotComplete).toBe(true);
+    });
     it('publishes exact worker admission changes once and keeps labels, other scopes, removal and reset truthful', () => {
         const state = createActionOperationStore();
         const scope = { serverId: SERVER_ID, accountId: 'account-a' };

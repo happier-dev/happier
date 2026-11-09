@@ -566,6 +566,14 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
 })));
 export type ActionOperationSnapshotV1 = Readonly<z.infer<typeof ActionOperationSnapshotV1Schema>>;
 
+/** Lists retain lifecycle facts while the full owner read carries terminal results. */
+export function projectActionOperationListSnapshotV1(snapshot: ActionOperationSnapshotV1): ActionOperationSnapshotV1 {
+  if (snapshot.result === undefined
+    || snapshot.state !== 'succeeded' && snapshot.state !== 'failed' && snapshot.state !== 'cancelled') return snapshot;
+  const { result: _result, ...summary } = snapshot;
+  return summary;
+}
+
 /** Retain only named native backup facts; executor diagnostics never enter receipts. */
 export function projectDeploymentBackupFailureResultV1(actionId: string, errorCode: string,
   details: unknown): DeploymentBackupFailureResultV1 | DeploymentRestoreFailureResultV1 | undefined {

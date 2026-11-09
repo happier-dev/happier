@@ -2,6 +2,7 @@ import {
     ActionOperationSnapshotV1Schema,
     canAdvanceActionOperationSnapshotV1,
     projectActionOperationSnapshotForV1Reader,
+    projectActionOperationListSnapshotV1,
     type ActionOperationGetV1Response,
     type ActionOperationRevisionEphemeralV1,
 } from '@happier-dev/protocol/actions/operations/v1';
@@ -52,8 +53,11 @@ export async function consumeActionOperationSnapshotPush(params: Readonly<{
 
     const store = params.store ?? actionOperationStore;
     const address = actionOperationAddressKey({ serverId: sourceServerId, operationId: snapshot.operationId });
-    const retained = store.getSnapshot().operationsByKey.get(address)?.snapshot;
-    if (retained && !canAdvanceActionOperationSnapshotV1(retained, snapshot)) return;
+    const retained = store.getSnapshot().operationsByKey.get(address);
+    if (retained && !canAdvanceActionOperationSnapshotV1(retained.snapshot, snapshot)
+        && !(retained.snapshotComplete !== true && retained.snapshot.revision === snapshot.revision
+            && sameStrictJsonValue(projectActionOperationListSnapshotV1(retained.snapshot),
+                projectActionOperationListSnapshotV1(snapshot)))) return;
     // Reboot and successful Software Apply publish full Account-scoped facts
     // before the target daemon can disappear. Other notifications still need
     // the ordinary fresh read to supply their current domain facts.
@@ -63,7 +67,7 @@ export async function consumeActionOperationSnapshotPush(params: Readonly<{
             && snapshot.domainRef?.kind === 'machineSetup'))
         && snapshot.domainRef.machineId === snapshot.scope.machineId
         && areServerProfileIdentifiersEquivalent(snapshot.domainRef.serverId, sourceServerId)) {
-        store.mergeSnapshots({ serverId: sourceServerId, snapshots: [snapshot] });
+        store.mergeSnapshots({ serverId: sourceServerId, snapshots: [snapshot], snapshotComplete: true });
     }
 
     let reads = pushRefreshes.get(store);
@@ -98,6 +102,7 @@ export async function refreshActionOperationSnapshot(params: Readonly<{
     const { accountId, machineId } = snapshot.scope;
     const store = params.store ?? actionOperationStore;
     const unavailable = () => store.setMachineObservation({ serverId: sourceServerId, machineId }, 'unavailable');
+    let snapshotComplete = false;
     try {
         const response = await params.readSnapshot(snapshot.operationId);
         if (!shouldContinue()) return;
@@ -111,6 +116,7 @@ export async function refreshActionOperationSnapshot(params: Readonly<{
             return;
         }
         snapshot = response.operation;
+        snapshotComplete = true;
     } catch (error) {
         if (!shouldContinue()) return;
         const retained = store.getSnapshot().operationsByKey.get(actionOperationAddressKey({
@@ -125,7 +131,7 @@ export async function refreshActionOperationSnapshot(params: Readonly<{
             return;
         }
     }
-    store.mergeSnapshots({ serverId: sourceServerId, snapshots: [snapshot] });
+    store.mergeSnapshots({ serverId: sourceServerId, snapshots: [snapshot], ...(snapshotComplete ? { snapshotComplete: true } : {}) });
     const operation = store.getSnapshot().operationsByKey.get(actionOperationAddressKey({
         serverId: sourceServerId, operationId: snapshot.operationId,
     }));

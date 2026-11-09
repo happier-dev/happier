@@ -53,8 +53,10 @@ intent or prepared restore identity takes precedence over the transport request
 id. Actions without a derived identity retain their original transport request id;
 template previews create no operation. The terminal operation result decides
 success or failure, including acknowledged partial Add progress. A fully reconciled
-terminal result can end observation while an earlier terminal-read reply is lost;
-a result-free list summary still requires the complete record. Environment absence
+terminal record can end observation while an earlier terminal-read reply is lost,
+including failed or cancelled records with no result. The in-memory qualified
+record carries full-read provenance; a list summary still requires the complete
+record, even at the same revision. Environment absence
 alone does not prove cleanup completed. Failed observation retains the unknown
 outcome. Recovery neither repeats the effect nor adds a polling timer. A removal
 refused because a deploy is running offers History and the receipt's existing Stop
@@ -111,6 +113,15 @@ from the selected row of the existing `machines.list` Action. This nullable publ
 identity is also visible to Machine Use recipients; it grants no authority. A
 missing identity cannot select an installed target. Template creation still
 requires Machine Manage and the existing Project and Environment permissions.
+
+In 0.3 development, adding a catalog service or database to an existing Environment
+uses `intent: "add"` and `destination: { kind: "stored" }`. The template preparer
+opens the saved definition at the supplied Environment revision and preserves its
+existing services. Callers may still supply an exact definition pin; they do not
+need to read an internal Artifact or compute a Compose digest. Selected template
+generators create credentials private to their creator when
+`generatedSecretAudience` is omitted. Explicit additional grants remain part of
+the reviewed input. UI, CLI and agent paths share the catalog default-binding owner.
 
 ## Domain and binding observations (0.3 development)
 
@@ -523,8 +534,13 @@ The installed controller derives the exact provider id, credential
 principal and operation identity from retained content and calls the target's
 declared observe Action through the existing reviewed-child owner. Receipt content
 and terminal state use the same installation-signed transition and CAS as Deploy;
-no second work queue or observation scheduler is introduced. Own-server receipts
-are unsupported. Reassigned controllers cannot borrow an earlier accepted
+no second work queue or observation scheduler is introduced. In current development
+source, own-server calls to `deployments.receipts.observe` and
+`deployments.observation.get` return `unsupported_action` with
+`reason: target_not_supported`, the target kind and a `deployments.receipts.get`
+recovery hint. Read that receipt for its recorded result and use
+`deployments.health.read` or `deployments.logs.read` for native runtime state;
+native settlement stays with the rollout owner. Reassigned controllers cannot borrow an earlier accepted
 installation's receipt custody; that retained-operation recovery boundary remains
 separate from future-controller selection.
 

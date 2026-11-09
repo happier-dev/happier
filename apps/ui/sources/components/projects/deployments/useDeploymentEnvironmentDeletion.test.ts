@@ -341,7 +341,7 @@ describe('Environment deletion client over the Action owner', () => {
         actionOperationStore.reset();
     });
 
-    it('ends the removed Environment spinner from its settled record while the terminal-read reply is lost', async () => {
+    it.each(['succeeded', 'failed', 'cancelled'] as const)('ends the removed Environment spinner from its settled record while the terminal-read reply is lost (%s)', async settlement => {
         const f = await setup();
         const machineId = f.detail.environment.controllerMachineId!;
         let operationRequestId: string | undefined;
@@ -382,18 +382,26 @@ describe('Environment deletion client over the Action owner', () => {
             vi.useFakeTimers();
             await act(async () => { await vi.advanceTimersByTimeAsync(4 * 60_000); });
             expect(completed).toBe(false);
-            settled = { ...retained!, revision: 2, state: 'succeeded', settledAt: 3, result: {
-                ok: true, environmentId: f.detail.environment.id, revision: f.detail.environment.revision + 3,
-                deploymentId: 'teardown-1', deploymentRevision: 1, state: 'succeeded', environmentRemoved: true } };
+            settled = { ...retained!, revision: 2, state: settlement, settledAt: 3,
+                ...(settlement === 'succeeded' ? { result: {
+                    ok: true, environmentId: f.detail.environment.id, revision: f.detail.environment.revision + 3,
+                    deploymentId: 'teardown-1', deploymentRevision: 1, state: 'succeeded', environmentRemoved: true } }
+                    : settlement === 'failed' ? { error: { errorCode: 'deployment_conflict', error: 'deployment_conflict' } } : {}) };
             await act(async () => {
+                const serverId = resolveServerProfileScopeIdForIdentifier(f.serverId);
+                const { result: _result, ...summary } = settled!;
+                actionOperationStore.reconcileMachineProjection({ serverId, accountId: 'owner', machineId,
+                    snapshots: [summary], knownOperationKeys: new Set() });
+                expect(completed).toBe(false);
                 await consumeActionOperationSnapshotPush({ accountId: 'owner', accountEncryptionMode: 'plain',
-                    sourceServerId: resolveServerProfileScopeIdForIdentifier(f.serverId),
+                    sourceServerId: serverId,
                     update: { type: 'action-operation-updated', machineId, content: { t: 'plain', v: settled! } },
                     readSnapshot: async () => ({ kind: 'found', operation: settled! }) });
                 await flushHookEffects();
             });
             expect(completed).toBe(true);
-            expect(await pending).toEqual({ kind: 'deleted', detached: false });
+            expect(await pending).toMatchObject(settlement === 'succeeded' ? { kind: 'deleted', detached: false }
+                : { kind: 'refused', code: settlement === 'failed' ? 'deployment_conflict' : 'cancelled' });
             expect(hook.getCurrent().busy).toBe(false);
             expect(readSignal?.aborted).toBe(true);
             expect(homes.requestsFor('/v1/actions/deployments.teardown')).toHaveLength(1);

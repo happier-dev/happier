@@ -1,4 +1,5 @@
-import { canAdvanceActionOperationSnapshotV1, canResumeDeploymentTeardownOperationV1, ActionOperationFailureV1ReadSchema, ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { canAdvanceActionOperationSnapshotV1, canResumeDeploymentTeardownOperationV1, ActionOperationFailureV1ReadSchema,
+  ActionOperationSnapshotV1Schema, projectActionOperationListSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type {
   ActionOperationDomainRefV1,
   ActionOperationFailureV1,
@@ -573,9 +574,8 @@ export function createActionOperationStore(options?: Readonly<{
       const page = cursorIndex >= 0 ? ordered.slice(cursorIndex + 1) : ordered;
       return {
         items: page.map((snapshot) => {
-          if (!isTerminal(snapshot) || snapshot.result === undefined) return snapshot;
-          const { result: _result, ...summary } = snapshot;
-          return freezeSnapshot(summary);
+          const summary = projectActionOperationListSnapshotV1(snapshot);
+          return summary === snapshot ? snapshot : freezeSnapshot(summary);
         }),
         nextCursor: null,
       };

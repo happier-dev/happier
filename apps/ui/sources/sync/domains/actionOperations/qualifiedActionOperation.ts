@@ -61,6 +61,8 @@ export type ActionOperationRequestAddress = Readonly<{
 export type QualifiedActionOperation = Readonly<{
     serverId: string;
     snapshot: ActionOperationSnapshotV1;
+    /** A full owner read, distinct from a result-free list summary of the same revision. */
+    snapshotComplete?: true;
     /** Fresh Machine CHECK, never a reconstructed receipt for the old invocation. */
     agentIsolationRecovery?: Readonly<{ enabled: boolean; preview: MachineAgentIsolationPreviewResultV1 }>;
 }>;
