@@ -9,7 +9,7 @@ import { groupUsageByProvider, type UsageAccountRow } from '@/components/hub/usa
 import { useUsageSummary, type UsageSummary } from '@/components/hub/usage/useUsageSummary';
 import { ConnectedAccountIdentityText } from '@/components/settings/connectedServices/ConnectedAccountIdentityText';
 import { ConnectedServiceMark } from '@/components/settings/connectedServices/ConnectedServiceMark';
-import { openConnectedServiceSetupModal } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
+import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import {
     AccountSubscriptionLine,
     AccountUsageResetsLine,
@@ -19,6 +19,8 @@ import { ConnectedAccountPrivacyToggle } from '@/components/settings/connectedSe
 import { UsageMeterRow, UsageMeterStack } from '@/components/settings/connectedServices/usage/UsageMeterRow';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import type { PopoverAnchor } from '@/components/ui/popover/_types';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
@@ -35,7 +37,6 @@ import {
     type ConnectedAccountIdentityPresenter,
 } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import type { MeterTone } from '@/components/ui/lists/MeterBar';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { ConnectedServiceQuotaRecoveryCreditsV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
@@ -46,6 +47,7 @@ import {
 } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 
 import type { SidebarFooterPopoverContentProps } from './SidebarFooterPopoverButton';
 
@@ -197,6 +199,7 @@ export function useUsagePopoverData(): Readonly<{
 /** Opening the Usage page or Credentials, and signing an account in again, close the popover first. */
 export function useUsagePopoverHandlers(params: Readonly<{ close: () => void; router: ReturnType<typeof useRouter> }>) {
     const { close, router } = params;
+    const scope = useActiveServerAccountScope();
     const openConnectedServices = React.useCallback(() => {
         close();
         const result = runGuardedNavigation(() => router.push(SETTINGS_ROUTES.connectedServices as never));
@@ -207,15 +210,11 @@ export function useUsagePopoverHandlers(params: Readonly<{ close: () => void; ro
         const result = runGuardedNavigation(() => router.push(SETTINGS_ROUTES.usage as never));
         if (result !== true) fireAndForget(result, { tag: 'UsagePopover.openUsage' });
     }, [close, router]);
-    const signInAgain = React.useCallback((account: ConnectedServiceAccountNeedingSignIn) => {
+    const signInAgain = React.useCallback((account: ConnectedServiceAccountNeedingSignIn, anchor?: PopoverAnchor) => {
         close();
-        // No page to grow in here: the same setup panel opens as a modal.
-        openConnectedServiceSetupModal({
-            kind: 'reconnect',
-            serviceKey: buildQualifiedPluginContributionKey(account.ref.service),
-            accountId: account.ref.accountId,
-        });
-    }, [close]);
+        fireAndForget(presentConnectSheet({ scope, intent: 'reconnect', service: account.ref.service, account: account.ref, ...(anchor ? { anchor } : {}) }),
+            { tag: 'UsagePopover.signInAgain' });
+    }, [close, scope]);
     return { openConnectedServices, openUsage, signInAgain };
 }
 
@@ -234,7 +233,7 @@ export function SidebarUsagePopoverView(props: Readonly<{
     onOpenConnectedServices: () => void;
     /** The header's chart: the Usage page, the whole picture behind this preview. */
     onOpenUsage: () => void;
-    onSignInAgain?: (account: ConnectedServiceAccountNeedingSignIn) => void;
+    onSignInAgain?: (account: ConnectedServiceAccountNeedingSignIn, anchor?: PopoverAnchor) => void;
 }>) {
     const { theme } = useUnistyles();
     const { usage, privacy, session } = props;
@@ -317,7 +316,16 @@ export function SidebarUsagePopoverView(props: Readonly<{
                     </Text>
                 );
     } else {
-        body = withDividers([...accounts.map(renderAccount), ...facts.accountsNeedingSignIn.map(renderSignedOut)]);
+        // Several accounts with nothing to show are one quiet line after the ones that answer; a lone one keeps its row.
+        const silent = accounts.filter(({ account }) => account.windows.length === 0 && account.state !== 'loading');
+        const collapsed = silent.length > 1 ? new Set(silent) : null;
+        body = withDividers([
+            ...accounts.filter(entry => !collapsed?.has(entry)).map(renderAccount),
+            ...facts.accountsNeedingSignIn.map(renderSignedOut),
+            ...(collapsed ? [<Text key="silent" testID="usage-popover-unavailable-accounts" style={styles.scopeLine}>
+                {t('sidebarFooter.usageUnavailableAccounts', { count: collapsed.size })}
+            </Text>] : []),
+        ]);
     }
 
     // Scoped to a session, the one row widens to every account. Otherwise the header's gear opens Credentials, so no
@@ -531,7 +539,7 @@ function OwnSignInGroup(props: Readonly<{ group: NonNullable<UsagePopoverSession
 const SignedOutAccount = React.memo(function SignedOutAccount(props: Readonly<{
     account: ConnectedServiceAccountNeedingSignIn;
     name: ConnectedAccountNamePresentation;
-    onSignInAgain?: (account: ConnectedServiceAccountNeedingSignIn) => void;
+    onSignInAgain?: (account: ConnectedServiceAccountNeedingSignIn, anchor?: PopoverAnchor) => void;
 }>) {
     const { theme } = useUnistyles();
     const { account } = props;
@@ -555,7 +563,7 @@ const SignedOutAccount = React.memo(function SignedOutAccount(props: Readonly<{
                         size="small"
                         display="secondary"
                         title={t('connectedServicesSettings.signInAgain')}
-                        onPress={() => props.onSignInAgain?.(account)}
+                        onPress={(event) => props.onSignInAgain?.(account, resolvePressTriggerAnchor(event))}
                     />
                 ) : null}
             </View>

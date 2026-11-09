@@ -448,6 +448,8 @@ export function summarizeUsageWork(
 
 export type UsageWorkTurnRow = MoneyDisplay & Readonly<{
   contributionId: string;
+  /** Every model call this turn adds up (a turn usually spans several). */
+  contributionIds: readonly string[];
   /** Null when the contribution carries no turn: it is still counted, and never guessed. */
   turnId: string | null;
   observedAtMs: number;
@@ -480,6 +482,39 @@ export type UsageWorkSessionAutopsy = UsageWorkIdentities & MoneyDisplay & Reado
 }>;
 
 /** One Session's contributions in witnessed order, each with its own exact amount and evidence. */
+/** A turn spans several model calls; one row per turn, its parts added up. A no-turn row with no usage says nothing. */
+function groupUsageWorkTurns(
+  rows: readonly UsageWorkTurnRow[],
+  contributionOf: (id: string) => UsageWorkAllocation['contribution'],
+  basis: UsageWorkAmount,
+): UsageWorkTurnRow[] {
+  const groups = new Map<string | null, UsageWorkTurnRow[]>();
+  for (const row of rows) groups.set(row.turnId, [...(groups.get(row.turnId) ?? []), row]);
+  return [...groups.values()].flatMap((parts): UsageWorkTurnRow[] => {
+    const first = parts[0]!;
+    const selected = basis.metric === 'cost'
+      ? resolveUsageCostBasis(aggregateUsageContributionCosts(parts.map(part => contributionOf(part.contributionId)), basis.costBasis), basis.costBasis)
+      : null;
+    const amount = basis.metric === 'cost' ? selected?.amountUsd ?? null : parts.reduce<number | null>((sum, part) => addAmount(sum, part.amount), 0);
+    if (first.turnId === null && amount === 0) return [];
+    const unique = <T,>(values: readonly T[]) => [...new Set(values)];
+    const withOutcome = parts.find(part => part.outcome !== null);
+    return [{
+      ...first,
+      contributionIds: parts.map(part => part.contributionId),
+      amount,
+      moneyBasis: selected ? { kind: selected.kind, currency: selected.currency } : null,
+      outcome: withOutcome?.outcome ?? null,
+      reason: withOutcome?.reason ?? first.reason,
+      checkpoints: unique(parts.flatMap(part => part.checkpoints)),
+      commits: unique(parts.flatMap(part => part.commits)),
+      branches: unique(parts.flatMap(part => part.branches)),
+      moments: [...new Map(parts.flatMap(part => part.moments).map(moment => [JSON.stringify(moment), moment])).values()],
+      retainedChanges: [...new Map(parts.flatMap(part => part.retainedChanges).map(change => [JSON.stringify(change), change])).values()],
+    }];
+  });
+}
+
 export function summarizeUsageWorkSession(
   work: UsageWorkProjection,
   basis: UsageWorkAmount,
@@ -489,7 +524,7 @@ export function summarizeUsageWorkSession(
   const marks = newMarks();
   const outcomes = new Map<string, UsageWorkOutcome>();
   let amount: number | null = 0;
-  const turns = work.allocations
+  const contributionRows = work.allocations
     .filter((row) => row.contribution.sessionId === sessionId)
     .map((row): UsageWorkTurnRow => {
       const branch = branchByContribution.get(row.contribution.id);
@@ -501,6 +536,7 @@ export function summarizeUsageWorkSession(
       if (row.outcome) outcomes.set(row.outcome.key, row.outcome);
       return {
         contributionId: row.contribution.id,
+        contributionIds: [row.contribution.id],
         turnId: row.contribution.turnId,
         observedAtMs: row.contribution.observedAtMs,
         modelId: row.contribution.modelId,
@@ -525,7 +561,7 @@ export function summarizeUsageWorkSession(
   let cumulativeCost = createEmptyUsageCost();
   const cumulativeRows: UsageWorkAllocation['contribution'][] = [];
   let costTimelineBasis: UsageWorkSessionAutopsy['costTimelineBasis'] = null;
-  const costTimeline = turns.map(turn => {
+  const costTimeline = contributionRows.map(turn => {
     const contribution = allocations.get(turn.contributionId)!.contribution;
     cumulativeRows.push(contribution);
     cumulativeCost = contribution.cost.reportedTotalContributionIds
@@ -536,7 +572,8 @@ export function summarizeUsageWorkSession(
     return { id: turn.contributionId, observedAtMs: turn.observedAtMs,
       amount: selected?.amountUsd ?? null };
   });
-  if (basis.metric === 'cost' && turns.length > 0) amount = resolveUsageCostBasis(cumulativeCost, basis.costBasis)?.amountUsd ?? null;
+  if (basis.metric === 'cost' && contributionRows.length > 0) amount = resolveUsageCostBasis(cumulativeCost, basis.costBasis)?.amountUsd ?? null;
+  const turns = groupUsageWorkTurns(contributionRows, id => allocations.get(id)!.contribution, basis);
   const selected = basis.metric === 'cost' ? resolveUsageCostBasis(cumulativeCost, basis.costBasis) : null;
   return { amount, moneyBasis: selected ? { kind: selected.kind, currency: selected.currency } : null,
     turns, costTimeline, costTimelineBasis, outcomes: [...outcomes.values()], ...identities(marks) };

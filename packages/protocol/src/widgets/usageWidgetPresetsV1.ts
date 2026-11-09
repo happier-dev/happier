@@ -67,36 +67,53 @@ const arrangements: Readonly<Record<UsageWidgetPresetId, readonly Arrangement[]>
         w('usage_constellation', 'full'), w('usage_outcomes', 'full', { style: 'shipped' })] }],
 };
 
+/** One Session's usage is its own question (why did it cost this): the autopsy, then what shaped it. */
+export const USAGE_SESSION_WIDGET_PRESET_ID = 'session';
+export const USAGE_SESSION_WIDGET_AREA = 'session';
+const sessionArrangement: Arrangement = { width: 'full', widgets: [w('usage_session_value', 'large'),
+    w('usage_breakdowns', 'medium', { breakdown: ['model'] }), w('usage_efficiency', 'medium')] };
+
+function usageFragment(name: string, arrangement: Arrangement, overrideMetric?: UsageQuery['metric']): WidgetLayoutFragmentDraftV1 {
+    const group: WidgetLayoutFragmentGroupV1 = {
+        width: arrangement.width, frameStyle: 'card', dividers: 'hairline',
+        children: arrangement.widgets.map(widget => {
+            const descriptor = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: widget.id })!;
+            const defaults = proposeWidgetInputDefaultBindingsV1(descriptor);
+            const metric = overrideMetric ?? widget.metric;
+            return { kind: 'widget', size: widget.size,
+            frameStyle: 'plain', instance: { v: 1, definition: { kind: 'builtin', id: widget.id }, bindings: {
+                ...Object.fromEntries(descriptor.inputs!.fields
+                    .filter(field => field.contextMode === 'follow').map(field => [field.path, { kind: 'context' as const, slot: field.path }])),
+                // Legacy routes open Overview. Their presentation seed must
+                // not replace the independent defaults of other named views.
+                ...Object.fromEntries(descriptor.inputs!.fields.filter(field => field.contextMode === 'own').flatMap(field => {
+                    const override = field.path === 'metric' ? metric : field.path === 'breakdown' && widget.breakdown ? [...widget.breakdown]
+                        : field.path === 'style' ? widget.style : field.path === 'colourBy' ? widget.colourBy : undefined;
+                    const binding = override === undefined ? defaults[field.path] : { kind: 'value' as const, value: override };
+                    return binding ? [[field.path, binding]] : [];
+                })),
+            } } };
+        }),
+    };
+    const applicableScopes = scopes.filter(field => group.children.some(child => Object.hasOwn(child.instance.bindings, field.path)));
+    return { name, inputs: { fields: applicableScopes.map(field => ({ ...field, required: true })) }, inputSchema: scopeSchema(), group };
+}
+
 /** Portable fragments have no placement identities; the platform allocates each host occurrence. */
 export function createUsageWidgetPresetFragments(names: Readonly<Record<UsageWidgetPresetId, string>>, options?: Readonly<{ initialMetric?: UsageQuery['metric'] }>):
     Readonly<Record<UsageWidgetPresetId, readonly WidgetLayoutFragmentDraftV1[]>> {
     const fragments: Partial<Record<UsageWidgetPresetId, readonly WidgetLayoutFragmentDraftV1[]>> = {};
-    for (const id of USAGE_WIDGET_PRESET_IDS) fragments[id] = arrangements[id].map((arrangement): WidgetLayoutFragmentDraftV1 => {
-        const group: WidgetLayoutFragmentGroupV1 = {
-            width: arrangement.width, frameStyle: 'card', dividers: 'hairline',
-            children: arrangement.widgets.map(widget => {
-                const descriptor = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: widget.id })!;
-                const defaults = proposeWidgetInputDefaultBindingsV1(descriptor);
-                const metric = (id === 'overview' ? options?.initialMetric : undefined) ?? widget.metric;
-                return { kind: 'widget', size: widget.size,
-                frameStyle: 'plain', instance: { v: 1, definition: { kind: 'builtin', id: widget.id }, bindings: {
-                    ...Object.fromEntries(descriptor.inputs!.fields
-                        .filter(field => field.contextMode === 'follow').map(field => [field.path, { kind: 'context' as const, slot: field.path }])),
-                    // Legacy routes open Overview. Their presentation seed must
-                    // not replace the independent defaults of other named views.
-                    ...Object.fromEntries(descriptor.inputs!.fields.filter(field => field.contextMode === 'own').flatMap(field => {
-                        const override = field.path === 'metric' ? metric : field.path === 'breakdown' && widget.breakdown ? [...widget.breakdown]
-                            : field.path === 'style' ? widget.style : field.path === 'colourBy' ? widget.colourBy : undefined;
-                        const binding = override === undefined ? defaults[field.path] : { kind: 'value' as const, value: override };
-                        return binding ? [[field.path, binding]] : [];
-                    })),
-                } } };
-            }),
-        };
-        const applicableScopes = scopes.filter(field => group.children.some(child => Object.hasOwn(child.instance.bindings, field.path)));
-        return { name: names[id], inputs: { fields: applicableScopes.map(field => ({ ...field, required: true })) }, inputSchema: scopeSchema(), group };
-    });
+    for (const id of USAGE_WIDGET_PRESET_IDS) fragments[id] = arrangements[id].map(arrangement =>
+        usageFragment(names[id], arrangement, id === 'overview' ? options?.initialMetric : undefined));
     return fragments as Record<UsageWidgetPresetId, readonly WidgetLayoutFragmentDraftV1[]>;
+}
+
+/** The Session route's one view, in its own area so a Session never lists the Account's tabs. */
+export function createUsageSessionWidgetPresets(name = 'Session'): readonly WidgetAreaPresetV1[] {
+    const fragment = usageFragment(name, sessionArrangement);
+    return [{ id: USAGE_SESSION_WIDGET_PRESET_ID, name, items: [instantiateWidgetLayoutFragmentGroupV1(fragment.group, {
+        groupId: `${USAGE_SESSION_WIDGET_PRESET_ID}:group:0`,
+        childIds: fragment.group.children.map((_, child) => `${USAGE_SESSION_WIDGET_PRESET_ID}:group:0:widget:${child}`) })] }];
 }
 
 /** Host metadata is localized by the mounted page, never read from a caller's layout input. */

@@ -276,10 +276,12 @@ export function UsagePlanIdentity(
     .join(' · ');
   return (
     <View testID={props.testID} style={styles.identity}>
-      <ConnectedServiceMark
-        legacyServiceId={props.name.legacyServiceId}
-        size="inline"
-      />
+      <View style={styles.identityMark}>
+        <ConnectedServiceMark
+          legacyServiceId={props.name.legacyServiceId}
+          size="inline"
+        />
+      </View>
       <View style={styles.identityText}>
         <ConnectedAccountIdentityText
           value={props.compact ? props.name.title : props.name.primaryLabel ?? props.name.title}
@@ -420,7 +422,10 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     gap: theme.space.s8,
     minWidth: 0,
+    // In a wrapping row (a Used-first title) the name and its detail wrap inside the row instead of running under the value.
+    maxWidth: '100%',
   },
+  identityMark: { flexShrink: 0 },
   identityText: {
     flexShrink: 1,
     minWidth: 0,

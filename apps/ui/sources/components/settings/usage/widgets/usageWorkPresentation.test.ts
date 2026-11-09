@@ -137,6 +137,15 @@ describe('Work display grouping of the canonical allocation', () => {
     expect(autopsy.costTimeline.map(row => row.amount)).toEqual([null, 0.12]);
     expect(autopsy.turns.map(row => row.amount)).toEqual([null, null]);
   });
+  it("reads one row per turn: a turn's model calls add up, and a no-turn row with no usage is left out", () => {
+    const none = { ...contribution('empty', 's1', null), tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+    const autopsy = summarizeUsageWorkSession(allocateUsageOutcomes({
+      contributions: [contribution('a', 's1', 't1'), contribution('b', 's1', 't1'), none, contribution('c', 's1', 't2')],
+      evidence: [],
+    }), { metric: 'tokens', costBasis: 'auto' }, 's1');
+    expect(autopsy.turns.map(turn => [turn.turnId, turn.amount])).toEqual([['t1', 28], ['t2', 14]]);
+    expect(autopsy.costTimeline).toHaveLength(4);
+  });
   it('plots only monetary partitions with witnessed outcome coordinates, including open outcomes at zero merged', () => {
     const unlinkedEuro = { ...contribution('unlinked', 'unlinked', 'u'),
       cost: { reportedUsd: 3, estimatedUsd: 4, currency: 'EUR' } };

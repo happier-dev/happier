@@ -5,9 +5,9 @@ import { renderScreen as renderScreenAtHost, standardCleanup } from '@/dev/testk
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { OverlayPortalProvider, OverlayPortalHost } from '@/components/ui/popover/OverlayPortal';
 import { installRealActionExecutorModuleLoader, serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { PENDING_INPUT_PROTOCOL_VERSION_V4 } from '@happier-dev/protocol/clientCompatibility/primitives';
+import { PendingRequestedActionV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { ConnectedServicePoolSelectionGetRequestV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { getPreferredLanguage, preloadTranslationsForSettings, setPreferredLanguageFromSettings, t } from '@/text';
@@ -38,7 +38,10 @@ import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/
 import { getPoolStrategyPresentation } from '@/sync/domains/connectedServices/connectedServicePoolPolicy';
 import { formatPlanMoment } from './UsagePlanParts';
 
-// Machine RPC and the served Home's Artifact persistence are the external boundaries.
+// Machine RPC, native confirmation and the served Home's HTTP transport are external boundaries.
+vi.mock('@/modal', async () =>
+  (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module,
+);
 const selectionTransport = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
   const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
@@ -100,24 +103,45 @@ afterEach(async () => {
   storage.setState({ profile: previousProfile, profileScope: previousProfileScope });
 });
 
-async function serveResetStartApprovalHome(serverUrl: string) {
-  const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
+async function serveResetStartHome(serverUrl: string) {
+  let reading: ConnectedServiceQuotaGetResultV1 | null = null;
+  const writes: Array<Readonly<{ path: string; accountId: string | null; body: unknown }>> = [];
+  const baseline = createRootLayoutFeaturesResponse();
+  const features = createRootLayoutFeaturesResponse({ capabilities: { session: { ...baseline.capabilities.session,
+    pendingInput: { protocolVersion: PENDING_INPUT_PROTOCOL_VERSION_V4 } } } });
   const settings = { actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
     'session.pending.resetStart.set': { approvalRequiredSurfaces: ['ui'] },
   } }) };
   comparisonHome = await serveAccountHomes({ homes: [{ key: 'reset', serverUrl, accountId: 'account-a', currentAccount: true, settings }],
     route: request => {
-      if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
-      return artifacts.handle(request.path, { method: request.method, headers: request.headers,
-        ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }), signal: request.signal }) ?? undefined;
+      const path = request.url.pathname;
+      if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
+      if (reading?.current) {
+        const record = { content: { t: 'plain', v: reading.current },
+          metadata: { fetchedAt: reading.current.fetchedAtMs, staleAfterMs: reading.current.staleAfterMs, status: 'ok' }, sources: [reading.source] };
+        if (path.endsWith('/provider-account-usage/sources/resolve')) return Response.json({ source: reading.source,
+          recordId: reading.current.recordId, providerAccountId: reading.current.recordKey.accountSubjectId,
+          fetchedAt: reading.current.fetchedAtMs, staleAfterMs: reading.current.staleAfterMs });
+        if (path.endsWith('/provider-account-usage/record')) return Response.json(record);
+        if (path.endsWith('/provider-account-usage/history')) return Response.json({
+          entries: (reading.history?.entries ?? []).map(entry => ({ id: entry.id, observedAtMs: entry.observedAtMs,
+            record: { ...record, content: { t: 'plain', v: entry.snapshot } } })), nextCursor: null });
+      }
+      if (request.method === 'PATCH' && /^\/v2\/sessions\/[^/]+\/pending\/[^/]+\/action$/.test(path)) {
+        const body = request.body;
+        if (!body || typeof body !== 'object') return Response.json({ error: 'invalid-params' }, { status: 400 });
+        const requestedAction = PendingRequestedActionV1Schema.parse(Reflect.get(body, 'requestedAction'));
+        writes.push({ path, accountId: request.accountId, body });
+        return Response.json({ ok: true, didUpdate: true, requestedAction });
+      }
+      return undefined;
     } });
   restoreActionModuleLoader = await installRealActionExecutorModuleLoader();
   const server = comparisonHome.homes.reset!;
   const { TokenStorage } = await import('@/auth/storage/tokenStorage');
   const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
   publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
-  const requests = () => artifacts.list().map(artifact => ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(artifact.id) ?? 'null')));
-  return { server, credentials, requests };
+  return { server, credentials, requests: () => writes, setReading: (value: ConnectedServiceQuotaGetResultV1) => { reading = value; } };
 }
 
 type Meter = Readonly<{
@@ -301,8 +325,8 @@ it('shows the canonical capacity weather and insufficient model/reset basis insi
   expect(screen.findByTestId('fit.plan.work.insufficient')).toBeFalsy();
   expect(screen.findByTestId('fit.plan.other.insufficient')).toBeFalsy();
   // It is one quiet promise, not a list of internal feature names.
-  const summary = String(screen.findByTestId('fit.notRecorded')!.props.children);
-  expect(summary).toBe(t('usage.board.plans.moreDetailLater'));
+  // No gap here is cured by waiting: the promise is earned only by missing history (see below).
+  expect(screen.findByTestId('fit.notRecorded')).toBeFalsy();
   expect(screen.getTextContent()).not.toContain(t('usage.board.plans.modelHeadroomTitle'));
   expect(screen.findByTestId('fit.plan.work.modelHeadroom.weekly.insufficient')).toBeFalsy();
   expect(screen.findByTestId('fit.plan.work.pricePerReset.weekly.insufficient')).toBeFalsy();
@@ -1100,7 +1124,7 @@ it('charts the picked window in the same chart, labels the empirical range with 
 
 it("binds one Session's pending message to a reset with the exact witnessed input, and withholds the control without a witness", async () => {
   const now = Date.now();
-  const { server, credentials, requests } = await serveResetStartApprovalHome('https://usage-plans.test');
+  const { server, credentials, requests, setReading } = await serveResetStartHome('https://usage-plans.test');
   const previous = storage.getState();
   storage.setState({
     profileScope: { serverId: server.id, accountId: 'account-a' },
@@ -1138,6 +1162,7 @@ it("binds one Session's pending message to a reset with the exact witnessed inpu
         entries: [{ id: 'entry-9', observedAtMs: now, snapshot: bare.current }],
       },
     });
+    setReading(witnessed);
     const sessionQuery = normalizeUsageQuery({ session: 's1' });
     const { UsageResetPlannerWidget } =
       await import('../UsageResetPlannerWidget');
@@ -1181,17 +1206,14 @@ it("binds one Session's pending message to a reset with the exact witnessed inpu
       await Promise.resolve();
     });
     await vi.waitFor(() => expect(requests()).toHaveLength(1));
-    expect(requests()[0]!.actionId).toBe('session.pending.resetStart.set');
-    expect(requests()[0]!.actionArgs).toEqual({
-      sessionId: 's1',
-      localId: 'local-1',
-      serverId: server.id,
+    expect(requests()[0]).toEqual({
+      path: '/v2/sessions/s1/pending/local-1/action', accountId: 'account-a', body: { requestedAction: { v: 1, kind: 'reset_start',
       reset: {
         source: witnessed.source,
         recordId: witnessed.current!.recordId,
         meterId: 'weekly',
         witness: { id: 'entry-9', observedAtMs: now },
-      },
+      } } },
     });
   } finally {
     storage.setState({
@@ -1203,7 +1225,7 @@ it("binds one Session's pending message to a reset with the exact witnessed inpu
 
 it('binds Account-wide queued identities once across accounts without reading private Pending text or granting unavailable authority', async () => {
   const now = Date.now();
-  const { server, credentials, requests } = await serveResetStartApprovalHome('https://usage-account-plans.test');
+  const { server, credentials, requests, setReading } = await serveResetStartHome('https://usage-account-plans.test');
   const previous = storage.getState();
   const privateText = 'Private queued request';
   storage.setState({
@@ -1227,6 +1249,7 @@ it('binds Account-wide queued identities once across accounts without reading pr
         waitingWork: { status: 'available', entries: [], unboundEntries },
       });
     });
+    setReading(reads[0]!);
     const { UsageResetPlannerWidget } = await import('../UsageResetPlannerWidget');
     const screen = await renderScreen(wrap(<UsageResetPlannerWidget {...bodyProps(reads)} serverId={server.id} id="usage_resets" testID="reset" />, credentials));
     const pickers = () => screen.findAllByType(DropdownMenu).filter(node => String(node.props.testID).startsWith('reset.resetStart.'));
@@ -1246,11 +1269,10 @@ it('binds Account-wide queued identities once across accounts without reading pr
       await Promise.resolve();
     });
     await vi.waitFor(() => expect(requests()).toHaveLength(1));
-    expect(requests()[0]!.actionId).toBe('session.pending.resetStart.set');
-    expect(requests()[0]!.actionArgs).toEqual({
-      sessionId: 's1', localId: 'local-1', serverId: server.id,
+    expect(requests()[0]).toEqual({
+      path: '/v2/sessions/s1/pending/local-1/action', accountId: 'account-a', body: { requestedAction: { v: 1, kind: 'reset_start',
       reset: { source: reads[0]!.source, recordId: reads[0]!.current!.recordId, meterId: 'weekly', witness: { id: 'accepted-work', observedAtMs: now } },
-    });
+    } } });
     expect(JSON.stringify(requests())).not.toContain(privateText);
   } finally {
     storage.setState({ profileScope: previous.profileScope, sessionPending: previous.sessionPending });
@@ -1344,7 +1366,27 @@ it("says what a banked reset's expiry means against the natural reset, and count
   expect(label).toContain('1');
   expect(label).toContain('3');
   expect(fit.findByTestId('fit.plan.other.fit.insufficient')).toBeTruthy();
-  expect(fit.findByTestId('fit.notRecorded')).toBeTruthy();
+});
+
+it('promises later detail only for history gaps', async () => {
+  const now = Date.now();
+  const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 20, resetAtMs: now + DAY, windowDurationMs: 7 * DAY }]);
+  const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  const render = async (reason: string) => {
+    const props = bodyProps([read]);
+    const source = { ref: { accountId: 'work', service: { pluginId: 'p', localId: 'l' } } };
+    const slice = { ...props.slice, planInsights: { recordedWeek: { status: 'available', recordedActiveDays: 1, recordedEvents: 1, coverage: 'complete' },
+      accounts: [{ source, value: { status: 'insufficient_basis', reason: 'account_usage_unpriced' }, weather: [], modelHeadroom: [],
+        pricePerReset: [{ meterId: 'weekly', label: 'Weekly', status: 'insufficient_basis', reason }] }] } } as unknown as typeof props.slice;
+    return renderScreen(wrap(<UsagePlanFitWidget {...props} slice={slice} id="usage_plan_fit" testID="fit" />));
+  };
+  const priceGap = await render('period_price_unavailable');
+  expect(priceGap.findByTestId('fit.notRecorded')).toBeFalsy();
+  expect(priceGap.findByTestId('fit.attribution')).toBeFalsy();
+  await priceGap.unmount();
+  const historyGap = await render('recorded_resets_unavailable');
+  expect(historyGap.findByTestId('fit.notRecorded')).toBeTruthy();
+  await historyGap.unmount();
 });
 
 it('shows the list-price observation date in the selected app language', async () => {
@@ -1384,7 +1426,7 @@ it('shows the list-price observation date in the selected app language', async (
 
 it.each(['waiting', 'unbound'] as const)('conceals hidden reset-plan Session labels while keeping configured %s work', async kind => {
   const now = Date.now();
-  const { server, credentials } = await serveResetStartApprovalHome('https://usage-reset-privacy.test');
+  const { server, credentials } = await serveResetStartHome('https://usage-reset-privacy.test');
   const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
   const { setScreenSharingPrivacyActive } = await import('@/desktop/capture/useNativeRecordingActive');
   const previous = storage.getState();

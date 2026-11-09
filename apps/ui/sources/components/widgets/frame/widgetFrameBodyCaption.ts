@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import type { IconName } from '@/components/ui/icons/Icon';
+
 /**
  * Header projection only: a mounted body lends the one quiet fact that names what it shows ("Tokens by
  * agent · last 30 days") to its nearest shared frame. The placement still decides precedence (a
@@ -25,12 +27,37 @@ export const WidgetFrameBodyMetaContext = React.createContext<
   ((meta: React.ReactNode) => void) | null
 >(null);
 
+/**
+ * The stretched cell's whole room (a group's shorter column), read beside the body's own box: a body that wants
+ * to fill it (a chart) reads this one fact; every other body keeps ignoring a taller partner.
+ */
+export const WidgetFrameCellHeightContext = React.createContext<number | undefined>(undefined);
+
 export function useWidgetFrameBodyMeta(meta: React.ReactNode): void {
   const lend = React.useContext(WidgetFrameBodyMetaContext);
   React.useEffect(() => {
     lend?.(meta);
     return () => lend?.(null);
   }, [meta, lend]);
+}
+
+/**
+ * The same lending for the header's name: a body whose widget is named by what it shows (a Metric by its
+ * metric: "CPU" with the CPU mark) lends that name and mark in place of its definition's generic ones. A name the
+ * person gave the widget always wins, so a host applies this only to an unnamed instance. Pass an
+ * identity-stable value: a new one re-lends it.
+ */
+export type WidgetFrameBodyIdentity = Readonly<{ title: string; mark: IconName }>;
+export const WidgetFrameBodyIdentityContext = React.createContext<
+  ((identity: WidgetFrameBodyIdentity | null) => void) | null
+>(null);
+
+export function useWidgetFrameBodyIdentity(identity: WidgetFrameBodyIdentity | null): void {
+  const lend = React.useContext(WidgetFrameBodyIdentityContext);
+  React.useEffect(() => {
+    lend?.(identity);
+    return () => lend?.(null);
+  }, [identity, lend]);
 }
 
 /**

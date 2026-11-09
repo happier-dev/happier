@@ -91,13 +91,13 @@ export function UsageWorkAutopsy(
   const modelOptions = React.useMemo(() => new Map([...new Set([...contributions.values()]
     .flatMap(row => row.agentId === null ? [] : [row.agentId]))].map(agentId => [agentId,
       getModelOptionsForSession(agentId, metadata)])), [contributions, metadata]);
-  const identityLine = (turn: UsageWorkTurnRow) => {
-    const row = contributions.get(turn.contributionId);
+  const identityLine = (turn: UsageWorkTurnRow) => [...new Set(turn.contributionIds.map((id) => {
+    const row = contributions.get(id);
     const model = row?.modelId ? findModelOptionForEffectiveModelId(modelOptions.get(row.agentId ?? '') ?? [], row.modelId)?.label
       ?? usageDimensionLabel('model', row.modelId) : t('usage.board.howYouWork.notRecorded');
     const machine = row?.machineId ? machineNames[row.machineId] ?? usageDimensionLabel('machine', row.machineId) : t('usage.board.howYouWork.notRecorded');
     return `${model} · ${machine}`;
-  };
+  }))].join(', ');
   const width = presentation?.geometry?.width;
   const details = useUsageChartDetails(`${t(`usage.widgets.${props.id}`)}: ${t('usage.board.work.costOverTime')}`,
     selected !== null && Boolean(autopsy?.costTimeline.length) && (width === undefined || width >= PLOT_MIN_WIDTH_PX));
@@ -125,15 +125,19 @@ export function UsageWorkAutopsy(
       }),
     ].join(' · ');
   // This column is about the PR outcome: a turn whose commit is linked lacks a PR, not commit evidence.
+  // A Session with no outcome at all says so once, in its summary, never on every turn.
   const outcomeLine = (turn: UsageWorkTurnRow) => {
     if (turn.outcome)
       return `${usageWorkPullRequestTitle(turn.outcome.pullRequest)} · ${usageWorkPullRequestState(turn.outcome.pullRequest)}`;
+    if ((autopsy?.outcomes.length ?? 0) === 0) return '';
     const reason = turn.reason === 'allocated' ? 'missing_evidence' : turn.reason;
     return t(`usage.board.work.reason_${reason === 'missing_evidence' && turn.commits.length > 0 ? 'missing_pr' : reason}`);
   };
 
   const phases = props.slice.howYouWork?.intervals;
-  const phaseEvents = props.slice.howYouWork?.autopsy?.events.filter(event => event.sessionId === selected) ?? [];
+  // Tool calls run to the hundreds; as timeline rows they bury the answer. Only what changes the Session's course stays.
+  const phaseEvents = props.slice.howYouWork?.autopsy?.events.filter(event => event.sessionId === selected
+    && (event.kind === 'compaction' || event.kind === 'delegate')) ?? [];
   const accent = usageSignatureAccent(appTheme);
   const quiet = usageMeterFill(appTheme, false);
   const intervals: IntervalTimelineInterval[] = [
@@ -194,6 +198,13 @@ export function UsageWorkAutopsy(
   const caption = { fontSize: rowMetrics.subtitle.fontSize, lineHeight: rowMetrics.subtitle.lineHeight };
   const metricLabel = metric === 'cost' ? t('usage.cost') : t('usage.tokens');
   const outcomes = autopsy?.outcomes ?? [];
+  // The answer to "why is this Session expensive": where it went, largest first; the timeline above keeps the order.
+  const ranked = [...turns].sort((left, right) => (right.amount ?? -1) - (left.amount ?? -1));
+  const largest = ranked[0]?.amount != null && ranked[0].amount > 0 && ranked[0].turnId !== null ? ranked[0] : null;
+  const largestShare = largest && autopsy?.amount ? Math.round((largest.amount! / autopsy.amount) * 100) : null;
+  // What every turn shares is said once in the summary, not on each row.
+  const identities = new Set(turns.map(identityLine));
+  const sharedIdentity = identities.size === 1 ? [...identities][0]! : null;
   return (
     <View testID={props.testID} style={styles.body}>
       {autopsy && turns.length > 0 ? (
@@ -215,6 +226,17 @@ export function UsageWorkAutopsy(
               label={t('usage.board.work.turns')}
               value={ordinals.size}
             />
+            {largest ? (
+              <HappierDataMetric
+                theme={theme}
+                size="stat"
+                showLabel
+                label={t('usage.board.work.largestTurn')}
+                value={largest.amount!}
+                valueFormatter={value => format(value, largest.moneyBasis)}
+                caption={[turnLabel(largest.turnId), largestShare === null ? null : `${largestShare}%`].filter(Boolean).join(' · ')}
+              />
+            ) : null}
           </View>
           <View style={styles.outcome}>
             <UsageWorkMarks
@@ -235,6 +257,7 @@ export function UsageWorkAutopsy(
                         )
                         .join(', ')
                 }`,
+                sharedIdentity,
               ]
                 .filter(Boolean)
                 .join(' · ')}
@@ -282,6 +305,42 @@ export function UsageWorkAutopsy(
           />
         </View>
       ) : null}
+      {turns.length > 0 ? (
+        <View style={styles.section}>
+          <UsageWorkSectionTitle caption={turns.length > 1 ? t('usage.board.work.largestFirst') : undefined}>{t('usage.board.work.turns')}</UsageWorkSectionTitle>
+          <HappierDataRows
+            theme={theme}
+            label={t('usage.board.work.turns')}
+            testID={`${props.testID}.turns`}
+            density="compact"
+            showProportionShares={false}
+            valueFormatter={format}
+            rowIds={ranked.map((turn) => turn.contributionId)}
+            rowDatums={ranked.map(turn => datum(turn.turnId === null ? t('usage.board.work.reason_missing_turn') : turnLabel(turn.turnId), turn.amount, turn.moneyBasis))}
+            columns={[
+              { label: t('usage.board.work.turn') },
+              { label: metricLabel, proportion: true },
+              { label: t('usage.board.work.linkedOutcome') },
+              { label: t('usage.board.work.commit') },
+              { label: t('usage.board.work.linesKept') },
+              { label: `${t('usage.board.page.byModel')} · ${t('common.machine')}` },
+              { label: t('usage.board.work.checkpoint') },
+            ]}
+            rows={ranked.map((turn) => [
+              turn.turnId === null ? t('usage.board.work.reason_missing_turn') : turnLabel(turn.turnId),
+              cell(turn.amount, turn.moneyBasis),
+              outcomeLine(turn),
+              evidenceLine(turn),
+              usageWorkRetainedChangeLine(turn.retainedChanges),
+              sharedIdentity === null ? identityLine(turn) : '',
+              // The raw checkpoint ref is the longest and least readable fact, so it ends the row's one line.
+              turn.checkpoints.join(' · '),
+            ])}
+          />
+          {turns.some(turn => turn.retainedChanges.length > 0) ?
+            <Text style={[styles.note, caption]}>{t('usage.board.work.linesKeptMethod')}</Text> : null}
+        </View>
+      ) : null}
       {domain && intervals.length > 0 ? (
         <View style={styles.section}>
           <UsageWorkSectionTitle caption={t('usage.board.work.phasesCaption')}>
@@ -305,42 +364,6 @@ export function UsageWorkAutopsy(
               {t('usage.board.howYouWork.unknownEndsReason')}
             </Text>
           ) : null}
-        </View>
-      ) : null}
-      {turns.length > 0 ? (
-        <View style={styles.section}>
-          <UsageWorkSectionTitle>{t('usage.board.work.turns')}</UsageWorkSectionTitle>
-          <HappierDataRows
-            theme={theme}
-            label={t('usage.board.work.turns')}
-            testID={`${props.testID}.turns`}
-            density="compact"
-            showProportionShares={false}
-            valueFormatter={format}
-            rowIds={turns.map((turn) => turn.contributionId)}
-            rowDatums={turns.map(turn => datum(turn.turnId === null ? t('usage.board.work.reason_missing_turn') : turnLabel(turn.turnId), turn.amount, turn.moneyBasis))}
-            columns={[
-              { label: t('usage.board.work.turn') },
-              { label: metricLabel, proportion: true },
-              { label: t('usage.board.work.linkedOutcome') },
-              { label: t('usage.board.work.commit') },
-              { label: t('usage.board.work.linesKept') },
-              { label: `${t('usage.board.page.byModel')} · ${t('common.machine')}` },
-              { label: t('usage.board.work.checkpoint') },
-            ]}
-            rows={turns.map((turn) => [
-              turn.turnId === null ? t('usage.board.work.reason_missing_turn') : turnLabel(turn.turnId),
-              cell(turn.amount, turn.moneyBasis),
-              outcomeLine(turn),
-              evidenceLine(turn),
-              usageWorkRetainedChangeLine(turn.retainedChanges),
-              identityLine(turn),
-              // The raw checkpoint ref is the longest and least readable fact, so it ends the row's one line.
-              turn.checkpoints.join(' · '),
-            ])}
-          />
-          {turns.some(turn => turn.retainedChanges.length > 0) ?
-            <Text style={[styles.note, caption]}>{t('usage.board.work.linesKeptMethod')}</Text> : null}
         </View>
       ) : null}
       <UsageCoverageLine

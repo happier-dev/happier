@@ -39,6 +39,7 @@ import { UsagePlanDisclosure } from './plans/UsagePlanParts';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { UsageCoachSettingsGroup } from '../UsageCoachSettingsGroup';
 import {
+  useUsageAnalyticsView,
   UsageBodyInsufficient,
   UsageBodyReading,
   UsageCoverageLine,
@@ -299,6 +300,8 @@ export function UsageCoachWidget(props: UsageBodyProps) {
   // state, the "need more evidence" line and the findings come and go inside one height; once settled it
   // keeps the tallest height it has drawn, so a re-read never moves what sits below.
   const reading = readUsageCoachState(props.slice) === 'reading';
+  // When a read's coverage names no count, the period's own Sessions read is the same fact the Overview shows.
+  const periodSessions = useUsageAnalyticsView(props.slice, props.query)?.hero.sessions ?? null;
   const floor = useSettledBodyHeightFloor(!reading, `${glance}:${strip}`);
   // The held room is a wrapper's min height and the body inside it is what gets measured, so the floor can follow
   // the drawn height down once at the first settle instead of measuring itself.
@@ -356,7 +359,7 @@ export function UsageCoachWidget(props: UsageBodyProps) {
     { key: 'findings', label: t('usage.board.coach.summaryFindings'), value: reading ? '—' : visible.length,
       caption: t('usage.board.coach.summaryOfChecks', { count: checked }) },
     { key: 'sessions', label: t('usage.board.coach.summarySessions'),
-      value: reading || !props.slice.accounting ? '—' : countUsageCheckedSessions(coach.sessionCoverage) ?? '—',
+      value: reading ? '—' : countUsageCheckedSessions(coach.sessionCoverage) ?? periodSessions ?? '—',
       caption: usagePeriodPhrase(props.query) },
     { key: 'insufficient', label: t('usage.board.coach.summaryNeedEvidence'), value: reading ? '—' : insufficient.length,
       caption: !reading && clear.length ? t('usage.board.coach.summaryClearCaption', { count: clear.length }) : undefined },

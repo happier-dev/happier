@@ -40,6 +40,16 @@ export function usageDrillFromPageFilters(
 const UsageDrillContext = React.createContext<UsageDrill | null>(null);
 export const UsageDrillProvider = UsageDrillContext.Provider;
 
+/** Opens one named Usage view: in place on the Usage page (its route owns the selection), or the Usage page from elsewhere. */
+export function useUsageOpenView(layoutId: string): () => void {
+  const onPage = React.useContext(UsageDrillContext) !== null;
+  const router = useRouter();
+  return React.useCallback(() => {
+    if (onPage) router.setParams({ layoutId });
+    else router.push(buildUsageSettingsRouteTarget({ layoutId }) as Parameters<typeof router.push>[0]);
+  }, [onPage, router, layoutId]);
+}
+
 /**
  * A body's drill. On the Usage page it edits the page's filter row. Anywhere else (Home, a Project, a
  * Board) there is no filter row to edit, so it opens the Usage page already narrowed to that value

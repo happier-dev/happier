@@ -1,10 +1,14 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { ChartDatum, formatHappierDataExactShare, formatHappierDataValue } from '@happier-dev/plugin-ui/presentation';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { Text } from '@/components/ui/text/Text';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { Item } from '@/components/ui/lists/Item';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { Typography } from '@/constants/Typography';
 import { formatUsageCost } from '@/utils/format/usageNumbers';
 import { getPreferredLanguage, t } from '@/text';
@@ -41,6 +45,8 @@ import {
 export function UsagePlanFitWidget(props: UsageBodyProps) {
   const { projection, nameOf, nowMs } = useUsagePlans(props.slice, props.model.refresh);
   const text = usePlanText();
+  const { theme: appTheme } = useUnistyles();
+  const router = useRouter();
   // A tile keeps every plan's facts on two lines and says the unrecorded comparisons once.
   const tile = useWidgetPresentation()?.size === 'small';
   // The viewer's own advice target, as echoed by the same allowance read; never a default.
@@ -67,6 +73,7 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
   const drawn = projection.accounts.filter((account) => !isUsagePlanAccountSettledUnread(account));
   const unreadCount = projection.accounts.length - drawn.length;
   const noPriceOnce = drawn.length > 1 && drawn.every((account) => readPlanKeyFact(account, insightsOf(account), nowMs) === null);
+  const planFitGaps = readPlanFitGaps(props.slice.planInsights);
   return (
     <View style={styles.body} testID={`${props.testID}.planFit`}>
       <View style={styles.rows} accessibilityRole="list">
@@ -94,15 +101,24 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
       ) : null}
       {props.slice.planInsights?.recordedWeek.status === 'available'
         ? <RecordedWeek value={props.slice.planInsights.recordedWeek} compact={tile} testID={`${props.testID}.recordedWeek`} /> : null}
-      {/* What has no basis yet is not a list of feature names: one quiet promise, said once. */}
-      {(props.slice.planInsights?.accounts ?? []).some(entry => readPlanInsightMissing(entry).length > 0)
-        || props.slice.planInsights?.recordedWeek.status !== 'available' ? (
+      {/* A gap more readings cure is one quiet promise; attribution says what it needs; a missing price is already said above. */}
+      {planFitGaps.attribution ? (
+        <Text testID={`${props.testID}.attribution`} style={[styles.quiet, text.detail]}>
+          {t('usage.board.plans.attributionNote')}
+        </Text>
+      ) : null}
+      {planFitGaps.history ? (
         <Text testID={`${props.testID}.notRecorded`} style={[styles.quiet, text.detail]}>
           {t('usage.board.plans.moreDetailLater')}
         </Text>
       ) : null}
       <UsagePlanAccountStates accounts={projection.accounts} nameOf={nameOf} slice={props.slice}
         onRetry={props.model.refresh} testID={`${props.testID}.state`} />
+      {/* The pace these rows are read against is set here: the one route from a plan's value to its target. */}
+      {tile ? null : <Item testID={`${props.testID}.paceTarget`} title={t('usage.board.plans.paceTargetLink')}
+        subtitle={t('usage.board.plans.paceTargetLinkSubtitle')}
+        icon={<Icon name="speedometer" size={ICON_SIZE.md} color={appTheme.colors.text.secondary} />}
+        onPress={() => router.push(SETTINGS_ROUTES.sessionProviderLimits as Parameters<typeof router.push>[0])} />}
     </View>
   );
 }
@@ -350,14 +366,16 @@ function PlanExtras(props: Readonly<{ value: UsagePlanInsights['accounts'][numbe
       value: numericFacts.map(fact => `${fact.label}: ${fact.exact}`).join(' · '), subtitle: valueText }}>{visual}</ChartDatum> : visual;
 }
 
-/** What one account has no basis for yet; the widget says the union once, under every plan. */
-function readPlanInsightMissing(value: UsagePlanInsights['accounts'][number]): string[] {
-  return [
-    ...(value.value.status !== 'available' ? [t('usage.board.plans.planValueTitle')] : []),
-    ...(value.weather.some(row => row.status !== 'available') ? [t('usage.board.plans.weatherTitle')] : []),
-    ...(value.modelHeadroom.some(row => row.status !== 'available') ? [t('usage.board.plans.modelHeadroomTitle')] : []),
-    ...(value.pricePerReset.some(row => row.status !== 'available') ? [t('usage.board.plans.pricePerResetTitle')] : []),
-  ];
+/** Only reasons more recorded history cures earn the "after a few weeks" promise. */
+const PLAN_HISTORY_REASONS: ReadonlySet<string> = new Set(['recorded_resets_unavailable', 'recorded_activity_unavailable']);
+
+function readPlanFitGaps(insights: UsagePlanInsights | undefined): Readonly<{ attribution: boolean; history: boolean }> {
+  const accounts = insights?.accounts ?? [];
+  const reasonOf = (row: { status: string; reason?: string }) => row.status === 'insufficient_basis' ? row.reason : undefined;
+  const attribution = accounts.some(entry => reasonOf(entry.value) === 'account_attribution_unavailable');
+  const history = accounts.some(entry => [...entry.pricePerReset, entry.value].some(row => PLAN_HISTORY_REASONS.has(reasonOf(row) ?? '')))
+    || PLAN_HISTORY_REASONS.has(insights ? reasonOf(insights.recordedWeek) ?? '' : '');
+  return { attribution, history };
 }
 
 function RecordedWeek(props: Readonly<{ value: UsagePlanInsights['recordedWeek']; compact: boolean; testID: string }>) {

@@ -25,6 +25,7 @@ export type SidebarFooterTranslation = Readonly<{
     /** Widens the session popover to every account. */
     usageAllAccounts: string;
     usageMoreAccounts: (params: Readonly<{ count: number }>) => string;
+    usageUnavailableAccounts: (params: Readonly<{ count: number }>) => string;
     /** How the session signs in: through a pool, with one account, or on its own. */
     usageSessionThroughPool: (params: Readonly<{ agent: string; pool: string }>) => string;
     usageSessionWithAccount: (params: Readonly<{ agent: string }>) => string;
@@ -61,6 +62,7 @@ export const sidebarFooterTranslationsEnglish = { en: {
         usageThisSession: 'This session',
         usageAllAccounts: 'All accounts',
         usageMoreAccounts: ({ count }) => `${count} more`,
+        usageUnavailableAccounts: ({ count }) => `${count} accounts with no usage data`,
         usageSessionThroughPool: ({ agent, pool }) => `${agent} signs in through ${pool}`,
         usageSessionWithAccount: ({ agent }) => `${agent} signs in with this account`,
         usageSessionOwnSignIn: ({ agent }) => `${agent} uses its own sign-in`,
@@ -68,9 +70,9 @@ export const sidebarFooterTranslationsEnglish = { en: {
         usageNextInOrder: ({ account }) => `When ${account} runs out, the next turn moves to the next account in order`,
         usageNextMostLeft: ({ account }) => `When ${account} runs out, the next turn moves to the account with the most left`,
         usageNextStays: ({ pool, account }) => `${pool} stays on ${account} until you switch`,
-        machinesEmptyTitle: 'Run sessions on your own computers',
-        machinesEmptyBody: 'Add this Mac, a server or a cloud machine. Happier shows what each one is doing and tells you when one needs you.',
-        machinesAddThisComputer: 'Add this computer',
+        machinesEmptyTitle: 'Run sessions on your own machines',
+        machinesEmptyBody: 'Add this Mac or a cloud machine. Happier shows what each one is doing and tells you when one needs you.',
+        machinesAddThisComputer: 'Add this machine',
         machinesAddAnotherMachine: 'Add another machine',
         machinesHomeSignedOut: ({ home }) => `You're signed out of ${home}, so its machines aren't listed.`,
     } } as const satisfies Pick<Record<string, SidebarFooterTranslation>, "en">;

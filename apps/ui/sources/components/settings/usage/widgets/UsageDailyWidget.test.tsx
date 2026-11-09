@@ -4,14 +4,25 @@ import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
 import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
-import { renderScreen } from '@/dev/testkit';
-import { UsageDailyWidget } from './UsageDailyWidget';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { resolveUsageDailyChartShape, UsageDailyWidget } from './UsageDailyWidget';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { formatUsageCalendarDate } from '@/sync/domains/usage/usageCalendarPresentation';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
-afterEach(() => vi.restoreAllMocks());
+let controlsHome: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
+afterEach(async () => { standardCleanup(); await controlsHome?.dispose(); controlsHome = undefined; vi.restoreAllMocks(); });
+async function renderControls(children: React.ReactNode) {
+  controlsHome = await serveActionHomes({ homes: [{ key: 'daily', serverUrl: 'https://usage-daily-controls.test', accountId: 'daily-account' }],
+    route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+  const server = controlsHome.homes.daily!;
+  publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+  return renderMountedCurrentUiContext(children);
+}
 
 const day = 86_400_000;
 // Friday midnight in UTC+14, so weekend classification cannot use the UTC weekday.
@@ -37,9 +48,15 @@ function fixture(values: readonly (number | null)[], endMs: number, byAgent = tr
 }
 
 describe('Daily period chart', () => {
+  it('gives the plot the room a taller partner leaves in its cell', () => {
+    const presentation = { size: 'tall', geometry: { width: 500, height: 368 } } as Parameters<typeof resolveUsageDailyChartShape>[0];
+    expect(resolveUsageDailyChartShape(presentation, false).plotPx).toBe(252);
+    expect(resolveUsageDailyChartShape(presentation, false, 270).plotPx).toBe(522);
+    expect(resolveUsageDailyChartShape(presentation, true, 270).plotPx).toBeLessThanOrEqual(252);
+  });
   it.each([true, false])('names date buckets in the shown calendar for accessibility and exact values, retaining their semantic identity (by Agent: %s)', async (byAgent) => {
     const props = fixture([10, 30], start + 2 * day, byAgent);
-    const screen = await renderScreen(<UsageDailyWidget {...props} />);
+    const screen = await renderControls(<UsageDailyWidget {...props} />);
     const expected = formatUsageCalendarDate(start, props.query.timeZoneOffsetMinutes, { month: 'short', day: 'numeric' });
     const chart = screen.findHostByTestId('daily.chart')!;
     expect(chart.props.accessibilityLabel).toContain(`${expected}:`);

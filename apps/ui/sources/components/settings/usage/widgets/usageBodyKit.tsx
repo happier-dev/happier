@@ -791,9 +791,16 @@ export function describeUsagePageNewerServerSources(slices: readonly Pick<UsageQ
  * The page header's one "Couldn't read …" fact: every shared read that failed, named once for the page. A read
  * that settled with only some Sessions' evidence joins the same sentence, so "Showing what arrived" is said once.
  */
+/** Only Work's linked pull requests and branches went unread: every figure still stands, so the page says it quietly. */
+export function isUsagePageFailureOnlyWork(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[]): boolean {
+  const failed = slices.flatMap(slice => slice.sources.filter(source => source.status === 'error' && isUsagePageReadSource(source.source)));
+  return failed.length > 0 && failed.every(source => source.source === 'work') && readUsagePageWitnessedNames(slices).length === 0;
+}
+
 export function describeUsagePageFailedSources(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[]): string | null {
   const names = readUsagePageFailedNames(slices);
   if (!names.length) return null;
+  if (isUsagePageFailureOnlyWork(slices)) return t('usage.board.page.workNotRead');
   const witnessed = readUsagePageWitnessedNames(slices);
   return witnessed.length
     ? t('usage.board.page.coverageFailedWitnessed', { sources: names.join(', '), witnessed: witnessed.join(', ') })

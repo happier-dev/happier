@@ -4,7 +4,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { ChartDatum, formatHappierDataExactShare, HAPPIER_DATA_METRICS, HappierDataMetric, HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { useWidgetFrameBodyCaption, useWidgetFrameBodyMeta } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { useUsageOpenView } from '../usageDrill';
 import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { Text } from '@/components/ui/text/Text';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -71,10 +73,18 @@ type Cell = Readonly<{
   selected: boolean;
   excluded: string | null;
 }>;
-type Run = Readonly<{ pool: UsagePlanPool | null; cells: readonly Cell[] }>;
+type Run = Readonly<{ pool: UsagePlanPool | null; cells: readonly Cell[]; /** Accounts outside every pool, joined under one label. */ outside?: boolean }>;
 
 /** Only a run of two or more members is a group worth an outline; a pool of one reads as its account does. */
-const isFramedRun = (run: Run) => run.pool !== null && run.cells.length > 1;
+const isFramedRun = (run: Run) => (run.pool !== null && run.cells.length > 1) || run.outside === true;
+
+/** Beside an outlined pool the accounts outside it read as one labelled group, not loose unlabelled cells. */
+function joinRunsOutsidePools(runs: readonly Run[]): Run[] {
+  const outside = runs.filter(run => run.pool === null);
+  if (outside.length < 2 || outside.length === runs.length) return [...runs];
+  const joined: Run = { pool: null, outside: true, cells: outside.flatMap(run => run.cells) };
+  return [...runs.filter(run => run.pool !== null), joined];
+}
 
 /**
  * The bar keeps the Account's own order. A pool's members sit together where its first member is, in
@@ -185,12 +195,21 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   const router = useRouter();
   useWidgetFrameBodyCaption(t('usage.board.plans.capacityCaption'));
   const pooled = POOLED_SIZES.has(presentation?.size ?? '');
+  // Beside other widgets the next move is Plans: the full view is one press from the figure (lab d2views-OV).
+  const openPlans = useUsageOpenView('plans');
+  const plansLink = React.useMemo(() => pooled && !tile
+    ? <TextLinkButton label={t('usage.board.plans.plansAndResets')} tone="accent" size="meta" onPress={openPlans} testID={`${props.testID}.plansLink`} />
+    : null, [pooled, tile, openPlans, props.testID]);
+  useWidgetFrameBodyMeta(plansLink);
   // Never-read accounts collapse into one quiet line; accounts in flight keep their segment's room.
   const drawn = React.useMemo(() => projection.accounts.filter((account) => !isUsagePlanAccountSettledUnread(account)), [projection.accounts]);
   const unreadNames = projection.accounts.filter(isUsagePlanAccountSettledUnread).map(account => nameOf(account).title);
   const runs = React.useMemo(
-    () => buildRuns(drawn, projection.pools, selections, nowMs),
-    [drawn, projection.pools, selections, nowMs],
+    () => {
+      const built = buildRuns(drawn, projection.pools, selections, nowMs);
+      return pooled ? built : joinRunsOutsidePools(built);
+    },
+    [drawn, projection.pools, selections, nowMs, pooled],
   );
   // Every window's latest reading, for the one witnessed-reset moment (lab `kitmotion` reset).
   const resetWindows = React.useMemo(
@@ -322,7 +341,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
         {runs.map((run) => (
           <React.Fragment key={runKey(run)}>
             <View
-              testID={isFramedRun(run) ? `${props.testID}.pool.${run.pool!.groupId}` : undefined}
+              testID={run.pool && isFramedRun(run) ? `${props.testID}.pool.${run.pool.groupId}` : undefined}
               style={[
                 isFramedRun(run) ? styles.pool : styles.run,
                 cellBasis
@@ -331,9 +350,9 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
               ]}
             >
               {/* An outline says which pool it holds, so the cells beside it read as accounts outside it. */}
-              {isFramedRun(run) && run.pool!.name ? (
-                <Text style={[styles.poolLabel, text.detail]} numberOfLines={1} testID={`${props.testID}.pool.${run.pool!.groupId}.label`}>
-                  {run.pool!.name}
+              {isFramedRun(run) && (run.outside || run.pool!.name) ? (
+                <Text style={[styles.poolLabel, text.detail]} numberOfLines={1} testID={`${props.testID}.pool.${run.outside ? 'outside' : run.pool!.groupId}.label`}>
+                  {run.outside ? t('usage.board.plans.poolOutside') : run.pool!.name}
                 </Text>
               ) : null}
               {isFramedRun(run) ? <View style={styles.run}>{renderCells(run)}</View> : renderCells(run)}
@@ -407,7 +426,7 @@ function CapacityPooledBar(props: Readonly<{
       <View style={styles.pooledBar} accessibilityRole="list" testID={`${props.testID}.pooled`}>
         {props.runs.map((run) => (
           <View key={runKey(run)}
-            testID={isFramedRun(run) ? `${props.testID}.pool.${run.pool!.groupId}` : undefined}
+            testID={run.pool && isFramedRun(run) ? `${props.testID}.pool.${run.pool.groupId}` : undefined}
             style={[styles.pooledRun, { flexGrow: run.cells.length, minWidth: run.cells.length * POOLED_SEGMENT_MIN_WIDTH_PX }]}>
             <View style={[styles.pooledTrack, isFramedRun(run) ? styles.pooledTrackPool : null]} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
               {run.cells.map((cell) => {

@@ -14,6 +14,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { captureUiUsageQueryAccountContext, getUsageQueryResourceStore } from '@/sync/api/account/usageQueryResource';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { MeterBar } from '@/components/ui/lists/MeterBar';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { StatusPill } from '@/components/ui/status/StatusPill';
@@ -375,6 +376,7 @@ function QueueRow(
 ) {
   const text = usePlanText();
   const { member } = props;
+  const phone = useDeviceType() === 'phone';
   const name = member.account ? props.nameOf(member.account) : null;
   const window = member.account?.headline ?? null;
   const remaining = window?.remainingFraction ?? null;
@@ -429,7 +431,8 @@ function QueueRow(
         ) : null}
       </View>
       {window ? (
-        <View style={styles.rowMeter}>
+        // A phone keeps only the short value right of the name; the meter would crowd it (lab p2pool P).
+        <View style={[styles.rowMeter, phone ? styles.rowMeterPhone : null]}>
           <Text
             style={[
               styles.rowValue,
@@ -440,12 +443,12 @@ function QueueRow(
           >
             {left ?? t('usage.board.plans.cellUnknown')}
           </Text>
-          <MeterBar
+          {phone ? null : <MeterBar
             height={4}
             tone={window.tone !== 'success' ? window.tone : 'neutral'}
             fillFraction={remaining ?? 0}
             {...(member.account?.stale ? { fillOpacity: 0.45 } : {})}
-          />
+          />}
         </View>
       ) : null}
     </View>
@@ -921,7 +924,7 @@ const styles = StyleSheet.create((theme) => ({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.colors.border.default,
   },
-  rowText: { flex: 1, minWidth: 0, gap: theme.space.s2 },
+  rowText: { flex: 1, flexBasis: 0, minWidth: 0, gap: theme.space.s2 },
   rowTitle: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -929,7 +932,8 @@ const styles = StyleSheet.create((theme) => ({
     columnGap: theme.space.s8,
     rowGap: theme.space.s2,
   },
-  rowMeter: { width: QUEUE_METER_WIDTH_PX, gap: theme.space.s4 },
+  rowMeter: { width: QUEUE_METER_WIDTH_PX, flexShrink: 0, gap: theme.space.s4 },
+  rowMeterPhone: { width: 'auto', minWidth: 52 },
   rowValue: {
     ...Typography.default('semiBold'),
     color: theme.colors.text.primary,

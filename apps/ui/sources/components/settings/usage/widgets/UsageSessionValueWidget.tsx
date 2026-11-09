@@ -128,6 +128,13 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
   const slotOf = (row: UsageWorkSessionRow) =>
     row.agentIds.length === 1 && slots.includes(row.agentIds[0]!) ? row.agentIds[0]! : null;
   const plots = projectUsageSessionValuePlots(summary.sessions, props.query.metric);
+  // One Session's page is its autopsy: no ranking of a list of one, no scatter of one point.
+  if (props.query.session) return (
+    <View style={styles.body} testID={`${props.testID}.value`}>
+      <UsageWorkAutopsy {...props} testID={`${props.testID}.autopsy`} />
+      <UsageCoverageLine slice={props.slice} sources={['work']} onRetry={props.model.refresh} testID={`${props.testID}.coverage`} />
+    </View>
+  );
   return (
     <View style={styles.body} testID={`${props.testID}.value`}>
       {outside}

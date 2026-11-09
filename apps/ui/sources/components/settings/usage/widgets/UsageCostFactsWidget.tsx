@@ -101,8 +101,10 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
               }
               caption={[
                 fact.amountUsd === null
-                  ? t('usage.board.page.unpricedCaption')
-                  : t('usage.board.page.factTokens', {
+                  ? t('usage.board.page.factUnpricedOverlap')
+                  : fact.kind === 'api_equivalent'
+                    ? t('usage.board.page.factApiTokens', { tokens: formatTokenCount(fact.tokens.total) })
+                    : t('usage.board.page.factTokens', {
                       tokens: formatTokenCount(fact.tokens.total),
                     }),
                 fact.complete || partialOnce ? null : t('usage.board.page.factIncomplete'),
@@ -121,8 +123,11 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
           </View>;
         })}
       </View>
-      {partialOnce ? (
-        <Text style={styles.partial} testID={`${props.testID}.partial`}>{usagePartialHistoryLabel()}</Text>
+      {/* The figures count overlapping populations, so they never present as parts of one sum. */}
+      {facts.length > 1 ? (
+        <Text style={styles.partial} testID={`${props.testID}.partial`}>
+          {[partialOnce ? usagePartialHistoryLabel() : null, t('usage.board.page.factsOverlap')].filter(Boolean).join(' · ')}
+        </Text>
       ) : null}
       {prices}
       <UsageCoverageLine

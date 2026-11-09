@@ -144,6 +144,7 @@ export function UsageAccountResetStartSection(props: ResetStartSectionProps) {
   const titles = useSessionDisplayTitles(addresses);
   if (entries.size === 0) return null;
   const led = leadingUsageRows(startable.map((entry, index) => ({ entry, title: titles[index] ?? null })), expanded);
+  let unnamedCount = 0;
   return (
     <View testID={props.testID} style={styles.section}>
       <UsagePlanSectionHead title={t('session.pendingMessages.title')} meta={t('usage.board.plans.resetStartMeta')} />
@@ -155,9 +156,11 @@ export function UsageAccountResetStartSection(props: ResetStartSectionProps) {
         <>
           {led.rows.map(({ entry, title }) => {
             const named = title !== null && isSessionVisible({ sessionId: entry.sessionId, serverId: props.serverId });
+            // An unnamed row is told apart by its place, never one label repeated over and over.
+            const unnamedPlace = named ? 0 : (unnamedCount += 1);
             return (
               <ResetStartRow key={`${entry.sessionId}\n${entry.localId}`}
-                title={named ? title : t('usage.board.plans.waitingSession')}
+                title={named ? title : t('usage.board.plans.waitingSessionNumbered', { number: unnamedPlace })}
                 {...(named ? { detail: t('usage.board.plans.waitingSession') } : {})}
                 localId={entry.localId} authorityCurrent sessionId={entry.sessionId} options={resolved.options}
                 serverId={props.serverId} onSettled={props.onSettled} testID={`${props.testID}.${entry.sessionId}.${entry.localId}`} />

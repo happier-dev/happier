@@ -45,7 +45,7 @@ import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeurist
 import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
 import { isWidgetResourceQuietRefresh, WidgetFrameResourceActivityContext } from './widgetFrameResourceActivity';
 import { useWidgetBodyRowHeight, WidgetFrameBodyRowsContext, widgetFootprintBodyRows } from './widgetFrameBody';
-import { WidgetFrameBodyOpenContext, type WidgetFrameBodyOpen } from './widgetFrameBodyCaption';
+import { WidgetFrameBodyOpenContext, WidgetFrameCellHeightContext, type WidgetFrameBodyOpen } from './widgetFrameBodyCaption';
 import { GlassLivePictureBackdropContext } from '@/components/ui/glass/livePictureBackdrop';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { resolveVerticalScrollEdgeMaskStyle } from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
@@ -262,6 +262,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     const rowHeight = useWidgetBodyRowHeight();
     const inheritedPresentation = useWidgetPresentation();
     const [geometry, setGeometry] = React.useState<WidgetBodyPresentation['geometry']>();
+    const [cellHeight, setCellHeight] = React.useState<number>();
     const onViewportLayout = React.useCallback((event: HappierLayoutChangeEvent) => {
         const { width, height } = event.nativeEvent.layout;
         if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
@@ -289,6 +290,11 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     // A phone stacks content with no cell to declare.
     const declaredRoomHeight = bodyHeight === 'content' && !phone && props.widgetPresentation
         ? props.viewportHeight ?? rows * rowHeight : declaredBodyHeight;
+    // The stretched cell's whole room, lent to a body that opts in (WidgetFrameCellHeightContext).
+    const onViewportCellLayout = React.useCallback((event: HappierLayoutChangeEvent) => {
+        const { height } = event.nativeEvent.layout;
+        if (Number.isFinite(height) && height > 0) setCellHeight(height);
+    }, []);
     const onBodyBoxLayout = React.useCallback((event: HappierLayoutChangeEvent) => {
         const { width, height } = event.nativeEvent.layout;
         if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
@@ -520,11 +526,13 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
                     // reach it) and the frame takes the height that results. A frame stretched by its band
                     // (a group's shorter column) grows this viewport, but the body keeps its own box: the
                     // extra height stays empty under it, so nothing it draws stretches or jumps.
-                    <View testID={`${props.testID}.viewport`}
+                    <View testID={`${props.testID}.viewport`} onLayout={onViewportCellLayout}
                         style={{ minHeight: bodyHeight === 'grow' ? props.viewportHeight ?? rows * rowHeight : undefined, flexGrow: 1, minWidth: 0 }}>
                         <View ref={viewportContentRef} testID={`${props.testID}.viewportBody`} onLayout={onBodyBoxLayout}
                             style={{ minWidth: 0, ...(bodyHeight === 'grow' ? { minHeight: declaredBodyHeight } : {}) }}>
+                            <WidgetFrameCellHeightContext.Provider value={cellHeight}>
                             <WidgetFrameBodyView testID={props.testID} body={body} rows={rows} />
+                            </WidgetFrameCellHeightContext.Provider>
                         </View>
                     </View>
                 ) : props.widgetPresentation ? (

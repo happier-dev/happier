@@ -45,6 +45,7 @@ import { UsageDrillProvider, usageDrillFromPageFilters } from './usageDrill';
 import { SessionRetentionNotice } from '@/components/sessions/info/SessionRetentionNotice';
 import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
 import {
+  USAGE_SESSION_WIDGET_PRESET_ID,
   USAGE_WIDGET_PRESET_IDS,
   type UsageWidgetPresetId,
 } from './usageWidgetPresets';
@@ -69,7 +70,7 @@ import {
   useUsageWidgetBatchHistory,
 } from './widgets/usageWidgetBatch';
 import type { UsagePageHistoryFact } from './useUsageWidgetPageContext';
-import { describeUsagePageFailedSources, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageAsOfMs } from './widgets/usageBodyKit';
+import { describeUsagePageFailedSources, isUsagePageFailureOnlyWork, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageAsOfMs } from './widgets/usageBodyKit';
 
 const PRESET_ICON: Readonly<Record<UsageWidgetPresetId, IconName>> = {
   overview: 'squares-four',
@@ -141,9 +142,9 @@ export function UsageWidgetPage(
     initialLayoutId: page.initialLayoutId,
     onLayoutChange: props.onLayoutChange,
   });
-  // Usage is a dashboard grid, so it takes the page's wide column role (a grid or a library), not the
-  // reading column: at 1920 and 2560 the lab's two-column groups need the room (lab wgusage-CD).
-  const wideColumn = useLayoutMaxWidth('wide');
+  // Usage is a dashboard's card grid, so it takes the page's dashboard column: the filter bar holds one
+  // row beside the sidebar at 1440 and the two-column groups keep their room at 1920+ (lab d2views, wgusage-CD).
+  const wideColumn = useLayoutMaxWidth('dashboard');
   const contentMaxWidth = React.useMemo(() => ({ maxWidth: wideColumn }), [wideColumn]);
   // Non-follow clauses travel with the same host context that the area admits for widget inputs.
   // widgetProvidedContext projects only slots/session to the Action boundary.
@@ -245,7 +246,9 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   const pageRead = useUsageWidgetBatchSelection(selectPageFacts, sameUsagePageFacts);
   const { facts } = pageRead;
   const filterSlices = React.useMemo(() => pageRead.filterFallback ?? [], [pageRead.filterFallback]);
-  const presets = React.useMemo(() => USAGE_WIDGET_PRESET_IDS.map(id => ({ id, name: props.names[id] })), [props.names]);
+  const session = props.sessionId !== undefined;
+  const presets = React.useMemo(() => session ? [{ id: USAGE_SESSION_WIDGET_PRESET_ID, name: t('usage.sessionUsage') }]
+    : USAGE_WIDGET_PRESET_IDS.map(id => ({ id, name: props.names[id] })), [session, props.names]);
   const publishedLayoutSelection = React.useRef<((layoutId: string, callerContext?: ActionExecutorContext) => Promise<boolean>) | null>(null);
   const selectPublishedLayout = React.useCallback((layoutId: string, callerContext?: ActionExecutorContext) => {
     if (!props.authority?.isCurrent()) return Promise.resolve(false);
@@ -433,7 +436,8 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
         layouts={layoutsFact} {...(props.sessionId ? { sessionId: props.sessionId } : {})} />
       {/* The page's reads wait on the Home: it says why once, here, and the views and bodies keep their room. */}
       <HomeReachabilityGate variant="line">{null}</HomeReachabilityGate>
-      <WidgetAreaLayoutBar
+      {/* One Session is one view: the Account's named views (Plans, Sources…) mean nothing here. */}
+      {session ? null : <WidgetAreaLayoutBar
         layouts={tabViews}
         selectedId={selectedLayoutId}
         onSelect={bar.onSelect}
@@ -442,7 +446,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
         // A failed views read is said once by the page header; the bar keeps the built-in views meanwhile.
         labels={labels}
         testID="usage-views"
-      />
+      />}
       {filterBar}
       {preset?.isEdited && ready ? (
         <WidgetAreaPresetLine
@@ -478,6 +482,7 @@ function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilte
     facts: {
       pending: describeUsagePagePendingSources(slices),
       failed: describeUsagePageFailedSources(slices),
+      failedQuiet: isUsagePageFailureOnlyWork(slices),
       newerServer: describeUsagePageNewerServerSources(slices),
       partial: describeUsagePagePartialSources(slices),
       observedAt: latest === null ? null : formatUsageObservedAt(latest),
@@ -514,9 +519,9 @@ function UsagePageHeader(
   const sessionTitle = useSessionDisplayTitles(React.useMemo(() => props.sessionId ? [{ sessionId: props.sessionId }] : [], [props.sessionId]))[0] ?? null;
   const facts = React.useMemo((): PageHeaderMetaFact[] => {
     // Shared read progress, failure and partial coverage are said once for the page.
-    const { pending, failed, newerServer, partial, observedAt, machines, agents } = props.facts;
+    const { pending, failed, failedQuiet, newerServer, partial, observedAt, machines, agents } = props.facts;
     const reading = [
-      ...(failed ? [{ key: 'failed', icon: 'warning' as const, text: failed, testID: 'usage-page.header.failed' }] : []),
+      ...(failed ? [{ key: 'failed', ...(failedQuiet ? {} : { icon: 'warning' as const }), text: failed, testID: 'usage-page.header.failed' }] : []),
       // The one Retry for it, which also rereads the views and Sessions that failed: bodies with nothing to draw only
       // say they were not read (`UsageBodyReadFailed`).
       ...(failed && retry ? [{ key: 'retry', text: t('common.retry'), onPress: retry,

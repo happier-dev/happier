@@ -7,7 +7,7 @@ import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRec
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useSessionListRowsByServerId } from '@/sync/store/hooks';
 import { useAllMachines } from '@/sync/domains/state/storage';
-import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { formatUsageCalendarDate } from '@/sync/domains/usage/usageCalendarPresentation';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
@@ -101,15 +101,18 @@ export function useUsageWork(
       .filter(id => !machines.some(machine => machine.id === id)).map(id => ({ id, absence: 'unlisted' as const }))])), [summary]));
   const machineNames = React.useMemo(() => new Map(Object.entries(selectedMachineNames)), [selectedMachineNames]);
   const machineWords = React.useCallback((ids: readonly string[]) => ids.map(id => machineNames.get(id) ?? id).join(', '), [machineNames]);
+  // A row names where it ran by the machine's own name; the suffix that tells two same-named machines apart stays out of a line about a project.
+  const selectedOwnMachineNames = useAllMachines(React.useCallback(machines => Object.fromEntries(machines.map(machine => [machine.id, getMachineDisplayName(machine)])), []));
+  const machinePlace = React.useCallback((ids: readonly string[]) => {
+    const names = [...new Set(ids.map(id => selectedOwnMachineNames[id] ?? machineNames.get(id) ?? id))];
+    return names.length > 2 ? t('usage.board.page.machinesCount', { count: names.length }) : names.join(', ');
+  }, [selectedOwnMachineNames, machineNames]);
   // Two rows never read alike: a Project name several share keeps its name whole; where it ran is a separate fact the
   // row carries on its own line, so a narrow screen never truncates the part that tells the rows apart.
   const projectName = React.useCallback((projectKey: string | null) => projectKey === null
     ? t('usage.board.work.unknownProject') : projectLabels.get(projectKey) ?? t('usage.board.work.unknownProject'), [projectLabels]);
-  const projectPlaces = React.useMemo(() => {
-    const counts = countLabels((summary?.projects ?? []).map(row => projectName(row.projectKey)));
-    return new Map((summary?.projects ?? []).map(row => [row.projectKey, counts.get(projectName(row.projectKey))! > 1
-      ? machineWords(row.machineIds) : ''] as const));
-  }, [summary, projectName, machineWords]);
+  const projectPlaces = React.useMemo(() => new Map((summary?.projects ?? []).map(row =>
+    [row.projectKey, row.projectKey === null ? '' : machinePlace(row.machineIds)] as const)), [summary, machinePlace]);
   const projectPlace = React.useCallback((projectKey: string | null) => projectPlaces.get(projectKey) ?? '', [projectPlaces]);
   const sessionHomes = React.useMemo(() => [serverId], [serverId]);
   const renderablesByHome = useSessionListRowsByServerId(sessionHomes);
@@ -144,7 +147,7 @@ export function useUsageWork(
         buildScopedSessionRouteHref({ sessionId, serverId, suffix: '/usage', query: buildUsageRouteParams({
           scope: { ...readUsageWidgetPageScope(query), session: sessionId }, metric,
           queryOverrides: readUsageWidgetQueryOverrides(query),
-          costMode: query.costBasis === 'estimated' ? 'estimated' : query.costBasis === 'reported' ? 'reported' : 'auto', layoutId: 'work',
+          costMode: query.costBasis === 'estimated' ? 'estimated' : query.costBasis === 'reported' ? 'reported' : 'auto',
         }) }) as Parameters<
           typeof router.push
         >[0],

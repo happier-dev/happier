@@ -105,7 +105,8 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
     );
   const density = compact ? 'compact' : 'comfortable';
   const metricLabel = props.query.metric === 'cost' ? t('usage.cost') : t('usage.tokens');
-  const sessionsLine = (count: number) => t('usage.board.work.valueCaption', { count });
+  // Usage with no Session behind it is said for what it is; "0 sessions" reads as a contradiction beside its amount.
+  const sessionsLine = (count: number) => count === 0 ? t('usage.board.work.noSessionLine') : t('usage.board.work.valueCaption', { count });
   // A shared Project name keeps its place on the row's second line; the one-string form serves labels that have no second line.
   const projectWhere = (projectKey: string | null) => [projectLabel(projectKey), projectPlace(projectKey)].filter(Boolean).join(' · ');
   const caption = {

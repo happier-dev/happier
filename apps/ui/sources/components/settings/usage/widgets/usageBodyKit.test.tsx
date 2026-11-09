@@ -27,6 +27,17 @@ import { describeUsagePageFailedSources, describeUsagePageNewerServerSources, de
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
+describe('the page failure fact', () => {
+  it('says a Work-only failure quietly and leaves other failures as failures', async () => {
+    const { describeUsagePageFailedSources, isUsagePageFailureOnlyWork } = await import('./usageBodyKit');
+    const work = [{ sources: [{ source: 'work', status: 'error', errorCode: 'work_evidence_failed' }] }] as never;
+    expect(isUsagePageFailureOnlyWork(work)).toBe(true);
+    expect(describeUsagePageFailedSources(work)).toBe(t('usage.board.page.workNotRead'));
+    const accounting = [{ sources: [{ source: 'accounting', status: 'error' }, { source: 'work', status: 'error' }] }] as never;
+    expect(isUsagePageFailureOnlyWork(accounting)).toBe(false);
+  });
+});
+
 describe('shared Usage identity and dependent coverage', () => {
     it('keeps unused analytics sections deferred through the body view cache', async () => {
         const admitted = usageQaAccountingFixture();
@@ -309,7 +320,7 @@ describe('shared Usage identity and dependent coverage', () => {
         const slice = (sources: readonly { source: string; status: string }[]) =>
             ({ sources }) as unknown as Parameters<typeof describeUsagePageFailedSources>[0][number];
         expect(describeUsagePageFailedSources([slice([{ source: 'work', status: 'error' }]), slice([{ source: 'work', status: 'error' }])]))
-            .toBe(t('usage.board.page.coverageFailed', { sources: usageSourceTitle('work') }));
+            .toBe(t('usage.board.page.workNotRead'));
         expect(describeUsagePageFailedSources([slice([{ source: 'comparison', status: 'error' }])])).toBeNull();
         expect(describeUsagePageFailedSources([slice([{ source: 'work', status: 'pending' }])])).toBeNull();
     });

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -107,6 +108,17 @@ describe('the Usage popover header', () => {
 });
 
 describe('SidebarUsagePopoverContent', () => {
+    it('folds several accounts with nothing to show into one line after the accounts that answer', async () => {
+        state.summaries = [summary('claude:a', null, 73, 'kevin@gmail.com')];
+        state.withoutUsage = ['c', 'd', 'e'].map(id => ({
+            key: `claude:${id}`, serviceLabel: 'Anthropic Claude', legacyServiceId: null,
+            serviceGroupKey: 'plugin.anthropic/claude', accountLabel: `Key ${id}`, accountEmail: null, accountId: id, state: 'unavailable' as const,
+        }));
+        const screen = await renderContent();
+        expect(screen.findByTestId('usage-popover-unavailable-accounts')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('sidebarFooter.usageUnavailableAccounts(count=3)');
+        expect(screen.getTextContent()).not.toContain('common.unavailable');
+    });
     it('shows every account with what is left in each window, and an account with nothing to show', async () => {
         state.summaries = [summary('claude:a', null, 73, 'kevin@gmail.com'), summary('claude:b', 'Work', 40)];
         state.withoutUsage = [{
@@ -192,10 +204,15 @@ describe('SidebarUsagePopoverContent', () => {
         const screen = await renderContent();
 
         expect(screen.getTextContent()).toContain('sidebarFooter.usageKeysWithoutLimits(count=1)');
-        await screen.pressByTestIdAsync('sidebar-usage-sign-in-again-codex:w');
-        expect(modalBoundary.show).toHaveBeenCalledWith(expect.objectContaining({ props: {
-            initialTarget: { kind: 'reconnect', serviceKey: 'happier.agent.codex/openai-codex', accountId: 'w' },
-        } }));
+        const trigger = { getBoundingClientRect: () => ({ left: 30, top: 40, width: 24, height: 24 }) };
+        await act(async () => { screen.findByTestId('sidebar-usage-sign-in-again-codex:w')!.props.onPress({ currentTarget: trigger }); });
+        expect(modalBoundary.show).toHaveBeenCalledWith(expect.objectContaining({ props: expect.objectContaining({ request: {
+            scope: null,
+            intent: 'reconnect',
+            service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+            account: state.needingSignIn[0].ref,
+            anchor: { kind: 'view', ref: { current: trigger } },
+        } }) }));
     });
 
     it('names every account by a name, its email or its service, never a raw id, and says an email once', async () => {

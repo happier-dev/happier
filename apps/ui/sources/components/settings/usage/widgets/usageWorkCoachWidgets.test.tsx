@@ -30,6 +30,7 @@ import {
 } from '@happier-dev/protocol/usage/coach/evaluateUsageCoach';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { UsageProjectLedgerWidget } from './UsageProjectLedgerWidget';
 import { UsageSessionValueWidget } from './UsageSessionValueWidget';
@@ -292,7 +293,7 @@ describe('Work and Coach widget bodies', () => {
     expect(first.length).toBeGreaterThan(t('session.untitled').length);
     await hook.unmount();
   });
-  it('keeps a shared Project name whole and tells twins apart by the machine they ran on', async () => {
+  it('keeps Project names whole and includes where each ran', async () => {
     const rows: UsageWorkContribution[] = [
       { ...contribution('t1', 'twin-1', 't1'), projectKey: 'tmp-a', machineId: 'machine-a' },
       { ...contribution('t2', 'twin-2', 't1'), projectKey: 'tmp-b', machineId: 'machine-b' },
@@ -302,11 +303,14 @@ describe('Work and Coach widget bodies', () => {
     const project = (key: string, label: string) => ({ ...slice.accounting!.breakdowns!.project![0]!, key, label });
     const accounting = { ...slice.accounting!, breakdowns: { project: [project('tmp-a', 'tmp'), project('tmp-b', 'tmp'), project('lone-key', 'solo')] } };
     const hook = await renderHook(() => useUsageWork({ ...slice, work: projection, accounting }, query, 'home'));
-    const { projectLabel, projectPlace } = hook.getCurrent();
+    const { projectLabel, projectPlace, summary } = hook.getCurrent();
+    expect(summary?.projects.map(row => [row.projectKey, row.amount])).toEqual([
+      ['tmp-a', 3], ['tmp-b', 3], ['lone-key', 3],
+    ]);
     expect([projectLabel('tmp-a'), projectLabel('tmp-b'), projectLabel('lone-key')]).toEqual(['tmp', 'tmp', 'solo']);
     expect(projectPlace('tmp-a')).not.toBe('');
     expect(projectPlace('tmp-a')).not.toBe(projectPlace('tmp-b'));
-    expect(projectPlace('lone-key')).toBe('');
+    expect(projectPlace('lone-key')).not.toBe('');
     await hook.unmount();
   });
   it('keeps an unanswered All Coach evaluation pending instead of claiming there are no findings', async () => {
@@ -360,7 +364,13 @@ describe('Work and Coach widget bodies', () => {
     expect(metric('sessions')).toBe(5);
     expect(screen.findHostByTestId('coverage-coach.summary.sessions')?.props.accessibilityLabel)
       .toContain(`${t('usage.board.coach.summarySessions')}: 5`);
-    await screen.update(<UsageCoachWidget {...props} slice={slice} id="usage_coach" testID="coverage-coach" />);
+    const periodOnly = { ...slice, accounting: UsageAnalyticsQueryResponseSchema.parse({ ...slice.accounting,
+      breakdowns: { ...slice.accounting!.breakdowns, session: ['s1', 's2'].map(key => ({ ...slice.accounting!.breakdowns!.project![0]!, key })) } }) };
+    await screen.update(<UsageCoachWidget {...props} slice={periodOnly} id="usage_coach" testID="coverage-coach" />);
+    expect(metric('sessions')).toBe(2);
+    expect(screen.findHostByTestId('coverage-coach.summary.sessions')?.props.accessibilityLabel)
+      .toContain(`${t('usage.board.coach.summarySessions')}: 2`);
+    await screen.update(<UsageCoachWidget {...props} slice={{ ...slice, accounting: undefined }} id="usage_coach" testID="coverage-coach" />);
     expect(metric('sessions')).toBe('—');
     expect(screen.findHostByTestId('coverage-coach.summary.sessions')?.props.accessibilityLabel)
       .toContain(`${t('usage.board.coach.summarySessions')}: —`);
@@ -799,7 +809,7 @@ describe('Work and Coach widget bodies', () => {
     const unpricedRow = screen.findByTestId('value.open.unpriced');
     const freeRow = screen.findByTestId('value.open.free');
     expect(unpricedRow).toBeTruthy();
-    expect(screen.getTextContent()).toContain('without a price');
+    expect(screen.getTextContent()).toContain(t('usage.board.recap.money_unpriced'));
     expect(screen.getTextContent()).toContain('$0.00');
     expect(freeRow).toBeTruthy();
   });

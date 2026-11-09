@@ -69,7 +69,8 @@ export function UsageFilterBar(
         const label = (key: string) => options.find(option => option.id === key)?.label ?? key;
         const value =
           selected.length === 0
-            ? t('usage.board.page.filterAll')
+            // The bare count reads as "everything" and keeps the row on one line at 1440 (R133 fix 7).
+            ? (options.length > 1 ? '' : t('usage.board.page.filterAll'))
             : selected.length <= 2
               ? selected.map(label).join(', ')
               : t('usage.board.page.filterCount', { count: selected.length });
@@ -196,7 +197,8 @@ export function UsageFilterBar(
           />
         </View>
       ) : null}
-      {costFilter ? <SelectionListFilterChip filter={costFilter} currentUiContextCommandScope={costFilter.testID} /> : null}
+      {/* The basis only changes money: with Tokens shown it says nothing, so the row keeps its one line (R133 fix 7). */}
+      {costFilter && props.metric !== 'tokens' ? <SelectionListFilterChip filter={costFilter} currentUiContextCommandScope={costFilter.testID} /> : null}
     </>
   );
   const period = (
@@ -230,7 +232,7 @@ export function UsageFilterBar(
   return (
     <View testID={props.testID} style={styles.bar}>
       {period}
-      <View style={styles.rule} />
+      {props.scopeFilters.length > 0 ? <View style={styles.rule} /> : null}
       <View style={styles.chips}>{chips}</View>
       <View style={styles.grow} />
       {/* What the widgets show and in which money stay together on the trailing edge, even when the bar wraps. */}

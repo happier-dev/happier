@@ -7,7 +7,7 @@ import {
   UsageDailyChart,
   type HappierSeries,
 } from '@happier-dev/plugin-ui/presentation';
-import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { useWidgetFrameBodyCaption, WidgetFrameCellHeightContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { getAgentIdentityColor } from '@/agents/catalog/catalog';
 import { t } from '@/text';
@@ -52,11 +52,13 @@ function dailyShowsPeak(phone: boolean, compact: boolean): boolean {
  * leaves its own space empty. The plot's floor leaves the peak figure's room inside the 120 px a plot keeps, so a
  * Medium card still holds the legend and the coverage note.
  */
-export function resolveUsageDailyChartShape(presentation: ReturnType<typeof useWidgetPresentation>, phone: boolean): Readonly<{ kind: 'chart'; plotPx: number; peak: boolean }> {
+export function resolveUsageDailyChartShape(presentation: ReturnType<typeof useWidgetPresentation>, phone: boolean, stretchPx = 0): Readonly<{ kind: 'chart'; plotPx: number; peak: boolean }> {
   if (presentation?.size === 'small' || presentation?.size === 'wide')
     return { kind: 'chart', plotPx: Math.max(1, (presentation.geometry?.height ?? 96) - USAGE_CHART_FRAME_PX.chrome / 2), peak: false };
   const peak = dailyShowsPeak(phone, false);
-  return { kind: 'chart', peak, plotPx: resolveUsageChartPlotPx(presentation?.geometry, phone ? 140 : 120 - USAGE_CHART_FRAME_PX.peak, { peak }) };
+  const plotPx = resolveUsageChartPlotPx(presentation?.geometry, phone ? 140 : 120 - USAGE_CHART_FRAME_PX.peak, { peak });
+  // Beside a longer partner the frame is stretched; the bars take that room instead of leaving it dead (R133 fix 9).
+  return { kind: 'chart', peak, plotPx: phone ? plotPx : plotPx + stretchPx };
 }
 
 /**
@@ -223,7 +225,17 @@ export function UsageDailyWidget(props: UsageBodyProps) {
   const caption = byAgent ? `${metric === 'cost' ? t('usage.cost') : t('usage.tokens')} ${t('usage.board.page.byAgent')} · ${usagePeriodPhrase(props.query)}` : measure;
   const details = useUsageChartDetails(t(`usage.widgets.${props.id}`), Boolean(view && count > 0));
   const compact = presentation?.size === 'small' || presentation?.size === 'wide';
-  const shape = resolveUsageDailyChartShape(presentation, phone);
+  // What the frame's cell has beyond the body's own box goes to the plot. Measured as a difference, so it settles at
+  // zero once filled and never feeds back; a partner that later shrinks leaves the chart tall until the next mount.
+  const cellHeight = React.useContext(WidgetFrameCellHeightContext);
+  const bodyHeight = presentation?.geometry?.height;
+  const [stretchPx, setStretchPx] = React.useState(0);
+  React.useEffect(() => {
+    if (phone || compact || cellHeight === undefined || bodyHeight === undefined) return;
+    const unused = cellHeight - bodyHeight;
+    if (Math.abs(unused) > 1) setStretchPx(current => Math.max(0, current + unused));
+  }, [phone, compact, cellHeight, bodyHeight]);
+  const shape = resolveUsageDailyChartShape(presentation, phone, compact ? 0 : stretchPx);
   const height = shape.plotPx;
   if (!view || count === 0)
     // Until the first read answers, the body holds the settled chart's shape (its plot, axis and legend room).

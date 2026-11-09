@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createWidgetSurfaceArtifactPortV1,
     flattenWidgetLayoutWidgetsV1, resolveConfiguredWidgetInputs, readBuiltinWidgetDescriptorV1,
     WidgetAreaPresetV1Schema, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
-import { createUsageWidgetPresets, USAGE_WIDGET_PRESET_IDS } from './usageWidgetPresets';
+import { createUsageSessionWidgetPresets, createUsageWidgetPresets, USAGE_WIDGET_PRESET_IDS } from './usageWidgetPresets';
 import { buildWidgetCandidateSetup } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { selectBuiltinWidgetCandidates } from '@/components/widgets/widgetCatalog';
 import { resolveWidgetGroupCells } from '@happier-dev/plugin-ui/components';
@@ -26,6 +26,12 @@ describe('Usage host fragment presets', () => {
             expect(row.instance.bindings.period).toEqual({ kind: 'context', slot: 'period' });
             expect(row.instance.bindings.metric).toBeUndefined();
         }
+    });
+    it('gives one Session its own view: the autopsy and what shaped it, nothing about the Account', () => {
+        const presets = createUsageSessionWidgetPresets('Session').map(preset => WidgetAreaPresetV1Schema.parse(preset));
+        expect(presets.map(preset => preset.id)).toEqual(['session']);
+        const widgets = flattenWidgetLayoutWidgetsV1(presets[0]!.items).map(row => row.instance.definition);
+        expect(widgets).toEqual([{ kind: 'builtin', id: 'usage_session_value' }, { kind: 'builtin', id: 'usage_breakdowns' }, { kind: 'builtin', id: 'usage_efficiency' }]);
     });
     it('initializes legacy Overview presentation without overwriting other host presets', () => {
         const presets = createUsageWidgetPresets(names, { initialMetric: 'cost' }).map(preset => WidgetAreaPresetV1Schema.parse(preset));

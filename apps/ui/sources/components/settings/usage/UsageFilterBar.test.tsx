@@ -130,7 +130,7 @@ describe('UsageFilterBar', () => {
   it('holds the cost basis chip and each unanswered count slot while the usage read is outstanding', async () => {
     Object.assign(viewport, { width: 1280, height: 900 });
     vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: 0 });
-    const pending = await renderBar([], { costBasisPending: true });
+    const pending = await renderBar([], { costBasisPending: true, metric: null });
     const chips = pending.findAllByType(SelectionListFilterChip).map((chip) => chip.props.filter);
     // The basis in force is the chip's only known choice; the scope chips hold their count slot until it is known.
     expect(chips.find((chip) => chip.id === 'costBasis')?.options.map((option: { id: string }) => option.id)).toEqual(['auto']);
