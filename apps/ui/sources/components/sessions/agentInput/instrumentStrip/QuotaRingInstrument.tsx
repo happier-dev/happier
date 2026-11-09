@@ -48,7 +48,7 @@ export const QuotaRingInstrument = React.memo(function QuotaRingInstrument(props
     const anchorRef = React.useRef(null);
     const hitReach = useInstrumentStripHitReach();
     // Resting the pointer on the ring previews the popover (web); a press pins it (the shared hover owner).
-    const { mode, toggle, close, hoverProps } = useHoverPreviewPopover({ enabled: Platform.OS === 'web' });
+    const { mode, toggle, close, hoverProps, popoverLayer } = useHoverPreviewPopover({ enabled: Platform.OS === 'web' });
 
     const { viewModel } = props;
     // Each globally selected window reports the percentage left.
@@ -130,6 +130,7 @@ export const QuotaRingInstrument = React.memo(function QuotaRingInstrument(props
                 open={mode !== 'closed'}
                 autoFocusOnOpen={mode === 'open'}
                 hoverProps={hoverProps}
+                layer={popoverLayer}
                 anchorRef={anchorRef}
                 onRequestClose={close}
                 maxWidthCap={RAIL_POPOVER_WIDE_WIDTH_PX}

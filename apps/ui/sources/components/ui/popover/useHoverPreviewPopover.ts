@@ -178,5 +178,7 @@ export function useHoverPreviewPopover<T = true>(params: Readonly<{
         [enabled, enterPanel, leave],
     );
     const hoverProps = React.useMemo(() => triggerHoverProps(true as T), [triggerHoverProps]);
-    return { mode: state.mode, target: state.target, open, close, toggle, hoverProps, triggerHoverProps, panelHoverProps };
+    // A preview stacks as a hover card, under every popover or menu someone opened; opened on purpose it is a popover.
+    const popoverLayer = state.mode === 'preview' ? 'hoverCard' as const : undefined;
+    return { mode: state.mode, target: state.target, open, close, toggle, hoverProps, triggerHoverProps, panelHoverProps, popoverLayer };
 }

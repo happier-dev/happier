@@ -65,6 +65,7 @@ export function CollectionRequestPeek(
     close: closeHover,
     hoverProps,
     panelHoverProps,
+    popoverLayer,
   } = useHoverPreviewPopover({ enabled: Platform.OS === 'web' && presented });
   const anchorRef = React.useRef<View>(null);
   const focusReturnRef = React.useRef<FocusReturnTarget>(null);
@@ -140,6 +141,7 @@ export function CollectionRequestPeek(
           anchorRef={anchorRef}
           focusReturnRef={focusReturnRef}
           autoFocusOnOpen={hoverMode !== 'preview'}
+          layer={popoverLayer}
           // Beside the row, from its trailing slot (lab `clicon` peek): the peek opens into the pane next to
           // the list, top-aligned with its row, so it never lies over the rows and group labels above it.
           placement="right"

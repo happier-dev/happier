@@ -112,6 +112,50 @@ describe('Popover web portal interaction readiness', () => {
         }
     });
 
+    it('keeps an opened menu above a hover card that opened after it, so the menu row takes the pointer', async () => {
+        const { Popover } = await import('./Popover');
+        const menuTrigger = document.createElement('button');
+        const hoverTrigger = document.createElement('button');
+        const container = document.createElement('div');
+        document.body.append(menuTrigger, hoverTrigger, container);
+        const root = createRoot(container);
+        const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rect(100, 100, 180, 40));
+        // The outermost stacking of an element: body-level portals at equal z stack by DOM order, the later on top.
+        const stacking = (element: Element) => {
+            let z = 0;
+            for (let node: Element | null = element; node && node !== document.body; node = node.parentElement) {
+                const value = Number((node as HTMLElement).style?.zIndex);
+                if (Number.isFinite(value) && value !== 0) z = value;
+            }
+            const portalRoot = [...document.body.children].find((child) => child.contains(element))!;
+            return { z, order: [...document.body.children].indexOf(portalRoot) };
+        };
+        const above = (a: Element, b: Element) => {
+            const x = stacking(a), y = stacking(b);
+            return x.z !== y.z ? x.z > y.z : x.order > y.order;
+        };
+        const render = (hoverOpen: boolean) => <>
+            <Popover open anchorRef={{ current: menuTrigger }} backdrop={false} portal={{ web: true }}>
+                {() => <button data-testid="menu-row">PRs & Issues</button>}
+            </Popover>
+            {/* The Usage gauge's hover card, opened by a resting pointer while the More menu is open. */}
+            {hoverOpen ? <Popover open anchorRef={{ current: hoverTrigger }} backdrop={false} portal={{ web: true }} layer="hoverCard">
+                {() => <div data-testid="hover-card">Usage</div>}
+            </Popover> : null}
+        </>;
+        try {
+            await act(async () => { root.render(render(false)); });
+            await act(async () => { root.render(render(true)); });
+            const row = document.querySelector('[data-testid="menu-row"]')!;
+            const card = document.querySelector('[data-testid="hover-card"]')!;
+            expect(above(row, card)).toBe(true);
+        } finally {
+            await act(async () => root.unmount());
+            measure.mockRestore();
+            container.remove(); menuTrigger.remove(); hoverTrigger.remove();
+        }
+    });
+
     it('moves focus in when a press takes over an open hover preview, and not before', async () => {
         const { Popover } = await import('./Popover');
         const trigger = document.createElement('button');

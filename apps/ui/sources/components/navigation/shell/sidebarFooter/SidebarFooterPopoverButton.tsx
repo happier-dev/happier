@@ -75,7 +75,7 @@ export function SidebarFooterPopoverButton(props: Readonly<{
     const hoverPreview = props.hoverPreview === true && Platform.OS === 'web';
     // The control a press came from: Escape returns focus there (the anchor view is not focusable).
     const focusReturnRef = React.useRef<FocusReturnTarget>(null);
-    const { mode, toggle, close, open, hoverProps } = useHoverPreviewPopover({ enabled: hoverPreview });
+    const { mode, toggle, close, open, hoverProps, popoverLayer } = useHoverPreviewPopover({ enabled: hoverPreview });
     const { registerOpener } = props;
     const intents = React.useRef({ open: props.onOpenIntent });
     intents.current = { open: props.onOpenIntent };
@@ -120,6 +120,7 @@ export function SidebarFooterPopoverButton(props: Readonly<{
                     anchorRef={anchorRef}
                     focusReturnRef={focusReturnRef}
                     autoFocusOnOpen={mode === 'open'}
+                    layer={popoverLayer}
                     placement={props.placement ?? 'top'}
                     gap={8}
                     edgePadding={{ horizontal: 8, vertical: 8 }}

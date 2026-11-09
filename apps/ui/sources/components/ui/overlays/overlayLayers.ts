@@ -1,5 +1,10 @@
 /** Body-level floating surfaces share one ordering; nested portals remain inside their parent layer. */
 export const POPOVER_Z_INDEX = 200000;
+/**
+ * A hover card (a preview the resting pointer opened) stacks under every popover or menu someone opened,
+ * whichever mounted last: its content (`+1`) stays below an opened popover's backdrop (`POPOVER_Z_INDEX`).
+ */
+export const HOVER_CARD_Z_INDEX = POPOVER_Z_INDEX - 2;
 export const MODAL_Z_INDEX_STEP = 10;
 export const MODAL_Z_INDEX = POPOVER_Z_INDEX + MODAL_Z_INDEX_STEP;
 export const SCREEN_OVERLAY_Z_INDEX = 90000;

@@ -78,6 +78,8 @@ export function ComposerChipHoverCard(
     <Popover
       open
       anchor={{ kind: 'view', ref: anchorRef }}
+      // A chip's card answers the resting pointer: it stacks under every popover or menu someone opened.
+      layer="hoverCard"
       backdrop={false}
       boundaryRef={null}
       placement="top"

@@ -489,7 +489,7 @@ function MachineTargetChipList(props: Readonly<{
     // Administration owns admission, including last-known draft choices, and keeps its canonical
     // order instead of applying launch-only presence reprioritization while the list is open.
     return (
-        <View style={MACHINE_CHIP_LIST_STYLE}>
+        <View style={resolveMachineChipListStyle()}>
         <NewSessionMachineSelectionContent<MachineAdministrationPickerMachine>
             groups={props.groups}
             selectedMachine={selectedMachine}
@@ -514,4 +514,10 @@ function MachineTargetChipList(props: Readonly<{
     );
 }
 
-const MACHINE_CHIP_LIST_STYLE = { width: CONTENT_SIZED_POPOVER_WIDTH.maxPx, maxWidth: '100%' } as const;
+// Read on first render, not at module load: this module sits in import cycles that reach the popover
+// module, and a top-level read there fails while that module is still initializing.
+let machineChipListStyle: Readonly<{ width: number; maxWidth: '100%' }> | null = null;
+function resolveMachineChipListStyle() {
+    machineChipListStyle ??= { width: CONTENT_SIZED_POPOVER_WIDTH.maxPx, maxWidth: '100%' };
+    return machineChipListStyle;
+}

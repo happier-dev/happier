@@ -10,6 +10,8 @@ import { useAgentInputPopoverLayout } from './useAgentInputPopoverLayout';
 export type AgentInputSelectionPopoverProps = Readonly<{
     open: boolean;
     autoFocusOnOpen?: boolean;
+    /** A hover preview's stacking, under every popover someone opened (`Popover`'s `layer`). */
+    layer?: 'hoverCard';
     anchorRef: React.RefObject<any>;
     boundaryRef?: React.RefObject<any> | null;
     onRequestClose: () => void;
@@ -75,6 +77,7 @@ function OpenAgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) 
             open={props.open}
             // A submenu takes focus as it opens, like the shared dropdown's, so Left and Escape work from inside it.
             autoFocusOnOpen={props.autoFocusOnOpen ?? (submenu ? true : undefined)}
+            layer={props.layer}
             anchorRef={props.anchorRef}
             // IMPORTANT:
             // Forward `undefined` so Popover can fall back to PopoverBoundaryProvider context.

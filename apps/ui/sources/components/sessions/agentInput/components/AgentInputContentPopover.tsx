@@ -63,6 +63,8 @@ export type AgentInputContentPopoverProps = Readonly<{
     autoFocusOnOpen?: boolean;
     /** A hover preview's panel handlers (`useHoverPreviewPopover`), spread on the whole surface. */
     hoverProps?: HoverPreviewHandlers | null;
+    /** The hover preview's stacking (`useHoverPreviewPopover`'s `popoverLayer`). */
+    layer?: 'hoverCard';
     anchorRef: React.RefObject<any>;
     boundaryRef?: React.RefObject<any> | null;
     content: AgentInputPopoverContent;
@@ -113,6 +115,7 @@ export function AgentInputContentPopover(props: AgentInputContentPopoverProps) {
         <AgentInputSelectionPopover
             open={props.open}
             autoFocusOnOpen={props.autoFocusOnOpen}
+            layer={props.layer}
             anchorRef={props.anchorRef}
             boundaryRef={props.boundaryRef}
             maxHeightCap={props.maxHeightCap ?? 420}

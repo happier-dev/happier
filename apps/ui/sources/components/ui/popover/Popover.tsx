@@ -40,7 +40,7 @@ import { getFallbackBoundaryRect, measureInWindow, measureLayoutRelativeTo } fro
 import { useWebPopoverContentMeasure } from './useWebPopoverContentMeasure';
 import { resolvePortalRelativeAnchorRect } from './resolvePortalRelativeAnchor';
 import { PopoverBackdrop } from './backdrop';
-import { POPOVER_PORTAL_Z_INDEX, tryRenderWebPortal, useNativeOverlayPortalNode } from './portal';
+import { HOVER_CARD_PORTAL_Z_INDEX, POPOVER_PORTAL_Z_INDEX, tryRenderWebPortal, useNativeOverlayPortalNode } from './portal';
 import { ESCAPE_LAYER_PRIORITIES, EscapeLayerProvider, useEscapeLayer } from '@/keyboard/escape';
 import {
     readDocumentFocusReturnTarget,
@@ -203,6 +203,11 @@ type PopoverCommonProps = Readonly<{
     accessibilityLabel?: string;
     /** Move focus into the popover after it opens when the content is menu-like. */
     autoFocusOnOpen?: boolean;
+    /**
+     * `hoverCard`: a preview the resting pointer opened (`useHoverPreviewPopover`'s `popoverLayer`). It stacks
+     * under every popover or menu someone opened, whichever mounted last, so it never covers their rows.
+     */
+    layer?: 'hoverCard';
     anchorRef?: React.RefObject<any>;
     anchor?: PopoverAnchor;
     focusReturnRef?: React.RefObject<any>;
@@ -1920,9 +1925,10 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
 
     // Body-level floating surfaces sit below dialogs, except one opened from inside a dialog, which
     // stacks just above that dialog's layer; modal-local portals inherit their layer.
+    const layerZ = props.layer === 'hoverCard' ? HOVER_CARD_PORTAL_Z_INDEX : POPOVER_PORTAL_Z_INDEX;
     const portalZ = portalTargetOnWeb === 'body' && modalLayerZIndex !== null
-        ? Math.max(POPOVER_PORTAL_Z_INDEX, modalLayerZIndex + 1)
-        : POPOVER_PORTAL_Z_INDEX;
+        ? Math.max(layerZ, modalLayerZIndex + 1)
+        : layerZ;
 
     const backdropEnabled =
         typeof backdrop === 'boolean'

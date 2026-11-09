@@ -3,9 +3,10 @@ import { Platform } from 'react-native';
 
 import { requireReactDOM } from '@/utils/web/reactDomCjs';
 import { areReactNodesStructurallyEqual } from '@/utils/react/areReactNodesStructurallyEqual';
-import { POPOVER_Z_INDEX } from '@/components/ui/overlays/overlayLayers';
+import { HOVER_CARD_Z_INDEX, POPOVER_Z_INDEX } from '@/components/ui/overlays/overlayLayers';
 
 export const POPOVER_PORTAL_Z_INDEX = POPOVER_Z_INDEX;
+export const HOVER_CARD_PORTAL_Z_INDEX = HOVER_CARD_Z_INDEX;
 
 type OverlayPortalDispatch = Readonly<{
     setPortalNode: (id: string, node: React.ReactNode) => void;
