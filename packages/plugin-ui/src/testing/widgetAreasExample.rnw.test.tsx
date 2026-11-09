@@ -1,3 +1,4 @@
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import { act, createElement } from 'react';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -63,7 +64,7 @@ it('mounts the registered page area, changes followed context and reloads config
           && field.inputType.pluginId === widgetAreasPlugin.manifest.id && field.inputType.localId === inputType.id
           ? { identity: field.inputType, occurrenceId: 'widget-areas-count-kind', definition: inputType } : null,
         resolveOptions: async () => {
-          const bytes = await optionsResource.read({ context: { kind: 'global' }, signal: new AbortController().signal });
+          const bytes = await optionsResource.read(createTestResourceInvocationContext({ context: { kind: 'global' }, signal: new AbortController().signal }));
           const options: unknown = JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes));
           if (!Array.isArray(options)) throw new Error('Invalid count options Resource');
           return options.map(option => InputOptionSchema.parse(option));
@@ -133,8 +134,8 @@ it('mounts the registered page area, changes followed context and reloads config
         const launchInput = input.result.input;
         const readResource = async ({ resource: ref }: Readonly<{ resource: unknown }>) => {
           expect(ref).toEqual({ pluginId: widgetAreasPlugin.manifest.id, localId: 'count' });
-          const bytes = await resource.read({ context: { kind: 'surface', mountInstanceKey: id,
-            launchInput }, signal: new AbortController().signal });
+          const bytes = await resource.read(createTestResourceInvocationContext({ context: { kind: 'surface', mountInstanceKey: id,
+            launchInput }, signal: new AbortController().signal }));
           return { contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`,
             bytes: typeof bytes === 'string' ? new TextEncoder().encode(bytes) : bytes };
         };

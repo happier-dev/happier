@@ -75,6 +75,12 @@ export type HappierScrollAreaProps = Readonly<{
 const screenBaseStyle: ViewStyle = { flex: 1, minWidth: 0 };
 const stackBaseStyle: ViewStyle = { minWidth: 0 };
 const stackGrowStyle: ViewStyle = { flex: 1, minWidth: 0 };
+/**
+ * A wrapping stack takes more lines rather than running past its container: it is never wider than the line it
+ * sits on and gives way to its siblings, so a wrapping group nested in a row (an action row's source controls, a
+ * pinned footer on a phone) wraps inside itself instead of keeping its one-line width past the pane's edge.
+ */
+const stackWrapStyle: ViewStyle = { flexShrink: 1, maxWidth: '100%' };
 
 export function HappierScreen({ children, controlRef, onLayout, testID, style, safeAreaInsets }: HappierScreenProps) {
   const insetStyle: ViewStyle | undefined = safeAreaInsets
@@ -146,6 +152,7 @@ export function HappierStack({
       style={[
         stackBaseStyle,
         grow ? stackGrowStyle : undefined,
+        wrap ? stackWrapStyle : undefined,
         {
           flexDirection: direction === 'horizontal' ? 'row' : 'column',
           gap,
@@ -156,10 +163,10 @@ export function HappierStack({
         style,
       ]}
     >
-      {/* A stretching column keeps its blocks full width and its labelled controls (buttons) their own width,
-          on its leading edge. A row, or a column the caller aligns, places them as it places everything else. */}
-      {direction === 'horizontal' || (align !== undefined && align !== 'stretch') ? children
-        : placeInlineControls(children)}
+      {/* A column left to its default keeps its blocks full width and its labelled controls (buttons) their own
+          width, on its leading edge. A row, or a column the caller aligns (`align="stretch"` to fill a phone's
+          action column), places them as it places everything else. */}
+      {direction === 'horizontal' || align !== undefined ? children : placeInlineControls(children)}
     </View>
   );
 }

@@ -11,6 +11,7 @@ import {
 import { Platform, View, type PointerEvent as NativePointerEvent, type ViewStyle } from 'react-native';
 
 import { useOptionalHappierUiTheme } from '../../environment/context.js';
+import { useHappierTouchPrimaryPointer } from '../../environment/interactiveTarget.js';
 import { useOptionalPluginUiPresentationHost } from '../../presentationHost/context.js';
 import type { HappierPortableStyle } from '../portableTypes.js';
 import {
@@ -199,18 +200,6 @@ export function resolveFloatingFrameSettleTransition(
   };
 }
 
-/** The primary pointer cannot hover (a phone or tablet browser): nothing can reveal on hover. */
-function primaryPointerCannotHover(): boolean {
-  if (Platform.OS !== 'web') return true;
-  const match = (globalThis as { matchMedia?: (query: string) => { matches: boolean } }).matchMedia;
-  if (typeof match !== 'function') return false;
-  try {
-    return match('(hover: none)').matches === true;
-  } catch {
-    return false;
-  }
-}
-
 const NO_DRAG_SELECTOR =
   '[data-happier-floating-frame-no-drag="true"], [role="button"], [role="tab"], button, a, input, textarea';
 const HANDLE_SELECTOR = '[data-happier-floating-frame-handle="true"]';
@@ -305,7 +294,8 @@ export function FloatingFrame(props: FloatingFrameProps) {
   const [hovered, setHovered] = useState(false);
   // A finger never hovers: once one reaches the frame, or when the primary pointer cannot hover at
   // all, the controls stay shown instead of waiting for a reveal that cannot come.
-  const [touchPointer, setTouchPointer] = useState(primaryPointerCannotHover);
+  const touchPrimaryPointer = useHappierTouchPrimaryPointer(Platform.OS);
+  const [touchPointer, setTouchPointer] = useState(false);
   const environmentTheme = useOptionalHappierUiTheme();
   const [focused, setFocused] = useState(false);
   // The body's ring marks keyboard focus on the frame itself (arrow keys move it). A focused control
@@ -525,6 +515,7 @@ export function FloatingFrame(props: FloatingFrameProps) {
 
   const controlsShown =
     props.controlsAlwaysVisible === true ||
+    touchPrimaryPointer ||
     touchPointer ||
     !floating ||
     hovered ||

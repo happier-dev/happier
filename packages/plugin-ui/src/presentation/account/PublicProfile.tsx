@@ -1,16 +1,20 @@
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 import type { PublicProfileDisplayView } from '../../components/publicProfileTypes.js';
 
 import { useHappierUiTheme } from '../../environment/context.js';
+import { HAPPIER_SPACE_STEPS } from '../../environment/spacing.js';
 import type { InertDeclarativeLabels } from '../../declarative/inertDeclarativeView.js';
 import type { HappierUiTheme } from '../../environment/types.js';
 import { HappierText } from '../text/Text.js';
-import { HappierInfoState, HappierInfoTile } from '../state/InfoState.js';
-import { HAPPIER_PAGE_METRICS, HAPPIER_PUBLIC_PROFILE_HERO_METRICS } from '../layout/pageMetrics.js';
+import { HAPPIER_STATE_SIZE_METRICS } from '../state/InfoState.js';
+import { resolveHappierButtonChrome, useHappierButtonMaterial } from '../interaction/buttonChrome.js';
+import { HAPPIER_PAGE_METRICS, HAPPIER_PUBLIC_PROFILE_HERO_METRICS, HAPPIER_PUBLIC_PROFILE_OWNER_METRICS } from '../layout/pageMetrics.js';
 export { HAPPIER_PUBLIC_PROFILE_HERO_METRICS, resolveHappierPublicProfilePlanetBand } from '../layout/pageMetrics.js';
 import { HAPPIER_WIDGET_FRAME_METRICS, HappierWidgetFrame, resolveHappierWidgetFrameInsetPx } from '../layout/WidgetFrame.js';
 import { PublicProfileUsageBody, type HappierPublicProfileUsageHost } from './PublicProfileUsage.js';
+import type { PublicUsageMetricId } from './PublicProfileUsageOriginal.js';
+import type { UsagePlanetSlot } from '../usage/charts/usagePlanetSlot.js';
 import type { PublicUsageChartModels } from '../usage/charts/publicUsageChartModels.js';
 import type { UsageRecordsModel } from '../usage/charts/UsageWorkCharts.js';
 export type { HappierPublicProfileUsageHost, HappierPublicProfileUsageLabels } from './PublicProfileUsage.js';
@@ -83,6 +87,8 @@ export type PublishedPublicProfileProps = Readonly<{
   renderAvatar?: () => ReactNode;
   /** Paint, localization and identity marks for the shared Usage bodies. */
   usage?: HappierPublicProfileUsageHost;
+  /** A visitor's brand bar, laid over the band. */
+  brand?: HappierPublicProfileBrand;
   /** One column: a phone host or a narrow window. Wider pages still wrap a pair that cannot fit. */
   singleColumn?: boolean;
   /**
@@ -108,14 +114,36 @@ export type HappierPublicProfileOwner = Readonly<{
    * "Share hours of the week"). Consent stays with the host's one policy owner.
    */
   renderHiddenNote?: (blockId: string) => ReactNode;
+  /**
+   * Each Totals figure's own eye (lab `ppcomp-E`), at the figure's top end; figures visitors don't see stay in
+   * place, quieted. One control per figure, never one for the block. Consent stays with the host's policy owner.
+   */
+  renderFigureControl?: (figure: PublicUsageMetricId) => ReactNode;
+  hiddenFigures?: ReadonlySet<PublicUsageMetricId>;
 }>;
 
-export type HappierPublicProfileProps = PublishedPublicProfileProps | Readonly<{
+export type WithdrawnPublicProfileProps = Readonly<{
   /** Withdrawal states have no fabricated snapshot, period, coverage or applied blocks. */
-  result: Readonly<{ kind: 'paused'; handle: string; identity: Readonly<{ name?: string }> }> | Readonly<{ kind: 'unavailable' }>;
-  labels: Readonly<{ paused: string; unavailable: string }>;
+  result: Readonly<{ kind: 'paused'; handle: string; identity: Readonly<{ name?: string; avatar?: Readonly<{ kind: 'planet' }> }> }>
+    | Readonly<{ kind: 'unavailable' }>;
+  labels: Readonly<{
+    /** "Leeroy paused this profile" / "No public profile here". */
+    title: string;
+    /** The one line under it: when the numbers come back, or what profiles are. */
+    body: string;
+    /** Paused only: "@leeroy · Happier Cloud" under the name the owner shares. */
+    identityLine?: string;
+  }>;
+  brand?: HappierPublicProfileBrand;
+  /** The quiet horizon, painted by the host at the given geometry (lab `ppstate-X`: a small rise, or an eclipse). */
+  renderHero?: (geometry: HappierPublicProfileHeroGeometry) => ReactNode;
+  /** The host's Brand planet, for a paused identity's shared planet fallback. */
+  renderPlanet?: UsagePlanetSlot;
+  singleColumn?: boolean;
   testID?: string;
 }>;
+
+export type HappierPublicProfileProps = PublishedPublicProfileProps | WithdrawnPublicProfileProps;
 
 /**
  * The public profile page: header, one period line and the owner's placed blocks below it. One
@@ -124,19 +152,94 @@ export type HappierPublicProfileProps = PublishedPublicProfileProps | Readonly<{
  * from `view`, never filtered here.
  */
 export function HappierPublicProfile(props: HappierPublicProfileProps) {
-  if ('result' in props) {
-    const paused = props.result.kind === 'paused' ? props.result : null;
-    return <View testID={props.testID ?? 'public-profile'} style={styles.page}>
-      <View style={styles.column}>
-        <HappierInfoState size="page">
-          <HappierInfoTile size="page"
-            title={paused ? paused.identity.name ?? `@${paused.handle}` : props.labels.unavailable}
-            description={paused ? props.labels.paused : undefined} />
-        </HappierInfoState>
+  return 'result' in props ? <WithdrawnPublicProfile {...props} /> : <PublishedPublicProfile {...props} />;
+}
+
+/**
+ * Paused and unavailable read as one quiet page (lab `ppstate-X`): the brand bar, a small horizon over a
+ * hairline, then one title and one line. Paused keeps the identity the owner shares; unavailable says
+ * what Happier is, so a visitor who followed a dead link still has somewhere to go.
+ */
+function WithdrawnPublicProfile(props: WithdrawnPublicProfileProps) {
+  const theme = useHappierUiTheme();
+  const testID = props.testID ?? 'public-profile';
+  const singleColumn = props.singleColumn ?? false;
+  const bandHeightPx = HAPPIER_PUBLIC_PROFILE_HERO_METRICS.quietBandHeightPx[singleColumn ? 'phone' : 'wide'];
+  const paused = props.result.kind === 'paused' ? props.result : null;
+  const pausedAvatar = paused?.identity.avatar?.kind === 'planet' && props.renderPlanet !== undefined;
+  const about = props.brand?.about;
+  return (
+    <View testID={testID} style={styles.page}>
+      {props.brand ? <PublicProfileBrandBar brand={props.brand} singleColumn={singleColumn} testID={testID} /> : null}
+      <View testID={`${testID}-hero-band`} style={[styles.heroBand, styles.quietBand,
+        { height: bandHeightPx, borderBottomColor: theme.colors.border }]}>
+        {props.renderHero?.({ bandHeightPx, singleColumn })}
       </View>
-    </View>;
-  }
-  return <PublishedPublicProfile {...props} />;
+      <View style={[styles.withdrawn, { maxWidth: HAPPIER_STATE_SIZE_METRICS[singleColumn ? 'phone' : 'page'].measurePx }]}>
+        <HappierText variant="title" tone="neutral" style={styles.centered} testID={`${testID}-withdrawn-title`}>
+          {props.labels.title}
+        </HappierText>
+        <HappierText variant="reading" tone="secondary" style={styles.centered}>
+          {props.labels.body}
+        </HappierText>
+        {paused ? (
+          <View testID={`${testID}-identity`} style={[styles.identityChip, pausedAvatar ? styles.identityChipWithAvatar : null,
+            { borderColor: theme.colors.border }]}>
+            {pausedAvatar && props.renderPlanet ? (
+              <PublicProfilePlanetAvatar handle={paused.handle} sizePx={HAPPIER_PUBLIC_PROFILE_HERO_METRICS.avatarPx.paused}
+                renderPlanet={props.renderPlanet} testID={`${testID}-avatar`} />
+            ) : null}
+            <View>
+              <HappierText variant="heading" tone="neutral">{paused.identity.name ?? `@${paused.handle}`}</HappierText>
+              {props.labels.identityLine ? <HappierText variant="meta" tone="secondary">{props.labels.identityLine}</HappierText> : null}
+            </View>
+          </View>
+        ) : about ? (
+          <PublicLinkButton href={about.href} label={about.label} testID={`${testID}-about`} />
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+/** The person's side of the one planet (lab `ppMark`): the same handle always turns it to the same longitude. */
+function planetLongitude(handle: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < handle.length; index++) hash = Math.imul(hash ^ handle.charCodeAt(index), 16777619);
+  return ((hash >>> 0) / 4294967296) * Math.PI * 2 - Math.PI;
+}
+
+/**
+ * The explained photo fallback (U3): no Account image has an admitted public address, so a shared photo is the
+ * person's planet, drawn by the host's own Brand planet owner (the app's canvas, the server's static adapter).
+ */
+function PublicProfilePlanetAvatar(props: Readonly<{ handle: string; sizePx: number; renderPlanet: UsagePlanetSlot; testID: string }>) {
+  const { sizePx } = props;
+  const theme = useHappierUiTheme();
+  // A paper coin, like a photo's paper ring: over the band's artwork the planet would otherwise dissolve into it.
+  return (
+    <View testID={props.testID} style={[styles.planetAvatar,
+      { width: sizePx, height: sizePx, borderRadius: sizePx / 2, backgroundColor: theme.colors.surface }]}>
+      {props.renderPlanet({ size: sizePx, radius: sizePx * 0.4, halo: 0.6, tail: 0, rise: 1, light: 1, rotate: planetLongitude(props.handle),
+        // Only the paused pill is mark-sized; a hero avatar keeps the whole planet so the person's side still shows.
+        style: 'rich', mark: sizePx <= HAPPIER_PUBLIC_PROFILE_HERO_METRICS.avatarPx.paused })}
+    </View>
+  );
+}
+
+/** The visitor's brand bar: in flow on a quiet page, over the top of the band on a published one. */
+function PublicProfileBrandBar(props: Readonly<{ brand: HappierPublicProfileBrand; singleColumn: boolean; over?: boolean; testID: string }>) {
+  const { brand, singleColumn } = props;
+  return (
+    <View testID={`${props.testID}-brand`} style={[styles.brandBar, singleColumn ? styles.brandBarPhone : null,
+      props.over ? styles.brandBarOver : null]}>
+      <View style={styles.brandName}>
+        <HappierText variant="heading" tone="neutral">{brand.name}</HappierText>
+        {!singleColumn && brand.service ? <HappierText variant="body" tone="secondary" numberOfLines={1}>{brand.service}</HappierText> : null}
+      </View>
+      {!singleColumn && brand.about ? <PublicLink href={brand.about.href} label={brand.about.label} rel="noopener" variant="body" /> : null}
+    </View>
+  );
 }
 
 function PublishedPublicProfile(props: PublishedPublicProfileProps) {
@@ -170,10 +273,17 @@ function PublishedPublicProfile(props: PublishedPublicProfileProps) {
       />
     ) : null;
   };
+  const renderAvatar = props.renderAvatar ?? (view.identity.avatar?.kind === 'planet' && props.usage?.renderPlanet
+    ? () => <PublicProfilePlanetAvatar handle={view.handle} sizePx={HAPPIER_PUBLIC_PROFILE_HERO_METRICS.avatarPx[columns === 1 ? 'phone' : 'wide']}
+      renderPlanet={props.usage!.renderPlanet!} testID={`${testID}-avatar`} /> : undefined);
+  // Beside an avatar on the band's edge, the words start where the artwork ends, never on it.
+  const wordsBelowBand = props.renderHero !== undefined && renderAvatar !== undefined && columns !== 1;
   const identity = (
-        <View style={[styles.identity, columns === 1 && props.renderHero ? styles.identityStacked : null]}>
-          {props.renderAvatar?.()}
-          <View style={styles.identityText}>
+        <View style={[styles.identity, columns === 1 && props.renderHero ? styles.identityStacked : null,
+          wordsBelowBand ? styles.identityBesideBandEdge : null]}>
+          {renderAvatar?.()}
+          <View style={[styles.identityText,
+            wordsBelowBand ? { paddingTop: HAPPIER_PUBLIC_PROFILE_HERO_METRICS.avatarPx.wide / 2 } : null]}>
             <HappierText
               variant="display"
               tone="neutral"
@@ -206,12 +316,14 @@ function PublishedPublicProfile(props: PublishedPublicProfileProps) {
   );
   return (
     <View testID={testID} style={styles.page}>
+      {props.brand && !props.renderHero ? <PublicProfileBrandBar brand={props.brand} singleColumn={columns === 1} testID={testID} /> : null}
       {props.renderHero ? (
         <PublicProfileHero
           testID={testID}
           singleColumn={columns === 1}
+          brand={props.brand}
           credit={labels.heroCredit}
-          overlapsBand={props.renderAvatar !== undefined}
+          overlapsBand={renderAvatar !== undefined}
           renderBand={props.renderHero}
         >
           {identity}
@@ -224,11 +336,10 @@ function PublishedPublicProfile(props: PublishedPublicProfileProps) {
           <HappierText variant="heading" tone="neutral">
             {labels.periodTitle}
           </HappierText>
-          {labels.periodDetail ? (
-            <HappierText variant="meta" tone="secondary" tabularNumbers>
-              {labels.periodDetail}
-            </HappierText>
-          ) : null}
+          {/* The line keeps its place while the period is still being read, so nothing moves when it arrives. */}
+          <HappierText variant="meta" tone="secondary" tabularNumbers>
+            {labels.periodDetail || '\u00a0'}
+          </HappierText>
         </View>
         {props.owner?.renderBlocks ? (
           props.owner.renderBlocks()
@@ -283,6 +394,7 @@ function PublicProfileHero(
   props: Readonly<{
     testID: string;
     singleColumn: boolean;
+    brand?: HappierPublicProfileBrand;
     credit?: string;
     /** Only an avatar sits over the band's edge; a name alone starts below the artwork, never on it. */
     overlapsBand: boolean;
@@ -298,8 +410,10 @@ function PublicProfileHero(
     <View testID={`${props.testID}-hero`} style={styles.hero}>
       <View testID={`${props.testID}-hero-band`} style={[styles.band, styles.heroBand, { height: bandHeightPx }]}>
         {props.renderBand({ bandHeightPx, singleColumn: props.singleColumn })}
+        {props.brand ? <PublicProfileBrandBar brand={props.brand} singleColumn={props.singleColumn} over testID={props.testID} /> : null}
         {props.credit ? (
-          <View style={[styles.credit, props.singleColumn ? styles.creditPhone : styles.creditWide,
+          <View style={[styles.credit, props.singleColumn ? styles.creditPhone
+            : props.brand ? styles.creditUnderBrand : styles.creditWide,
             { backgroundColor: theme.colors.surface }]}>
             <HappierText variant="micro" tone="secondary" numberOfLines={1}>{props.credit}</HappierText>
           </View>
@@ -457,6 +571,11 @@ function PublicProfileBlock(
 ) {
   const theme = useHappierUiTheme();
   const onlyYou = props.owner?.hiddenBlockIds.has(props.widget.id) ? props.owner.onlyYou : null;
+  // A block visitors don't see has its one Share below it; figure eyes belong to blocks they do see.
+  const renderFigure = onlyYou ? undefined : props.owner?.renderFigureControl;
+  const hiddenFigures = props.owner?.hiddenFigures;
+  const figures = useMemo(() => renderFigure ? { render: renderFigure, hidden: hiddenFigures ?? new Set<PublicUsageMetricId>() }
+    : undefined, [renderFigure, hiddenFigures]);
   const marker = onlyYou ? (
     <View style={[styles.onlyYou, { borderColor: theme.colors.border }]}>
       <HappierText variant="micro" tone="secondary">{onlyYou}</HappierText>
@@ -464,7 +583,7 @@ function PublicProfileBlock(
   ) : null;
   const body = props.widget.presentation.kind === 'usage'
     ? props.usage ? <PublicProfileUsageBody presentation={props.widget.presentation} models={props.usageModels} records={props.usageRecords}
-      host={props.usage} width={props.coldWidthPx} testID={`${props.testID}-usage-${props.widget.id}`} /> : null
+      host={props.usage} width={props.coldWidthPx} figures={figures} testID={`${props.testID}-usage-${props.widget.id}`} /> : null
     : props.projection.renderDeclarative(props.widget.presentation.document.root, theme, props.labels.inert);
   const shownBody = onlyYou ? <>
     <View style={styles.quieted}>{body}</View>
@@ -508,16 +627,35 @@ function PublicLink(
     href: string;
     label: string;
     rel?: string;
+    variant?: 'meta' | 'body';
     testID?: string;
   }>,
 ) {
   return (
     <HappierText
-      variant="meta"
+      variant={props.variant ?? 'meta'}
       tone="secondary"
       testID={props.testID}
       accessibilityRole="link"
       {...anchorProps(props.href, props.rel)}
+    >
+      {props.label}
+    </HappierText>
+  );
+}
+
+/** A link that reads as the page's one secondary action: the shared button face on a real anchor. */
+function PublicLinkButton(props: Readonly<{ href: string; label: string; testID?: string }>) {
+  const theme = useHappierUiTheme();
+  const material = useHappierButtonMaterial(theme);
+  const chrome = resolveHappierButtonChrome({ theme, variant: 'secondary', disabled: false, focused: false, ...material });
+  return (
+    <HappierText
+      variant="label"
+      testID={props.testID}
+      accessibilityRole="link"
+      style={[chrome.style, styles.linkButton, { color: chrome.foreground }]}
+      {...anchorProps(props.href, 'noopener')}
     >
       {props.label}
     </HappierText>
@@ -537,6 +675,48 @@ const styles = StyleSheet.create({
     borderRadius: HAPPIER_PAGE_METRICS.controlHeightPx,
   },
   creditWide: { top: HAPPIER_PAGE_METRICS.cardPaddingPx },
+  // The brand bar holds the band's top; the credit sits just under its "What is Happier?" (lab `ppalign-H`).
+  creditUnderBrand: { top: HAPPIER_PAGE_METRICS.paneHeaderHeightPx },
+  // Lab `.pp-top`: one 56 px bar (48 on a phone) at the page's own side room.
+  brandBar: {
+    minHeight: HAPPIER_PAGE_METRICS.paneHeaderHeightPx,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: HAPPIER_PAGE_METRICS.cardGapPx,
+    paddingHorizontal: HAPPIER_PAGE_METRICS.cardPaddingPx * 2,
+  },
+  brandBarPhone: {
+    minHeight: HAPPIER_PAGE_METRICS.paneHeaderUnderNativeChromeHeightPx,
+    paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx,
+  },
+  brandBarOver: { position: 'absolute', top: 0, left: 0, right: 0 },
+  brandName: { flexDirection: 'row', alignItems: 'baseline', gap: HAPPIER_PAGE_METRICS.cardGapPx, flexShrink: 1, minWidth: 0 },
+  quietBand: { width: '100%', borderBottomWidth: StyleSheet.hairlineWidth },
+  withdrawn: {
+    width: '100%',
+    alignSelf: 'center',
+    alignItems: 'center',
+    paddingTop: HAPPIER_PAGE_METRICS.sectionGapPx,
+    paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx,
+    paddingBottom: HAPPIER_PAGE_METRICS.pagePaddingBottomPx,
+    gap: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx * 2,
+  },
+  centered: { textAlign: 'center' },
+  // Lab `.ppS-who`: name and handle in a quiet pill under the line.
+  identityChip: {
+    marginTop: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx * 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: HAPPIER_SPACE_STEPS.s10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: HAPPIER_PAGE_METRICS.paneHeaderHeightPx,
+    paddingVertical: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx * 2,
+    paddingHorizontal: HAPPIER_PAGE_METRICS.cardPaddingPx * 1.5,
+  },
+  // The avatar sits close to the pill's rounded end (lab `ppS-who`).
+  identityChipWithAvatar: { paddingLeft: HAPPIER_SPACE_STEPS.s10 },
+  linkButton: { marginTop: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx * 2, textDecorationLine: 'none' },
   // On a phone the credit stays on the picture, just above where the identity begins.
   creditPhone: { bottom: HAPPIER_PAGE_METRICS.cardPaddingPx * 3 },
   column: {
@@ -562,6 +742,8 @@ const styles = StyleSheet.create({
   },
   // On a phone the avatar sits on the band's edge and the words drop below it.
   identityStacked: { flexDirection: 'column', alignItems: 'flex-start' },
+  identityBesideBandEdge: { alignItems: 'flex-start' },
+  planetAvatar: { overflow: 'hidden' },
   identityText: {
     flexShrink: 1,
     minWidth: 0,
@@ -597,7 +779,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx * 2,
   },
   // A private block stays in place for its owner, quieted, so consent changes never move the layout.
-  quieted: { opacity: 0.45 },
+  quieted: { opacity: HAPPIER_PUBLIC_PROFILE_OWNER_METRICS.quietedOpacity },
   footer: {
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingTop: HAPPIER_PAGE_METRICS.cardPaddingPx,

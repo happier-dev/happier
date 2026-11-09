@@ -110,6 +110,7 @@ export function Tree(props: TreeProps): ReactElement {
           <HappierTreeRow
             key={item.key}
             node={item}
+            position={interaction.positionOf(item.key)}
             title={item.title}
             mark={item.mark}
             meta={item.meta}

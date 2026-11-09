@@ -5,7 +5,8 @@ vi.mock('react-native-svg', async () => {
   const { createElement } = await import('react');
   const shape = (name: string) => (props: Record<string, unknown>) => createElement(name, props);
   const Svg = shape('Svg');
-  return { default: Svg, Svg, Path: shape('Path'), Line: shape('Line'), Rect: shape('Rect'), Pattern: shape('Pattern'), Defs: shape('Defs') };
+  return { default: Svg, Svg, Path: shape('Path'), Line: shape('Line'), Rect: shape('Rect'), Pattern: shape('Pattern'), Defs: shape('Defs'),
+    LinearGradient: shape('LinearGradient'), RadialGradient: shape('RadialGradient'), Stop: shape('Stop') };
 });
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

@@ -280,8 +280,10 @@ describe('plugin host API hooks', () => {
     let result!: ReturnType<typeof usePluginResource>;
     let projected!: ReturnType<typeof useLivePluginResourceProjection<ResourceContent, PluginUiResourceSnapshot>>;
     function Probe() {
-      result = usePluginResource(reference);
+      // Admit live demand first; adding a first live observer to an existing
+      // snapshot-only read intentionally requests a separate canonical reread.
       projected = useLivePluginResourceProjection(reference, projection, snapshot => snapshot);
+      result = usePluginResource(reference);
       return null;
     }
     const render = (requesterExecutionReady: boolean) => (
@@ -335,8 +337,11 @@ describe('plugin host API hooks', () => {
     expect(decode).not.toHaveBeenCalled();
 
     await act(async () => { tree.update(render(false, false)); });
-    expect(result.resource).toMatchObject({ pending: 'idle', error: { code: 'unavailable' } });
+    expect(result.resource).toMatchObject({ pending: 'idle', error: {
+      code: 'unavailable', diagnostics: ['host_api_method_unavailable:readResource'],
+    } });
     expect(projected.value).toMatchObject({ pending: 'idle', freshness: 'unknown', error: { code: 'unavailable' } });
+    expect(projected.value.error).toEqual(result.resource.error);
     await act(async () => { await result.refresh(); await projected.refresh(); });
     expect(host.api.readResource).not.toHaveBeenCalled();
     expect(decode).not.toHaveBeenCalled();
@@ -645,7 +650,7 @@ describe('plugin host API hooks', () => {
     }
   });
 
-  it('retries a transient initial watch-open failure without discarding last-known-good Resource bytes', async () => {
+  it('recovers a transient initial watch-open failure on a host signal without discarding last-known-good Resource bytes', async () => {
     vi.useFakeTimers();
     try {
       const lastKnownGood: ResourceContent = {
@@ -660,7 +665,12 @@ describe('plugin host API hooks', () => {
       };
       const recoveryRead = deferred<ResourceContent>();
       let reads = 0;
+      let recover: (() => void) | undefined;
       const client: PluginUiResourceClient = {
+        onWatchRecovery(listener) {
+          recover = listener;
+          return { dispose() { recover = undefined; } };
+        },
         readResource: vi.fn(async () => {
           reads += 1;
           return reads === 1 ? lastKnownGood : await recoveryRead.promise;
@@ -698,7 +708,11 @@ describe('plugin host API hooks', () => {
       });
 
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(5_000);
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(client.watchResource).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        recover!();
       });
       expect(client.watchResource).toHaveBeenCalledTimes(2);
 
@@ -720,11 +734,16 @@ describe('plugin host API hooks', () => {
     }
   });
 
-  it('cancels an initial watch-open retry when its Account lifetime retires', async () => {
+  it('releases initial watch-open recovery when its Account lifetime retires', async () => {
     vi.useFakeTimers();
     try {
       const account = createAccountLifetime();
+      const recoveryListeners = new Set<() => void>();
       const client: PluginUiResourceClient = {
+        onWatchRecovery(listener) {
+          recoveryListeners.add(listener);
+          return { dispose() { recoveryListeners.delete(listener); } };
+        },
         readResource: vi.fn(async () => new Promise<ResourceContent>(() => {})),
         watchResource: vi.fn(async () => {
           throw Object.assign(new Error('temporary transport failure'), {
@@ -746,8 +765,10 @@ describe('plugin host API hooks', () => {
       });
 
       expect(entry.getSnapshot().subscription).toBe('reconnecting');
+      expect(recoveryListeners.size).toBe(1);
 
       account.retire();
+      expect(recoveryListeners.size).toBe(0);
       await act(async () => {
         await vi.advanceTimersByTimeAsync(10_000);
       });

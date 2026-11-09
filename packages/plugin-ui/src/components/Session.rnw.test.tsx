@@ -148,7 +148,7 @@ describe('Session parts', () => {
     view.unmount();
   });
 
-  it('never asks the host for a part outside a provider or for a duplicate part inside one', () => {
+  it('leaves physical duplicate claims to the host and suppresses only unbound parts', () => {
     const { calls, renderSessionPart } = recordingHost();
     const view = mount(
       <>
@@ -166,10 +166,10 @@ describe('Session parts', () => {
     const transcripts = calls.filter((call) => call.part === 'transcript');
     const composers = calls.filter((call) => call.part === 'composer');
     expect(transcripts.length).toBeGreaterThan(0);
-    expect(transcripts.every((call) => call.part === 'transcript' && call.testID === 'first')).toBe(true);
-    expect(composers.every((call) => call.part === 'composer' && call.testID === 'composer-a')).toBe(true);
-    expect(view.container.querySelectorAll('[data-testid="host-transcript"]')).toHaveLength(1);
-    expect(view.container.querySelectorAll('[data-testid="host-composer"]')).toHaveLength(1);
+    expect(transcripts.map((call) => call.testID)).toEqual(['first', 'second']);
+    expect(composers.map((call) => call.testID)).toEqual(['composer-a', 'composer-b']);
+    expect(view.container.querySelectorAll('[data-testid="host-transcript"]')).toHaveLength(2);
+    expect(view.container.querySelectorAll('[data-testid="host-composer"]')).toHaveLength(2);
     view.unmount();
   });
 

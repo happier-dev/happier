@@ -14,6 +14,8 @@ export type HappierCapabilityStatusKind =
   | 'cantrun'
   | 'offline'
   | 'update'
+  /** Its source no longer offers it: the person decides whether to keep their copy. */
+  | 'removed'
   | 'modified'
   | 'pinned'
   | 'unused'
@@ -97,7 +99,7 @@ type Spec = Readonly<{
   detailIsReason?: true;
 }>;
 
-// Blocking order (most first): error > sign-in family > cantrun > offline > update > modified > masked > pinned > off > unused > ready.
+// Blocking order (most first): error > sign-in family > cantrun > offline > removed > update > modified > masked > pinned > off > unused > ready.
 const SPECS: Readonly<Record<HappierCapabilityStatusKind, Spec>> = {
   error: {
     tone: 'failed',
@@ -159,6 +161,8 @@ const SPECS: Readonly<Record<HappierCapabilityStatusKind, Spec>> = {
     chrome: 'pill',
     fix: 'review_update',
   },
+  // The source dropped it: a decision ranks above a waiting update, with no fix of its own (the caller's Decide).
+  removed: { tone: 'neutral', rank: 62, variant: 'neutral', chrome: 'pill' },
   modified: { tone: 'neutral', rank: 50, variant: 'neutral', chrome: 'pill' },
   masked: {
     tone: 'neutral',

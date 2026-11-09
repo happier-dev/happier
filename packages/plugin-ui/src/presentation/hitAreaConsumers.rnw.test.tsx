@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { act, type ReactNode } from 'react';
 import { Text, TextInput, View, Pressable } from 'react-native';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PluginUiPlatform } from '@happier-dev/plugin-sdk/ui';
@@ -12,6 +12,9 @@ import { HappierCollectionConditionEditor, type HappierCollectionConditionEditor
 import { conditionModelFromFilter } from './collection/conditionModel.js';
 import { normalizeSessionListFilterV1, sessionWorkFilterFields } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { HappierFieldStepper } from './form/FieldStepper.js';
+import { HappierDragGrip, HappierDragGripTrigger, HAPPIER_DRAG_GRIP_METRICS } from './interaction/DragGrip.js';
+import { HappierComposerStatusBadge } from './status/ComposerStatusBadge.js';
+import { hitAreaClippingAncestors, readHitAreaReach as hitFrame } from './interaction/hitArea.testSupport.js';
 import { resolveHappierFieldTextInputMetrics, HAPPIER_FIELD_BOX_METRICS } from './form/FieldBox.js';
 import { HappierSelect } from './form/Fields.js';
 import { resolveHappierPageRowMetrics } from './layout/pageRowMetrics.js';
@@ -46,12 +49,6 @@ function byTestId(container: HTMLElement, id: string): HTMLElement {
   return node;
 }
 
-function hitFrame(control: HTMLElement) {
-  const frame = control.querySelector<HTMLElement>(':scope > [data-happier-hit-area="true"]');
-  if (frame === null) return null;
-  const style = getComputedStyle(frame);
-  return { top: 0 - px(style.top), bottom: 0 - px(style.bottom), left: 0 - px(style.left), right: 0 - px(style.right) };
-}
 
 describe('row geometry stays designed under a finger', () => {
   it('draws every page row density at its own height on touch', () => {
@@ -112,6 +109,26 @@ describe('form controls stay designed under a finger', () => {
     } finally { mount.unmount(); }
   });
 
+  it('keeps the compact stepper buttons reachable outside the shared box (nothing clips their hit area)', () => {
+    const mount = mountIn('ios', <HappierFieldStepper compact
+      colors={{ borderColor: 'gray', backgroundColor: 'white' }} focusColor="blue" decreaseLabel="Less" increaseLabel="More"
+      canDecrement canIncrement onStep={() => {}} renderSymbol={(symbol) => <Text>{symbol}</Text>} testID="count">
+      <Text>3</Text>
+    </HappierFieldStepper>);
+    try {
+      const minus = byTestId(mount.container, 'count.decrement');
+      const plus = byTestId(mount.container, 'count.increment');
+      // Drawn inside the one field box (its border takes a pixel each side); the reach still meets the target.
+      const inner = HAPPIER_FIELD_BOX_METRICS.minHeightPx - 2 * HAPPIER_FIELD_BOX_METRICS.borderWidthPx;
+      expect(px(getComputedStyle(minus).minHeight)).toBe(inner);
+      expect(hitFrame(minus)).toMatchObject({ top: (44 - inner) / 2, bottom: (44 - inner) / 2, right: 0 });
+      expect(hitFrame(plus)).toMatchObject({ top: (44 - inner) / 2, bottom: (44 - inner) / 2, left: 0 });
+      // The box is shorter than the hit area: a clipping box or button would cut the reach off.
+      expect(hitAreaClippingAncestors(minus, mount.container)).toEqual([]);
+      expect(hitAreaClippingAncestors(plus, mount.container)).toEqual([]);
+    } finally { mount.unmount(); }
+  });
+
   it('draws select options at their content size', () => {
     const mount = mountIn('android', <HappierSelect label="Plan" theme={theme} value="a" onChange={() => {}}
       options={[{ value: 'a', label: 'A', testID: 'opt-a' }, { value: 'b', label: 'B', testID: 'opt-b' }]} />);
@@ -154,6 +171,55 @@ describe('collection filter rows stay designed under a finger', () => {
       expect(frame).toMatchObject({ top: 6, bottom: 6, left: 3 });
       const row = remove.closest<HTMLElement>('[data-testid^="collection-filter-condition:"]:not([data-testid$=":remove"])')!;
       expect(px(getComputedStyle(row).minHeight)).toBe(34);
+      // The value chip (26 tall) reaches the row's edges; clipping its long value must not clip that reach.
+      const value = mount.container.querySelector<HTMLElement>('[data-testid$=":value"]')!;
+      expect(hitFrame(value)).toMatchObject({ top: 4, bottom: 4 });
+      // Within its row (the editor's scrolling body is the one clipping edge, well clear of the row).
+      expect(hitAreaClippingAncestors(value, row.parentElement!)).toEqual([]);
+    } finally { mount.unmount(); }
+  });
+});
+
+/** Delivers a real RNW layout event to `node` (jsdom has no layout), as the measured owner receives it. */
+function layOut(node: HTMLElement, width: number, height: number) {
+  const handler = Reflect.get(node, '__reactLayoutHandler');
+  if (typeof handler === 'function') act(() => handler({ nativeEvent: { layout: { x: 0, y: 0, width, height } } }));
+}
+
+describe('primitives on raw platform views take their hit area from the shared owner (web ignores hitSlop)', () => {
+  const gripColors = { glyph: 'gray', activeGlyph: 'black', activeFill: 'white' };
+  const touchBox = HAPPIER_DRAG_GRIP_METRICS.touch.box;
+
+  it('reaches a standalone touch grip to the finger target with a real web frame', () => {
+    const mount = mountIn('ios', <HappierDragGrip density="touch" accessibilityLabel="Move Review" colors={gripColors}
+      renderGlyph={() => <Text>::</Text>} testID="grip" />);
+    try {
+      const grip = byTestId(mount.container, 'grip');
+      expect(px(getComputedStyle(grip).width)).toBe(touchBox);
+      const reach = (44 - touchBox) / 2;
+      expect(hitFrame(grip)).toEqual({ top: reach, bottom: reach, left: reach, right: reach });
+    } finally { mount.unmount(); }
+  });
+
+  it('gives a grip trigger one hit area, on its pressable, never a second one on the grip inside it', () => {
+    const mount = mountIn('ios', <HappierDragGripTrigger density="touch" accessibilityLabel="Move Review" colors={gripColors}
+      renderGlyph={() => <Text>::</Text>} testID="grip" onPress={() => {}} />);
+    try {
+      const trigger = byTestId(mount.container, 'grip');
+      layOut(trigger, touchBox, touchBox);
+      const reach = (44 - touchBox) / 2;
+      expect(hitFrame(trigger)).toEqual({ top: reach, bottom: reach, left: reach, right: reach });
+      expect(trigger.querySelectorAll('[data-happier-hit-area="true"]')).toHaveLength(1);
+    } finally { mount.unmount(); }
+  });
+
+  it('reaches a composer status item to the finger target with a real web frame', () => {
+    const mount = mountIn('ios', <HappierComposerStatusBadge label="Waiting" text={<Text>Waiting</Text>} tintColor="#eee" inkColor="#111"
+      onPress={() => {}} testID="status" />);
+    try {
+      const item = byTestId(mount.container, 'status');
+      layOut(item, 80, 24);
+      expect(hitFrame(item)).toMatchObject({ top: 10, bottom: 10 });
     } finally { mount.unmount(); }
   });
 });

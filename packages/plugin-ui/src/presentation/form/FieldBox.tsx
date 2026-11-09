@@ -191,7 +191,7 @@ export type HappierFieldBoxTriggerProps = Readonly<{
    */
   density?: 'field' | 'chip';
   /** The drawn box itself: what the field's choices hang from and match in width (the press target may be wider). */
-  boxRef?: Ref<View>;
+  boxRef?: Ref<unknown>;
 }>;
 
 /**
@@ -221,7 +221,7 @@ export function HappierFieldBoxTrigger({ colors, leading, children, trailing, sp
   }, [maxWidthPx, onFieldSaturated, reportsSaturation]);
   return (
     <View
-      ref={boxRef}
+      ref={boxRef as Ref<View>}
       collapsable={false}
       {...(observesSaturation ? { onLayout: handleLayout } : {})}
       style={[chip ? HAPPIER_FIELD_BOX_CHIP_SHAPE : HAPPIER_FIELD_BOX_SHAPE, {
@@ -346,7 +346,17 @@ export type HappierFieldTextBoxProps = Readonly<{
   style?: HappierStyleProp;
   /** `document`: a soft filled card (the adapter supplies the fill and no border), card radius and roomy insets. */
   presentation?: HappierFieldTextPresentation;
+  /**
+   * A fixed mark the value continues (the `/` of a shortcut), drawn in the box before the text with no gap, so
+   * `/` + `release-notes` reads as one `/release-notes`. The adapter decides whether assistive technology reads it.
+   */
+  leading?: ReactNode;
+  /** Inline field actions or a mark at the end of the box (paste, reveal, a key hint), after the text. */
+  trailing?: ReactNode;
 }>;
+
+/** The trailing slot's own breath inside the box's right padding, so an inline action never touches the edge. */
+const HAPPIER_FIELD_TRAILING_INSET_PX = 4;
 
 /** The document card's shape: the card step of the radius base and the field's own inset on both sides. */
 const HAPPIER_FIELD_DOCUMENT_SHAPE: HappierPortableStyle = Object.freeze({
@@ -392,7 +402,16 @@ export function HappierFieldTextBox(props: HappierFieldTextBoxProps) {
             props.presentation === 'document' ? HAPPIER_FIELD_DOCUMENT_SHAPE : null,
           ]}
         >
-          {props.children}
+          {props.leading == null && props.trailing == null ? props.children : (
+            // One row: the mark, the value taking the room left, then the trailing actions.
+            <View style={{ flexDirection: 'row', alignItems: 'center', minWidth: 0 }}>
+              {props.leading == null ? null : <View style={{ flexShrink: 0 }}>{props.leading}</View>}
+              <View style={{ flex: 1, minWidth: 0 }}>{props.children}</View>
+              {props.trailing == null ? null : (
+                <View style={{ flexShrink: 0, paddingRight: HAPPIER_FIELD_TRAILING_INSET_PX }}>{props.trailing}</View>
+              )}
+            </View>
+          )}
         </View>
         {props.error ?? null}
       </View>

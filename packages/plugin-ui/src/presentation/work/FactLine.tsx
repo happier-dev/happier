@@ -3,7 +3,7 @@ import { Fragment, type ReactNode } from 'react';
 import type { HappierStyleProp } from '../portableTypes.js';
 import { resolveHappierWorkHost, useHappierWorkTheme, type HappierWorkHost, type HappierWorkTextRole, type HappierWorkTheme } from './workTheme.js';
 
-const FACT_SEPARATOR = ' · ';
+export const FACT_SEPARATOR = ' · ';
 
 /** Ordered human facts, omitting absent values without changing their wording. */
 export function joinHappierFacts(...facts: readonly (string | null | undefined)[]): string {
@@ -20,11 +20,16 @@ export type HappierFactLineProps = Readonly<{
   host?: HappierWorkHost;
 }>;
 
+/** The one rule for an absent fact: omitted, never a separator; a numeric zero is a fact. */
+export function renderableHappierFacts(facts: readonly ReactNode[]): ReactNode[] {
+  return facts.filter((fact) => fact !== null && fact !== undefined && fact !== false && fact !== '');
+}
+
 /** One quiet line of facts; separators use quieter ink than the facts themselves. */
 export function HappierFactLine(props: HappierFactLineProps) {
   const theme = useHappierWorkTheme(props.theme);
   const { Text } = resolveHappierWorkHost(props.host);
-  const facts = props.facts.filter((fact) => fact !== null && fact !== undefined && fact !== false && fact !== '');
+  const facts = renderableHappierFacts(props.facts);
   const role = props.role ?? 'rowLine';
   if (facts.length === 0) return null;
   return (

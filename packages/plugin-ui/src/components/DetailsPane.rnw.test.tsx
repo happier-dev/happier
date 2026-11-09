@@ -277,6 +277,15 @@ describe('DetailsPane (host details pane binding)', () => {
     expect(sticky.at(-1)).toBe(34 - HAPPIER_PAGE_METRICS.groupSeparatorGapPx);
     keyboardAware.unmount();
 
+    // A host's pinned bar owns the phone's bottom, so the shell's bar folds instead of stacking under this one.
+    const hostBar = mountWithPane(detail, null, {
+      context,
+      host: { renderPagePinnedBar: (input) => <div data-testid="page-pinned-bar">{input.children}</div> },
+    });
+    await flush();
+    expect(hostBar.container.querySelector('[data-testid="page-pinned-bar"] [data-testid="footer-primary"]')).not.toBeNull();
+    hostBar.unmount();
+
     // Beside the page the primary lives in the pane's header; the footer is not drawn.
     const pane = createPaneHost(true);
     const wide = mountWithPane(detail, pane, { context });

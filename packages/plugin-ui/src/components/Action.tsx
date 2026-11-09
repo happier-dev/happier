@@ -4,10 +4,12 @@ import type {
   PluginUiActionInputFor,
   PluginUiActionReference,
   PluginUiActionResultFor,
+  OpenSurfaceOptions,
 } from '@happier-dev/plugin-sdk/ui';
 
 import { usePluginHostApi } from '../hostApi/context.js';
 import {
+  isPluginActionConfirmationDeclined,
   useExecutePluginAction,
   type PluginActionExecution,
 } from '../hostApi/executeAction.js';
@@ -133,12 +135,16 @@ export type ActionExecuteProps<TAction extends PluginUiActionReference = PluginU
   onSettled?: (execution: PluginActionExecution<PluginUiActionResultFor<NoInfer<TAction>>>) => void;
 }>;
 
-function notifyActionSettled<Execution extends Readonly<{ status: string }>>(
-  execute: () => Promise<Execution>,
-  onSettled: ((execution: Execution) => void) | undefined,
+function notifyActionSettled<Result>(
+  execute: () => Promise<PluginActionExecution<Result>>,
+  onSettled: ((execution: PluginActionExecution<Result>) => void) | undefined,
 ): void {
   void execute().then(settled => {
-    if (settled.status !== 'pending') onSettled?.(settled);
+    if (settled.status !== 'pending') {
+      // Generic Actions stay quiet after a declined prompt. Domain controllers
+      // retain the host's exact no-effect fact through the execution hook.
+      onSettled?.(isPluginActionConfirmationDeclined(settled) ? { status: 'idle' } : settled);
+    }
   });
 }
 
@@ -146,10 +152,9 @@ function notifyActionSettled<Execution extends Readonly<{ status: string }>>(
  * Run a contributed or host action.
  *
  * The pending state comes from {@link useExecutePluginAction} rather than from
- * the press promise, so the button and the author's `onSettled` read the SAME
- * execution — a control that looked idle while the hook still considered the
- * action in flight is exactly the disagreement that produces a duplicate
- * mutation.
+ * the press promise, so the button and dispatch share one in-flight owner.
+ * A declined confirmation stays quiet in this generic control's callback;
+ * domain controllers can render the exact host decision from the hook.
  */
 function ActionExecute<TAction extends PluginUiActionReference>({
   action,
@@ -221,12 +226,15 @@ export type ActionOpenSurfaceProps = ActionChromeProps & Readonly<{
   view: PluginReference;
   /** Launch input for the opened surface (§3.7). */
   input?: JsonValue;
+  /** Request the host's desktop-window presentation for this destination. */
+  presentation?: OpenSurfaceOptions['presentation'];
 }>;
 
 /** Ask the host to open another plugin surface, with optional launch input. */
-function ActionOpenSurface({ view, input, ...chrome }: ActionOpenSurfaceProps): ReactElement {
+function ActionOpenSurface({ view, input, presentation, ...chrome }: ActionOpenSurfaceProps): ReactElement {
   const hostApi = usePluginHostApi();
-  const onPress = useCallback(() => hostApi.openSurface(view, input), [hostApi, input, view]);
+  const onPress = useCallback(() => hostApi.openSurface(view, input,
+    presentation === undefined ? undefined : { presentation }), [hostApi, input, presentation, view]);
 
   return <ActionButton defaultTitle="Open" defaultTitleKey="happier.plugin-ui.action.open" onPress={onPress} {...chrome} />;
 }

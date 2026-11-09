@@ -6,6 +6,7 @@ import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import { PluginUiProvider } from '../../components/PluginUiProvider.js';
 import { createHostApiStub, createSurfaceContext } from '../../surfaceFixture.testSupport.js';
 import { HappierMaterialSurface } from '../layout/Surface.js';
+import { hitAreaClippingAncestors, readHitAreaReach } from './hitArea.testSupport.js';
 import {
   HappierSelectionActionBar,
   resolveHappierSelectionActionBarLayout,
@@ -47,6 +48,42 @@ async function click(element: HTMLElement | undefined): Promise<void> {
 }
 
 describe('HappierSelectionActionBar', () => {
+  it('lets a finger reach an inline action past its drawn pill (the pill paint never clips the hit area)', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(pointer: coarse)' || query === '(hover: none)' }));
+    const context = createSurfaceContext();
+    const mounted = mountThroughReactNativeWeb(<PluginUiProvider context={context} hostApi={createHostApiStub(context)}>
+      <HappierSelectionActionBar visible label="2 selected" actions={actions(() => {})} dismiss={{ label: 'Clear selection', onPress: () => {} }} colors={COLORS} host={host} reducedMotion testID="bar" />
+    </PluginUiProvider>);
+    try {
+      const action = buttonNamed(mounted.container, 'Ask Agent')!;
+      expect(readHitAreaReach(action)?.top).toBeGreaterThan(0);
+      expect(hitAreaClippingAncestors(action, mounted.container)).toEqual([]);
+    } finally {
+      mounted.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  // The glyph actions are 32 px wide and 2 px apart: unbounded, each reaches 6 px sideways and the ⋯ and ✕ overlap by 10.
+  it('keeps the overflow and dismiss glyph actions from overlapping: each takes half of their 2 px gap', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(pointer: coarse)' || query === '(hover: none)' }));
+    const context = createSurfaceContext();
+    const mounted = mountThroughReactNativeWeb(<PluginUiProvider context={context} hostApi={createHostApiStub(context)}>
+      <HappierSelectionActionBar visible label="2 selected" moreLabel="More actions"
+        actions={[{ id: 'copy', label: 'Copy', onPress: () => {} }, { id: 'rare', label: 'Rare', placement: 'menu', onPress: () => {} }]}
+        dismiss={{ label: 'Clear selection', onPress: () => {} }} colors={COLORS} host={host} reducedMotion testID="bar" />
+    </PluginUiProvider>);
+    try {
+      const more = readHitAreaReach(buttonNamed(mounted.container, 'More actions')!);
+      const dismiss = readHitAreaReach(buttonNamed(mounted.container, 'Clear selection')!);
+      expect(more).not.toBeNull();
+      expect(more!.right + dismiss!.left).toBeLessThanOrEqual(2);
+    } finally {
+      mounted.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('finishes its floating rail once without replacing its inverted fill, selection identity or actions when Flat changes', async () => {
     const context = createSurfaceContext();
     const gradient = { colors: ['rgba(0,0,0,0)', 'rgba(0,0,0,0.024)'] as const };

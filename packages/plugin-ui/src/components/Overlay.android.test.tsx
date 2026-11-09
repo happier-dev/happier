@@ -184,7 +184,9 @@ describe('shared overlay menu Android touch targets', () => {
     await act(async () => {
       finalRow?.props.onPress();
     });
-    expect(onSelect).toHaveBeenCalledExactlyOnceWith('final');
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith('final', expect.objectContaining({
+      anchorRef: expect.any(Object),
+    }));
     expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
   });
 

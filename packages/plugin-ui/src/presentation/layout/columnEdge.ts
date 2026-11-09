@@ -23,8 +23,8 @@ export function useHappierColumnEdgePx(): number {
 }
 
 /**
- * @internal A body that already stands its content on its own edge (a widget frame's body): a line inside
- * it (an empty note, a failure line) starts on that edge, beside the body's titles and figures, instead of
- * adding a collection row's inset of its own.
+ * A body that already stands its content on its own edge (a widget frame's body, a preview pane): a line
+ * inside it (an empty note, a failure line) starts on that edge, beside the body's titles and text, instead
+ * of adding a collection row's inset of its own.
  */
 export const HappierBodyEdgeContext = createContext(false);

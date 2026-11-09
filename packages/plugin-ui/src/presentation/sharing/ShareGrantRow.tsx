@@ -72,6 +72,8 @@ export type HappierShareRowActionProps = HappierShareAction & Readonly<{
   host?: HappierShareHost;
   /** Set where the action is a row's trailing value: its text ends on the row's edge, like static meta beside it. */
   endsRow?: boolean;
+  /** Set where the action leads a line of the row's column: its text starts on the column's edge, under the title. */
+  startsRow?: boolean;
 }>;
 
 /** One quiet operation/choice, using the shared keyboard and focus-visible owner. */
@@ -83,6 +85,7 @@ export function HappierShareRowAction(props: HappierShareRowActionProps) {
     hitTarget={host.minimumTargetSize}
     disabled={props.disabled} onPress={props.onPress} style={state => ({
       justifyContent: 'center', paddingHorizontal: 8,
+      paddingLeft: props.startsRow ? 0 : 8,
       paddingRight: props.trailing || props.endsRow ? 0 : 8,
       ...happierFocusRingStyle({ visible: state.focused, color: host.focusColor }),
     })}>
@@ -126,8 +129,8 @@ export function HappierShareGrantRow(props: HappierShareGrantRowProps) {
   const { Text } = host;
   const Choice = host.Choice ?? DefaultChoice;
   const removal = props.removal;
-  const action = (value: HappierShareAction, busy = false) => <HappierShareRowAction {...value}
-    disabled={busy || value.disabled} host={host} />;
+  const action = (value: HappierShareAction, busy = false, startsRow = false) => <HappierShareRowAction {...value}
+    disabled={busy || value.disabled} host={host} startsRow={startsRow} />;
   // One choice is not a choice: the row's level control already states it.
   const levels = props.levels && props.levels.length > 1 ? props.levels : undefined;
   const request = removal?.kind === 'allowed' ? removal.request : undefined;
@@ -137,18 +140,18 @@ export function HappierShareGrantRow(props: HappierShareGrantRowProps) {
     {levels || request ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
       {levels ? <Choice accessibilityLabel={props.levelsAccessibilityLabel ?? ''} disabled={props.busy}
         choices={levels.map(level => ({ ...level, disabled: props.busy || level.disabled }))} /> : null}
-      {request ? action({ tone: 'destructive', ...request }, props.busy) : null}
+      {request ? action({ tone: 'destructive', ...request }, props.busy, !levels) : null}
     </View> : null}
     {props.details}
     {props.error ? <Text accessibilityLiveRegion="polite" tone="secondary">{props.error}</Text> : null}
-    {props.retry ? action(props.retry) : null}
+    {props.retry ? action(props.retry, false, true) : null}
     {removal?.kind === 'confirming' ? <>
       {removal.consequences.map(consequence => <Text key={consequence} testID={removal.consequenceTestID}
         accessibilityLiveRegion="polite" tone="secondary">{consequence}</Text>)}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-        {action({ tone: 'destructive', ...removal.confirm }, props.busy)}{action(removal.cancel, props.busy)}
+        {action({ tone: 'destructive', ...removal.confirm }, props.busy, true)}{action(removal.cancel, props.busy)}
       </View>
     </> : null}
-    {removal?.kind === 'blocked' ? action(removal.explain) : null}
+    {removal?.kind === 'blocked' ? action(removal.explain, false, true) : null}
   </View>;
 }

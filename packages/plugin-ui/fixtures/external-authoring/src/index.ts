@@ -15,6 +15,10 @@ import type {
 } from '@happier-dev/plugin-sdk';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { publicSnapshotTemplate } from './publicWidget.js';
+import { externalWorkflowPatternContribution } from './workflowPattern.js';
+import { REVIEW_READY_NOTICE_CATEGORY, sendReviewReadyNotice } from './reviewReadyNotice.js';
+export { sendReviewReadyNotice } from './reviewReadyNotice.js';
+export { externalWorkflowStartInput, startExternalWorkflowThroughActions, pauseExternalWorkflowThroughActions } from './workflowPattern.js';
 export { readExternalDoc, commentOnExternalDoc, proposeExternalDocEdit,
   requestExternalDocAcceptance, requestExternalDocDecline } from './docReview.js';
 
@@ -127,8 +131,21 @@ export function readExternalAuthoringAcceptedMessageLocalIds(): readonly string[
  * authoring here rather than creating a second external package path.
  */
 export const externalAuthoringPlugin = definePlugin({
+  workflows: { 'independent-review': externalWorkflowPatternContribution },
   id: 'fixture.external-authoring',
   version: '0.1.0',
+  // A notice the person can be sent: one declared category, delivered by Happier's own channels.
+  notifications: {
+    [REVIEW_READY_NOTICE_CATEGORY]: { kind: 'activity', title: 'Review ready', eventIds: [] },
+  },
+  actions: {
+    'send-review-ready-notice': {
+      title: 'Send the review-ready notice',
+      surfaces: ['plugin'],
+      execution: { target: 'daemon' },
+      run: async (_input, context) => sendReviewReadyNotice(context.services.notifications, context.signal),
+    },
+  },
   resources: {
     'review-options': {
       source: 'dynamic', kind: 'config', scope: 'global', contentType: 'application/json',

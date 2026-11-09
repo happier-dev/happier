@@ -4,6 +4,7 @@ import type {
   CollectionProps, CollectionAnatomy, CollectionSingleChoice, ListSingleChoiceCapabilityProps, DetailsPaneProps, StepProps, TabsProps, TabsItemProps,
   PluginTranslationValues, PluginUiFocusTarget,
   CollectionVirtualizer, CollectionVirtualizerHandle, CollectionVirtualizerRequest, CollectionHeaderSlots, CollectionSort,
+  HappierCollectionRowRole,
 } from '../index.js';
 import type { FormProps, SelectProps, TextFieldProps, TextSelection } from './Form.js';
 import type { ActionInputOptionValue } from '@happier-dev/plugin-sdk/actions';
@@ -50,19 +51,22 @@ type IsEqual<Left, Right> = (
 ) ? true : false;
 
 type _AuthorCollectionKeysAreCurated = Assert<IsEqual<keyof CollectionProps<unknown>,
-  | 'model' | 'anatomy' | 'accessibilityLabel' | 'title' | 'presentation' | 'boardLayout' | 'detail' | 'renderDetail' | 'detailHeader'
+  | 'model' | 'anatomy' | 'accessibilityLabel' | 'title' | 'presentation' | 'boardLayout' | 'detail' | 'detailOpenIntent' | 'renderDetail' | 'detailHeader'
   | 'minListWidth' | 'minDetailWidth' | 'preferredListRatio' | 'minCardWidth' | 'narrowGrid' | 'groupAction' | 'collapsedGroups'
-  | 'scroll' | 'virtualizer' | 'loading' | 'loadingRows' | 'useRowActions' | 'selection' | 'search' | 'empty' | 'afterRows' | 'header' | 'footer'
+  | 'scroll' | 'virtualizer' | 'loading' | 'loadingRows' | 'useRowActions' | 'selection' | 'pageRoot' | 'search' | 'create' | 'empty' | 'afterRows' | 'header' | 'headerPlacement' | 'footer'
   | 'windowStatement' | 'testID' | 'listTestID' | 'detailTestID'
   | 'sort' | 'summaryRows' | 'labels'
   | 'listWidthPx' | 'onListWidthChange' | 'onListWidthCommit' | 'onListWidthReset' | 'resizeKey'
 >>;
 type _AuthorCollectionAnatomyKeysAreCurated = Assert<IsEqual<keyof CollectionAnatomy<unknown>,
-  | 'card' | 'destination' | 'wrapItem' | 'glyph' | 'glyphBadge' | 'title' | 'titleSuffix' | 'titleControls' | 'leadingControl' | 'needsYou' | 'where' | 'byline'
-  | 'reason' | 'signal'
-  | 'agent' | 'age' | 'titleMeta'
+  | 'card' | 'rowRole' | 'kindLabel' | 'destination' | 'wrapItem' | 'glyph' | 'loadingGlyph' | 'glyphBadge' | 'title' | 'titleSuffix' | 'titleControls' | 'leadingControl' | 'needsYou' | 'where' | 'byline'
+  | 'reason' | 'listFact' | 'signal'
+  | 'agent' | 'age' | 'titleMeta' | 'titleMetaAlign'
   | 'fields' | 'peek' | 'preview' | 'description' | 'action' | 'accessibilityLabel' | 'accessibilityHint'
   | 'testID' | 'columnTitles'
+>>;
+type _AuthorCollectionRowRoleIsPublic = Assert<IsEqual<
+  NonNullable<CollectionAnatomy<unknown>['rowRole']>, HappierCollectionRowRole
 >>;
 type _VirtualizerDoesNotOwnSelectionOrNativeRefs = Assert<IsEqual<keyof CollectionVirtualizer, 'render'>>;
 type _VirtualizerHandleOnlyPositions = Assert<IsEqual<keyof CollectionVirtualizerHandle, 'reveal' | 'scrollToOffset' | 'scrollToEnd'>>;
@@ -86,10 +90,13 @@ type _AuthorStepKeysAreCurated = Assert<IsEqual<keyof StepProps,
   'marker' | 'title' | 'titleKey' | 'trailing' | 'children' | 'testID'
 >>;
 type _AuthorTabsKeysAreCurated = Assert<IsEqual<keyof TabsProps,
-  'value' | 'onValueChange' | 'ariaLabel' | 'testID' | 'tabList' | 'layout' | 'sharedPanel' | 'labels' | 'children'
+  'value' | 'onValueChange' | 'ariaLabel' | 'testID' | 'tabList' | 'layout' | 'sharedPanel' | 'labels' | 'children' | 'presentation' | 'pageKind'
+>>;
+type _AuthorPageTabsAddOnlyTheirPresentationFact = Assert<IsEqual<
+  Exclude<keyof Extract<TabsProps, { presentation: 'page' }>, keyof TabsProps>, 'phonePresented'
 >>;
 type _AuthorTabsItemKeysAreCurated = Assert<IsEqual<keyof TabsItemProps,
-  'value' | 'title' | 'icon' | 'badge' | 'badgeTone' | 'marker' | 'disabled' | 'retention' | 'children'
+  'value' | 'title' | 'icon' | 'glyph' | 'phonePlacement' | 'badge' | 'badgeTone' | 'marker' | 'disabled' | 'retention' | 'children' | 'kind' | 'companion'
 >>;
 
 type _AuthorFormFieldDoesNotExposeHostOptionSources = Assert<
@@ -106,6 +113,7 @@ type _AuthorTextInterpolationValuesArePublic = Assert<IsEqual<
   PluginTranslationValues | undefined
 >>;
 
+// `fill` + `leadingContent`: a panel's one scroller is the diff itself (QB-55/81), so the content above it scrolls inside.
 type _AuthorDiffViewerKeysStayReadOnlyAndCurated = Assert<IsEqual<keyof DiffViewerProps,
   | 'unifiedDiff'
   | 'filePath'
@@ -130,8 +138,8 @@ type _VisibleTitleButtonMayUseItsTitleAsTheAccessibleName = Assert<(
   Readonly<{ title: string; icon: string; onPress: () => void }> extends ButtonProps ? true : false
 )>;
 type _AuthorTextFieldFocusTarget = Assert<IsEqual<TextFieldProps['focusTarget'], PluginUiFocusTarget | undefined>>;
-// r0.14: the page field row is a presentation of TextField, not a new component.
-type _AuthorTextFieldPresentation = Assert<IsEqual<TextFieldProps['presentation'], 'form' | 'field' | undefined>>;
+// Form fields, configuration rows and in-place document editing share TextField.
+type _AuthorTextFieldPresentation = Assert<IsEqual<TextFieldProps['presentation'], 'form' | 'field' | 'document' | undefined>>;
 type _AuthorTextFieldKind = Assert<IsEqual<TextFieldProps['kind'], 'text' | 'integer' | 'decimal' | undefined>>;
 type _AuthorSelectFocusTarget = Assert<IsEqual<SelectProps['focusTarget'], PluginUiFocusTarget | undefined>>;
 // A narrow toolbar's segmented Select shows icons alone; one author switch, not a size or a label mode.
@@ -187,6 +195,7 @@ type _AuthorSelectOptionValuesUseCanonicalActionValues = Assert<IsEqual<
 >>;
 
 type _AuthorItemPropKeysAreCurated = Assert<IsEqual<keyof ItemProps,
+  | 'rowRole'
   | 'children'
   | 'title'
   | 'subtitle'

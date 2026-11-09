@@ -293,9 +293,121 @@ describe('plugin UI Resource watch availability', () => {
     });
     expect(entry.getSnapshot().subscription).toBe('ended');
     expect(observed).not.toContain('live');
+    expect(api.watchResource).toHaveBeenCalledTimes(1);
 
     unsubscribe();
     store.dispose();
+  });
+
+  it('replaces an established expired watch and delivers replacement data to the same consumer', async () => {
+    vi.useFakeTimers();
+    let current = onlineValue;
+    const listeners: ((event: ResourceSubscriptionEvent) => void)[] = [];
+    const disposals: ReturnType<typeof vi.fn>[] = [];
+    const readResource = vi.fn(async () => current);
+    const watchResource = vi.fn(async (
+      _resource: unknown,
+      listener: (event: ResourceSubscriptionEvent) => void,
+    ): Promise<Disposable> => {
+      listeners.push(listener);
+      const dispose = vi.fn();
+      disposals.push(dispose);
+      return { dispose };
+    });
+    const store = createPluginUiResourceStore({ client: { readResource, watchResource } });
+    const entry = store.getEntry('review-summary');
+    const values: (ResourceContent | undefined)[] = [];
+    const unsubscribe = entry.subscribe(() => { values.push(entry.getSnapshot().value); }, true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(entry.getSnapshot()).toMatchObject({ value: onlineValue, subscription: 'live' });
+
+    current = refreshedValue;
+    listeners[0]!({ version: 1, subscriptionId: 'sub-1', kind: 'error',
+      code: 'expired_resource', diagnostics: ['stale_generation'] });
+    expect(entry.getSnapshot().value).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(entry.getSnapshot()).toMatchObject({ value: refreshedValue, freshness: 'fresh', subscription: 'live' });
+    expect(values).toContain(undefined);
+    expect(values.at(-1)).toBe(refreshedValue);
+    expect(disposals[0]).toHaveBeenCalledTimes(1);
+    expect(watchResource).toHaveBeenCalledTimes(2);
+
+    const readCount = readResource.mock.calls.length;
+    listeners[0]!({ version: 1, subscriptionId: 'sub-1', kind: 'invalidated', digest: onlineValue.digest });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(readResource).toHaveBeenCalledTimes(readCount);
+    expect(watchResource).toHaveBeenCalledTimes(2);
+    expect(entry.getSnapshot().value).toBe(refreshedValue);
+    unsubscribe();
+    store.dispose();
+    expect(disposals[1]).toHaveBeenCalledTimes(1);
+  });
+
+  it('withdraws authority and rejects a pending read without reopening the watch', async () => {
+    vi.useFakeTimers();
+    let deliver: ((event: ResourceSubscriptionEvent) => void) | undefined;
+    let finishRead: ((value: ResourceContent) => void) | undefined;
+    let readSignal: AbortSignal | undefined;
+    let holdRead = false;
+    const disposeWatch = vi.fn();
+    const readResource: PluginUiHostApi['readResource'] = async (_resource, options) => {
+      if (!holdRead) return onlineValue;
+      readSignal = options?.signal;
+      return new Promise(resolve => { finishRead = resolve; });
+    };
+    const watchResource = vi.fn(async (
+      _resource: unknown,
+      listener: (event: ResourceSubscriptionEvent) => void,
+    ): Promise<Disposable> => {
+      deliver = listener;
+      return { dispose: disposeWatch };
+    });
+    const store = createPluginUiResourceStore({ client: { readResource, watchResource } });
+    const entry = store.getEntry('review-summary');
+    const unsubscribe = entry.subscribe(() => undefined, true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(entry.getSnapshot()).toMatchObject({ value: onlineValue, subscription: 'live' });
+
+    holdRead = true;
+    const refreshing = entry.refresh();
+    deliver!({ version: 1, subscriptionId: 'sub-1', kind: 'error', code: 'denied', diagnostics: [] });
+    expect(readSignal?.aborted).toBe(true);
+    expect(entry.getSnapshot()).toMatchObject({ error: { code: 'denied' }, pending: 'idle', subscription: 'ended' });
+    expect(entry.getSnapshot().value).toBeUndefined();
+    finishRead!(refreshedValue);
+    await refreshing;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(entry.getSnapshot().value).toBeUndefined();
+    expect(watchResource).toHaveBeenCalledTimes(1);
+    expect(disposeWatch).toHaveBeenCalledTimes(1);
+    unsubscribe();
+    store.dispose();
+  });
+
+  it('releases a late physical watch when disposed during establishment', async () => {
+    vi.useFakeTimers();
+    let finishWatch: ((watch: Disposable) => void) | undefined;
+    let watchSignal: AbortSignal | undefined;
+    const disposeWatch = vi.fn();
+    const watchResource: PluginUiHostApi['watchResource'] = vi.fn(async (_resource, _listener, options) => {
+      watchSignal = options?.signal;
+      return new Promise<Disposable>(resolve => { finishWatch = resolve; });
+    });
+    const store = createPluginUiResourceStore({ client: { readResource: async () => onlineValue, watchResource } });
+    const entry = store.getEntry('review-summary');
+    const subscriptions: string[] = [];
+    entry.subscribe(() => { subscriptions.push(entry.getSnapshot().subscription); }, true);
+    expect(entry.getSnapshot().subscription).toBe('establishing');
+
+    store.dispose();
+    expect(watchSignal?.aborted).toBe(true);
+    finishWatch!({ dispose: disposeWatch });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(disposeWatch).toHaveBeenCalledTimes(1);
+    expect(watchResource).toHaveBeenCalledTimes(1);
+    expect(entry.getSnapshot()).toMatchObject({ subscription: 'ended', pending: 'idle' });
+    expect(entry.getSnapshot().value).toBeUndefined();
+    expect(subscriptions).not.toContain('live');
   });
 
   it('keeps a host that genuinely cannot watch permanently unsupported', async () => {
@@ -336,6 +448,30 @@ describe('plugin UI Resource watch availability', () => {
     expect(watchResource.mock.calls.length).toBeLessThanOrEqual(1);
     expect(entry.getSnapshot().subscription).toBe('unsupported');
 
+    unsubscribe();
+    store.dispose();
+  });
+
+  it.each([
+    ['plugin_resource_not_found', 'ended'],
+    ['action_forbidden', 'ended'],
+    ['plugin_resource_transport_not_supported', 'unsupported'],
+    ['unsupported_method', 'unsupported'],
+  ] as const)('settles %s admission without reopening an unchanged Resource during an idle minute', async (code, subscription) => {
+    vi.useFakeTimers();
+    const watchResource = vi.fn(async () => {
+      throw Object.assign(new Error('Resource watch refused'), { code, retryable: false });
+    });
+    const store = createPluginUiResourceStore({ client: { readResource: async () => onlineValue, watchResource } });
+    const entry = store.getEntry('review-summary');
+    const unsubscribe = entry.subscribe(() => undefined, true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(entry.getSnapshot()).toMatchObject({ subscription, pending: 'idle' });
+    if (subscription === 'ended') expect(entry.getSnapshot().error).toMatchObject({ code, retryable: false });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(watchResource).toHaveBeenCalledTimes(1);
+    await entry.refresh();
+    expect(watchResource).toHaveBeenCalledTimes(1);
     unsubscribe();
     store.dispose();
   });

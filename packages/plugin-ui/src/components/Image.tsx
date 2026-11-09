@@ -58,6 +58,11 @@ export type BrandMarkProps = Readonly<{
   showName?: boolean;
   /** An adjacent host-owned label already supplies the one canonical name. */
   externallyLabelled?: boolean;
+  /**
+   * Happier's own mark instead of a package brand, for content Happier itself holds (a personal task). Decorative,
+   * so pair it with a label; without a host renderer it falls back to the mounted plugin's brand.
+   */
+  host?: boolean;
   testID?: string;
 }>;
 
@@ -89,7 +94,7 @@ export function usePluginBrandDisplayName(pluginId?: string): string | undefined
  * intentionally not an author prop: `manifest.brand.iconResourceId` remains
  * the one declaration and projection owner.
  */
-export function BrandMark({ pluginId, size, pixelSize: requestedPixelSize, showName = false, externallyLabelled = false, testID }: BrandMarkProps): ReactElement {
+export function BrandMark({ pluginId, size, pixelSize: requestedPixelSize, showName = false, externallyLabelled = false, host = false, testID }: BrandMarkProps): ReactElement {
   // A small mark sits beside text (a byline, a cell): at a small glyph's step, not the 32 px image step,
   // where a filled brand reads as a heavy disk. Larger marks keep their image steps.
   const pageHeaderGlyphPx = usePageHeaderMarkGlyphPx();
@@ -104,6 +109,10 @@ export function BrandMark({ pluginId, size, pixelSize: requestedPixelSize, showN
   // no Resource generation and the app owns the bundled artwork instead.
   const targetPluginId = requestedPluginId || mountedPluginId || resource?.pluginId;
   const theme = usePluginTheme();
+  const hostMark = host && pixelSize !== undefined
+    ? presentationHost?.renderHostMark?.({ pixelSize, ...(testID === undefined ? {} : { testID }) })
+    : undefined;
+  if (hostMark !== undefined && hostMark !== null) return <>{hostMark}</>;
   if (targetPluginId) {
     const rendered = presentationHost?.renderBrandMark?.({
       pluginId: targetPluginId,

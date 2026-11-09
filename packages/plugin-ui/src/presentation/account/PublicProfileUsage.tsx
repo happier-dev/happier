@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { PublicProfileUsagePresentation } from '../../components/publicProfileTypes.js';
 
 import { useHappierUiTheme } from '../../environment/context.js';
@@ -21,7 +22,7 @@ import {
   UsageAgentMoons, UsageAtmosphere, UsageMachines, UsageProjects,
   type UsageAtmosphereLabels, type UsageMachinesLabels, type UsageMoonsLabels, type UsageProjectsLabels,
 } from '../usage/charts/UsagePlanetFamily.js';
-import { publicProfileUsageOriginalBody, type PublicUsageOriginalLabels } from './PublicProfileUsageOriginal.js';
+import { publicProfileUsageOriginalBody, type PublicUsageMetricId, type PublicUsageOriginalLabels } from './PublicProfileUsageOriginal.js';
 export type { PublicUsageOriginalLabels, PublicUsageMetricId } from './PublicProfileUsageOriginal.js';
 
 /** Host localization for the same chart bodies used by private Usage. */
@@ -69,16 +70,24 @@ export type PublicProfileUsageBodyProps = Readonly<{
   host: HappierPublicProfileUsageHost;
   /** The block's drawing width on a cold host, from its place in the page column. */
   width?: number;
+  /** The owner's own page only: each figure's in-place control and which figures visitors don't see. */
+  figures?: HappierPublicProfileFigureControls;
   testID: string;
 }>;
 
+/** Owner-only, per figure: the host renders the control and keeps consent with its one policy owner. */
+export type HappierPublicProfileFigureControls = Readonly<{
+  hidden: ReadonlySet<PublicUsageMetricId>;
+  render: (figure: PublicUsageMetricId) => ReactNode;
+}>;
+
 /** A thin model/host adapter; shared Usage bodies own all chart markup and geometry. */
-export function PublicProfileUsageBody({ presentation, models, records, host, width, testID }: PublicProfileUsageBodyProps) {
+export function PublicProfileUsageBody({ presentation, models, records, host, width, figures, testID }: PublicProfileUsageBodyProps) {
   const theme = useHappierUiTheme();
   const { labels } = host;
   const base = { theme, paint: host.paint, width, label: labels.chartLabel(presentation.widgetId), testID };
   const agents = (ids: readonly (string | null)[]) => [...new Set(ids)].flatMap(id => id === null ? [] : [host.agent(id)]);
-  const original = publicProfileUsageOriginalBody({ presentation, models, records, host, width, testID }, theme);
+  const original = publicProfileUsageOriginalBody({ presentation, models, records, host, width, figures, testID }, theme);
   if (original) return original;
   switch (presentation.widgetId) {
     case 'usage_recap':

@@ -41,6 +41,8 @@ export type CollectionVirtualizerRequest<Item> = CollectionVirtualizerBase<Item>
       sections: readonly Readonly<{ key: string; title?: string; data: readonly Item[] }>[];
       /** Section headers share the rows' scroller and stay pinned where they can paint their ground (not inside a translucent material). */
       renderSectionHeader(sectionIndex: number): ReactNode;
+      /** A page list draws each section's rows on its own sheet; windowed rows and their spacers stand inside it. */
+      renderSectionRows?(sectionIndex: number, rows: ReactNode): ReactNode;
     }>
 );
 

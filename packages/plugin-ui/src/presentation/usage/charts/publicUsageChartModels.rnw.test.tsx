@@ -21,6 +21,18 @@ const base: PublicProfileSnapshotV1 = {
 };
 
 describe('public Usage chart producer', () => {
+  it('keeps shared unavailable summary figures distinct from witnessed zero and hidden figures', () => {
+    const projected = projectPublicProfileSnapshot({ ...base, facts: { tokens: 0, activeDays: 3, peakParallel: 99 },
+      fieldCoverage: { tokens: base.coverage, activeDays: base.coverage, agentTime: base.coverage,
+        mergedPrs: { status: 'unavailable', method: 'unknown' }, currentStreak: base.coverage,
+        bestStreak: base.coverage, peakParallel: base.coverage } }, {
+      ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields,
+        tokens: true, activeDays: true, agentTime: true, mergedPrs: true, currentStreak: true, bestStreak: true, peakParallel: false },
+    });
+    expect(components.projectPublicUsageChartModels(projected).summary).toEqual({ tokens: 0, activeDays: 3,
+      agentTimeMs: null, mergedPrs: null, currentStreakDays: null, bestStreakDays: null });
+    expect(projected.fieldCoverage).not.toHaveProperty('peakParallel');
+  });
   it('produces period-sized planet calendars, clipped ordinal weeks and independently disclosed moons', () => {
     const models = components.projectPublicUsageChartModels({ ...base, facts: {
       calendar: [{ date: '2026-09-01', level: 4 }, { date: '2026-09-02', level: 0 }], currentStreakDays: 0,

@@ -13,7 +13,7 @@ import { HappierStatus } from '../presentation/status/Status.js';
 import type { PluginUiPresentationHost } from '../presentationHost/context.js';
 import { defineHappierScene, defineHappierSceneProp, type HappierSceneRenderRequest } from '../presentation/state/scenes.js';
 import { PluginUiProvider, PluginUiProviderInternal } from './PluginUiProvider.js';
-import { Button, EmptyState, ErrorState, FreshnessLine, LoadingState, Spinner, State, Status } from './index.js';
+import { Button, EmptyState, ErrorState, FreshnessLine, LoadingState, Spinner, State, Status, SurfaceState } from './index.js';
 import { SceneArt } from './State.js';
 import { PluginUiSurfaceNoticeContext } from '../presentationHost/surfaceNotice.js';
 
@@ -588,6 +588,18 @@ describe('plugin states take the container they are mounted in (lab 5 host primi
     const unsized = mountSurface(<LoadingState title="Loading" />);
     expect(measureOf(unsized, 'Loading')).toBe('520px');
     unsized.unmount();
+  });
+
+  it('stretches a phone state\'s recovery to the column, and leaves a wide state\'s content-sized', () => {
+    const phone = mountSurface(<ErrorState title="Could not load" size="phone" onRetry={() => undefined} />);
+    const retry = [...phone.container.querySelectorAll<HTMLElement>('[role="button"]')].find(node => node.textContent === 'Retry')!;
+    expect(getComputedStyle(retry).width).toBe('100%');
+    phone.unmount();
+
+    const page = mountSurface(<ErrorState title="Could not load" size="page" onRetry={() => undefined} />);
+    const own = [...page.container.querySelectorAll<HTMLElement>('[role="button"]')].find(node => node.textContent === 'Retry')!;
+    expect(getComputedStyle(own).width).not.toBe('100%');
+    page.unmount();
   });
 
   it('draws one quiet line, not a centred column, in a line container (an inspector section, a narrow column)', () => {

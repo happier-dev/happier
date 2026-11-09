@@ -3,6 +3,8 @@ import { View } from 'react-native';
 
 import type { HappierStyleProp } from '../portableTypes.js';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, happierFocusRingStyle, resolveHappierFocusRingVisible } from './focusVisible.js';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '../../environment/interactiveTarget.js';
+import { useHappierHitArea } from './hitArea.js';
 import { HappierPressable, type HappierPressableProps } from './Pressable.js';
 
 /**
@@ -10,8 +12,9 @@ import { HappierPressable, type HappierPressableProps } from './Pressable.js';
  * swipe and tap (phone Organize mode, lab K1h) and wherever a surface keeps its body for other input
  * (a Board card). It is chrome only: the host attaches its gesture/keyboard owner around it.
  *
- * The visible glyph stays small; the touch target is widened with hit slop to the platform minimum
- * so the grip is easy to catch without crowding the row.
+ * The visible glyph stays small; its hit area (the shared owner's: an invisible frame on the web,
+ * `hitSlop` on native) reaches the platform's finger target, and the WCAG floor under a pointer, so the
+ * grip is easy to catch without crowding the row.
  */
 export type HappierDragGripDensity = 'pointer' | 'touch';
 
@@ -38,17 +41,29 @@ export type HappierDragGripProps = Readonly<{
    * that already owns the name, so the grip is not announced twice.
    */
   accessibilityLabel?: string;
-  /** Minimum interactive size of the platform; the hit area grows to it around the glyph. */
-  minimumTargetSize?: number;
   colors: Readonly<{ glyph: string; activeGlyph: string; activeFill: string; hoverFill?: string; focusRing?: string }>;
   renderGlyph: (color: string, size: number) => ReactNode;
   testID?: string;
   style?: HappierStyleProp;
 }>;
 
+type DragGripChromeProps = HappierDragGripProps & Readonly<{
+  /** The grip's own hit area, when the grip itself is the target; a trigger's pressable owns it instead. */
+  hitArea?: ReturnType<typeof useHappierHitArea>;
+}>;
+
+/** A standalone grip (a host gesture surface): the grip's box is the target, so it owns the hit area. */
 export const HappierDragGrip = forwardRef<unknown, HappierDragGripProps>(function HappierDragGrip(props, ref) {
   const metrics = GRIP_METRICS[props.density ?? 'pointer'];
-  const slop = Math.max(0, Math.ceil(((props.minimumTargetSize ?? metrics.box) - metrics.box) / 2));
+  const hitArea = useHappierHitArea({
+    restingStyle: () => ({ width: metrics.box, height: metrics.box }),
+    hitTarget: HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE,
+  });
+  return <DragGripChrome ref={ref} {...props} hitArea={hitArea} />;
+});
+
+const DragGripChrome = forwardRef<unknown, DragGripChromeProps>(function DragGripChrome(props, ref) {
+  const metrics = GRIP_METRICS[props.density ?? 'pointer'];
   const active = props.active === true;
   const focused = props.interaction?.focused === true;
   const lit = props.interaction?.hovered === true || props.interaction?.pressed === true;
@@ -60,7 +75,8 @@ export const HappierDragGrip = forwardRef<unknown, HappierDragGripProps>(functio
       testID={props.testID}
       accessible={props.accessibilityLabel !== undefined}
       accessibilityLabel={props.accessibilityLabel}
-      hitSlop={slop > 0 ? { top: slop, bottom: slop, left: slop, right: slop } : undefined}
+      hitSlop={props.hitArea?.hitSlop}
+      onLayout={props.hitArea?.onLayout}
       style={[
         {
           width: metrics.box,
@@ -78,6 +94,7 @@ export const HappierDragGrip = forwardRef<unknown, HappierDragGripProps>(functio
         props.style,
       ] as HappierStyleProp}
     >
+      {props.hitArea?.frame}
       {props.renderGlyph(active ? props.colors.activeGlyph : props.colors.glyph, metrics.glyph)}
     </View>
   );
@@ -94,6 +111,8 @@ export function HappierDragGripTrigger(props: HappierDragGripTriggerProps) {
     accessibilityActions={props.accessibilityActions} onAccessibilityAction={props.onAccessibilityAction}
     controlRef={props.controlRef} expanded={props.expanded} disabled={props.disabled} hasPopup="menu"
     tabIndex={props.tabIndex}
+    // The pressable is the target: it owns the one hit area, reaching the finger target past the grip.
+    hitTarget={HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE}
     onPress={props.onPress} onKeyDown={props.onKeyDown} onFocusChange={props.onFocusChange}
     style={({ pressed }) => [props.style, {
       borderRadius: GRIP_METRICS[props.density ?? 'pointer'].radius,
@@ -101,7 +120,7 @@ export function HappierDragGripTrigger(props: HappierDragGripTriggerProps) {
       // The grip draws the ring; without a ring colour the browser's own ring stays.
       ...(props.colors.focusRing ? HAPPIER_FOCUS_RING_DELEGATED_STYLE : null),
     }]}
-  >{state => <HappierDragGrip active={props.active} revealed={props.revealed} density={props.density}
+  >{state => <DragGripChrome active={props.active} revealed={props.revealed} density={props.density}
     interaction={{ focused: state.focused, hovered: state.hovered }} colors={props.colors}
-    minimumTargetSize={props.minimumTargetSize} renderGlyph={props.renderGlyph} />}</HappierPressable>;
+    renderGlyph={props.renderGlyph} />}</HappierPressable>;
 }

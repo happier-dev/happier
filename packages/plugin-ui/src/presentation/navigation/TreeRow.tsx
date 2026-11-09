@@ -114,7 +114,6 @@ export function HappierTreeDisclosure(
       expanded={props.expanded}
       accessibilityLabel={props.accessibilityLabel}
       tabIndex={-1}
-      hitSlop={4}
       hitReach={props.hitReach ?? DISCLOSURE_HIT_REACH}
       style={{
         width: box,
@@ -140,6 +139,8 @@ export function HappierTreeDisclosure(
 export type HappierTreeRowProps = Readonly<{
   node: HappierTreeNode;
   title: string;
+  /** The row's place among its siblings (`useHappierTreeInteraction().positionOf`), announced as "n of m". */
+  position?: Readonly<{ positionInSet: number; setSize: number }> | null;
   /** The item's own mark (a folder or file glyph, a brand mark); it stands alone, never on a tile. */
   mark?: ReactNode;
   /** A controlled selection control before the mark (for example, a changed-file checkbox). */
@@ -263,6 +264,7 @@ export function HappierTreeRow(props: HappierTreeRowProps) {
       // Tree rows stack flush: the row's own box is its hit area, never reaching over the next row.
       hitReach={0}
       accessibilityLevel={node.depth + 1}
+      {...(props.position ? { accessibilityPositionInSet: props.position.positionInSet, accessibilitySetSize: props.position.setSize } : {})}
       accessibilityLabel={props.title}
       expanded={branch ? node.expanded : undefined}
       selected={props.selected === true}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
 /** What a typed-in-place setting holds: free text, a whole number or a decimal. */
@@ -33,19 +33,24 @@ export function resolveHappierFieldKeyboardType(
 }
 
 export type HappierFieldValueDraftInput = Readonly<{
-  /** The saved value, as text. The draft follows it whenever it changes. */
+  /** The saved value, as text. External changes update pristine fields, preserving dirty drafts. */
   value: string;
-  /** A controlled editor may echo its draft in value; blur still compares against this acknowledged value. */
+  /** A controlled editor echoes its draft in value; setting both to the acknowledged value resets the draft. */
   committedValue?: string;
   /**
    * Saves the typed value, only when it differs from `committedValue` (or `value` when omitted). Returns the text
    * the field shows afterwards (a number moved to its bound, the saved value
-   * when refused), or nothing to keep the draft.
+   * when refused), or nothing to keep the draft. An asynchronous Action can return its acceptance;
+   * false/rejection retains the draft for an explicit retry. The caller presents any failure.
    */
-  onCommit: (draft: string) => string | void;
+  onCommit: (draft: string) => string | void | Promise<boolean>;
   /** Each draft as the field keeps it. */
   onDraftChange?: (draft: string) => void;
   kind?: HappierFieldValueKind;
+  /** Text fields trim at commit by default; prose/templates can preserve their authored whitespace. */
+  trim?: boolean;
+  /** Canonical saved text for this field; replaces trimming when supplied and runs only on commit. */
+  normalize?: (draft: string) => string;
   signed?: boolean;
   /** A number that may be left empty ("not set"): an empty draft commits instead of returning. */
   allowEmpty?: boolean;
@@ -63,45 +68,77 @@ export function useHappierFieldValueDraft(input: HappierFieldValueDraftInput): R
   draft: string;
   change: (text: string) => void;
   commit: () => void;
+  cancel: () => void;
   stepBy: (direction: -1 | 1) => void;
   canDecrement: boolean;
   canIncrement: boolean;
 }> {
-  const { value, onCommit, onDraftChange, kind = 'text', signed = false, allowEmpty, stepper } = input;
-  const committedValue = input.committedValue ?? value;
+  const { value, committedValue: acknowledgedValue, onCommit, onDraftChange, kind = 'text', trim = true, normalize, signed = false, allowEmpty, stepper } = input;
+  const committedValue = acknowledgedValue ?? value;
   const [draft, setDraft] = useState(value);
+  const currentDraft = useRef(value);
+  const dirty = useRef(false);
+  const submitted = useRef<Readonly<{ text: string }> | null>(null);
+  const show = useCallback((text: string) => { currentDraft.current = text; setDraft(text); }, []);
   useEffect(() => {
-    setDraft(value);
-  }, [value]);
+    if (currentDraft.current === committedValue || (acknowledgedValue !== undefined && value === committedValue)) {
+      dirty.current = false;
+      submitted.current = null;
+    }
+    if (!dirty.current) show(value);
+  }, [acknowledgedValue, committedValue, show, value]);
   const change = useCallback((text: string) => {
     const next = filterHappierFieldDraft(kind, text, signed);
-    setDraft(next);
+    dirty.current = next !== committedValue;
+    submitted.current = null;
+    show(next);
     onDraftChange?.(next);
-  }, [kind, onDraftChange, signed]);
-  const commit = useCallback(() => {
-    const next = kind === 'text' ? draft.trim() : draft;
-    if (kind !== 'text' && next.length === 0 && !allowEmpty) {
-      setDraft(committedValue);
-      return;
-    }
-    if (next === committedValue) {
-      setDraft(value);
-      return;
-    }
+  }, [committedValue, kind, onDraftChange, show, signed]);
+  const cancel = useCallback(() => {
+    dirty.current = false;
+    submitted.current = null;
+    show(committedValue);
+    onDraftChange?.(committedValue);
+  }, [committedValue, onDraftChange, show]);
+  const submit = useCallback((next: string) => {
     const shown = onCommit(next);
-    setDraft(typeof shown === 'string' ? shown : next);
-  }, [allowEmpty, committedValue, draft, kind, onCommit, value]);
+    const submission = { text: next };
+    submitted.current = submission;
+    dirty.current = true;
+    show(typeof shown === 'string' ? shown : next);
+    if (typeof shown === 'string') dirty.current = shown !== committedValue;
+    if (shown instanceof Promise) {
+      // A refused/failed Action keeps the draft and allows an explicit retry. A late result from
+      // an earlier edit cannot change the newer edit's submission state.
+      const retry = () => { if (submitted.current === submission) submitted.current = null; };
+      void shown.then(accepted => {
+        if (submitted.current !== submission) return;
+        submitted.current = null;
+        if (accepted) dirty.current = false;
+      }, retry);
+    }
+  }, [committedValue, onCommit, show]);
+  const commit = useCallback(() => {
+    if (!dirty.current) return;
+    const next = normalize ? normalize(currentDraft.current)
+      : kind === 'text' && trim ? currentDraft.current.trim() : currentDraft.current;
+    if ((kind !== 'text' && next.length === 0 && !allowEmpty) || next === committedValue) {
+      cancel();
+      return;
+    }
+    // Submit and blur can arrive before the Action's acknowledgement. They complete one edit.
+    if (submitted.current?.text !== next) submit(next);
+  }, [allowEmpty, cancel, committedValue, kind, normalize, submit, trim]);
   const current = draft.trim() !== '' && Number.isFinite(Number(draft)) ? Number(draft) : Number(value);
   const stepBy = useCallback((direction: -1 | 1) => {
     if (!stepper || !Number.isFinite(current)) return;
     const next = Math.max(stepper.min ?? -Infinity, Math.min(stepper.max ?? Infinity, current + direction * stepper.step));
     const text = String(next);
-    if (text === value) { setDraft(value); return; }
-    const shown = onCommit(text);
-    setDraft(typeof shown === 'string' ? shown : text);
-  }, [current, onCommit, stepper, value]);
+    if (text === value) { cancel(); return; }
+    submit(text);
+  }, [cancel, current, stepper, submit, value]);
   return {
-    draft, change, commit, stepBy,
+    draft, change, commit, cancel, stepBy,
     canDecrement: Number.isFinite(current) && current > (stepper?.min ?? -Infinity),
     canIncrement: Number.isFinite(current) && current < (stepper?.max ?? Infinity),
   };

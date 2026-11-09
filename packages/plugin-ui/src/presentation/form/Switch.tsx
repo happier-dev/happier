@@ -5,6 +5,7 @@ import { useHappierHitArea } from '../interaction/hitArea.js';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
 import type { HappierFocusable, HappierStyleProp } from '../portableTypes.js';
+import type { HappierHitReach } from '../../environment/interactiveTarget.js';
 
 /**
  * The one switch owner for Happier core and plugin surfaces (D6).
@@ -30,7 +31,7 @@ export const HAPPIER_SWITCH_METRICS = Object.freeze({
    * squash of a switch about to move), by this much, and settles back on release.
    */
   pressStretchPx: 4,
-  /** The web control's hit region around the drawn track; it overhangs and takes no layout. */
+  /** The web control's hit area around the drawn track (the shared hit-area owner's frame); it takes no layout. */
   webTargetPx: 44,
   disabledOpacity: 0.6,
 });
@@ -69,6 +70,12 @@ export type HappierSwitchProps = Readonly<{
   /** Caller layout for the control box; the switch's own target floor always applies over it. */
   style?: HappierStyleProp;
   /**
+   * How far the hit area may reach past the drawn switch on each side (the shared hit-area owner's
+   * reach): half the gap to a neighbour, `0` toward a control that owns that space (the row above a
+   * trigger's actions line).
+   */
+  hitReach?: HappierHitReach;
+  /**
    * The row this switch sits in owns its press (tap anywhere on the row toggles it): the switch draws
    * its state only — no press, focus or accessibility node of its own — so a tap is counted once.
    */
@@ -105,7 +112,7 @@ function isToggleKey(key: string): boolean {
  */
 export function HappierSwitchNative(props: HappierSwitchProps) {
   const { colors } = props;
-  const hitArea = useHappierHitArea({ restingStyle: () => null, hitTarget: props.minimumTouchTarget });
+  const hitArea = useHappierHitArea({ restingStyle: () => null, hitTarget: props.minimumTouchTarget, hitReach: props.hitReach });
   const toggle = props.onValueChange;
   const control = (
     <ReactNativeSwitch
@@ -153,8 +160,6 @@ export function HappierSwitch(props: HappierSwitchProps) {
   const metrics = HAPPIER_SWITCH_METRICS[props.size ?? 'default'];
   const thumbTravel = (thumbWidth: number) => (value ? metrics.trackWidth - thumbWidth - metrics.padding * 2 : 0);
   const toggle = () => { onValueChange?.(!value); };
-  const hitWidth = Math.max(HAPPIER_SWITCH_METRICS.webTargetPx, metrics.trackWidth);
-  const hitHeight = Math.max(HAPPIER_SWITCH_METRICS.webTargetPx, metrics.trackHeight);
   const renderTrack = (pressed: boolean, focused: boolean) => {
     const thumbWidth = metrics.thumbSize + (pressed && disabled !== true ? HAPPIER_SWITCH_METRICS.pressStretchPx : 0);
     return <View
@@ -220,6 +225,9 @@ export function HappierSwitch(props: HappierSwitchProps) {
       // A switch settles synchronously: the press returns nothing, so the
       // shared pending lifecycle never disables it mid-change.
       onPress={toggle}
+      // The switch is drawn at its track; its hit area reaches the target past it, within the caller's reach.
+      hitTarget={HAPPIER_SWITCH_METRICS.webTargetPx}
+      hitReach={props.hitReach}
       onKeyDown={(key) => {
         if (disabled === true || !isToggleKey(key)) return false;
         toggle();
@@ -228,12 +236,9 @@ export function HappierSwitch(props: HappierSwitchProps) {
       style={(state) => [
         props.style,
         {
-          // The hit region is the full target, but it overhangs the drawn track instead of taking
-          // layout: in flow the switch is exactly its track, so it never makes a row taller.
-          width: hitWidth,
-          height: hitHeight,
-          marginHorizontal: -(hitWidth - metrics.trackWidth) / 2,
-          marginVertical: -(hitHeight - metrics.trackHeight) / 2,
+          // In flow the switch is exactly its track, so it never makes a row taller.
+          width: metrics.trackWidth,
+          height: metrics.trackHeight,
           alignItems: 'center',
           justifyContent: 'center',
           alignSelf: 'flex-start',

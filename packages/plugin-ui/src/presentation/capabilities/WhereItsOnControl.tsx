@@ -168,6 +168,8 @@ export type HappierWhereItsOnControlLabels = HappierWhereItsOnLabels &
       staysOff: (agents: string) => string;
       change: () => string;
       changeFailed: () => string;
+      /** The consequence line while the machines' Agents are not known yet. */
+      checking: () => string;
       tryAgain: () => string;
     }>;
   }>;
@@ -438,9 +440,11 @@ function SentenceText(
 
 const NAME_OPEN = '\u0003';
 const NAME_CLOSE = '\u0004';
-// Web only (the text is CSS): a name stays whole, so the sentence wraps before it, never inside it.
+// Web only (the text is CSS): a name is one unit, so the sentence wraps before it, never inside it. A name wider
+// than the line (a generated host name) breaks inside its own box rather than running out of the card.
+// The portable style has no inline-block or overflow-wrap; react-native-web still receives them.
 const WHOLE_NAME = Platform.select<NonNullable<HappierWhereItsOnTextProps['style']>>({
-  web: { whiteSpace: 'nowrap' },
+  web: { display: 'inline-block', maxWidth: '100%', overflowWrap: 'anywhere' } as unknown as NonNullable<HappierWhereItsOnTextProps['style']>,
 });
 
 /** "Available to [Claude], [Codex] and [OpenCode] on MacBook Pro and nl2", then the notes. */
@@ -487,7 +491,7 @@ function ConsequenceLine(
   ) {
     return (
       <Text variant="body" tone="secondary" testID={props.testID}>
-        —
+        {props.labels.control.checking()}
       </Text>
     );
   }

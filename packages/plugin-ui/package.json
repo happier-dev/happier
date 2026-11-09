@@ -116,9 +116,6 @@
     "api-declarations": "pnpm --silent run api-governance",
     "check:api-declarations": "pnpm --silent run check:api-governance"
   },
-  "bundledDependencies": [
-    "@happier-dev/protocol"
-  ],
   "dependencies": {
     "@happier-dev/plugin-sdk": "0.0.0"
   },

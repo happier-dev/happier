@@ -1,19 +1,13 @@
 import {
   createContext,
   useContext,
-  useState,
   type ReactElement,
   type ReactNode,
 } from 'react';
 
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
 import { useOptionalHappierTabPanelActivityInternal } from '../presentation/navigation/Tabs.js';
-import {
-  createSessionPartClaims,
-  useSessionPartClaim,
-  type SessionPartClaims,
-  type SessionPartKind,
-} from '../presentationHost/sessionPartClaims.js';
+import type { SessionPartKind } from '../presentationHost/sessionPartClaims.js';
 
 export type SessionProviderProps = Readonly<{
   /** A Session in the mounting surface's Account. The host resolves it; nothing else is trusted. */
@@ -35,9 +29,7 @@ export type SessionChatProps = Readonly<{
   testID?: string;
 }>;
 
-const SessionPartClaimsContext = createContext<SessionPartClaims | null>(null);
-const TRANSCRIPT_PART = ['transcript'] as const;
-const COMPOSER_PART = ['composer'] as const;
+const SessionProviderContext = createContext(false);
 
 function normalizeSessionId(sessionId: string): string {
   return typeof sessionId === 'string' ? sessionId.trim() : '';
@@ -51,7 +43,6 @@ export function SessionProvider(props: SessionProviderProps): ReactElement | nul
   const tabActivity = useOptionalHappierTabPanelActivityInternal();
   const host = useOptionalPluginUiPresentationHost();
   const renderSessionPart = host?.renderSessionPart;
-  const [claims] = useState(createSessionPartClaims);
   const sessionId = normalizeSessionId(props.sessionId);
   if (!renderSessionPart || sessionId.length === 0) return <>{props.fallback ?? null}</>;
   return (
@@ -62,9 +53,9 @@ export function SessionProvider(props: SessionProviderProps): ReactElement | nul
         readOnly: props.readOnly === true,
         ...(tabActivity ? { presented: tabActivity.active } : {}),
         children: (
-          <SessionPartClaimsContext.Provider value={claims}>
+          <SessionProviderContext.Provider value>
             {props.children}
-          </SessionPartClaimsContext.Provider>
+          </SessionProviderContext.Provider>
         ),
       }))}
     </>
@@ -73,10 +64,9 @@ export function SessionProvider(props: SessionProviderProps): ReactElement | nul
 
 function SessionPart(props: SessionPartProps & Readonly<{ part: SessionPartKind }>): ReactElement | null {
   const host = useOptionalPluginUiPresentationHost();
-  const claims = useContext(SessionPartClaimsContext);
-  const owns = useSessionPartClaim(claims, props.part === 'transcript' ? TRANSCRIPT_PART : COMPOSER_PART);
+  const bound = useContext(SessionProviderContext);
   const renderSessionPart = host?.renderSessionPart;
-  if (!renderSessionPart || !owns) return null;
+  if (!renderSessionPart || !bound) return null;
   return (
     <>
       {renderSessionPart(Object.freeze({

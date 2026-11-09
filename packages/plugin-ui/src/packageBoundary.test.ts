@@ -348,6 +348,14 @@ describe('author package boundary', () => {
     };
 
     for (const specifier of Object.keys(packageJson.exports)) {
+      if (specifier === './ansi') {
+        expect(packageJson.exports[specifier]).toEqual({
+          'happier-source': './src/ansi.ts',
+          types: './dist/ansi.d.ts',
+          default: './dist/ansi.js',
+        });
+        continue;
+      }
       if (specifier === './presentation/formatBytes') {
         expect(packageJson.exports[specifier]).toEqual({
           'happier-source': './src/presentation/data/formatBytes.ts',
@@ -510,7 +518,6 @@ describe('author package boundary', () => {
     const imports = fixtureSources.flatMap((filePath) =>
       importedSpecifiers(readFileSync(filePath, 'utf8')),
     );
-
     // Read the JavaScript inventory owner through its real Node ESM boundary.
     const sdkInventoryOwner: {
       readCurrentApiSurfaceInventory(options: { packageRoot: string }): Promise<{
@@ -550,6 +557,7 @@ describe('author package boundary', () => {
       'tsconfig.nodenext.json',
       'tsconfig.vite.json',
       'tsconfig.voice-native.json',
+      'tsconfig.managed-services-native.json',
       'tsconfig.runtime.json',
       'vite.browser.config.ts',
     ]) {

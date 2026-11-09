@@ -12,7 +12,7 @@ vi.mock('react-native', () => ({
 }));
 
 import { createAdmittedBrandPngFixture, createSurfaceContext } from '../../surfaceFixture.testSupport.js';
-import { HappierBrandMark, HappierImage } from './Image.js';
+import { HappierBrandMark, HappierImage, resolveHappierBrandFallback } from './Image.js';
 import { materializeHappierRenderableImage } from './renderableImage.js';
 
 /**
@@ -82,6 +82,10 @@ describe('HappierImage byte source derivation', () => {
     }
   });
 
+  it('keeps a single fallback grapheme when uppercasing expands a letter', () => {
+    expect(resolveHappierBrandFallback('ßeta')).toBe('S');
+    expect(resolveHappierBrandFallback('👩🏽‍💻 tools')).toBe('👩🏽‍💻');
+  });
   it('exposes the decoder-failure callback on the public brand-mark contract', async () => {
     const context = createSurfaceContext({ colorScheme: 'light', contrast: 'normal' });
     const onDecodeError = vi.fn();

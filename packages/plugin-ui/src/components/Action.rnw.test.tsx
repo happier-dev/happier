@@ -1,7 +1,3 @@
-import { createPluginUiTestkit, type PluginUiTestkitHostHandlers } from '@happier-dev/plugin-sdk/testing';
-import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { defineUiSurface } from '../surfaceEntry.js';
-import { useSurfaceContext } from './PluginUiProvider.js';
 import type { ActionContract } from '@happier-dev/plugin-sdk/actions';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginUiHostApi, SurfaceContext } from '@happier-dev/plugin-sdk/ui';
@@ -14,9 +10,13 @@ import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { Action, ActionPanel } from './Action.js';
-import { useExecutePluginAction } from '../hostApi/executeAction.js';
+import { projectPluginActionRejectionV1, useExecutePluginAction } from '../hostApi/executeAction.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 import { createPluginUiHostApiClientFromTransport } from '../../../plugin-sdk/src/ui/clientTransport.js';
+import { createPluginUiTestkit, type PluginUiTestkitHostHandlers } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import { defineUiSurface } from '../surfaceEntry.js';
+import { useSurfaceContext } from './PluginUiProvider.js';
 
 declare const updateReview: ActionContract;
 declare const completeReview: ActionContract;
@@ -540,11 +540,13 @@ describe('plugin-ui Action family dispatches through the canonical host API', ()
     mount.unmount();
   });
 
-  it('settles an exact host confirmation decline quietly and preserves a real permission denial', async () => {
+  it.each(['strings', 'sdk'] as const)('settles an exact host confirmation decline quietly and preserves a real permission denial (%s)', async representation => {
     // The mounted host's Action transport reports a declined prompt as denied
     // with this exact diagnostic; ordinary permission denial has another cause.
     const refusals = [
-      Object.assign(new Error('denied'), { code: 'denied', diagnostics: ['plugin_action_current_intent_rejected'] }),
+      representation === 'strings'
+        ? Object.assign(new Error('denied'), { code: 'denied', diagnostics: ['plugin_action_current_intent_rejected'] })
+        : new PluginError({ code: 'denied', diagnostics: [{ code: 'plugin_action_current_intent_rejected', severity: 'error' }] }),
       Object.assign(new Error('denied'), { code: 'denied', diagnostics: ['plugin_action_scope_denied'] }),
     ];
     const executeAction = vi.fn(async () => { throw refusals.shift(); });
@@ -560,6 +562,16 @@ describe('plugin-ui Action family dispatches through the canonical host API', ()
       await press(pressableByLabel(mount.container, 'Run review'));
       expect(onSettled.mock.calls[1]?.[0]).toMatchObject({ status: 'error', code: 'denied' });
     } finally { mount.unmount(); }
+  });
+
+  it('preserves the typed host decline code for domain outcome projections', () => {
+    const execution = projectPluginActionRejectionV1(new PluginError({ code: 'denied',
+      diagnostics: [{ code: 'plugin_action_current_intent_rejected', severity: 'error' }] }),
+    (_key, fallback) => fallback ?? 'Host refusal');
+    expect(execution).toMatchObject({ status: 'error', code: 'plugin_action_current_intent_rejected' });
+    expect(projectPluginActionRejectionV1(new PluginError({ code: 'denied',
+      diagnostics: [{ code: 'plugin_action_scope_denied', severity: 'error' }] }),
+    (_key, fallback) => fallback ?? 'Host refusal')).toMatchObject({ status: 'error', code: 'denied' });
   });
 
   it('keeps a superseded mount pending until the current projection rebinds its host, without replaying the Action', async () => {
@@ -721,34 +733,48 @@ describe('plugin-ui Action family dispatches through the canonical host API', ()
   it('routes copy, external link, surface navigation and refresh to their own host owners', async () => {
     const writeClipboard = vi.fn(async () => undefined);
     const openExternalLink = vi.fn(async () => undefined);
-    const openSurface = vi.fn(async () => undefined);
     const onRefresh = vi.fn();
     const mount = mountSurface(
       <ActionPanel title="Row actions">
         <Action.Copy value="sha256:abcd" title="Copy digest" />
         <Action.OpenExternal url="https://happier.dev/docs" title="Open docs" />
-        <Action.OpenSurface view={{ pluginId: 'acme.review', localId: 'detail' }} input={{ id: '7' }} title="Open detail" />
         <Action.Refresh onRefresh={onRefresh} title="Refresh" />
       </ActionPanel>,
       createHostApiStub(createSurfaceContext(), {
         writeClipboard,
         openExternalLink,
-        openSurface,
       } as unknown as Partial<PluginUiHostApi>),
     );
 
     await press(pressableByLabel(mount.container, 'Copy digest'));
     await press(pressableByLabel(mount.container, 'Open docs'));
-    await press(pressableByLabel(mount.container, 'Open detail'));
     await press(pressableByLabel(mount.container, 'Refresh'));
 
     expect(writeClipboard).toHaveBeenCalledWith('sha256:abcd');
     expect(openExternalLink).toHaveBeenCalledWith('https://happier.dev/docs');
-    expect(openSurface.mock.calls[0]?.[0]).toEqual({ pluginId: 'acme.review', localId: 'detail' });
-    expect(openSurface.mock.calls[0]?.[1]).toEqual({ id: '7' });
     expect(onRefresh).toHaveBeenCalledTimes(1);
 
     mount.unmount();
+  });
+
+  it('opens a window destination through the public testkit host, as an author tests it', async () => {
+    type OpenSurfaceInput = Parameters<NonNullable<PluginUiTestkitHostHandlers['openSurface']>>[0];
+    const opened: Omit<OpenSurfaceInput, 'signal'>[] = [];
+    const context = createSurfaceContext();
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'action-open-surface-author', mountNonce: 'action-open-surface-author-mount' },
+      authorPlugin: { id: 'com.acme.action-open-surface', version: '1.0.0' },
+      surface: defineUiSurface(() => (
+        <Action.OpenSurface view={{ pluginId: 'acme.review', localId: 'detail' }} input={{ id: '7' }} presentation="window" title="Open detail" />
+      )),
+      surfaceContext: context,
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { openSurface: ({ signal: _signal, ...request }) => { opened.push(request); } },
+    });
+    try {
+      await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Open detail' })); });
+      expect(opened).toEqual([{ view: { pluginId: 'acme.review', localId: 'detail' }, input: { id: '7' }, presentation: 'window' }]);
+    } finally { await fixture.dispose(); }
   });
 
   it('resolves a declared translation key for the action label and falls back to author text', () => {

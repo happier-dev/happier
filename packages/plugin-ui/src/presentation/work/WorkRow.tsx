@@ -2,7 +2,7 @@ import { memo, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { HappierSpinner } from '../feedback/Spinner.js';
-import { HappierFactLine } from './FactLine.js';
+import { FACT_SEPARATOR, HappierFactLine, renderableHappierFacts } from './FactLine.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HappierPressable, type HappierPressableProps } from '../interaction/Pressable.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
@@ -11,6 +11,7 @@ import { HAPPIER_PAGE_TEXT } from '../layout/pageText.js';
 import { happierPageRowDividerWidth, useHappierPageSection } from '../layout/PageSection.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 import { resolveHappierWorkStatusWordColor, type HappierWorkStatusTone } from './workStatus.js';
+import { HAPPIER_COLLECTION_ROW_METRICS, HappierCollectionRowMain } from '../collection/CollectionRowContent.js';
 import {
   HAPPIER_WORK_PANE_METRICS,
   resolveHappierWorkHost,
@@ -41,14 +42,18 @@ import {
 
 /** Each nesting level of work under its lead. */
 const LEVEL_INDENT_PX = 24;
-const MARK_SIZE_PX = 30;
+/**
+ * A Work summary sets the collection's comfortable row slots (lab `clflat`): the same identity column and
+ * gap as a Session row, so Work, Inbox and collection rows share one text edge.
+ */
+const SUMMARY_DENSITY = 'comfortable' as const;
+const MARK_SIZE_PX = HAPPIER_COLLECTION_ROW_METRICS.identity[SUMMARY_DENSITY].slotSize;
 /** Between a row's mark and its text. */
-const MARK_TEXT_GAP_PX = 10;
+const MARK_TEXT_GAP_PX = HAPPIER_COLLECTION_ROW_METRICS.contentGap[SUMMARY_DENSITY];
 
 const styles = StyleSheet.create({
-  summary: { flexDirection: 'row', alignItems: 'flex-start', gap: MARK_TEXT_GAP_PX, minWidth: 0 },
-  // A glyph smaller than the identity slot sits at its centre, level with the title (DESIGN-15 R5).
-  mark: { width: MARK_SIZE_PX, height: MARK_SIZE_PX, alignItems: 'center', justifyContent: 'center' },
+  summary: { flexDirection: 'row', alignItems: 'flex-start', minWidth: 0 },
+  heading: { flex: 1, minWidth: 0 },
   // The corner badge sits on the pane's paper so it reads as cut out of the mark.
   badge: {
     position: 'absolute',
@@ -61,7 +66,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   attentionDot: { width: 7, height: 7, borderRadius: 4 },
-  copy: { flex: 1, minWidth: 0 },
   // A title in two runs: the start gives way with its own ellipsis, the end stays whole.
   splitTitle: { flexDirection: 'row', minWidth: 0 },
 });
@@ -77,15 +81,17 @@ const ROW_STYLE: HappierPortableStyle = {
   minHeight: 52,
   justifyContent: 'center',
 };
-const LINE_STYLE: HappierPortableStyle = { marginTop: 1 };
 const BYLINE_STYLE: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, minWidth: 0 };
 const BYLINE_TEXT_STYLE: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
-const TIME_STYLE: HappierPortableStyle = { flexShrink: 0 };
+const FACTS_ROW_STYLE: HappierPortableStyle = { flexDirection: 'row', alignItems: 'baseline', minWidth: 0 };
+const FACTS_HEAD_STYLE: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
+const FACTS_TAIL_STYLE: HappierPortableStyle = { flexShrink: 0 };
+const TIME_STYLE: HappierPortableStyle = { flexShrink: 0, marginLeft: HAPPIER_COLLECTION_ROW_METRICS.trailingGap };
 const TITLE_HEAD_STYLE: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
 const TITLE_TAIL_STYLE: HappierPortableStyle = { flexShrink: 0, maxWidth: '100%' };
 /** Keeps the word gap between the two runs of a split title; an ordinary space would collapse. */
 const NON_BREAKING_SPACE = '\u00A0';
-const TRAILING_STATE_STYLE: HappierPortableStyle = { flexShrink: 0, maxWidth: '45%' };
+const TRAILING_STATE_STYLE: HappierPortableStyle = { flexShrink: 0, maxWidth: '45%', marginLeft: HAPPIER_COLLECTION_ROW_METRICS.trailingGap };
 /**
  * A row with its own control (Review, Settle, ⋯): the control keeps the row's inset from the sheet's
  * edge and a row padding's breath after the row's meta, so it never sits flush on the edge (lab
@@ -223,6 +229,8 @@ export const HappierWorkRowShell = memo(function HappierWorkRowShell(props: Happ
           accessibilityRole="button"
           accessibilityLabel={props.accessibilityLabel}
           selected={selected}
+          // A selected row is the item open beside the list: the page's current one, not a toggle's pressed state.
+          current={selected ? 'page' : undefined}
           expanded={props.expanded}
           controlRef={props.controlRef}
           accessibilityActions={props.accessibilityActions}
@@ -293,10 +301,17 @@ export type HappierWorkSummaryProps = Readonly<{
    * from the person, how long it has run); a `HappierWorkStatusWord` draws a fact in a state tone.
    */
   facts: readonly ReactNode[];
+  /**
+   * A last fact (a narrow row's age) that stays on the line, after " · ": when the facts are too long
+   * for the line, they truncate before it does, like a title's tail.
+   */
+  factsTail?: ReactNode;
   /** Who it involves, one muted line under the facts ("Ana asked you"); its avatar leads it. */
   byline?: Readonly<{ text: string; leading?: ReactNode }> | null;
   /** A short date at the trailing edge ("2h"); omitted while live. */
   trailingTime?: ReactNode;
+  /** Something here has not been seen yet: the title reads strong (a Session row's unread weight) without an amber dot. */
+  unread?: boolean;
   /** The owner's state word at the trailing edge: the row then says where the work stands once. */
   trailingState?: Readonly<{ word: string; tone: HappierWorkStatusTone }> | null;
   accessibilityLabel: string;
@@ -337,64 +352,83 @@ export const HappierWorkSummary = memo(function HappierWorkSummary(props: Happie
   const roles = TEXT_ROLES[density];
   const attentionMark = props.attentionMark !== false;
   const titleLines = props.titleLines ?? 1;
+  const hasFacts = renderableHappierFacts(props.facts).length > 0;
+  const hasTail = renderableHappierFacts([props.factsTail]).length > 0;
 
   return (
     <View testID={testID} accessible accessibilityLabel={props.accessibilityLabel} accessibilityLiveRegion={props.accessibilityLiveRegion}
       style={[styles.summary, density === 'page' ? PAGE_SUMMARY_STYLE : null]}>
-      {props.mark !== null && props.mark !== undefined ? <View style={styles.mark}>
-        {props.mark}
-        {phase === 'attention' && attentionMark ? (
-          <View
-            testID={testID ? `${testID}:attention-dot` : undefined}
-            style={[styles.badge, { backgroundColor: theme.colors.surface }]}
-          >
-            <View style={[styles.attentionDot, { backgroundColor: theme.colors.attention.foreground }]} />
-          </View>
-        ) : phase === 'live' ? (
-          <View testID={testID ? `${testID}:live` : undefined} style={[styles.badge, { backgroundColor: theme.colors.surface }]}>
-            {props.liveIndicator ?? <HappierSpinner size={9} color={theme.colors.secondaryText} />}
-          </View>
+      <HappierCollectionRowMain
+        density={SUMMARY_DENSITY}
+        identity={props.mark !== null && props.mark !== undefined ? (
+          <>
+            {props.mark}
+            {phase === 'attention' && attentionMark ? (
+              <View
+                testID={testID ? `${testID}:attention-dot` : undefined}
+                style={[styles.badge, { backgroundColor: theme.colors.surface }]}
+              >
+                <View style={[styles.attentionDot, { backgroundColor: theme.colors.attention.foreground }]} />
+              </View>
+            ) : phase === 'live' ? (
+              <View testID={testID ? `${testID}:live` : undefined} style={[styles.badge, { backgroundColor: theme.colors.surface }]}>
+                {props.liveIndicator ?? <HappierSpinner size={9} color={theme.colors.secondaryText} />}
+              </View>
+            ) : null}
+          </>
         ) : null}
-      </View> : null}
-      <View style={styles.copy}>
-        {titleTail.length > 0 ? (
-          <View style={styles.splitTitle}>
-            <Text
-              role={roles.title}
-              strong={phase === 'attention'}
-              numberOfLines={1}
-              testID={testID ? `${testID}:title` : undefined}
-              style={[TITLE_HEAD_STYLE, titleColor]}
-            >
-              {titleHead}
-            </Text>
-            <Text
-              role={roles.title}
-              strong={phase === 'attention'}
-              numberOfLines={1}
-              testID={testID ? `${testID}:title-tail` : undefined}
-              style={[TITLE_TAIL_STYLE, titleColor]}
-            >
-              {NON_BREAKING_SPACE}
-              {titleTail}
-            </Text>
+        title={(
+          <View style={styles.heading}>
+            {titleTail.length > 0 ? (
+              <View style={styles.splitTitle}>
+                <Text
+                  role={roles.title}
+                  strong={phase === 'attention' || props.unread === true}
+                  numberOfLines={1}
+                  testID={testID ? `${testID}:title` : undefined}
+                  style={[TITLE_HEAD_STYLE, titleColor]}
+                >
+                  {titleHead}
+                </Text>
+                <Text
+                  role={roles.title}
+                  strong={phase === 'attention' || props.unread === true}
+                  numberOfLines={1}
+                  testID={testID ? `${testID}:title-tail` : undefined}
+                  style={[TITLE_TAIL_STYLE, titleColor]}
+                >
+                  {NON_BREAKING_SPACE}
+                  {titleTail}
+                </Text>
+              </View>
+            ) : (
+              <Text role={roles.title} strong={phase === 'attention' || props.unread === true} numberOfLines={titleLines}
+                testID={testID ? `${testID}:title` : undefined} style={titleColor}>
+                {props.title}
+              </Text>
+            )}
           </View>
-        ) : (
-          <Text role={roles.title} strong={phase === 'attention'} numberOfLines={titleLines}
-            testID={testID ? `${testID}:title` : undefined} style={titleColor}>
-            {props.title}
-          </Text>
         )}
-        {props.facts.length > 0 ? (
-          <HappierFactLine
-            role={roles.line}
-            testID={testID ? `${testID}:facts` : undefined}
-            numberOfLines={1}
-            style={[LINE_STYLE, { color: theme.colors.secondaryText }]}
-            facts={props.facts}
-            theme={theme}
-            host={host}
-          />
+      >
+        {hasFacts || hasTail ? (
+          <View style={FACTS_ROW_STYLE}>
+            {hasFacts ? (
+              <HappierFactLine
+                role={roles.line}
+                testID={testID ? `${testID}:facts` : undefined}
+                numberOfLines={1}
+                style={[FACTS_HEAD_STYLE, { color: theme.colors.secondaryText }]}
+                facts={props.facts}
+                theme={theme}
+                host={host}
+              />
+            ) : null}
+            {hasTail ? (
+              <Text role={roles.line} style={[FACTS_TAIL_STYLE, { color: theme.colors.mutedText }]}>
+                {hasFacts ? FACT_SEPARATOR : ''}{props.factsTail}
+              </Text>
+            ) : null}
+          </View>
         ) : null}
         {props.byline ? (
           <View style={BYLINE_STYLE} testID={testID ? `${testID}:byline` : undefined}>
@@ -402,7 +436,7 @@ export const HappierWorkSummary = memo(function HappierWorkSummary(props: Happie
             <Text role={roles.line} numberOfLines={1} style={[BYLINE_TEXT_STYLE, { color: theme.colors.mutedText }]}>{props.byline.text}</Text>
           </View>
         ) : null}
-      </View>
+      </HappierCollectionRowMain>
       {trailingTime ? (
         <Text role={roles.time} style={[TIME_STYLE, { color: theme.colors.mutedText }]}>{trailingTime}</Text>
       ) : null}

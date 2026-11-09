@@ -21,6 +21,11 @@ import {
 import { createWorkBoardArtifactBoundary } from '../../protocol/src/boards/workBoardArtifactV1.testkit.js';
 
 import { externalAuthoringPlugin } from '@external-authoring/plugin';
+import { externalWorkflowStartInput } from '@external-authoring/plugin';
+import { WorkflowRunStartRequestV1Schema, WorkflowRunStartResultV1Schema } from '../../protocol/src/workflows/actionsV1.js';
+import { WorkflowDefinitionV1Schema } from '../../protocol/src/workflows/workflowV1.js';
+import { validateWorkflowDefinition } from '../../protocol/src/workflows/workflowValidationV1.js';
+import { createWorkflowRunSummaryFixture } from '../../../apps/ui/sources/dev/testkit/fixtures/workflowRunFixtures.js';
 import { renderPhysicalCopyTargetSurface } from '@external-authoring/targeted-surface';
 import { manifest as externalContributorManifest } from '@external-authoring/targeted-contributor';
 
@@ -56,10 +61,151 @@ async function loadExternalAuthoringSemanticSurface(viewId = EXTERNAL_SEMANTIC_V
 }
 
 describe('external author semantic proof', () => {
+  it('starts and controls a contributed participant Workflow through the public Run band', async () => {
+    const contribution = externalAuthoringPlugin.manifest.contributes.workflows?.find(item => item.id === 'independent-review');
+    expect(contribution).toBeDefined();
+    const definition = WorkflowDefinitionV1Schema.parse(contribution!.definition);
+    expect(validateWorkflowDefinition(definition).valid).toBe(true);
+    const actions: string[] = [];
+    let revision = 1;
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'workflow-pattern', mountNonce: 'workflow-pattern-mount' },
+      authorPlugin: { id: externalAuthoringPlugin.manifest.id, version: externalAuthoringPlugin.manifest.version },
+      surface: await loadExternalAuthoringSemanticSurface(),
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      // The host Action transport is the system boundary; declaration/input/renderer owners stay real.
+      handlers: { executeAction: async ({ action, input }) => {
+        if (typeof action !== 'string') throw new Error('unexpected_contributed_action');
+        actions.push(action);
+        if (action === 'workflow.run.start') {
+          const request = WorkflowRunStartRequestV1Schema.parse(input);
+          expect(request).toEqual(externalWorkflowStartInput);
+          expect(request.source).toEqual({ kind: 'catalog', workflow: `plugin:${externalAuthoringPlugin.manifest.id}/${contribution!.id}` });
+          expect(request.inputs?.participant).toMatchObject({ kind: 'session', session: { serverId: request.origin!.discussion.serverId } });
+          return WorkflowRunStartResultV1Schema.parse({ admission: 'created', run: createWorkflowRunSummaryFixture({
+            id: request.runId, revision, origin: { kind: 'direct' },
+          }) });
+        }
+        if (action !== 'workflow.run.pause') throw new Error('unexpected_workflow_action');
+        expect(input).toEqual({ runId: externalWorkflowStartInput.runId, expectedRevision: revision });
+        revision += 1;
+        return { run: createWorkflowRunSummaryFixture({ id: externalWorkflowStartInput.runId, revision, state: 'pause_requested', origin: { kind: 'direct' } }) };
+      } },
+    });
+    try {
+      await fixture.press(await fixture.getByRole('button', { name: 'Start contributed Workflow' }));
+      await expect(fixture.getByText('Independent review')).resolves.toBeDefined();
+      await fixture.press(await fixture.getByRole('button', { name: 'Pause contributed Workflow' }));
+      expect(actions).toEqual(['workflow.run.start', 'workflow.run.pause']);
+    } finally { await fixture.dispose(); }
+  });
+
+  it('refuses a contributed participant binding wired to a missing input', () => {
+    const contribution = externalAuthoringPlugin.manifest.contributes.workflows?.find(item => item.id === 'independent-review');
+    const definition = WorkflowDefinitionV1Schema.parse(contribution!.definition);
+    const leaf = definition.blocks[0];
+    if (leaf?.kind !== 'step') throw new Error('missing_contributed_step');
+    const miswired = { ...definition, blocks: [{ ...leaf, execution: { participant: { kind: 'input' as const, name: 'missing' } } }] };
+    expect(validateWorkflowDefinition(miswired).valid).toBe(false);
+  });
+
   let externalAuthoringSemanticSurface: RenderSurface;
 
   beforeAll(async () => {
     externalAuthoringSemanticSurface = await loadExternalAuthoringSemanticSurface();
+  });
+
+  it.each([
+    { requested: 'Accept', action: 'doc.edit.accept', disposition: { state: 'declined',
+      decidedBy: { accountId: 'reviewing-person', atMs: 123 } }, receipt: 'Declined by reviewing-person' },
+    { requested: 'Decline', action: 'doc.edit.decline', disposition: { state: 'accepted',
+      acceptedRevision: { headerVersion: 8, bodyVersion: 27 },
+      decidedBy: { accountId: 'reviewing-person', atMs: 123 } }, receipt: 'Accepted by reviewing-person · now version 27' },
+  ] as const)('retries the mounted Doc $requested callback and displays the acknowledged disposition', async ({ requested, action, disposition, receipt }) => {
+    const calls: Array<Readonly<{ action: unknown; input: unknown }>> = [];
+    const proposalRef = { kind: 'discussion', discussion: { serverId: 'home', discussionId: 'd1' }, messageId: 'm1' } as const;
+    const result = { proposalRef, docEditProposalDispositionV1: disposition } satisfies PluginUiActionResultFor<'doc.edit.accept'>;
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: `external-doc-${requested}`, mountNonce: `external-doc-${requested}` },
+      authorPlugin: { id: externalAuthoringPlugin.manifest.id, version: externalAuthoringPlugin.manifest.version },
+      surface: externalAuthoringSemanticSurface,
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { executeAction: async request => {
+        calls.push({ action: request.action, input: request.input });
+        if (calls.length === 1) throw new Error('approval_denied');
+        return result;
+      } },
+    });
+    try {
+      await fixture.press(await fixture.getByRole('button', { name: requested }));
+      await expect(fixture.getByText('Couldn’t save your decision. Try again.')).resolves.toBeDefined();
+      await fixture.press(await fixture.getByRole('button', { name: requested }));
+      await expect(fixture.getByText(receipt)).resolves.toBeDefined();
+      expect(calls).toEqual([0, 1].map(() => ({ action, input: {
+        proposalRef, ...(action === 'doc.edit.accept' ? { expectedRevision: { headerVersion: 3, bodyVersion: 14 } } : {}),
+      } })));
+      expect(document.querySelector('[data-testid="author-proposal.diff"]')).toBeNull();
+    } finally { await fixture.dispose(); }
+  });
+
+  it('exercises mounted thread and Memory callbacks without granting presentation mutation authority', async () => {
+    const actions: unknown[] = [];
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'external-memory', mountNonce: 'external-memory' },
+      authorPlugin: { id: externalAuthoringPlugin.manifest.id, version: externalAuthoringPlugin.manifest.version },
+      surface: externalAuthoringSemanticSurface,
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { executeAction: async request => { actions.push(request); return null; } },
+    });
+    try {
+      await fixture.press(await fixture.getByRole('button', { name: 'Select message' }));
+      await expect(fixture.getByText('Message selected')).resolves.toBeDefined();
+      for (const [role, name, outcome] of [
+        ['link', 'Open source session', 'source'],
+        ['button', 'Edit fact', 'edit'],
+        ['button', 'Open review habits', 'topic'],
+      ] as const) {
+        await fixture.press(await fixture.getByRole(role, { name }));
+        await expect(fixture.getByText(`Opened ${outcome}`)).resolves.toBeDefined();
+      }
+      await fixture.press(await fixture.getByRole('button', { name: 'Save' }));
+      await expect(fixture.getByText('Saved update:saved-retry')).resolves.toBeDefined();
+      const candidate = (await fixture.getAllByRole('radio')).find(row => row.name?.includes('Back off 400 ms'));
+      expect(candidate).toBeDefined();
+      await fixture.press(candidate!);
+      await fixture.press(await fixture.getByRole('radio', { name: 'Replace it' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Save' }));
+      await expect(fixture.getByText('Saved replace:saved-backoff')).resolves.toBeDefined();
+      await fixture.press(await fixture.getByRole('radio', { name: 'Keep both' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Save' }));
+      await expect(fixture.getByText('Saved keep_both:none')).resolves.toBeDefined();
+      expect(actions).toEqual([]);
+    } finally { await fixture.dispose(); }
+  });
+
+  it('mounts the byline, Follow editor, Work update and notice examples and sends the notice only through its own Action', async () => {
+    const actions: unknown[] = [];
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'external-reach', mountNonce: 'external-reach' },
+      authorPlugin: { id: externalAuthoringPlugin.manifest.id, version: externalAuthoringPlugin.manifest.version },
+      surface: externalAuthoringSemanticSurface,
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { executeAction: async request => { actions.push(request); return null; } },
+    });
+    try {
+      await expect(fixture.getByText('Waiting for Former member to confirm')).resolves.toBeDefined();
+      await fixture.press(await fixture.getByRole('button', { name: 'Open review' }));
+      await expect(fixture.getByText('Opened review')).resolves.toBeDefined();
+      expect(actions).toEqual([]);
+      await fixture.press(await fixture.getByRole('button', { name: 'Notify me when ready' }));
+      await expect(fixture.getByText('Notice sent')).resolves.toBeDefined();
+      expect(JSON.stringify(actions)).toContain('send-review-ready-notice');
+      expect(actions).toHaveLength(1);
+    } finally { await fixture.dispose(); }
   });
 
   it('filters genuine held release stages through the installed plugin page and public adapter without Actions', async () => {
@@ -74,7 +220,8 @@ describe('external author semantic proof', () => {
       handlers: { executeAction: async () => { actions += 1; return null; } },
     });
     try {
-      expect((await fixture.getAllByRole('radio')).map(row => row.name)).toEqual(['Choose Release review']);
+      const releaseChoices = (await fixture.getAllByRole('radio')).filter(row => row.name?.startsWith('Choose '));
+      expect(releaseChoices.map(row => row.name)).toEqual(['Choose Release review']);
       expect(actions).toBe(0);
     } finally { await fixture.dispose(); }
   });
@@ -258,7 +405,7 @@ describe('external author semantic proof', () => {
         authorPlugin: { id: externalAuthoringPlugin.manifest.id, version: externalAuthoringPlugin.manifest.version },
         surface: await loadExternalAuthoringSemanticSurface(mount.kind === 'embedded' ? widget.id : companion.id),
         surfaceContext: createSurfaceContextFixture({ mount, target: mount.kind === 'embedded'
-          ? { kind: 'app' } : { kind: 'project', projectId: checkout.projectKey } }),
+          ? { kind: 'app' } : { kind: 'project', projectKey: checkout.projectKey } }),
         launchInput: admitted.result.input,
         adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       });

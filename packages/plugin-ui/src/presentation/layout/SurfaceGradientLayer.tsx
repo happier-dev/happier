@@ -1,7 +1,7 @@
 import { useId } from 'react';
-import { Platform, StyleSheet } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { Svg, Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
-import type { HappierSurfaceGradient } from './material.js';
+import { happierSurfaceGradientCssParts, type HappierSurfaceGradient } from './material.js';
 import { happierSvgGradientStop } from './svgGradientStop.js';
 
 /** One native paint layer. Web draws the same stops on its existing surface element. */
@@ -12,8 +12,18 @@ export function HappierSurfaceGradientLayer(props: Readonly<{ gradient?: Happier
   const radius = props.borderRadius ?? 0;
   const stops = (gradient: HappierSurfaceGradient) => gradient.colors.map((color, index) => <Stop key={index} offset={gradient.locations?.[index] ?? index / (gradient.colors.length - 1)} {...happierSvgGradientStop(color)} />);
   const full = paints.filter(gradient => !gradient.band);
+  // Android's SvgView rasterizes a bitmap at view size, which a tall surface can push past the canvas
+  // limit (a fatal draw) and every surface pays in memory. A native background image has no bitmap.
+  const nativeFull = Platform.OS === 'android' && full.length > 0;
   return <>
-    {full.length > 0 ? <Svg pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={StyleSheet.absoluteFillObject} width="100%" height="100%">
+    {nativeFull ? <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+      style={{ ...StyleSheet.absoluteFillObject, borderRadius: radius,
+        experimental_backgroundImage: [...full].reverse().map((gradient) => {
+          const { angle, stops: parts } = happierSurfaceGradientCssParts(gradient);
+          return { type: 'linear-gradient' as const, direction: `${angle}deg`,
+            colorStops: parts.map(({ color, percent }) => ({ color, positions: [`${percent}%`] })) };
+        }) }} /> : null}
+    {!nativeFull && full.length > 0 ? <Svg pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={StyleSheet.absoluteFillObject} width="100%" height="100%">
       <Defs>{full.map((gradient, paint) => <LinearGradient key={paint} id={`${id}-${paint}`} x1={gradient.start?.x ?? 0.5} y1={gradient.start?.y ?? 0} x2={gradient.end?.x ?? 0.5} y2={gradient.end?.y ?? 1}>{stops(gradient)}</LinearGradient>)}</Defs>
       {full.map((_, paint) => <Rect key={paint} width="100%" height="100%" rx={radius} ry={radius} fill={`url(#${id}-${paint})`} />)}
     </Svg> : null}

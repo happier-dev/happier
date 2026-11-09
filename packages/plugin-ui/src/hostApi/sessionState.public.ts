@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import type { SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 
 import { usePluginHostApi, usePluginHostApiResourceActive } from './context.js';
@@ -8,16 +9,21 @@ import { usePluginHostApi, usePluginHostApiResourceActive } from './context.js';
  *
  * - `loading`: the first read has not settled.
  * - `ready`: `state` is the current host snapshot.
- * - `unavailable`: this Account cannot reach the Session, or the read failed.
+ * - `missing`: the Session does not exist or this Account cannot access it.
+ * - `unavailable`: the read failed; `retryable` preserves the host's recovery fact.
  * - `unsupported`: the mounted host does not advertise `readSession`.
  */
 export type SessionStateReadV1<T = SessionStateV1> = Readonly<{
-  status: 'loading' | 'ready' | 'unavailable' | 'unsupported';
+  status: 'loading' | 'ready' | 'missing' | 'unavailable' | 'unsupported';
   state: T | null;
+  /** Present for a failed read; known absence is `missing`, not a failed read. */
+  retryable?: boolean;
 }>;
 
 const LOADING: SessionStateReadV1<never> = Object.freeze({ status: 'loading', state: null });
-const UNAVAILABLE: SessionStateReadV1<never> = Object.freeze({ status: 'unavailable', state: null });
+const MISSING: SessionStateReadV1<never> = Object.freeze({ status: 'missing', state: null });
+const UNAVAILABLE: SessionStateReadV1<never> = Object.freeze({ status: 'unavailable', state: null, retryable: true });
+const NON_RETRYABLE: SessionStateReadV1<never> = Object.freeze({ status: 'unavailable', state: null, retryable: false });
 const UNSUPPORTED: SessionStateReadV1<never> = Object.freeze({ status: 'unsupported', state: null });
 
 export type SessionStatesReadV1<T = SessionStateV1> = Readonly<{
@@ -39,7 +45,7 @@ export type SessionStatesReadV1<T = SessionStateV1> = Readonly<{
  */
 export function useSessionState(sessionId: string | null): SessionStateReadV1 {
   const ids = React.useMemo(() => sessionId === null ? [] : [sessionId], [sessionId]);
-  return useSessionStates(ids).sessions.get(sessionId ?? '') ?? UNAVAILABLE;
+  return useSessionStates(ids).sessions.get(sessionId ?? '') ?? MISSING;
 }
 
 /**
@@ -95,18 +101,19 @@ export function useSessionStates<T>(
         if (!current) return;
         try {
           const state = await host.readSession(sessionId, { signal: cancellation.signal });
-          publish(sessionId, state ? Object.freeze({ status: 'ready', state: select === undefined ? state : select(state) }) : UNAVAILABLE);
-        } catch {
-          publish(sessionId, UNAVAILABLE);
+          publish(sessionId, state ? Object.freeze({ status: 'ready', state: select === undefined ? state : select(state) }) : MISSING);
+        } catch (error) {
+          publish(sessionId, isPluginError(error) && !error.retryable ? NON_RETRYABLE : UNAVAILABLE);
         }
       };
       void (async () => {
         if (canWatch) {
           try {
-            const established = await host.watchSession(sessionId, (event) => {
+            const established = await host.watchSession(sessionId, () => {
               if (!current) return;
-              if (event.kind === 'invalidated') void refresh();
-              else publish(sessionId, UNAVAILABLE);
+              // A terminated watch establishes no snapshot fact. Read once to distinguish
+              // terminal absence from a failed read, without reopening the watch or polling.
+              void refresh();
             }, { signal: cancellation.signal });
             if (!current) {
               established.dispose();
@@ -143,6 +150,7 @@ export function useSessionStates<T>(
 function sameSessionRead<T>(left: SessionStateReadV1<T>, right: SessionStateReadV1<T>): boolean {
   if (left === right) return true;
   if (left.status !== right.status) return false;
+  if (left.retryable !== right.retryable) return false;
   if (left.state === right.state) return true;
   return left.state !== null && right.state !== null && JSON.stringify(left.state) === JSON.stringify(right.state);
 }

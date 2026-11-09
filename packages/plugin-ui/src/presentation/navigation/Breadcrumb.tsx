@@ -61,7 +61,6 @@ export function HappierBreadcrumb(props: HappierBreadcrumbProps) {
               accessibilityRole="link"
               accessibilityLabel={item.label}
               onPress={item.onPress}
-              hitSlop={6}
               hitReach={props.linkHitReach}
               style={({ hovered, pressed, focused }) => [
                 { flexShrink: 1, minWidth: 0 },

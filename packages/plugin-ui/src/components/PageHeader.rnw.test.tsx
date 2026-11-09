@@ -94,6 +94,42 @@ describe('public PageHeader composition', () => {
     }
   });
 
+  it('moves a hanging header\'s controls after the identity once they would squeeze out the name', () => {
+    const context = createSurfaceContext();
+    const view = mountThroughReactNativeWeb(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+      <PageHeader testID="header" title="NLDW3-5-36-33" actionsLayout="hang" description="One purpose line."
+        leading={<View />} actions={<View testID="controls" />} />
+    </PluginUiProvider>);
+    const handler = (node: Element) => Reflect.get(node, '__reactLayoutHandler') as ((event: HappierLayoutChangeEvent) => void) | undefined;
+    const layout = (node: Element | undefined, width: number, height: number) => {
+      if (node && handler(node)) act(() => handler(node)!({ nativeEvent: { layout: { x: 0, y: 0, width, height } } }));
+    };
+    const header = view.container.querySelector<HTMLElement>('[data-testid="header"]')!;
+    const measured = (node: Element) => {
+      const boxes: Element[] = [];
+      for (let parent = node.parentElement; parent && parent !== header; parent = parent.parentElement) if (handler(parent)) boxes.push(parent);
+      return boxes;
+    };
+    const controls = () => view.container.querySelector('[data-testid="controls"]')!;
+    const identityColumn = () => measured(header.querySelector('[role="heading"]')!).at(-1);
+    const actionsBelow = () => view.container.querySelector('[data-testid="header-actions-below"]');
+    try {
+      layout(header, 900, 120);
+      layout(measured(controls())[0], 280, 34);
+      layout(identityColumn(), 760, 60);
+      expect(actionsBelow()).toBeNull();
+      layout(header, 390, 120);
+      layout(identityColumn(), 318, 60);
+      layout(measured(header.querySelector('[role="heading"]')!)[0], 220, 30);
+      layout(measured(controls())[0], 280, 34);
+      layout(identityColumn(), 318, 60);
+      expect(actionsBelow()).not.toBeNull();
+      expect(view.container.querySelector('[role="heading"]')?.textContent).toBe('NLDW3-5-36-33');
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('shows a column summary after the identity row and retains an actionable control', () => {
     const context = createSurfaceContext();
     let refreshed = false;

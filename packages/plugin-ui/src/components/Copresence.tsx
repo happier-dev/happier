@@ -154,6 +154,8 @@ export type PresenceCapsuleProps = Readonly<{
   /** Open the surface this capsule narrates. */
   onWatch?: () => void;
   compact?: boolean;
+  /** Container width; narrow frames keep the mark and an accessible icon action instead of clipped words. */
+  availableWidth?: number;
   placement?: HappierPresenceCapsulePlacement;
   testID: string;
 }>;
@@ -213,6 +215,7 @@ export function PresenceCapsule(props: PresenceCapsuleProps): ReactElement | nul
       checking={props.checking}
       onWatch={props.onWatch}
       compact={props.compact}
+      availableWidth={props.availableWidth}
       placement={props.placement}
       colors={colors}
       host={host}

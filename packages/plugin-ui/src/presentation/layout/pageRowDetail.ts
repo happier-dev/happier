@@ -18,14 +18,17 @@ export function resolveHappierPageRowDetailLayout(input: Readonly<{
   const metrics = HAPPIER_PAGE_METRICS;
   const rowChromePx = 2 * input.rowInsetPx + (input.leadingColumnWidthPx > 0
     ? input.leadingColumnWidthPx + metrics.rowLeadingGapPx : 0);
+  // The label keeps its whole name up to the section floor, and the floor is text width: a name the
+  // floor could hold is never cut to make room for the detail (a Machine name beside "Not shared with you"
+  // on a phone); the detail moves beneath instead. Unmeasured, the label keeps the floor.
   const labelColumnPx = input.titleNaturalWidthPx !== null
-    ? Math.min(metrics.sectionTextMinWidthPx, input.titleNaturalWidthPx + input.trailingWidthPx + rowChromePx)
+    ? Math.min(metrics.sectionTextMinWidthPx, input.titleNaturalWidthPx) + input.trailingWidthPx + rowChromePx
     : metrics.sectionTextMinWidthPx;
   const beneath = input.detailWidthPx !== null
     && input.rowWidthPx - input.detailWidthPx - metrics.rowLeadingGapPx < labelColumnPx;
   return {
     beneath,
-    inlineMaxWidthPx: !beneath && labelColumnPx < metrics.sectionTextMinWidthPx
+    inlineMaxWidthPx: !beneath && input.titleNaturalWidthPx !== null && input.titleNaturalWidthPx < metrics.sectionTextMinWidthPx
       ? input.rowWidthPx - (labelColumnPx - input.trailingWidthPx) - metrics.rowLeadingGapPx - input.detailGapPx
       : null,
   };

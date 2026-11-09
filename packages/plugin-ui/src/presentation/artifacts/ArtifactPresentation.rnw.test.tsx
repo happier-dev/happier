@@ -6,6 +6,10 @@ import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import { HappierArtifactRevisionList, type HappierArtifactRevisionListProps } from './ArtifactRevisionList.js';
 import { HappierPublicLinkCard, type HappierPublicLinkCardProps } from './PublicLinkCard.js';
 import { HappierArtifactPreviewCard, type HappierArtifactPreview } from './ArtifactPreviewCard.js';
+import { HappierSavedSkillCard } from '../index.public.js';
+import { HappierUiEnvironmentProvider } from '../../environment/context.js';
+import { projectHappierUiEnvironment } from '../../environment/projectEnvironment.js';
+import { createSurfaceContext } from '../../surfaceFixture.testSupport.js';
 
 function publicLink(overrides: Partial<HappierPublicLinkCardProps> = {}) {
   return <HappierPublicLinkCard testID="link" published loaded configuring={false} shareUrl={null}
@@ -33,6 +37,23 @@ function RevisionGroup(props: Readonly<{ title: string; children?: ReactNode }>)
 }
 
 describe('shared artifact presentation', () => {
+  it('keeps a saved skill identity and View while attachment fails, with an explicit host-routed retry', async () => {
+    let views = 0, attachments = 0;
+    const view = mountThroughReactNativeWeb(<HappierUiEnvironmentProvider environment={projectHappierUiEnvironment(createSurfaceContext())}>
+      <HappierSavedSkillCard testID="saved" name="Review code" description="Catch regressions" savedLabel="Saved to your skills"
+        scopeLabel="This session" status="Not attached here" maker={<Text>Made by Ada</Text>}
+        viewControl={<Pressable testID="view" onPress={() => { views++; }}><Text>View</Text></Pressable>}
+        recoveryControl={<Pressable testID="attach" onPress={() => { attachments++; }}><Text>Attach again</Text></Pressable>} />
+    </HappierUiEnvironmentProvider>);
+    try {
+      expect(view.container.textContent).toContain('Review code');
+      expect(view.container.textContent).toContain('Not attached here');
+      expect(view.container.textContent).toContain('Made by Ada');
+      byId(view.container, 'view')!.click();
+      byId(view.container, 'attach')!.click();
+      expect([views, attachments]).toEqual([1, 1]);
+    } finally { view.unmount(); }
+  });
   it('keeps decorative grid previews outside the web accessibility tree', async () => {
     const previews: readonly HappierArtifactPreview[] = [
       { kind: 'markdown', text: '# Preview heading\nPreview body' },

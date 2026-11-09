@@ -217,12 +217,19 @@ function WideToolbar(props: CollectionToolbarProps): ReactElement {
     const trail = trailRef.current;
     if (row === null || lead === null || trail === null) return;
     const widths: Partial<Record<'row' | 'lead' | 'trail', number>> = {};
+    const heights: Partial<Record<'lead' | 'trail', number>> = {};
     // In-window measurement preserves fractional web widths; `measure` rounds each box independently.
-    const read = (name: keyof typeof widths, box: ComponentRef<typeof View>) => box.measureInWindow((_x, _y, width) => {
+    const read = (name: keyof typeof widths, box: ComponentRef<typeof View>) => box.measureInWindow((_x, _y, width, height) => {
       widths[name] = width;
+      if (name !== 'row') heights[name] = height;
       const { row: rowWidth, lead: leadWidth, trail: trailWidth } = widths;
-      if (rowWidth === undefined || leadWidth === undefined || trailWidth === undefined || rowWidth <= 0) return;
-      if (leadWidth + trailWidth + spacing.small > rowWidth) {
+      const { lead: leadHeight, trail: trailHeight } = heights;
+      if (rowWidth === undefined || leadWidth === undefined || trailWidth === undefined || rowWidth <= 0
+        || leadHeight === undefined || trailHeight === undefined) return;
+      // A cluster can fit its share of the row by breaking onto a second line (a pane-narrowed page): twice the height
+      // of the other cluster is a wrapped row just as a trailing group below the lead is, and it folds the same way.
+      const wrapped = Math.min(leadHeight, trailHeight) > 0 && Math.max(leadHeight, trailHeight) >= Math.min(leadHeight, trailHeight) * 1.5;
+      if (wrapped || leadWidth + trailWidth + spacing.small > rowWidth) {
         if (quietable && !quiet) setQuietBelowPx(rowWidth);
         else fit?.overflow(rowWidth);
       } else {
@@ -336,9 +343,10 @@ function CompactToolbar(props: CollectionToolbarProps): ReactElement {
       {props.primary === undefined ? null : <PrimaryControl primary={props.primary} folded />}
     </>
   );
-  // Healthy is quiet here: the words stay one tap away, under Refresh in ⋯.
+  // Healthy is quiet here, and so is a read in flight (the wide row gives it up first too): the words stay one tap
+  // away, under Refresh in ⋯, instead of being cut to a letter beside the switch. Only a list that is not current speaks.
   const said =
-    freshness == null || freshness.tone === 'muted' ? null : freshness;
+    freshness == null || freshness.tone === 'muted' || freshness.pulsing === true ? null : freshness;
   const head = slots?.title != null || search !== null;
   // Select is an action on the list, as Filters and ⋯ are: it ends the search row, where the search gives way to it,
   // and never shares the lens row, whose segmented lens and switch leave it no room on a phone (it wrapped mid-word).
@@ -350,7 +358,7 @@ function CompactToolbar(props: CollectionToolbarProps): ReactElement {
     <Stack gap="small" testID={props.testID} onLayout={(event) => fit?.width(event.nativeEvent.layout.width)}>
       {head ? (
         <Row gap="small" align="center">
-          {measured('title', slots?.title)}
+          {measured('title', slots?.title, compactTitleStyle)}
           {search}
           {buttons}
           {trailingSelection}
@@ -481,7 +489,10 @@ const leadStyle: HappierPortableStyle = {
 const trailStyle: HappierPortableStyle = { maxWidth: '100%', minWidth: 0, marginLeft: 'auto', justifyContent: 'flex-end' };
 const compactLeadStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
 const compactLensStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
-const compactPageActionsStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1, minWidth: 0 };
+/** The page's name or switch keeps its words whole beside the search, which gives way instead. */
+const compactTitleStyle: HappierPortableStyle = { flexShrink: 0 };
+// The route controls (Run on) truncate on their own, so a tight row takes its room from them before the lens.
+const compactPageActionsStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 100, minWidth: 0 };
 /** A control's words never break inside the folded toolbar; the search beside it gives way instead. */
 const compactSelectionStyle: HappierPortableStyle = { flexShrink: 0 };
 /** The space between the lens and the switch; a freshness that needs saying ends there, truncating first. */

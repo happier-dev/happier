@@ -7,7 +7,8 @@ import { HappierRowStatusLine } from './RowStatusLine.js';
 const host = {
   colors: { quiet: '#555555', warn: '#aa6600', bad: '#aa0000' },
   actionGap: 8,
-  renderText: ({ text, numberOfLines }: { text: string; numberOfLines: number }) => <Text numberOfLines={numberOfLines}>{text}</Text>,
+  renderText: ({ text, numberOfLines, mono }: { text: string; numberOfLines: number; mono?: boolean }) =>
+    <Text numberOfLines={numberOfLines} testID={mono ? 'mono' : undefined}>{text}</Text>,
   renderBusy: () => <Text testID="busy">Working</Text>,
   renderIndicator: () => <Text testID="indicator">Trouble</Text>,
   renderAction: (action: { label: string; onPress: () => unknown; testID?: string }) => <button data-testid={action.testID} onClick={action.onPress}>{action.label}</button>,
@@ -18,6 +19,15 @@ describe('compact row status', () => {
     const view = mountThroughReactNativeWeb(<HappierRowStatusLine text="Ready" tone="quiet" testID="status" host={host} />);
     expect(view.container.querySelector('[data-testid="status"]')?.getAttribute('aria-label')).toBe('Ready');
     expect(view.container.textContent).toBe('Ready');
+  });
+
+  it('leads with a quiet mono command and keeps the outcome whole, without a dot when the row mark already says it', () => {
+    const view = mountThroughReactNativeWeb(<HappierRowStatusLine lead="yarn lint" text="Exited with code 1 at 10:12" tone="bad" marked
+      testID="status" host={host} />);
+    expect(view.container.querySelector('[data-testid="mono"]')?.textContent).toBe('yarn lint');
+    expect(view.container.querySelector('[data-testid="indicator"]')).toBeNull();
+    expect(view.container.textContent).toBe('yarn lint · Exited with code 1 at 10:12');
+    expect(view.container.querySelector('[data-testid="status"]')?.getAttribute('aria-label')).toBe('yarn lint · Exited with code 1 at 10:12');
   });
 
   it('retains the trouble indicator while busy and leaves its recovery action independently operable', () => {

@@ -303,7 +303,14 @@ export function DetailsPaneFooter(props: Readonly<{ children: ReactNode; testID?
   // The pause a group edge makes: the page's existing measure for a seam inside its column.
   const gap = HAPPIER_PAGE_METRICS.groupSeparatorGapPx;
   const paddingBottom = Math.max(safeArea.bottom, gap);
-  const footer = (
+  const content = <HappierColumnEdgeContext.Provider value={0}>{props.children}</HappierColumnEdgeContext.Provider>;
+  // The host's pinned bar owns the phone's bottom, so the shell's bar folds instead of stacking under this one.
+  const hostBar = host?.renderPagePinnedBar?.({
+    ...(props.testID === undefined ? {} : { testID: props.testID }),
+    style: { paddingTop: gap, paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx },
+    children: content,
+  });
+  const footer = hostBar ? <View style={{ marginHorizontal: -edgePx }}>{hostBar}</View> : (
     <View
       testID={props.testID}
       style={{
@@ -316,7 +323,7 @@ export function DetailsPaneFooter(props: Readonly<{ children: ReactNode; testID?
         marginHorizontal: -edgePx,
       }}
     >
-      <HappierColumnEdgeContext.Provider value={0}>{props.children}</HappierColumnEdgeContext.Provider>
+      {content}
     </View>
   );
   return host?.renderKeyboardStickyFooter === undefined

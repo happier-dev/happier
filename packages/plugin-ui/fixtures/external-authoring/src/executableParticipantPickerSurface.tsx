@@ -25,7 +25,9 @@ export function ExecutableParticipantPickerExample(props: Readonly<{ multiple?: 
   return <>
     <ExecutableParticipantPicker
       testID="author-participant-picker"
-      sections={sections}
+      sections={sections.map(section => ({ ...section, options: section.options.map(option => ({
+        ...option, searchText: option.id === 'review' ? 'GPT review' : option.label,
+      })) }))}
       searchPlaceholder="Search reviewers"
       selection={selection}
       doneLabel="Use reviewers"

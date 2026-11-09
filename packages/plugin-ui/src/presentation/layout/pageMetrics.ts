@@ -7,7 +7,7 @@ export const HAPPIER_PUBLIC_PROFILE_OWNER_METRICS = Object.freeze({ quietedOpaci
 /** Shared profile band geometry (lab `pphero`) for measured hosts and cold raster adapters. */
 export const HAPPIER_PUBLIC_PROFILE_HERO_METRICS = Object.freeze({
   bandHeightPx: Object.freeze({ wide: 420, phone: 300 }),
-  avatarPx: Object.freeze({ wide: 84, phone: 64 }),
+  avatarPx: Object.freeze({ wide: 84, phone: 64, paused: 40 }),
   /** Paint at 1× and 2×; the selected edition covers the reserved band. */
   rasterWidthPx: Object.freeze({ wide: 1440, phone: 390 }),
   /** Existing owner-preview recomposition threshold. */
@@ -120,7 +120,6 @@ export const HAPPIER_PAGE_METRICS = Object.freeze({
   pageHeaderColumnGapPx: 14,
   /** A page header's leading mark → its title block: close enough that mark, title and purpose read as one unit. */
   pageHeaderMarkGapPx: 10,
-  /** A page header's leading mark → its title block: close enough that mark, title and purpose read as one unit. */
   /**
    * A page header's leading mark: a square slot with one stable footprint for the thing the page is
    * about, and the glyph drawn inside it. Core's identity header and a plugin's own header both use it,
@@ -130,7 +129,6 @@ export const HAPPIER_PAGE_METRICS = Object.freeze({
   pageHeaderMarkGlyphPx: 28,
   /** Above and below a page's tab bar: it belongs to neither the header above it nor the content below it. */
   pageTabsGapPx: 12,
-  /** Above and below a page's tab bar: it belongs to neither the header above it nor the content below it. */
   sectionGapPx: 28,
   sectionHeaderGapPx: 10,
   /** Sheets are cards: the `xl` step of the one radius base. */
@@ -179,8 +177,15 @@ export const HAPPIER_PAGE_METRICS = Object.freeze({
    * `CollectionToolbar` folds into its two calm rows instead of wrapping control by control — a list narrowed
    * beside a details pane, a small window, a phone. It is the least fold width: a page whose real controls need more
    * (a long freshness, Run on) reports its wrapped row and `Collection` folds at that measured width instead.
+   * Bounded by the two widths it separates: a list narrowed beside a details pane at 1440 (about 780) folds, and
+   * a page beside the open Projects column (about 1030; lab a2 draws its one row at about 930) keeps its row.
    */
-  toolbarFoldBelowWidthPx: 1080,
+  toolbarFoldBelowWidthPx: 900,
+  /**
+   * Between the pieces of a Collection's header: its toolbar, a banner the page puts under it (Actions' "A deployment
+   * is waiting for you"), a stale-data line. Lab a2 `.fc-banner` stands 16 below the toolbar.
+   */
+  collectionHeaderGapPx: 16,
   /**
    * The narrowest a section title and description may get beside the section's
    * action (the label column above). By default, a compact action ("Cancel", "Add")
@@ -208,7 +213,8 @@ export const HAPPIER_PAGE_METRICS = Object.freeze({
  * The list column of a settings collection beside its detail, by role instead of one number per page,
  * so every collection's rail is the same width unless its rows need more room. `standard` is the
  * one-line row (a name, a glyph and a quiet fact); `detailed` is for rows that carry a description or
- * a facts line of their own. Host-internal: no plugin draws a settings collection's rail.
+ * a facts line of their own; `compact` is a short list of names beside a detail that needs the room (a Project's
+ * Environments: production, staging). Host-internal: no plugin draws a settings collection's rail.
  */
 export const HAPPIER_COLLECTION_RAIL_WIDTH_PX = Object.freeze({
   compact: 232,

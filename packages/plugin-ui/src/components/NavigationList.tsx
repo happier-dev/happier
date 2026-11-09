@@ -111,6 +111,9 @@ export type NavigationListRowProps = Readonly<{
 export type NavigationListDestination = Readonly<{
   destination: Parameters<PluginUiHostApi['openSurface']>[0];
   subPath?: string;
+}> | Readonly<{
+  /** An existing host route; ordinary activation stays with the caller. */
+  href: string;
 }>;
 
 const TEXT_COLOR_ROLE: Readonly<Record<HappierCollectionListTextRole, 'text' | 'secondaryText' | 'mutedText'>> = {
@@ -243,6 +246,7 @@ function NavigationListFootRow(props: Readonly<{ footer: NavigationListFooter }>
   return (
     <View style={[footStyle, { borderTopColor: theme.colors.divider }]}>
       <HappierListItem
+        rowRole="item"
         title={props.footer.title}
         titleNumberOfLines={1}
         icon={<Icon name={props.footer.icon} tone="secondary" />}
@@ -288,6 +292,7 @@ function NavigationListRow(props: NavigationListRowProps): ReactElement {
     : `${props.accessibilityLabel ?? title}, ${props.status.label}`;
   const row = (
     <HappierListItem
+      rowRole="item"
       title={title}
       titleNumberOfLines={1}
       icon={props.icon !== undefined ? <Icon name={props.icon} tone="secondary" /> : props.mark}

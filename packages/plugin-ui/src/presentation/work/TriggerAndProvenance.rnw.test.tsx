@@ -1,10 +1,13 @@
 import { act, useState, type ReactNode } from 'react';
+import { Text } from 'react-native';
 import { expect, it, vi } from 'vitest';
 import * as publicUi from '../../index.public.js';
 import { HappierUiEnvironmentProvider } from '../../environment/context.js';
 import { projectHappierUiEnvironment } from '../../environment/projectEnvironment.js';
 import { createSurfaceContext } from '../../surfaceFixture.testSupport.js';
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
+import { HAPPIER_SWITCH_METRICS } from '../form/Switch.js';
+import { readHitAreaReach } from '../interaction/hitArea.testSupport.js';
 
 function surface(children: ReactNode) {
   return (
@@ -81,6 +84,22 @@ it('lets authors toggle a trigger independently from opening it, including disab
   } finally {
     mounted.unmount();
   }
+});
+
+it('keeps the switch on a trigger\'s actions line from reaching up into the row it belongs to', () => {
+  const mounted = mountThroughReactNativeWeb(surface(
+    <publicUi.HappierTriggerRow testID="trigger" title="Memory upkeep" qualifier="Every day" enabled toggleLabel="Toggle Memory upkeep"
+      onToggle={() => {}} onPress={() => {}} actions={<Text>History</Text>} />,
+  ));
+  try {
+    const toggle = mounted.container.querySelector<HTMLElement>('[data-testid="trigger-switch"]')!;
+    const { trackWidth, trackHeight } = HAPPIER_SWITCH_METRICS.default;
+    // Drawn at its track; the row above owns the space over it (neighbours split gaps, never overlap),
+    // so the hit area reaches the target down and sideways only.
+    expect(Number.parseFloat(getComputedStyle(toggle).height)).toBe(trackHeight);
+    expect(Number.parseFloat(getComputedStyle(toggle).width)).toBe(trackWidth);
+    expect(readHitAreaReach(toggle)).toMatchObject({ top: 0, bottom: (44 - trackHeight) / 2, left: (44 - trackWidth) / 2, right: (44 - trackWidth) / 2 });
+  } finally { mounted.unmount(); }
 });
 
 it('renders caller-qualified provenance as a named link or a non-interactive source', async () => {

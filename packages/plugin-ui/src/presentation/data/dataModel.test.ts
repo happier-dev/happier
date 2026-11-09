@@ -98,6 +98,10 @@ describe('shared data presentation rules', () => {
   });
 
   it('reads bytes in the base the quantity kind sets: storage decimal, memory binary', () => {
+    // Launch forms and their receipts request fixed GiB, including fractional memory and large disks.
+    expect(formatHappierDataBytes(100 * 1024 ** 3, { kind: 'storage', unit: 'GiB', locale: 'en-US' })).toBe('100 GiB');
+    expect(formatHappierDataBytes(0.5 * 1024 ** 3, { kind: 'memory', unit: 'GiB', locale: 'de-DE' })).toBe('0,5 GiB');
+    expect(formatHappierDataBytesParts(1024 ** 4, { kind: 'storage', unit: 'GiB', locale: 'en-US' })).toEqual({ value: '1,020', unit: 'GiB' });
     // A 1 TB drive is "1 TB" and a 128 GiB machine is "128 GB", as the OS and drive vendor show them.
     expect(formatHappierDataBytes(1_000_000_000_000, { kind: 'storage', locale: 'en-US' })).toBe('1 TB');
     expect(formatHappierDataBytes(128 * 1024 ** 3, { kind: 'memory', locale: 'en-US' })).toBe('128 GB');

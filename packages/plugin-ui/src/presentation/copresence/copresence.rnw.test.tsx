@@ -14,6 +14,10 @@ import {
   type HappierAgentTarget,
 } from './AgentCursor.js';
 import { HappierPresenceCapsule, type HappierPresence, type HappierPresenceCapsuleCopy } from './PresenceCapsule.js';
+import { PresenceCapsule } from '../../components/Copresence.js';
+import { PluginUiHostPresentationScope } from '../../components/PluginUiProvider.js';
+import { projectHappierUiEnvironment } from '../../environment/projectEnvironment.js';
+import { createSurfaceContext } from '../../surfaceFixture.testSupport.js';
 
 const COLORS: HappierCapsuleColors = {
   text: 'black',
@@ -46,7 +50,8 @@ function createHost(): Readonly<{ host: HappierCapsuleHost; settle: () => void }
     Surface: (props) => <div data-testid={props.testID} data-elevation={props.elevation}>{props.children}</div>,
     Text: (props) => <span data-lines={props.numberOfLines}>{props.children}</span>,
     Button: (props) => (
-      <button type="button" data-testid={props.testID} onClick={props.onPress} disabled={props.disabled} title={props.accessibilityHint}>{props.title}</button>
+      <button type="button" data-testid={props.testID} data-icon-only={String(props.iconOnly === true)} aria-label={props.iconOnly ? props.title : undefined}
+        onClick={props.onPress} disabled={props.disabled} title={props.accessibilityHint}>{props.iconOnly ? props.leading : props.title}</button>
     ),
     Spinner: () => <span data-testid="spinner" />,
     renderGlyph: (glyph) => <span data-glyph={glyph} />,
@@ -79,6 +84,115 @@ async function click(element: HTMLElement | null): Promise<void> {
 }
 
 describe('HappierPresenceCapsule', () => {
+  it('lets the curated themed capsule recompose at its available width and restore its words', async () => {
+    const { host } = createHost();
+    const environment = projectHappierUiEnvironment(createSurfaceContext());
+    const render = (availableWidth: number) => (
+      <PluginUiHostPresentationScope environment={environment} presentationHost={{ capsuleHost: host }}>
+        <PresenceCapsule presence={{ kind: 'agent', controlEpoch: 1 }} agentName="Claude" agentTitle={COPY.agentTitle}
+          agentDetail={COPY.agentDetail ?? undefined} onTakeControl={() => undefined}
+          availableWidth={availableWidth} placement="inline" testID="curated" />
+      </PluginUiHostPresentationScope>
+    );
+    const mounted = mountThroughReactNativeWeb(render(115));
+    try {
+      const words = byTestId(mounted.container, 'curated-text');
+      const handler = (words as unknown as { __reactLayoutHandler?: (event: unknown) => void }).__reactLayoutHandler;
+      act(() => handler?.({ nativeEvent: { layout: { x: 0, y: 0, width: 4, height: 30 } } }));
+      expect(byTestId(mounted.container, 'curated-text')).toBeNull();
+      const take = byTestId(mounted.container, 'curated-take-control')!;
+      expect(take.dataset.iconOnly).toBe('true');
+      expect(take.getAttribute('aria-label')).toBe(COPY.takeControl);
+      expect(byTestId(mounted.container, 'curated-agent')!.getAttribute('aria-label')).toContain(COPY.agentTitle);
+
+      await mounted.render(render(400));
+      expect(mounted.container.textContent).toContain(COPY.agentTitle);
+      expect(byTestId(mounted.container, 'curated-take-control')!.dataset.iconOnly).toBe('false');
+    } finally { mounted.unmount(); }
+  });
+
+  it('recomposes to the mark and an icon-only action when the frame is narrower than the words need, and restores when it grows', async () => {
+    const { host } = createHost();
+    const render = (availableWidth: number) => (
+      <HappierPresenceCapsule presence={{ kind: 'agent', controlEpoch: 1 }} copy={COPY} colors={COLORS} host={host}
+        onTakeControl={() => undefined} availableWidth={availableWidth} placement="inline" testID="p" />
+    );
+    const layout = (node: Element, width: number) => {
+      const handler = (node as unknown as { __reactLayoutHandler?: (event: unknown) => void }).__reactLayoutHandler;
+      expect(handler, 'the capsule measures its words').toBeDefined();
+      act(() => handler!({ nativeEvent: { layout: { x: 0, y: 0, width, height: 30 } } }));
+    };
+    const mounted = mountThroughReactNativeWeb(render(115));
+    try {
+      // The words are squeezed to a sliver: nothing may be clipped, so the words give way.
+      layout(byTestId(mounted.container, 'p-text')!, 4);
+      expect(byTestId(mounted.container, 'p-text')).toBeNull();
+      expect(mounted.container.textContent).not.toContain(COPY.agentTitle);
+      const take = byTestId(mounted.container, 'p-take-control')!;
+      expect(take.dataset.iconOnly).toBe('true');
+      expect(take.getAttribute('aria-label')).toBe(COPY.takeControl);
+      expect(byTestId(mounted.container, 'p-agent')!.getAttribute('aria-label')).toContain(COPY.agentTitle);
+
+      // A frame wide enough for the words again gets them back, at the same state.
+      await mounted.render(render(400));
+      expect(byTestId(mounted.container, 'p-text')).toBeTruthy();
+      expect(byTestId(mounted.container, 'p-take-control')!.dataset.iconOnly).toBe('false');
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  it('keeps the words and the labelled action while there is room for them', async () => {
+    const { host } = createHost();
+    const mounted = mountThroughReactNativeWeb(
+      <HappierPresenceCapsule presence={{ kind: 'agent', controlEpoch: 1 }} copy={COPY} colors={COLORS} host={host}
+        onTakeControl={() => undefined} availableWidth={420} placement="inline" testID="p" />,
+    );
+    try {
+      const handler = (byTestId(mounted.container, 'p-text') as unknown as { __reactLayoutHandler?: (event: unknown) => void }).__reactLayoutHandler;
+      act(() => handler?.({ nativeEvent: { layout: { x: 0, y: 0, width: 220, height: 30 } } }));
+      expect(mounted.container.textContent).toContain(COPY.agentTitle);
+      expect(byTestId(mounted.container, 'p-take-control')!.dataset.iconOnly).toBe('false');
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  it('keeps a strip\'s sentence on one line, and moves its buttons beneath it where the column would squeeze the words', async () => {
+    const base = createHost().host;
+    // The host's text reports the wrap the capsule asks for.
+    const host: HappierCapsuleHost = {
+      ...base,
+      Text: (props) => (
+        <span data-text-wrap={String((props.style as { textWrap?: string } | undefined)?.textWrap ?? '')}>{props.children}</span>
+      ),
+    };
+    const render = (availableWidth: number) => (
+      <HappierPresenceCapsule presence={{ kind: 'agent', controlEpoch: 1 }} copy={COPY} colors={COLORS} host={host}
+        onWatch={() => undefined} onTakeControl={() => undefined} availableWidth={availableWidth} placement="strip" testID="p" />
+    );
+    const mounted = mountThroughReactNativeWeb(render(220));
+    try {
+      // One line: the title never balances itself across lines (that wrapped it one syllable per line).
+      const title = [...mounted.container.querySelectorAll('span')].find((node) => node.textContent === COPY.agentTitle)!;
+      expect(title.dataset.textWrap).not.toBe('balance');
+      const words = byTestId(mounted.container, 'p-text')!;
+      const handler = (words as unknown as { __reactLayoutHandler?: (event: unknown) => void }).__reactLayoutHandler;
+      expect(handler, 'the strip measures its words').toBeDefined();
+      act(() => handler!({ nativeEvent: { layout: { x: 0, y: 0, width: 24, height: 20 } } }));
+      // Squeezed: the words keep the row, Watch and Take control (still labelled) move beneath them.
+      const actions = byTestId(mounted.container, 'p-actions-beneath');
+      expect(actions).toBeTruthy();
+      expect(actions!.contains(byTestId(mounted.container, 'p-watch'))).toBe(true);
+      expect(byTestId(mounted.container, 'p-take-control')!.dataset.iconOnly).toBe('false');
+      expect(mounted.container.textContent).toContain(COPY.agentTitle);
+      await mounted.render(render(600));
+      expect(byTestId(mounted.container, 'p-actions-beneath')).toBeNull();
+    } finally {
+      mounted.unmount();
+    }
+  });
+
   it('keeps an unavailable Watch visible and explains why it cannot open', async () => {
     const { host } = createHost();
     const onWatch = vi.fn();

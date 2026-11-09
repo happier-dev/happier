@@ -683,7 +683,7 @@ describe('controlled overlay presentation', () => {
       scope?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
       scope?.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
     });
-    expect(onSelect).toHaveBeenCalledExactlyOnceWith('scope');
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith('scope', { anchorRef: input?.anchorRef });
     expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
     mount.unmount();
   });
@@ -827,7 +827,9 @@ describe('controlled overlay presentation', () => {
     await act(async () => {
       finalRow?.click();
     });
-    expect(onSelect).toHaveBeenCalledExactlyOnceWith('final');
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith('final', expect.objectContaining({
+      anchorRef: expect.objectContaining({ current: expect.anything() }),
+    }));
     expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
     mount.unmount();
   });

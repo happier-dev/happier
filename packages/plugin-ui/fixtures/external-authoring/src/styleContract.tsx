@@ -1,4 +1,18 @@
 import { Stack } from '@happier-dev/plugin-ui';
+import type { InboxItemAttentionTypeV1, PluginUiIconTokenV1 } from '@happier-dev/plugin-sdk/ui';
+import type { CollectionGroupRollup, HappierWorkStatusPresentation } from '@happier-dev/plugin-ui/components';
+
+// External authors use the same public status family and canonical SDK constituents.
+const externalAttentionType: InboxItemAttentionTypeV1 | null = null;
+const externalStatusGlyph: PluginUiIconTokenV1 = 'review';
+const externalWorkStatus = {
+  state: 'reviewing', bucket: 'working', tone: 'neutral', attentionType: externalAttentionType,
+  word: 'Reviewing', glyph: externalStatusGlyph,
+} satisfies HappierWorkStatusPresentation;
+const externalGroupRollup = {
+  status: externalWorkStatus, needsYouCount: null, coverage: 'partial',
+} satisfies CollectionGroupRollup;
+void externalGroupRollup;
 
 const supportedPortableStyle = (
   <Stack

@@ -178,10 +178,11 @@ describe('useSessionStates', () => {
     // Session transport is the genuine host boundary; the mounted read/watch owner stays real.
     const watchers = new Map<string, Parameters<PluginUiHostApi['watchSession']>[1]>();
     const snapshots = new Map<string, SessionStateV1 | null>([['first', WORKING]]);
+    let sessionReads = 0;
     const base = createHostApiStub();
     const hostApi = createHostApiStub(undefined, {
       version: () => ({ ...base.version(), methods: ['readSession', 'watchSession'] }),
-      readSession: async (id) => snapshots.get(id) ?? null,
+      readSession: async (id) => { sessionReads += 1; return snapshots.get(id) ?? null; },
       watchSession: async (id, listener) => {
         if (watchers.has(id)) throw new Error('duplicate host watch');
         watchers.set(id, listener);
@@ -210,7 +211,7 @@ describe('useSessionStates', () => {
       await vi.waitFor(() => expect(current?.sessions.get('first')?.state?.workStatus.bucket).toBe('idle'));
 
       await act(async () => { tree.update(view(['second'])); });
-      await vi.waitFor(() => expect(current?.sessions.get('second')?.status).toBe('unavailable'));
+      await vi.waitFor(() => expect(current?.sessions.get('second')?.status).toBe('missing'));
       expect(current?.sessions.has('first')).toBe(false);
       expect(watchers.has('first')).toBe(false);
       // A retired host callback cannot leak the prior row's activity into the new window.
@@ -220,6 +221,12 @@ describe('useSessionStates', () => {
       snapshots.set('second', { ...WORKING, sessionId: 'second' });
       await act(async () => { current?.refresh(); });
       await vi.waitFor(() => expect(current?.sessions.get('second')).toMatchObject({ status: 'ready', state: { sessionId: 'second' } }));
+      snapshots.set('second', null);
+      const readsBeforeTerminalEvent = sessionReads;
+      await act(async () => { watchers.get('second')?.({ version: 1, subscriptionId: 'second-watch', kind: 'error', code: 'unavailable' }); });
+      await vi.waitFor(() => expect(current?.sessions.get('second')).toEqual({ status: 'missing', state: null }));
+      await act(async () => { tree.update(view(['second'])); });
+      expect(sessionReads).toBe(readsBeforeTerminalEvent + 1);
     } finally {
       act(() => tree?.unmount());
     }

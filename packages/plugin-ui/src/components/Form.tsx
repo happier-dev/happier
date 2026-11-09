@@ -15,6 +15,7 @@ import {
 import {
   HappierField,
   HappierForm,
+  happierFormMarksOptionalFields,
   HappierFormActions,
   HappierSelect,
   HappierTextField,
@@ -147,9 +148,14 @@ export type TextFieldProps = Readonly<{
    * `form` (default): a form field with its visible label. `field`: the
    * configuration page's bordered field box, placed as an `Item` row's
    * `accessory` — the row's title names it, so `label` is its accessible name
-   * only — exactly like Happier's own page text fields.
+   * only — exactly like Happier's own page text fields. `document`: text
+   * written in place in a document (a task draft's title and notes), with no
+   * well or box; its placeholder says what goes there and `label` is its
+   * accessible name.
    */
-  presentation?: 'form' | 'field';
+  presentation?: 'form' | 'field' | 'document';
+  /** `document` only: the document's `title` (title type, wraps as one paragraph) or its `body` (reading type, the default). */
+  documentRole?: 'title' | 'body';
   /**
    * `field` only: typed in place and saved on leaving. The field keeps a local
    * draft (reported through `onChange`) and calls this once when focus leaves
@@ -162,8 +168,19 @@ export type TextFieldProps = Readonly<{
   kind?: 'text' | 'integer' | 'decimal';
   /** A number that may be left empty ("not set"); otherwise an emptied number returns to `value`. */
   allowEmpty?: boolean;
+  /** `field` only: the value is an identifier, path or header value, set in the host's mono face once typed. */
+  monospace?: boolean;
+  /** `field` + `multiline` only: starts this many lines tall and grows with what is typed (a one-line comment box). */
+  minLines?: number;
   /** `field` only: the field's refusal, shown beneath the box and announced. */
   error?: string;
+  /**
+   * A fixed mark inside the field before the value, which the value continues (the `/` of a
+   * shortcut field). It is decoration: assistive technology reads the field's `label`.
+   */
+  leading?: ReactNode;
+  /** A decorative mark inside the field after the value (a key hint), hidden from assistive technology. */
+  trailing?: ReactNode;
   testID?: string;
 }>;
 
@@ -183,6 +200,7 @@ function TextFieldControl(props: Omit<TextFieldProps, 'dictation'>): ReactElemen
     placeholder,
     placeholderKey,
     presentation = 'form',
+    documentRole,
     onCommit,
     kind,
     allowEmpty,
@@ -195,6 +213,20 @@ function TextFieldControl(props: Omit<TextFieldProps, 'dictation'>): ReactElemen
   const palette = useOptionalHappierUiPalette(theme);
   const resolvedLabel = resolveAuthorText(translate, label, labelKey) ?? label;
   const resolvedPlaceholder = resolveAuthorText(translate, placeholder, placeholderKey);
+  if (presentation === 'document') {
+    return (
+      <HappierTextField
+        {...rest}
+        appearance="document"
+        documentRole={documentRole ?? 'body'}
+        label={resolvedLabel}
+        placeholder={resolvedPlaceholder}
+        onChangeText={onChange}
+        controlRef={focusBinding}
+        theme={theme}
+      />
+    );
+  }
   if (presentation === 'field' && palette !== null) {
     const fieldColors = {
       borderColor: palette.controlBorder,
@@ -253,7 +285,7 @@ function CommittingFieldTextField(props: Omit<TextFieldProps, 'dictation' | 'lab
   fieldColors: NonNullable<HappierTextFieldProps['fieldColors']>;
   controlRef: HappierTextFieldProps['controlRef'];
 }>): ReactElement {
-  const { value, onChange, onCommit, kind, allowEmpty, error, fieldColors, controlRef, onSubmitEditing, ...rest } = props;
+  const { value, onChange, onCommit, kind, allowEmpty, error, fieldColors, controlRef, onSubmitEditing, onEscape, ...rest } = props;
   const theme = usePluginTheme();
   const field = useHappierFieldValueDraft({ value, onCommit, onDraftChange: onChange, kind, allowEmpty });
   return (
@@ -266,6 +298,7 @@ function CommittingFieldTextField(props: Omit<TextFieldProps, 'dictation' | 'lab
       onChangeText={field.change}
       onBlur={field.commit}
       onSubmitEditing={() => { field.commit(); onSubmitEditing?.(); }}
+      onEscape={() => { field.cancel(); return onEscape?.() ?? true; }}
       keyboardType={resolveHappierFieldKeyboardType(kind) ?? rest.keyboardType}
       controlRef={controlRef}
       theme={theme}
@@ -575,6 +608,8 @@ export type FormProps = Readonly<{
   disabled?: boolean;
   /** Prevent submission of an incomplete draft while keeping fields and Cancel usable. */
   submitDisabled?: boolean;
+  /** `secondary`: a form opened under an action row that already holds the view's one filled action. */
+  submitVariant?: 'primary' | 'secondary';
   busy?: boolean;
   testID?: string;
 }>;
@@ -619,7 +654,8 @@ function FormRoot(props: FormProps): ReactElement {
     ?? translate(FORM_CANCEL_TRANSLATION_KEY, 'Cancel');
 
   return (
-    <HappierForm accessibilityLabel={hints.title} testID={props.testID} busy={submission.pending}>
+    <HappierForm accessibilityLabel={hints.title} testID={props.testID} busy={submission.pending}
+      marksOptionalFields={happierFormMarksOptionalFields(fields)}>
       <Stack gap="medium">
       {hints.title ? <Heading value={hints.title} level={2} /> : null}
       {hints.description ? <Text value={hints.description} tone="secondary" /> : null}
@@ -649,6 +685,7 @@ function FormRoot(props: FormProps): ReactElement {
       <FormActions>
         <Button
           title={submitLabel}
+          {...(props.submitVariant === undefined ? {} : { variant: props.submitVariant })}
           busy={submission.pending}
           disabled={formDisabled || props.submitDisabled === true}
           onPress={() => submission.submit(() => props.onSubmit(

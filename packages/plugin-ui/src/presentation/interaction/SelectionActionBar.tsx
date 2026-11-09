@@ -140,6 +140,8 @@ const BAR_INSET = 4;
 const ACTION_HEIGHT = 32;
 const ACTION_RADIUS = 8;
 const ACTION_GAP = 2;
+/** Each action's hit area takes half of the gap to its neighbour, so two glyph actions never overlap. */
+const ACTION_HIT_REACH = { left: ACTION_GAP / 2, right: ACTION_GAP / 2 } as const;
 const PRIMARY_FILL_OPACITY = 0.14;
 const DIVIDER_OPACITY = 0.2;
 const GLYPH_SIZE = 14;
@@ -269,6 +271,7 @@ export function HappierSelectionActionBar(props: HappierSelectionActionBarProps)
               accessibilityLabel={action.accessibilityLabel ?? action.label}
               disabled={action.disabled}
               busy={action.busy}
+              hitReach={ACTION_HIT_REACH}
               onPress={action.onPress}
               style={({ pressed }) => ({
                 height: ACTION_HEIGHT,
@@ -276,15 +279,16 @@ export function HappierSelectionActionBar(props: HappierSelectionActionBarProps)
                 alignItems: 'center',
                 gap: 6,
                 paddingHorizontal: 10,
+                // Rounded, never clipping: the hit area reaches past the pill, so its primary fill carries
+                // the radius itself.
                 borderRadius: ACTION_RADIUS,
-                overflow: 'hidden',
                 opacity: action.disabled ? 0.45 : pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacity : 1,
               })}
             >
               {action.emphasis === 'primary' ? (
                 <View
                   pointerEvents="none"
-                  style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: foreground, opacity: PRIMARY_FILL_OPACITY }}
+                  style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: ACTION_RADIUS, backgroundColor: foreground, opacity: PRIMARY_FILL_OPACITY }}
                 />
               ) : null}
               {action.renderIcon?.(actionColor(action)) ?? null}
@@ -306,6 +310,7 @@ export function HappierSelectionActionBar(props: HappierSelectionActionBarProps)
                 <HappierPressable
                   accessibilityLabel={props.moreLabel}
                   hasPopup="menu"
+                  hitReach={ACTION_HIT_REACH}
                   onPress={open}
                   style={({ pressed }) => ({
                     height: ACTION_HEIGHT,
@@ -325,6 +330,7 @@ export function HappierSelectionActionBar(props: HappierSelectionActionBarProps)
             testID={presented.dismiss.testID}
             accessibilityLabel={presented.dismiss.label}
             disabled={presented.dismiss.disabled}
+            hitReach={ACTION_HIT_REACH}
             onPress={presented.dismiss.onPress}
             style={({ pressed }) => ({
               height: ACTION_HEIGHT,

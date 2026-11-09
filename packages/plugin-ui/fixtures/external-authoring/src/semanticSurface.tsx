@@ -3,6 +3,8 @@ import { isRecord } from '@happier-dev/plugin-sdk';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
   Button,
+  BrandMark,
+  Image,
   InlineCode,
   Collection,
   type ComposerDecorationSetV1,
@@ -15,6 +17,8 @@ import {
   ItemGroup,
   List,
   ListDetailLayout,
+  NavigationList,
+  Row,
   Select,
   Stack,
   Status,
@@ -38,10 +42,49 @@ import {
 } from '@happier-dev/plugin-ui/components';
 import {
   HappierFloatingFrame as FloatingFrame, HappierStack, HappierText, resolveFloatingFrameRect, resolveHappierTreeFocusKey,
+  HappierBrandMark, type HappierBrandMarkProps,
   useHappierCollection, type FrameRect, type HappierTreeNode,
 } from '@happier-dev/plugin-ui/components';
+// @ts-expect-error Catalog URL inputs are host-private, never an author entrypoint.
+import type { HostCatalogMark } from '@happier-dev/plugin-ui/components';
 import { externalReleaseReviews, externalReleaseStageSelection, externalReleaseStageField,
   externalReleaseStageRegistry, readExternalReleaseFilterLocation } from './releaseStage.js';
+import { DocEditProposalExample } from './docEditProposalSurface.js';
+import { ThreadExample } from './threadSurface.js';
+import { AccountBylineExample } from './accountBylineSurface.js';
+import { FollowPolicyEditorExample } from './followPolicyEditorSurface.js';
+import { WorkUpdateCardExample } from './workUpdateCardSurface.js';
+import { ReviewReadyNoticeExample } from './reviewReadyNoticeSurface.js';
+import { MemoryFactsExample } from './memoryFactsSurface.js';
+import { MemoryDuplicateChoiceExample } from './memoryDuplicateChoiceSurface.js';
+import { WorkflowPatternExample } from './workflowPatternSurface.js';
+import { externalWorkflowStartInput } from './workflowPattern.js';
+
+export type ExternalForbiddenCatalogMark = HostCatalogMark;
+
+/** Row callbacks may use the optional trigger context or keep accepting only the action id. */
+export function ExternalAuthorRowActions(props: Readonly<{
+  onAction(id: string, anchorRef?: Readonly<{ current: unknown }>): void;
+}>) {
+  return <Item title="Review" secondaryActions={[{ id: 'inspect', label: 'Inspect' }]}
+    onSecondaryAction={(id, selection) => props.onAction(id, selection?.anchorRef)} />;
+}
+
+/** Compile the public image boundary without giving authors catalog URL authority. */
+export function ExternalAuthorBrandBoundary(props: Pick<HappierBrandMarkProps, 'theme'>) {
+  return <>
+    <BrandMark />
+    {/* @ts-expect-error Manifest-owned BrandMark has no author URL input. */}
+    <BrandMark uri="https://example.test/logo.png" />
+    <HappierBrandMark displayName="Author" bytes={new Uint8Array()} theme={props.theme} />
+    {/* @ts-expect-error Public marks accept admitted bytes, never remote URI props. */}
+    <HappierBrandMark displayName="Author" theme={props.theme} uri="https://example.test/logo.png" />
+    {/* @ts-expect-error Host catalog descriptors are not public mark props. */}
+    <HappierBrandMark displayName="Author" theme={props.theme} source={{ uri: 'https://example.test/logo.png' }} />
+    {/* @ts-expect-error Public media uses a packaged PNG Resource, never a URI. */}
+    <Image resource={{ pluginId: 'external.example', localId: 'logo' }} uri="https://example.test/logo.png" />
+  </>;
+}
 
 const externalReviews = externalReleaseReviews;
 const releaseFilterLabels: CollectionConditionEditorProps['labels'] = {
@@ -162,6 +205,7 @@ function ExternalAuthoringSemanticSurface(props: Pick<RenderContext, 'launchInpu
   const [selectedReviewId, setSelectedReviewId] = useState<string | null>('current');
   const [reviewChoice, setReviewChoice] = useState<string | null>('current');
   const [widgetExpanded, setWidgetExpanded] = useState(true);
+  const [widgetFrameStyle, setWidgetFrameStyle] = useState<'card' | 'plain'>('card');
   const [reviewTreeExpanded, setReviewTreeExpanded] = useState(false);
   const [openedReviewKey, setOpenedReviewKey] = useState<string | null>(null);
   const releaseStage = isRecord(props.launchInput) && typeof props.launchInput.releaseStage === 'string'
@@ -213,6 +257,15 @@ function ExternalAuthoringSemanticSurface(props: Pick<RenderContext, 'launchInpu
   return (
     <>
       <ExternalAuthoringAdvancedPanel />
+      <DocEditProposalExample />
+      <ThreadExample />
+      <AccountBylineExample />
+      <FollowPolicyEditorExample />
+      <WorkUpdateCardExample />
+      <ReviewReadyNoticeExample />
+      <MemoryFactsExample />
+      <MemoryDuplicateChoiceExample />
+      <WorkflowPatternExample input={externalWorkflowStartInput} />
       <Button
         title="Open an editable authoring draft"
         onPress={async () => {
@@ -307,7 +360,7 @@ function ExternalAuthoringSemanticSurface(props: Pick<RenderContext, 'launchInpu
           selectedKey: selectedReviewId,
           onSelectedKeyChange: setSelectedReviewId,
         }}
-        renderItem={(review) => <List.Item title={review.title} />}
+        renderItem={(review) => <List.Item rowRole="item" title={review.title} />}
       />
       <CountedDisclosureItem title="Older reviews" count={externalReviews.length - 1} testID="external-older-reviews">
         {externalReviews.slice(1).map((review) => <Item key={review.id} title={review.title} />)}
@@ -315,9 +368,15 @@ function ExternalAuthoringSemanticSurface(props: Pick<RenderContext, 'launchInpu
       <TechnicalDetailsDisclosure title="Technical details" lines={externalReviewReferences} testID="external-review-technical" />
       <HappierText style={[{ textAlign: 'center' }, HAPPIER_BALANCED_TEXT_WRAP]}>Opening the review on the reviewer's Machine</HappierText>
       <WidgetFrame
-        frameStyle="card"
+        frameStyle={widgetFrameStyle}
         placement="board"
         title="Review choices"
+        accessory={<Row>
+          <Button size="small" title="Clear review choice" onPress={() => setReviewChoice(null)} />
+          <Button size="small" title={widgetFrameStyle === 'card' ? 'Hide frame' : 'Show frame'}
+            onPress={() => setWidgetFrameStyle(current => current === 'card' ? 'plain' : 'card')} />
+        </Row>}
+        facts={<Text value="Release reviews" variant="meta" />}
         disclosure={{ collapsed: !widgetExpanded, onCollapsedChange: (collapsed) => setWidgetExpanded(!collapsed),
           expandLabel: 'Expand review choices', collapseLabel: 'Collapse review choices' }}
       >
@@ -346,17 +405,35 @@ function ExternalAuthoringSemanticSurface(props: Pick<RenderContext, 'launchInpu
         <Collection
           model={reviewModel}
           accessibilityLabel="External review choice"
-          presentation="list"
+          presentation={isRecord(props.launchInput) && props.launchInput.reviewCards === true ? 'grid' : 'list'}
           detail="none"
           scroll="page"
           minListWidth={240}
           minDetailWidth={240}
           preferredListRatio={0.5}
-          anatomy={{ glyph: () => null, title: (review) => review.title,
+          anatomy={{ glyph: () => <BrandMark externallyLabelled />, title: (review) => review.title,
+            rowRole: 'catalogRow',
+            description: (review) => review.id === 'current' ? 'Review the current release before choosing it.' : null,
+            card: {
+              // A group can show exact package marks beside its independent control;
+              // the host owns package identity, artwork and fallback admission.
+              headerRight: (review) => <Row>
+                <BrandMark pluginId="fixture.external-authoring" size="small" />
+                <BrandMark pluginId="fixture.physical-copy-target" size="small" />
+                <Button size="small" title={`Choose ${review.title}`}
+                  testID={`external-review-choose:${review.id}`} onPress={() => setReviewChoice(review.id)} />
+              </Row>,
+              facts: (review) => <Text value={reviewChoice === review.id ? 'Selected review' : 'Available review'} variant="meta" />,
+              body: { render: (review) => <Text value={`Review context for ${review.title}`} /> },
+            },
             accessibilityLabel: (review) => `Choose ${review.title}`, columnTitles: { title: 'Review' } }}
           selection={{ single: { value: reviewChoice, onValueChange: setReviewChoice } }}
         />
       </WidgetFrame>
+      <NavigationList title="Host settings">
+        <NavigationList.Row title="Plugins" destination={{ href: '/settings/plugins' }}
+          onPress={() => hostApi.executeAction('workspace.tabs.open', { href: '/settings/plugins' })} />
+      </NavigationList>
       <Tree
         items={externalReviewTree(reviewTreeExpanded)}
         accessibilityLabel="External review tree"
@@ -457,7 +534,7 @@ function ExternalProjectSurface({ launchInput }: RenderContext) {
   const source = isRecord(launchInput) && isRecord(launchInput.source) ? launchInput.source : null;
   return (
     <Stack gap="small">
-      <Text value={`Project ${target.kind === 'project' ? target.projectId : checkout.projectKey}`} />
+      <Text value={`Project ${target.kind === 'project' ? target.projectKey : checkout.projectKey}`} />
       <Text value={`${checkout.serverId} · ${checkout.machineId} · ${checkout.rootPath}`} tone="secondary" />
       {source && typeof source.sourceId === 'string' ? <Text value={`Source ${source.sourceId}`} /> : null}
     </Stack>

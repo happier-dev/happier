@@ -29,13 +29,15 @@ export type HappierStepMarker =
     labelKey?: string;
   }>;
 
-export type HappierStepState = 'passed' | 'failed' | 'running';
+/** `open`: a chapter with nothing settled yet (no fix linked); a hollow mark, neither a count nor a verdict. */
+export type HappierStepState = 'passed' | 'failed' | 'running' | 'open';
 
 /** The tone each state marker's glyph takes. */
 export const HAPPIER_STEP_STATE_TONE = {
   passed: 'success',
   failed: 'danger',
   running: 'info',
+  open: 'secondary',
 } as const satisfies Record<HappierStepState, string>;
 
 const MARKER_SIZE = 22;
@@ -72,7 +74,8 @@ export function HappierStepMarkerView(props: Readonly<{
   const settledTone = progress === 'failed' || progress === 'waiting' ? HAPPIER_STEP_PROGRESS_GLYPH_TONE[progress] : null;
   // A settled state sits on its own tone at the shared tint strength (a passed check on green, a failure on
   // red), so the rail reads its states before its words; a count stays on the raised control fill.
-  const fill = marker.kind === 'state'
+  const fill = marker.kind === 'state' && marker.state === 'open' ? theme.colors.control
+    : marker.kind === 'state'
     ? softenHappierWorkColor(theme.colors[HAPPIER_TONE_COLOR_TOKEN[HAPPIER_STEP_STATE_TONE[marker.state]]], 0.1)
       ?? theme.colors.control
     : settledTone ? softenHappierWorkColor(theme.colors[HAPPIER_TONE_COLOR_TOKEN[settledTone]], 0.1) ?? theme.colors.control
@@ -88,6 +91,7 @@ export function HappierStepMarkerView(props: Readonly<{
       : progress === 'running' ? <HappierSpinner size={MARKER_GLYPH_SIZE} color={theme.colors.text} />
         : progress === 'cancelled' ? <HappierStepCancelledMark color={theme.colors.mutedText} />
           : <HappierText style={{ ...numberTextStyle, color: ringed ? theme.colors.text : theme.colors.secondaryText }}>{String(marker.value)}</HappierText>)
+      : marker.state === 'open' ? <View style={{ width: 8, height: 8, borderRadius: 4, borderWidth: 1.5, borderColor: theme.colors.mutedText }} />
       : marker.state === 'running' ? <HappierSpinner size={MARKER_GLYPH_SIZE} color={theme.colors[HAPPIER_TONE_COLOR_TOKEN[HAPPIER_STEP_STATE_TONE.running]]} />
         : props.stateGlyph}
   </View>;

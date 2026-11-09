@@ -305,6 +305,7 @@ export function resolveHappierUiPalette(theme: PluginUiThemeV1): HappierUiPalett
     segmentThumb: colors.surface,
     navigationSelected: colors.elevatedSurface,
     navigationHover: colors.control,
+    pageTabSelected: colors.control,
     ...(skeleton === null ? {} : { skeleton }),
   };
 }

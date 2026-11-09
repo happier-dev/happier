@@ -23,6 +23,8 @@ export type PropertyChoice = Readonly<{
   label: string;
   /** Supporting identity ("CHK-214 · Linear"), kept apart from the label. */
   subtitle?: string;
+  /** This choice is a person: their name, drawn as an `Avatar` beside the label. */
+  person?: string;
 }>;
 
 /**
@@ -75,6 +77,8 @@ export type PropertyEditor =
       choices: readonly PropertyChoice[];
       /** Find choices by their name or supporting identity. */
       searchable?: boolean;
+      /** Say the chosen names as chips instead of joined words (labels). */
+      chips?: boolean;
       onCommit(next: readonly string[]): unknown;
     }>;
 
@@ -273,6 +277,7 @@ function PropertyChoiceMenu(
       id: choice.id,
       label: choice.label,
       ...(choice.subtitle === undefined ? {} : { subtitle: choice.subtitle }),
+      ...(choice.person === undefined ? {} : { person: choice.person }),
       ...(multiple
         ? { kind: 'checkbox' as const, checked: selected.has(choice.id) }
         : { kind: 'radio' as const, radioGroupId }),
@@ -297,6 +302,8 @@ function PropertyChoiceMenu(
       disabled={props.disabled || write.busy}
       trigger={props.shown}
       triggerTextTone={props.toneOfValue}
+      {...(editor.kind === 'choices' && editor.chips === true && editor.value.length > 0
+        ? { triggerContent: <PropertyNameChips names={editor.value.map((id) => editor.choices.find((choice) => choice.id === id)?.label ?? id)} /> } : {})}
       triggerAccessibilityLabel={props.triggerAccessibilityLabel}
       sheet={{ title: item.label }}
       items={items}

@@ -3,6 +3,7 @@ import {
   createSurfaceContextFixture,
 } from '@happier-dev/plugin-sdk/testing';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginManifestV2Schema } from '@happier-dev/protocol';
 import type {
   ComposerAttachmentViewV1,
   ComposerReadResultV1,
@@ -13,6 +14,7 @@ import { act, cloneElement, type ReactElement } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderComposerIssueSurface } from '../../../tests/fixtures/plugin-platform/composer-external-dogfood/src/issueSurface.mjs';
+import { manifest } from '../../../tests/fixtures/plugin-platform/composer-external-dogfood/src/index.mjs';
 import { createPluginUiRnwSemanticSurfaceAdapter } from './rnwSemanticAdapter.testSupport.js';
 
 const composer = {
@@ -274,6 +276,26 @@ describe('external Composer dogfood surface', () => {
   });
 
   it('drives picker selection through the public Composer facade and immutable fallback input', async () => {
+    const admittedManifest = PluginManifestV2Schema.parse(JSON.parse(JSON.stringify(manifest)));
+    expect(admittedManifest.contributes.composerControls.find(({ id }) => id === 'issue-control'))
+      .toMatchObject({ defaultPlacement: 'pinned' });
+    const defaultOverflowControl = admittedManifest.contributes.composerControls
+      .find(({ id }) => id === 'inspect');
+    const inspectAction = admittedManifest.contributes.actions.find(({ id }) => id === 'inspect');
+    expect(defaultOverflowControl).toMatchObject({
+      id: 'inspect',
+      label: 'Discussion helper',
+      scopes: ['discussion'],
+      interaction: {
+        kind: 'surface',
+        renderer: { renderer: 'discussion-surface' },
+      },
+    });
+    expect(defaultOverflowControl?.defaultPlacement).toBeUndefined();
+    expect(inspectAction).toMatchObject({ id: 'inspect', scopes: ['global', 'session'] });
+    expect(inspectAction?.placementBindings)
+      .toEqual(['commandPalette', 'composer.primary', 'composer.more']);
+
     const readComposer = vi.fn(async () => ({ status: 'ready' as const, snapshot: snapshot() }));
     const applyComposer = vi.fn(async () => ({
       status: 'applied' as const,

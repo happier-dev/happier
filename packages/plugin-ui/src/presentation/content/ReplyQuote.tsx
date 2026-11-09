@@ -3,6 +3,7 @@ import { View } from 'react-native';
 
 import type { HappierPortableStyle } from '../portableTypes.js';
 
+import { HAPPIER_RADIUS_V1 } from '../../environment/radius.js';
 import { HAPPIER_SPACE_STEPS } from '../../environment/spacing.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
@@ -36,8 +37,20 @@ export type HappierReplyQuoteProps = Readonly<{
   source: HappierReplyQuoteSource;
   leading?: ReactNode;
   Text: ComponentType<HappierReplyQuoteTextProps>;
-  colors: Readonly<{ text: string; secondaryText: string; border: string; focus: string }>;
-  space?: Readonly<Record<'s2' | 's6' | 's8', number>>;
+  colors: Readonly<{
+    text: string; secondaryText: string; border: string; focus: string;
+    /** A passage's fill: the host's quiet inset surface, a hair off the page. */
+    passage?: string;
+  }>;
+  space?: Readonly<Record<'s2' | 's6' | 's8', number> & Partial<Record<'s10' | 's12', number>>>;
+  /** A passage box's corner; defaults to the shared base step. */
+  radius?: number;
+  /**
+   * `reply` (default): one line of mark, source and words on a left rule. `passage`: the quoted words
+   * alone, up to two lines, in their own filled box (lab T3-A), where the surface already names the
+   * source (a second opinion on one answer, a note on selected messages).
+   */
+  form?: 'reply' | 'passage';
 }>;
 
 /**
@@ -47,15 +60,22 @@ export type HappierReplyQuoteProps = Readonly<{
 export function HappierReplyQuote(props: HappierReplyQuoteProps): ReactElement {
   const { Text, colors, source } = props;
   const space = props.space ?? HAPPIER_SPACE_STEPS;
-  const frame = { borderLeftWidth: 2, borderLeftColor: colors.border,
-    paddingHorizontal: space.s8, paddingVertical: space.s2, gap: space.s2, minWidth: 0 };
+  const boxed = props.form === 'passage';
+  // A reply's quote is a rule beside the words; a passage is the words themselves, set in a filled box.
+  const frame = boxed
+    ? { borderRadius: props.radius ?? HAPPIER_RADIUS_V1.lg, backgroundColor: colors.passage,
+      paddingHorizontal: space.s12 ?? HAPPIER_SPACE_STEPS.s12, paddingVertical: space.s10 ?? HAPPIER_SPACE_STEPS.s10,
+      gap: space.s2, minWidth: 0 }
+    : { borderLeftWidth: 2, borderLeftColor: colors.border,
+      paddingHorizontal: space.s8, paddingVertical: space.s2, gap: space.s2, minWidth: 0 };
+  const passage = boxed && source.state === 'available';
   const content = <>
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s6, minWidth: 0 }}>
+    <View style={{ flexDirection: 'row', alignItems: passage ? 'flex-start' : 'center', gap: space.s6, minWidth: 0 }}>
       {props.leading}
-      <Text role="source" color={colors.text} numberOfLines={1} style={{ flexShrink: 0, maxWidth: '45%' }}>{source.label}</Text>
+      {passage ? null : <Text role="source" color={colors.text} numberOfLines={1} style={{ flexShrink: 0, maxWidth: '45%' }}>{source.label}</Text>}
       {source.state === 'available'
-        ? <Text role="quote" color={colors.secondaryText} numberOfLines={1} style={{ flexShrink: 1, minWidth: 0 }}
-            testID={props.testID ? `${props.testID}.text` : undefined}>{source.text}</Text>
+        ? <Text role="quote" color={colors.secondaryText} numberOfLines={passage ? 2 : 1} style={{ flexShrink: 1, minWidth: 0 }}
+            testID={props.testID ? `${props.testID}.text` : undefined}>{passage ? passageWords(source.text) : source.text}</Text>
         : <Text role="detail" color={colors.secondaryText} numberOfLines={1} style={{ flexShrink: 1, minWidth: 0 }}
             testID={props.testID ? `${props.testID}.unavailable` : undefined}>{source.reason}</Text>}
     </View>
@@ -68,4 +88,9 @@ export function HappierReplyQuote(props: HappierReplyQuoteProps): ReactElement {
         {content}
       </HappierPressable>
     : <View testID={props.testID} style={frame}>{content}</View>;
+}
+
+/** A passage is an excerpt read as running words: its paragraph breaks would spend its two lines on blank space. */
+function passageWords(text: string): string {
+  return text.replace(/\s+/gu, ' ').trim();
 }

@@ -1,3 +1,4 @@
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import {
   createPluginUiTestkit,
   createSurfaceContextFixture,
@@ -130,7 +131,7 @@ describe('public authoring Project Companion activity surface', () => {
     const host: InputTypePickerHostV1 = {
       resolveType: async () => type,
       resolveOptions: async () => {
-        const content = await resource.read({ signal: new AbortController().signal, context: { kind: 'global' } });
+        const content = await resource.read(createTestResourceInvocationContext({ signal: new AbortController().signal, context: { kind: 'global' } }));
         return readInputTypeOptions(type, JSON.parse(typeof content === 'string' ? content : new TextDecoder().decode(content)))
           ?? { errorCode: 'input_type_options_invalid' };
       },

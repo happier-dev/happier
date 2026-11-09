@@ -39,9 +39,12 @@ export function publicProfileUsageOriginalBody(props: PublicProfileUsageBodyProp
   const labels = host.labels.original;
   if (!labels) return null;
   const coverage = <HappierText variant="meta" tone="secondary">{labels.coverage.status(models.coverage.status)}</HappierText>;
-  const metrics = () => (['tokens', 'activeDays', 'agentTimeMs', 'mergedPrs', 'currentStreakDays', 'bestStreakDays', 'peakParallel'] as const).flatMap(kind => {
-    const value = models.summary[kind];
-    return value === undefined ? [] : [{ id: kind, label: labels.metrics[kind], value: labels.formatMetric(kind, value) } satisfies UsageSummaryMetric];
+  const metrics = () => Object.entries(models.summary).flatMap(([key, value]) => {
+    const kind = key as PublicUsageMetricId;
+    // A public figure the period could not record keeps its slot as a dash; the reason is its quiet caption, never the figure.
+    return value === undefined ? [] : [{ id: kind, label: labels.metrics[kind],
+      ...(value === null ? { value: '—', caption: host.labels.unavailable } : { value: labels.formatMetric(kind, value) }),
+      ...(props.figures ? { accessory: props.figures.render(kind), quieted: props.figures.hidden.has(kind) } : {}) } satisfies UsageSummaryMetric];
   });
   const caption = <HappierText variant="micro" tone="secondary">{labels.activityLevel}</HappierText>;
   switch (presentation.widgetId) {
@@ -57,9 +60,11 @@ export function publicProfileUsageOriginalBody(props: PublicProfileUsageBodyProp
     case 'usage_period_summary': {
       const metricRows = metrics();
       if (!metricRows.length) return null;
-      const hero = metricRows.find(row => row.id === 'tokens');
+      const tokens = metricRows.find(row => row.id === 'tokens');
+      // The lead figure carries no label of its own, so it names its unit, as private Usage's summary does.
+      const hero = tokens ? { ...tokens, unit: labels.footprint.tokensUnit } : undefined;
       return <UsagePeriodSummaryBody theme={theme} testID={testID} hero={hero}
-        stats={metricRows.filter(row => row !== hero)} coverage={coverage} />;
+        stats={metricRows.filter(row => row !== tokens)} coverage={coverage} />;
     }
     case 'usage_footprint':
       return models.footprint ? <UsageFootprintBody theme={theme} testID={testID} labels={labels.footprint}
@@ -117,7 +122,7 @@ export function publicProfileUsageOriginalBody(props: PublicProfileUsageBodyProp
       return blocks.length ? <UsageBreakdownsBody theme={theme} testID={testID} model={{ blocks }} coverage={coverage} /> : null;
     }
     case 'usage_outcomes':
-      return presentation.inputs.style !== 'shipped' && models.summary.mergedPrs !== undefined
+      return presentation.inputs.style !== 'shipped' && typeof models.summary.mergedPrs === 'number'
         ? <UsageOutcomesBody theme={theme} testID={testID} model={{ kind: 'count', count: models.summary.mergedPrs,
           label: labels.metrics.mergedPrs, formatValue: value => labels.formatMetric('mergedPrs', value) }} coverage={coverage} /> : null;
     case 'usage_recap': {

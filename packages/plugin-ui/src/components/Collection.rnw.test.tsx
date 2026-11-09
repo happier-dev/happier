@@ -376,6 +376,7 @@ function presentationHost(
 }
 
 type HarnessOptions = Readonly<{
+  retainedRowKeys?: readonly string[];
   presentation?: 'table' | 'list' | 'board' | 'grid';
   items?: readonly Entry[];
   grouped?: boolean;
@@ -464,6 +465,7 @@ function Harness(props: HarnessProps): ReactElement {
       {...(props.sort === undefined ? {} : { sort: props.sort })}
       {...(props.summaryRows === undefined ? {} : { summaryRows: props.summaryRows })}
       {...(props.scroll === undefined ? {} : { scroll: props.scroll })}
+      {...(props.retainedRowKeys === undefined ? {} : { retainedRowKeys: props.retainedRowKeys })}
       {...(props.narrowGrid === undefined ? {} : { narrowGrid: props.narrowGrid })}
       {...(props.minCardWidth === undefined ? {} : { minCardWidth: props.minCardWidth })}
       {...(props.groupAction === undefined
@@ -942,6 +944,59 @@ describe('Collection table', () => {
       expect(view.query('row:item-240')).toBe(focused);
       expect(document.activeElement).toBe(focused);
       expect(lineOf('item-240')).toBeNull();
+    } finally {
+      view.unmount();
+    }
+  });
+  it('windows a sheet-sectioned page list without losing its sections, dividers or keyboard reach', async () => {
+    const listeners = new Set<() => void>();
+    let window = { top: 0, bottom: 800 };
+    const tracker: PluginUiScrollActivityTracker & { scrollToOffset(offset: number): void } = {
+      onScroll() {}, onLayout() {}, onContentSizeChange() {}, invalidateLayout() {},
+      getLayoutRevision: () => 0,
+      getWindow: () => window,
+      subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      measureSpan: async () => ({ top: 0 }),
+      scrollToOffset: (offset) => {
+        window = { top: offset, bottom: offset + 800 };
+        listeners.forEach((listener) => listener());
+      },
+    };
+    const catalog = Array.from({ length: 300 }, (_, index): Entry => ({
+      id: `w-${index}`, title: `Workflow ${index}`, group: index < 200 ? 'needs' : 'rest', repo: '', reason: '', age: '',
+    }));
+    const view = mount({
+      items: catalog,
+      grouped: true,
+      presentation: 'list',
+      scroll: 'page-virtualized',
+      scrollTracker: tracker,
+      detail: 'none',
+      retainedRowKeys: ['w-250'],
+      selection: { single: { value: 'w-0', onValueChange() {} } },
+    });
+    try {
+      view.measure(1000);
+      await act(async () => {});
+      const mounted = () => view.container.querySelectorAll('[role="radio"]').length;
+      // The rows stand on the page's own sheets, never in the collection scroller.
+      expect(view.query('virtualizer')).toBeNull();
+      expect(mounted()).toBeGreaterThan(0);
+      expect(mounted()).toBeLessThan(catalog.length / 4);
+      expect(view.query('row:w-299')).toBeNull();
+      // The retained row stands far outside the first viewport, in its own place.
+      expect(view.query('row:w-250')).not.toBeNull();
+      // Both groups keep their headings, each with its own sheet of rows.
+      expect(view.container.textContent).toContain('Needs');
+      // Keyboard reach: End lands focus on the last row even though it was not mounted.
+      await act(async () => {
+        view.query('row:w-0')!.focus();
+        view.query('row:w-0')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
+      });
+      expect(document.activeElement).toBe(view.query('row:w-299'));
+      expect(mounted()).toBeLessThan(catalog.length / 4);
+      // A row a live interaction anchors to stays mounted wherever the viewport moves.
+      expect(view.query('row:w-250')).not.toBeNull();
     } finally {
       view.unmount();
     }
@@ -2320,6 +2375,21 @@ describe('Collection table', () => {
     const table = mount({ anatomy: factAnatomy });
     table.measure(1440);
     expect(table.query('virtualizer')?.textContent).not.toContain('Overdue');
+    table.unmount();
+  });
+
+  it('keeps Signal and gives up the Agent column first when the table cannot hold both', () => {
+    const facts: CollectionAnatomy<Entry> = {
+      ...anatomy,
+      signal: () => 'SIGNAL-CELL',
+      agent: () => 'AGENT-CELL',
+      columnTitles: { ...anatomy.columnTitles, signal: 'Signal', agent: 'Agent' },
+    };
+    const table = mount({ presentation: 'table', anatomy: facts, peek: false } as never);
+    table.measure(980);
+    const text = table.query('virtualizer')?.textContent ?? '';
+    expect(text).toContain('SIGNAL-CELL');
+    expect(text).not.toContain('AGENT-CELL');
     table.unmount();
   });
 
@@ -6349,6 +6419,19 @@ describe('the Collection toolbar', () => {
     layout('toolbar:lead', 0, 36);
     layout('toolbar', 0, 36);
     expect(view.query('refine:toolbar')).not.toBeNull();
+    view.unmount();
+  });
+
+  it('folds when its leading controls wrap inside their own share of the row, not only when the trailing group wraps', () => {
+    const view = mount({ search, header: toolbarHeader([]), renderPopover: openPopover });
+    view.measure(1120);
+    expect(view.query('refine:toolbar')).not.toBeNull();
+    // Beside a details pane the lead fits its share of the row by breaking onto a second line: two rows, no overflow by width.
+    reportToolbarLayout(view, 'toolbar:lead', 0, 650, 80);
+    reportToolbarLayout(view, 'toolbar:trail', 0, 300, 32);
+    reportToolbarLayout(view, 'toolbar', 0, 1000, 80);
+    reportToolbarLayout(view, 'toolbar:trail', 0, 300, 32);
+    expect(view.query('refine:toolbar')).toBeNull();
     view.unmount();
   });
 

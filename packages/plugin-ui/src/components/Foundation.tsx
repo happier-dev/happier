@@ -12,8 +12,9 @@ import {
   HappierProgress,
   type HappierBannerPoint,
 } from '../presentation/content/Foundation.js';
-import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../presentation/semantics.js';
+import { HAPPIER_TONE_COLOR_TOKEN, resolveHappierMarkColor, type HappierMarkColor, type HappierTone } from '../presentation/semantics.js';
 import { softenHappierWorkColor } from '../presentation/work/workStatus.js';
+import { HappierStatusDot } from '../presentation/status/StatusDot.js';
 import { usePluginHostApi } from '../hostApi/context.js';
 import {
   type PluginUiFocusTarget,
@@ -89,11 +90,16 @@ export type BadgeProps = AuthorText & Readonly<{
   variant?: 'outlined' | 'tinted';
   /** A leading icon in the tone's marker ink ("Review requested" with an eye). Decorative: the words carry the meaning. */
   icon?: IconName;
+  /**
+   * A leading colour dot in this tone while the badge itself stays in its own tone (a label chip: neutral words,
+   * the label's chosen colour as the dot). Decorative: the words carry the meaning. Ignored when `icon` is set.
+   */
+  dot?: HappierMarkColor;
   testID?: string;
   children?: ReactNode;
 }>;
 
-export function Badge({ tone = 'neutral', variant = 'outlined', icon, testID, children, ...text }: BadgeProps): ReactElement {
+export function Badge({ tone = 'neutral', variant = 'outlined', icon, dot, testID, children, ...text }: BadgeProps): ReactElement {
   const theme = usePluginTheme();
   const color = theme.colors[HAPPIER_TONE_COLOR_TOKEN[tone]];
   const label = useAuthorText(text);
@@ -117,6 +123,9 @@ export function Badge({ tone = 'neutral', variant = 'outlined', icon, testID, ch
       // One status geometry for every badge (HAPPIER_BADGE_METRICS), on the host's small-mark radius step.
       radius={theme.radii.small}
       style={BADGE_SELF_ALIGNMENT}
+      {...(icon === undefined && dot !== undefined ? {
+        leading: <HappierStatusDot color={resolveHappierMarkColor(theme, dot)} />,
+      } : {})}
       {...(icon === undefined ? {} : {
         leading: (
           <PluginUiIconGlyph

@@ -5,6 +5,8 @@ import type { FindController } from './findTypes.js';
 export type FindSurfaceRegistration = Readonly<{
   surfaceId: string;
   containsFocus(): boolean;
+  /** Web interaction containment, including content that leaves DOM focus on BODY. */
+  containsTarget?(target: unknown): boolean;
   open(): void;
   isOpen(): boolean;
   isInputFocused(): boolean;
@@ -29,6 +31,7 @@ export function useFindSurfaceRegistrationWithHost(surface: FindSurfaceRegistrat
     const dispose = host.register({
       surfaceId,
       containsFocus: () => latest.current?.containsFocus() === true,
+      containsTarget: (target) => latest.current?.containsTarget?.(target) === true,
       isAvailable: () => latest.current !== null && latest.current.isAvailable?.() !== false,
       open: () => latest.current?.open(),
       isOpen: () => latest.current?.isOpen() === true,

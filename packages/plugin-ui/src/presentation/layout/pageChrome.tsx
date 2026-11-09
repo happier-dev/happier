@@ -54,6 +54,11 @@ export type HappierPageChromeInternal = HappierPageChrome & Readonly<{
    */
   navigationBackSpendsStep?: boolean;
   /**
+   * Navigation chrome that shows a band above the page (a phone) draws this press as its Back, beside the route's
+   * own controls, so a pushed detail has one band over it rather than a second row. `null` withdraws it.
+   */
+  publishBack?: (press: (() => void) | null) => void;
+  /**
    * Hands the page title to navigation chrome that shows it (a phone's stack header), as Happier's own
    * `PageHeader` does; the page header then omits its title. `undefined` withdraws it.
    */

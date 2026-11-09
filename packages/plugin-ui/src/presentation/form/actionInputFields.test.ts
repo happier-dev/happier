@@ -8,6 +8,20 @@ import {
 } from './actionInputFields.js';
 
 describe('shared Action form semantics', () => {
+  it('displays an empty JSON array as blank and preserves array round trips when cleared', () => {
+    for (const value of [[], [{ location: '/work', writable: true }]]) {
+      const field = resolveHappierActionFieldPresentation({ widget: 'json' }, value);
+      if (field.kind !== 'text') throw new Error('Expected JSON text field');
+      expect.soft(field.value).toBe(value.length === 0 ? '' : JSON.stringify(value, null, 2));
+      expect.soft(field.parseText(field.value)).toEqual(value);
+      expect.soft(field.parseText('')).toEqual([]);
+      expect(field.parseText('[{"location":"/shared"}]')).toEqual([{ location: '/shared' }]);
+      expect(field.parseText('[')).toBe('[');
+    }
+    const unset = resolveHappierActionFieldPresentation({ widget: 'json' }, undefined);
+    expect(unset.kind === 'text' && unset.parseText('')).toBe('');
+    expect(resolveHappierActionFieldPresentation({ widget: 'json' }, {})).toMatchObject({ value: '{}' });
+  });
   it('draws up to six short ordinal steps as one segmented control and keeps the four-choice cap otherwise', () => {
     const single = { kind: 'select', value: 'medium', multiple: false } as const;
     const levels = (names: readonly string[]) => names.map((label) => ({ label }));

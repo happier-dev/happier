@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.voice-native.json",
+  "include": ["src/managedServicesNativeContract.ts"]
+}

@@ -19,6 +19,22 @@ describe('the shared hit-area policy', () => {
     expect(leading!.right + trailing!.left).toBeLessThanOrEqual(4);
   });
 
+  it('shifts the share a bounded side cannot give to the opposite side that declared room, never to an undeclared one', () => {
+    // A 16 px chevron against its lead (nothing to give leftward) with 8 px free after it: the 24 floor is reached
+    // by its right side alone, instead of the centred 4 + 4 losing the left half.
+    expect(resolveHappierHitInsets({ width: 16, height: 16, target: 24, reach: { left: 0, right: 8 } }))
+      .toEqual({ top: 4, bottom: 4, left: 0, right: 8 });
+    // 1 px free below, 13 above: the 14 px deficit is taken from the side with room.
+    expect(resolveHappierHitInsets({ width: 40, height: 30, target: 44, reach: { top: 13, bottom: 1 } }))
+      .toEqual({ top: 13, bottom: 1, left: 2, right: 2 });
+    // Only what it declared: a side left open keeps its centred share, so a clipped edge nobody described is not leaned on.
+    expect(resolveHappierHitInsets({ width: 16, height: 16, target: 24, reach: { left: 0 } }))
+      .toEqual({ top: 4, bottom: 4, left: 0, right: 4 });
+    // Never past the room declared.
+    expect(resolveHappierHitInsets({ width: 16, height: 16, target: 44, reach: { left: 0, right: 8 } }))
+      .toEqual({ top: 14, bottom: 14, left: 0, right: 8 });
+  });
+
   it('extends nothing under a precise pointer, for a box already at the target, or on an unknown axis', () => {
     expect(resolveHappierHitInsets({ width: 24, height: 24, target: undefined })).toBeUndefined();
     expect(resolveHappierHitInsets({ width: 48, height: 44, target: 44 })).toBeUndefined();

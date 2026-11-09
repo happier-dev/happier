@@ -25,6 +25,7 @@ import {
   HappierPublicProfile,
   HappierPublicProfileWidget,
   type HappierPublicProfileLabels,
+  type HappierPublicProfileOwner,
 } from '../../components/PublicProfile.js';
 import type { PublicUsageOriginalLabels } from './PublicProfileUsage.js';
 
@@ -181,7 +182,7 @@ function render(
 }
 
 describe('HappierPublicProfile', () => {
-  it('shares one model projection across twenty child widgets instead of revisiting 1000 facts per widget', () => {
+  it('shares one model projection across twenty child widgets instead of revisiting 1000 facts per widget', async () => {
     const view = projectPublicProfile({ context, snapshot: { ...snapshot, facts: { ...snapshot.facts,
       sessionDurations: Array.from({ length: 1000 }, () => ({ agentId: 'codex', durationMs: 100 })) } }, metadata: {},
       policy: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields, sessionDurations: true } },
@@ -198,12 +199,20 @@ describe('HappierPublicProfile', () => {
     const oneProjectionVisits = visits;
     expect(oneProjectionVisits).toBeGreaterThanOrEqual(1000);
     visits = 0;
-    const page = mountThroughReactNativeWeb(createElement(HappierUiEnvironmentProvider, { environment,
-      children: createElement(HappierPublicProfile, { view, labels, owner: {
-        onlyYou: 'Only you', hiddenBlockIds: new Set(), renderBlocks: () => view.layout.items.map(item =>
-          createElement(HappierPublicProfileWidget, { key: item.id, view, labels, widgetId: item.id })),
-      } }) }));
-    try { expect(visits).toBe(oneProjectionVisits); } finally { page.unmount(); }
+    const tree = (current: typeof view, currentLabels = labels) => createElement(HappierUiEnvironmentProvider, { environment,
+      children: createElement(HappierPublicProfile, { view: current, labels: currentLabels, owner: {
+        onlyYou: 'Only you', hiddenBlockIds: new Set(), renderBlocks: () => current.layout.items.map(item =>
+          createElement(HappierPublicProfileWidget, { key: item.id, view: current, labels: currentLabels, widgetId: item.id, testID: `child-${item.id}` })),
+      } }) });
+    const page = mountThroughReactNativeWeb(tree(view));
+    try {
+      expect(visits).toBe(oneProjectionVisits);
+      visits = 0;
+      await page.render(tree({ ...view, layout: { ...view.layout, items: [...view.layout.items].reverse() } }, { ...labels, heroCredit: 'New Look' }));
+      expect(visits).toBe(0);
+      await page.render(tree({ ...view, snapshot: { ...view.snapshot, facts: { ...view.snapshot.facts, activeDays: 4 } } }));
+      expect(visits).toBe(oneProjectionVisits);
+    } finally { page.unmount(); }
   });
   it('gives the exported page and individual widget the same admitted project links and strips both when off', () => {
     for (const projects of [true, false]) {
@@ -215,7 +224,7 @@ describe('HappierPublicProfile', () => {
       const usage = { cold: true, paint: { accent: '#aabbee', paper: '#111111', dark: true }, agent: (id: string) => ({ id, name: id, color: '#aabbee' }),
         labels: { chartLabel: () => 'Projects', unavailable: 'Unavailable', projects: { empty: 'No projects' } } };
       const mounts = [createElement(HappierPublicProfile, { view, labels, usage }),
-        createElement(HappierPublicProfileWidget, { view, widgetId: 'projects', labels, usage })].map(children =>
+        createElement(HappierPublicProfileWidget, { view, widgetId: 'projects', labels, usage, testID: 'projects-widget' })].map(children =>
           mountThroughReactNativeWeb(createElement(HappierUiEnvironmentProvider, {
             environment: projectHappierUiEnvironment(createSurfaceContext()), children,
           })));
@@ -228,6 +237,83 @@ describe('HappierPublicProfile', () => {
       } finally { mounts.forEach(mounted => mounted.unmount()); }
     }
   });
+  it('keeps a public figure the period did not record in its slot as a dash, with the reason quiet beneath', () => {
+    const view = projectPublicProfile({
+      context, metadata: {}, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1,
+      policy: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields, agentTime: true, peakParallel: true } },
+      // As a real snapshot says it: the period could not measure these two public figures.
+      snapshot: PublicProfileSnapshotV1Schema.parse({ ...snapshot, facts: { tokens: 1_100_000_000, activeDays: 25 },
+        fieldCoverage: { ...snapshot.fieldCoverage, agentTime: { status: 'unavailable', method: 'unknown' },
+          peakParallel: { status: 'unavailable', method: 'unknown' } } }),
+      layout: PublicProfileLayoutV1Schema.parse({ v: 1, items: [{ kind: 'widget', id: 'original', title: 'Totals', size: 'wide',
+        frameStyle: 'plain', presentation: { kind: 'usage', widgetId: 'usage_period_summary', inputs: {} } }] }),
+    });
+    if (!view) throw new Error('expected admitted original');
+    const mounted = mountThroughReactNativeWeb(createElement(HappierUiEnvironmentProvider, {
+      environment: projectHappierUiEnvironment(createSurfaceContext()),
+      children: createElement(HappierPublicProfile, { view, labels, usage: { width: 900,
+        paint: { accent: '#007aff', paper: '#ffffff', dark: false }, agent: (id) => ({ id, name: id, color: '#007aff' }),
+        labels: { chartLabel: () => 'Totals', unavailable: 'Not recorded for this period.', original: originalLabels } } }),
+    }));
+    try {
+      const block = mounted.container.querySelector('[data-testid="public-profile-block-original"]');
+      const values = [...(block?.querySelectorAll('[data-testid$="-value"], [data-testid$=".value"]') ?? [])].map(node => node.textContent);
+      const text = block?.textContent ?? '';
+      // The reason is said, but never in a figure's own slot at figure size.
+      expect(values.some(value => value?.includes('Not recorded'))).toBe(false);
+      expect(text).toContain('—');
+    } finally { mounted.unmount(); }
+  });
+
+  it('names what the Totals lead figure counts, as private Usage does', () => {
+    const view = projectPublicProfile({
+      context, metadata: {}, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1, policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1,
+      snapshot: PublicProfileSnapshotV1Schema.parse({ ...snapshot, facts: { tokens: 1_100_000_000, activeDays: 25 } }),
+      layout: PublicProfileLayoutV1Schema.parse({ v: 1, items: [{ kind: 'widget', id: 'original', title: 'Totals', size: 'wide',
+        frameStyle: 'plain', presentation: { kind: 'usage', widgetId: 'usage_period_summary', inputs: {} } }] }),
+    });
+    if (!view) throw new Error('expected admitted original');
+    const mounted = mountThroughReactNativeWeb(createElement(HappierUiEnvironmentProvider, {
+      environment: projectHappierUiEnvironment(createSurfaceContext()),
+      children: createElement(HappierPublicProfile, { view, labels, usage: { width: 480,
+        paint: { accent: '#007aff', paper: '#ffffff', dark: false }, agent: (id) => ({ id, name: id, color: '#007aff' }),
+        labels: { chartLabel: () => 'Totals', unavailable: 'Not shared', original: originalLabels } } }),
+    }));
+    try {
+      const hero = mounted.container.querySelector('[data-testid="public-profile-block-original"] [data-testid$=".hero"]');
+      expect(hero?.textContent).toContain(originalLabels.footprint.tokensUnit);
+    } finally { mounted.unmount(); }
+  });
+
+  it('renders consented unavailable Totals figures beside real zero and omits a hidden figure', () => {
+    const view = projectPublicProfile({ context, metadata: {}, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1,
+      policy: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields,
+        tokens: true, activeDays: true, agentTime: true, mergedPrs: true, peakParallel: false } },
+      snapshot: PublicProfileSnapshotV1Schema.parse({ ...snapshot, facts: { tokens: 0, activeDays: 3, peakParallel: 99 },
+        fieldCoverage: { tokens: coverage, activeDays: coverage, agentTime: coverage,
+          mergedPrs: { status: 'unavailable', method: 'unknown' }, peakParallel: coverage } }),
+      layout: PublicProfileLayoutV1Schema.parse({ v: 1, items: [{ kind: 'widget', id: 'totals', title: 'Totals', size: 'wide',
+        frameStyle: 'plain', presentation: { kind: 'usage', widgetId: 'usage_period_summary', inputs: {} } }] }),
+    });
+    if (!view) throw new Error('expected admitted Totals');
+    const mounted = mountThroughReactNativeWeb(createElement(HappierUiEnvironmentProvider, {
+      environment: projectHappierUiEnvironment(createSurfaceContext()),
+      children: createElement(HappierPublicProfile, { view, labels, usage: { width: 480,
+        paint: { accent: '#007aff', paper: '#ffffff', dark: false }, agent: id => ({ id, name: id, color: '#007aff' }),
+        labels: { chartLabel: () => 'Totals', unavailable: 'Unavailable', original: originalLabels } } }),
+    }));
+    try {
+      const block = mounted.container.querySelector('[data-testid="public-profile-block-totals"]');
+      expect(block?.textContent).toContain('Agent time');
+      expect(block?.textContent).toContain('Merged PRs');
+      expect(block?.textContent?.match(/Unavailable/g)).toHaveLength(2);
+      expect(block?.textContent).toContain('Active days');
+      expect(block?.querySelector('[data-testid$=".hero"]')?.textContent).toContain('0');
+      expect(block?.textContent).not.toContain('Peak');
+      expect(block?.textContent).not.toContain('99');
+    } finally { mounted.unmount(); }
+  });
+
   it.each([
     ['usage_daily', {}, 'Activity level'],
     ['usage_period_summary', {}, 'Active days'],
@@ -726,6 +812,74 @@ describe('HappierPublicProfile', () => {
     }
   });
 
+  it('draws the explained planet fallback as the avatar when the photo is shared, with the host planet, and nothing when it is not', () => {
+    const specs: Array<Readonly<{ size: number; rotate: number; mark?: boolean }>> = [];
+    const usage = { paint: { accent: '#007aff', paper: '#ffffff', dark: false }, agent: (id: string) => ({ id, name: id, color: '#007aff' }),
+      renderPlanet: (spec: Readonly<{ size: number; rotate: number; mark?: boolean }>) => { specs.push(spec); return createElement('i', { 'data-testid': 'planet' }); },
+      labels: { chartLabel: () => 'Totals', unavailable: 'Not shared' } };
+    const project = (avatar: boolean) => projectPublicProfile({
+      context: { ...context, identity: { ...context.identity, avatar: { kind: 'planet', reason: 'account_image_unavailable' } } },
+      metadata: {}, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1, snapshot, layout: { v: 1, items: [] },
+      policy: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields, avatar } },
+    })!;
+    const mount = (avatar: boolean) => mountThroughReactNativeWeb(createElement(HappierUiEnvironmentProvider, {
+      environment: projectHappierUiEnvironment(createSurfaceContext()),
+      children: createElement(HappierPublicProfile, { view: project(avatar), labels, usage }),
+    }));
+    const shared = mount(true);
+    try {
+      expect(shared.container.querySelector('[data-testid="public-profile-avatar"] [data-testid="planet"]')).not.toBeNull();
+      expect(specs.at(-1)?.size).toBe(HAPPIER_PUBLIC_PROFILE_HERO_METRICS.avatarPx.wide);
+    } finally {
+      shared.unmount();
+    }
+    const again = mount(true);
+    again.unmount();
+    // The same person always gets the same side of the planet.
+    expect(specs.at(-1)?.rotate).toBe(specs[0]?.rotate);
+    const unshared = mount(false);
+    try {
+      expect(unshared.container.querySelector('[data-testid="public-profile-avatar"]')).toBeNull();
+    } finally {
+      unshared.unmount();
+    }
+  });
+
+  it('gives each Totals figure its own in-place control for its owner, and none to visitors', () => {
+    const view = projectPublicProfile({
+      context, metadata: {}, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1, snapshot,
+      policy: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields, tokens: true, activeDays: true, peakParallel: true } },
+      layout: PublicProfileLayoutV1Schema.parse({ v: 1, items: [{ kind: 'widget', id: 'totals', title: 'Totals', size: 'full',
+        frameStyle: 'plain', presentation: { kind: 'usage', widgetId: 'usage_period_summary', inputs: {} } }] }),
+    });
+    if (!view) throw new Error('expected a published view');
+    const usage = { paint: { accent: '#007aff', paper: '#ffffff', dark: false }, agent: (id: string) => ({ id, name: id, color: '#007aff' }),
+      labels: { chartLabel: () => 'Totals', unavailable: 'Not shared', original: originalLabels } };
+    const pressed: string[] = [];
+    const mount = (owner?: HappierPublicProfileOwner) =>
+      mountThroughReactNativeWeb(createElement(HappierUiEnvironmentProvider, {
+        environment: projectHappierUiEnvironment(createSurfaceContext()),
+        children: createElement(HappierPublicProfile, { view, labels, usage, ...(owner ? { owner } : {}) }),
+      }));
+    const owned = mount({ hiddenBlockIds: new Set(), onlyYou: 'Only you', hiddenFigures: new Set(['activeDays']),
+      renderFigureControl: (figure) => createElement('button', { 'data-testid': `eye-${figure}`, onClick: () => pressed.push(figure) }) });
+    try {
+      const eyes = [...owned.container.querySelectorAll('[data-testid^="eye-"]')].map(eye => eye.getAttribute('data-testid'));
+      expect(eyes.sort()).toEqual(['eye-activeDays', 'eye-peakParallel', 'eye-tokens']);
+      act(() => { (owned.container.querySelector('[data-testid="eye-activeDays"]') as HTMLElement).click(); });
+      act(() => { (owned.container.querySelector('[data-testid="eye-tokens"]') as HTMLElement).click(); });
+      expect(pressed).toEqual(['activeDays', 'tokens']);
+    } finally {
+      owned.unmount();
+    }
+    const visitor = mount();
+    try {
+      expect(visitor.container.querySelector('[data-testid^="eye-"]')).toBeNull();
+    } finally {
+      visitor.unmount();
+    }
+  });
+
   it('lets the owner edit the blocks in place while the header, period and footer stay the visitor page', () => {
     const view = projectPublicProfile({
       context,
@@ -1188,47 +1342,105 @@ describe('HappierPublicProfile', () => {
       mounted.unmount();
     }
   });
-  it.each([
-    { kind: 'unavailable' },
-    { kind: 'paused', handle: 'ada', identity: { name: 'Ada Lovelace' } },
-  ] as const)(
-    'renders $kind without fabricating a published view or period',
-    (input) => {
-      const result = PublicProfileReadResultV1Schema.parse(input);
-      if (result.kind === 'published')
-        throw new Error('Expected a non-published result');
-      const mounted = mountThroughReactNativeWeb(
-        createElement(HappierUiEnvironmentProvider, {
-          environment: projectHappierUiEnvironment(createSurfaceContext()),
-          children: createElement(HappierPublicProfile, {
-            result,
-            labels: {
-              paused: 'This profile is paused',
-              unavailable: 'Profile unavailable',
-            },
-          }),
+  const brand = { name: 'Happier', service: 'Happier Cloud', about: { label: 'What is Happier?', href: 'https://happier.dev' } };
+  const withdrawal = (input: unknown, singleColumn = false) => {
+    const result = PublicProfileReadResultV1Schema.parse(input);
+    if (result.kind === 'published') throw new Error('Expected a non-published result');
+    const bands: number[] = [];
+    const mounted = mountThroughReactNativeWeb(
+      createElement(HappierUiEnvironmentProvider, {
+        environment: projectHappierUiEnvironment(createSurfaceContext()),
+        children: createElement(HappierPublicProfile, {
+          result,
+          brand,
+          singleColumn,
+          renderHero: (geometry) => {
+            bands.push(geometry.bandHeightPx);
+            return createElement('div', { 'data-testid': 'quiet-art' });
+          },
+          renderPlanet: () => createElement('i', { 'data-testid': 'planet' }),
+          labels: result.kind === 'paused'
+            ? { title: 'Ada Lovelace paused this profile', body: 'Its numbers come back when Ada Lovelace resumes it.', identityLine: '@ada · Happier Cloud' }
+            : { title: 'No public profile here', body: 'Profiles on Happier are opt-in and shared by link.' },
         }),
-      );
-      try {
-        expect(mounted.container.textContent).toContain(
-          input.kind === 'paused'
-            ? 'This profile is paused'
-            : 'Profile unavailable',
-        );
-        if (input.kind === 'paused')
-          expect(mounted.container.textContent).toContain('Ada Lovelace');
-        expect(mounted.container.textContent).not.toContain('Last 90 days');
-        expect(mounted.container.textContent).not.toContain('87,654,321');
-        expect(
-          mounted.container.querySelector(
-            '[data-testid="public-profile-block-tokens"]',
-          ),
-        ).toBeNull();
-      } finally {
-        mounted.unmount();
-      }
-    },
-  );
+      }),
+    );
+    return { mounted, bands };
+  };
+  it('keeps a paused page to its brand, a quiet band, one line and the identity it opted into', () => {
+    const { mounted, bands } = withdrawal({ kind: 'paused', handle: 'ada', identity: { name: 'Ada Lovelace' } });
+    try {
+      const root = mounted.container;
+      expect(root.querySelector('[data-testid="public-profile-brand"]')?.textContent).toBe('HappierHappier CloudWhat is Happier?');
+      expect(root.querySelector('[data-testid="public-profile-brand"] a[href="https://happier.dev"]')?.textContent).toBe('What is Happier?');
+      expect(bands).toEqual([HAPPIER_PUBLIC_PROFILE_HERO_METRICS.quietBandHeightPx.wide]);
+      expect(root.querySelector('[data-testid="public-profile-hero-band"] [data-testid="quiet-art"]')).not.toBeNull();
+      expect(root.querySelector('[data-testid="public-profile-withdrawn-title"]')?.textContent).toBe('Ada Lovelace paused this profile');
+      expect(root.querySelector('[data-testid="public-profile-identity"]')?.textContent).toBe('Ada Lovelace@ada · Happier Cloud');
+      expect(root.querySelector('[data-testid="public-profile-about"]')).toBeNull();
+      expect(root.textContent).not.toContain('Last 90 days');
+      expect(root.querySelector('[data-testid="public-profile-block-tokens"]')).toBeNull();
+    } finally {
+      mounted.unmount();
+    }
+  });
+  it('puts the shared planet fallback beside the paused identity, and none when the photo is not shared', () => {
+    const shared = withdrawal({ kind: 'paused', handle: 'ada', identity: { name: 'Ada Lovelace',
+      avatar: { kind: 'planet', reason: 'account_image_unavailable' } } });
+    try {
+      expect(shared.mounted.container.querySelector('[data-testid="public-profile-identity"] [data-testid="planet"]')).not.toBeNull();
+    } finally {
+      shared.mounted.unmount();
+    }
+    const unshared = withdrawal({ kind: 'paused', handle: 'ada', identity: { name: 'Ada Lovelace' } });
+    try {
+      expect(unshared.mounted.container.querySelector('[data-testid="planet"]')).toBeNull();
+    } finally {
+      unshared.mounted.unmount();
+    }
+  });
+  it('tells a visitor there is no public profile here and what Happier is, without an identity', () => {
+    const { mounted } = withdrawal({ kind: 'unavailable' });
+    try {
+      const root = mounted.container;
+      expect(root.querySelector('[data-testid="public-profile-withdrawn-title"]')?.textContent).toBe('No public profile here');
+      expect(root.textContent).toContain('Profiles on Happier are opt-in and shared by link.');
+      expect(root.querySelector('a[data-testid="public-profile-about"]')?.getAttribute('href')).toBe('https://happier.dev');
+      expect(root.querySelector('[data-testid="public-profile-identity"]')).toBeNull();
+    } finally {
+      mounted.unmount();
+    }
+  });
+  it('keeps only the brand on a phone bar, with the phone quiet band', () => {
+    const { mounted, bands } = withdrawal({ kind: 'unavailable' }, true);
+    try {
+      expect(mounted.container.querySelector('[data-testid="public-profile-brand"]')?.textContent).toBe('Happier');
+      expect(bands).toEqual([HAPPIER_PUBLIC_PROFILE_HERO_METRICS.quietBandHeightPx.phone]);
+      expect(mounted.container.querySelector('a[data-testid="public-profile-about"]')).not.toBeNull();
+    } finally {
+      mounted.unmount();
+    }
+  });
+  it('lays the visitor brand bar over the band, and draws none for the owner, who is in the app', () => {
+    const view = projectPublicProfile({ context, policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1, metadata: {}, snapshot,
+      appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1, layout: { v: 1, items: [] } });
+    if (!view) throw new Error('expected a published view');
+    const page = (withBrand: boolean) => mountThroughReactNativeWeb(createElement(HappierUiEnvironmentProvider, {
+      environment: projectHappierUiEnvironment(createSurfaceContext()),
+      children: createElement(HappierPublicProfile, { view, labels, ...(withBrand ? { brand } : {}),
+        renderHero: () => createElement('div', { 'data-testid': 'band-art' }) }),
+    }));
+    const visitor = page(true);
+    const owner = page(false);
+    try {
+      expect(visitor.container.querySelector('[data-testid="public-profile-hero-band"] [data-testid="public-profile-brand"]')?.textContent)
+        .toBe('HappierHappier CloudWhat is Happier?');
+      expect(owner.container.querySelector('[data-testid="public-profile-brand"]')).toBeNull();
+    } finally {
+      visitor.unmount();
+      owner.unmount();
+    }
+  });
   it('draws the applied identity, period and placed blocks with real links and no controls', () => {
     const mounted = render();
     try {

@@ -614,6 +614,7 @@ export {
 } from './content/ChangedFilesReview.js';
 export {
   HAPPIER_TONE_COLOR_TOKEN,
+  resolveHappierMarkColor,
   type HappierTextVariant,
   type HappierTone,
 } from './semantics.js';

@@ -1,8 +1,10 @@
-import { useState, type ComponentType, type ReactElement, type ReactNode } from 'react';
-import { View, type ViewStyle } from 'react-native';
+import { type ComponentType, type ReactElement, type ReactNode } from 'react';
+import { View } from 'react-native';
 
 import { HAPPIER_RADIUS_V1 } from '../../environment/radius.js';
 import { HAPPIER_SPACE_STEPS } from '../../environment/spacing.js';
+import type { HappierPortableStyle } from '../portableTypes.js';
+import { HappierCollapsibleBody } from './CollapsibleBody.js';
 
 /** A returned answer longer than this many lines of its body text is clipped behind Show more. */
 const RETURNED_ANSWER_BODY_LINES = 8;
@@ -84,7 +86,12 @@ export type HappierReturnedAnswerQuoteProps = Readonly<{
    * `fade` is the caller's bottom-edge fade (its scroll-edge mask owner) applied while the answer is
    * clipped, so the clip never slices a line of text in half.
    */
-  collapse?: Readonly<{ lineHeight: number; showMore: string; showLess: string; fade?: ViewStyle }>;
+  collapse?: Readonly<{
+    lineHeight: number;
+    showMore: string;
+    showLess: string;
+    fade?: HappierPortableStyle | Readonly<{ maskImage: string; WebkitMaskImage: string }>;
+  }>;
   space?: Readonly<Record<'s2' | 's6' | 's8' | 's10' | 's12', number>>;
 }>;
 
@@ -159,8 +166,11 @@ export function HappierReturnedAnswerQuote(
           {props.children}
         </ReturnedAnswerBody>
       ) : null}
-      <View style={row}>
-        {props.informationMark}
+      {/* Top-aligned: on a phone the note wraps, and its mark and the link keep to its first line. */}
+      <View style={{ ...row, alignItems: 'flex-start' }}>
+        {props.informationMark ? (
+          <View style={{ paddingTop: space.s2 }}>{props.informationMark}</View>
+        ) : null}
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text role="meta" color={colors.secondaryText}>
             {labels.information}
@@ -191,9 +201,8 @@ export function HappierReturnedAnswerQuote(
 }
 
 /**
- * The answer, drawn whole when it fits a few lines of its body text and clipped to them when it does not.
- * The clip applies from the first paint, until the answer is measured, so a long answer never paints full length
- * first and shrinks on arrival.
+ * The answer, drawn whole when it fits a few lines of its body text and clipped to them when it does not
+ * (`HappierCollapsibleBody`, the one owner of clipped previews).
  */
 function ReturnedAnswerBody(
   props: Readonly<{
@@ -205,33 +214,19 @@ function ReturnedAnswerBody(
   }>,
 ): ReactElement {
   const { collapse, Action } = props;
-  const [expanded, setExpanded] = useState(false);
-  const [naturalHeight, setNaturalHeight] = useState(0);
   if (!collapse) return <View style={{ minWidth: 0 }}>{props.children}</View>;
-  const maxHeight = RETURNED_ANSWER_BODY_LINES * collapse.lineHeight;
-  const overflowing = naturalHeight > maxHeight;
   return (
-    <View style={{ minWidth: 0, gap: props.gap }}>
-      <View
-        testID={props.testID}
-        style={expanded ? { minWidth: 0 }
-          : { minWidth: 0, maxHeight, overflow: 'hidden', ...(overflowing ? collapse.fade : null) }}
-      >
-        <View onLayout={(event) => setNaturalHeight(event.nativeEvent.layout.height)}>
-          {props.children}
-        </View>
-      </View>
-      {overflowing ? (
-        <View style={{ alignSelf: 'flex-start' }}>
-          <Action
-            label={expanded ? collapse.showLess : collapse.showMore}
-            expanded={expanded}
-            onPress={() => setExpanded((value) => !value)}
-            testID={props.testID ? `${props.testID}.fold` : undefined}
-          />
-        </View>
-      ) : null}
-    </View>
+    <HappierCollapsibleBody
+      maxHeight={RETURNED_ANSWER_BODY_LINES * collapse.lineHeight}
+      showMore={collapse.showMore}
+      showLess={collapse.showLess}
+      Action={Action}
+      {...(collapse.fade === undefined ? {} : { fade: collapse.fade })}
+      gap={props.gap}
+      {...(props.testID === undefined ? {} : { testID: props.testID, actionTestID: `${props.testID}.fold` })}
+    >
+      {props.children}
+    </HappierCollapsibleBody>
   );
 }
 

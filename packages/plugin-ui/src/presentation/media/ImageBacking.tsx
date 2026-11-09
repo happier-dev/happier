@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 import { StyleSheet } from 'react-native';
-import Svg, { Defs, Pattern, Rect } from 'react-native-svg';
+import { Svg, Defs, Pattern, Rect } from 'react-native-svg';
 
 /** One checker square of the transparency board (lab files FV4a: 8 px ink squares). */
 const CHECKER_PX = 8;

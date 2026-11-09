@@ -22,11 +22,13 @@ function sameMeasuredGeometry(left: PageGeometry, right: PageGeometry) {
 }
 
 /** List's positioning adapter for rows inside an already-owned physical page, never another scroller. */
-export function PageCollectionVirtualizer<Item>({ request, geometry, tracker, tabStopKey }: Readonly<{
+export function PageCollectionVirtualizer<Item>({ request, geometry, tracker, tabStopKey, retainedKeys }: Readonly<{
   request: CollectionVirtualizerRequest<Item>;
   geometry: PageGeometry;
   tracker: PluginUiScrollActivityTracker;
   tabStopKey: string | null;
+  /** Rows a live interaction anchors to (a deep link's popover); they stay mounted wherever the viewport is. */
+  retainedKeys?: ReadonlySet<string>;
 }>) {
   const root = useRef<View | null>(null);
   const [span, setSpan] = useState<Readonly<{ top: number }> | null>(null);
@@ -90,35 +92,72 @@ export function PageCollectionVirtualizer<Item>({ request, geometry, tracker, ta
     return () => request.onHandle(null);
   }, [handle, request.onHandle]);
 
+  const inWindow = (cell: Cell<Item>) => span !== null && window !== null
+    && span.top + cell.offset + cell.height >= window.top && span.top + cell.offset <= window.bottom;
+  const pinned = (cell: Cell<Item>) => span !== null && window !== null && !cell.header
+    && cell.keys.some(key => key === tabStopKey || (retainedKeys?.has(key) ?? false));
+  const renderCell = (cell: Cell<Item>) => (
+    <View key={cell.key} onLayout={(event: HappierLayoutChangeEvent) => {
+      const height = event.nativeEvent.layout.height;
+      if (height <= 0 || height === cell.height) return;
+      setMeasurements(current => ({ geometry,
+        heights: new Map(sameMeasuredGeometry(current.geometry, geometry) ? current.heights : NO_MEASUREMENTS).set(cell.key, height),
+      }));
+    }}>
+      {cell.header && request.kind === 'sections' ? request.renderSectionHeader(cell.sectionIndex!)
+        : geometry.directory === undefined ? (cell.items[0] === undefined ? null : request.renderItem(cell.items[0], cell.index, cell.sectionIndex))
+        : <CatalogDirectory columns={cell.columns}
+            columnGapPx={geometry.directory.columnGapPx} spanLoneRow={false}
+            {...(geometry.directory.lineTestID === undefined ? {} : { lineTestID: geometry.directory.lineTestID })}
+            rows={cell.items.map((item, at) => <Fragment key={cell.keys[at]}>{request.renderItem(item, cell.index + at, cell.sectionIndex)}</Fragment>)} />}
+    </View>
+  );
+  const spacer = (key: string, height: number) => (
+    <View key={key} aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ height }} />
+  );
+
   const content: ReactNode[] = [];
   let renderedEnd = 0;
-  for (const cell of cells) {
-    // Initial rows and headers enter together once their physical page position is known.
-    const pinned = span !== null && window !== null && !cell.header && tabStopKey !== null && cell.keys.includes(tabStopKey);
-    const inWindow = span !== null && window !== null
-      && span.top + cell.offset + cell.height >= window.top && span.top + cell.offset <= window.bottom;
-    if (!pinned && !inWindow) continue;
-    const gap = cell.offset - renderedEnd;
-    content.push(
-      <Fragment key={cell.key}>
-        {gap <= 0 ? null : <View aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ height: gap }} />}
-        <View onLayout={(event: HappierLayoutChangeEvent) => {
-          const height = event.nativeEvent.layout.height;
-          if (height <= 0 || height === cell.height) return;
-          setMeasurements(current => ({ geometry,
-            heights: new Map(sameMeasuredGeometry(current.geometry, geometry) ? current.heights : NO_MEASUREMENTS).set(cell.key, height),
-          }));
-        }}>
-          {cell.header && request.kind === 'sections' ? request.renderSectionHeader(cell.sectionIndex!)
-            : geometry.directory === undefined ? (cell.items[0] === undefined ? null : request.renderItem(cell.items[0], cell.index, cell.sectionIndex))
-            : <CatalogDirectory columns={cell.columns}
-                columnGapPx={geometry.directory.columnGapPx} spanLoneRow={false}
-                {...(geometry.directory.lineTestID === undefined ? {} : { lineTestID: geometry.directory.lineTestID })}
-                rows={cell.items.map((item, at) => <Fragment key={cell.keys[at]}>{request.renderItem(item, cell.index + at, cell.sectionIndex)}</Fragment>)} />}
-        </View>
-      </Fragment>,
-    );
-    renderedEnd = cell.offset + cell.height;
+  const renderSectionRows = request.kind === 'sections' ? request.renderSectionRows : undefined;
+  if (renderSectionRows !== undefined) {
+    // Each section's sheet is drawn whenever any of its cells is near: the windowed rows and their
+    // spacers stand inside it, so the sheet's edges stay at the section's full extent.
+    for (const header of cells.filter(cell => cell.header)) {
+      const section = cells.filter(cell => cell.sectionIndex === header.sectionIndex);
+      const rows = section.filter(cell => !cell.header);
+      if (!section.some(cell => inWindow(cell) || pinned(cell))) continue;
+      const gap = header.offset - renderedEnd;
+      if (gap > 0) content.push(spacer(`gap:${header.key}`, gap));
+      const sectionRows: ReactNode[] = [];
+      let cursor = rows[0]?.offset ?? header.offset + header.height;
+      for (const row of rows) {
+        if (!inWindow(row) && !pinned(row)) continue;
+        if (row.offset > cursor) sectionRows.push(spacer(`gap:${row.key}`, row.offset - cursor));
+        sectionRows.push(renderCell(row));
+        cursor = row.offset + row.height;
+      }
+      const sectionEnd = rows.length === 0 ? cursor : rows[rows.length - 1]!.offset + rows[rows.length - 1]!.height;
+      if (sectionEnd > cursor) sectionRows.push(spacer('end', sectionEnd - cursor));
+      content.push(
+        <Fragment key={header.key}>
+          {renderCell(header)}
+          {rows.length === 0 ? null : renderSectionRows(header.sectionIndex!, sectionRows)}
+        </Fragment>,
+      );
+      renderedEnd = sectionEnd;
+    }
+  } else {
+    for (const cell of cells) {
+      if (!pinned(cell) && !inWindow(cell)) continue;
+      const gap = cell.offset - renderedEnd;
+      content.push(
+        <Fragment key={cell.key}>
+          {gap <= 0 ? null : spacer(`gap:${cell.key}`, gap)}
+          {renderCell(cell)}
+        </Fragment>,
+      );
+      renderedEnd = cell.offset + cell.height;
+    }
   }
   return (
     <View ref={root} onLayout={() => { void measure(); }}

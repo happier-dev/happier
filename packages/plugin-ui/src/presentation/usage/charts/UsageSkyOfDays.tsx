@@ -10,6 +10,7 @@ import {
 } from 'react-native-svg';
 
 import { HappierText } from '../../text/Text.js';
+import { happierSvgGradientStop } from '../../layout/svgGradientStop.js';
 import { ChartDrawing, ChartMark } from '../../data/ChartDatum.js';
 import { formatHappierDataValue } from '../../data/dataModel.js';
 
@@ -351,34 +352,32 @@ export function UsageSkyOfDays(props: UsageSkyOfDaysProps) {
                   >
                     <Stop
                       offset="0"
-                      stopColor={usageChartMix(
+                      {...happierSvgGradientStop(usageChartMix(
                         color,
                         '#ffffff',
                         props.paint.dark ? 0.48 : 0.62,
-                      )}
+                      ))}
                     />
-                    <Stop offset="0.5" stopColor={color} />
+                    <Stop offset="0.5" {...happierSvgGradientStop(color)} />
                     <Stop
                       offset="1"
-                      stopColor={usageChartMix(
+                      {...happierSvgGradientStop(usageChartMix(
                         color,
                         '#000000',
                         props.paint.dark ? 0.78 : 0.86,
-                      )}
+                      ))}
                     />
                   </RadialGradient>,
                   <RadialGradient key={`h-${key}`} id={`${gradientId}-halo-${key}`}>
                     <Stop
                       offset="0"
-                      stopColor={color}
-                      stopOpacity={glowStrength}
+                      {...happierSvgGradientStop(color, glowStrength)}
                     />
                     <Stop
                       offset="0.45"
-                      stopColor={color}
-                      stopOpacity={glowStrength * 0.35}
+                      {...happierSvgGradientStop(color, glowStrength * 0.35)}
                     />
-                    <Stop offset="1" stopColor={color} stopOpacity={0} />
+                    <Stop offset="1" {...happierSvgGradientStop(color, 0)} />
                   </RadialGradient>,
                 ];
               })}

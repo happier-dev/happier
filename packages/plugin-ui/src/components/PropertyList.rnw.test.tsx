@@ -122,6 +122,20 @@ describe('public PropertyList', () => {
     } finally { mount.unmount(); }
   });
 
+  it('draws a person choice with their face, kept out of the name that is read and searched', async () => {
+    const mount = mountWithPopoverHost(<PluginUi.PropertyList testID="props" items={[{
+      id: 'assignee', label: 'Assignees', value: null, editor: { kind: 'choices', value: [], searchable: true, onCommit: () => {},
+        choices: [{ id: 'ada', label: 'Ada Lovelace', person: 'Ada Lovelace' }, { id: 'bug', label: 'bug' }] },
+    }]} />);
+    try {
+      await act(async () => { mount.container.querySelector<HTMLElement>('[data-testid="props.assignee.value"]')!.click(); });
+      const rows = Array.from(mount.container.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]'));
+      expect(rows.map(row => row.querySelector('[data-testid="menu-item-face"]') !== null)).toEqual([true, false]);
+      const name = rows[0]!.querySelector('[data-testid="menu-item-face"]')!.closest('[aria-hidden="true"]');
+      expect(name, 'the row is already named by its label').not.toBeNull();
+    } finally { mount.unmount(); }
+  });
+
   it('retains a search through a pending source write and shows its refused settlement', async () => {
     let finish!: (result: unknown) => void;
     let commits = 0;

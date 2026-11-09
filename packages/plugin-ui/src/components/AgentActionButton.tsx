@@ -133,6 +133,7 @@ export function AgentActionButton(
           />
         }
         disabled={props.disabled === true}
+        sheet={{ title: optionsLabel }}
         items={items}
         {...(props.groups === undefined || props.groups.length === 0
           ? {}

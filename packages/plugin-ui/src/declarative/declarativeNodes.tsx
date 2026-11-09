@@ -1,7 +1,8 @@
 import * as React from 'react';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/plugin-sdk/manifest';
 import { HappierActionPanel, HappierActionPanelSection } from '../presentation/interaction/ActionPanel.js';
 import { HappierDataChart } from '../presentation/data/Chart.js';
-import { StackedSeriesChart } from '../presentation/data/StackedSeriesChart.js';
+import { StackedSeriesChart, type StackedSeriesPlot } from '../presentation/data/StackedSeriesChart.js';
 import type { HappierSeriesPoint } from '../presentation/data/dataModel.js';
 import { HappierDataMetric } from '../presentation/data/Metric.js';
 import { HappierDataRows, HappierDataTable } from '../presentation/data/DataRows.js';
@@ -45,9 +46,7 @@ export type DeclarativeTextResolver = (value: unknown) => string;
  * happens to be installed when the message is replayed.
  */
 export function readDeclarativeText(value: unknown): string {
-    if (typeof value === 'string') return value;
-    const candidate = readDeclarativeRecord(value);
-    return typeof candidate?.fallback === 'string' ? candidate.fallback : '';
+    return resolvePluginLocalizedStringV2Text(value);
 }
 
 export type DeclarativeFindTextBlock = Readonly<{
@@ -101,7 +100,7 @@ export function createDeclarativeTextResolver(
         const candidate = readDeclarativeRecord(value);
         const fallback = typeof candidate?.fallback === 'string' ? candidate.fallback : '';
         const key = typeof candidate?.key === 'string' ? candidate.key : '';
-        return key ? translate(key, fallback) : fallback;
+        return resolvePluginLocalizedStringV2Text(value, key ? translate(key, fallback) : fallback);
     };
 }
 
@@ -192,6 +191,8 @@ export type DeclarativeRenderingHost = Readonly<{
     readDataField: (value: unknown, field: Extract<PluginDeclarativeNodeV2, { kind: 'metric' }>['value']) => string | number | boolean;
     readDataRows: (value: unknown, field: readonly string[]) => readonly unknown[];
     renderAction: (node: RecordValue, affordance: DeclarativeActionAffordance, context: DeclarativeNodeRenderContext, label: React.ReactNode) => React.ReactNode;
+    /** The host's all-series lens over each chart's plot (crosshair and exact values); inert hosts omit it. */
+    renderSeriesLens?: (plot: StackedSeriesPlot) => React.ReactNode;
 }>;
 
 export type DeclarativeNodeRenderContext = Readonly<{
@@ -383,6 +384,8 @@ const renderDeclarativeData: DeclarativeNodeRenderer = (value, context) => {
         }
         const rows = readPluginDeclarativeDataRowsV1(data, node.rows);
         if (node.kind === 'chart') {
+            // Each bucket opens the host's lens, the same owner its Usage charts use.
+            const renderPlotOverlay = context.host.renderSeriesLens;
             if ('series' in node) {
                 const series = new Map<string, { id: string; label: string; points: HappierSeriesPoint[] }>();
                 for (const row of rows) {
@@ -394,10 +397,11 @@ const renderDeclarativeData: DeclarativeNodeRenderer = (value, context) => {
                     entry.points.push({ id: JSON.stringify(x), x, y: Number(readPluginDeclarativeDataFieldV1(row, node.value)) });
                 }
                 return <StackedSeriesChart key={key} testID={testID} theme={theme} label={context.localize(node.label)} variant={node.style}
-                    size="full" barEmphasis="none" viewportHeight={context.widgetPresentation?.geometry?.height} series={[...series.values()]} />;
+                    size="full" barEmphasis="none" viewportHeight={context.widgetPresentation?.geometry?.height} series={[...series.values()]}
+                    renderPlotOverlay={renderPlotOverlay} />;
             }
             return <HappierDataChart key={key} testID={testID} theme={theme} label={context.localize(node.label)} style={node.style}
-                viewportHeight={context.widgetPresentation?.geometry?.height}
+                viewportHeight={context.widgetPresentation?.geometry?.height} renderPlotOverlay={renderPlotOverlay}
                 points={rows.map((row) => {
                     const x = readPluginDeclarativeDataFieldV1(row, node.x);
                     return { x: typeof x === 'boolean' ? String(x) : x, y: Number(readPluginDeclarativeDataFieldV1(row, node.y)) };

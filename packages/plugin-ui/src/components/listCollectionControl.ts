@@ -46,6 +46,8 @@ export type ListCollectionControl = Readonly<{
    */
   pageScroll?: boolean;
   /** Collection's existing row/header geometry, windowed in the containing physical page. */
+  /** Rows a live interaction anchors to; a windowed page keeps them mounted wherever the viewport is. */
+  retainedRowKeys?: readonly string[];
   pageVirtualization?: Readonly<{
     rowHeight(key: string): number;
     headerHeight: number;

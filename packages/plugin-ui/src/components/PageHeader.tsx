@@ -25,14 +25,17 @@ export type PageHeaderMetaFact = Readonly<{
 }>;
 
 export type PageHeaderProps = Readonly<{
-  /** The page's title. Hidden when the host's navigation already shows it; the purpose line stays. */
+  /**
+   * The page's title. Hidden when the host's navigation already shows it (the purpose line stays), unless the
+   * header has a `leading` mark: an entity's mark, title, facts and actions always stay together in the page.
+   */
   title: string;
   /** A key from this plugin's declared translation bundle; `title` is its fallback. */
   titleKey?: string;
   /** One sentence saying what the page is for. */
   description?: string;
   descriptionKey?: string;
-  /** A leading identity mark: the thing the page is about (a `BrandMark`, an `Image`). */
+  /** A leading identity or status mark: the thing the page is about (a `BrandMark`, an `Image`, a status glyph). */
   leading?: ReactNode;
   /** Identity details or a summary spanning the page's content column. */
   details?: ReactNode;
@@ -71,15 +74,22 @@ export function PageHeader(props: PageHeaderProps): ReactElement {
   const translate = usePluginTranslation();
   const chrome = useHappierPageChromeInternal();
   const bridgeSurface = usePluginUiSurfaceBridge();
-  // A Collection detail retains its own semantic heading and controls in the detail body.
+  // An entity header (a leading identity or status mark) keeps its mark, title, facts and actions together in
+  // the body, as a core entity page does (`alwaysShowTitle`, actions in the page): the mark never stands without
+  // its title, and the navigation chrome keeps the destination's own name.
+  const entity = props.leading != null;
+  // A Collection detail retains its own semantic heading and controls in the detail body. Every other header
+  // takes the host's controls (its route controls, its pane's Hide); an entity keeps them, with its own
+  // actions, in its row rather than letting the host hoist them into navigation chrome.
   const hostActions = headingRef === undefined && chrome?.renderNavigationActions !== undefined;
+  const hoisted = hostActions && !entity && chrome.showsTitle;
   const actions = hostActions ? chrome.renderNavigationActions?.(props.actions == null ? null : bridgeSurface(
-    chrome.showsTitle ? normalizeHappierPageOperations(props.actions, (value, key) => resolveAuthorText(translate, value, key)) : props.actions,
-  )) : props.actions;
+    hoisted ? normalizeHappierPageOperations(props.actions, (value, key) => resolveAuthorText(translate, value, key)) : props.actions,
+  ), entity ? 'page' : 'navigation') : props.actions;
   const title = resolveAuthorText(translate, props.title, props.titleKey) ?? props.title;
   // A collection detail keeps its heading in the body; any other page names itself in the chrome that
   // hides its title, exactly as a core page header does, so a phone never loses the page's identity.
-  const publishTitle = headingRef === undefined ? chrome?.publishTitle : undefined;
+  const publishTitle = headingRef === undefined && !entity ? chrome?.publishTitle : undefined;
   useEffect(() => {
     if (publishTitle === undefined) return;
     publishTitle(title);
@@ -100,18 +110,18 @@ export function PageHeader(props: PageHeaderProps): ReactElement {
   }));
   return (
     <HappierPageHeadingBindingContext.Provider value={headingRef ?? explicitHeadingRef}>
-    {hostActions && chrome.showsTitle ? actions : null}
+    {hoisted ? actions : null}
     <HappierPageHeader
       title={title}
       largeTitle={chrome?.largeTitle === true && headingRef === undefined}
-      showTitle={headingRef !== undefined || chrome?.showsTitle !== true}
+      showTitle={headingRef !== undefined || entity || chrome?.showsTitle !== true}
       description={description}
       leading={props.leading ? <PageHeaderMarkSlot>{props.leading}</PageHeaderMarkSlot> : undefined}
       details={props.details}
       detailsPlacement={props.detailsPlacement}
       compactPresentation={props.compactPresentation}
       meta={meta}
-      actions={hostActions && chrome.showsTitle ? null : actions}
+      actions={hoisted ? null : actions}
       actionsLayout={props.actionsLayout}
       metaIdCopy={metaIdCopy}
       renderBack={chrome?.renderBack ?? null}

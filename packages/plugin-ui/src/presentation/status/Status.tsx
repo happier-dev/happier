@@ -1,4 +1,4 @@
-import { cloneElement, isValidElement, type ReactNode } from 'react';
+import { cloneElement, isValidElement, useState, type ReactNode } from 'react';
 import { View, type TextStyle } from 'react-native';
 
 import type { HappierUiAccessibility, HappierUiTheme } from '../../environment/types.js';
@@ -8,6 +8,7 @@ import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../semantics.js';
 import { HappierText } from '../text/Text.js';
 import { useHappierTypeRoleStyle } from '../text/typeRole.js';
 import { HappierStatusDot } from './StatusDot.js';
+import { HAPPIER_PAGE_METRICS, readHappierVisibleLayoutWidth } from '../layout/pageMetrics.js';
 import { HAPPIER_SMALL_BUTTON_HEIGHT } from '../interaction/buttonChrome.js';
 
 export type HappierStatusProps = Readonly<{
@@ -69,9 +70,14 @@ export function HappierStatus(props: HappierStatusProps) {
   const accessibilityLiveRegion = props.accessibilityLiveRegion ?? 'polite';
   const ariaLive = accessibilityLiveRegion === 'none' ? 'off' : accessibilityLiveRegion;
   const highContrast = (props.contrast ?? environmentAccessibility?.contrast) === 'high';
+  // A notice whose action does not fit beside its words on a narrow measure (a phone) takes the action beneath
+  // them, as a banner does; beside a wrapped block it would crowd the sentence it belongs to.
+  const [actionBelow, setActionBelow] = useState(false);
   const toneColor = props.theme.colors[HAPPIER_TONE_COLOR_TOKEN[props.tone]];
   // A status line is quiet metadata beside the content it describes: body for
   // its name, caption for its value — never the row-title weight of a label.
+  // The dot carries the tone; the value (the reason or the time) stays quiet
+  // secondary ink, so a warning reads as one amber mark, not an amber paragraph.
   const bodyStyle = useHappierTypeRoleStyle('meta', props.theme);
   const captionStyle = useHappierTypeRoleStyle('micro', props.theme);
   const label = renderStatusText(
@@ -95,7 +101,7 @@ export function HappierStatus(props: HappierStatusProps) {
     ? null
     : renderStatusText(
       props.value,
-      textStyle(captionStyle, highContrast ? props.theme.colors.text : toneColor),
+      textStyle(captionStyle, highContrast ? props.theme.colors.text : props.theme.colors.secondaryText),
       true,
       highContrast ? { color: props.theme.colors.text } : undefined,
     );
@@ -115,6 +121,8 @@ export function HappierStatus(props: HappierStatusProps) {
         ? { minWidth: 0, maxWidth: '100%', flexDirection: 'row', alignItems: 'center', gap: props.theme.spacing.xsmall }
         : props.action === undefined || props.action === null
         ? { flexDirection: 'row', alignItems: 'center', gap: props.theme.spacing.small }
+        : actionBelow
+        ? { alignSelf: 'stretch', flexDirection: 'row', alignItems: 'flex-start', gap: props.theme.spacing.small }
         : { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'flex-start', gap: props.theme.spacing.small,
           paddingTop: besideActionInsetPx }}
     >
@@ -138,7 +146,15 @@ export function HappierStatus(props: HappierStatusProps) {
   );
   if (props.action === undefined || props.action === null) return region;
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: props.theme.spacing.small }}>
+    <View
+      onLayout={(event) => {
+        const width = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width);
+        if (width !== null) setActionBelow(width < HAPPIER_PAGE_METRICS.rowStackBelowWidthPx);
+      }}
+      style={actionBelow
+        ? { alignItems: 'flex-start', gap: props.theme.spacing.xsmall }
+        : { flexDirection: 'row', alignItems: 'flex-start', gap: props.theme.spacing.small }}
+    >
       {region}
       {/* Beside the words, the action rides the sentence's first line ("acme/ledger could not be read · Manage
           sources"), never the middle of a two-line notice, where it reads as a line of its own. */}

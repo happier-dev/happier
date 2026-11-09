@@ -70,6 +70,11 @@ export type HappierModalHeaderTextRender = (input: Readonly<{
 export type HappierModalHeaderProps = Readonly<{
   /** A leading identity mark before the title. */
   leading?: ReactNode;
+  /**
+   * `above`: the leading slot is a way back, not a mark. On a compact card it takes its own row with the close
+   * control and the title and subtitle stand beneath it on the page gutter; a wide card keeps one row.
+   */
+  leadingPlacement?: 'above' | null;
   /** Drawn in the heading step through `renderText`. */
   title?: ReactNode;
   /** One line under the title saying what the dialog is for or what it acts on. */
@@ -153,12 +158,49 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
   if (!hasTitle && !props.leading && !hasActions && close === null) return null;
 
   const testID = props.testID ?? 'modal-card-header';
+  if (props.compact === true && props.leadingPlacement === 'above' && props.leading && hasTitle) {
+    return (
+      <View
+        testID={testID}
+        style={[
+          {
+            paddingHorizontal: space.s16,
+            paddingTop: space.s2,
+            paddingBottom: space.s10,
+            gap: space.s2,
+          },
+          props.style,
+        ]}
+      >
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: space.s12,
+          }}
+        >
+          <View style={{ flex: 1, minWidth: 0 }}>{props.leading}</View>
+          {hasActions || close !== null ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s10 }}>
+              {props.actions}
+              {close}
+            </View>
+          ) : null}
+        </View>
+        <View style={{ gap: space.s2 }}>
+          {title}
+          {subtitle}
+        </View>
+      </View>
+    );
+  }
   const leadingWrap = {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
     minWidth: 0,
-    gap: space.s10,
+    gap: props.subtitle != null && props.subtitle !== false && props.leadingPlacement !== 'above' ? space.s8 : space.s10,
   } as const;
   const titleWrap = { flex: 1, minWidth: 0, gap: space.s2 } as const;
 
@@ -207,6 +249,46 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
         >
           {props.actions}
         </View>
+      </View>
+    );
+  }
+
+  // An identity mark sits on the title line; the subtitle stands beneath on the band's one left edge,
+  // the edge the content below starts on, so no empty column hangs under the mark.
+  if (props.leading && subtitle !== null && props.leadingPlacement !== 'above') {
+    return (
+      <View
+        testID={testID}
+        style={[
+          {
+            paddingHorizontal: space.s16,
+            paddingTop: HAPPIER_MODAL_HEADER_METRICS.textTopInsetPx,
+            paddingBottom: space.s10,
+            gap: space.s2,
+          },
+          props.style,
+        ]}
+      >
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: space.s12,
+          }}
+        >
+          <View style={leadingWrap}>
+            {props.leading}
+            <View style={titleWrap}>{title}</View>
+          </View>
+          {hasActions || close !== null ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s10 }}>
+              {props.actions}
+              {close}
+            </View>
+          ) : null}
+        </View>
+        {subtitle}
       </View>
     );
   }

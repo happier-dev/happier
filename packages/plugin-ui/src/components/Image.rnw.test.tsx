@@ -260,8 +260,37 @@ describe('bounded package image and brand fallback', () => {
     expect(getComputedStyle(fallback!).backgroundColor).toBe('rgba(0, 0, 0, 0)');
     expect(fallback?.firstElementChild).not.toBeNull();
     expect(getComputedStyle(fallback!.firstElementChild!).color).toBe(
-      renderedColor('backgroundColor', context.theme.colors.text),
+      renderedColor('backgroundColor', context.theme.colors.secondaryText),
     );
+    mount.unmount();
+  });
+
+  it("draws the host's own mark for content the host holds itself, never the mounted plugin's brand", () => {
+    const context = createSurfaceContext();
+    const renderBrandMark = vi.fn(() => <span data-testid="plugin-brand">Plugin</span>);
+    const renderHostMark = vi.fn((input: Readonly<{ pixelSize: number; testID?: string }>) => (
+      <span data-testid={input.testID} data-size={input.pixelSize}>Happier</span>
+    ));
+    const host = (withHostMark: boolean) => ({
+      brand: { displayName: 'Tasks plugin', resource: { pluginId: 'example.tasks', localId: 'brand-icon' } },
+      renderBrandMark,
+      ...(withHostMark ? { renderHostMark } : {}),
+      renderMarkdown: () => null,
+      renderCodeBlock: () => null,
+      renderPopover: () => null,
+      renderIcon: () => null,
+    });
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <PluginUiPresentationHostProviderInternal host={host(true) as never}>
+          <BrandMark host size="small" externallyLabelled testID="personal-task-mark" />
+        </PluginUiPresentationHostProviderInternal>
+      </PluginUiProvider>,
+    );
+    const mark = mount.container.querySelector('[data-testid="personal-task-mark"]');
+    expect(mark?.textContent).toBe('Happier');
+    expect(mark?.getAttribute('data-size')).toBe(String(resolveHappierIconSize('small')));
+    expect(renderBrandMark).not.toHaveBeenCalled();
     mount.unmount();
   });
 

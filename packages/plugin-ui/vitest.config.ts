@@ -18,6 +18,7 @@ const packageRoot = fileURLToPath(new URL('.', import.meta.url));
 const resolve = (...paths: string[]) => resolvePath(packageRoot, ...paths);
 
 const workspacePackages: readonly WorkspacePackageSpec[] = [
+  { packageName: '@happier-dev/deployment-protocol', packageSourceRoot: resolve('../deployment-protocol/src') },
   // Source tests must exercise the current declaration owner, not the SDK's vendored copy.
   { packageName: '@happier-dev/protocol', packageSourceRoot: resolve('../protocol/src') },
   { packageName: '@happier-dev/agents', packageSourceRoot: resolve('../agents/src') },

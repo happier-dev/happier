@@ -102,3 +102,24 @@ describe('HappierWorkUpdateCard for plugin authors', () => {
     }
   });
 });
+
+describe('HappierWorkUpdateCard in the external-author fixture', () => {
+  it('renders the author’s work in the shared anatomy and runs its own action', async () => {
+    const { act } = await import('react');
+    const { PluginUiProvider } = await import('../../components/PluginUiProvider.js');
+    const { createHostApiStub } = await import('../../surfaceFixture.testSupport.js');
+    const { WorkUpdateCardExample } = await import('../../../fixtures/external-authoring/src/workUpdateCardSurface.js');
+    const context = createSurfaceContext();
+    const mounted = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}><WorkUpdateCardExample /></PluginUiProvider>,
+    );
+    const card = byTestId(mounted.container, 'author-work-update');
+    expect(card?.textContent).toContain('Release review');
+    expect(byTestId(mounted.container, 'author-work-update-state')?.textContent).toBe('needs you');
+    expect(byTestId(mounted.container, 'author-work-update-fact:checks')?.textContent).toContain('Checks passed');
+    const open = [...mounted.container.querySelectorAll('[role="button"]')].find(node => node.textContent === 'Open review');
+    act(() => (open as HTMLElement).click());
+    expect(mounted.container.textContent).toContain('Opened review');
+    mounted.unmount();
+  });
+});

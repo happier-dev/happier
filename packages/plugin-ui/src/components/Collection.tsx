@@ -472,12 +472,14 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
    * `page`: a page-sized collection scrolls as the page — its `header`, every row and its `footer` in one scroller
    * and one reading and focus order, with no virtualization (for a few dozen items, not an open-ended feed).
    * `collection` (default): the rows scroll inside the Collection, virtualized, under a fixed header.
-   * `page-virtualized`: a table (including its responsive list) or a catalog directory (a list of catalog rows, in its
-   * row-major columns) windows in a positioned containing page; otherwise uses collection scrolling.
+   * `page-virtualized`: a table (including its responsive list), a catalog directory (a list of catalog rows, in its
+   * row-major columns) or a sheet-sectioned page list windows in a positioned containing page; otherwise uses collection scrolling.
    */
   scroll?: 'collection' | 'page' | 'page-virtualized';
   /** Platform adapter for collection-scrolling Lists; page modes retain the containing page's scroll owner. */
   virtualizer?: CollectionVirtualizer;
+  /** Rows a live interaction anchors to (a deep link's popover); a windowed page keeps them mounted wherever the viewport is. */
+  retainedRowKeys?: readonly string[];
   /**
    * The items are still arriving: the table and list hold their row geometry with skeleton rows that fill the
    * view, and a grid with skeleton cards (the last known count). `empty` is shown only once loading is over.
@@ -602,8 +604,9 @@ const TABLE = Object.freeze({
 const SLOT_COLUMNS = Object.freeze({
   where: { minWidth: 150, priority: 4, maxWidth: 224 },
   reason: { minWidth: 172, priority: 5 },
-  signal: { minWidth: 124, priority: 2 },
-  agent: { minWidth: 150, priority: 3 },
+  // Failing checks are the row's call to act; the agent is also on the row's glyph, so it gives way first.
+  signal: { minWidth: 124, priority: 3 },
+  agent: { minWidth: 150, priority: 2 },
   age: { minWidth: 46, priority: 6, align: 'end' as const },
   titleMeta: { minWidth: 120, priority: 7, align: 'end' as const },
 });
@@ -1280,7 +1283,8 @@ const beneathStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: '
 const controlsStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 };
 /** A second line's facts and its end, sized from their natural widths so neither one takes the whole line. */
 const sharedLineFactsStyle: HappierPortableStyle = { flexGrow: 1, flexShrink: 1, flexBasis: 'auto', minWidth: 0 };
-const sharedLineEndStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', flexShrink: 1, flexBasis: 'auto', minWidth: 0 };
+// The reason chip keeps its words whole; the facts beside it truncate first. A long sentence is held to most of the line.
+const sharedLineEndStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', flexShrink: 0, flexBasis: 'auto', minWidth: 0, maxWidth: '70%' };
 const whereWithControlsStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flexShrink: 1 };
 
 /**
@@ -1927,9 +1931,12 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   const pageWindowed = props.scroll === 'page-virtualized' && pageTracker?.scrollToOffset !== undefined;
   const windowsDirectory = presentation === 'list' && rowRole === 'catalogRow' && palette !== null && !onBodyEdge
     && !(grouped && (props.summaryRows?.length ?? 0) > 0);
-  const pageVirtualized = pageWindowed && (presentation === 'table' || windowsDirectory);
+  // A sheet-sectioned page list (titled groups, each its own page section) windows on its sheets too.
+  const windowsSheetList = presentation === 'list' && rowRole !== 'catalogRow' && palette !== null && !onBodyEdge && (grouped || model.sections.length === 0)
+    && (props.summaryRows?.length ?? 0) === 0 && !model.sections.some((section) => section.group?.section !== undefined);
+  const pageVirtualized = pageWindowed && (presentation === 'table' || windowsDirectory || windowsSheetList);
   // Without the page's tracker a directory still scrolls with its page, every row mounted; only a table falls back to scrolling itself.
-  const pageScroll = props.scroll === 'page' || pageVirtualized || (props.scroll === 'page-virtualized' && windowsDirectory);
+  const pageScroll = props.scroll === 'page' || pageVirtualized || (props.scroll === 'page-virtualized' && (windowsDirectory || windowsSheetList));
   // A page-scrolling list sits among the page's other sections, so its groups take the page section anatomy:
   // a section title above one sheet of rows, not a dense list's caption band.
   const pageSections = pageScroll && presentation === 'list' && palette !== null && !onBodyEdge;
@@ -2490,7 +2497,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
       ),
     }),
     ...(pageScroll ? { pageScroll: true } : {}),
-    ...(pageVirtualized ? { pageVirtualization: pageGeometry } : {}),
+    ...(pageVirtualized ? { pageVirtualization: pageGeometry, ...(props.retainedRowKeys === undefined ? {} : { retainedRowKeys: props.retainedRowKeys }) } : {}),
     ...(nestedTable ? { collectionRole: 'treegrid' as const } : {}),
     wrapSectionHeader: (sectionKey, header) => (
       <driver.AnimatedView
@@ -2502,7 +2509,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
         {header}
       </driver.AnimatedView>
     ),
-  }), [canPeek, catalogDirectory, catalogSideList, directoryColumns, directoryHeadingInsetPx, driver, expandable, metrics, model, multipleStore, navigationKeys, nestedTable, setBranchOpen, treeNodes, pageScroll, wrapTitles, ruledInsetPx, pageVirtualized, pageGeometry, pageSections, pageTable, pageSheetHeader, enclosingPageSheet, containingMaterial, paintColor, palette, presentation, progress, props.groupAction, props.testID, scrollOffsetRef, singleChoice === undefined, tabStopKey, theme.colors.divider, theme.colors.elevatedSurface, theme.colors.surface, transition, view.scrollRequest, viewportScrollRequest, rowGeometry, props.useRowActions]);
+  }), [canPeek, catalogDirectory, catalogSideList, directoryColumns, directoryHeadingInsetPx, driver, expandable, metrics, model, multipleStore, navigationKeys, nestedTable, setBranchOpen, treeNodes, props.retainedRowKeys, pageScroll, wrapTitles, ruledInsetPx, pageVirtualized, pageGeometry, pageSections, pageTable, pageSheetHeader, enclosingPageSheet, containingMaterial, paintColor, palette, presentation, progress, props.groupAction, props.testID, scrollOffsetRef, singleChoice === undefined, tabStopKey, theme.colors.divider, theme.colors.elevatedSurface, theme.colors.surface, transition, view.scrollRequest, viewportScrollRequest, rowGeometry, props.useRowActions]);
 
   // ---- Escape returns to the table from anywhere inside the Collection (web keyboard) ----
   const rootRef = useRef<View | null>(null);

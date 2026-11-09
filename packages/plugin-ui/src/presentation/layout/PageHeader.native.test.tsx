@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 // Native layout delivery is the platform boundary; the responsive header and control stay real.
 vi.mock('react-native', () => ({ View: 'View', Text: 'Text', Pressable: 'Pressable', Platform: { OS: 'ios' } }));
@@ -106,6 +106,7 @@ describe('page header entrance parts', () => {
         actions={<Pressable testID="start"><Text>Start session</Text></Pressable>}
         wrapPart={(part, node) => { parts.push(part); return <View testID={`part-${part}`}>{node}</View>; }} />);
     });
+    onTestFinished(() => { act(() => renderer.unmount()); });
     const part = (name: string) => renderer.root.findAll(node => node.props.testID === `part-${name}`);
     const inside = (name: string, testID: string) => part(name).some(wrapper => wrapper.findAll(node => node.props.testID === testID).length > 0);
     expect(inside('mark', 'mark')).toBe(true);

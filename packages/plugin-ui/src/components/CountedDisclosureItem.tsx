@@ -7,15 +7,16 @@ import {
   type HappierCountedDisclosureFrameProps,
 } from '../presentation/collection/CountedDisclosure.js';
 import { HappierDisclosure } from '../presentation/collection/Disclosure.js';
-import { HappierDisclosureChevron } from '../presentation/collection/DisclosureChevron.js';
 import { HAPPIER_INSTANT_DISCLOSURE_MOTION } from '../presentation/collection/collectionMotion.js';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
+import { HappierDisclosureCaret } from './DisclosureCaret.js';
 import { Item } from './List.js';
 import { usePluginTheme } from './PluginUiProvider.js';
 
 export type CountedDisclosureItemProps = HappierCountedDisclosureContentProps;
 
-function CountedDisclosureFrame(props: HappierCountedDisclosureFrameProps): ReactElement {
+/** The disclosure with the host's motion, reduced motion and hairline; shared by this package's folded rows. */
+export function CountedDisclosureFrame(props: HappierCountedDisclosureFrameProps): ReactElement {
   const host = useOptionalPluginUiPresentationHost();
   const theme = usePluginTheme();
   const { reducedMotion } = useHappierUiAccessibility();
@@ -31,8 +32,6 @@ function CountedDisclosureFrame(props: HappierCountedDisclosureFrameProps): Reac
 
 /** A locally folded count or word summary; its details mount only when the reader opens it. */
 export function CountedDisclosureItem(props: CountedDisclosureItemProps): ReactElement {
-  const theme = usePluginTheme();
-  const { reducedMotion } = useHappierUiAccessibility();
   return (
     <HappierCountedDisclosure
       {...props}
@@ -48,7 +47,7 @@ export function CountedDisclosureItem(props: CountedDisclosureItemProps): ReactE
           onPress={state.headerProps.onPress}
           accessibilityRole={state.headerProps.accessibilityRole}
           accessibilityExpanded={state.expanded}
-          accessory={<HappierDisclosureChevron expanded={state.expanded} color={theme.colors.secondaryText} reducedMotion={reducedMotion} />}
+          accessory={<HappierDisclosureCaret expanded={state.expanded} />}
         />
       )}
     />

@@ -7,7 +7,7 @@ const platform = vi.hoisted(() => ({ OS: 'ios' }));
 // Native host primitives are the boundary; use RNW's real RN-compatible color parser.
 vi.mock('react-native', async () => {
   const { processColor } = await vi.importActual<Pick<typeof import('react-native'), 'processColor'>>('react-native-web');
-  return { Platform: platform, StyleSheet: { absoluteFillObject: {} }, processColor: (color: string) => {
+  return { Platform: platform, StyleSheet: { absoluteFillObject: {} }, View: 'View', processColor: (color: string) => {
     const parsed = processColor(color);
     return platform.OS === 'android' && typeof parsed === 'number' ? parsed | 0 : parsed;
   } };
@@ -25,8 +25,40 @@ afterEach(() => {
 });
 
 describe('native surface gradient paint', () => {
-  it.each(['ios', 'android'])('preserves alpha in full-height, underlay and band stops on %s', (os) => {
-    platform.OS = os;
+  it('paints Android full-surface layers natively so no view-sized SVG bitmap can outgrow the canvas limit', () => {
+    platform.OS = 'android';
+    act(() => {
+      renderer = create(<HappierSurfaceGradientLayer borderRadius={12}
+        underlay={{ colors: ['rgba(255, 255, 255, 0.14)', 'transparent'] }}
+        gradient={{ colors: ['rgba(34, 34, 34, 0)', 'rgba(34, 34, 34, 0.5)'], locations: [0.3, 1], start: { x: 0.5, y: 1 }, end: { x: 0.5, y: 0 } }}
+      />);
+    });
+    expect(renderer!.root.findAll(node => String(node.type) === 'Svg')).toHaveLength(0);
+    const painted = renderer!.root.findAll(node => String(node.type) === 'View');
+    expect(painted).toHaveLength(1);
+    expect(painted[0].props.pointerEvents).toBe('none');
+    expect(painted[0].props.style.borderRadius).toBe(12);
+    // CSS paints its first layer on top: the gradient stays above its underlay, as in SVG order.
+    expect(painted[0].props.style.experimental_backgroundImage).toEqual([
+      { type: 'linear-gradient', direction: '0deg', colorStops: [
+        { color: 'rgba(34, 34, 34, 0)', positions: ['30%'] }, { color: 'rgba(34, 34, 34, 0.5)', positions: ['100%'] },
+      ] },
+      { type: 'linear-gradient', direction: '180deg', colorStops: [
+        { color: 'rgba(255, 255, 255, 0.14)', positions: ['0%'] }, { color: 'transparent', positions: ['100%'] },
+      ] },
+    ]);
+  });
+
+  it('keeps an Android edge band in its own fixed-height SVG strip', () => {
+    platform.OS = 'android';
+    act(() => {
+      renderer = create(<HappierSurfaceGradientLayer gradient={{ colors: ['red', 'blue'], band: { edge: 'top', height: 32 } }} />);
+    });
+    expect(renderer!.root.findAll(node => String(node.type) === 'Svg').map(node => node.props.height)).toEqual([32]);
+  });
+
+  it('preserves alpha in full-height, underlay and band stops on ios', () => {
+    platform.OS = 'ios';
     act(() => {
       renderer = create(<HappierSurfaceGradientLayer
         underlay={{ colors: ['rgba(255, 255, 255, 0.14)', 'transparent'] }}

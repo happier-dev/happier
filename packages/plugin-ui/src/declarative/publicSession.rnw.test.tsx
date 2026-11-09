@@ -7,11 +7,27 @@ import { createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { PluginDeclarativeNodeV2Schema } from '@happier-dev/protocol/plugins/contributions/ui/v2';
 import { projectWidgetSnapshotPreviewV1, WidgetSnapshotDocumentV1Schema } from '@happier-dev/protocol/widgets';
 import { publicSessionDeclarativeDocument as document } from './publicSession.fixture.testSupport.js';
+import { createDeclarativeTextResolver } from './declarativeNodes.js';
+import { projectHappierUiEnvironment } from '../environment/projectEnvironment.js';
 import { buildArtifactHtmlDocumentV1 } from '@happier-dev/plugin-sdk/ui';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { externalTableVisual, externalChartVisual, externalHtmlVisual, externalHtmlBundle } from '../../fixtures/external-authoring/src/sessionVisuals.js';
 
 describe('public Session portable declarative rendering', () => {
+    it('substitutes scalar label data in frozen text and the current surface locale', () => {
+        const title = { key: 'review.continue', fallback: 'Continue {count} more · {pullRequest}',
+            params: { count: 7, pullRequest: 'example/repository#1' } };
+        const root = PluginDeclarativeNodeV2Schema.parse({ kind: 'state', state: 'empty', title });
+        const context = createSurfaceContext();
+        const mounted = mountThroughReactNativeWeb(createElement('div', null,
+            buildPublicSessionDeclarativeView({ version: 1, root }, context.theme)));
+        try { expect(mounted.container.textContent).toContain('Continue 7 more · example/repository#1'); }
+        finally { mounted.unmount(); }
+        const environment = projectHappierUiEnvironment({ ...context,
+            translations: { 'review.continue': '{pullRequest} : encore {count}' } });
+        expect(createDeclarativeTextResolver(environment.localization.translate)(title))
+            .toBe('example/repository#1 : encore 7');
+    });
     it('admits and renders source-driven external author visuals through public bundle and Action contracts', () => {
         const schema = getActionSpec('session.board.item.upsert').inputSchema;
         expect(schema.safeParse(externalTableVisual).success).toBe(true);

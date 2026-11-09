@@ -24,14 +24,26 @@ export function resolveHappierSurfaceFinish(input: Readonly<{
   return input.gradients[input.role] ?? null;
 }
 
-/** CSS paints on the existing surface: no additional web element or opaque background. */
-export function happierSurfaceGradientWebStyle(gradient: HappierSurfaceGradient | null | undefined, clipToPaddingBox = true): HappierPortableLayerStyle | null {
-  if (!gradient) return null;
+/** CSS gradient geometry shared by web paint and Android's native background image. */
+export function happierSurfaceGradientCssParts(gradient: HappierSurfaceGradient): Readonly<{
+  angle: number;
+  stops: readonly Readonly<{ color: string; percent: number }>[];
+}> {
   const start = gradient.start ?? { x: 0.5, y: 0 };
   const end = gradient.end ?? { x: 0.5, y: 1 };
   const angle = Math.atan2(end.x - start.x, start.y - end.y) * 180 / Math.PI;
-  const stops = gradient.colors.map((color, index) => `${color} ${(gradient.locations?.[index] ?? index / (gradient.colors.length - 1)) * 100}%`);
-  return { backgroundImage: `linear-gradient(${angle < 0 ? angle + 360 : angle}deg, ${stops.join(', ')})`, ...(clipToPaddingBox ? { backgroundClip: 'padding-box' as const } : {}),
+  return {
+    angle: angle < 0 ? angle + 360 : angle,
+    stops: gradient.colors.map((color, index) => ({ color, percent: (gradient.locations?.[index] ?? index / (gradient.colors.length - 1)) * 100 })),
+  };
+}
+
+/** CSS paints on the existing surface: no additional web element or opaque background. */
+export function happierSurfaceGradientWebStyle(gradient: HappierSurfaceGradient | null | undefined, clipToPaddingBox = true): HappierPortableLayerStyle | null {
+  if (!gradient) return null;
+  const { angle, stops: parts } = happierSurfaceGradientCssParts(gradient);
+  const stops = parts.map(({ color, percent }) => `${color} ${percent}%`);
+  return { backgroundImage: `linear-gradient(${angle}deg, ${stops.join(', ')})`, ...(clipToPaddingBox ? { backgroundClip: 'padding-box' as const } : {}),
     ...(gradient.band ? { backgroundSize: `100% ${gradient.band.height}px`, backgroundPosition: gradient.band.edge, backgroundRepeat: 'no-repeat' as const } : {}) };
 }
 
@@ -58,8 +70,9 @@ export function happierMaterialGradient(gradient: HappierSurfaceGradient | null 
 }
 
 /** An inner control chooses ink over glass, while the same solid surface keeps its exact authored fill. */
-export function happierMaterialInnerBackgroundColor(baseColor: string, translucentColor: string, role: HappierMaterialRole, web: boolean): string {
-  if (!web || baseColor === 'transparent' || /^(?:rgba\(|hsla\(|#[\da-f]{8}$)/iu.test(baseColor)) return baseColor;
+export function happierMaterialInnerBackgroundColor(baseColor: string, translucentColor: string, role: HappierMaterialRole, web: boolean, authoredTranslucent?: boolean): string {
+  // A host that resolved a theme token can supply its actual alpha instead of the syntax hint.
+  if (!web || baseColor === 'transparent' || (authoredTranslucent ?? /^(?:rgba\(|hsla\(|#[\da-f]{8}$)/iu.test(baseColor))) return baseColor;
   const prefix = `--happier-glass-${role}-nested-`;
   return `var(${prefix}inner-background-color, color-mix(in srgb, ${baseColor} var(${prefix}opacity, 100%), ${translucentColor}))`;
 }

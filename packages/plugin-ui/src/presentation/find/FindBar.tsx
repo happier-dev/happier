@@ -12,6 +12,7 @@ import { HappierMaterialSurface, type HappierMaterialSurfaceRender } from '../la
 import type { HappierSurfaceGradient } from '../layout/material.js';
 import type { HappierFocusable, HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 import type { FindCapabilities, FindOptions, FindStatus } from './findTypes.js';
+import { HAPPIER_FIND_BAR_HOST } from './findBarHost.js';
 
 /**
  * The ONE Find bar (plan §4.2, Find lab `ffind`): what every in-surface Find draws — chat, terminal,
@@ -176,7 +177,8 @@ export type HappierFindBarProps = Readonly<{
   gradient?: HappierSurfaceGradient | null;
   /** Core binds its incumbent material owner; standalone plugins consume their presentation host. */
   renderMaterialSurface?: HappierMaterialSurfaceRender;
-  host: HappierFindBarHost;
+  /** Omit to use the mounted environment's native text, input, glyph and spinner adapters. */
+  host?: HappierFindBarHost;
   /**
    * A hit area the host asks for where a finger is the pointer (44/48). The bar and its buttons keep their
    * drawn sizes; each control's hit area reaches it into the room around it (DESIGN.md → touch targets).
@@ -218,11 +220,13 @@ export const HAPPIER_FIND_BAR_METRICS = Object.freeze({
     /** Wide enough that the searching note and its Stop read as one line (Find lab `.fd-barnote`). */
     noteMaxWidthPx: 440,
     /**
-     * Everything at its smallest: inset, glyph, the shrunken field, count, two dividers, five buttons. A
-     * span narrower than this (a split terminal leaf, a slim review pane) draws the compact capsule: no
-     * leading glyph or dividers, a tighter count and a narrower field floor, so it fits a ~265 px span.
+     * The full capsule's natural width: inset, glyph, the field at `fieldWidthPx`, count, two dividers and
+     * five buttons. Below it the field would shrink while every control kept its size, so a narrower span
+     * (a docked terminal, a split leaf, a slim review pane) draws the compact capsule instead: no leading
+     * glyph or dividers, a tighter count, and match case / regex folded into the phone's one options
+     * disclosure, so the query keeps its room down to a ~240 px span.
      */
-    compactBelowPx: 326,
+    compactBelowPx: 436,
   }),
   keyboardSeated: Object.freeze({
     paddingVerticalPx: 6,
@@ -257,7 +261,12 @@ type CountSlot = Readonly<{
  * window, the terminal's kept scrollback, unreadable pages and a search still running say what they
  * found so far, and the note under the bar says why that is not everything.
  */
-export function resolveHappierFindBarCount(status: FindStatus, labels: HappierFindBarLabels): CountSlot | null {
+export function resolveHappierFindBarCount(
+  status: FindStatus,
+  labels: HappierFindBarLabels,
+  /** The seated phone bar leaves "· N files" to the file headers, so the query keeps the field. */
+  options: Readonly<{ files?: boolean }> = {},
+): CountSlot | null {
   switch (status.kind) {
     case 'idle':
       return null;
@@ -279,7 +288,7 @@ export function resolveHappierFindBarCount(status: FindStatus, labels: HappierFi
           : { text: labels.noneFound, sub: null, tone: 'secondary', busy: false };
       }
       const parts: string[] = [];
-      if (typeof status.files === 'number' && status.files > 1) parts.push(`· ${labels.files(status.files)}`);
+      if (options.files !== false && typeof status.files === 'number' && status.files > 1) parts.push(`· ${labels.files(status.files)}`);
       if (status.coverage === 'loaded' || status.coverage === 'olderRemaining') parts.push(labels.loaded);
       return {
         text: labels.count(status.current, status.total),
@@ -303,11 +312,13 @@ function isComposing(event: HappierFindBarKeyEvent): boolean {
 export function HappierFindBar(props: HappierFindBarProps) {
   const seated = props.presentation === 'keyboardSeated';
   const hitTarget = props.minimumTargetSize;
-  const { colors, labels, host } = props;
-  const count = resolveHappierFindBarCount(props.status, labels);
+  const { colors, labels } = props;
+  const host = props.host ?? HAPPIER_FIND_BAR_HOST;
+  const count = resolveHappierFindBarCount(props.status, labels, { files: !seated });
   const stepEnabled = canStep(props.status);
   const searching = props.status.kind === 'searching';
   const showStop = searching && props.capabilities.stop;
+  const optionsActive = props.options.matchCase || (props.capabilities.regex && props.options.regex);
   // The phone's match options stay folded until asked for.
   const [optionsOpen, setOptionsOpen] = useState(false);
   // The inline span the surface gives the bar (it spans the pane, so the capsule can right-align and shrink).
@@ -476,7 +487,6 @@ export function HappierFindBar(props: HappierFindBarProps) {
     // Controls on the bar reach half the gap toward each other; the options pills half their column gap.
     const hit: FindBarHit = { target: hitTarget, reach: { left: seatedMetrics.gapPx / 2, right: seatedMetrics.gapPx / 2 } };
     const pillHit: FindBarHit = { target: hitTarget, reach: { left: 4, right: 4 } };
-    const optionsActive = props.options.matchCase || (props.capabilities.regex && props.options.regex);
     return (
       <Animated.View
         accessibilityRole="search"
@@ -612,10 +622,33 @@ export function HappierFindBar(props: HappierFindBarProps) {
             {glyphButton('previous', -1, labels.previous)}
             {glyphButton('next', 1, labels.next)}
             {compact ? null : <Divider color={colors.divider} />}
-            <FindBarToggle text="Aa" label={labels.matchCase} on={props.options.matchCase} size={button} hit={hit} colors={colors} host={host} onPress={() => props.onOptionsChange({ ...props.options, matchCase: !props.options.matchCase })} testID={props.testID ? `${props.testID}.matchCase` : undefined} />
-            {props.capabilities.regex ? (
-              <FindBarToggle text=".*" label={labels.regex} on={props.options.regex} size={button} hit={hit} colors={colors} host={host} onPress={() => props.onOptionsChange({ ...props.options, regex: !props.options.regex })} testID={props.testID ? `${props.testID}.regex` : undefined} />
-            ) : null}
+            {compact ? (
+              // The phone's options disclosure: one quiet Aa, tinted while any option is on.
+              <HappierPressable
+                accessibilityRole="button"
+                accessibilityLabel={labels.options}
+                expanded={optionsOpen}
+                onPress={() => setOptionsOpen((open) => !open)}
+                testID={props.testID ? `${props.testID}.options` : undefined}
+                hitTarget={hit.target}
+                hitReach={hit.reach}
+                style={(state) => buttonStyle({ size: button, radius: inline.buttonRadiusPx, colors, on: optionsActive }, state)}
+              >
+                {(state) => (
+                  <>
+                    <host.Text numberOfLines={1} mono style={{ fontSize: inline.toggleFontSizePx, fontWeight: '600', color: optionsActive ? colors.accent : colors.secondaryText }}>Aa</host.Text>
+                    <FocusRing visible={state.focused} color={colors.focus} radius={inline.buttonRadiusPx} />
+                  </>
+                )}
+              </HappierPressable>
+            ) : (
+              <>
+                <FindBarToggle text="Aa" label={labels.matchCase} on={props.options.matchCase} size={button} hit={hit} colors={colors} host={host} onPress={() => props.onOptionsChange({ ...props.options, matchCase: !props.options.matchCase })} testID={props.testID ? `${props.testID}.matchCase` : undefined} />
+                {props.capabilities.regex ? (
+                  <FindBarToggle text=".*" label={labels.regex} on={props.options.regex} size={button} hit={hit} colors={colors} host={host} onPress={() => props.onOptionsChange({ ...props.options, regex: !props.options.regex })} testID={props.testID ? `${props.testID}.regex` : undefined} />
+                ) : null}
+              </>
+            )}
             <FindBarGlyphButton glyph="close" label={labels.close} size={button} glyphSize={inline.glyphPx} color={colors.secondaryText} onPress={props.onClose} hit={hit} colors={colors} host={host} radius={inline.buttonRadiusPx} testID={props.testID ? `${props.testID}.close` : undefined} />
           </View>
         )}
@@ -627,6 +660,20 @@ export function HappierFindBar(props: HappierFindBarProps) {
       >
         <View style={{ width: inline.fieldWidthPx, flexShrink: 1, minWidth: compact ? inline.compactFieldMinWidthPx : inline.fieldMinWidthPx, flexDirection: 'row', alignItems: 'center' }}>{input}</View>
       </HappierSearchFieldBox>
+      {compact && optionsOpen ? (
+        // The folded options as the phone's pills, on their own floating plane under the capsule.
+        <HappierMaterialSurface materialRole="floating" finishRole="floating" gradient={props.gradient}
+          renderMaterialSurface={props.renderMaterialSurface} testID={props.testID ? `${props.testID}.optionsRow` : undefined}
+          style={[{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 6, maxWidth: '100%', paddingHorizontal: 6,
+            borderRadius: inline.radiusPx, backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ring }, props.elevation ?? null] as HappierStyleProp}>
+          <FindBarOptionPill glyph="Aa" text={labels.matchCase} label={labels.matchCase} on={props.options.matchCase} minHeight={barHeight} hit={hit} colors={colors} host={host}
+            onPress={() => props.onOptionsChange({ ...props.options, matchCase: !props.options.matchCase })} testID={props.testID ? `${props.testID}.matchCase` : undefined} />
+          {props.capabilities.regex ? (
+            <FindBarOptionPill glyph=".*" text={labels.regexShort} label={labels.regex} on={props.options.regex} minHeight={barHeight} hit={hit} colors={colors} host={host}
+              onPress={() => props.onOptionsChange({ ...props.options, regex: !props.options.regex })} testID={props.testID ? `${props.testID}.regex` : undefined} />
+          ) : null}
+        </HappierMaterialSurface>
+      ) : null}
       {note}
     </Animated.View>
   );
@@ -782,6 +829,10 @@ function FindBarOptionPill(props: Readonly<{
   );
 }
 
+/** The note's block padding: the free space its link's hit area may take above and below the line. */
+const NOTE_PADDING_SEATED_PX = 6;
+const NOTE_PADDING_INLINE_PX = 7;
+
 function FindBarNote(props: Readonly<{
   note: HappierFindBarNote | null;
   link: Readonly<{ label: string; onPress: () => void; testID?: string }> | null;
@@ -801,7 +852,7 @@ function FindBarNote(props: Readonly<{
     alignItems: 'center',
     gap: 7,
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: NOTE_PADDING_SEATED_PX,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.ring,
   } : {
@@ -809,7 +860,7 @@ function FindBarNote(props: Readonly<{
     alignItems: 'flex-start',
     gap: 7,
     maxWidth: HAPPIER_FIND_BAR_METRICS.inline.noteMaxWidthPx,
-    paddingVertical: 7,
+    paddingVertical: NOTE_PADDING_INLINE_PX,
     paddingHorizontal: 10,
     borderRadius: 9,
     backgroundColor: colors.surface,
@@ -828,6 +879,8 @@ function FindBarNote(props: Readonly<{
           hoverColor={colors.accent}
           focusColor={colors.focus}
           minimumTargetSize={props.minimumTargetSize}
+          // Past the note's own padding the field above or below is the neighbour.
+          verticalReach={props.seated ? NOTE_PADDING_SEATED_PX : NOTE_PADDING_INLINE_PX}
           note={props.note ? { text: props.note.text, style: { flexShrink: 1, fontSize: 12, lineHeight: 16, color: colors.secondaryText } } : undefined}
         />
       ) : props.note ? <host.Text style={{ flexShrink: 1, fontSize: 12, lineHeight: 16, color: colors.secondaryText }}>{props.note.text}</host.Text> : null}

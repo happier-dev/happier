@@ -66,7 +66,7 @@ export function resolveHappierImagePixels(size: HappierImageSize | undefined, pi
 /** One neutral textual fallback; manifest projection remains the brand owner. */
 export function resolveHappierBrandFallback(displayName: string): string {
   const value = displayName.trim();
-  return (takeLeadingGraphemes(value, 1) || '?').toLocaleUpperCase();
+  return takeLeadingGraphemes(value.toLocaleUpperCase(), 1) || '?';
 }
 
 /** Preserve two visible graphemes when the runtime can segment them exactly. */
@@ -147,7 +147,7 @@ export function HappierImage(props: Readonly<{
       }}
     >
       <HappierText {...(props.brandMark
-        ? { textScale: 1, style: { color: props.theme.colors.text, fontSize: pixels * 0.75, lineHeight: pixels, fontWeight: '600', textAlign: 'center' } }
+        ? { textScale: 1, style: { color: props.theme.colors.secondaryText, fontSize: pixels * 0.75, lineHeight: pixels, fontWeight: '600', textAlign: 'center' } }
         : { tone: 'secondary' })}
       >
         {resolveHappierImageFallback(props.fallback)}

@@ -194,10 +194,32 @@ function reachOf(reach: HappierHitReach | undefined, side: keyof HappierHitInset
 }
 
 /**
+ * One axis of the hit area: the deficit is split evenly, except that a side bounded below its half cannot
+ * give it, and the opposite side takes the share it cannot use up to the room that side DECLARED. A side left
+ * open is never leaned on: nothing described what lies there (a clipping edge, a neighbour).
+ */
+function resolveAxisInsets(deficit: number, startReach: number, endReach: number): readonly [number, number] {
+  const half = deficit / 2;
+  let start = Math.min(half, startReach);
+  let end = Math.min(half, endReach);
+  let missing = deficit - start - end;
+  if (missing > 0) {
+    const declaredRoom = (reach: number, got: number) => (Number.isFinite(reach) ? Math.max(0, reach - got) : 0);
+    const toStart = Math.min(missing, declaredRoom(startReach, start));
+    start += toStart;
+    missing -= toStart;
+    end += Math.min(missing, declaredRoom(endReach, end));
+  }
+  return [start, end];
+}
+
+/**
  * The one hit-area policy: how far beyond a control's DRAWN box its hit area extends so the area
- * reaches `target`, centred on the control and never past the reach it was given. The drawn box and
- * its layout never grow; neighbours that each reach half their gap meet without overlapping. An
- * unknown drawn dimension extends nothing on that axis. `undefined` when nothing extends.
+ * reaches `target`, centred on the control and never past the reach it was given; where one side's reach
+ * is smaller than its half, the opposite side's declared reach takes what that side could not
+ * ({@link resolveAxisInsets}). The drawn box and its layout never grow; neighbours that each reach half
+ * their gap meet without overlapping. An unknown drawn dimension extends nothing on that axis.
+ * `undefined` when nothing extends.
  */
 export function resolveHappierHitInsets(input: Readonly<{
   width?: number;
@@ -208,15 +230,10 @@ export function resolveHappierHitInsets(input: Readonly<{
   const { target } = input;
   if (target === undefined || !Number.isFinite(target)) return undefined;
   const deficit = (drawn: number | undefined) => (
-    typeof drawn === 'number' && Number.isFinite(drawn) ? Math.max(0, (target - drawn) / 2) : 0
+    typeof drawn === 'number' && Number.isFinite(drawn) ? Math.max(0, target - drawn) : 0
   );
-  const x = deficit(input.width);
-  const y = deficit(input.height);
-  const insets = {
-    top: Math.min(y, reachOf(input.reach, 'top')),
-    bottom: Math.min(y, reachOf(input.reach, 'bottom')),
-    left: Math.min(x, reachOf(input.reach, 'left')),
-    right: Math.min(x, reachOf(input.reach, 'right')),
-  };
+  const [top, bottom] = resolveAxisInsets(deficit(input.height), reachOf(input.reach, 'top'), reachOf(input.reach, 'bottom'));
+  const [left, right] = resolveAxisInsets(deficit(input.width), reachOf(input.reach, 'left'), reachOf(input.reach, 'right'));
+  const insets = { top, bottom, left, right };
   return insets.top + insets.bottom + insets.left + insets.right > 0 ? insets : undefined;
 }

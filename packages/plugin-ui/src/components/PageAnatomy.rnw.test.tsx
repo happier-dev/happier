@@ -100,6 +100,11 @@ describe('plugin page anatomy through the shared page owners', () => {
     { title: 'Advanced', row: 358, detail: 44, titleWidth: 65, icon: false, beneath: false },
     { title: 'Role', row: 340, detail: 150, titleWidth: 32, icon: false, beneath: false },
     { title: 'Advanced', row: 356, detail: 215, titleWidth: 65, icon: true, beneath: true },
+    // A phone row: a Machine name the label column could hold whole, beside "Not shared with you". The
+    // detail moves beneath rather than cutting the name down to the section floor's width.
+    { title: 'NLDW3-5-36-33', row: 358, detail: 125, titleWidth: 150, icon: true, beneath: true },
+    // A long label beside a short value: the label keeps the section floor and the value stays on its line.
+    { title: 'Notify me when a session finishes', row: 358, detail: 30, titleWidth: 280, icon: false, beneath: false },
   ])('fits page detail using the label and row chrome ($row/$detail/$title)', ({ title, row: rowWidth, detail: detailWidth, titleWidth, icon, beneath }) => {
     const value = 'Service identity and diagnostics';
     const mount = mountPage(<PublicUi.ItemGroup title="Account">
@@ -341,6 +346,66 @@ describe('plugin page anatomy through the shared page owners', () => {
     expect(published).toEqual(['wilson@test.local']);
     mount.unmount();
     expect(published).toEqual(['wilson@test.local', undefined]);
+  });
+
+  it('keeps an entity header whole in the page under chrome that shows the title, with the host controls in its row', () => {
+    const published: Array<string | undefined> = [];
+    const placements: Array<string | undefined> = [];
+    const mount = mountPage(
+      <PageHeader
+        title="forge-qa-failing"
+        leading={<View testID="mark" />}
+        meta={[{ key: 'run', text: '#9' }]}
+        actions={<button data-testid="fix">Fix in a session</button>}
+        testID="header"
+      />,
+      {
+        pageChrome: {
+          showsTitle: true,
+          publishTitle: (title: string | undefined) => { published.push(title); },
+          // A host hoists ordinary actions into its navigation; a page placement stays in the header row.
+          renderNavigationActions: (actions: ReactNode, placement?: 'navigation' | 'page') => {
+            placements.push(placement);
+            return placement === 'page'
+              ? <>{actions}<button data-testid="host-hide">Hide</button></>
+              : <div data-testid="nav-actions">{actions}</div>;
+          },
+        },
+      },
+    );
+    const header = mount.container.querySelector('[data-testid="header"]')!;
+    // The mark never stands without its title: the identity, its facts and its actions stay together.
+    expect(textOf(header.querySelector('[role="heading"]'))).toBe('forge-qa-failing');
+    expect(header.querySelector('[data-testid="fix"]')).not.toBeNull();
+    expect(mount.container.querySelector('[data-testid="nav-actions"]')).toBeNull();
+    // The host's own controls still join the entity's row.
+    expect(header.querySelector('[data-testid="host-hide"]')).not.toBeNull();
+    expect(new Set(placements)).toEqual(new Set(['page']));
+    // The chrome keeps the destination's own name rather than repeating the entity.
+    expect(published).toEqual([]);
+    mount.unmount();
+  });
+
+  it('gives an entity header the host page controls (main-column Hide) beside the desktop title', () => {
+    const mount = mountPage(
+      <PageHeader
+        title="forge-qa-failing"
+        leading={<View testID="mark" />}
+        actions={<button data-testid="fix">Fix in a session</button>}
+        testID="header"
+      />,
+      {
+        pageChrome: {
+          showsTitle: false,
+          renderNavigationActions: (actions: ReactNode) => <>{actions}<button data-testid="host-hide">Hide</button></>,
+        },
+      },
+    );
+    const header = mount.container.querySelector('[data-testid="header"]')!;
+    expect(header.querySelector('[data-testid="fix"]')).not.toBeNull();
+    expect(header.querySelector('[data-testid="host-hide"]')).not.toBeNull();
+    expect(mount.container.querySelectorAll('[data-testid="host-hide"]')).toHaveLength(1);
+    mount.unmount();
   });
 
   it('places host page actions beside the desktop title even when the plugin declares no actions', () => {

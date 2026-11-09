@@ -18,11 +18,20 @@ import { HappierSpinner, iconMatchedSpinnerSize } from '../presentation/feedback
 import { HappierText } from '../presentation/text/Text.js';
 import { HAPPIER_ICON_BUTTON_SIZE, HAPPIER_ICON_BUTTON_WELL_SIZE, resolveHappierIconButtonChrome } from '../presentation/interaction/iconButtonChrome.js';
 import { PluginUiLeadingGlyphInkContext } from './Icon.js';
+
+/** A phone state's action fills its column; set by the shared state owner, never a public Button prop. */
+export const PluginUiButtonFillContext = createContext(false);
 /**
  * A state's action in a container that never owns its page's primary (the host's `stateActions: 'quiet'`): a
  * primary Button there draws quiet. Set by the shared state owner around its action slots, never a public prop.
  */
 export const PluginUiQuietStateActionContext = createContext(false);
+/**
+ * A sized state's action (a card, a pane): an author's Button there draws at the state action size the shared
+ * state owner gives its own actions, so a plugin's empty state reads like the host's beside it. Set by the state
+ * owner around its action slot, never a public prop.
+ */
+export const PluginUiStateActionSizeContext = createContext<ButtonSize | null>(null);
 import {
   type PluginUiFocusTarget,
   usePluginUiFocusTargetBindingInternal,
@@ -69,6 +78,10 @@ type ButtonCommonProps = Readonly<{
   busy?: boolean;
   /** Leading glyph. Sized and tinted by the caller. */
   icon?: ReactNode;
+  /** The side this button shares with a Menu's caret in a split button (Fix | ⌄). */
+  joinedEdge?: 'start' | 'end';
+  /** The label stays on one line and ends in "…" where the row has no room (a phone's action band). */
+  singleLine?: boolean;
   /** Logical focus target transferred by the mounted host after author state changes. */
   focusTarget?: PluginUiFocusTarget;
   testID?: string;
@@ -93,8 +106,6 @@ type ButtonWithExplicitAccessibleNameProps = ButtonCommonProps & Readonly<{
 
 export type ButtonProps = ButtonWithVisibleTitleProps | ButtonWithExplicitAccessibleNameProps;
 
-const BUTTON_HIT_SLOP = 8;
-
 function requireAccessibleButtonName(
   accessibilityLabel: string | undefined,
   visibleLabel: string | undefined,
@@ -115,6 +126,8 @@ export function Button({
   disabled,
   busy,
   icon,
+  joinedEdge,
+  singleLine,
   accessibilityLabel,
   focusTarget,
   testID,
@@ -131,7 +144,8 @@ export function Button({
   const accessibleName = requireAccessibleButtonName(resolvedAccessibilityLabel, label);
   const focusBinding = usePluginUiFocusTargetBindingInternal(focusTarget);
   const quietState = useContext(PluginUiQuietStateActionContext);
-  const face = useButtonFace(quietState && variant === 'primary' ? 'secondary' : variant, size, disabled === true);
+  const stateActionSize = useContext(PluginUiStateActionSizeContext);
+  const face = useButtonFace(quietState && variant === 'primary' ? 'secondary' : variant, stateActionSize ?? size, disabled === true, joinedEdge);
 
   return (
     <HappierPressable
@@ -139,13 +153,13 @@ export function Button({
       accessibilityLabel={accessibleName}
       disabled={disabled}
       busy={busy}
-      hitSlop={BUTTON_HIT_SLOP}
       onPress={onPress}
       controlRef={focusBinding}
       style={face.style}
     >
       {(state) => face.renderContent(state, {
         icon,
+        ...(singleLine === true ? { singleLine: true } : {}),
         children: children ?? label,
         ...(testID ? { spinnerTestID: `${testID}-spinner` } : {}),
       })}
@@ -183,17 +197,19 @@ Button.happierPageOperation = (
  * (a `Popover` with `triggerAppearance="primary"`), so a primary that opens a choice is the same
  * button as one that acts — one face, never a second button style.
  */
-export function useButtonFace(variant: ButtonVariant, size: ButtonSize, disabled: boolean) {
+export function useButtonFace(variant: ButtonVariant, size: ButtonSize, disabled: boolean, joinedEdge?: 'start' | 'end') {
   const theme = usePluginTheme();
   const material = useHappierButtonMaterial(theme);
   const reducedMotion = useOptionalHappierUiAccessibility()?.reducedMotion ?? false;
   const palette = useOptionalHappierUiPalette(theme);
   const textEdge = useContext(HappierTextActionEdgeContext);
+  const fill = useContext(PluginUiButtonFillContext);
   const { foreground } = resolveHappierButtonChrome({ theme, variant, disabled, focused: false, ...material });
   const style = (state: HappierPressableStyleState): HappierPortableStyle => {
     const chrome = resolveHappierButtonChrome({
       theme, variant, size, disabled: state.disabled, focused: state.focused,
       pressed: state.pressed, gloss: palette?.accentGloss, ...material,
+      ...(joinedEdge === undefined ? {} : { joinedEdge }),
     });
     return {
       ...chrome.style,
@@ -201,6 +217,7 @@ export function useButtonFace(variant: ButtonVariant, size: ButtonSize, disabled
       // instead of overflowing the card or the pane edge.
       flexShrink: 1,
       maxWidth: '100%',
+      ...(fill ? { alignSelf: 'stretch', width: '100%' } : {}),
       // A button with no resting fill on a text edge puts its label on that edge, keeping its box (the hit area)
       // the same size. On its own line under a section's text the box moves into the leading gutter by the padding
       // it gave up; the offset is visual only (not a negative margin): the section measures this button's box to
@@ -222,7 +239,7 @@ export function useButtonFace(variant: ButtonVariant, size: ButtonSize, disabled
   };
   const renderContent = (
     state: HappierPressableStyleState,
-    content: Readonly<{ icon?: ReactNode; children: ReactNode; spinnerTestID?: string }>,
+    content: Readonly<{ icon?: ReactNode; children: ReactNode; spinnerTestID?: string; singleLine?: boolean }>,
   ): ReactElement => (
     <>
       <HappierSurfaceGradientLayer gradient={resolveHappierButtonChrome({ theme, variant, disabled: state.disabled, focused: state.focused, pressed: state.pressed }).gradient} borderRadius={theme.radii.control} />
@@ -243,7 +260,7 @@ export function useButtonFace(variant: ButtonVariant, size: ButtonSize, disabled
       */}
       <View style={state.busy ? { opacity: 0, flexShrink: 1 } : { flexShrink: 1 }}>
         {typeof content.children === 'string' || content.children === undefined ? (
-          <HappierText variant="label" style={{ color: foreground, textAlign: 'center' }}>
+          <HappierText variant="label" {...(content.singleLine === true ? { numberOfLines: 1 } : {})} style={{ color: foreground, textAlign: 'center' }}>
             {content.children}
           </HappierText>
         ) : content.children}
@@ -303,7 +320,6 @@ export function IconButton({
       disabled={disabled}
       busy={busy}
       selected={selected}
-      hitSlop={8}
       testID={testID}
       onPress={onPress}
       controlRef={focusBinding}

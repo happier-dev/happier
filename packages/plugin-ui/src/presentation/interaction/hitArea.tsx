@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Platform, View, type LayoutChangeEvent } from 'react-native';
+import { Platform, View } from 'react-native';
+
+import type { HappierLayoutChangeEvent } from '../portableTypes.js';
 
 import {
   resolveHappierHitInsets,
@@ -83,6 +85,12 @@ function sameHitInsets(a: HappierHitInsets | undefined, b: HappierHitInsets | un
  * the web frame adds the host's border widths because it is offset from the padding edge. The caller
  * renders `frame` as the pressable's first child and forwards `hitSlop` and `onLayout`.
  *
+ * Nothing between the pressable and the space its hit area reaches into may clip: not the pressable
+ * itself, not a box that paints a few controls together (a compact stepper, a tile frame). A clipping
+ * edge cuts the reach off on the web and on native alike (a view outside its clipping parent is never
+ * hit-tested). Rounded paint that needs clipping goes on a noninteractive inner or backing view; a real
+ * clipping edge (a scroll viewport, a card) bounds the reach through `hitReach` instead.
+ *
  * `HappierPressable` uses this; a control built on a raw platform pressable (a ref-forwarding chip,
  * the native switch) uses it directly rather than keeping a second target policy.
  */
@@ -95,7 +103,7 @@ export function useHappierHitArea(input: Readonly<{
   hitSlop?: HitSlop;
 }>): Readonly<{
   hitSlop: HitSlop | undefined;
-  onLayout: ((event: LayoutChangeEvent) => void) | undefined;
+  onLayout: ((event: HappierLayoutChangeEvent) => void) | undefined;
   frame: ReactNode;
 }> {
   const target = resolveHappierInteractiveTargetFloor(input.hitTarget, useHappierTouchTargetSize());
@@ -112,7 +120,7 @@ export function useHappierHitArea(input: Readonly<{
   insetsRef.current = insets;
   const policyRef = useRef({ target, reach: input.hitReach });
   policyRef.current = { target, reach: input.hitReach };
-  const onLayout = useCallback((event: LayoutChangeEvent) => {
+  const onLayout = useCallback((event: HappierLayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
     if (sameHitInsets(resolveHappierHitInsets({ width, height, ...policyRef.current }), insetsRef.current)) return;
     setMeasured({ width, height });

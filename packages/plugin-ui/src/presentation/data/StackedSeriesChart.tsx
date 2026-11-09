@@ -113,6 +113,11 @@ export type StackedSeriesChartProps = Readonly<{
   /** The caller's reading of a numeric x (a time bucket as its date) for exact values and Details. */
   coordinateFormatter?: (x: number) => string;
   onSelect?: (bucketId: string) => void;
+  /**
+   * A picture, not a reading: the caller states the values (a row's sparkline beside its figure). The chart draws its ink
+   * only, with no per-bucket hit layer, selection, readout or accessible name, and is hidden from assistive technology.
+   */
+  decorative?: boolean;
   /** Host overlay adapter; the chart retains selection and exact values. */
   renderBucket?: (bucket: HappierSeriesBucket, visual: ReactNode, select: () => void) => ReactNode;
   /** Incumbent horizontal frame adapter, without another scrolling owner. */
@@ -137,6 +142,12 @@ export type StackedSeriesPlot = Readonly<{
   buckets: readonly HappierSeriesBucket[];
   /** One x per bucket, in the plot's own coordinates. */
   centers: readonly number[];
+  /** Each series' drawn colour, by series index, so a lens keys rows with the ink on the plot. */
+  seriesColors: readonly string[];
+  /** The chart's own value reading (caller units and precision). */
+  format: (value: number) => string;
+  /** The chart's selected bucket (keyboard focus or a press), where a lens reads without a pointer. */
+  selectedBucketId: string | null;
 }>;
 
 function HatchPattern(props: Readonly<{ id: string; color: string }>) {
@@ -371,7 +382,7 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
     const values = bucket.values.map(entry => `${entry.label} ${entry.value === null ? unknown : format(entry.value)}`).join(', ');
     return `${range}; ${asOf(describeHappierSeriesCoordinate(bucket, reading))}${bucket.annotation ? ` · ${bucket.annotation}` : ''}: ${values}`;
   };
-  const exact = latest ? '' : geometry.buckets.map(describe).join('; ');
+  const exact = latest || props.decorative ? '' : geometry.buckets.map(describe).join('; ');
   const reference = props.reference && Number.isFinite(props.reference.value) ? props.reference : null;
   const shading = new Map((props.bucketShading ?? []).map(entry => [entry.bucketId, entry]));
   const barRanges = props.variant === 'bar' ? (props.barRanges ?? []).filter(range => Number.isFinite(range.lower)
@@ -591,7 +602,7 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
       {props.renderInk ? props.renderInk(ink, reducedMotion) : ink}
     </View>}
     <View style={{ height, flexDirection: 'row', gap: props.variant === 'bar' ? barGap : 0, paddingHorizontal: props.variant === 'bar' ? props.barLeadingInset : undefined }}>
-      {denseLine ? historyControl : geometry.buckets.map((bucket, index) => {
+      {props.decorative ? null : denseLine ? historyControl : geometry.buckets.map((bucket, index) => {
         const shade = shading.get(bucket.id);
         const range = ranges.get(bucket.id);
         const visual = props.variant !== 'bar' ? <View style={{ flex: 1 }} /> : <View style={{ height, width: '100%', position: 'relative' }}>
@@ -648,7 +659,8 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
     </View>
     {props.renderPlotOverlay && plotWidth > 0 && geometry.buckets.length ? <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, width: plotWidth, height }}>
       {props.renderPlotOverlay({ width: plotWidth, height, buckets: geometry.buckets, centers: geometry.buckets.map((_, index) => props.variant === 'bar'
-        ? (props.barLeadingInset ?? 0) + index * (barSlotWidth + barGap) + barSlotWidth / 2 : geometry.xAt(index)) })}
+        ? (props.barLeadingInset ?? 0) + index * (barSlotWidth + barGap) + barSlotWidth / 2 : geometry.xAt(index)),
+        seriesColors: props.series.map((_, index) => color(index)), format, selectedBucketId: selectedId })}
     </View> : null}
   </View>;
   const axisTicks = resolveAxisTicks(props.axisTicks, geometry.buckets, props.showPointLabels === true);
@@ -689,9 +701,10 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
     {plot}
     {showAxis && geometry.buckets.length ? axis : null}
   </View>;
-  return <View testID={props.testID} accessible={nativeInline ? true : undefined}
-    accessibilityRole={threshold || props.mirrored || summarised ? 'image' : undefined}
-    accessibilityLabel={`${props.label}${latest ? imageName(latest) : exact ? `: ${exact}` : ''}${threshold ? `; ${threshold.label} ${format(threshold.value)}` : ''}${reference ? `; ${reference.label} ${reference.value}` : ''}${barRanges.map(range => `; ${range.label} ${range.lower}–${range.upper}`).join('')}`}
+  return <View testID={props.testID} accessible={nativeInline && !props.decorative ? true : undefined}
+    aria-hidden={props.decorative} importantForAccessibility={props.decorative ? 'no-hide-descendants' : undefined}
+    accessibilityRole={!props.decorative && (threshold || props.mirrored || summarised) ? 'image' : undefined}
+    accessibilityLabel={props.decorative ? undefined : `${props.label}${latest ? imageName(latest) : exact ? `: ${exact}` : ''}${threshold ? `; ${threshold.label} ${format(threshold.value)}` : ''}${reference ? `; ${reference.label} ${reference.value}` : ''}${barRanges.map(range => `; ${range.label} ${range.lower}–${range.upper}`).join('')}`}
     onLayout={(event: HappierLayoutChangeEvent) => {
       const visibleWidth = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width);
       if (visibleWidth !== null) setWidth(visibleWidth);

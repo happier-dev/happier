@@ -50,6 +50,21 @@ function PublicControls({ store }: { store: rootEntry.ListMultiSelectionStore })
 }
 
 describe('curated plugin-ui public API', () => {
+  it('formats measured durations through the public author entry with canonical locale and invalid-input behavior', async () => {
+    const { formatUsageDurationCompact: canonical } = await import('@happier-dev/protocol/usage/usageFormatting');
+    const format = chartEntry.formatUsageDurationCompact;
+    expect(format).toBeTypeOf('function');
+    expect(format(40_000, 'en-US')).toBe('40s');
+    expect(format(3_570_000, 'en-US')).toBe('1h');
+    expect(format(11_520_000, 'en-US')).toBe('3h 12m');
+    expect(format(40_000, 'fr-FR')).toBe(new Intl.NumberFormat('fr-FR', {
+      style: 'unit', unit: 'second', unitDisplay: 'narrow',
+    }).format(40));
+    for (const value of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(format(value, 'en-US')).toBe(canonical(value, 'en-US'));
+    }
+  });
+
   it('renders the complete public chart author fixture and preserves keyboard selection and exact accessible facts', async () => {
     expect(chartEntry).toEqual(expect.objectContaining({
       Treemap: expect.any(Function), Sunburst: expect.any(Function),
@@ -192,9 +207,12 @@ describe('curated plugin-ui public API', () => {
     }
 
     for (const entry of [rootEntry, componentsEntry]) {
+      expect(entry).not.toHaveProperty('PluginUiButtonFillContext');
+      expect(entry).not.toHaveProperty('useButtonFace');
       expect(entry).toEqual(expect.objectContaining({
+        Button: expect.any(Function), IconButton: expect.any(Function),
         Collection: expect.any(Function), BrandMark: expect.any(Function), DetailsPaneFooter: expect.any(Function),
-        Step: expect.any(Function), Tabs: expect.any(Function),
+        Step: expect.any(Function), Tabs: expect.any(Function), InlineCode: expect.any(Function),
         createListMultiSelectionStore: expect.any(Function), useListMultiSelectionController: expect.any(Function),
         ListMultiSelectionProvider: expect.any(Function), useOptionalListMultiSelectionStore: expect.any(Function),
         useListMultiSelectionStoreSnapshot: expect.any(Function), useListMultiSelectionSnapshot: expect.any(Function),

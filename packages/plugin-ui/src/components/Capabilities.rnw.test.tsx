@@ -5,10 +5,38 @@ import { CapabilityAddExample, CapabilityKitExample } from '../../fixtures/exter
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
+import { CapabilityListingSections, type CapabilityListingFacts } from './CapabilityListingSections.js';
 
 const byId = (container: HTMLElement, id: string) => container.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 
 describe('external author capability kit', () => {
+  it('falls back to an openable website, retains a licence alone, and omits missing listing sections', async () => {
+    const context = createSurfaceContext();
+    const openExternalLink = vi.fn(async () => undefined);
+    const hostApi = createHostApiStub(context, { openExternalLink });
+    const tree = (facts: CapabilityListingFacts) => (
+      <PluginUiProvider hostApi={hostApi} context={context}>
+        <CapabilityListingSections testID="listing" facts={facts} />
+      </PluginUiProvider>
+    );
+    const mounted = mountThroughReactNativeWeb(tree({
+      license: 'MIT', links: { repository: 'javascript:alert(1)', website: 'https://www.example.com/docs' },
+    }));
+    try {
+      const link = byId(mounted.container, 'listing.source.link')!;
+      expect(link.textContent).toContain('example.com/docs');
+      expect(link.textContent).toContain('MIT');
+      await act(async () => link.click());
+      expect(openExternalLink).toHaveBeenCalledWith('https://www.example.com/docs');
+      await mounted.render(tree({ license: 'MIT' }));
+      expect(byId(mounted.container, 'listing.source')?.textContent).toContain('MIT');
+      expect(byId(mounted.container, 'listing.source.link')).toBeNull();
+      await mounted.render(tree({}));
+      expect(byId(mounted.container, 'listing.source')).toBeNull();
+      expect(byId(mounted.container, 'listing.versions')).toBeNull();
+    } finally { mounted.unmount(); }
+  });
+
   it('speaks the most blocking status with its fix, keeps healthy rows quiet, and clears once fixed', () => {
     const onSignIn = vi.fn();
     const context = createSurfaceContext();
@@ -72,8 +100,9 @@ describe('external author capability kit', () => {
   it('lets an author add its own things through the shared Add body: the list, one item\'s details and its install', async () => {
     const onInstall = vi.fn();
     const onClose = vi.fn();
+    const openExternalLink = vi.fn(async () => undefined);
     const context = createSurfaceContext();
-    const mounted = mountThroughReactNativeWeb(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+    const mounted = mountThroughReactNativeWeb(<PluginUiProvider hostApi={createHostApiStub(context, { openExternalLink })} context={context}>
       <CapabilityAddExample onInstall={onInstall} onClose={onClose} />
     </PluginUiProvider>);
     try {
@@ -81,9 +110,19 @@ describe('external author capability kit', () => {
       expect(byId(mounted.container, 'author-add.row.figma')).not.toBeNull();
       await act(async () => byId(mounted.container, 'author-add.row.linear')!.click());
       expect(byId(mounted.container, 'author-add:detail:linear')).not.toBeNull();
+      expect(byId(mounted.container, 'author-add:detail-action')!.contains(byId(mounted.container, 'author-add:primary'))).toBe(true);
+      const versions = byId(mounted.container, 'author-add.listing.linear.versions');
+      expect(versions).not.toBeNull();
+      expect(versions?.textContent).toContain('1.4.0');
+      const source = byId(mounted.container, 'author-add.listing.linear.source')!;
+      expect(source.textContent).toContain('Extension registry');
+      expect(source.textContent).toContain('MIT');
+      await act(async () => byId(mounted.container, 'author-add.listing.linear.source.link')!.click());
+      expect(openExternalLink).toHaveBeenCalledWith('https://github.com/acme/linear-extension.git');
+      expect(onInstall).not.toHaveBeenCalled();
       await act(async () => byId(mounted.container, 'author-add:primary')!.click());
       expect(onInstall).toHaveBeenCalledWith('linear');
-      // Installed and staying: the footer turns to Done.
+      // Installed and staying: the action turns to Done.
       expect(byId(mounted.container, 'author-add:done')).not.toBeNull();
       expect(onClose).not.toHaveBeenCalled();
       await act(async () => byId(mounted.container, 'author-add:done')!.click());

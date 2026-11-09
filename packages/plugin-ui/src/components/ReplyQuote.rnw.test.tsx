@@ -31,4 +31,23 @@ describe('external author reply quotes', () => {
     expect(mounted.container.textContent).toContain('Opened task');
     mounted.unmount();
   });
+
+  it('sets a passage as its own filled box of words alone, without the reply rule or a second source label', () => {
+    const context = createSurfaceContext();
+    const mounted = mountThroughReactNativeWeb(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+      <ReplyQuoteExample />
+    </PluginUiProvider>);
+    const passage = mounted.container.querySelector('[data-testid="author-passage-quote"]') as HTMLElement;
+    const reply = mounted.container.querySelector('[data-testid="author-message-quote"]') as HTMLElement;
+    // An excerpt reads as running words; its paragraph break doesn't spend a line.
+    expect(passage.textContent).toContain('behind the flag first. Then widen it');
+    expect(passage.textContent).not.toContain('Mara');
+    // The same anatomy core's passages use: a fill and a corner instead of the reply's left rule.
+    const box = getComputedStyle(passage);
+    expect(box.backgroundColor).not.toMatch(/^(|transparent|rgba\(0, 0, 0, 0\))$/);
+    expect(parseFloat(box.borderTopLeftRadius)).toBeGreaterThan(0);
+    expect(parseFloat(box.borderLeftWidth || '0')).toBe(0);
+    expect(parseFloat(getComputedStyle(reply).borderLeftWidth)).toBeGreaterThan(0);
+    mounted.unmount();
+  });
 });

@@ -1748,6 +1748,10 @@ function VirtualizedList<Item>(
   const pageScroll = collectionControl?.pageScroll === true;
   const pageTracker = useOptionalPluginUiScrollActivityTracker();
   const pageGeometry = collectionControl?.pageVirtualization;
+  const retainedRowKeys = collectionControl?.retainedRowKeys;
+  const retainedVirtualizerKeys = useMemo(() => (retainedRowKeys === undefined ? undefined
+    : new Set(retainedRowKeys.flatMap(key => visibleSections === undefined ? [key] : [encodeHappierSectionRowCellKey(key)]))),
+  [retainedRowKeys, visibleSections === undefined]);
   const pageSheet = pageScroll ? collectionControl?.pageSheet : undefined;
   const catalogDirectory = pageScroll ? collectionControl?.catalogDirectory : undefined;
   // Rows exist to sit on it: an empty or still-reading list keeps its own empty state on the page.
@@ -1894,6 +1898,16 @@ function VirtualizedList<Item>(
           kind: 'sections',
           sections: virtualizedSections,
           renderSectionHeader: renderVirtualizedSectionHeader,
+          ...(pageGeometry !== undefined && pageSheet !== undefined && catalogDirectory === undefined
+            ? { renderSectionRows: (sectionIndex: number, rows: ReactNode) => (
+                <HappierPageSheet colors={pageSheet.colors} rowDividers={false}>
+                  <View>
+                    {sectionIndex === 0 ? pageSheet.header ?? null : null}
+                    {rows}
+                  </View>
+                </HappierPageSheet>
+              ) }
+            : {}),
         } as const)),
     keyForItem:
       visibleSections === undefined
@@ -1941,6 +1955,7 @@ function VirtualizedList<Item>(
               ? (rows[tabStopIndex]?.key ?? null)
               : encodeHappierSectionRowCellKey(rows[tabStopIndex]?.key ?? '')
         }
+        retainedKeys={retainedVirtualizerKeys}
       />
     ) : pageScroll ? (
       <View

@@ -22,6 +22,10 @@ const ComposerChipPressable = Pressable as React.ComponentType<
 export type HappierComposerChipProps = Readonly<{
   children?: React.ReactNode;
   onPress: (event: HappierGestureResponderEvent) => void;
+  /** Intent signals a host may warm a popover's content on: the chip is about to be used (hover, focus, touch-down). */
+  onPressIn?: () => void;
+  onFocus?: () => void;
+  onHoverIn?: () => void;
   /** Web-only host attributes: the native tooltip and the `data-*` hooks a browser test reads. */
   webAttributes?: Readonly<{ title?: string; dataSet?: Readonly<Record<string, string>> }>;
   disabled?: boolean;
@@ -72,6 +76,9 @@ export const HappierComposerChip = React.forwardRef<unknown, HappierComposerChip
         hitSlop={hitArea.hitSlop}
         onLayout={hitArea.onLayout}
         onPress={props.onPress}
+        onPressIn={props.onPressIn}
+        onFocus={props.onFocus}
+        onHoverIn={props.onHoverIn}
         {...props.webAttributes}
         style={({ pressed }) => props.style?.(pressed)}
       >

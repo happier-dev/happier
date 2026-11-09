@@ -6,7 +6,7 @@
  * mapping from Happier's own owner facts (Sessions, workflow runs, worker updates) onto this
  * presentation. A plugin maps its own facts onto the same fields; the words stay the owner's.
  */
-import type { InboxItemAttentionTypeV1, PluginUiIconTokenV1 } from '@happier-dev/plugin-sdk/ui';
+import type { HappierIconName } from '../content/Icon.js';
 import type { HappierTone } from '../semantics.js';
 
 export type HappierWorkStatusBucket = 'needs_you' | 'working' | 'finished' | 'idle' | 'offline';
@@ -27,11 +27,11 @@ export type HappierWorkStatusPresentation = Readonly<{
   bucket: HappierWorkStatusBucket;
   tone: HappierWorkStatusTone;
   /** C1's admitted classification, independent of the visible status tone. */
-  attentionType: InboxItemAttentionTypeV1 | null;
+  attentionType: 'mention' | 'blocked' | 'decision' | 'approval' | 'update' | null;
   /** The owner's own state word ("Completed", "Waiting for you"); never the bucket label. */
   word: string;
   /** The public semantic icon token, resolved by the shared status renderer. */
-  glyph?: PluginUiIconTokenV1;
+  glyph?: HappierIconName;
 }>;
 
 /** Caller-owned group membership and C1 subject count; unavailable coverage is never zero. */

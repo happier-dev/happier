@@ -22,7 +22,11 @@ function LinkText(props: ComponentProps<ComponentProps<typeof HappierTextLinkBut
   return <HappierText {...props} />;
 }
 
-/** Quiet row metadata; trouble adds colour and a dot, and work may retain one recovery link. */
+/**
+ * Quiet row metadata; trouble adds colour and a dot, and work may retain one recovery link. A run's line can
+ * lead with its command in mono (`yarn lint · Exited with code 1`), and a row whose mark already shows the
+ * state passes `marked` to keep the tone without the dot.
+ */
 export function RowStatusLine(props: RowStatusLineProps): ReactElement {
   const theme = usePluginTheme();
   const typography = useOptionalHappierUiTypography();
@@ -38,7 +42,8 @@ export function RowStatusLine(props: RowStatusLineProps): ReactElement {
     actionGap: theme.spacing.small,
     renderBusy: ({ size }) => <HappierSpinner size={size} color={theme.colors.mutedText} style={{ width: size, height: size }} />,
     renderIndicator: ({ size, color }) => <HappierStatusDot size={size} color={color} />,
-    renderText: ({ text, numberOfLines, style }) => <HappierText tabularNumbers style={{ ...textStyle, ...style }} numberOfLines={numberOfLines}>{text}</HappierText>,
+    renderText: ({ text, numberOfLines, style, mono }) => <HappierText tabularNumbers numberOfLines={numberOfLines}
+      style={{ ...textStyle, ...(mono && theme.typography.code.fontFamily ? { fontFamily: theme.typography.code.fontFamily } : null), ...style }}>{text}</HappierText>,
     renderAction: (action) => <HappierTextLinkButton {...action} Text={LinkText} labelStyle={actionStyle} hoverColor={theme.colors.text} focusColor={theme.colors.accent} />,
   }} />;
 }

@@ -7,6 +7,8 @@ import { Text } from './Text.js';
 export type ExecutableParticipantPickerOption = Readonly<{
   id: string;
   label: string;
+  /** Canonical model/Agent names used only for matching by the host's shared query owner. */
+  searchText?: string;
   subtitle?: string;
   icon?: ReactNode | (() => ReactNode);
   rightAccessory?: ReactNode | (() => ReactNode);

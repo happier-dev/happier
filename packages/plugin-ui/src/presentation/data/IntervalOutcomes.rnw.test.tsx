@@ -6,6 +6,7 @@ import { SURFACE_CONTEXT_THEME_FIXTURE } from '../../../../plugin-sdk/src/ui/sur
 import { HappierUiPlatformProvider } from '../../environment/context.js';
 import { IntervalTimeline, selectIntervalTrackRun, stepIntervalTrackRun } from './IntervalTimeline.js';
 import { OutcomeScatter } from './OutcomeScatter.js';
+import { readHitAreaReach } from '../interaction/hitArea.testSupport.js';
 import { ChartInteractionProvider } from './ChartDatum.js';
 
 const query = (root: HTMLElement, id: string) => root.querySelector<HTMLElement>(`[data-testid="${id}"]`);
@@ -155,6 +156,12 @@ describe('neutral intervals and outcomes', () => {
       expect(query(mount.container, 'lanes-lane-0-track-1')!.querySelector('[data-testid="lanes-interval-c"]')).not.toBeNull();
       expect(mount.container.querySelectorAll('[data-testid^="lanes-lane-1-track-"]')).toHaveLength(1);
       expect(query(mount.container, 'lanes-axis')!.textContent).toBe('00:0003:0006:0010:00');
+      // A run's target covers its whole track and meets the next track halfway across the gap between them.
+      const reach = readHitAreaReach(query(mount.container, 'lanes-select-c')!);
+      expect(reach).not.toBeNull();
+      expect(reach!.top).toBeGreaterThan(0);
+      expect(reach!.bottom).toBe(reach!.top);
+      expect(reach!.left).toBe(0);
       act(() => query(mount.container, 'lanes-select-c')!.click());
       expect(query(mount.container, 'lanes-readout')!.textContent).toContain('Docs');
       act(() => query(mount.container, 'lanes-values-toggle')!.click());

@@ -47,7 +47,7 @@ import { PluginUiIconGlyph, type IconName } from './Icon.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
 import { Spinner } from './Spinner.js';
-import { Button, PluginUiQuietStateActionContext } from './Button.js';
+import { Button, PluginUiButtonFillContext, PluginUiQuietStateActionContext, PluginUiStateActionSizeContext, type ButtonSize } from './Button.js';
 import { HappierSpinner } from '../presentation/feedback/Spinner.js';
 
 const STATE_LOADING_TRANSLATION_KEY = 'happier.plugin-ui.state.loading';
@@ -279,8 +279,12 @@ function EmptyStateView(props: EmptyStateProps): ReactElement {
   const add = props.variant === 'add';
   const page = layout === 'page';
   const size = page ? undefined : stateSize;
+  // A sized state's author action takes the size the state owner gives its own actions (`renderButton`).
+  const sizedAction = size && action !== undefined
+    ? <PluginUiStateActionSizeContext.Provider value={STATE_ACTION_BUTTON_SIZE}>{action}</PluginUiStateActionSizeContext.Provider>
+    : action;
   const state = (
-    <HappierInfoState testID={add || page ? undefined : props.testID} action={action} size={size}>
+    <HappierInfoState testID={add || page ? undefined : props.testID} action={sizedAction} size={size}>
       <HappierInfoTile
         icon={scene ?? (props.icon ? (
           <View style={size ? { marginBottom: HAPPIER_STATE_SIZE_METRICS[size].glyphGapPx } : undefined}>
@@ -506,6 +510,8 @@ const STATE_DEFAULT_GLYPH: Partial<Record<HappierSurfaceStateKind, IconName>> = 
   warning: 'warning',
 };
 const UNSIZED_STATE_GLYPH_PX = 32;
+/** The one size a state's actions draw at, the shared composition's and an author's alike. */
+const STATE_ACTION_BUTTON_SIZE: ButtonSize = 'small';
 const UNSIZED_STATE_GLYPH_GAP_PX = 8;
 
 function SurfaceStateAdapter(authored: SurfaceStateProps & Readonly<{ actionSlot?: ReactNode }>): ReactElement {
@@ -562,16 +568,18 @@ function SurfaceStateAdapterView(authored: SurfaceStateProps & Readonly<{ action
       if (role === 'quiet') return <HappierText testID={testID} tone="muted" style={{ ...textMetrics, textAlign: align === 'start' ? 'auto' : 'center' }}>{children}</HappierText>;
       return <HappierText testID={testID} tone="secondary" tabularNumbers={role === 'live'} style={textMetrics}>{children}</HappierText>;
     },
-    renderButton: ({ action, emphasis, tone, testID }) => (
-      <Button
-        testID={testID}
-        title={action.label}
-        variant={emphasis === 'secondary' ? 'plain' : tone === 'filled' ? 'primary' : 'secondary'}
-        size="small"
-        disabled={action.disabled}
-        busy={action.busy}
-        onPress={action.onPress}
-      />
+    renderButton: ({ action, emphasis, tone, testID, fullWidth }) => (
+      <PluginUiButtonFillContext.Provider value={fullWidth}>
+        <Button
+          testID={testID}
+          title={action.label}
+          variant={emphasis === 'secondary' ? 'plain' : tone === 'filled' ? 'primary' : 'secondary'}
+          size={STATE_ACTION_BUTTON_SIZE}
+          disabled={action.disabled}
+          busy={action.busy}
+          onPress={action.onPress}
+        />
+      </PluginUiButtonFillContext.Provider>
     ),
     renderSpinner: (sizePx) => (
       <HappierSpinner size={sizePx} color={theme.colors.mutedText} animationEnabled={surfaceActivity.active} />
@@ -672,7 +680,6 @@ export function FreshnessLine(props: FreshnessLineProps): ReactElement {
           testID={props.testID ? `${props.testID}-action` : undefined}
           accessibilityRole="button"
           accessibilityLabel={props.action.label}
-          hitSlop={6}
           onPress={props.action.onPress}
           style={{ minHeight: metrics.minHeightPx, justifyContent: 'center', paddingHorizontal: 4 }}
         >

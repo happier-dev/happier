@@ -2,6 +2,7 @@ import type { ReactElement, ReactNode, RefObject } from 'react';
 import { Pressable, View } from 'react-native';
 
 import { HappierBadge } from '../content/Foundation.js';
+import { useHappierHitArea } from '../interaction/hitArea.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 import type { HappierTypeEmphasis, HappierTypeRole } from '../text/typeScale.js';
@@ -41,8 +42,9 @@ export const HAPPIER_COMPOSER_STATUS_BADGE_TYPE: Readonly<Record<HappierComposer
 
 /**
  * The item's rhythm beside the composer's chips (lab `.l12-sb`): 24 high on the row-meta line, an 8/9
- * inset and 6 between mark and words. A quiet item has no inset and sits 4 from its mark. The slop
- * brings a short item up to a comfortable target without inflating a row of plain 11pt status text.
+ * inset and 6 between mark and words. A quiet item has no inset and sits 4 from its mark. Under a
+ * finger the shared hit area reaches the touch target; the drawn item never grows into a row of plain
+ * 11pt status text.
  */
 export const HAPPIER_COMPOSER_STATUS_BADGE_METRICS = Object.freeze({
   paddingTop: 4,
@@ -54,7 +56,6 @@ export const HAPPIER_COMPOSER_STATUS_BADGE_METRICS = Object.freeze({
   caretSize: 11,
   /** A leading mark's box, at the words' line. */
   iconSize: 14,
-  hitSlop: Object.freeze({ top: 10, bottom: 10, left: 6, right: 6 }),
 });
 
 export type HappierComposerStatusBadgeProps = Readonly<{
@@ -97,6 +98,9 @@ const QUIET_STYLE: HappierPortableStyle = { flexShrink: 1, minWidth: 0, gap: HAP
 export function HappierComposerStatusBadge(props: HappierComposerStatusBadgeProps): ReactElement {
   const quiet = props.emphasis === 'quiet';
   const metrics = HAPPIER_COMPOSER_STATUS_BADGE_METRICS;
+  // Content-sized: the shared owner measures the item and reaches its hit area to the finger target
+  // (an invisible frame on the web, which ignores a raw platform `hitSlop`).
+  const hitArea = useHappierHitArea({ restingStyle: () => WRAPPER_STYLE });
   const badge = (
     <HappierBadge
       color={props.inkColor}
@@ -145,10 +149,12 @@ export function HappierComposerStatusBadge(props: HappierComposerStatusBadgeProp
       accessibilityState={props.accessibilityState}
       // React Native Web announces disclosure through the ARIA prop, not `accessibilityState`.
       aria-expanded={props.accessibilityState?.expanded}
-      hitSlop={metrics.hitSlop}
+      hitSlop={hitArea.hitSlop}
+      onLayout={hitArea.onLayout}
       onPress={props.onPress}
       style={({ pressed }) => (pressed ? WRAPPER_PRESSED_STYLE : WRAPPER_STYLE)}
     >
+      {hitArea.frame}
       {badge}
     </Pressable>
   );

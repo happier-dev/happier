@@ -11,6 +11,7 @@ import {
   useUsageChartSvgText, useUsageChartWidth, type UsageChartAgent, type UsageChartBaseProps, type UsageChartKeyItem, type UsageChartValuesLabels,
 } from './chartKit.js';
 import type { UsagePlanetSlot } from './usagePlanetSlot.js';
+import { placeUsageOrbitLabels } from './usageOrbitLabelLayout.js';
 
 type AgentsProps = UsageChartBaseProps & Readonly<{ agents: readonly UsageChartAgent[] }>;
 const agentOf = (agents: readonly UsageChartAgent[], id: string | null) => agents.find((agent) => agent.id === id);
@@ -145,11 +146,14 @@ export function UsageOrbit(props: AgentsProps & Readonly<{ model: readonly Usage
           return { entry, x, y, radius, text, span, anchor: right ? 'start' as const : 'end' as const,
             at: right ? Math.min(beside, width - span) : Math.max(beside, span) };
         });
+        const labelY = placeUsageOrbitLabels(placed.map((label) => ({ x: label.at, y: label.y + 4, span: label.span, anchor: label.anchor })),
+          // The "unknown share" line owns the bottom row, so planet labels stay above it.
+          { height: unknown.length ? height - ((svgText.styles.body.fontSize ?? 13) + 3) : height, line: (svgText.styles.body.fontSize ?? 13) + 3 });
         return <>
           <Svg width={width} height={height}>
             {known.map((_, index) => <Ellipse key={`o${index}`} cx={cx} cy={cy} rx={r1(rx0 + index * step)} ry={r1((rx0 + index * step) * aspect)} stroke={ink.grid} strokeWidth={1} fill="none" />)}
             {placed.map(({ entry, x, y, radius }) => <Circle key={JSON.stringify(entry.agentId)} cx={r1(x)} cy={r1(y)} r={r1(radius)} fill={agentOf(props.agents, entry.agentId)?.color ?? ink.neutral} />)}
-            {placed.map(({ entry, text, at, anchor }, index) => svgText.draw({ x: at, y: placed[index]!.y + 4, anchor, tone: 'secondary', size: 'body', halo: props.paint.paper, text }, `l${index}-${JSON.stringify(entry.agentId)}`))}
+            {placed.map(({ entry, text, at, anchor }, index) => svgText.draw({ x: at, y: labelY[index]!, anchor, tone: 'secondary', size: 'body', halo: props.paint.paper, text }, `l${index}-${JSON.stringify(entry.agentId)}`))}
             {unknown.length ? svgText.draw({ x: width, y: height - 4, anchor: 'end', text: props.labels.unknown(unknown.map((entry) => shortName(props.agents, entry.agentId, props.labels.unknownAgent)).join(', ')) }) : null}
           </Svg>
           {placed.map(({ entry, x, y, radius }) => <ChartMark key={JSON.stringify(entry.agentId)} testID={`${props.testID}.agent.${entry.agentId}`}

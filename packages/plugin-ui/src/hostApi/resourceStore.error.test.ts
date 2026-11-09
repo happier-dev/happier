@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui/client';
 
 import {
+  createPluginUiHostApiResourceClient,
   createPluginUiResourceStore,
   type PluginUiResourceClient,
 } from './resourceStore.js';
@@ -58,6 +59,12 @@ describe('plugin UI Resource store read failures', () => {
 
   it.each([
     { code: 'denied', retryable: false },
+    { code: 'action_disabled' },
+    { code: 'action_forbidden' },
+    { code: 'action_home_signed_out' },
+    { code: 'unavailable', diagnostics: [{ code: 'action_disabled' }] },
+    { code: 'unavailable', diagnostics: [{ code: 'action_forbidden' }] },
+    { code: 'unavailable', diagnostics: [{ code: 'action_home_signed_out' }] },
     { code: 'plugin_resource_session_access_unavailable' },
     { code: 'plugin_resource_context_unavailable' },
     { code: 'plugin_resource_path_denied' },
@@ -85,6 +92,12 @@ describe('plugin UI Resource store read failures', () => {
 
   it.each([
     { code: 'denied', diagnostics: [] },
+    { code: 'action_disabled', diagnostics: [] },
+    { code: 'action_forbidden', diagnostics: [] },
+    { code: 'action_home_signed_out', diagnostics: [] },
+    { code: 'unavailable', diagnostics: ['action_disabled'] },
+    { code: 'unavailable', diagnostics: ['action_forbidden'] },
+    { code: 'unavailable', diagnostics: ['action_home_signed_out'] },
     { code: 'unavailable', diagnostics: ['plugin_resource_session_access_unavailable'] },
     { code: 'unavailable', diagnostics: ['plugin_resource_context_unavailable'] },
     { code: 'stale_surface', diagnostics: ['plugin_generation_stale'] },
@@ -117,6 +130,35 @@ describe('plugin UI Resource store read failures', () => {
     await expect(entry.refresh()).resolves.toMatchObject({ value, freshness: 'fresh' });
     release();
     store.dispose();
+  });
+
+  it.each([
+    { code: 'home_unreachable' },
+    { code: 'deployment_unavailable' },
+    { code: 'unavailable', diagnostics: [{ code: 'home_unreachable' }] },
+    { code: 'unavailable', diagnostics: [{ code: 'deployment_unavailable' }] },
+    { code: 'unavailable', diagnostics: [{ code: 'plugin_resource_transport_error' }] },
+  ])('retains last admitted bytes across ordinary read failure $code and admits recovery', async (failure) => {
+    const value = { contentType: 'application/json', digest: 'private', bytes: new TextEncoder().encode('7') };
+    let unavailable = false;
+    const store = createPluginUiResourceStore({ pluginId: 'acme.preview', client: {
+      readResource: async () => {
+        if (unavailable) throw Object.assign(new Error('Read temporarily unavailable'), failure, { retryable: false });
+        return value;
+      },
+    } });
+    try {
+      const entry = store.getEntry('private-metric');
+      await expect(entry.refresh()).resolves.toMatchObject({ value, freshness: 'fresh' });
+      unavailable = true;
+      const failed = await entry.refresh();
+      expect(failed.value).toBe(value);
+      expect(failed).toMatchObject({ digest: value.digest, freshness: 'stale', pending: 'idle',
+        error: { code: failure.code, message: 'Read temporarily unavailable', retryable: false } });
+      unavailable = false;
+      await expect(entry.refresh()).resolves.toMatchObject({ value, freshness: 'fresh' });
+      expect(entry.getSnapshot().error).toBeUndefined();
+    } finally { store.dispose(); }
   });
 
   it('retains an already requested read for the first static subscriber without queuing another baseline', async () => {
@@ -232,11 +274,11 @@ describe('plugin UI Resource store read failures', () => {
     entry.refresh();
     await vi.waitFor(() => {
       // Both mounted failures use the public `unavailable` envelope. The
-      // author-facing store must retain the exact protocol diagnostic so a
-      // declaration failure cannot be presented as an offline transport error.
+      // current transport code/message remain truthful, while the existing
+      // authority loss survives until a read admits fresh bytes.
       expect(entry.getSnapshot().error).toEqual({
         code: 'unavailable',
-        diagnostics: ['plugin_resource_transport_error'],
+        diagnostics: ['plugin_resource_transport_error', 'plugin_resource_not_found'],
         message: 'The daemon transport is unavailable',
       });
     });

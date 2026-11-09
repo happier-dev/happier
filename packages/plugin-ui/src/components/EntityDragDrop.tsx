@@ -14,7 +14,6 @@ import { HappierStagedMoveDock, type HappierReleasePreviewHost } from '../presen
 import { resolveHappierStagedMoveKey, resolveHappierDropChooserSections } from '../presentation/interaction/dragDrop.js';
 import { describeHappierDropAnnouncement, describeHappierDropOutcome, resolveHappierStagedMoveHints, type HappierDropOutcomeVocabulary } from '../presentation/interaction/dropOutcome.js';
 import { HappierText } from '../presentation/text/Text.js';
-import { resolveHappierMinimumInteractiveTargetSize } from '../environment/interactiveTarget.js';
 import { HostedAnchoredMenu } from './Overlay.js';
 import { ListItemSelectionContext } from './List.js';
 import { HappierRowOperationContext } from '../presentation/collection/rowOperation.js';
@@ -150,7 +149,7 @@ function HostedDragSource(props: DragSourceProps): ReactElement {
     {props.organizing && !props.disabled ? <HappierDragGripTrigger
       controlRef={node => { grip.current = node instanceof HTMLElement ? node : null; }}
       testID={props.testID ? `${props.testID}-grip` : undefined} accessibilityLabel={translate('entityDrag.move', 'Move item')}
-      expanded={chooser} density="touch" minimumTargetSize={resolveHappierMinimumInteractiveTargetSize(Platform.OS)}
+      expanded={chooser} density="touch"
       tabIndex={props.tabIndex}
       colors={{ glyph: theme.colors.secondaryText, activeGlyph: theme.colors.accent, activeFill: theme.colors.control, hoverFill: theme.colors.control, focusRing: theme.colors.focus }}
       onKeyDown={(key, event) => handleKeyDown(key, typeof event === 'object' && event !== null && 'repeat' in event && event.repeat === true)}

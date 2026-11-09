@@ -86,6 +86,8 @@ export function resolveHappierButtonChrome(input: Readonly<{
   secondaryFill?: string;
   /** The secondary action's outline (`useHappierButtonMaterial`); absent, it draws on its fill alone. */
   secondaryBorder?: string;
+  /** The side this button shares with a sibling in a split button (Fix | ⌄): square, so the two read as one control. */
+  joinedEdge?: 'start' | 'end';
   resolveColor?: (color: string, translucentColor?: string, paintRole?: 'surface' | 'solidControl') => string;
 }>): Readonly<{
   style: HappierPortableStyle;
@@ -123,8 +125,12 @@ export function resolveHappierButtonChrome(input: Readonly<{
       paddingHorizontal: (small ? theme.spacing.medium : theme.spacing.large) + (outline === null ? 0 : BUTTON_EDGE_WIDTH - 1),
       paddingVertical: small ? 0 : BUTTON_PADDING_VERTICAL,
       borderRadius: theme.radii.control,
+      ...(input.joinedEdge === 'end' ? { borderTopEndRadius: 0, borderBottomEndRadius: 0 }
+        : input.joinedEdge === 'start' ? { borderTopStartRadius: 0, borderBottomStartRadius: 0 } : {}),
       backgroundColor: input.resolveColor?.(background, undefined, variant === 'primary' || input.disabled ? 'solidControl' : 'surface') ?? background,
-      ...(Platform.OS === 'web' ? happierSurfaceGradientWebStyle(gradient, input.dark !== true) : null),
+      // Only a drawn outline keeps the finish off its edge. Clipping a transparent edge would also clip the fill, so a
+      // primary would paint smaller than the bordered secondary beside it.
+      ...(Platform.OS === 'web' ? happierSurfaceGradientWebStyle(gradient, outline !== null && input.dark !== true) : null),
       borderWidth: outline === null ? BUTTON_EDGE_WIDTH : 1,
       borderColor: outline ?? 'transparent',
       ...happierFocusRingStyle({ visible: input.focused, color: theme.colors.focus }),

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import childProcess, { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -10,12 +10,12 @@ import test from 'node:test';
 
 import { resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 import { createPublicSurfaceProgram, projectEntrypointExportRows } from '../../../scripts/api-governance/publicDeclarationReport.mjs';
+import { copyBuiltSdkArtifact, linkBuiltRuntimeDependencyClosure } from '../../plugin-sdk/src/test-support/sdkArtifactFixture.ts';
 import * as fixtureHarness from './validateExternalAuthoringFixture.mjs';
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = resolve(packageRoot, '../..');
 const requireFromPluginUi = createRequire(resolve(packageRoot, 'package.json'));
-const requireFromPluginSdk = createRequire(resolve(repositoryRoot, 'packages/plugin-sdk/package.json'));
 
 test('public components admission follows declaration reexports and rejects raw image exports', async () => {
   await fixtureHarness.withTemporaryExternalAuthoringRoot(async (root) => {
@@ -547,7 +547,7 @@ test('external author proof fails closed before install unless both direct tarba
   }
 });
 
-test('external targeted package boundary accepts public SDK/UI imports and rejects private source paths', async () => {
+test('external targeted package boundary follows public SDK/UI exports and rejects private imports', async () => {
   assert.equal(typeof fixtureHarness.assertExternalTargetedPackagePublicBoundary, 'function');
   const root = await mkdtemp(join(tmpdir(), 'plugin-ui-external-target-boundary-'));
   try {
@@ -575,14 +575,41 @@ test('external targeted package boundary accepts public SDK/UI imports and rejec
     const acceptedFiles = await fixtureHarness.assertExternalTargetedPackagePublicBoundary({ targetRoot: root });
     assert.equal(acceptedFiles.length, 2);
 
-    await writeFile(
-      join(sourceRoot, 'private.ts'),
-      "import { definePlugin } from '@happier-dev/plugin-sdk/src/definePlugin.js';\nexport { definePlugin };\n",
-    );
-    await assert.rejects(
-      fixtureHarness.assertExternalTargetedPackagePublicBoundary({ targetRoot: root }),
-      /non-public dependency/u,
-    );
+    for (const specifier of [
+      '@happier-dev/plugin-sdk/src/definePlugin.js',
+      '@happier-dev/plugin-ui/src/index.ts',
+      '@happier-dev/plugin-sdk/not-exported',
+      '@happier-dev/plugin-ui/not-exported',
+      '@happier-dev/plugin-sdk/host/registration',
+      '@happier-dev/plugin-sdk/host/ui',
+      '@happier-dev/plugin-sdk/host/fs/json-owner-file-lock',
+      '@happier-dev/plugin-ui/presentation',
+      '@happier-dev/plugin-ui/presentation/formatBytes',
+      '@happier-dev/plugin-ui/presentation/typeScale',
+      '@happier-dev/plugin-ui/presentation/pageMetrics',
+      'react-dom',
+    ]) {
+      await writeFile(join(sourceRoot, 'imports.ts'), `import '${specifier}';\n`);
+      await assert.rejects(
+        fixtureHarness.assertExternalTargetedPackagePublicBoundary({ targetRoot: root }),
+        /non-public dependency/u,
+        specifier,
+      );
+    }
+
+    // Exercise the package-owned surface, including exports added after this test.
+    for (const packageName of ['plugin-sdk', 'plugin-ui']) {
+      const manifest = JSON.parse(await readFile(join(repositoryRoot, 'packages', packageName, 'package.json'), 'utf8'));
+      const publicSpecifiers = Object.keys(manifest.exports).filter((specifier) => (
+        specifier !== './host' && !specifier.startsWith('./host/')
+        && specifier !== './presentation' && !specifier.startsWith('./presentation/')
+      ));
+      await writeFile(join(sourceRoot, 'imports.ts'), [
+        "import 'react';",
+        ...publicSpecifiers.map((specifier) => `import '${manifest.name}${specifier === '.' ? '' : specifier.slice(1)}';`),
+      ].join('\n'));
+      await fixtureHarness.assertExternalTargetedPackagePublicBoundary({ targetRoot: root });
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1252,10 +1279,13 @@ test('public Plugin UI declarations preserve the Node consumer global contracts'
   const consumerRoot = await mkdtemp(join(repositoryRoot, '.project/tmp/plugin-ui-node-declarations-'));
   try {
     const consumerPath = join(consumerRoot, 'consumer.mts');
+    const publicEntrypoints = Object.keys(JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')).exports);
     await writeFile(consumerPath, [
-      "import type * as PublicComponents from '@happier-dev/plugin-ui/components';",
-      'declare const components: typeof PublicComponents;',
-      'void components;',
+      ...publicEntrypoints.flatMap((entrypoint, index) => [
+        `import type * as Public${index} from '@happier-dev/plugin-ui${entrypoint === '.' ? '' : entrypoint.slice(1)}';`,
+        `declare const public${index}: typeof Public${index};`,
+        `void public${index};`,
+      ]),
       'const timeout: NodeJS.Timeout = setTimeout(() => {}, 0);',
       'clearTimeout(timeout);',
       'const form = new FormData();',
@@ -1295,27 +1325,10 @@ test('public Plugin UI declarations preserve the Node consumer global contracts'
 test('public SDK declarations compile for a clean external author without Node ambient types', async () => {
   await fixtureHarness.withTemporaryExternalAuthoringRoot(async (consumerRoot) => {
     await mkdir(join(consumerRoot, 'src'));
-    const nodeModulesRoot = join(consumerRoot, 'node_modules');
-    for (const packageName of ['plugin-sdk', 'agents', 'protocol']) {
-      const sourceRoot = resolve(repositoryRoot, `packages/${packageName}`);
-      const installedRoot = join(nodeModulesRoot, '@happier-dev', packageName);
-      await mkdir(installedRoot, { recursive: true });
-      await cp(join(sourceRoot, 'package.json'), join(installedRoot, 'package.json'));
-      await cp(join(sourceRoot, 'dist'), join(installedRoot, 'dist'), {
-        recursive: true,
-        filter: (source) => lstatSync(source).isDirectory() || source.endsWith('.d.ts'),
-      });
-    }
-    await symlink(
-      resolve(repositoryRoot, 'packages/plugin-sdk/node_modules/@happier-dev/protocol/node_modules'),
-      join(nodeModulesRoot, '@happier-dev/protocol/node_modules'),
-      'dir',
-    );
-    await symlink(
-      dirname(requireFromPluginSdk.resolve('zod/package.json')),
-      join(nodeModulesRoot, 'zod'),
-      'dir',
-    );
+    // Use the same nested internal closure as the SDK's declaration consumers,
+    // including every manifest-declared bundled dependency.
+    await copyBuiltSdkArtifact(join(consumerRoot, 'node_modules', '@happier-dev', 'plugin-sdk'));
+    await linkBuiltRuntimeDependencyClosure(consumerRoot, resolve(repositoryRoot, 'packages/plugin-sdk'));
     await writeFile(join(consumerRoot, 'package.json'), JSON.stringify({
       name: 'clean-plugin-sdk-declaration-consumer',
       private: true,
@@ -1330,6 +1343,7 @@ test('public SDK declarations compile for a clean external author without Node a
         strict: true,
         skipLibCheck: false,
         noEmit: true,
+        types: [],
       },
       include: ['src/**/*.ts'],
     }));

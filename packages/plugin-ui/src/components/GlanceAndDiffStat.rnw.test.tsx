@@ -113,6 +113,16 @@ describe('WidgetGlanceRow', () => {
     row.unmount();
   });
 
+  it('continues the label as one wrapping sentence when the tag says more about it', () => {
+    const row = mount(<WidgetGlanceRow testID="row" title="5 files not committed" tag="3 included" tagSentence />);
+    const texts = [...row.container.querySelectorAll('[data-testid="row"] [dir="auto"]')] as HTMLElement[];
+    const line = texts.find(text => text.textContent?.includes('5 files not committed')) as HTMLElement;
+    expect(line.textContent).toBe('5 files not committed · 3 included');
+    // Room or not, the label is never cut short by its tag: the line wraps instead of clamping to one.
+    expect(getComputedStyle(line).whiteSpace).not.toBe('nowrap');
+    row.unmount();
+  });
+
   it('stays a static row without a press, and speaks only when the fact needs the person', () => {
     const row = mount(
       <WidgetGlanceRow

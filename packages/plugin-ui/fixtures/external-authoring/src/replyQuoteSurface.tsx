@@ -14,6 +14,8 @@ export function ReplyQuoteExample() {
       : { state: 'unavailable', label: 'Document passage', reason: 'Source unavailable' }} />
     <ReplyQuote testID="author-task-quote" kind="task" source={{ state: 'available',
       label: 'Retry budget', text: 'In progress', onPress: () => setOpened('task') }} />
+    <ReplyQuote testID="author-passage-quote" kind="message" form="passage" source={{ state: 'available',
+      label: 'Mara', text: 'Ship the retry budget behind the flag first.\n\nThen widen it once the error rate holds.' }} />
     <Button title="Withdraw document source" onPress={() => setAvailable(false)} />
     {opened ? <Text value={`Opened ${opened}`} /> : null}
   </>;

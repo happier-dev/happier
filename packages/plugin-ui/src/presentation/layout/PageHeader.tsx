@@ -208,6 +208,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   const [leadingHeightPx, setLeadingHeightPx] = useState(0);
   const [actionsHeightPx, setActionsHeightPx] = useState(0);
   const [actionsWrapWidthPx, setActionsWrapWidthPx] = useState<number | null>(null);
+  const [actionsNaturalWidthPx, setActionsNaturalWidthPx] = useState(0);
   const splitWidthRef = useRef<number | null>(null);
   // Sizes, not positions: a web layout event reports a box that resized, never one that only moved, so
   // the wrap is read from the shared line growing taller than its tallest item.
@@ -249,6 +250,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
     const { height } = event.nativeEvent.layout;
     setActionsHeightPx(current => current === height ? current : height);
     naturalWidthsRef.current.actions = Math.max(naturalWidthsRef.current.actions, event.nativeEvent.layout.width);
+    setActionsNaturalWidthPx(naturalWidthsRef.current.actions);
     if (splitWidthRef.current !== null) predictActionsWrap(splitWidthRef.current);
   }, [predictActionsWrap]);
   // Layout events arrive in no fixed order: whichever of the column, title and actions lands last decides.
@@ -281,7 +283,12 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
 
   const columnMaxWidthPx = props.columnMaxWidthPx ?? Number.POSITIVE_INFINITY;
   const centered = props.compactPresentation === 'centered' && paneWidthPx !== null && paneWidthPx < HAPPIER_PAGE_METRICS.rowStackBelowWidthPx;
-  const hangsFromTitle = !centered && props.actionsLayout === 'hang';
+  // Hanging keeps the controls on the name's line only while the name keeps its column; past that they
+  // take the wrap rule's place after the whole identity, because a controls-only line loses the page's name.
+  const hangLeavesNoName = splitWidthPx !== null && actionsNaturalWidthPx > 0
+    && splitWidthPx - HAPPIER_PAGE_METRICS.pageHeaderColumnGapPx - actionsNaturalWidthPx < HAPPIER_PAGE_METRICS.sectionTextMinWidthPx;
+  const hangIdentity = !centered && props.actionsLayout === 'hang';
+  const hangsFromTitle = hangIdentity && !hangLeavesNoName;
   const inlineActions = hangsFromTitle || (!centered && props.actionsLayout === 'inline');
   // The header's own measurement wins; until it arrives, the split's detail width places back.
   const backPlacement = resolveHappierPageBackPlacement({ paneWidthPx: paneWidthPx ?? detailWidthPx, columnMaxWidthPx, backShown: showsBack });
@@ -380,9 +387,9 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   const wrappedActionsWidthPx = splitWidthPx === null ? undefined : splitWidthPx + leadingInsetPx;
   const actionsContent = props.actions || props.status ? (
             <View
-              onLayout={splitTitleLine ? (event: HappierLayoutChangeEvent) => {
+              onLayout={splitTitleLine || hangsFromTitle ? (event: HappierLayoutChangeEvent) => {
                 handleActionsNaturalLayout(event);
-                if (!actionsBelowIdentity) handleLineActionsLayout(event);
+                if (splitTitleLine && !actionsBelowIdentity) handleLineActionsLayout(event);
               } : undefined}
               style={{
                 flexShrink: inlineActions ? 0 : 1,
@@ -440,7 +447,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
           testID={props.testID ? `${props.testID}-title-row` : undefined}
           // Inline actions (and the status line under them) hang from the title's top edge, so a status
           // that wraps to another line never re-centres, and so moves, the identity beside it.
-          style={{ position: 'relative', flexDirection: centered ? 'column' : 'row', flexWrap: centered ? 'nowrap' : 'wrap', alignItems: inlineActions ? 'flex-start' : 'center', columnGap: HAPPIER_PAGE_METRICS.pageHeaderMarkGapPx, rowGap: 12 }}
+          style={{ position: 'relative', flexDirection: centered ? 'column' : 'row', flexWrap: centered ? 'nowrap' : 'wrap', alignItems: inlineActions || hangIdentity ? 'flex-start' : 'center', columnGap: HAPPIER_PAGE_METRICS.pageHeaderMarkGapPx, rowGap: 12 }}
         >
           {renderBack && centered && backPlacement === 'above-title'
             // A compact centred identity keeps back at the pane's top-left corner.
@@ -450,14 +457,14 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
             <View
               onLayout={handleLeadingLayout}
               // Hanging, the mark hangs from the title's line: centred on it, its overflow inside the header's padding.
-              style={[{ flexShrink: 0, position: 'relative' }, hangsFromTitle && showTitle ? { height: titleLineHeight, justifyContent: 'center' } : null]}
+              style={[{ flexShrink: 0, position: 'relative' }, hangIdentity && showTitle ? { height: titleLineHeight, justifyContent: 'center' } : null]}
             >
               {wrapPart ? wrapPart('mark', props.leading) : props.leading}
               {gutterBack}
             </View>
           ) : null}
           <View
-            onLayout={splitTitleLine ? handleSplitLayout : undefined}
+            onLayout={splitTitleLine || hangsFromTitle ? handleSplitLayout : undefined}
             style={{ flexGrow: centered ? 0 : 1, flexShrink: 1, flexBasis: centered ? 'auto' : HAPPIER_PAGE_METRICS.sectionTextMinWidthPx, minWidth: 0, ...(centered ? { width: '100%', alignItems: 'center' } : {}) }}
           >
               <View

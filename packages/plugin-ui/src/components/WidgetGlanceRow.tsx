@@ -35,6 +35,7 @@ export function WidgetGlanceRow({ mark, ...props }: WidgetGlanceRowProps): React
         secondaryText: theme.colors.secondaryText,
         mutedText: theme.colors.mutedText,
         attention: theme.colors.warning,
+        danger: theme.colors.danger,
         pressed: palette?.navigationHover ?? theme.colors.control,
         focus: theme.colors.focus,
       }}
@@ -53,7 +54,7 @@ function GlanceRowText(props: HappierWidgetGlanceRowTextProps): ReactElement {
     : resolveHappierTypeRoleStyle('meta', theme, typography);
   const mono = props.mono && theme.typography.code.fontFamily ? { fontFamily: theme.typography.code.fontFamily } : null;
   return (
-    <HappierText numberOfLines={1} style={[role, mono, { color: props.color }, props.style]}>
+    <HappierText numberOfLines={props.lines ?? 1} style={[role, mono, { color: props.color }, props.style]}>
       {props.children}
     </HappierText>
   );

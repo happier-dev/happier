@@ -302,7 +302,7 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
                     datum={interval.datum ?? { label: interval.label, value: describe(interval), color }}
                     renderTrigger={interaction => <HappierPressable testID={props.testID ? `${props.testID}-select-${interval.id}` : undefined}
                   accessibilityRole="button" accessibilityLabel={describe(interval)} selected={selectedId === interval.id}
-                  hitSlop={{ top: trackGap / 2, bottom: trackGap / 2 }}
+                  hitTarget={trackStep}
                   hitReach={{ top: trackGap / 2, bottom: trackGap / 2, left: 0, right: 0 }}
                   onPress={() => { setSelectedId(interval.id); interaction.onPress(); }} onHoverChange={interaction.onHoverChange}
                   onFocusChange={(focused) => { if (focused) setSelectedId(interval.id); interaction.onFocusChange(focused); }}

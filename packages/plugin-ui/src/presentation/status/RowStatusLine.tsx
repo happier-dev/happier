@@ -6,6 +6,13 @@ export type HappierRowStatusAction = Readonly<{ label: string; onPress: () => un
 export type HappierRowStatusLineContentProps = Readonly<{
   text: string;
   tone: HappierRowStatusTone;
+  /**
+   * A quiet mono lead before the outcome (the command a run executes: `yarn lint · Exited with code 1`). It
+   * gives way first, so the outcome, the part that changes and the part a failure is read from, stays whole.
+   */
+  lead?: string | null;
+  /** The row's own mark already shows this state (a run glyph); the line keeps its tone without a dot. */
+  marked?: boolean;
   busy?: boolean;
   action?: HappierRowStatusAction | null;
   testID?: string;
@@ -15,7 +22,8 @@ export type HappierRowStatusLineContentProps = Readonly<{
 export type HappierRowStatusLineHost = Readonly<{
   colors: Readonly<Record<HappierRowStatusTone, string>>;
   actionGap: number;
-  renderText(input: Readonly<{ text: string; numberOfLines: number; style: Readonly<{ color: string; flexShrink: number }> }>): ReactNode;
+  renderText(input: Readonly<{ text: string; numberOfLines: number; mono?: boolean;
+    style: Readonly<{ color: string; flexShrink: number; maxWidth?: '100%' }> }>): ReactNode;
   renderBusy(input: Readonly<{ size: number }>): ReactNode;
   renderIndicator(input: Readonly<{ size: number; color: string }>): ReactNode;
   renderAction(action: HappierRowStatusAction): ReactNode;
@@ -25,16 +33,22 @@ export type HappierRowStatusLineProps = HappierRowStatusLineContentProps & Reado
 /** Compact row metadata with an optional busy indicator and one inline recovery. */
 export function HappierRowStatusLine(props: HappierRowStatusLineProps): ReactElement {
   const color = props.host.colors[props.tone];
+  const lead = props.lead || null;
+  const label = lead && props.text ? `${lead} · ${props.text}` : lead ?? props.text;
   const line = (
     <View testID={props.action ? undefined : props.testID} style={LINE_STYLE}
-      accessible={!props.action} accessibilityLabel={props.action ? undefined : props.text}>
+      accessible={!props.action} accessibilityLabel={props.action ? undefined : label}>
       {props.busy ? props.host.renderBusy({ size: 12 }) : null}
-      {props.tone !== 'quiet' ? props.host.renderIndicator({ size: 6, color }) : null}
-      {props.host.renderText({
+      {props.tone !== 'quiet' && !props.marked ? props.host.renderIndicator({ size: 6, color }) : null}
+      {lead ? props.host.renderText({ text: lead, numberOfLines: 1, mono: true,
+        style: { color: props.host.colors.quiet, flexShrink: 1 } }) : null}
+      {lead && props.text ? props.host.renderText({ text: ' · ', numberOfLines: 1,
+        style: { color: props.host.colors.quiet, flexShrink: 0 } }) : null}
+      {props.text ? props.host.renderText({
         text: props.text,
         numberOfLines: props.numberOfLines ?? 1,
-        style: { color, flexShrink: 1 },
-      })}
+        style: lead ? { color, flexShrink: 0, maxWidth: '100%' } : { color, flexShrink: 1 },
+      }) : null}
     </View>
   );
   if (!props.action) return line;

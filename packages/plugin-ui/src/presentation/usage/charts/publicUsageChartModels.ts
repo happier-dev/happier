@@ -50,7 +50,8 @@ export type UsageGalaxyModel = UsageRunLengthModel;
 export type PublicUsageRecordKind = 'activeDays' | 'currentStreakDays' | 'bestStreakDays' | 'peakParallel' | 'longestTurnMs';
 
 export type PublicUsageChartModels = Readonly<{
-  summary: Readonly<Partial<Record<'tokens' | 'activeDays' | 'agentTimeMs' | 'mergedPrs' | 'currentStreakDays' | 'bestStreakDays' | 'peakParallel', number>>>;
+  /** Null is shared but unavailable evidence; an absent key is not shared. */
+  summary: Readonly<Partial<Record<'tokens' | 'activeDays' | 'agentTimeMs' | 'mergedPrs' | 'currentStreakDays' | 'bestStreakDays' | 'peakParallel', number | null>>>;
   coverage: UsageChartCoverage;
   highlights: readonly Readonly<{ kind: 'merged_prs' | 'peak_parallel' | 'active_days'; count: number }>[] | null;
   footprint: Readonly<{ accountedTokens?: number }> | null;

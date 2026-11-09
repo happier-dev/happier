@@ -7,6 +7,7 @@ import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../../surfaceFixture.testSupport.js';
 import { PluginUiProvider } from '../../components/PluginUiProvider.js';
 import { HappierMaterialSurface } from '../layout/Surface.js';
+import { readHitAreaReach } from '../interaction/hitArea.testSupport.js';
 import { happierSurfaceGradientWebStyle } from '../layout/material.js';
 import { HAPPIER_FIND_BAR_METRICS, HappierFindBar, type HappierFindBarHost, type HappierFindBarInputProps, type HappierFindBarLabels, type HappierFindBarProps } from './FindBar.js';
 import type { FindOptions, FindStatus } from './findTypes.js';
@@ -105,6 +106,14 @@ async function key(element: HTMLElement | null, init: KeyboardEventInit & { keyC
 }
 
 describe('HappierFindBar', () => {
+  it('renders a usable native input from the mounted environment when no custom host is supplied', () => {
+    const mounted = mountBar({ status: { kind: 'idle' }, host: undefined }, body => (
+      <PluginUiProvider hostApi={createHostApiStub()} context={createSurfaceContext()}>{body}</PluginUiProvider>
+    ));
+    try {
+      expect(mounted.mounted.container.querySelector('input[aria-label="Find in chat"]')).not.toBeNull();
+    } finally { mounted.mounted.unmount(); }
+  });
   const gradient = { colors: ['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0.024)'] as [string, string] };
   const baseContext = createSurfaceContext();
   const context = { ...baseContext, theme: { ...baseContext.theme, surfaceFinish: { floating: gradient } } };
@@ -292,6 +301,10 @@ describe('HappierFindBar', () => {
     expect(region?.textContent).toBe('3 of 8 · 3 files');
     expect(region?.getAttribute('aria-live')).toBe('polite');
     files.mounted.unmount();
+    // The seated phone bar leaves the file count to the file headers so the query keeps its width.
+    const seated = mountBar({ presentation: 'keyboardSeated', status: { kind: 'results', current: 3, total: 8, files: 3, coverage: 'complete' } });
+    expect(byTestId(seated.mounted.container, 'find.status')?.textContent).toBe('3 of 8');
+    seated.mounted.unmount();
 
     const loaded = mountBar({ status: { kind: 'results', current: 3, total: 5, coverage: 'loaded' } });
     expect(byTestId(loaded.mounted.container, 'find.status')?.textContent).toBe('3 of 5 loaded');
@@ -419,30 +432,26 @@ describe('HappierFindBar', () => {
     }
   });
 
-  it('gives a coarse-web note action a physical touch target without enlarging its text line', () => {
-    let boundLineHeight: number | undefined;
-    const textHost: HappierFindBarHost = { ...host, Text: ({ children, style, numberOfLines, testID }) => {
-      if (children === labels.stop) boundLineHeight = style.lineHeight;
-      return <Text style={style as React.ComponentProps<typeof Text>['style']} numberOfLines={numberOfLines} testID={testID}>{children}</Text>;
-    } };
-    const { mounted } = mountBar({
-      host: textHost,
-      minimumTargetSize: 44,
-      status: { kind: 'searching', total: 2 },
-      note: { icon: 'history', text: 'Searching older messages' },
-    });
-    try {
-      const action = buttonNamed(mounted.container, 'Stop')!;
-      // jsdom retains RNW's font shorthand but loses its atomic line-height rule. Use the real
-      // host binding's supplied text metric; target padding/margins still come from rendered RNW.
-      expect(boundLineHeight).toBe(16);
-      const lineHeight = boundLineHeight!;
-      const targetStyle = getComputedStyle(action);
-      const physicalHeight = lineHeight + (parseFloat(targetStyle.paddingTop) || 0) + (parseFloat(targetStyle.paddingBottom) || 0);
-      expect(physicalHeight).toBeGreaterThanOrEqual(44);
-      expect(physicalHeight + (parseFloat(targetStyle.marginTop) || 0) + (parseFloat(targetStyle.marginBottom) || 0)).toBe(lineHeight);
-    } finally {
-      mounted.unmount();
+  it('gives a coarse-web note action a physical touch target above and below its line, bounded by the note padding, never sideways nor in flow', () => {
+    // The field beside the note is the neighbour past its padding: 7 px inline, 6 px seated.
+    for (const [presentation, padding] of [['inline', 7], ['keyboardSeated', 6]] as const) {
+      const { mounted } = mountBar({
+        presentation,
+        minimumTargetSize: 44,
+        status: { kind: 'searching', total: 2 },
+        note: { icon: 'history', text: 'Searching older messages' },
+      });
+      try {
+        const action = buttonNamed(mounted.container, 'Stop')!;
+        const targetStyle = getComputedStyle(action);
+        // The 16 px line would reach 14 px each way for 44; the note's own padding leaves less.
+        expect(readHitAreaReach(action)).toEqual({ top: padding, bottom: padding, left: 0, right: 0 });
+        for (const side of ['paddingTop', 'paddingBottom', 'marginTop', 'marginBottom'] as const) {
+          expect(parseFloat(targetStyle[side]) || 0).toBe(0);
+        }
+      } finally {
+        mounted.unmount();
+      }
     }
   });
 
@@ -484,6 +493,28 @@ describe('HappierFindBar', () => {
     expect(buttonNamed(engine.mounted.container, 'Match case')).toBeTruthy();
     expect(buttonNamed(engine.mounted.container, 'Use regular expression')).toBeUndefined();
     engine.mounted.unmount();
+  });
+
+  it('folds match case and regex into one disclosure in a narrow pane so the query keeps its room', async () => {
+    const bar = mountBar({ status: { kind: 'results', current: 2, total: 9, coverage: 'complete' } });
+    const span = byTestId(bar.mounted.container, 'find');
+    // RNW registers its platform measurement callback on the host element.
+    const layout = (width: number) => act(() => (span as unknown as { __reactLayoutHandler: (event: unknown) => void })
+      .__reactLayoutHandler({ nativeEvent: { layout: { x: 0, y: 0, width, height: 40 } } }));
+    layout(640);
+    expect(buttonNamed(bar.mounted.container, 'Match case')?.getAttribute('role')).toBe('switch');
+    expect(buttonNamed(bar.mounted.container, 'Match options')).toBeUndefined();
+    // A 364 px Project terminal dock: the two option switches become the phone's one quiet disclosure.
+    layout(364);
+    expect(buttonNamed(bar.mounted.container, 'Match case')).toBeUndefined();
+    expect(buttonNamed(bar.mounted.container, 'Use regular expression')).toBeUndefined();
+    const disclosure = buttonNamed(bar.mounted.container, 'Match options');
+    expect(disclosure?.getAttribute('aria-expanded')).toBe('false');
+    await press(disclosure);
+    await press(buttonNamed(bar.mounted.container, 'Use regular expression'));
+    expect(bar.recorded.options).toEqual([{ matchCase: false, regex: true }]);
+    expect(buttonNamed(bar.mounted.container, 'Close find')).toBeTruthy();
+    bar.mounted.unmount();
   });
 
   it('seats above the keyboard with ↑ ↓, the field and a printed Done that closes', async () => {

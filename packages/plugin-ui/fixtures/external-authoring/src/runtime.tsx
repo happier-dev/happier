@@ -97,8 +97,10 @@ const translationBundles = contributes.ui.translations;
 const englishTranslations = translationBundles.find(({ locale }) => locale === 'en');
 const frenchTranslations = translationBundles.find(({ locale }) => locale === 'fr');
 if (
-  englishTranslations?.messages['external.review.save'] !== 'Save external review'
-  || frenchTranslations?.messages['external.review.save'] !== 'Enregistrer la revue externe'
+  !englishTranslations || !('messages' in englishTranslations)
+  || englishTranslations.messages['external.review.save'] !== 'Save external review'
+  || !frenchTranslations || !('messages' in frenchTranslations)
+  || frenchTranslations.messages['external.review.save'] !== 'Enregistrer la revue externe'
 ) {
   throw new Error('External author package did not preserve its public translation bundles.');
 }

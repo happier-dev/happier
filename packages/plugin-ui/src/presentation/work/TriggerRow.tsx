@@ -2,6 +2,7 @@ import type { ComponentType, ReactNode } from 'react';
 import { View } from 'react-native';
 
 import { useOptionalHappierUiTheme } from '../../environment/context.js';
+import type { HappierHitReach } from '../../environment/interactiveTarget.js';
 import { HappierListItem } from '../collection/List.js';
 import { HAPPIER_COLLECTION_LIST_METRICS } from '../collection/CollectionList.js';
 import { HappierToggle } from '../form/Fields.js';
@@ -31,6 +32,8 @@ export type HappierTriggerRowToggleProps = Readonly<{
   disabled?: boolean;
   accessibilityLabel: string;
   onValueChange: (next: boolean) => void;
+  /** The switch's hit reach; on the actions line it never reaches up into the row it belongs to. */
+  hitReach?: HappierHitReach;
 }>;
 
 export type HappierTriggerRowHost = Readonly<{
@@ -47,6 +50,11 @@ export type HappierTriggerRowProps = Readonly<{
   qualifier?: string | null;
   qualifierAccessibilityLabel?: string;
   outcome?: Readonly<{ text: string; tone: HappierWorkStatusTone }> | null;
+  /**
+   * Who last changed what this trigger runs ("Edited by Ada · 2d ago"), already localized. Quiet
+   * information that ends the line after the outcome, so it never takes the attention tone.
+   */
+  provenance?: string | null;
   attention?: boolean;
   enabled: boolean;
   toggleDisabled?: boolean;
@@ -76,7 +84,7 @@ function DefaultToggle(props: HappierTriggerRowToggleProps) {
   const theme = useOptionalHappierUiTheme();
   if (!theme) throw new Error('TriggerRow requires a mounted theme or a host binding.');
   return <HappierToggle label={props.accessibilityLabel} value={props.value} disabled={props.disabled}
-    onChange={props.onValueChange} theme={theme} testID={props.testID} />;
+    onChange={props.onValueChange} hitReach={props.hitReach} theme={theme} testID={props.testID} />;
 }
 
 const defaultHost: HappierTriggerRowHost = {
@@ -86,29 +94,44 @@ const defaultHost: HappierTriggerRowHost = {
 };
 
 /** One trigger's presentation; schedules, clocks, source reads and writes remain caller-owned. */
+const ACTIONS_LINE_HIT_REACH: HappierHitReach = Object.freeze({ top: 0 });
+/**
+ * The switch closes the actions line at its far end, in the column every other switch on the page uses,
+ * centred on the line's buttons (a switch draws itself at the top of its slot).
+ */
+const TOGGLE_ENDS_ACTIONS_LINE = Object.freeze({ marginLeft: 'auto', justifyContent: 'center' } as const);
+
 export function HappierTriggerRow(props: HappierTriggerRowProps) {
   const { Row, Toggle, Text, actionsStyle } = props.host ?? defaultHost;
   const lead = props.qualifier;
   const outcome = props.outcome;
-  const line = [lead, outcome?.text].filter(Boolean).join(' · ');
-  const subtitle = outcome ? <Text tone="neutral">
-    {lead ? `${lead} · ` : ''}<Text testID={`${props.testID}-outcome`} tone={outcome.tone}>{outcome.text}</Text>
-  </Text> : lead;
-  const toggle = <Toggle testID={`${props.testID}-switch`} value={props.enabled} disabled={props.toggleDisabled}
-    accessibilityLabel={props.toggleLabel} onValueChange={props.onToggle} />;
+  const provenance = props.provenance || null;
+  const line = [lead, outcome?.text, provenance].filter(Boolean).join(' · ');
+  // The line keeps one order: what fires it, how it last went, then who changed it. Each fact keeps its
+  // own tone, so a review pause stays amber while the provenance after it stays quiet; a plain line
+  // keeps the row's own ink (dimmed while the trigger is off).
+  const subtitle = outcome || (provenance && props.attention) ? <Text tone="neutral">
+    {lead ? <Text tone={props.attention ? 'attention' : 'neutral'}>{lead}</Text> : null}
+    {lead && outcome ? ' · ' : ''}
+    {outcome ? <Text testID={`${props.testID}-outcome`} tone={outcome.tone}>{outcome.text}</Text> : null}
+    {provenance ? `${lead || outcome ? ' · ' : ''}${provenance}` : ''}
+  </Text> : line || lead;
   // A row with its own actions line (History · Run now) ends that line with the switch, the pause, so the
-  // title and its quiet line keep the whole row width (lab `b-habit T`).
+  // title and its quiet line keep the whole row width (lab `b-habit T`). The row above owns the space over
+  // that line: the switch's hit area reaches down and sideways, never up into the row's own target.
   const toggleOnActions = Boolean(props.actions) && props.presentation !== 'column';
+  const toggle = <Toggle testID={`${props.testID}-switch`} value={props.enabled} disabled={props.toggleDisabled}
+    accessibilityLabel={props.toggleLabel} onValueChange={props.onToggle} hitReach={toggleOnActions ? ACTIONS_LINE_HIT_REACH : undefined} />;
   return <>
     <Row testID={props.testID} title={props.title} subtitle={subtitle} subtitleText={line}
       accessibilityLabel={props.qualifierAccessibilityLabel
-        ? [props.title, lead, props.qualifierAccessibilityLabel, outcome?.text].filter(Boolean).join('. ')
+        ? [props.title, lead, props.qualifierAccessibilityLabel, outcome?.text, provenance].filter(Boolean).join('. ')
         : undefined}
       enabled={props.enabled} attention={props.attention === true} multiline={props.multiline}
       presentation={props.presentation} icon={props.icon} onPress={props.onPress} toggle={toggleOnActions ? null : toggle} />
     {props.actions ? <View testID={`${props.testID}-actions`} style={actionsStyle ?? {
       flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap',
       paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset,
-    }}>{props.actions}{toggleOnActions ? toggle : null}</View> : null}
+    }}>{props.actions}{toggleOnActions ? <View style={TOGGLE_ENDS_ACTIONS_LINE}>{toggle}</View> : null}</View> : null}
   </>;
 }

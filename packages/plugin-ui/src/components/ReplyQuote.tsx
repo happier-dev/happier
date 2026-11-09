@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 
-import { useOptionalHappierUiTypography } from '../environment/context.js';
+import { useOptionalHappierUiPalette, useOptionalHappierUiTypography } from '../environment/context.js';
 import { HappierReplyQuote, type HappierReplyQuoteSource, type HappierReplyQuoteTextProps } from '../presentation/content/ReplyQuote.js';
 import { HappierText } from '../presentation/text/Text.js';
 import { resolveHappierTypeRoleStyle } from '../presentation/text/typeRole.js';
@@ -11,6 +11,8 @@ export type ReplyQuoteProps = Readonly<{
   testID?: string;
   kind: 'message' | 'doc_passage' | 'task';
   source: HappierReplyQuoteSource;
+  /** `passage`: the quoted words alone, in their own filled box, where your surface already names the source. */
+  form?: 'reply' | 'passage';
 }>;
 
 const sourceMarks = { message: 'conversations', doc_passage: 'file', task: 'issue' } satisfies Record<ReplyQuoteProps['kind'], IconName>;
@@ -18,9 +20,11 @@ const sourceMarks = { message: 'conversations', doc_passage: 'file', task: 'issu
 /** Source reads and routing stay with the author; the host owns the quote's presentation. */
 export function ReplyQuote(props: ReplyQuoteProps): ReactElement {
   const theme = usePluginTheme();
-  return <HappierReplyQuote testID={props.testID} source={props.source} Text={QuoteText}
+  const palette = useOptionalHappierUiPalette(theme);
+  return <HappierReplyQuote testID={props.testID} source={props.source} Text={QuoteText} form={props.form}
     leading={<Icon name={sourceMarks[props.kind]} size="small" tone="secondary" />}
-    colors={{ text: theme.colors.text, secondaryText: theme.colors.secondaryText, border: theme.colors.divider, focus: theme.colors.focus }} />;
+    colors={{ text: theme.colors.text, secondaryText: theme.colors.secondaryText, border: theme.colors.divider, focus: theme.colors.focus,
+      passage: palette?.inset ?? theme.colors.surface }} />;
 }
 
 function QuoteText(props: HappierReplyQuoteTextProps): ReactElement {

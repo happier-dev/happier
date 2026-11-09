@@ -1,4 +1,4 @@
-import { resolveUsageCalendarInstant, summarizeUsageRunLengthObservations,
+import { PUBLIC_PROFILE_FACT_FIELDS_V1, resolveUsageCalendarInstant, summarizeUsageRunLengthObservations,
   type PublicProfileSnapshotV1, type PublicProfileViewV1 } from '@happier-dev/plugin-sdk';
 import type { UsageAgentShare, UsageConstellationModel, UsageRiverModel, UsageShippedModel } from '../presentation/usage/charts/UsageAgentsCharts.js';
 import type { UsageDaylightModel, UsageWeekHourModel } from '../presentation/usage/charts/UsageRhythmEncodings.js';
@@ -81,16 +81,15 @@ export function projectPublicUsageChartModels(snapshot: PublicProfileSnapshotV1,
   });
   const runLength: UsageRunLengthModel | null = distribution === null ? null : { rows: distribution.byAgent.map(row => ({ agentId: row.agentId,
     samples: row.sampleCount, medianMs: row.medianMs, p90Ms: row.p90Ms, durationsMs: row.durationsMs })), openCount: null, croppedCount: null };
+  const summary: PublicUsageChartModels['summary'] = Object.fromEntries(
+    (['tokens', 'activeDays', 'agentTimeMs', 'mergedPrs', 'currentStreakDays', 'bestStreakDays', 'peakParallel'] as const).flatMap(kind => {
+      const value = facts[kind];
+      // Coverage has already passed the publication owner's same consent projection as the facts.
+      return value !== undefined || snapshot.fieldCoverage[PUBLIC_PROFILE_FACT_FIELDS_V1[kind]]
+        ? [[kind, value ?? null] as const] : [];
+    }));
   return {
-    summary: {
-      ...(facts.tokens === undefined ? {} : { tokens: facts.tokens }),
-      ...(facts.activeDays === undefined ? {} : { activeDays: facts.activeDays }),
-      ...(facts.agentTimeMs === undefined ? {} : { agentTimeMs: facts.agentTimeMs }),
-      ...(facts.mergedPrs === undefined ? {} : { mergedPrs: facts.mergedPrs }),
-      ...(facts.currentStreakDays === undefined ? {} : { currentStreakDays: facts.currentStreakDays }),
-      ...(facts.bestStreakDays === undefined ? {} : { bestStreakDays: facts.bestStreakDays }),
-      ...(facts.peakParallel === undefined ? {} : { peakParallel: facts.peakParallel }),
-    },
+    summary,
     coverage: snapshot.coverage,
     highlights: facts.highlights ?? null,
     footprint: facts.footprint === undefined ? null : { ...(facts.tokens === undefined ? {} : { accountedTokens: facts.tokens }) },

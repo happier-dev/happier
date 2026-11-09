@@ -1,6 +1,7 @@
 import { Fragment, type ComponentType, type ReactNode } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 
+import { HappierBodyEdgeContext } from '../layout/columnEdge.js';
 import type {
   HappierTypeEmphasis,
   HappierTypeRole,
@@ -171,7 +172,7 @@ export function HappierPromptPickerPreview(
     action: string;
     /** The prompt's text, its loading line or its failure, drawn by the surface. */
     children: ReactNode;
-    /** "Edited 3d ago" or the session it was sent in. */
+    /** A library prompt's "Edited 3d ago"; where a row came from otherwise already leads `meta`. */
     origin?: string | null;
     colors: HappierPromptPickerColors;
     host: HappierPromptPickerHost;
@@ -197,7 +198,8 @@ export function HappierPromptPickerPreview(
         style={styles.previewScroll}
         contentContainerStyle={styles.previewScrollContent}
       >
-        {props.children}
+        {/* The preview stands its text on its own edge; a failure line there starts on it too. */}
+        <HappierBodyEdgeContext.Provider value>{props.children}</HappierBodyEdgeContext.Provider>
       </ScrollView>
       {props.origin ? (
         <Text

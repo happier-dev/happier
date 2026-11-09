@@ -181,6 +181,23 @@ describe('hosted-web Collection UI-query guest pager', () => {
     expect(wire).toMatchObject({ operation: 'collection.sharing.put', arguments: [{ ownerAccountId: 'alice', expectedRevision: 4 }] });
   });
 
+  it.each([
+    'collection_index_not_ready', 'collection_update_required',
+    'collection_content_mode_mismatch', 'collection_contract_inconsistent',
+  ])('preserves %s through hosted get/query without idle requests', async code => {
+    vi.useFakeTimers();
+    try {
+      const harness = createTransportHarness();
+      harness.request.mockResolvedValue({ kind: 'error', error: { code, message: 'Collection read refused', retryable: false } });
+      const collection = createClient(harness).collection(taskCollectionDefinition);
+      await expect(collection.get('task-1')).rejects.toMatchObject({ name: 'PluginError', code, retryable: false });
+      await expect(collection.query({ index: 'by-id', order: 'asc' }))
+        .rejects.toMatchObject({ name: 'PluginError', code, retryable: false });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(harness.request).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('projects the complete generic Account-data client through the host-owned bridge', async () => {
     const harness = createTransportHarness();
     const client = createClient(harness);

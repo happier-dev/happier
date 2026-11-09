@@ -185,6 +185,27 @@ describe('FloatingFrame', () => {
     }
   });
 
+  it('updates mounted controls when the primary pointer changes in either direction', () => {
+    let coarse = false;
+    const listeners = new Set<() => void>();
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      get matches() { return query === '(pointer: coarse)' || query === '(hover: none)' ? coarse : !coarse; },
+      addEventListener: (_event: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_event: string, listener: () => void) => listeners.delete(listener),
+    }));
+    const frame = mount();
+    try {
+      expect(frame.byId('frame-controls').style.opacity).toBe('0');
+      act(() => { coarse = true; for (const listener of listeners) listener(); });
+      expect(frame.byId('frame-controls').style.opacity).toBe('1');
+      act(() => { coarse = false; for (const listener of listeners) listener(); });
+      expect(frame.byId('frame-controls').style.opacity).toBe('0');
+    } finally {
+      frame.view.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('keeps its controls shown once a finger has reached it on a device that also hovers', () => {
     const { view, byId } = mount();
     const event = new MouseEvent('pointerover', { bubbles: true });

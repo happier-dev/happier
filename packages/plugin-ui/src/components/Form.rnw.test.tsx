@@ -153,6 +153,29 @@ describe('canonical Action Form presentation', () => {
     expect(mount.container.querySelectorAll('input')[1]?.getAttribute('aria-label')).toBe('Branch');
     mount.unmount();
   });
+  it('marks no field in an all-required form and only the optional ones in a mixed form, never with an asterisk', () => {
+    const allRequired = mountForm(<Form hints={{ fields: [
+      { path: 'name', title: 'Name', widget: 'text', required: true },
+      { path: 'region', title: 'Region', widget: 'text', required: true },
+    ] }} value={{}} onChange={() => undefined} onSubmit={() => undefined} />);
+    expect(allRequired.container.textContent).not.toContain('*');
+    expect(allRequired.container.textContent?.toLowerCase()).not.toContain('optional');
+    // Requiredness stays in the semantics even though nothing is drawn for it.
+    expect([...allRequired.container.querySelectorAll('input')].map(input => input.getAttribute('aria-required'))).toEqual(['true', 'true']);
+    allRequired.unmount();
+
+    const context = createSurfaceContext({ locale: 'es', translations: { 'happier.plugin-ui.form.optional': 'Opcional' } });
+    const mixed = mountForm(<Form hints={{ fields: [
+      { path: 'name', title: 'Name', widget: 'text', required: true },
+      { path: 'branch', title: 'Branch', widget: 'text' },
+    ] }} value={{}} onChange={() => undefined} onSubmit={() => undefined} />, context);
+    expect(mixed.container.textContent).not.toContain('*');
+    const marks = [...mixed.container.querySelectorAll<HTMLElement>('*')].filter(node => node.children.length === 0 && node.textContent?.includes('Opcional'));
+    expect(marks).toHaveLength(1);
+    // The mark belongs to the optional field's label, after its name.
+    expect(marks[0]!.parentElement?.textContent).toMatch(/^Branch\s*Opcional$/);
+    mixed.unmount();
+  });
   it('resolves direct field chrome through the plugin catalog', () => {
     const context = createSurfaceContext({
       translations: {
@@ -449,8 +472,8 @@ describe('canonical Action Form presentation', () => {
     );
     const toggle = mount.container.querySelector<HTMLElement>('[role="switch"]');
     expect(toggle).not.toBeNull();
-    // The ring rides the drawn track (the switch's first child), not the larger hit box around it.
-    const track = toggle!.firstElementChild as HTMLElement;
+    // The ring rides the drawn track (the switch's drawn child, beside its invisible hit frame), not the hit area.
+    const track = toggle!.querySelector<HTMLElement>(':scope > :not([data-happier-hit-area])')!;
     expect(getComputedStyle(track).outlineStyle).not.toBe('solid');
 
     await act(async () => {
@@ -1137,7 +1160,7 @@ describe('shared control visuals (D6)', () => {
     }
     const mount = mountWithPalette(<Harness />);
     const toggle = mount.container.querySelector<HTMLElement>('[role="switch"]');
-    const track = toggle?.firstElementChild as HTMLElement | null;
+    const track = toggle?.querySelector<HTMLElement>(':scope > :not([data-happier-hit-area])') ?? null;
     const thumb = track?.firstElementChild as HTMLElement | null;
     // Plugin and core controls consume the same switch geometry and host colours.
     expect(getComputedStyle(track!).width).toBe(`${HAPPIER_SWITCH_METRICS.default.trackWidth}px`);
@@ -1422,6 +1445,38 @@ describe('shared control visuals (D6)', () => {
     await act(async () => { input.dispatchEvent(new FocusEvent('blur')); input.dispatchEvent(new FocusEvent('focusout', { bubbles: true })); });
     expect(onCommit).toHaveBeenCalledTimes(1);
     expect(input.value).toBe('3');
+    mount.unmount();
+  });
+
+  it('draws a field TextField\'s leading and trailing marks inside the box, around a value that stays editable and named', async () => {
+    const onChange = vi.fn();
+    const mount = mountWithPalette(
+      <Form.TextField label="Shortcut" presentation="field" value="release-notes" onChange={onChange} testID="shortcut-field"
+        leading={<span data-testid="shortcut-slash">/</span>} trailing={<span data-testid="shortcut-end">⌘</span>} />,
+    );
+    const input = mount.container.querySelector<HTMLInputElement>('[data-testid="shortcut-field"]')!;
+    const slash = mount.container.querySelector<HTMLElement>('[data-testid="shortcut-slash"]')!;
+    const end = mount.container.querySelector<HTMLElement>('[data-testid="shortcut-end"]')!;
+    expect(slash).not.toBeNull();
+    expect(end).not.toBeNull();
+    // One bordered box holds the mark, the value and the end mark, in reading order.
+    const box = [...mount.container.querySelectorAll<HTMLElement>('div')].find((node) =>
+      getComputedStyle(node).borderTopColor === 'rgb(171, 205, 239)' && node.contains(input))!;
+    expect(box.contains(slash) && box.contains(end)).toBe(true);
+    expect(slash.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(input.compareDocumentPosition(end) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The field keeps its name; the marks are decoration.
+    expect(input.getAttribute('aria-label')).toBe('Shortcut');
+    await act(async () => { setInputValue(input, 'release'); });
+    expect(onChange).toHaveBeenLastCalledWith('release');
+    mount.unmount();
+  });
+
+  it('draws a form TextField\'s trailing mark even without a leading one', () => {
+    const mount = mountWithPalette(
+      <Form.TextField label="Query" value="" onChange={() => undefined} testID="query-field" trailing={<span data-testid="query-end">⌘K</span>} />,
+    );
+    expect(mount.container.querySelector('[data-testid="query-end"]')).not.toBeNull();
     mount.unmount();
   });
 

@@ -1,5 +1,5 @@
-import { act, useEffect, useState } from 'react';
-import { Pressable, Text, TextInput } from 'react-native';
+import { act, useEffect, useState, type ReactNode } from 'react';
+import { Pressable, Text, TextInput, View } from 'react-native';
 import { describe, expect, it } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
@@ -13,6 +13,7 @@ import {
   type HappierWidgetFrameProps,
 } from './WidgetFrame.js';
 import { HappierStateLine } from '../state/InfoState.js';
+import type { HappierStyleProp } from '../portableTypes.js';
 
 /**
  * The one widget frame (lab `cwidgets` F1, round 2 WK): the same header grammar — mark, title,
@@ -50,20 +51,73 @@ function byId(root: ParentNode, id: string): HTMLElement | null {
 }
 
 describe('HappierWidgetFrame', () => {
-  it('draws a widget card on one identity line (mark · title · source · meta · controls) and stacks only an item card', () => {
-    // A glance on Home or a Board (atmosphere lab, berthd): the mark sits on the title's line, and so do its controls.
-    for (const placement of ['home', 'board'] as const) {
-      const widget = mount({ placement });
-      expect(byId(widget.container, 'frame.header')!.style.flexDirection).toBe('row');
-      expect(byId(widget.container, 'frame.titleBlock')!.style.flexDirection).toBe('row');
+  it.each([false, true])('keeps its body and controls mounted across card → plain → card (host material: %s)', async (hosted) => {
+    // A real host supplies its own component type, as Happier does with GlassSurface.
+    function HostMaterial(input: Readonly<{ children?: ReactNode; style?: HappierStyleProp; testID?: string }>) {
+      return <View testID={input.testID} style={input.style}>{input.children}</View>;
     }
-    // A Collection item card (lab store `y:card`) keeps its identity row above a full-width title.
-    const item = mount({ anatomy: 'item' });
-    expect(byId(item.container, 'frame.header')!.style.flexDirection).toBe('column-reverse');
-    expect(byId(item.container, 'frame.titleBlock')!.style.flexDirection).toBe('column');
+    const renderMaterialSurface: HappierWidgetFrameProps['renderMaterialSurface'] = input => (
+      <HostMaterial style={input.style} testID={input.testID}>{input.children}</HostMaterial>
+    );
+    let mounts = 0;
+    let releases = 0;
+    function Body() {
+      const [draft, setDraft] = useState('draft');
+      useEffect(() => { mounts += 1; return () => { releases += 1; }; }, []);
+      return <Pressable testID="live-body" onPress={() => setDraft('edited')}><Text>{draft}</Text></Pressable>;
+    }
+    const frame = (frameStyle: HappierWidgetFrameProps['frameStyle']) => (
+      <HappierWidgetFrame testID="frame" frameStyle={frameStyle} placement="board" cardStyle={CHROME.card}
+        dividerColor={CHROME.divider} renderMaterialSurface={hosted ? renderMaterialSurface : undefined}
+        mark={<Text>mark</Text>} title="Vitals" source="NLDW3" meta={<Text testID="live-meta">now</Text>}
+        accessory={<Pressable testID="options" accessibilityRole="button" onPress={() => undefined}><Text>Options</Text></Pressable>}>
+        <Body />
+      </HappierWidgetFrame>
+    );
+    const view = mountThroughReactNativeWeb(frame('card'));
+    try {
+      const body = byId(view.container, 'live-body')!;
+      const options = byId(view.container, 'options')!;
+      const meta = byId(view.container, 'live-meta')!;
+      const header = byId(view.container, 'frame.header')!;
+      await act(async () => { body.click(); options.focus(); });
+      for (const next of ['plain', 'card'] as const) {
+        await view.render(frame(next));
+        expect(mounts).toBe(1);
+        expect(releases).toBe(0);
+        expect(byId(view.container, 'live-body')).toBe(body);
+        expect(body.textContent).toBe('edited');
+        expect(byId(view.container, 'options')).toBe(options);
+        expect(byId(view.container, 'live-meta')).toBe(meta);
+        expect(byId(view.container, 'frame.header')).toBe(header);
+        expect(document.activeElement).toBe(options);
+      }
+    } finally { view.unmount(); }
+    expect(releases).toBe(1);
   });
 
-  it('keeps controlled disclosure separate from header actions and retains the body input across collapse', async () => {
+  it('opens from its own target while header and retained body controls act independently', async () => {
+    let opened = 0;
+    let edited = 0;
+    let inspected = 0;
+    const view = mount({
+      onOpen: () => { opened += 1; },
+      accessory: <Pressable testID="inspect-card" accessibilityRole="button" onPress={() => { inspected += 1; }}><Text>Inspect</Text></Pressable>,
+      children: <Pressable testID="edit-card" accessibilityRole="button" onPress={() => { edited += 1; }}><Text>Edit</Text></Pressable>,
+    });
+    try {
+      const open = byId(view.container, 'frame:open');
+      expect(open).not.toBeNull();
+      expect(open!.contains(byId(view.container, 'inspect-card'))).toBe(false);
+      expect(open!.contains(byId(view.container, 'edit-card'))).toBe(false);
+      await act(async () => { byId(view.container, 'inspect-card')!.click(); byId(view.container, 'edit-card')!.click(); });
+      expect([opened, inspected, edited]).toEqual([0, 1, 1]);
+      await act(async () => { open!.click(); });
+      expect(opened).toBe(1);
+    } finally { view.unmount(); }
+  });
+
+  it.each(['plain', 'card'] as const)('keeps %s controlled disclosure separate from header actions and retains the body input across collapse', async (frameStyle) => {
     let mounts = 0;
     let inspections = 0;
     function Body() {
@@ -74,7 +128,7 @@ describe('HappierWidgetFrame', () => {
     }
     function Frame() {
       const [collapsed, setCollapsed] = useState(false);
-      return <HappierWidgetFrame frameStyle="plain" placement="companion" title="Notes" testID="disclosure"
+      return <HappierWidgetFrame frameStyle={frameStyle} placement="companion" title="Notes" testID="disclosure"
         disclosure={{ collapsed, onCollapsedChange: setCollapsed, expandLabel: 'Expand notes', collapseLabel: 'Collapse notes' }}
         accessory={<Pressable accessibilityRole="button" testID="header-action" onPress={() => { inspections += 1; }}><Text>About</Text></Pressable>}>
         <Body />
@@ -155,6 +209,19 @@ describe('HappierWidgetFrame', () => {
     const titleRowOf = (root: ParentNode) => byId(root, 'frame.titleBlock')!;
     expect(titleRowOf(inline.container).style.flexDirection).toBe('row');
     expect(titleRowOf(below.container).style.flexDirection).toBe('column');
+  });
+
+  it('draws a widget card on one identity line (mark · title · source · meta · controls) and stacks only an item card', () => {
+    // A glance on Home or a Board (atmosphere lab, berthd): the mark sits on the title's line, and so do its controls.
+    for (const placement of ['home', 'board'] as const) {
+      const widget = mount({ placement });
+      expect(byId(widget.container, 'frame.header')!.style.flexDirection).toBe('row');
+      expect(byId(widget.container, 'frame.titleBlock')!.style.flexDirection).toBe('row');
+    }
+    // A Collection item card (lab store `y:card`) keeps its identity row above a full-width title.
+    const item = mount({ anatomy: 'item' });
+    expect(byId(item.container, 'frame.header')!.style.flexDirection).toBe('column-reverse');
+    expect(byId(item.container, 'frame.titleBlock')!.style.flexDirection).toBe('column');
   });
 
   it('aligns body and header on the placement inset: a card keeps its padding, plain lines up with the page', () => {

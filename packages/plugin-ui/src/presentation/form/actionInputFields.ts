@@ -10,7 +10,7 @@ type InputRecord = Readonly<Record<string, unknown>>;
  * the dependency direction: presentation never imports host/SDK transport.
  */
 export type HappierActionInputField = Pick<InputFieldHint, 'widget'>
-  & Partial<Pick<InputFieldHint, 'unit' | 'listSeparator' | 'inputType' | 'options' | 'optionsSourceId' | 'connectedAccountOptions'>>;
+  & Partial<Pick<InputFieldHint, 'unit' | 'listSeparator' | 'inputType' | 'options' | 'optionsSourceId' | 'connectedAccountOptions' | 'allowCustomValue'>>;
 
 export function readHappierActionInputPath(input: InputRecord, path: string): unknown {
   return readInputPath(input, path);
@@ -143,7 +143,7 @@ export function resolveHappierActionFieldPresentation<OptionValue = unknown>(
   const newlineList = isList && field.listSeparator === 'newline';
   const gib = field.widget === 'integer' && field.unit === 'bytes';
   const display = isJson
-    ? value === undefined
+    ? value === undefined || Array.isArray(value) && value.length === 0
       ? ''
       : (() => { try { return JSON.stringify(value, null, 2); } catch { return ''; } })()
     : isList
@@ -169,6 +169,7 @@ export function resolveHappierActionFieldPresentation<OptionValue = unknown>(
         return text.split(newlineList ? '\n' : ',').map((item) => item.trim()).filter(Boolean);
       }
       if (isJson) {
+        if (text.trim() === '' && Array.isArray(value)) return [];
         try { return JSON.parse(text); } catch { return text; }
       }
       return text;

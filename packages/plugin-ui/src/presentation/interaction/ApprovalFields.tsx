@@ -116,6 +116,8 @@ export type HappierApprovalFieldsSpace = Readonly<{
 export const HAPPIER_APPROVAL_FIELDS_METRICS = Object.freeze({
   /** The table's key column: wide enough for the common argument names, so the values share one edge. */
   tableLabelWidthPx: 96,
+  /** A page facts list's key column: its labels are short single words (Where, Path, As). */
+  pageLabelWidthPx: 56,
   /** How far a structured value's nested entries step in per level. */
   entryIndentPx: 12,
   space: Object.freeze({
@@ -160,6 +162,12 @@ export type HappierApprovalFieldsProps<TSource = never> =
        * for a body that already sits behind a "Details" line.
        */
       anatomy?: 'table' | 'stack';
+      /**
+       * `card` (default): the open card's inset table. `page`: a short facts list on the page beneath the thing
+       * asked (a script's command): no inset, the compact key column and a page row's description size, the keys a
+       * step quieter than their values.
+       */
+      density?: 'card' | 'page';
       /** The last line of the fields (a Technical details disclosure). */
       footer?: ReactNode;
       radius?: number;
@@ -327,7 +335,12 @@ export function HappierApprovalFieldEntries<TSource = never>(
 export function HappierApprovalFields<TSource = never>(
   props: HappierApprovalFieldsProps<TSource>,
 ) {
-  const { colors, space, text } = useApprovalFieldsLook(props);
+  const { colors, space, styles, text } = useApprovalFieldsLook(props);
+  const page = props.density === 'page';
+  const keyText = (label: string) =>
+    page ? text('tableLabel', label, styles.pageEntryLabel) : text('tableLabel', label);
+  const valueText = (value: string) =>
+    page ? text('value', value, styles.pageEntryValue) : text('value', value);
   const look: HappierApprovalFieldsLook<TSource> = {
     Resolve: props.Resolve,
     colors: props.colors,
@@ -339,7 +352,11 @@ export function HappierApprovalFields<TSource = never>(
   const content = (row: HappierApprovalFieldRow<TSource>) => {
     if (row.kind === 'entries')
       return (
-        <HappierApprovalFieldEntries<TSource> {...look} entries={row.entries} />
+        <HappierApprovalFieldEntries<TSource>
+          {...look}
+          entries={row.entries}
+          density={page ? 'page' : 'card'}
+        />
       );
     if (row.kind === 'answers') {
       return (
@@ -410,19 +427,26 @@ export function HappierApprovalFields<TSource = never>(
   }
 
   const labelColumn: HappierPortableStyle = {
-    width: HAPPIER_APPROVAL_FIELDS_METRICS.tableLabelWidthPx,
+    width: page
+      ? HAPPIER_APPROVAL_FIELDS_METRICS.pageLabelWidthPx
+      : HAPPIER_APPROVAL_FIELDS_METRICS.tableLabelWidthPx,
     flexShrink: 0,
   };
   return (
     <View
       testID={props.testID}
-      style={{
-        borderRadius: props.radius ?? HAPPIER_APPROVAL_FIELDS_METRICS.radiusPx,
-        ...(colors ? { backgroundColor: colors.inset } : null),
-        paddingHorizontal: space.s12,
-        paddingVertical: space.s8,
-        gap: space.s6,
-      }}
+      style={
+        page
+          ? { gap: space.s4 }
+          : {
+              borderRadius:
+                props.radius ?? HAPPIER_APPROVAL_FIELDS_METRICS.radiusPx,
+              ...(colors ? { backgroundColor: colors.inset } : null),
+              paddingHorizontal: space.s12,
+              paddingVertical: space.s8,
+              gap: space.s6,
+            }
+      }
     >
       {props.rows.map((row) =>
         row.kind === 'value' || row.kind === 'entries' ? (
@@ -444,18 +468,16 @@ export function HappierApprovalFields<TSource = never>(
               >
                 {(resolved) => (
                   <>
-                    <View style={labelColumn}>
-                      {text('tableLabel', resolved.label)}
-                    </View>
+                    <View style={labelColumn}>{keyText(resolved.label)}</View>
                     <View style={{ flex: 1, minWidth: 0 }}>
-                      {text('value', resolved.value)}
+                      {valueText(resolved.value)}
                     </View>
                   </>
                 )}
               </ResolvedText>
             ) : (
               <>
-                <View style={labelColumn}>{text('tableLabel', row.label)}</View>
+                <View style={labelColumn}>{keyText(row.label)}</View>
                 <View style={{ flex: 1, minWidth: 0 }}>{content(row)}</View>
               </>
             )}

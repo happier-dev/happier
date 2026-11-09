@@ -1,8 +1,16 @@
 import React from 'react';
 import { ThreadExample } from './threadSurface.js';
+import { AccountBylineExample } from './accountBylineSurface.js';
+import { FollowPolicyEditorExample } from './followPolicyEditorSurface.js';
+import { WorkUpdateCardExample } from './workUpdateCardSurface.js';
+import { ReviewReadyNoticeExample } from './reviewReadyNoticeSurface.js';
 import { ReplyQuoteExample } from './replyQuoteSurface.js';
 import { ReturnedAnswerQuoteExample } from './returnedAnswerQuoteSurface.js';
 import { ExecutableParticipantPickerExample } from './executableParticipantPickerSurface.js';
+import { DocEditProposalExample } from './docEditProposalSurface.js';
+import { MemoryFactsExample } from './memoryFactsSurface.js';
+import { MemoryDuplicateChoiceExample } from './memoryDuplicateChoiceSurface.js';
+import { BuiltInParityExample } from './builtInParitySurface.js';
 import {
   Button,
   Card,
@@ -26,6 +34,7 @@ import {
   useLivePluginResource,
   usePluginResource,
   usePluginTheme,
+  usePluginTranslation,
 } from '@happier-dev/plugin-ui';
 import {
   usePluginCollectionQuery,
@@ -43,6 +52,8 @@ const summary = { pluginId: 'example.plugin-ui', localId: 'summary' } as const;
 
 function Summary() {
   const hostApi = usePluginHostApi();
+  const translate = usePluginTranslation();
+  const [reviewDecided, setReviewDecided] = React.useState(false);
   const { resource } = usePluginResource(summary);
   const { resource: liveResource } = useLivePluginResource(summary);
   usePluginUiDataClient();
@@ -66,9 +77,18 @@ function Summary() {
       <ExternalAuthoringOverlays />
       <NeutralMeasurements />
       <ThreadExample />
+      <AccountBylineExample />
+      <FollowPolicyEditorExample />
+      <WorkUpdateCardExample />
+      <ReviewReadyNoticeExample />
+      <DocEditProposalExample />
+      <MemoryFactsExample />
+      <MemoryDuplicateChoiceExample />
       <ReplyQuoteExample />
       <ReturnedAnswerQuoteExample />
       <ExecutableParticipantPickerExample multiple />
+      <BuiltInParityExample text={(words) => translate(words, words)} onDecide={() => setReviewDecided(true)} />
+      {reviewDecided ? <Text value={translate('Review decision recorded', 'Review decision recorded')} /> : null}
     </Card>
   );
 }
@@ -277,5 +297,8 @@ export const renderSurface = defineUiSurface(Summary);
 /** The custom-arrangement Session consumer (plan 05 §4.8). */
 export const renderLeadSessionSurface = defineUiSurface(LeadSession);
 
-/** The built-in page pieces one surface composes: header, needs-you highlight, compact approval. */
+/** Controlled approval presentation for authors composing their own request body. */
+export { ApprovalFieldsExample } from './approvalFieldsSurface.js';
+
+/** The built-in page pieces one surface composes: header, spaces strip, needs-you highlight, compact approval. */
 export { BuiltInParityExample } from './builtInParitySurface.js';

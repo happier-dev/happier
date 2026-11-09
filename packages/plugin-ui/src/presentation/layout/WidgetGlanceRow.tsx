@@ -11,12 +11,14 @@ import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 
-/** One line of the row's text; the host draws it on a single line (`numberOfLines={1}`). */
+/** A piece of the row's text; the host draws it on one line unless `lines` says otherwise (`numberOfLines`). */
 export type HappierWidgetGlanceRowTextProps = Readonly<{
   /** `title`: the row's name (row title step). `meta`: a fact, a tag or a fact-variant label (row meta step). */
   role: 'title' | 'meta';
   /** A path, id or ref: the host's mono face. */
   mono?: boolean;
+  /** How many lines it may take: 2 for a wrapping sentence, 0 for a span with no limit of its own. */
+  lines?: number;
   color: string;
   style: HappierStyleProp;
   children: ReactNode;
@@ -54,8 +56,15 @@ export type HappierWidgetGlanceRowProps = Readonly<{
   title: string;
   /** `fact` draws the label as a quiet one-line statement (About); `row` is a thing with a name. */
   variant?: 'row' | 'fact';
-  /** A short tag on the label's line ("Here"). */
+  /** A short tag on the label's line ("Here", a state word such as "Waiting for you"). */
   tag?: string | null;
+  /** A state word as the tag speaks only when it needs the person (`attention`) or failed (`danger`). */
+  tagTone?: 'quiet' | 'attention' | 'danger';
+  /**
+   * The tag says more about the label (`5 files not committed · 3 included`): one sentence that wraps
+   * to a second line when the room runs out, so the tag never cuts the label short.
+   */
+  tagSentence?: boolean;
   /** The second line: where it is and what is happening there. */
   fact?: string | null;
   /** `attention`: the fact needs the person (amber); `danger`: it failed. Healthy state stays quiet. */
@@ -82,6 +91,7 @@ export const HappierWidgetGlanceRow = memo(function HappierWidgetGlanceRow(
 ): ReactElement {
   const { Text, colors, space } = props;
   const variant = props.variant ?? 'row';
+  const sentenceTag = props.tagSentence && props.tag ? props.tag : null;
   const content = (
     <>
       {props.mark !== undefined ? (
@@ -92,13 +102,31 @@ export const HappierWidgetGlanceRow = memo(function HappierWidgetGlanceRow(
           <Text
             role={variant === 'fact' ? 'meta' : 'title'}
             {...(props.mono ? { mono: true } : {})}
+            {...(sentenceTag ? { lines: 2 } : {})}
             color={variant === 'fact' ? colors.secondaryText : colors.text}
             style={shrinkingTextStyle}
           >
             {props.title}
+            {sentenceTag ? (
+              <>
+                <Text role="meta" lines={0} color={colors.mutedText} style={null}>{' ·'}</Text>
+                {' '}
+                <Text role="meta" color={colors.mutedText} style={null}>{sentenceTag}</Text>
+              </>
+            ) : null}
           </Text>
-          {props.tag ? (
-            <Text role="meta" color={colors.mutedText} style={fixedTextStyle}>
+          {props.tag && !sentenceTag ? (
+            <Text
+              role="meta"
+              color={
+                props.tagTone === 'attention'
+                  ? colors.attention
+                  : props.tagTone === 'danger'
+                    ? (colors.danger ?? colors.text)
+                    : colors.mutedText
+              }
+              style={fixedTextStyle}
+            >
               {props.tag}
             </Text>
           ) : null}

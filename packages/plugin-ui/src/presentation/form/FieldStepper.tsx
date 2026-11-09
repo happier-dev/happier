@@ -35,9 +35,11 @@ export function HappierFieldStepper(props: Readonly<{
   // outward and up and down, never over the value between them (DESIGN.md → touch targets are hit areas).
   const size = HAPPIER_FIELD_BOX_METRICS.minHeightPx;
   const compact = props.compact === true;
+  // The compact box paints the shared field (ground, outline, edge) but never clips: it is shorter than
+  // its buttons' hit areas, and a clipping box would cut their reach off (DESIGN.md → touch targets).
   return <View style={compact ? [
     HAPPIER_FIELD_BOX_SHAPE,
-    { flexDirection: 'row', alignItems: 'center', paddingLeft: 0, paddingRight: 0, overflow: 'hidden', borderColor: props.colors.borderColor, backgroundColor: paintColor(props.colors.backgroundColor) },
+    { flexDirection: 'row', alignItems: 'center', paddingLeft: 0, paddingRight: 0, borderColor: props.colors.borderColor, backgroundColor: paintColor(props.colors.backgroundColor) },
     happierRaisedEdgeStyle(props.colors.edge),
   ] : { flexDirection: 'row', alignItems: 'center', flexShrink: 1 }}>
     {([-1, 1] as const).map((direction) => {

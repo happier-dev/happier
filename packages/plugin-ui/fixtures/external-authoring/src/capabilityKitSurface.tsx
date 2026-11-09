@@ -1,11 +1,15 @@
 import { useState } from 'react';
 import {
   CapabilityAddBody,
+  CapabilityAddDetailAction,
   CapabilityBlockingBanner,
   CapabilityDetailHeader,
   CapabilityFacts,
   CapabilityStatusChip,
+  CapabilityListingSections,
   Collection,
+  Button,
+  PageHeader,
   WhereItsOnControl,
   capabilityCollectionAnatomy,
   pickMostBlockingCapabilityStatus,
@@ -21,6 +25,7 @@ type Extension = Readonly<{
   name: string;
   purpose: string;
   scope: string;
+  toolCount: number;
   statuses: readonly CapabilityStatus[];
 }>;
 
@@ -32,6 +37,7 @@ export function CapabilityKitExample(
   props: Readonly<{ onSignIn?: (id: string) => void; onWhere?: (intent: WhereItsOnIntent) => void }>,
 ) {
   const [signedIn, setSignedIn] = useState<readonly string[]>([]);
+  const [openKey, setOpenKey] = useState<string | null>(null);
   // The plugin owns its rules; the control says the person's choice and the plugin applies it.
   const [everywhere, setEverywhere] = useState<'on' | 'off'>('on');
   const [rules, setRules] = useState<readonly WhereItsOnRule[]>([{ place: { t: 'allMachines' }, agentId: 'gemini', on: false }]);
@@ -54,6 +60,7 @@ export function CapabilityKitExample(
       name: 'Linear',
       purpose: 'Read and update the issues your team works on.',
       scope: 'Everywhere',
+      toolCount: 12,
       statuses: signedIn.includes('linear')
         ? []
         : [
@@ -69,10 +76,11 @@ export function CapabilityKitExample(
       name: 'Figma',
       purpose: 'Read frames and comments from shared files.',
       scope: '2 projects',
+      toolCount: 8,
       statuses: [],
     },
   ];
-  const model = useHappierCollection({ items: extensions, keyOf: (item) => item.id, openKey: null, onOpenChange: () => undefined });
+  const model = useHappierCollection({ items: extensions, keyOf: (item) => item.id, openKey, onOpenChange: setOpenKey });
   const status = (item: Extension) =>
     pickMostBlockingCapabilityStatus(item.statuses);
   const linear = extensions[0]!;
@@ -133,8 +141,15 @@ export function CapabilityKitExample(
       model={model}
       accessibilityLabel="Extensions"
       presentation="list"
-      detail="none"
-      scroll="page"
+      detail="auto"
+      headerPlacement="list"
+      header={<PageHeader title="Extensions" />}
+      renderDetail={(key) => {
+        const item = extensions.find((candidate) => candidate.id === key);
+        return item ? <CapabilityDetailHeader title={item.name} purpose={item.purpose}
+          facts={{ source: { kind: 'registry', label: 'Extension registry' }, trust: 'has_files' }}
+          testID={`author-capability.detail.${item.id}`} /> : null;
+      }}
       minListWidth={240}
       minDetailWidth={240}
       preferredListRatio={0.5}
@@ -142,6 +157,7 @@ export function CapabilityKitExample(
         title: (item) => item.name,
         description: (item) => item.purpose,
         whereSummary: (item) => item.scope,
+        count: (item) => item.toolCount,
         facts: () => ({ source: { kind: 'registry', label: 'Extension registry' }, trust: 'has_files' }),
         status,
         accessibilityLabel: (item) => item.name,
@@ -156,20 +172,32 @@ type Listing = Readonly<{ id: string; name: string; summary: string }>;
 
 /**
  * The same plugin adds extensions from its own page: the shared Add body (tabs, the catalog list with details beside
- * it, the pinned footer). The page around it and its header are the plugin's.
+ * it, the install action). The page around it and its header are the plugin's.
  */
 export function CapabilityAddExample(
-  props: Readonly<{ onInstall?: (id: string) => void; onClose?: () => void }>,
+  props: Readonly<{
+    onInstall?: (id: string) => void;
+    onClose?: () => void;
+    /** The caller can publish its asynchronously loaded rows without remounting the body. */
+    listings?: readonly Listing[];
+    loading?: boolean;
+    initialItemKey?: string;
+    loadMore?: CapabilityAddConfig<Listing>['catalog']['loadMore'];
+  }>,
 ) {
   const [query, setQuery] = useState('');
-  const listings: readonly Listing[] = [
+  const [catalogDemanded, setCatalogDemanded] = useState(true);
+  const listings: readonly Listing[] = props.listings ?? [
     { id: 'linear', name: 'Linear', summary: 'Issues and projects.' },
     { id: 'figma', name: 'Figma', summary: 'Frames and comments.' },
   ];
   const shown = listings.filter((listing) => listing.name.toLowerCase().includes(query.toLowerCase()));
   const config: CapabilityAddConfig<Listing> = {
     title: 'Add an extension',
-    modes: [{ key: 'browse', label: 'Browse', icon: 'search', kind: 'catalog' }],
+    onCatalogDemandChange: setCatalogDemanded,
+    ...(props.initialItemKey === undefined ? {} : { initialItemKey: props.initialItemKey }),
+    modes: [{ key: 'browse', label: 'Browse', icon: 'search', kind: 'catalog' },
+      { key: 'input', label: 'Your own', icon: 'file', kind: 'input', renderBody: ctx => <>{ctx.tools()}</> }],
     catalog: {
       query,
       onQueryChange: setQuery,
@@ -183,10 +211,19 @@ export function CapabilityAddExample(
         accessibilityLabel: (item) => item.name,
         testID: (item) => `author-add.row.${item.id}`,
       }),
-      loading: false,
-      empty: null,
+      loading: catalogDemanded && (props.loading ?? false),
+      ...(props.loadMore === undefined ? {} : { loadMore: props.loadMore }),
+      empty: ({ selectMode }) => <Button title="Add your own" onPress={() => selectMode('input')} />,
     },
-    renderDetail: (item) => <CapabilityFacts testID={`author-add.detail.${item.id}`} source={{ kind: 'you' }} trust="text_only" />,
+    renderDetail: (item) => <>
+      <CapabilityDetailHeader title={item.name} purpose={item.summary}
+        facts={{ source: { kind: 'you' }, trust: 'text_only' }}
+        testID={`author-add.detail.${item.id}`} />
+      <CapabilityAddDetailAction />
+      <CapabilityListingSections testID={`author-add.listing.${item.id}`}
+        facts={{ version: '1.4.0', sourceTitle: 'Extension registry', license: 'MIT',
+          links: { repository: 'https://github.com/acme/linear-extension.git' } }} />
+    </>,
     detailFooter: (item) => ({
       primary: {
         label: 'Install',
@@ -199,5 +236,10 @@ export function CapabilityAddExample(
     }),
     testID: 'author-add',
   };
-  return <CapabilityAddBody config={config} onClose={() => props.onClose?.()} />;
+  return <CapabilityAddBody config={config} onClose={() => props.onClose?.()}
+    renderLayout={({ modes, level, body }) => <>
+      <PageHeader title={level.kind === 'registries' ? level.header.title : 'Add an extension'}
+        actions={level.kind === 'root' ? modes : <Button title="Back" variant="secondary" onPress={level.back} />} />
+      {body}
+    </>} />;
 }

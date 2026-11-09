@@ -38,7 +38,7 @@ export function Step(props: StepProps): ReactElement {
   const markerLabel = marker.kind === 'state'
     ? resolveAuthorText(translate, marker.label, marker.labelKey) ?? marker.label
     : undefined;
-  const stateGlyph = marker.kind === 'state' && marker.state !== 'running'
+  const stateGlyph = marker.kind === 'state' && marker.state !== 'running' && marker.state !== 'open'
     ? <Icon name={marker.state === 'passed' ? 'check' : 'close'} size="small" tone={HAPPIER_STEP_STATE_TONE[marker.state]} />
     : undefined;
 

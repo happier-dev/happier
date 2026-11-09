@@ -20,6 +20,7 @@ import {
 } from '../presentation/capabilities/capabilityFacts.js';
 import {
   doesHappierCapabilityStatusSpeak,
+  presentHappierCapabilityStatus,
   resolveHappierCapabilityBlockingNotice,
   type HappierCapabilityFixKind,
   type HappierCapabilityStatus,
@@ -128,6 +129,8 @@ function statusLabels(
           return translate(`${KEY}.status.signing`, 'Signing in…');
         case 'update':
           return translate(`${KEY}.status.update`, 'Update available');
+        case 'removed':
+          return translate(`${KEY}.status.removed`, 'Removed from source');
         case 'modified':
           return translate(`${KEY}.status.modified`, 'Modified');
         case 'pinned':
@@ -413,7 +416,10 @@ export type CapabilityCollectionAnatomyInput<Item> =
 const COLLECTION_PARTS = {
   facts: (facts: CapabilityFactsInput) => <CapabilityFacts {...facts} />,
   status: (status: CapabilityStatus, testID: string) => (
-    <CapabilityStatusChip status={status} testID={testID} />
+    <CapabilityStatusChip status={status} placement="catalog" testID={testID} />
+  ),
+  fix: (status: CapabilityStatus, testID: string) => (
+    <CapabilityCollectionFix status={status} testID={testID} />
   ),
   summary: (summary: string) => (
     <Text variant="meta" tone="secondary" numberOfLines={1}>
@@ -422,9 +428,18 @@ const COLLECTION_PARTS = {
   ),
 } as const;
 
+function CapabilityCollectionFix(props: Readonly<{ status: CapabilityStatus; testID: string }>): ReactElement | null {
+  const translate = usePluginTranslation();
+  const presentation = presentHappierCapabilityStatus(props.status, 'row', statusLabels(translate));
+  const fix = props.status.fix;
+  return fix && presentation.fixLabel
+    ? <StatusFix title={presentation.fixLabel} onPress={fix.onPress} testID={props.testID} />
+    : null;
+}
+
 /**
- * The capability row anatomy for `Collection`: name with where it is on at the title line's end, description,
- * then the facts line, which a speaking status takes.
+ * The capability row anatomy for `Collection`: name with held count/scope, then status-leading description.
+ * Facts remain available to cards and details; the fix is an independent row action.
  */
 export function capabilityCollectionAnatomy<Item>(
   input: CapabilityCollectionAnatomyInput<Item>,
@@ -557,6 +572,7 @@ function whereItsOnLabels(translate: PluginTranslate): HappierWhereItsOnControlL
       staysOff: (agents) => translate(`${k}.staysOff`, `${agents} stays off here`, { agents }),
       change: () => translate(`${k}.change`, 'Change'),
       changeFailed: () => translate(`${k}.changeFailed`, 'Couldn’t save that change.'),
+      checking: () => translate(`${k}.checking`, 'Checking machines…'),
       tryAgain: () => translate(`${KEY}.fix.tryAgain`, 'Try again'),
     },
   };
