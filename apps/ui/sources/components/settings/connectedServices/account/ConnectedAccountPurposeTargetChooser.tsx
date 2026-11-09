@@ -1,5 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { useShallow } from 'zustand/react/shallow';
+import { storage } from '@/sync/domains/state/storageStore';
+import { getConnectedMetadataCatalog, subscribeConnectedMetadataCatalog } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { usePathname } from '@/components/appShell/workspace/destinationRoute';
 
@@ -39,7 +43,7 @@ import { getConnectedAccountAuthentication, type ConnectedServiceRegistrySnapsho
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
-import { useActiveServerAccountScope, useProfile } from '@/sync/store/hooks';
+import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import type { HomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { getPreferredLanguage, t } from '@/text';
@@ -47,8 +51,13 @@ import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccou
 
 import {
   buildConnectedAccountPurposeTargetChoices,
-  connectedAccountPurposeTargetChoiceId,
+  resolveSelectedConnectedAccountPurposeTargetChoice,
+  type ConnectedAccountPurposeTargetChoicesInput,
 } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
+
+const SUMMARY_ACCOUNT_PROFILE_KEYS = ['connectedAccountsV4'] as const;
+const SUMMARY_GROUP_PROFILE_KEYS = ['connectedAccountsV4', 'connectedAccountGroupsV4'] as const;
+const SUMMARY_NO_PROFILE_KEYS = [] as const;
 
 const EMPTY_ACCOUNTS = Object.freeze([]);
 const EMPTY_GROUPS = Object.freeze([]);
@@ -66,10 +75,12 @@ type PurposeTargetPickerRefresh = Readonly<{
 }>;
 
 type ConnectedAccountPurposeTargetPickerModalContentProps = Readonly<{
-  rootStep: SelectionListStep;
-  selectedOptionId: string | null;
+  choiceInput: Omit<ConnectedAccountPurposeTargetChoicesInput, 'accounts' | 'groups' | 'labelsByKey'>;
+  accountsOnly?: boolean;
+  teamResourcesOnly?: boolean;
+  restriction?: Readonly<{ summary: string; sentence: string }>;
   accessibilityLabel: string;
-  onSelect: (optionId: string) => void;
+  onSelect: (target: QualifiedConnectedAccountPurposeBindingTargetV1 | null, teamResource: AgentConnectedAccountPurposeTeamResourceDefault | null) => void;
   refresh: PurposeTargetPickerRefresh | null;
   testID: string;
   onClose: () => void;
@@ -78,12 +89,45 @@ type ConnectedAccountPurposeTargetPickerModalContentProps = Readonly<{
 function ConnectedAccountPurposeTargetPickerModalContent(
   props: ConnectedAccountPurposeTargetPickerModalContentProps,
 ) {
+  const profile = storage(useShallow(state => ({
+    accounts: state.profile.connectedAccountsV4,
+    groups: state.profile.connectedAccountGroupsV4,
+  })), { profile: ['connectedAccountsV4', 'connectedAccountGroupsV4'] });
+  const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
+  const locale = getPreferredLanguage();
+  const choices = React.useMemo(() => buildConnectedAccountPurposeTargetChoices({
+    ...props.choiceInput,
+    accounts: props.choiceInput.sourceNegotiation === 'advertised-v4' && !props.teamResourcesOnly
+      ? profile.accounts ?? EMPTY_ACCOUNTS : EMPTY_ACCOUNTS,
+    groups: props.choiceInput.sourceNegotiation === 'advertised-v4' && !props.accountsOnly && !props.teamResourcesOnly
+      ? profile.groups ?? EMPTY_GROUPS : EMPTY_GROUPS,
+    labelsByKey,
+  }), [props.choiceInput, props.accountsOnly, props.teamResourcesOnly, profile.accounts, profile.groups, labelsByKey]);
+  const selected = choices.find(choice => choice.current);
+  const rootStep = React.useMemo<SelectionListStep>(() => ({
+    id: 'connected-account-purpose-targets',
+    ...(props.restriction ? { title: props.restriction.sentence } : {}),
+    inputPlaceholder: t('common.search'),
+    emptyStateLabel: t('common.unavailable'),
+    sections: [{
+      kind: 'static',
+      id: 'targets',
+      options: choices.map(choice => ({
+        id: choice.id,
+        testID: `${props.testID}:choice:${choice.id}`,
+        label: choice.presentation.primaryLabel,
+        ...(choice.presentation.secondaryLabel ? { subtitle: choice.presentation.secondaryLabel } : {}),
+        accessibilityLabel: choice.presentation.accessibilityLabel,
+        disabled: !choice.selectable,
+      })),
+    }],
+  }), [choices, locale, props.restriction, props.testID]);
   return (
     <>
       <SelectionList
         testID="connected-account-purpose-target-picker"
-        rootStep={props.rootStep}
-        selectedOptionId={props.selectedOptionId}
+        rootStep={rootStep}
+        selectedOptionId={selected?.selectable ? selected.id : null}
         listAccessibilityLabel={props.accessibilityLabel}
         maxHeight={SELECTION_LIST_MODAL_MAX_HEIGHT}
         heightBehavior={resolveSelectionListModalHeightBehavior()}
@@ -91,7 +135,8 @@ function ConnectedAccountPurposeTargetPickerModalContent(
         onRequestClose={props.onClose}
         onSelect={(optionId) => {
           props.onClose();
-          props.onSelect(optionId);
+          const choice = choices.find(candidate => candidate.id === optionId);
+          if (choice?.selectable) props.onSelect(choice.target, choice.teamResource);
         }}
       />
       {props.refresh ? (
@@ -190,10 +235,9 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
    */
   teamResourcesOnly?: boolean;
 }>) {
-  const profile = useProfile();
+  const profileId = storage(state => state.profile.id, { profile: ['id'] });
   const { present } = useConnectedAccountIdentityPrivacy();
   const locale = getPreferredLanguage();
-  const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
   const pathname = usePathname();
   const focusedRegistry = useProjectedConnectedServicesRegistry();
   const registry = props.registry ?? focusedRegistry;
@@ -205,25 +249,21 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   const serverFeatures = useServerFeaturesRuntimeSnapshot({ enabled: true });
   const accountTransport = resolveConnectedAccountUiNegotiation(serverFeatures);
   const activeAccountScope = useActiveServerAccountScope();
+  const activeServer = useActiveServerSnapshot();
+  const metadataScope = useActiveServerAccountScope(activeServer.serverId);
   // A feature bit only proves the transport is understood. The profile owner
   // proves whether the qualified target arrays belong to the current Account;
   // its default empty profile must remain indeterminate until that owner has
   // hydrated (or a cached profile is demonstrably for the active Account).
-  const profileHydrated = typeof profile.id === 'string'
+  const profileHydrated = typeof profileId === 'string'
     && Boolean(activeAccountScope?.accountId)
-    && profile.id.trim() === activeAccountScope?.accountId;
+    && profileId.trim() === activeAccountScope?.accountId;
   const effectiveAccountTransport = accountTransport === 'advertised-v4' && !profileHydrated
     ? 'indeterminate'
     : accountTransport;
   const pickerModalIdRef = React.useRef<string | null>(null);
   const [reloading, setReloading] = React.useState(false);
   const reloadingRef = React.useRef(false);
-  const accounts = effectiveAccountTransport === 'advertised-v4' && !props.teamResourcesOnly
-    ? profile.connectedAccountsV4 ?? EMPTY_ACCOUNTS
-    : EMPTY_ACCOUNTS;
-  const groups = effectiveAccountTransport === 'advertised-v4' && !props.accountsOnly && !props.teamResourcesOnly
-    ? profile.connectedAccountGroupsV4 ?? EMPTY_GROUPS
-    : EMPTY_GROUPS;
   const teamCatalog = props.teamCredentialCatalog;
   const teamResources = React.useMemo(() => (
     teamCatalog ? teamCatalog.resources : EMPTY_TEAM_RESOURCES
@@ -236,43 +276,47 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
       localizePluginText,
     );
   }, [localizePluginText, locale, props.declaration.service, registry.entries]);
-  const choices = React.useMemo(() => buildConnectedAccountPurposeTargetChoices({
+  const choiceInput = React.useMemo(() => ({
     declaration: { ...props.declaration, required: props.declaration.required === true },
     selectedTarget: props.value,
     selectedTeamResource: props.teamResourceValue ?? null,
     ...(props.noneLabel ? { noneLabel: props.noneLabel } : {}),
-    accounts,
-    groups,
-    labelsByKey,
     serviceTitle,
     sourceNegotiation: effectiveAccountTransport,
     descriptorsLoading: registry.status === 'loading',
     presentIdentity: present,
-    resolveAuthentication: service => getConnectedAccountAuthentication(service, registry),
+    resolveAuthentication: (service: PluginContributionIdentityV1) => getConnectedAccountAuthentication(service, registry),
     teamResources,
     teamResourceStatusByKey: teamCatalog?.resourceStatusByKey,
     ...(teamCatalog ? { teamNameById: teamCatalog.teamNameById } : {}),
-  }), [
-    accounts,
-    groups,
-    teamResources,
-    teamCatalog,
-    effectiveAccountTransport,
-    present,
-    props.declaration.purpose,
-    props.declaration.service.pluginId,
-    props.declaration.service.localId,
-    props.declaration.required,
-    props.value,
-    props.teamResourceValue,
-    props.noneLabel,
-    serviceTitle,
-    labelsByKey,
-    // The registry is the descriptor/currentness owner for authentication.
-    registry,
-  ]);
-  const selectedId = connectedAccountPurposeTargetChoiceId(props.value, props.teamResourceValue ?? null);
-  const selected = choices.find((choice) => choice.id === selectedId) ?? null;
+  }), [props.declaration, props.value, props.teamResourceValue, props.noneLabel, serviceTitle, locale,
+    effectiveAccountTransport, registry, present, teamResources, teamCatalog]);
+  const selectedInventory = !props.teamResourceValue && effectiveAccountTransport === 'advertised-v4'
+    ? props.value?.kind ?? null : null;
+  const summaryProfileKeys = selectedInventory === 'group' ? SUMMARY_GROUP_PROFILE_KEYS
+    : selectedInventory === 'account' ? SUMMARY_ACCOUNT_PROFILE_KEYS : SUMMARY_NO_PROFILE_KEYS;
+  const subscribeSummary = React.useCallback((listener: () => void) => {
+    const unsubscribeProfile = summaryProfileKeys.length
+      ? storage.subscribe(listener, { profile: summaryProfileKeys }) : () => {};
+    const unsubscribeLabels = selectedInventory ? subscribeConnectedMetadataCatalog(listener) : () => {};
+    return () => { unsubscribeProfile(); unsubscribeLabels(); };
+  }, [selectedInventory, summaryProfileKeys]);
+  const selectSummary = useShallow((state: ReturnType<typeof storage.getState>) => {
+    const choice = resolveSelectedConnectedAccountPurposeTargetChoice({
+      ...choiceInput,
+      accounts: selectedInventory !== null && !props.teamResourcesOnly
+        ? state.profile.connectedAccountsV4 ?? EMPTY_ACCOUNTS : EMPTY_ACCOUNTS,
+      groups: selectedInventory === 'group' && !props.accountsOnly && !props.teamResourcesOnly
+        ? state.profile.connectedAccountGroupsV4 ?? EMPTY_GROUPS : EMPTY_GROUPS,
+      labelsByKey: getConnectedMetadataCatalog(metadataScope).labelsByKey,
+    });
+    // Flat presentation values give the store owner a stable selected summary even
+    // when another account changes; no closed row retains the option inventory.
+    return choice ? { ...choice.presentation, id: choice.id, kind: choice.kind, selectable: choice.selectable } : null;
+  });
+  const readSummary = React.useCallback(() => selectSummary(storage.getState()), [selectSummary]);
+  const summary = React.useSyncExternalStore(subscribeSummary, readSummary, readSummary);
+  const selected = summary ? { id: summary.id, kind: summary.kind, selectable: summary.selectable, presentation: summary } : null;
   const declaredPurposeTitle = props.declaration.title
     ? localizePluginText(props.localizedTextPluginId, props.declaration.title)
     : '';
@@ -304,27 +348,6 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
     selected?.presentation.unavailableReason ? null : triggerStatus,
   ].filter((label): label is string => label !== null).join(' · ');
 
-  const rootStep = React.useMemo<SelectionListStep>(() => ({
-    id: 'connected-account-purpose-targets',
-    ...(props.restriction ? { title: props.restriction.sentence } : {}),
-    // It chooses accounts and pools, not models.
-    inputPlaceholder: t('common.search'),
-    emptyStateLabel: t('common.unavailable'),
-    sections: [{
-      kind: 'static',
-      id: 'targets',
-      // SelectionList owns search and automatically virtualizes this section
-      // above its shared threshold; the chooser does not keep a second limit.
-      options: choices.map((choice) => ({
-        id: choice.id,
-        testID: `${props.testID}:choice:${choice.id}`,
-        label: choice.presentation.primaryLabel,
-        ...(choice.presentation.secondaryLabel ? { subtitle: choice.presentation.secondaryLabel } : {}),
-        accessibilityLabel: choice.presentation.accessibilityLabel,
-        disabled: !choice.selectable,
-      })),
-    }],
-  }), [choices, locale, props.restriction, props.testID]);
   const closePicker = React.useCallback(() => {
     if (!pickerModalIdRef.current) return;
     Modal.hide(pickerModalIdRef.current);
@@ -348,11 +371,13 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   // Consumers pass inline handlers; the open sheet updates only when what it shows changes.
   const onChangeRef = React.useRef(props.onChange);
   onChangeRef.current = props.onChange;
-  // The open sheet reads the same choices as the row: a reload (or any upstream change) refreshes it
-  // in place instead of leaving a stale list on screen.
+  // Inventory and label demand live in the mounted sheet; these props keep its
+  // current declaration, selected value and owner-provided recovery in sync.
   const pickerProps = React.useMemo((): Omit<ConnectedAccountPurposeTargetPickerModalContentProps, 'onClose'> => ({
-    rootStep,
-    selectedOptionId: selected?.selectable ? selected.id : null,
+    choiceInput,
+    accountsOnly: props.accountsOnly,
+    teamResourcesOnly: props.teamResourcesOnly,
+    restriction: props.restriction,
     accessibilityLabel: purposeTitle,
     testID: props.testID,
     refresh: canReload
@@ -362,13 +387,11 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
           onRefresh: () => void reload(),
         }
       : null,
-    onSelect: (id) => {
-      // The sheet closed itself before selecting; it no longer takes updates.
+    onSelect: (target, teamResource) => {
       pickerModalIdRef.current = null;
-      const choice = choices.find((candidate) => candidate.id === id);
-      if (choice?.selectable) onChangeRef.current(choice.target, choice.teamResource);
+      onChangeRef.current(target, teamResource);
     },
-  }), [canReload, choices, props.reloadSubtitle, props.testID, purposeTitle, reload, reloading, rootStep, selected]);
+  }), [canReload, choiceInput, props.accountsOnly, props.teamResourcesOnly, props.restriction, props.reloadSubtitle, props.testID, purposeTitle, reload, reloading]);
   React.useEffect(() => {
     if (pickerModalIdRef.current) Modal.update(pickerModalIdRef.current, pickerProps);
   }, [pickerProps]);

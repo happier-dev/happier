@@ -126,38 +126,34 @@ async function renderScreen(element: React.ReactElement) {
   seedAccountProfile();
   return renderBaseScreen(element);
 }
-vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
-  useProjectedConnectedServicesRegistry: () => ({
-    scopeKey: 'server-a', status: descriptorSource.status, errorReason: null, entries: connectedServiceRegistryState.entries,
-  }),
-  useProjectedPluginLocalizedTextResolver: () => localizationSpies.resolve,
-  useAppShellPluginUiProjection: () => ({ reloadConnectedAccountProjection: descriptorReload }),
-}));
+vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', async () => {
+  const { ConnectedAccountUiProjectionEntryV1Schema } = await import('@happier-dev/protocol/connect/connectedAccountUiProjectionV1');
+  const descriptor = ConnectedAccountUiProjectionEntryV1Schema.parse({
+    id: 'gateway', serviceId: 'gateway', pluginId: 'acme.managed.provider',
+    provenance: 'external', sourceKind: 'test', title: 'Acme Gateway account',
+    authentication: { defaultModeId: 'oauth', modes: [{
+      id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'http://127.0.0.1:4000/auth/callback',
+      pkce: 'required', outcomeReconciliation: 'none',
+    }] },
+    capabilities: [], availability: { state: 'available', reason: 'ready' }, diagnostics: [],
+  });
+  return {
+    useProjectedConnectedServicesRegistry: () => ({
+      scopeKey: 'server-a', status: descriptorSource.status, errorReason: null,
+      entries: connectedServiceRegistryState.entries.map(entry => ({ ...entry,
+        ...(descriptorSource.readable ? { projectedDescriptor: descriptor } : {}),
+      })),
+    }),
+    useProjectedPluginLocalizedTextResolver: () => localizationSpies.resolve,
+    useAppShellPluginUiProjection: () => ({ reloadConnectedAccountProjection: descriptorReload }),
+  };
+});
 vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
   useServerFeaturesRuntimeSnapshot: () => ({
     status: featureRuntimeState.status,
     features: { capabilities: { connectedServices: {
       qualifiedAccounts: featureRuntimeState.qualifiedAccounts ? { protocolVersion: 4 } : undefined,
     } } },
-  }),
-}));
-vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
-  getConnectedAccountAuthentication: () => (descriptorSource.readable ? {
-    defaultModeId: 'oauth',
-    modes: [{
-      id: 'oauth',
-      kind: 'oauthAuthorizationCode',
-      callbackUrl: 'http://127.0.0.1:4000/auth/callback',
-      pkce: 'required',
-      outcomeReconciliation: 'none',
-    }],
-  } : null),
-  getQualifiedConnectedServiceRegistryEntry: () => null,
-  getGeneratedLegacyConnectedServiceRegistryFallback: () => null,
-  getLegacyConnectedServiceRegistryEntry: () => ({
-    serviceId: 'acme-gateway-account',
-    connectCommand: 'happier connect acme-gateway-account',
-    supportsOauth: true,
   }),
 }));
 
@@ -211,7 +207,13 @@ function findItemByTestId(screen: Awaited<ReturnType<typeof renderScreen>>, test
 describe('ConnectedAccountPurposeTargetChooser', () => {
   it('keeps eight closed slots free of option builds and label demand across a 200-account update', async () => {
     const choices = vi.spyOn(purposeChoices, 'buildConnectedAccountPurposeTargetChoices');
-    const demand = vi.spyOn(metadataEngine, 'observeConnectedMetadataCatalog');
+    const observe = metadataEngine.observeConnectedMetadataCatalog;
+    const released = vi.fn();
+    // Observe the real demand lifecycle; both acquisition and release still run their owner.
+    const demand = vi.spyOn(metadataEngine, 'observeConnectedMetadataCatalog').mockImplementation(scope => {
+      const release = observe(scope);
+      return () => { released(); release(); };
+    });
     const { ConnectedAccountPurposeTargetChooser } = await import('./ConnectedAccountPurposeTargetChooser');
     const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
     const runtime = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
@@ -237,6 +239,7 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
           } }} onChange={() => undefined} />
       </React.Profiler>
     ))}</View>);
+    let unmounted = false;
     try {
       expect(choices).toHaveBeenCalledTimes(0);
       expect(demand).toHaveBeenCalledTimes(0);
@@ -262,6 +265,7 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
       expect(findItemByTestId(screen, 'slot-0')?.props.detail).toBe('Current personal account');
       await act(async () => { modalScreen.findByType(SelectionList).props.onRequestClose(); });
       expect(modalScreen.findAllByType(SelectionList)).toHaveLength(0);
+      expect(released).toHaveBeenCalledTimes(1);
       choices.mockClear();
       await act(async () => {
         const profile = storage.getState().profile;
@@ -269,8 +273,14 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
       });
       expect(choices).toHaveBeenCalledTimes(0);
       expect(demand).toHaveBeenCalledTimes(1);
-    } finally {
+      await act(async () => { findItemByTestId(screen, 'slot-0')?.props.onPress(); });
+      expect(demand).toHaveBeenCalledTimes(2);
+      expect(latestPurposeTargetModalConfig().props.rootStep.sections[0].options.some(option => option.label === 'Current personal account')).toBe(true);
       await screen.unmount();
+      unmounted = true;
+      expect(released).toHaveBeenCalledTimes(2);
+    } finally {
+      if (!unmounted) await screen.unmount();
       choices.mockRestore(); demand.mockRestore();
       runtime.publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
     }

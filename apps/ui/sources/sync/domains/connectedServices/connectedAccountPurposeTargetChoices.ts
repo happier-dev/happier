@@ -144,7 +144,7 @@ export type ConnectedAccountPurposeTargetChoice = Readonly<{
  * It owns current/deleted/incompatible semantics; Provider only owns CAS and
  * stores the target it receives from this projection.
  */
-export function buildConnectedAccountPurposeTargetChoices(input: Readonly<{
+export type ConnectedAccountPurposeTargetChoicesInput = Readonly<{
   declaration: Readonly<{
     purpose: string;
     service: PluginContributionIdentityV1;
@@ -180,188 +180,90 @@ export function buildConnectedAccountPurposeTargetChoices(input: Readonly<{
   /** Exact Home catalog currentness; stale retained resources stay visible but cannot be selected. */
   teamResourceStatusByKey?: TeamCredentialResourceStatusByKey;
   teamNameById?: Readonly<Record<string, string>>;
-}>): readonly ConnectedAccountPurposeTargetChoice[] {
-  const candidates: ConnectedAccountPurposeTargetChoice[] = [];
-  const selectedTeamResource = input.selectedTeamResource ?? null;
-  if (!input.declaration.required) {
-    const noneLabel = input.noneLabel ?? t('connectedServices.purposeTargets.notSet');
-    candidates.push({
-      id: connectedAccountPurposeTargetChoiceId(null),
-      target: null,
-      teamResource: null,
-      presentation: {
-        primaryLabel: noneLabel,
-        accessibilityLabel: noneLabel,
-      },
-      kind: 'none',
-      eligibility: 'none',
-      selectable: true,
-      current: input.selectedTarget === null && selectedTeamResource === null,
-    });
-  }
+}>;
 
-  const declaredServices = [input.declaration.service];
+export function buildConnectedAccountPurposeTargetChoices(input: ConnectedAccountPurposeTargetChoicesInput): readonly ConnectedAccountPurposeTargetChoice[] {
   const declaredTargets = connectedAccountPurposeServiceTargets(input.accounts, input.groups, input.declaration.service);
-  const accountCandidates = declaredTargets.accounts
-    .map((account) => {
-    const target: QualifiedConnectedAccountPurposeBindingTargetV1 = {
-      kind: 'account',
-      account: account.ref,
-    };
-    const result = describeConnectedAccountPurposeTargetEligibility({
-      target,
-      declaredServices,
-      accounts: input.accounts,
-      groups: input.groups,
-      resolveAuthentication: input.resolveAuthentication,
-    });
-    return {
-      id: connectedAccountPurposeTargetChoiceId(target),
-      target,
-      teamResource: null,
-      presentation: withEligibilityReason(presentQualifiedConnectedAccountTarget({
-        target,
-        accounts: input.accounts,
-        groups: input.groups,
-        labelsByKey: input.labelsByKey,
-        serviceTitle: input.serviceTitle,
-        presentIdentity: input.presentIdentity,
-      }), result, input.descriptorsLoading === true),
-      kind: 'account',
-      eligibility: result.eligibility,
-      selectable: result.eligibility === 'usable',
-      current: sameTarget(target, input.selectedTarget),
-    } satisfies ConnectedAccountPurposeTargetChoice;
-  })
-    .sort((left, right) => left.presentation.primaryLabel.localeCompare(right.presentation.primaryLabel));
-  candidates.push(...accountCandidates);
-
-  const groupCandidates = declaredTargets.groups
-    .map((group) => {
-    const target: QualifiedConnectedAccountPurposeBindingTargetV1 = {
-      kind: 'group',
-      service: group.ref.service,
-      groupId: group.ref.groupId,
-    };
-    const result = describeConnectedAccountPurposeTargetEligibility({
-      target,
-      declaredServices,
-      accounts: input.accounts,
-      groups: input.groups,
-      resolveAuthentication: input.resolveAuthentication,
-    });
-    return {
-      id: connectedAccountPurposeTargetChoiceId(target),
-      target,
-      teamResource: null,
-      presentation: withEligibilityReason(presentQualifiedConnectedAccountTarget({
-        target,
-        accounts: input.accounts,
-        groups: input.groups,
-        labelsByKey: input.labelsByKey,
-        serviceTitle: input.serviceTitle,
-        presentIdentity: input.presentIdentity,
-      }), result, input.descriptorsLoading === true),
-      kind: 'group',
-      eligibility: result.eligibility,
-      selectable: result.eligibility === 'usable',
-      current: sameTarget(target, input.selectedTarget),
-    } satisfies ConnectedAccountPurposeTargetChoice;
-  })
-    .sort((left, right) => left.presentation.primaryLabel.localeCompare(right.presentation.primaryLabel));
-  candidates.push(...groupCandidates);
-
-  const teamCandidates = (input.teamResources ?? [])
-    .filter((resource) => (
-      resource.sourcePresentation?.kind === 'connected_service'
-      && sameService(resource.sourcePresentation.service, input.declaration.service)
-    ))
-    .flatMap((resource) => resource.connectedServiceSelections.flatMap((selection) => {
-      const resourceCurrent = input.teamResourceStatusByKey === undefined
-        || (input.teamResourceStatusByKey.get(`${resource.teamId}:${resource.id}`)?.kind === 'current');
-      if (
-        selection.deliveryMode === 'direct'
-        && !sameService(selection.disclosedMember.service, input.declaration.service)
-      ) return [];
-      const teamResource: AgentConnectedAccountPurposeTeamResourceDefault = {
-        teamId: resource.teamId,
-        selection,
-      };
-      const eligibility = resourceCurrent
-        ? resolveConnectedAccountPurposeTeamResourceEligibility({
-        teamResource,
-        service: input.declaration.service,
-        teamResources: input.teamResources ?? [],
-      })
-        : 'unusable' as const;
-      return [{
-        id: connectedAccountPurposeTargetChoiceId(null, teamResource),
-        target: null,
-        teamResource,
-        presentation: presentConnectedAccountPurposeTeamResource({
-          teamResource,
-          teamResources: input.teamResources ?? [],
-          serviceTitle: input.serviceTitle,
-          ...(input.teamNameById ? { teamNameById: input.teamNameById } : {}),
-        }),
-        kind: resourceCurrent ? 'team_resource' : 'unavailable',
-        eligibility,
-        selectable: resourceCurrent && eligibility === 'usable',
-        current: sameTeamResource(teamResource, selectedTeamResource),
-      } satisfies ConnectedAccountPurposeTargetChoice];
-    }))
-    .sort((left, right) => left.presentation.primaryLabel.localeCompare(right.presentation.primaryLabel));
-  candidates.push(...teamCandidates);
-
-  if (selectedTeamResource && !candidates.some((candidate) => candidate.current)) {
-    // A withdrawn Team default stays the visible, unavailable current choice
-    // until the user replaces it; there is no personal fallback (child 02 §11.6).
-    candidates.push({
-      id: connectedAccountPurposeTargetChoiceId(null, selectedTeamResource),
-      target: null,
-      teamResource: selectedTeamResource,
-      presentation: presentConnectedAccountPurposeTeamResource({
-        teamResource: selectedTeamResource,
-        teamResources: input.teamResources ?? [],
-        serviceTitle: input.serviceTitle,
-        ...(input.teamNameById ? { teamNameById: input.teamNameById } : {}),
-      }),
-      kind: 'unavailable',
-      eligibility: 'unusable',
-      selectable: false,
-      current: true,
-    });
+  const candidates: ConnectedAccountPurposeTargetChoice[] = [];
+  const add = (target: QualifiedConnectedAccountPurposeBindingTargetV1 | null,
+    teamResource: AgentConnectedAccountPurposeTeamResourceDefault | null = null) => {
+    const choice = resolvePurposeTargetChoice(input, target, teamResource);
+    if (choice) candidates.push(choice);
+  };
+  add(null);
+  const accounts = declaredTargets.accounts.map(account => resolvePurposeTargetChoice(input,
+    { kind: 'account', account: account.ref }, null)!);
+  const groups = declaredTargets.groups.map(group => resolvePurposeTargetChoice(input,
+    { kind: 'group', service: group.ref.service, groupId: group.ref.groupId }, null)!);
+  const teams = (input.teamResources ?? []).filter(resource => (
+    resource.sourcePresentation?.kind === 'connected_service'
+    && sameService(resource.sourcePresentation.service, input.declaration.service)
+  )).flatMap(resource => resource.connectedServiceSelections.flatMap(selection => {
+    if (selection.deliveryMode === 'direct' && !sameService(selection.disclosedMember.service, input.declaration.service)) return [];
+    return [resolvePurposeTargetChoice(input, null, { teamId: resource.teamId, selection })!];
+  }));
+  for (const choices of [accounts, groups, teams]) {
+    candidates.push(...choices.sort((left, right) => left.presentation.primaryLabel.localeCompare(right.presentation.primaryLabel)));
   }
-  if (input.selectedTarget && !candidates.some((candidate) => candidate.current)) {
-    const presentation = presentQualifiedConnectedAccountTarget({
-      target: input.selectedTarget,
-      accounts: input.accounts,
-      groups: input.groups,
-      labelsByKey: input.labelsByKey,
-      serviceTitle: input.serviceTitle,
-      sourceNegotiation: input.sourceNegotiation,
-      presentIdentity: input.presentIdentity,
-    });
-    candidates.push({
-      id: connectedAccountPurposeTargetChoiceId(input.selectedTarget),
-      target: input.selectedTarget,
-      teamResource: null,
-      presentation: input.sourceNegotiation === 'indeterminate' || input.sourceNegotiation === 'legacy'
-        ? presentation : withEligibilityReason(presentation, describeConnectedAccountPurposeTargetEligibility({
-          target: input.selectedTarget, declaredServices, accounts: input.accounts, groups: input.groups,
-          resolveAuthentication: input.resolveAuthentication,
-        }), input.descriptorsLoading === true),
-      kind: input.sourceNegotiation === 'indeterminate'
-        ? 'hydrating'
-        : input.sourceNegotiation === 'legacy'
-          ? 'legacy'
-          : 'unavailable',
-      eligibility: 'unusable',
-      selectable: false,
-      current: true,
-    });
+  if ((input.selectedTarget || input.selectedTeamResource) && !candidates.some(candidate => candidate.current)) {
+    const selected = resolveSelectedConnectedAccountPurposeTargetChoice(input);
+    if (selected) candidates.push(selected);
   }
   return candidates;
+}
+
+/** The same exact-target projection serves the closed summary and each open choice. */
+export function resolveSelectedConnectedAccountPurposeTargetChoice(input: ConnectedAccountPurposeTargetChoicesInput): ConnectedAccountPurposeTargetChoice | null {
+  return resolvePurposeTargetChoice(input, input.selectedTarget, input.selectedTeamResource ?? null);
+}
+
+function resolvePurposeTargetChoice(input: ConnectedAccountPurposeTargetChoicesInput,
+  target: QualifiedConnectedAccountPurposeBindingTargetV1 | null,
+  teamResource: AgentConnectedAccountPurposeTeamResourceDefault | null): ConnectedAccountPurposeTargetChoice | null {
+  const current = teamResource ? sameTeamResource(teamResource, input.selectedTeamResource ?? null)
+    : !input.selectedTeamResource && sameTarget(target, input.selectedTarget);
+  if (teamResource) {
+    const resource = (input.teamResources ?? []).find(resource => resource.id === teamResource.selection.resourceId && resource.teamId === teamResource.teamId);
+    const offered = resource?.sourcePresentation?.kind === 'connected_service'
+      && sameService(resource.sourcePresentation.service, input.declaration.service)
+      && resource.connectedServiceSelections.some(selection => areTeamResourceConnectedServiceSelectionsEqual(selection, teamResource.selection))
+      && (teamResource.selection.deliveryMode !== 'direct' || sameService(teamResource.selection.disclosedMember.service, input.declaration.service));
+    const resourceCurrent = offered && (input.teamResourceStatusByKey === undefined
+      || input.teamResourceStatusByKey.get(`${teamResource.teamId}:${resource!.id}`)?.kind === 'current');
+    const eligibility = resourceCurrent ? resolveConnectedAccountPurposeTeamResourceEligibility({
+      teamResource, service: input.declaration.service, teamResources: input.teamResources ?? [],
+    }) : 'unusable';
+    return {
+      id: connectedAccountPurposeTargetChoiceId(null, teamResource), target: null, teamResource,
+      presentation: presentConnectedAccountPurposeTeamResource({ teamResource, teamResources: input.teamResources ?? [],
+        serviceTitle: input.serviceTitle, ...(input.teamNameById ? { teamNameById: input.teamNameById } : {}) }),
+      kind: resourceCurrent ? 'team_resource' : 'unavailable', eligibility,
+      selectable: Boolean(resourceCurrent) && eligibility === 'usable', current,
+    };
+  }
+  if (!target) {
+    if (input.declaration.required) return null;
+    const label = input.noneLabel ?? t('connectedServices.purposeTargets.notSet');
+    return { id: connectedAccountPurposeTargetChoiceId(null), target: null, teamResource: null,
+      presentation: { primaryLabel: label, accessibilityLabel: label }, kind: 'none', eligibility: 'none', selectable: true, current };
+  }
+  const service = target.kind === 'account' ? target.account.service : target.service;
+  const exists = sameService(service, input.declaration.service) && (target.kind === 'account'
+    ? input.accounts.some(account => sameTarget({ kind: 'account', account: account.ref }, target))
+    : input.groups.some(group => sameTarget({ kind: 'group', service: group.ref.service, groupId: group.ref.groupId }, target)));
+  const presentation = presentQualifiedConnectedAccountTarget({ target, accounts: input.accounts, groups: input.groups,
+    labelsByKey: input.labelsByKey, serviceTitle: input.serviceTitle, sourceNegotiation: exists ? undefined : input.sourceNegotiation,
+    presentIdentity: input.presentIdentity });
+  const unresolved = !exists && (input.sourceNegotiation === 'indeterminate' || input.sourceNegotiation === 'legacy');
+  const result = describeConnectedAccountPurposeTargetEligibility({ target, declaredServices: [input.declaration.service],
+    accounts: input.accounts, groups: input.groups, resolveAuthentication: input.resolveAuthentication });
+  return {
+    id: connectedAccountPurposeTargetChoiceId(target), target, teamResource: null,
+    presentation: unresolved ? presentation : withEligibilityReason(presentation, result, input.descriptorsLoading === true),
+    kind: exists ? target.kind : input.sourceNegotiation === 'indeterminate' ? 'hydrating'
+      : input.sourceNegotiation === 'legacy' ? 'legacy' : 'unavailable',
+    eligibility: exists ? result.eligibility : 'unusable', selectable: exists && result.eligibility === 'usable', current,
+  };
 }
 
 /** Render a current target without exposing its serialized/raw identity. */
