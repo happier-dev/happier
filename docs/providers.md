@@ -1007,9 +1007,18 @@ native home produces an unavailable result rather than claiming continuity.
 Real subscription acceptance and loaded-runtime account switching remain live
 validation obligations; a dummy endpoint proves serialization, not entitlement.
 
-Claude subscription routes remain undeclared for these Agents, Kimi and Qwen:
-the inspected native paths cannot preserve the required subscription request
-contract across all Agent calls. Kimi's ChatGPT route also remains undeclared:
+Claude subscription accounts are contributed by Claude Code, OpenCode, Pi,
+Oh My Pi and DeepSec. A custom Anthropic endpoint alone does not establish
+another subscription route. Copilot's inspected preamble customization merges
+the subscription identity into its native block; Droid's system override replaces
+its native instructions. Neither exposes the request-body interception used by
+OpenCode to preserve both blocks. Kimi's inspected prefix misses delegated
+requests, and Qwen's direct Anthropic driver selects API-key authentication.
+CodeBuddy 2.181.0 dispatches custom models through OpenAI Chat or Responses;
+its catalogued `anthropic-messages` value does not select a Messages serializer,
+and `useCustomProtocol` changes only the URL. These routes remain undeclared.
+
+Kimi's ChatGPT route also remains undeclared:
 its custom Responses model requires an authoritative context size, while the
 current host launch input supplies only a selected model ID. Qwen's inspected
 Responses driver appends `/v1/responses`, which does not reach the ChatGPT Codex

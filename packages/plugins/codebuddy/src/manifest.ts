@@ -1,4 +1,4 @@
-import { projectAgentCapabilitiesV2FromDefinition, type PluginHostOwnedAgentDeclaration } from '@happier-dev/plugin-sdk/agents';
+import { projectAgentCapabilitiesV2FromDefinition, type PluginCustomAgentDeclaration } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { CODEBUDDY_ACP_COMMAND } from './agent/acp/preflight.js';
@@ -68,7 +68,7 @@ export const CODEBUDDY_PLUGIN = definePlugin({
           instances: [{ kind: 'default', constants: {} }],
         }],
       } },
-    } satisfies PluginHostOwnedAgentDeclaration,
+    } satisfies PluginCustomAgentDeclaration,
     factory: createCodeBuddyAgentRuntime,
     sessionRunnerFactory: { module: './agent/runtime/factory', export: 'createCodeBuddyAgentRuntime', runtimeApiVersion: 1, externalSessionsExport: 'codeBuddyExternalSessionsContribution' },
     preflightSessionControls: { catalogs: { kind: 'acp', command: CODEBUDDY_ACP_COMMAND } },

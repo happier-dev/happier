@@ -18,6 +18,9 @@ import { QWEN_ACP_RUNTIME_DEFINITION } from '../../../../../packages/plugins/qwe
 import { PLUGIN_MANIFEST as CODEBUDDY_PLUGIN_MANIFEST } from '../../../../../packages/plugins/codebuddy/src/manifest';
 import { CODEBUDDY_UI_DESCRIPTOR } from '../../../../../packages/plugins/codebuddy/src/ui/descriptor';
 import { CODEBUDDY_ACP_RUNTIME_DECLARATION } from '../../../../../packages/plugins/codebuddy/src/agent/acp/runtimeDeclaration';
+import { PLUGIN_MANIFEST as FX_PLUGIN_MANIFEST } from '../../../../../packages/plugins/fx/src/manifest';
+import { FX_UI_DESCRIPTOR } from '../../../../../packages/plugins/fx/src/ui/descriptor';
+import { FX_PERMISSION_MODE_MAPPING } from '../../../../../packages/plugins/fx/src/agent/acp/permissionModes';
 
 
 function emittedCorePermissionMapping(source: string, coreName: string): unknown {
@@ -40,18 +43,22 @@ function emittedCorePermissionMapping(source: string, coreName: string): unknown
 }
 
 describe('bundled Agent permission mapping projection', () => {
-    it('preserves CodeBuddy permission controls through custom runtime admission and both UI publication paths', () => {
-        const parsed = ingestPluginManifestV2(CODEBUDDY_PLUGIN_MANIFEST);
+    it.each([
+        { agentId: 'codebuddy', manifest: CODEBUDDY_PLUGIN_MANIFEST, descriptor: CODEBUDDY_UI_DESCRIPTOR,
+            expected: CODEBUDDY_ACP_RUNTIME_DECLARATION.definition.permissionModeMapping },
+        { agentId: 'fx', manifest: FX_PLUGIN_MANIFEST, descriptor: FX_UI_DESCRIPTOR, expected: FX_PERMISSION_MODE_MAPPING },
+    ] as const)('preserves $agentId permission controls through custom runtime admission and both UI publication paths', ({ agentId, manifest, descriptor, expected }) => {
+        const parsed = ingestPluginManifestV2(manifest);
         if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
         const pluginPackage: BundledPluginPackage = {
-            pluginPackageId: 'codebuddy', pluginId: parsed.manifest.id,
-            packageName: '@happier-dev/plugins-codebuddy', packageVersion: '0.0.0',
-            agentId: 'codebuddy', manifest: parsed.manifest, agentUiDescriptor: CODEBUDDY_UI_DESCRIPTOR,
+            pluginPackageId: agentId, pluginId: parsed.manifest.id,
+            packageName: `@happier-dev/plugins-${agentId}`, packageVersion: '0.0.0',
+            agentId, manifest: parsed.manifest, agentUiDescriptor: descriptor,
         };
         const ui = renderUiBundledPluginEntriesTs({ packageNames: [pluginPackage.packageName], pluginPackages: [pluginPackage] });
-        const expected = CODEBUDDY_ACP_RUNTIME_DECLARATION.definition.permissionModeMapping;
-        expect(emittedCorePermissionMapping(ui, 'CODEBUDDY_CORE')).toEqual(expected);
-        expect(emittedCorePermissionMapping(renderRetainedUiBundledPluginEntriesTs(ui, [pluginPackage], 'projection.ts'), 'CODEBUDDY_CORE')).toEqual(expected);
+        const coreName = `${agentId.toUpperCase()}_CORE`;
+        expect(emittedCorePermissionMapping(ui, coreName)).toEqual(expected);
+        expect(emittedCorePermissionMapping(renderRetainedUiBundledPluginEntriesTs(ui, [pluginPackage], 'projection.ts'), coreName)).toEqual(expected);
     });
 
     it('publishes declared ACP mappings from real manifests, including null policy, and omits unmapped/native Agents', () => {

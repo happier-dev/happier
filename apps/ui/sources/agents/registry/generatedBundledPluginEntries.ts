@@ -741,6 +741,16 @@ const FX_CORE: AgentCoreConfig = {
     permissions: {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
+        permissionModeMapping: {
+  "default": null,
+  "read-only": [
+    "ask"
+  ],
+  "safe-yolo": [
+    "auto",
+    "code"
+  ]
+},
     },
     sessionModes: {
         kind: getAgentSessionModesKind('fx'),

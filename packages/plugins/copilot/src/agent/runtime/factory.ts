@@ -19,7 +19,7 @@ import { prepareCopilotConnectedAccount } from './connectedAccount.js';
 
 export { copilotExternalSessionsContribution } from '../externalSessions/contribution.js';
 
-function createCopilotAcpOptions(configuration: AgentSessionConfigurationSnapshot | undefined): AgentAcpRuntimeOptions {
+function createCopilotAcpOptions(configuration: AgentSessionConfigurationSnapshot | undefined) {
   if (!configuration) throw new Error('Copilot requires the host-projected Agent session configuration');
   return {
     transport: {
@@ -31,7 +31,7 @@ function createCopilotAcpOptions(configuration: AgentSessionConfigurationSnapsho
       }),
     },
     definition: COPILOT_ACP_RUNTIME_DEFINITION,
-  };
+  } satisfies AgentAcpRuntimeOptions;
 }
 
 export const createCopilotAgentRuntime: AgentRuntimeFactory = () => ({
