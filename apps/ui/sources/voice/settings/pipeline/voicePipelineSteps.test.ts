@@ -1,6 +1,6 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { Platform } from 'react-native';
-import type { LocalNeuralExecution } from '@happier-dev/protocol';
+import type { LocalNeuralExecution } from '@happier-dev/protocol/daemon/voiceInference';
 
 import {
     readLocalConversationVoiceSettings,
@@ -152,5 +152,6 @@ describe('realtime service pipeline', () => {
             voice: { ...voiceSettingsDefaults, providerId }, machine, serviceTitle: 'ElevenLabs Voice', readiness: null, registry,
         });
         expect(result?.pipeline.steps[0]?.engine).toMatchObject({ kind: 'service', providerId, mark: { kind: 'icon', name: 'waveform' } });
+        expect(result?.pipeline.steps[0]?.placement).toEqual({ kind: 'machine', machineId: machine.machineId, machineName: machine.machineLabel });
     });
 });

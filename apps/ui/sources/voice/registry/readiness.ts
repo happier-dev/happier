@@ -160,22 +160,27 @@ export function resolveVoiceConversationAdapterMachineReadiness(input: Readonly<
   role: VoiceReadinessRole;
   executionMachine: VoiceReadinessFact | undefined;
 }>): VoiceRoleReadiness | null {
-  if (input.entry?.kind !== 'voice.conversation-provider.v1' || input.entry.source.kind === 'built_in') return null;
+  // The adapter-only admission path has no selected-mode requirements yet. Placement
+  // still comes from the same owner as the full Settings/readiness projection.
+  if (!input.entry || !projectVoiceProviderRequirements(input.entry, null, null, [])?.includes('execution_machine')) return null;
   return projectVoiceReadinessRequirement(input.role, input.entry.providerId, 'execution_machine', input.executionMachine);
 }
 
 /** Sole owner for descriptor and selected-mode requirement projection. */
 export function projectVoiceProviderRequirements(
-  entry: Pick<VoiceProviderRegistryEntry, 'requirements' | 'requirementsByMode'>,
+  entry: Pick<VoiceProviderRegistryEntry, 'kind' | 'source' | 'requirements' | 'requirementsByMode'>,
   modeId: string | null | undefined,
   credentialSourceKind?: VoiceProviderCredentialSourceKind | null,
+  settingsRequirements?: readonly VoiceReadinessRequirement[],
 ): readonly VoiceReadinessRequirement[] | null {
-  const declaredRequirements = !entry.requirementsByMode
+  const declaredRequirements = settingsRequirements ?? (!entry.requirementsByMode
     ? entry.requirements
     : !modeId || !Object.prototype.hasOwnProperty.call(entry.requirementsByMode, modeId)
       ? null
-      : entry.requirementsByMode[modeId] ?? null;
-  if (!declaredRequirements || credentialSourceKind !== 'connectedAccount') {
+      : entry.requirementsByMode[modeId] ?? null);
+  const requiresMachine = credentialSourceKind === 'connectedAccount'
+    || (entry.kind === 'voice.conversation-provider.v1' && entry.source.kind !== 'built_in');
+  if (!declaredRequirements || !requiresMachine) {
     return declaredRequirements;
   }
   return declaredRequirements.includes('execution_machine')
@@ -223,12 +228,9 @@ function resolveVoiceRoleReadinessInternal(
     }
     return result(input.role, input.providerId, 'needs_setup', `settings_${input.facts.settings}`, 'open_provider_settings');
   }
-  const declaredRequirements = input.settingsRequirements
-    ? input.credentialSourceKind === 'connectedAccount'
-      && !input.settingsRequirements.includes('execution_machine')
-      ? Object.freeze([...input.settingsRequirements, 'execution_machine' as const])
-      : input.settingsRequirements
-    : projectVoiceProviderRequirements(entry, input.modeId, input.credentialSourceKind);
+  const declaredRequirements = projectVoiceProviderRequirements(
+    entry, input.modeId, input.credentialSourceKind, input.settingsRequirements,
+  );
   if (!declaredRequirements) {
     return result(input.role, input.providerId, 'needs_setup', 'provider_mode_unknown', 'open_provider_settings');
   }
@@ -247,10 +249,6 @@ function resolveVoiceRoleReadinessInternal(
     );
     if (projected) return projected;
   }
-  const adapterMachineReadiness = resolveVoiceConversationAdapterMachineReadiness({
-    entry, role: input.role, executionMachine: input.facts.executionMachine,
-  });
-  if (adapterMachineReadiness) return adapterMachineReadiness;
   if (entry.localReadiness?.kind === 'device_speech') {
     const path = resolveVoiceDeviceSpeechRolePath({
       role: input.role,

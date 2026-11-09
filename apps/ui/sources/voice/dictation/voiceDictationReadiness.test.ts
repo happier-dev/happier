@@ -721,7 +721,7 @@ describe('resolveVoiceDictationReadiness', () => {
       providerId: 'local_neural',
       status: 'unavailable',
       code: 'execution_machine_incompatible',
-      recoveryAction: 'retry',
+      recoveryAction: 'select_execution_machine',
     });
   });
 

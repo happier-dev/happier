@@ -70,7 +70,7 @@ export function resolveVoiceStartAdmission(input: Readonly<{
         );
     const envelope = input.voiceSettings.providers?.[input.providerId] ?? null;
     const projection = entry ? projectVoiceProviderSettings(entry, envelope) : null;
-    const requirements = projection?.requirements ?? (entry ? projectVoiceProviderRequirements(entry, projection?.modeId) : null);
+    const requirements = entry ? projectVoiceProviderRequirements(entry, projection?.modeId, null, projection?.requirements) : null;
     // Built-in Local's aggregate speech requirements have no provider credential
     // slot; its speech engines own those facts. Compose the selected conversation
     // declaration's credential through the same owner Settings uses.

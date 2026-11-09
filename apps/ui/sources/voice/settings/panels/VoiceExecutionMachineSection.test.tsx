@@ -232,7 +232,7 @@ describe('VoiceExecutionMachineSection', () => {
     await screen.unmount();
   });
 
-  it.each(['section', 'chip'] as const)('updates the mounted %s without replacing Machine rows on withdrawal and re-observation', async (presentation) => {
+  it.each(['section', 'chip'] as const)('retains mounted %s presence through transport withdrawal until activity updates', async (presentation) => {
     onTestFinished(clearMachineRequestReachabilityForTest);
     onTestFinished(() => { vi.useRealTimers(); });
     const voice = localVoice('local_conversation');
@@ -252,10 +252,11 @@ describe('VoiceExecutionMachineSection', () => {
     const rows = storage.getState().machineListByServerId;
     await act(async () => { withdrawMachinePresenceForScope(account.scope); });
     expect(storage.getState().machineListByServerId).toBe(rows);
-    expect(read()).toBe(t('common.unknown'));
-    if (presentation === 'chip') expect(chip().props.filter.presence).toBeUndefined();
+    // Transport withdrawal supplies no Machine activity fact; the existing activity remains authoritative.
+    expect(read()).toBe(t('settingsVoice.local.executionMachine.onlineLabel'));
+    if (presentation === 'chip') expect(chip().props.filter.presence).toBe('online');
     await act(async () => { captureMachinePresenceObservation({ ...account.scope, accountId: 'other-account' })(['machine-1']); });
-    expect(read()).toBe(t('common.unknown'));
+    expect(read()).toBe(t('settingsVoice.local.executionMachine.onlineLabel'));
     await act(async () => { captureMachinePresenceObservation(account.scope)(['machine-1']); });
     expect(read()).toBe(t('settingsVoice.local.executionMachine.onlineLabel'));
     const lastSeenAt = Date.now();
@@ -298,7 +299,7 @@ describe('VoiceExecutionMachineSection', () => {
   );
 
   it.each(['dictation', 'advanced'] as const)(
-    'renders on the %s page for daemon-backed Dictation even when the conversation provider is machine-independent',
+    'renders on the %s page for daemon-backed Dictation with a realtime conversation provider',
     async (intent) => {
     const VoiceExecutionMachineSection = await loadSection();
     const voice = {
@@ -526,8 +527,9 @@ describe('VoiceExecutionMachineSection', () => {
   });
 
   it.each(['happier.voice.openai/realtime-openai', 'happier.voice.xai/realtime-grok'] as const)(
-    'does not render for the canonical credential-only %s BYO contribution',
+    'keeps the adapter Machine chooser reachable for %s with no usable Machine or saved credential source',
     async (providerId) => {
+      storage.getState().applyMachines([], true, { sourceServerId: account.scope.serverId, sourceAccountId: account.scope.accountId });
       const VoiceExecutionMachineSection = await loadSection();
       const screen = await renderSettingsView(
         <VoiceExecutionMachineSection
@@ -536,13 +538,13 @@ describe('VoiceExecutionMachineSection', () => {
         />,
       );
 
-      expect(screen.findAll((node) => node.type === DropdownMenu)).toHaveLength(0);
+      expect(screen.findAll((node) => node.type === DropdownMenu)).toHaveLength(1);
     },
   );
 
   it.each([
     ['Connected Account', 'connectedAccount', 1],
-    ['SavedSecret', 'savedSecret', 0],
+    ['SavedSecret', 'savedSecret', 1],
   ] as const)('uses the selected %s source when projecting execution-machine visibility', async (_label, sourceKind, expectedCount) => {
     const { settingsParse } = await import('@/sync/domains/settings/settings');
     const {
@@ -597,20 +599,18 @@ describe('VoiceExecutionMachineSection', () => {
       );
       const dropdowns = screen.findAll((node) => node.type === DropdownMenu);
       expect(dropdowns).toHaveLength(expectedCount);
-      if (sourceKind === 'connectedAccount') {
-        const dropdown = dropdowns[0];
-        expect(dropdown).toBeTruthy();
-        dropdown?.props.onSelect('machine-1');
-        expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
-          executionMachine: expect.objectContaining({ mode: 'fixed', machineId: 'machine-1' }),
-        }));
-      }
+      const dropdown = dropdowns[0];
+      expect(dropdown).toBeTruthy();
+      dropdown?.props.onSelect('machine-1');
+      expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
+        executionMachine: expect.objectContaining({ mode: 'fixed', machineId: 'machine-1' }),
+      }));
     } finally {
       storageBoundary.settings = null;
     }
   });
 
-  it('does not render for ElevenLabs credential or server-feature modes', async () => {
+  it('keeps the adapter Machine available for ElevenLabs credential and server-feature modes', async () => {
     const VoiceExecutionMachineSection = await loadSection();
     const envelope = voiceSettingsDefaults.providers['happier.voice.elevenlabs/realtime-elevenlabs'];
     const baseConfig = envelope?.config;
@@ -626,7 +626,7 @@ describe('VoiceExecutionMachineSection', () => {
             ...voiceSettingsDefaults.providers,
             'happier.voice.elevenlabs/realtime-elevenlabs': {
               schemaVersion: envelope?.schemaVersion ?? 2,
-              config: { ...config, billingMode },
+              config: { ...config, billingMode, agentId: 'agent-machine-picker' },
             },
           },
         }}
@@ -634,8 +634,8 @@ describe('VoiceExecutionMachineSection', () => {
       />,
     );
 
-    expect((await renderMode('byo')).findAll((node) => node.type === DropdownMenu)).toHaveLength(0);
-    expect((await renderMode('happier')).findAll((node) => node.type === DropdownMenu)).toHaveLength(0);
+    expect((await renderMode('byo')).findAll((node) => node.type === DropdownMenu)).toHaveLength(1);
+    expect((await renderMode('happier')).findAll((node) => node.type === DropdownMenu)).toHaveLength(1);
   });
 
   it.each([

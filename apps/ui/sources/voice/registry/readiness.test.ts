@@ -441,12 +441,12 @@ describe('resolveVoiceRoleReadiness', () => {
     })).toMatchObject({ status: 'needs_setup', code: 'provider_mode_unknown' });
   });
 
-  it('projects a selected Connected Account machine dependency through the canonical requirement owner', () => {
+  it('projects plugin adapter placement through the same requirements as credential selection and settings overrides', () => {
     const openAi = createDefaultVoiceProviderRegistry().get('happier.voice.openai/realtime-openai');
     if (!openAi) throw new Error('expected_openai_voice_provider');
 
     expect(projectVoiceProviderRequirements(openAi, 'byo', 'savedSecret'))
-      .not.toContain('execution_machine');
+      .toContain('execution_machine');
     expect(projectVoiceProviderRequirements(openAi, 'byo', 'connectedAccount'))
       .toContain('execution_machine');
     expect(resolveVoiceRoleReadiness({
@@ -461,6 +461,16 @@ describe('resolveVoiceRoleReadiness', () => {
       status: 'needs_setup',
       code: 'execution_machine_missing',
     });
+    expect(resolveVoiceRoleReadiness({
+      registry: createDefaultVoiceProviderRegistry(),
+      role: 'realtime_conversation',
+      providerId: openAi.providerId,
+      platform: 'web',
+      modeId: 'byo',
+      credentialSourceKind: 'savedSecret',
+      settingsRequirements: [],
+      facts: { ...readyFacts, executionMachine: 'missing' },
+    })).toMatchObject({ status: 'needs_setup', code: 'execution_machine_missing' });
   });
 
   it('projects a disabled deployment feature through the same requirement owner', () => {

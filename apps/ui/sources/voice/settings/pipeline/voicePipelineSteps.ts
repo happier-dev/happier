@@ -1,4 +1,4 @@
-import type { LocalNeuralExecution } from '@happier-dev/protocol';
+import type { LocalNeuralExecution } from '@happier-dev/protocol/daemon/voiceInference';
 import type { VoiceServiceMark } from '@happier-dev/plugin-sdk/voice';
 
 import { isBundledAgentId } from '@/agents/catalog/catalog';
@@ -7,7 +7,7 @@ import { t } from '@/text';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { parseLocalVoiceSttSettings, parseLocalVoiceTtsSettings, resolveLocalVoiceAdapterSettingsFromVoice } from '@/voice/local/localVoiceSettings';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
-import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
+import { projectVoiceProviderSettings, type VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { projectVoiceProviderRequirements, type VoiceRoleReadiness } from '@/voice/registry/readiness';
 import type { LocalSttProviderSpec } from '@/voice/settings/panels/localStt/providers/_types';
 import { getLocalSttProviderSpec } from '@/voice/settings/panels/localStt/providers/registry';
@@ -163,8 +163,9 @@ export function buildVoiceConversationsPipeline(input: Readonly<{
         };
     }
     const entry = registry.get(providerId);
+    const settingsProjection = entry ? projectVoiceProviderSettings(entry, input.voice.providers[providerId] ?? null) : null;
     const requiresMachine = entry
-        ? projectVoiceProviderRequirements(entry, null)?.includes('execution_machine') === true
+        ? projectVoiceProviderRequirements(entry, settingsProjection?.modeId, null, settingsProjection?.requirements)?.includes('execution_machine') === true
         : false;
     return {
         pipeline: projectVoiceSettingsPipeline({

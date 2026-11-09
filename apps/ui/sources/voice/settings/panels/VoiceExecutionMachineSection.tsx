@@ -17,7 +17,7 @@ import {
   type VoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
 import { useSetting } from '@/sync/domains/state/storage';
-import { useAllMachines } from '@/sync/store/hooks';
+import { useActiveMachineFacts } from '@/sync/store/hooks';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
@@ -52,7 +52,7 @@ export function VoiceExecutionMachineSection(props: Readonly<{
   onChooserOpenChange?: (open: boolean) => void;
 }>) {
   const { theme } = useUnistyles();
-  const machines = useAllMachines();
+  const machines = useActiveMachineFacts();
   const voiceSettingsV1 = useSetting('voiceSettingsV1');
   const secrets = useSetting('secrets');
   const accountSettings = React.useMemo(() => ({ voiceSettingsV1, secrets }), [voiceSettingsV1, secrets]);
@@ -108,6 +108,7 @@ export function VoiceExecutionMachineSection(props: Readonly<{
         entry,
         settingsProjection?.modeId ?? null,
         credentialSourceKind,
+        settingsProjection?.status === 'ready' ? settingsProjection.requirements : undefined,
       )
       ?.includes('execution_machine') === true
     : false;
