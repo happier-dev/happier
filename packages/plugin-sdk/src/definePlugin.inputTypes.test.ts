@@ -2,6 +2,7 @@ import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/ar
 import { describe, expect, it } from 'vitest';
 import { definePlugin } from './definePlugin.js';
 import { createPluginTestkit } from './testing/host.js';
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import { parsePluginManifest } from './manifest.js';
 import { repositoryInputTypes, repositoryResources } from '../examples/public-authoring/inputTypes.js';
 import { externalAuthoringPlugin } from '../../plugin-ui/fixtures/external-authoring/src/index.js';
@@ -40,7 +41,7 @@ describe('public author input types', () => {
     try {
       const resource = testkit.registration('resources', 'review-options');
       if (!resource) throw new Error('Expected the external author’s options Resource');
-      const value = await resource.read({ signal: new AbortController().signal, context: { kind: 'global' } });
+      const value = await resource.read(createTestResourceInvocationContext({ signal: new AbortController().signal, context: { kind: 'global' } }));
       expect(JSON.parse(typeof value === 'string' ? value : new TextDecoder().decode(value))).toEqual([
         { value: { reviewId: 'current' }, label: 'Current review' },
       ]);
@@ -62,10 +63,10 @@ describe('public author input types', () => {
       expect(testkit.registrations()).toEqual([{ family: 'resources', localId: 'review-repositories' }]);
       const resource = testkit.registration('resources', 'review-repositories');
       if (!resource) throw new Error('Expected declared Resource registration');
-      const value = await resource.read({ signal: new AbortController().signal, context: { kind: 'global' } });
-      expect(JSON.parse(typeof value === 'string' ? value : new TextDecoder().decode(value))).toEqual([
+      const value = await resource.read(createTestResourceInvocationContext({ signal: new AbortController().signal, context: { kind: 'global' } }));
+      expect(JSON.parse(typeof value === 'string' ? value : new TextDecoder().decode(value))).toEqual({ options: [
         { value: { repositoryId: 'example/review-assistant' }, label: 'Review assistant' },
-      ]);
+      ] });
     } finally { await testkit.dispose(); }
   });
 });

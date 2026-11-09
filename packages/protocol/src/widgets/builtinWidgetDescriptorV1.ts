@@ -264,7 +264,7 @@ function machineWidgetContract(id: MachineBuiltinWidgetIdV1): WidgetInputDescrip
     } else if (id === 'machine_top_consumers') {
         const session = { op: 'eq' as const, path: 'scope', value: 'session' };
         fields.push({ path: 'scope', title: 'Scope', widget: 'select', contextMode: 'own', options: choices(['machine', 'session']) },
-            { path: 'session', title: 'Session', widget: 'json', contextMode: 'follow', visibleWhen: session, requiredWhen: session });
+            { path: 'session', title: 'Session', widget: 'select', optionsSourceId: 'sessions', contextMode: 'follow', visibleWhen: session, requiredWhen: session });
         schema = z.strictObject({ machine: MachineTargetV1Schema, scope: z._default(z.enum(['machine', 'session']), 'machine'),
             session: z.optional(VoiceTrackedSessionAddressV1Schema) });
     } else if (id === 'machine_worktrees') {

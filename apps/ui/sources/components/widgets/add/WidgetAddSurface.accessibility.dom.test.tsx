@@ -13,6 +13,53 @@ import { WidgetAddPanel } from './WidgetAddSurface';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+it('reveals opening and keyboard selections while leaving manual scroll, hover, refresh and pointer selections alone', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const reveal = vi.fn(function (this: HTMLElement) { this.closest('[role="listbox"]')!.scrollTop = 0; });
+    const previousReveal = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: reveal });
+    const sections = [{ id: 'builtins', title: 'Built in', entries: [
+        { id: 'alpha', title: 'Alpha', icon: 'chart-bar' as const, onPick: () => {} },
+        { id: 'beta', title: 'Beta', icon: 'chat-circle' as const, onPick: () => {} },
+    ] }];
+    const panel = () => <WidgetAddPanel title="Add widgets" searchPlaceholder="Search widgets" sections={[...sections]}
+        initialEntryId="alpha" addLabel="Add" composition="split" onRequestClose={() => {}} testID="add" />;
+    try {
+        await act(async () => root.render(panel()));
+        expect(reveal).toHaveBeenCalledTimes(1);
+        const search = container.querySelector<HTMLInputElement>('input[data-testid="add.search"]')!;
+        const list = container.querySelector<HTMLElement>('[role="listbox"]')!;
+        const beta = container.querySelector<HTMLElement>('[data-testid="add.entry.beta"]')!;
+        list.scrollTop = 180;
+        await act(async () => {
+            list.dispatchEvent(new Event('scroll', { bubbles: true }));
+            beta.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+            root.render(panel());
+        });
+        expect(container.querySelector('[role="listbox"]')).toBe(list);
+        expect(list.scrollTop).toBe(180);
+        expect(reveal).toHaveBeenCalledTimes(1);
+        await act(async () => beta.click());
+        expect(list.scrollTop).toBe(180);
+        expect(reveal).toHaveBeenCalledTimes(1);
+        search.focus();
+        await act(async () => search.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })));
+        expect(reveal).toHaveBeenCalledTimes(2);
+        expect(reveal.mock.contexts.at(-1)).toBe(container.querySelector('[data-testid="add.entry.alpha"]'));
+        list.scrollTop = 240;
+        await act(async () => { list.dispatchEvent(new Event('scroll', { bubbles: true })); root.render(panel()); });
+        expect(list.scrollTop).toBe(240);
+        expect(reveal).toHaveBeenCalledTimes(2);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        if (previousReveal) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', previousReveal);
+        else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+    }
+});
+
 it('delivers search-owned active options to the DOM while arrows preserve focus and filtering never leaves a missing descendant', async () => {
     const container = document.createElement('div');
     document.body.append(container);

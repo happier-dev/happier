@@ -97,15 +97,16 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
   const disabled = props.disabled === true || field.disabled === true;
   const palette = useOptionalHappierUiPalette(theme) ?? resolveHappierUiPalette(theme);
   const localization = useOptionalHappierUiLocalization();
+  const allowsCustomValue = field.allowCustomValue === true;
   // A picker-only type has no list to show: its field box is the picker's trigger.
-  const pickerOnly = presentation.kind === 'select' && (props.options ?? []).length === 0 && picker.affordance !== null;
+  const pickerOnly = presentation.kind === 'select' && !allowsCustomValue && (props.options ?? []).length === 0 && picker.affordance !== null;
   // Nothing to choose from: the field box stays and reads its value; there is no blank list to open.
-  const noChoices = presentation.kind === 'select' && optionsSettled && props.options?.length === 0 && !pickerOnly;
-  // An optional field that declares what its empty answer means ("All agents") is still answered when
-  // there is nothing to narrow by; only a choice the form still needs says that none is available.
-  const answeredWithoutChoices = field.required !== true && field.placeholder !== undefined;
+  const noChoices = presentation.kind === 'select' && !allowsCustomValue && optionsSettled && props.options?.length === 0 && !pickerOnly;
   const optionsNotice = props.optionsStatus === 'failed' ? props.optionsNotice
-    : noChoices && !answeredWithoutChoices
+    : props.optionsStatus === 'loading' && presentation.kind === 'select' && !allowsCustomValue
+      ? <HappierStatus label={localization?.translate('happier.plugin-ui.state.loading', 'Loading') ?? 'Loading'}
+          tone="neutral" indicator={false} theme={theme} />
+    : noChoices
       ? <HappierStatus label={localization?.translate('happier.plugin-ui.select.empty', 'No options available') ?? 'No options available'}
           tone="neutral" indicator={false} theme={theme} />
       : null;
@@ -124,7 +125,7 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
         onChange={props.onChange}
       />
     );
-  } else if (presentation.kind === 'select' && resolveHappierChoiceControl(presentation, props.options ?? []) === 'segmented') {
+  } else if (presentation.kind === 'select' && !allowsCustomValue && resolveHappierChoiceControl(presentation, props.options ?? []) === 'segmented') {
     // Two to four short choices: one segmented control, the same shape as every other few-way choice.
     const plan = planHappierSelectOptions<Value>({
       options: props.options ?? [],
@@ -189,11 +190,16 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
         minimumSelections={presentation.multiple && field.required ? 1 : undefined}
         required={field.required}
         placeholder={field.placeholder}
+        {...(allowsCustomValue ? { customValue: {
+          value: typeof props.value === 'string' ? props.value : '',
+          onChange: props.onChange,
+          testID: props.controlTestID,
+        } } : {})}
         {...(props.valueLabel === undefined ? {} : { reading: props.valueLabel })}
         {...(props.testID === undefined ? {} : { testID: props.testID })}
         {...(props.openRequest === undefined ? {} : { openRequest: props.openRequest })}
         {...(props.renderChoiceControls === undefined ? {} : { renderControls: props.renderChoiceControls })}
-        disabled={disabled || !optionsSettled || noChoices}
+        disabled={disabled || !allowsCustomValue && (!optionsSettled || noChoices)}
         theme={theme}
         {...(props.isEqual === undefined ? {} : { isEqual: props.isEqual })}
         {...(props.keyForOption === undefined ? {} : { keyForOption: props.keyForOption })}

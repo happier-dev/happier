@@ -605,10 +605,10 @@ export function DropdownMenu(props: DropdownMenuProps) {
     }, [closeMenu, fieldColors, openMenu, pageSelectedItem, pageTrigger, props.itemTrigger, props.open, props.trigger, resolvedTriggerDensity, selectedItemForTrigger, theme.colors.input.placeholder, theme.colors.text.secondary, theme.colors.text.tertiary, toggle]);
 
     const resultsRef = React.useRef<SelectableMenuResultsHandle>(null);
-    // The highlighted row scrolls into view only once the user moves it (or when it is the menu's current choice):
+    // The highlighted row scrolls into view only when the keyboard moves it (or on opening its current choice):
     // a menu that opens on its first row stays at its top, so its first heading is never scrolled under the fade.
-    const [highlightMoved, setHighlightMoved] = React.useState(false);
-    React.useEffect(() => { if (!props.open) setHighlightMoved(false); }, [props.open]);
+    const [highlightOrigin, setHighlightOrigin] = React.useState<'opening' | 'keyboard' | 'pointer'>('opening');
+    React.useEffect(() => { if (!props.open) setHighlightOrigin('opening'); }, [props.open]);
     const searchable = props.search === true;
     // A searched menu keeps the height it opened at: narrowing to a few rows (or none) never shrinks the
     // overlay, so it neither jumps away from its trigger nor re-places itself while the person types.
@@ -619,7 +619,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
         setResultsMinHeight((current) => (height > current ? height : current));
     }, []);
     const followKeyboardSelection = React.useCallback((index: number) => {
-        setHighlightMoved(true);
+        setHighlightOrigin('keyboard');
         if (!searchable) resultsRef.current?.focusItem(index);
     }, [searchable]);
     const {
@@ -675,11 +675,12 @@ export function DropdownMenu(props: DropdownMenuProps) {
     }, [props.open]);
     const handleResultsSelectionChange = React.useCallback((index: number) => {
         setSwatchHighlightVisible(true);
+        setHighlightOrigin('pointer');
         setSelectedIndex(index);
     }, [setSelectedIndex]);
 
     const resultScroll = useScrollRectIntoViewRegistry({
-        activeKey: highlightMoved || (highlightedId !== null && highlightedId === props.selectedId) ? highlightedId : null,
+        activeKey: highlightOrigin === 'keyboard' || (highlightOrigin === 'opening' && highlightedId !== null && highlightedId === props.selectedId) ? highlightedId : null,
         padding: theme.space.s8,
         animated: !reducedMotion,
         // Revealed once per highlighted row: a long menu mounts rows as the person scrolls, and those layouts must

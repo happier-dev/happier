@@ -110,7 +110,7 @@ describe('session.list execution', () => {
       selectedSession: { ...consumer.selectedSession, serverId: 'foreign-home' } }, fieldPath: 'session' }, context))
       .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
   });
-  it.each(['changes', 'local_services'] as const)('offers %s Session options from the same awareness owner without requiring a plugin catalog', async (id) => {
+  it.each(['session_summary', 'changes', 'local_services', 'machine_top_consumers'] as const)('offers %s Session options from the same awareness owner without requiring a plugin catalog', async (id) => {
     const sessionList = vi.fn(async () => buildSessionAwarenessListResultV1({ sessions: [{
       v: 1, sessionId: 'B', title: 'Bound B', lifecycle: 'active', runtime: 'idle', freshness: 'live',
       operational: { primary: 'none', reasons: [] }, encryption: 'plain', availability: 'complete',
@@ -118,7 +118,7 @@ describe('session.list execution', () => {
     const executor = createExecutor({ sessionList, widgetAccountScope: () => ({ serverId: 'home-current', accountId: 'viewer' }) });
     const result = await executor.execute('action.options.resolve', {
       consumer: { kind: 'widget', surface: { serverId: 'home-current', accountId: 'viewer', owner: { kind: 'home' } },
-        definition: { kind: 'builtin', id } }, fieldPath: 'session',
+        definition: { kind: 'builtin', id } }, fieldPath: 'session', draftInput: { scope: 'session' },
     }, { surface: 'ui', authority: 'present_user', serverId: 'home-current' });
     expect(result).toEqual({ ok: true, result: expect.objectContaining({ options: [expect.objectContaining({ value: { serverId: 'home-current', sessionId: 'B' }, label: 'Bound B' })] }) });
   });

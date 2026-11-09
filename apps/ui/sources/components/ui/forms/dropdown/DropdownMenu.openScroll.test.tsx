@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { DropdownMenu } from './DropdownMenu';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -31,7 +32,6 @@ const ITEMS = ['a', 'b', 'c', 'd', 'e', 'f'].map((id, index) => ({
 
 async function openMenu(selectedId: string | null) {
     const scrollTo = vi.fn();
-    const { DropdownMenu } = await import('./DropdownMenu');
     const screen = await renderScreen(
         <DropdownMenu open onOpenChange={() => {}} items={ITEMS} selectedId={selectedId} onSelect={() => {}} showCategoryTitles trigger={null} />,
         { createNodeMock: node => node.props && 'keyboardShouldPersistTaps' in node.props ? { scrollTo } : null },
@@ -45,7 +45,7 @@ async function openMenu(selectedId: string | null) {
     await act(async () => {
         ITEMS.forEach((item, index) => screen.findByTestId(`row:${item.id}:scroll-frame`)?.props.onLayout({ nativeEvent: { layout: { y: index * ROW, height: ROW } } }));
     });
-    return { screen, scrollTo };
+    return { screen, scrollTo, scroller };
 }
 
 describe('DropdownMenu opening scroll position', () => {
@@ -62,6 +62,27 @@ describe('DropdownMenu opening scroll position', () => {
     it('follows the highlight once the user moves it with the keys', async () => {
         const { screen, scrollTo } = await openMenu(null);
         await act(async () => { screen.findByTestId('row:c:scroll-frame')!.props.onKeyDown({ nativeEvent: { key: 'ArrowDown' }, preventDefault() {}, stopPropagation() {} }); });
+        expect(scrollTo).toHaveBeenCalled();
+    });
+
+    it.each([null, 'c'])('leaves manual scroll alone when pointer hover follows keyboard navigation (opening choice %s), then resumes following the keyboard', async selectedId => {
+        const { screen, scrollTo, scroller } = await openMenu(selectedId);
+        const key = (id: string, value: string) => screen.findByTestId(`row:${id}:scroll-frame`)!.props.onKeyDown({
+            nativeEvent: { key: value }, preventDefault() {}, stopPropagation() {},
+        });
+        await act(async () => { key('c', 'ArrowDown'); });
+        expect(scrollTo).toHaveBeenCalled();
+        await act(async () => {
+            scroller.props.onScroll({ nativeEvent: {
+                contentOffset: { y: 90 }, layoutMeasurement: { height: 100 }, contentSize: { height: ITEMS.length * ROW },
+            } });
+        });
+        scrollTo.mockClear();
+        // "c" is partly visible at the top after the person's scroll. Hover may highlight it,
+        // but must not pull the list back to reveal the whole row.
+        await act(async () => { screen.findByTestId('row:c:scroll-frame')!.props.onPointerEnter({ pointerType: 'mouse' }); });
+        expect(scrollTo).not.toHaveBeenCalled();
+        await act(async () => { key('c', 'ArrowUp'); });
         expect(scrollTo).toHaveBeenCalled();
     });
 });

@@ -22,6 +22,7 @@ import { EmptySlot } from '@/components/ui/empty/EmptySlot';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { useRevealSelectedRow } from '@/components/ui/lists/collection/useRevealSelectedRow';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
@@ -230,8 +231,8 @@ function AnchoredWidgetAddContent(props: Readonly<{
 export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
     const styles = stylesheet;
     const [query, setQuery] = React.useState('');
-    const [selection, setSelection] = React.useState<Readonly<{ id: string; callerContext?: ActionExecutorContext }> | null>(
-        props.initialEntryId === undefined ? null : { id: props.initialEntryId });
+    const [selection, setSelection] = React.useState<Readonly<{ id: string; reveal: boolean; callerContext?: ActionExecutorContext }> | null>(
+        props.initialEntryId === undefined ? null : { id: props.initialEntryId, reveal: true });
     const selectedId = selection?.id ?? null;
     // The narrow composition shows the list or the selected widget's pane, one at a time.
     const [pushed, setPushed] = React.useState(props.initialEntryId !== undefined);
@@ -267,7 +268,7 @@ export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
         { key: 'search', title: props.searchPlaceholder, invoke: value => { if (typeof value !== 'string') return false; setQuery(value); } },
         ...[...sections.flatMap(section => section.entries), ...(ask && askEntry ? [askEntry] : [])].map(entry => ({
             key: `entry:${entry.id}`, title: entry.title, invoke: (push?: import('@happier-dev/protocol/plugins/ui').PluginUiJsonValueV1, callerContext?: ActionExecutorContext) => {
-                setSelection({ id: entry.id, callerContext });
+                setSelection({ id: entry.id, reveal: push === false, callerContext });
                 if (!split && push !== false) { setPushed(true); setDirection('forward'); }
             },
         })),
@@ -341,6 +342,7 @@ export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
             sections={sections}
             askEntry={ask ? askEntry : null}
             selectedId={selectedId}
+            revealSelection={selection?.reveal ?? false}
             listboxId={listboxId}
             activeId={activeId}
             feedback={feedback}
@@ -407,6 +409,7 @@ function WidgetAddList(props: WidgetAddPanelProps & Readonly<{
     onSearchKey: (event: Readonly<{ nativeEvent: { key: string }; preventDefault?: () => void }>) => void;
     askEntry: WidgetAddEntry | null;
     selectedId: string | null;
+    revealSelection: boolean;
     listboxId: string;
     activeId: string | null;
     feedback: AddFeedback | null;
@@ -416,6 +419,10 @@ function WidgetAddList(props: WidgetAddPanelProps & Readonly<{
 }>): React.ReactElement {
     const styles = stylesheet;
     const split = props.composition === 'split';
+    const selectedRef = useRevealSelectedRow(props.selectedId, props.activeId !== null, props.revealSelection);
+    const setSelectedRef = React.useCallback<NonNullable<React.ComponentProps<typeof HappierPressable>['controlRef']>>((node) => {
+        selectedRef.current = node;
+    }, [selectedRef]);
     // An unresolved inventory cannot establish absence. Once it settles, a search without matches
     // says so even when the ask is offered under it; an empty list with no search is the ask alone.
     const nothing = props.sections.length === 0 && !props.pendingSections?.length && (!props.askEntry || props.query.trim().length > 0);
@@ -424,6 +431,7 @@ function WidgetAddList(props: WidgetAddPanelProps & Readonly<{
     const fadeMask = Platform.OS === 'web' && !props.phone ? resolveVerticalScrollEdgeMaskStyle(fades.visibility) : null;
     const row = (entry: WidgetAddEntry) => (
         <WidgetAddRow key={entry.id} entry={entry} selected={props.selectedId === entry.id}
+            controlRef={props.selectedId === entry.id ? setSelectedRef : undefined}
             nativeID={widgetAddOptionId(props.listboxId, entry.id)}
             feedback={props.feedback?.entryId === entry.id ? props.feedback : null}
             onSelect={props.onSelect} testID={`${props.testID}.entry.${entry.id}`} />
@@ -509,6 +517,7 @@ function WidgetAddList(props: WidgetAddPanelProps & Readonly<{
 const WidgetAddRow = React.memo(function WidgetAddRow(props: Readonly<{
     entry: WidgetAddEntry;
     selected: boolean;
+    controlRef?: React.ComponentProps<typeof HappierPressable>['controlRef'];
     feedback: AddFeedback | null;
     onSelect: (id: string) => void;
     testID: string;
@@ -521,6 +530,7 @@ const WidgetAddRow = React.memo(function WidgetAddRow(props: Readonly<{
         <HappierPressable
             testID={props.testID}
             nativeID={props.nativeID}
+            controlRef={props.controlRef}
             accessibilityRole="option"
             selected={props.selected}
             accessibilityLabel={widgetAddEntryAccessibilityLabel(entry)}

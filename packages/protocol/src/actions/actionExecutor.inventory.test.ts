@@ -322,6 +322,8 @@ describe('createActionExecutor (inventory/discovery)', () => {
             tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 }, cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }] }],
           breakdowns: { machine: [{ key: 'machine-a', eventCount: 1,
             tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 }, cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }],
+            source: [{ key: 'runtime', eventCount: 1,
+            tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 }, cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }],
             project: [{ key: 'project-a', label: 'Project A', eventCount: 1,
             tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 }, cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }] } },
         sources: [{ source: 'accounting', status: 'available' as const }], pending: false })) }) };
@@ -330,7 +332,8 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const executor = createActionExecutor({ ...createDeps(), usageActions, widgetAccountScope: () => ({ serverId: 'home', accountId: 'viewer' }),
       machinesList: async () => ({ items: [{ id: 'machine-a', label: 'Personal laptop' }, { id: 'unused', label: 'Other computer' }] }) });
     for (const [fieldPath, expected] of [['agents', { value: 'claude', label: 'claude' }],
-      ['machines', { value: 'machine-a', label: 'Personal laptop' }], ['projects', { value: 'project-a', label: 'Project A' }]] as const) {
+      ['machines', { value: 'machine-a', label: 'Personal laptop' }], ['projects', { value: 'project-a', label: 'Project A' }],
+      ['sources', { value: 'runtime', label: 'runtime' }]] as const) {
       const result = await executor.execute('action.options.resolve', { consumer: { kind: 'widget', surface,
         definition: { kind: 'builtin', id: 'usage_daily' } }, fieldPath, draftInput: { [fieldPath]: ['retained'] } }, { serverId: 'home' });
       expect(result.ok ? null : result).toBeNull();

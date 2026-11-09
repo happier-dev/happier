@@ -22,14 +22,14 @@ installDropdownCommonModuleMocks({
     },
 });
 
+const { SelectableMenuResults } = await import('./SelectableMenuResults');
+
 describe('SelectableMenuResults (web)', () => {
     beforeEach(() => {
         scrollIntoViewSpy.mockClear();
     });
 
     it('does not call DOM scrollIntoView (prevents scrolling the underlying page when opening dropdowns)', async () => {
-        const { SelectableMenuResults } = await import('./SelectableMenuResults');
-
         const categories = [
             {
                 id: 'general',
@@ -70,8 +70,6 @@ describe('SelectableMenuResults (web)', () => {
     });
 
     it('does not call DOM scrollIntoView for item-row rendering mode either', async () => {
-        const { SelectableMenuResults } = await import('./SelectableMenuResults');
-
         const categories = [
             {
                 id: 'general',
