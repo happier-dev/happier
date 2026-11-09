@@ -1282,7 +1282,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     expect(await readFile(join(fixture.sourcePath, 'payload.txt'), 'utf8')).toBe('before quiesce');
   });
 
-  it.each(['fresh', 'retire-created', 'staged', 'retired', 'refresh-during-create', 'remote-missing-parents', 'remote-known-endpoints', 'remote-refusal', 'carrier-refusal', 'native-dial-refusal', 'pinned-9', 'native-failure'] as const)('creates a worker copy or returns an actionable native failure (%s)', async intent => {
+  it.each(['fresh', 'retire-created', 'staged', 'retired', 'refresh-during-create', 'remote-git', 'remote-missing-parents', 'remote-known-endpoints', 'remote-refusal', 'carrier-refusal', 'native-dial-refusal', 'pinned-9', 'native-failure'] as const)('creates a worker copy or returns an actionable native failure (%s)', async intent => {
     const createFailureLog = intent === 'native-failure' ? vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {}) : undefined;
     if (createFailureLog) onTestFinished(() => createFailureLog.mockRestore());
     // Observe only the file sink: controller, grant verification, carrier and
@@ -1295,6 +1295,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     const rows: ProjectAccountRowV1[] = [];
     let refreshDuringCreate: (() => Promise<void>) | undefined;
     const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, withScmRuntime: intent !== 'remote-refusal', projectRowsFromHttp: true,
+      ...(intent === 'remote-git' ? { separateTargetParent: true, gitWorktreeSeed: true } : {}),
       ...(intent === 'remote-missing-parents' ? { separateTargetParent: true, remoteSeed: true, missingTargetParents: true } : {}),
       ...(intent === 'remote-known-endpoints' ? { separateTargetParent: true, remoteSeed: true } : {}),
       ...(intent === 'carrier-refusal' ? { separateTargetParent: true, remoteSeed: true, nativeCarrierRefusal: true } : {}),
@@ -1335,7 +1336,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
     const key = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: fixture.sourceRef.id };
     rows.push(ProjectAccountRowV1Schema.parse({ key, revision: 0, content: cipher.seal({ key, value: fixture.sourceRef }) }));
-    if (intent !== 'fresh' && intent !== 'retire-created' && intent !== 'remote-missing-parents' && intent !== 'remote-refusal' && intent !== 'carrier-refusal' && intent !== 'native-dial-refusal') {
+    if (intent !== 'fresh' && intent !== 'retire-created' && intent !== 'remote-git' && intent !== 'remote-missing-parents' && intent !== 'remote-refusal' && intent !== 'carrier-refusal' && intent !== 'native-dial-refusal') {
       const targetKey = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: fixture.targetRef.id };
       rows.push(ProjectAccountRowV1Schema.parse({ key: targetKey, revision: 0, content: cipher.seal({ key: targetKey,
         value: { ...fixture.targetRef, projectKey: fixture.sourceRef.id } }) }));
@@ -1362,7 +1363,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     if (!create) throw new Error('The production relationship-create RPC is not registered');
     const request = { v: 1, operationId: 'same-machine-worker-copy', actionInput: { v: 1,
       sourceWorkspaceRefId: fixture.sourceRef.id, targetMachineId: fixture.targetRef.machineId, targetPath: fixture.targetPath,
-      mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace', purpose: 'worker_clean_copy', contentPolicy } };
+      mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace', purpose: 'worker_clean_copy', contentPolicy: fixture.prepareInput.action.contentPolicy } };
     refreshDuringCreate = async () => {
       const index = rows.findIndex(row => buildProjectAccountRowPhysicalKeyV1(row.key) === buildProjectAccountRowPhysicalKeyV1(key));
       rows[index] = ProjectAccountRowV1Schema.parse({ key, revision: rows[index]!.revision + 1,
@@ -1498,6 +1499,10 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
         sourceWorkspaceRefId: fixture.sourceRef.id, targetWorkspaceRefId: created.targetWorkspaceRefId },
     })]);
     expect(await readFile(join(fixture.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+    if (intent === 'remote-git') {
+      expect(await readFile(join(fixture.targetPath, '.git', 'HEAD'), 'utf8'))
+        .toBe(await readFile(join(fixture.sourcePath, '.git', 'HEAD'), 'utf8'));
+    }
     if (intent === 'retire-created') {
       await fixture.parent.workspaceSync.relationshipOwner.stop(created.relationshipId);
       expect(getActiveProjectAccountRowsSnapshot()?.relationships).toEqual([]);

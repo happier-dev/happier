@@ -373,7 +373,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     }
     const content = { mode: 'plain' as const };
     const decoded = await socketRpcCodec.decodeRequestParams(content, payload.params, payload.method);
-    if (options.resolutionTransfer && [RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
+    if ((options.gitWorktreeSeed || options.remoteSeed || options.resolutionTransfer) && [RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
       RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_RELEASE].some(method => payload.method === `${sourceRef.machineId}:${method}`)) {
       const method = payload.method.slice(sourceRef.machineId.length + 1);
       const receiver = handlers.get(method);
@@ -541,7 +541,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
       const session = sessions.get(input.sessionIdentifier);
       if (input.t === 'terminate') { if (sessions.delete(input.sessionIdentifier)) nativeChanges.change(); return null; }
       if (!session) throw new Error(`Mutagen session missing: ${input.sessionIdentifier}`);
-      if (input.t === 'get_policy') return { selection: 'all_files', patterns: [], nextCursor: null };
+      if (input.t === 'get_policy') return { selection: contentPolicy.selection, patterns: [], nextCursor: null };
       if (input.t === 'list_conflicts') return { totalCount: 0, shownCount: 0, truncatedCount: 0, conflicts: [], nextCursor: null };
       if (input.t === 'flush') {
         // The sidecar is the genuine OS copy boundary. Paths remain resolved by the real controller/target owners.
