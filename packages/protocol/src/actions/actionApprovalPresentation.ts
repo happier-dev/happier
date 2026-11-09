@@ -25,6 +25,7 @@ import {
 import { ReachPlaceV1Schema } from '../reach/reachPlaceV1.js';
 import { ReachRuleDraftV1Schema } from '../reach/reachRuleV1.js';
 import { ReachRulesChangeV1Schema } from '../reach/reachRulesChangeV1.js';
+import { PrincipalRefV1Schema } from '../teams/principal.js';
 import { BackendTargetRefV2InputSchema, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '../backends/targets/backendTargetRefV2.js';
 import {
   PluginChangePendingReviewResultSchema,
@@ -165,6 +166,8 @@ export type ApprovalActionReference =
     }>
   | Readonly<{ kind: 'home'; id: string }>
   | Readonly<{ kind: 'account'; id: string }>
+  | Readonly<{ kind: 'team'; id: string }>
+  | Readonly<{ kind: 'group'; id: string; teamId: string }>
   | Readonly<{ kind: 'setting'; id: string }>
   | Readonly<{ kind: 'providerConnection'; id: string; displayName?: string; catalogSourceKey?: string; agentTargetKey?: string }>
   | Readonly<{ kind: 'providerModel'; id: string; connectionId: string; agentTargetKey: string; catalogSourceKey?: string }>
@@ -232,6 +235,18 @@ function readApprovalAgentReference(value: unknown): ApprovalActionReference | u
   return undefined;
 }
 
+/** A typed resource audience names the person, Team or Group itself, rather than its discriminator and keys. */
+function readApprovalPrincipalReference(value: unknown): ApprovalActionReference | undefined {
+  if (!isRecord(value)) return undefined;
+  const principal = PrincipalRefV1Schema.safeParse(value);
+  if (!principal.success) return undefined;
+  switch (principal.data.kind) {
+    case 'account': return { kind: 'account', id: principal.data.accountId };
+    case 'team': return { kind: 'team', id: principal.data.teamId };
+    case 'group': return { kind: 'group', id: principal.data.groupId, teamId: principal.data.teamId };
+  }
+}
+
 function describeApprovalReference(actionId: string, field: ActionInputFieldHint, values: readonly unknown[], input: unknown): ApprovalActionReference | undefined {
   if (values.length !== 1) return undefined;
   const value = values[0];
@@ -252,7 +267,8 @@ function describeApprovalReference(actionId: string, field: ActionInputFieldHint
   if (leaf === 'agentTarget') return readApprovalAgentReference(value);
   if (leaf === 'modelSelection') return readApprovalModelReference(value);
   // A declared target binding or model selection reads as what it names wherever an Action carries it.
-  const declared = readApprovalDeclaredModelSelection(value) ?? readApprovalConnectedAccountTarget(value)?.reference;
+  const declared = readApprovalDeclaredModelSelection(value) ?? readApprovalConnectedAccountTarget(value)?.reference
+    ?? readApprovalPrincipalReference(value);
   if (declared) return declared;
   if (typeof value !== 'string' || !value.trim()) return undefined;
   if (actionId.startsWith('machines.managed.') && field.path === 'managedId'
@@ -597,6 +613,11 @@ function appendApprovalStructuredEntries(
   const declaredReference = field ? readApprovalSavedSecretReference('', undefined, value, field.inputType) : undefined;
   if (declaredReference) {
     output.push({ label, value: formatApprovalEntryValue(key, value), depth, reference: declaredReference });
+    return;
+  }
+  const principal = !widgetStructure ? readApprovalPrincipalReference(value) : undefined;
+  if (principal) {
+    output.push({ label, value: principal.id, depth, reference: principal });
     return;
   }
   // A declared descendant must be visited even when its containing object or flat list could read as one line.

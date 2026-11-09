@@ -1220,14 +1220,6 @@ describe('approval field presentation', () => {
     expect(describeApprovalActionFields({ actionId: 'session.board.item.upsert', actionArgs: absent }).unrepresentable)
       .toMatchObject({ path: 'expectedItemRevision', reason: 'missing_required_context' });
   });
-  it.each(['account', 'team', 'group'])('keeps %s access principals as data, not Session references', (kind) => {
-    const principal = { kind, ...(kind === 'group' ? { teamId: 'team-1' } : {}), [`${kind}Id`]: 'session-shaped-id' };
-    const rows = describeApprovalActionFields({ actionId: 'machines.access.grant.set',
-      actionArgs: { serverId: 'home', machineId: 'machine', principal, level: 'view' } }).rows;
-    expect(rows.find(row => row.path === 'principal')).toMatchObject({ kind: 'value', path: 'principal', value: JSON.stringify(principal) });
-    expect(rows.find(row => row.path === 'principal')).not.toHaveProperty('reference');
-  });
-
   it('identifies the declared Voice Session target with its own Home', () => {
     const rows = describeApprovalActionFields({ actionId: 'ui.voice_global.start', actionArgs: {
       target: { kind: 'session', sessionAddress: { serverId: 'other-home', sessionId: 'session-1' } }, expectedAttempt: null,
