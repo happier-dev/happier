@@ -10,6 +10,7 @@ import { isDeploymentBackupActionIdV1, isDeploymentBackupReadActionIdV1, isDeplo
 import { isDeploymentNativeReadActionIdV1 } from '../../deployments/deploymentReadAdmissionV1.js';
 
 const deploymentDeployActionCompletionV1 = createDeploymentDeployActionCompletionV1(DeploymentActionOutputSchemasV1['deployments.deploy']);
+const deploymentDeployDescription = 'Deploy an existing saved Environment to a linked target. Discover the named Environment with deployments.environments.list, then use deployments.environments.get to choose its linked target. To deploy that saved definition, supply only serverId, environmentId and targetLinkId from those results. The Action prepares the exact deployment candidate, revisions and hashes for review. The contentArtifactId/contentHeaderVersion/contentBodyVersion input branch accepts an already prepared deployment candidate; Environment and target content Artifacts are not deployment candidates. No caller-authored candidate or shell hash calculation is needed.';
 
 type DeploymentActionSpec<TId extends DeploymentActionIdV1> = ActionSpecProjectionMetadata & Readonly<{
   id: TId;
@@ -102,7 +103,9 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       { path: 'target', title: 'Target reference', widget: 'json' },
       { path: 'sessionRef', title: 'Existing Session', widget: 'json' },
       { path: 'importFrom', title: 'Import configuration references', widget: 'json' },
-    ] } as const : { fields: [
+    ] } as const : {
+      ...(id === 'deployments.deploy' ? { description: deploymentDeployDescription } : {}),
+      fields: [
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
       ...(id === 'deployments.environments.create' || id === 'deployments.environments.list'
         ? [{ path: 'projectSourceId', title: 'Project source', widget: 'text' as const }]
@@ -174,6 +177,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     ] } as const;
   return {
     id, title, safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'write',
+    ...(id === 'deployments.deploy' ? { description: deploymentDeployDescription } : {}),
     ...(previewForInput ? { safetyForInput: (input: unknown): 'safe' | 'danger' => previewForInput(input) ? 'safe' : 'danger' } : {}),
     ...(id === 'deployments.environments.update' ? { permissionChangingForInput: (input: unknown): boolean => {
       const parsed = DeploymentActionInputSchemasV1['deployments.environments.update'].safeParse(input);
