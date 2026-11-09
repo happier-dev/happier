@@ -39,6 +39,12 @@ import type { TeamCredentialSourceHint } from '@/components/settings/teams/teams
 import { AccountDetailUsedBySectionView, type AccountDetailUsedBySlots } from './AccountDetailSections';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { useCopyProviderAccountId } from './useCopyProviderAccountId';
+import {
+    describeConnectedAccountIncludedApiKey,
+    presentConnectedAccountAccessMode,
+    type ConnectedAccountAccessMode,
+    type ConnectedAccountIncludedApiKey,
+} from '../model/presentConnectedAccountAccessMode';
 
 export type QualifiedAccountDetailViewProps = Readonly<{
     /** Qualified identity of the account this screen describes. */
@@ -72,6 +78,10 @@ export type QualifiedAccountDetailViewProps = Readonly<{
     labelsByKey?: Readonly<Record<string, string | undefined>>;
     /** The plan the provider reports ("Pro"), shown with the service in the header. */
     planLabel?: string | null;
+    /** Subscription or API key, from the account's record; the header's meta says it once (lab `muse-accounts` A1). */
+    accessMode?: ConnectedAccountAccessMode | null;
+    /** A key the account created when it connected: a fact row in Sign-in, never its value. */
+    includedApiKey?: ConnectedAccountIncludedApiKey | null;
     /** ★ "Default for <agent>": the per-agent default menu (never a per-service default). */
     agentDefaults?: Readonly<{
         choices: readonly AgentDefaultChoice[];
@@ -199,6 +209,10 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
     const planLabel = props.planLabel?.trim();
     const planIncludesService = planLabel === serviceLabel || planLabel?.startsWith(`${serviceLabel} `);
     const servicePlanLabel = planIncludesService ? planLabel : [serviceLabel, planLabel].filter(Boolean).join(' ');
+    // With a recorded mode the meta says it once: the plan (or "Subscription"), or "API key · ends 7Qa2".
+    const modeLabel = props.accessMode
+        ? presentConnectedAccountAccessMode(props.accessMode, planLabel ? servicePlanLabel : null)
+        : servicePlanLabel;
 
     const [disconnectPending, setDisconnectPending] = React.useState(false);
     const [renameOpen, setRenameOpen] = React.useState(false);
@@ -338,7 +352,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                         ) : null}
                         {email ? factSeparator : null}
                         <Text testID={`${testID}:meta:plan`} style={stylesheet.factText} numberOfLines={1}>
-                            {servicePlanLabel}
+                            {modeLabel}
                         </Text>
                         {memberships.length > 0 ? factSeparator : null}
                         {memberships.length > 0 ? (
@@ -399,7 +413,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
 
             {/* Lab `s2svc:account`: identity, Usage, Used by and pools, then Sign-in with where it works and the
                 machine its operations run on, configuration, sharing, and removal last. */}
-            {hasSignInRow || props.worksOnSection || props.machineScopeLine ? (
+            {hasSignInRow || props.includedApiKey || props.worksOnSection || props.machineScopeLine ? (
                 <ItemGroup title={t('connectedServicesSettings.detailSignInTitle')}>
                     {hasSignInRow ? <Item
                         testID={`${testID}:sign-in`}
@@ -425,6 +439,14 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                         rightElementOutsidePressable
                     /> : null}
                     {props.signInFlow ? <SectionContentRow>{props.signInFlow}</SectionContentRow> : null}
+                    {/* A fact, not a control: the key exists because the account connected; its value stays sealed. */}
+                    {props.includedApiKey ? <Item
+                        testID={`${testID}:included-api-key`}
+                        title={t('connectedServicesSettings.detailIncludesApiKey')}
+                        subtitle={describeConnectedAccountIncludedApiKey(props.includedApiKey)}
+                        mode="info"
+                        showChevron={false}
+                    /> : null}
                     {props.worksOnSection ?? null}
                     {props.machineScopeLine ?? null}
                 </ItemGroup>

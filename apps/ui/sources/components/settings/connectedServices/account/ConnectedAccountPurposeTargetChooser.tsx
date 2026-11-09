@@ -160,6 +160,11 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   /** What the current choice means here, said when the row has no state of its own to report. */
   description?: string;
   /**
+   * What this purpose can serve here when it is restricted (a gateway family): `summary` ends the row's
+   * line 2 ("chat requests only"), `sentence` opens the picker. Words from the declaring owner, never parsed.
+   */
+  restriction?: Readonly<{ summary: string; sentence: string }>;
+  /**
    * What an optional purpose with no target means on this surface (an Agent's own sign-in, an
    * unused gateway slot). Defaults to "Not set"; never a dash.
    */
@@ -301,6 +306,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
 
   const rootStep = React.useMemo<SelectionListStep>(() => ({
     id: 'connected-account-purpose-targets',
+    ...(props.restriction ? { title: props.restriction.sentence } : {}),
     // It chooses accounts and pools, not models.
     inputPlaceholder: t('common.search'),
     emptyStateLabel: t('common.unavailable'),
@@ -318,7 +324,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
         disabled: !choice.selectable,
       })),
     }],
-  }), [choices, locale, props.testID]);
+  }), [choices, locale, props.restriction, props.testID]);
   const closePicker = React.useCallback(() => {
     if (!pickerModalIdRef.current) return;
     Modal.hide(pickerModalIdRef.current);
@@ -402,9 +408,12 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   );
   const statusSubtitle = triggerStatus ?? selected?.presentation.summaryLabel ?? props.description;
   // The field already says what the row's status says (the unset prompt, a disabled reason); the row does not repeat it.
-  const subtitle = fieldColors && statusSubtitle === triggerDetail ? props.description : statusSubtitle;
+  const baseSubtitle = fieldColors && statusSubtitle === triggerDetail ? props.description : statusSubtitle;
+  const subtitle = props.restriction
+    ? [baseSubtitle, props.restriction.summary].filter(Boolean).join(' · ')
+    : baseSubtitle;
   // What repairs a saved target that cannot serve (D14) reads as needing the user.
-  const subtitleNeedsYou = Boolean(selected?.presentation.unavailableReason) && subtitle === triggerStatus;
+  const subtitleNeedsYou = Boolean(selected?.presentation.unavailableReason) && baseSubtitle === triggerStatus;
   return (
     <Item
       testID={props.testID}

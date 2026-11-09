@@ -240,6 +240,21 @@ function SettingAnchorHost(props: Readonly<{
 }
 
 /**
+ * The same reveal for a row that just arrived (a gateway family that was connected moves into its
+ * section): it scrolls into view and pulses once when `active` turns on. The host is always rendered so
+ * the row keeps its mount when the pulse starts.
+ */
+export function RowArrivalReveal(props: Readonly<{ active: boolean; testID: string; children: React.ReactElement }>) {
+    const { hostRef, highlight } = useSettingReveal(props.active, 0);
+    return (
+        <View ref={hostRef} style={styles.host}>
+            {props.children}
+            {props.active ? <RevealOverlay highlight={highlight} testID={props.testID} /> : null}
+        </View>
+    );
+}
+
+/**
  * Wraps a declared section (its `ItemGroup`). When search asks for one of the section's settings and
  * the page does not render that row right now (it waits on another setting, a machine or a feature),
  * the section is revealed instead: its own state line says what the row needs, so the user never

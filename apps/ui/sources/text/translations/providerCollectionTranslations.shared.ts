@@ -40,6 +40,7 @@ export const en = {
             modelsFromDescription: 'The subscriptions this gateway draws on. Choose an account or a pool for each; they are never mixed.',
             slotUnused: ({ service }: { service: string }) => `${service} models aren’t offered through this gateway.`,
             slotConnect: ({ service }: { service: string }) => `Connect a ${service} account to use it here.`,
+            addMoreFamilies: "Add more",
             connect: 'Connect',
             runsOnTitle: 'Runs on',
             runsOnDescription: 'Where the gateway starts when a session needs it. Requests still go to the subscriptions above.',

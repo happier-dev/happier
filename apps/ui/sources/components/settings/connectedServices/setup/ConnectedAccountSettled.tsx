@@ -111,7 +111,7 @@ export function ConnectedAccountSettled(props: Readonly<{
     ) : null;
     return <>
         <ConnectedAccountActionApprovalNotice execution={execution} testID="connected-services-settle-approval-pending" />
-        <ConnectedAccountSettledView identity={identity} offer={offer} primaryAction={primaryAction} onDismiss={onDismiss} testID={props.testID} />
+        <ConnectedAccountSettledView identity={identity} includedApiKey={profile?.includesApiKey} offer={offer} primaryAction={primaryAction} onDismiss={onDismiss} testID={props.testID} />
     </>;
 }
 
@@ -121,6 +121,8 @@ export function ConnectedAccountSettledView(props: Readonly<{
     offer: ConnectedAccountSettleOffer | null;
     primaryAction: React.ReactNode;
     onDismiss: () => void;
+    /** The connection also created an API key (a Muse device sign-in mints one): said once, as a fact. */
+    includedApiKey?: boolean;
     testID?: string;
 }>) {
     const { theme } = useUnistyles();
@@ -161,6 +163,16 @@ export function ConnectedAccountSettledView(props: Readonly<{
                 )}
                 {props.primaryAction}
             </View>
+            {props.includedApiKey ? (
+                // Its own line under the identity: the key glyph takes the check's column, so both texts
+                // share one left edge (the lab's storage line missed it by about 10 px).
+                <View testID={`${props.testID ?? 'connected-services-settle'}:included-api-key`} style={styles.note}>
+                    <View style={styles.noteGlyph}>
+                        <Icon name="key" size={13} color={theme.colors.text.secondary} />
+                    </View>
+                    <Text style={styles.text}>{t('connectedServicesSettings.settleAlsoCreatedApiKey')}</Text>
+                </View>
+            ) : null}
         </View>
     );
 }
@@ -232,5 +244,16 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
+    },
+    note: {
+        flexBasis: '100%',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s10,
+    },
+    noteGlyph: {
+        // The check's width, so the note's text starts where the identity's does.
+        width: 15,
+        alignItems: 'center',
     },
 }));
