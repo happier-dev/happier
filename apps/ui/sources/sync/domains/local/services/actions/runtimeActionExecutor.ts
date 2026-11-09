@@ -3,7 +3,7 @@ import { DaemonLocalServicePreviewOpenOrCreateRequestV1Schema, DaemonLocalServic
 import { DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema, DaemonLocalServicePublicPreviewCreateRequestV1Schema, DaemonLocalServicePublicPreviewRevokeRequestV1Schema, DaemonLocalServicePublicPreviewStatusRequestV1Schema, redactLocalServicePublicPreviewCreateResponseForAgentEgress, redactLocalServicePublicPreviewRevokeResponseForAgentEgress, redactLocalServicePublicPreviewSnapshotForAgentEgress, type LocalServicePublicPreviewSnapshotV1 } from '@happier-dev/protocol/local/services/public/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { LocalServiceActionRequestV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
+import { LocalServiceActionRequestV1Schema, LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { fetchLocalServiceInventorySummaryViaMachineRpc } from '../inventory/machineRpc';
 import { DaemonLocalServiceLauncherLeafRequestV1Schema, DaemonLocalServiceLauncherSnapshotRequestV1Schema, DaemonLocalServiceLauncherStartRequestV1Schema, type DaemonLocalServiceLauncherLeafRequestV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import { requiresAgentEgressRedaction } from '@happier-dev/protocol/actions/actionApprovalPolicy';
@@ -17,9 +17,6 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import type { UiActionExecutorContext } from '@/sync/ops/actions/defaultActionExecutor';
 
 import {
-    executeLocalServiceActionViaRequest,
-    type LocalServiceActionExecuteClientInput,
-    type LocalServiceActionExecuteClientResult,
     type LocalServiceActionExecuteRequest,
 } from './api';
 import {
@@ -161,9 +158,6 @@ export type CreateLocalServicesRuntimeActionExecutorInput = Readonly<{
     copyPublicPreviewUrl?: (
         input: LocalServicePublicPreviewCopyUrlClientInput,
     ) => Promise<LocalServicePublicPreviewCopyUrlClientResult>;
-    executeLocalServiceAction?: (
-        input: LocalServiceActionExecuteClientInput,
-    ) => Promise<LocalServiceActionExecuteClientResult>;
     fallback?: RuntimeActionExecute;
 }>;
 
@@ -375,7 +369,6 @@ export function createLocalServicesRuntimeActionExecutor(
     const createPublicPreviewExposure = input.createPublicPreviewExposure;
     const revokePublicPreviewExposure = input.revokePublicPreviewExposure;
     const copyPublicPreviewUrl = input.copyPublicPreviewUrl;
-    const executeLocalServiceAction = input.executeLocalServiceAction ?? executeLocalServiceActionViaRequest;
 
     return async (args) => {
         if (!isLocalServicesRuntimeAction(args.actionId)) {
@@ -690,33 +683,28 @@ export function createLocalServicesRuntimeActionExecutor(
             ) {
                 return invalidParametersResult;
             }
+            const target = args.context.externalActionTarget;
+            if (target && (target.kind !== 'machine' || target.machineId !== request.data.target.machineId)) {
+                return invalidParametersResult;
+            }
+            if (!input.executeOnMachine) return routeFailureResult('action', 'unavailable');
+            const result = await input.executeOnMachine({ ...args, input: request.data, context: {
+                ...args.context, externalActionTarget: target ?? { kind: 'machine', machineId: request.data.target.machineId },
+            } });
             if (args.actionId === 'localServices.actions.openPreview') {
-                const target = args.context.externalActionTarget;
-                if (target && (target.kind !== 'machine' || target.machineId !== request.data.target.machineId)) {
-                    return invalidParametersResult;
-                }
-                if (!input.executeOnMachine) return routeFailureResult('action', 'unavailable');
                 // Preview Open shares the lifecycle DTO, rather than the legacy audited-control envelope.
-                const result = await input.executeOnMachine({ ...args, input: request.data, context: {
-                    ...args.context, externalActionTarget: target ?? { kind: 'machine', machineId: request.data.target.machineId },
-                } });
                 const response = DaemonLocalServicePreviewOpenOrCreateResponseV1Schema.safeParse(result);
                 if (response.success) publishLifecycleSnapshot(onPreviewSnapshot, request.data.target.machineId, serverId, response.data.snapshot);
                 return result;
             }
-            const result = await executeLocalServiceAction({
-                request: request.data,
-                serverId,
-                signal: args.context.signal,
-                executeRequest: input.request,
-            });
+            const response = LocalServiceActionResultV1Schema.safeParse(result);
             // Mutation settlement is shared by every UI entry point. A successful write
             // also recovers a retired inventory watch; derived launcher projections follow it.
-            if (result.ok && result.result.status === 'succeeded'
+            if (response.success && response.data.status === 'succeeded'
                 && request.data.action !== 'copy_url' && request.data.action !== 'open_preview') {
                 invalidateInventory({ machineId: request.data.target.machineId, serverId });
             }
-            return result.ok ? result.result : routeFailureResult('action', result.reason);
+            return result;
         }
 
         return disabledResult('local_services_runtime_action_unbacked');

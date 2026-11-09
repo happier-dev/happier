@@ -4,6 +4,7 @@ import {
     type LocalServiceActionRequestV1,
     type LocalServiceActionResultV1,
 } from '@happier-dev/protocol/local/services/actions/v1';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 export const LOCAL_SERVICE_ACTION_EXECUTE_ROUTE = '/local-services/actions/execute';
 
@@ -21,6 +22,7 @@ export type LocalServiceActionExecuteClientInput = Readonly<{
 
 export type LocalServiceActionExecuteClientResult =
     | Readonly<{ ok: true; result: LocalServiceActionResultV1 }>
+    | Readonly<{ ok: false; reason: 'refused'; failure: ActionExecuteFailure }>
     | Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response' }>;
 
 export function isLocalServiceActionResultForRequest(

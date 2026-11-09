@@ -20,7 +20,6 @@ import {
     createLocalServicesRuntimeActionExecutor,
     type CreateLocalServicesRuntimeActionExecutorInput,
 } from '@/sync/domains/local/services/actions/runtimeActionExecutor';
-import { executeLocalServiceActionViaMachineRpc } from '@/sync/domains/local/services/actions/machineRpc';
 import { fetchLocalServiceInventorySnapshotViaMachineRpc } from '@/sync/domains/local/services/inventory/machineRpc';
 import {
     fetchLocalServiceLauncherSnapshotViaMachineRpc,
@@ -108,7 +107,6 @@ export function createDefaultRuntimeActionExecutor(
         createPublicPreviewExposure: createLocalServicePublicPreviewExposureViaMachineRpc,
         revokePublicPreviewExposure: revokeLocalServicePublicPreviewExposureViaMachineRpc,
         copyPublicPreviewUrl: copyLocalServicePublicPreviewUrlViaMachineRpc,
-        executeLocalServiceAction: input.localServices?.executeLocalServiceAction ?? executeLocalServiceActionViaMachineRpc,
         fallback: computer,
     });
     return createBrowserRuntimeActionExecutor({

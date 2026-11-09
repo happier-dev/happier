@@ -2,7 +2,8 @@ import {
     DaemonLocalServiceActionExecuteRequestV1Schema,
     DaemonLocalServiceActionExecuteResponseV1Schema,
 } from '@happier-dev/protocol/local/services/actions/v1';
-import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { isRpcError, isRpcMethodNotFoundError, isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
@@ -33,11 +34,18 @@ export async function executeLocalServiceActionViaMachineRpc(
         if (isRpcMethodNotFoundResult(raw)) {
             return { ok: false, reason: 'unavailable' };
         }
+        const failure = readActionFailureEnvelope(raw, { treatReturnedErrorEnvelopeAsFailure: true });
+        if (failure) return { ok: false, reason: 'refused', failure };
         const parsed = DaemonLocalServiceActionExecuteResponseV1Schema.safeParse(raw);
         return parsed.success && isLocalServiceActionResultForRequest(parsed.data.result, payload.data)
             ? { ok: true, result: parsed.data.result }
             : { ok: false, reason: 'invalid_response' };
-    } catch {
+    } catch (error) {
+        if (isRpcMethodNotFoundError(error)) return { ok: false, reason: 'unavailable' };
+        if (isRpcError(error)) {
+            const failure = readActionFailureEnvelope({ ...error, ok: false, errorCode: error.rpcErrorCode, error: error.message });
+            if (failure) return { ok: false, reason: 'refused', failure };
+        }
         return { ok: false, reason: 'request_failed' };
     }
 }

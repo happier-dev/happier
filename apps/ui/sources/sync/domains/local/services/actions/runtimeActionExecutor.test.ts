@@ -379,10 +379,7 @@ describe('UI local-services runtime action executor', () => {
         expect(mod?.createLocalServicesRuntimeActionExecutor).toBeTypeOf('function');
         if (!mod?.createLocalServicesRuntimeActionExecutor) return;
 
-        const executeLocalServiceAction = vi.fn(async () => ({ ok: false as const, reason: 'unavailable' as const }));
-        const execute = mod.createLocalServicesRuntimeActionExecutor({
-            executeLocalServiceAction,
-        });
+        const execute = mod.createLocalServicesRuntimeActionExecutor();
 
         await expect(execute(runtimeArgs({
             actionId: 'localServices.actions.copyUrl',
@@ -397,18 +394,17 @@ describe('UI local-services runtime action executor', () => {
             errorCode: 'runtime_action_disabled',
             error: 'runtime_action_disabled:localServices:local_services_action_unavailable',
         });
-        expect(executeLocalServiceAction).toHaveBeenCalledOnce();
     });
 
-    it('returns local service action results from the injected action client', async () => {
+    it('returns local service action results from the original Account Machine transport', async () => {
         const mod = await import('./runtimeActionExecutor').catch(() => null);
 
         expect(mod?.createLocalServicesRuntimeActionExecutor).toBeTypeOf('function');
         if (!mod?.createLocalServicesRuntimeActionExecutor) return;
 
-        const executeLocalServiceAction = vi.fn(async () => ({ ok: true as const, result: actionResult }));
+        const executeOnMachine = vi.fn(async () => actionResult);
         const execute = mod.createLocalServicesRuntimeActionExecutor({
-            executeLocalServiceAction,
+            executeOnMachine,
         });
 
         await expect(execute(runtimeArgs({
@@ -428,9 +424,9 @@ describe('UI local-services runtime action executor', () => {
         expect(mod?.createLocalServicesRuntimeActionExecutor).toBeTypeOf('function');
         if (!mod?.createLocalServicesRuntimeActionExecutor) return;
 
-        const executeLocalServiceAction = vi.fn(async () => ({ ok: true as const, result: actionResult }));
+        const executeOnMachine = vi.fn(async () => actionResult);
         const execute = mod.createLocalServicesRuntimeActionExecutor({
-            executeLocalServiceAction,
+            executeOnMachine,
         });
 
         await expect(execute(runtimeArgs({
@@ -451,7 +447,25 @@ describe('UI local-services runtime action executor', () => {
             errorCode: 'invalid_parameters',
             error: 'invalid_parameters',
         });
-        expect(executeLocalServiceAction).not.toHaveBeenCalled();
+        expect(executeOnMachine).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['localServices.actions.stopManaged', 'stop_managed'],
+        ['localServices.actions.restartManaged', 'restart_managed'],
+        ['localServices.actions.forget', 'forget'],
+    ] as const)('keeps %s on the original Account Machine transport and preserves its refusal', async (actionId, action) => {
+        const { createLocalServicesRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const refusal = { ok: false as const, errorCode: 'requester_account_material_unavailable', error: 'requester_account_material_unavailable' };
+        const executeOnMachine = vi.fn(async () => refusal);
+        const execute = createLocalServicesRuntimeActionExecutor({ executeOnMachine });
+        expect(await execute(runtimeArgs({ actionId, input: {
+            requestId: 'control-on-worker', action, force: false, confirmationNonce: 'reviewed-control',
+            target: { kind: 'managed_service', machineId: 'worker', managedServiceId: 'owned-service' },
+        }, context: { surface: 'ui', actionRequestId: 'control-on-worker' } }))).toEqual(refusal);
+        expect(executeOnMachine).toHaveBeenCalledWith(expect.objectContaining({ context: expect.objectContaining({
+            actionRequestId: 'control-on-worker', externalActionTarget: { kind: 'machine', machineId: 'worker' },
+        }) }));
     });
 
     it('maps localServices.launcher.start to the injected launcher start route', async () => {

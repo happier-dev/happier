@@ -1,8 +1,8 @@
 import type {
     LocalServiceActionAuditEventV1,
     LocalServiceActionResultV1,
-} from '@happier-dev/protocol';
-import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+} from '@happier-dev/protocol/local/services/actions/v1';
+import { RpcError, RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
@@ -63,6 +63,25 @@ describe('local service actions machine RPC client', () => {
             serverId: 'server_1',
             method: RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_EXECUTE,
             payload: request,
+        });
+    });
+
+    it.each([
+        { ok: false, errorCode: 'requester_credentials_unavailable', error: 'requester_credentials_unavailable' },
+        { errorCode: 'requester_credentials_unavailable', error: 'requester_credentials_unavailable' },
+    ])('preserves a typed handler refusal before decoding the control response: %j', async refusal => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce(refusal);
+        const { executeLocalServiceActionViaMachineRpc } = await import('./machineRpc');
+        expect(await executeLocalServiceActionViaMachineRpc({ request })).toMatchObject({
+            ok: false, reason: 'refused', failure: { ok: false, errorCode: 'requester_credentials_unavailable' },
+        });
+    });
+
+    it('preserves a typed transport refusal', async () => {
+        machineRpcWithServerScopeMock.mockRejectedValueOnce(new RpcError('Requester material unavailable', 'requester_credentials_unavailable'));
+        const { executeLocalServiceActionViaMachineRpc } = await import('./machineRpc');
+        expect(await executeLocalServiceActionViaMachineRpc({ request })).toMatchObject({
+            ok: false, reason: 'refused', failure: { ok: false, errorCode: 'requester_credentials_unavailable' },
         });
     });
 

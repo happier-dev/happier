@@ -1,5 +1,6 @@
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executor/computer';
+import { LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
 import { resolveApprovalReplayRoute } from './approvalReplayRoute';
 import { createUiPreparedSessionBirthV1 } from './preparedSessionBirth';
@@ -930,7 +931,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         credentialKey: resolveAuthCredentialsScopeKey(accountContext.credentials) } } : {}),
     },
   }, accountContext?.accountLifetime, async (args) => {
-    if (isComputerRuntimeActionId(args.actionId) && accountContext) {
+    if ((isComputerRuntimeActionId(args.actionId) || Object.hasOwn(LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION, args.actionId)) && accountContext) {
       return await createUiAccountAction({ account: accountContext })({ ...args,
         context: { ...args.context, actionCaller: args.context.actionCaller ?? { kind: 'host' } } });
     }
@@ -5212,7 +5213,12 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext,
     },
     machineProcessesAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),
     machineServiceAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),
-    machineServiceControl: ({ input, context, signal }) => machineActionRpc('machines.services.control', input, signal, context.actionRequestId ?? undefined),
+    machineServiceControl: ({ input, context, signal }) => createUiAccountAction({ account })({
+      actionId: 'machines.services.control', input, signal, context: { ...context,
+        actionCaller: context.actionCaller ?? { kind: 'host' },
+        externalActionTarget: context.externalActionTarget ?? { kind: 'machine', machineId: input.machineId },
+      },
+    }),
     machineServiceLogsRead: ({ input, context, signal }) => machineActionRpc('machines.services.logs.read', input, signal, context.actionRequestId ?? undefined),
     machineAdminAccessAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),
     machineAgentIsolationAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),

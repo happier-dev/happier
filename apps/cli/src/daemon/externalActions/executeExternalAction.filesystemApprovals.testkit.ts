@@ -164,8 +164,8 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   cliPolicy?: Readonly<{ authentication: 'account' | 'terminal'; askWithUiWaiver?: boolean; hostOnlyAsk?: 'waived' | 'unavailable';
     requireMoveChild?: true; approvalDecisionActorAccountId?: string; machineCustodianAccountId?: string; machineRole?: 'manage' | 'use';
     deploymentRuntimeMachine?: true }>) {
-  const serviceAction = actionId === 'localServices.launcher.start' || actionId === 'projects.service.relocate'
-    || actionId === 'localServices.actions.stopManaged';
+  const serviceAction = actionId.startsWith('localServices.') || actionId.startsWith('machines.services.')
+    || actionId === 'projects.service.relocate';
   let deploymentChildDelivery: ((job: ReturnType<typeof DeploymentChildRpcV1Schema.parse>, result: unknown) => Promise<void>) | undefined;
   vi.spyOn(syncClient, 'createHappierSocket').mockImplementation(params => {
     // Substitute only the Home socket boundary; the transport adapter, RPC
@@ -1093,7 +1093,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   const runtimeActionExecute = api.createBrowserRuntimeActionExecutor();
   if (serviceAction) {
     pluginRuntime = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
-      ...(actionId === 'projects.service.relocate' ? { controller: pluginReloadController } : {}),
+      ...(actionId === 'projects.service.relocate' || actionId.startsWith('machines.services.') ? { controller: pluginReloadController } : {}),
       runtimeOptions: { pluginIds: [], resolveCurrentMachineId: () => target.machineId } });
   }
   const startRuntime = (machineClient: ApiMachineClient, machineId: string,
@@ -1201,6 +1201,9 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     },
     onDeploymentChildDelivery(listener: NonNullable<typeof deploymentChildDelivery>) { deploymentChildDelivery = listener; },
     deliverExternalAction,
+    deliverMachineRpc: (method: string, params: unknown) => rpcInstallation.run(installation, () => rpc.handleRequest({
+      method: target.machineId + ':' + method, params, callerAuthority: 'present_user', machineAdmission: admission,
+    })),
     async seedMoveService() {
       if (!pluginRuntime) throw new Error('Missing installed Service owner');
       let phase: 'running' | 'stopped' = 'running';
@@ -1227,6 +1230,20 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         destination, selectedTarget: { machineId: workerRef.machineId }, desiredPlacement: { workspace, serviceName: 'web',
           expectedRevision: 'absent', expected: { kind: 'absent' }, value: { runsOn: destination, unavailable: 'fail' } } });
       return { request, finishStop, snapshot: handle.snapshot, stopCalls: () => stopCalls };
+    },
+    async seedNativeService() {
+      if (!pluginRuntime) throw new Error('Missing installed Service owner');
+      let phase: 'running' | 'stopped' = 'running';
+      let stopCalls = 0;
+      const handle = await pluginRuntime.registry.projectManagedServices.superviseMachine({ serverId: homeId, machineId: ref.machineId,
+        watch: { v: 1, watchId: 'native-web', name: 'Native web', adapter: { pluginId: 'fixture.plugin', localId: 'web' },
+          nativeResourceId: 'web', lifecyclePurpose: 'development' },
+        isCurrent: () => true, releaseObservation: async () => {}, lifecycle: {
+          inspect: async () => ({ phase, readiness: 'not_reported', endpoint: null }),
+          stop: async () => { stopCalls++; phase = 'stopped'; return { status: 'stopped' }; },
+        } });
+      return { target: { serverId: homeId, machineId: ref.machineId, serviceId: handle.serviceId, expectedGeneration: handle.instanceId },
+        snapshot: handle.snapshot, stopCalls: () => stopCalls, finishStop: () => {} };
     },
     async runStandaloneCli(input: unknown) {
       // A standalone CLI discovers SOURCE locally, while Script placement must
