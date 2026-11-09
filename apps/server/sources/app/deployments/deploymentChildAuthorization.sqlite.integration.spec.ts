@@ -684,6 +684,38 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
+    it.each(['plain', 'e2ee'] as const)('returns a terminal refusal for a %s Store proposal naming a Machine as its installation', async contentMode => {
+        const f = await fixture('account', 'account', { templateRoot: true, readableEnvironment: true, contentMode });
+        const actionId = 'deployments.templates.instantiate';
+        const input = { ...f.templateInput, machineId: f.controller.id,
+            environment: { kind: 'create', requestKey: crypto.randomUUID(), name: 'Agent Store app',
+                protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: f.controller.id },
+            target: { kind: 'new', installationId: f.controller.id }, destination: { kind: 'stored' } };
+        const token = await auth.createToken(f.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+        await withAuthenticatedTestApp(registerExternalActionRoutes, async app => {
+            const mint = (installationId: string) => {
+                const requestId = crypto.randomUUID();
+                const target = { kind: 'machine' as const, machineId: f.controller.id };
+                const operand = { ...input, target: { ...input.target, installationId } };
+                const envelope = contentMode === 'plain' ? { v: 1 as const, requestId, target, input: operand }
+                    : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                        binding: { serverIdentityId: serverId, accountId: f.account.id,
+                            authentication: { kind: 'terminal', tokenEpoch: f.account.tokenEpoch }, actionId, requestId, target },
+                        input: operand, material: { type: 'dataKey', machineKey: f.controller.contentKey }, randomBytes: nacl.randomBytes });
+                return app.inject({ method: 'POST', url: `/v1/actions/${actionId}/execution-authorization`,
+                    headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: f.controller.id, envelope } });
+            };
+            const malformed = await mint(f.controller.id);
+            expect(malformed.statusCode, malformed.body).toBe(403);
+            expect(malformed.json()).toMatchObject({ error: 'credential_scope_denied' });
+            // A real installation still reaches admission; no template policy waiver is needed.
+            const admitted = await mint(f.controller.installationId);
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            expect(admitted.json().binding).toMatchObject({ authentication: { kind: 'terminal' },
+                deploymentPreparationAdmission: { target: { installationId: f.controller.installationId } } });
+        }, { authentication: 'real' });
+    });
+
     it('binds template receipt history to the deploy intent present at Home mint', async () => {
         const f = await fixture('account', 'account', { templateRoot: true, readableEnvironment: true });
         const { deploy, ...unprepared } = f.templateInput;

@@ -676,7 +676,7 @@ class AuthModule {
         // A caller cannot grant itself child dispatch, even on an otherwise valid root.
         if (input.deploymentChildRoot !== undefined) throw new ApiTokenOperationError('credential_scope_denied');
         const deploymentChildRoot = isDeploymentChildRootActionIdV1(input.actionId, input.deploymentPreparationAdmission);
-        let supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse({
+        const parsedBinding = ExternalActionExecutionAuthorizationBindingV1Schema.safeParse({
             ...input, custodianAccountId: machine.accountId, installationId: machine.installationId,
             ...(deploymentChildRoot ? { deploymentChildRoot: true } : {}),
             ...(managedAdmission ? { managedAdmission } : {}),
@@ -692,6 +692,8 @@ class AuthModule {
             }) } : {}),
             accountEncryptionMode: accountMode.encryptionMode,
         });
+        if (!parsedBinding.success) throw new ApiTokenOperationError('credential_scope_denied');
+        let supplied = parsedBinding.data;
         // Link's private input names the Environment; only Home derives its owner.
         if (input.deploymentLinkAdmission) throw new ApiTokenOperationError('credential_scope_denied');
         if (supplied.actionId === 'deployments.targets.link') {
