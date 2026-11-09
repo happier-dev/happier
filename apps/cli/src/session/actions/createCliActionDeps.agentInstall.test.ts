@@ -65,7 +65,7 @@ describe('CLI install job Actions', () => {
     const result = await executor.execute(actionId, { machineId: 'machine', ...input }, {
       surface: 'cli', authority: 'present_user', serverId: 'home-2',
     });
-    expect(result).toMatchObject({ ok: false, errorCode: 'action_failed', error: 'server_scope_mismatch' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' });
     expect(invoke).not.toHaveBeenCalled();
     expect(callMachineRpc).not.toHaveBeenCalled();
   });

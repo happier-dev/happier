@@ -547,8 +547,7 @@ describe('UI machine Agent inventory Action transport', () => {
         const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
         const machine = { ...createPlainMachineRowFixture({ id: 'machine-1', accountId: 'custodian' }),
             kind: 'persistent', active: true, installationId: 'installation', installationPublicKey: encodeBase64(installation.publicKey),
-            revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
-            access: { custodian: { accountId: 'custodian' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } } as const;
+            revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null } as const;
         harness.answer(serverId, '/v1/machines', { body: [machine] });
         harness.answer(serverId, '/v1/machines/machine-1', { body: { machine } });
         network.setHttpResponder((input, init) => harness.request(input, init));

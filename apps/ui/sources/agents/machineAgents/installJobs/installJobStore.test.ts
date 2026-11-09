@@ -56,8 +56,7 @@ beforeEach(async () => {
             const machineId = url.pathname.split('/').at(-1)!;
             return Response.json({ machine: { ...createPlainMachineRowFixture({ id: machineId, accountId: home.accountId! }),
                 kind: 'persistent', active: true, installationId: 'installation', revokedAt: null, replacedByMachineId: null,
-                dataEncryptionKey: null, runnerContentKeyBinding: null,
-                access: { custodian: { accountId: home.accountId }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } } });
+                dataEncryptionKey: null, runnerContentKeyBinding: null } });
         }
         const method = url.pathname === '/v1/actions/machines.agents.install.status' ? RPC_METHODS.DAEMON_AGENTS_INSTALL_READ
             : url.pathname === '/v1/actions/machines.agents.install.cancel' ? RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL : null;
