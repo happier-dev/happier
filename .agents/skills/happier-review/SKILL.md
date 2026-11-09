@@ -188,7 +188,7 @@ Never edit implementation files in `report`, `intent`, `qa` or `comment` mode.
 
 Before a non-trivial boundary or ship verdict:
 
-1. run `.agents/skills/attack-conclusion`, starting with its machinery questions (which owner already decides this, what can be deleted, net mechanism delta), then against alternative causes, neighboring cases, blast radius, environment gap, hypothesis lock, split-brains, and compatibility provenance;
+1. run `.agents/skills/attack-conclusion`'s self-simplification pass on the reviewed change (callers and machinery first, hunks traced, would-I-still-build-this, split-brain and provenance, falsifiers, test value, net delta from the diff);
 2. use `.agents/skills/verify-claims` for decision-material delegated claims consolidated at this boundary;
 3. use autoreview only when the approved boundary, explicit user request, or risk-selected closeout calls for an advisory independent diff reviewer—not automatically after each vertical or microchange;
 4. require a reviewer different from the author of the reviewed vertical for release, schema/data, security-critical, and user-visible ship gates; require a wholly separate validation session only when release or security policy says so;

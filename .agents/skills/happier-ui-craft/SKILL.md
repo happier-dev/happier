@@ -50,9 +50,9 @@ personal present, one hero, one rhythm, inviting empty states. Read it before de
 **Material** (see `DESIGN.md` → Materials; values in the edge and elevation owners)
 
 - Ink borders, ink dividers, ink selection — never a fixed grey.
-- Flat edge for everything in flow; the directional rim only for floating surfaces and the message
-  bubble, by role (lighter corner on dark, a breath darker on light, never white). Never on buttons,
-  fields or rows. The rim is a whisper: if you notice it before the content, it is too strong.
+- Flat edge for everything in flow; the directional rim only for floating surfaces, by role (lighter
+  corner on dark, a breath darker on light, never white); the message bubble is a fill only. Never on
+  buttons, fields or rows. The rim is a whisper: if you notice it before the content, it is too strong.
 - One radius base, concentric nesting; one spacing rhythm.
 - Meta in one right-aligned tabular column; mono only for ids, paths, code and shortcuts.
 - Colour means state: amber needs you, rose failed; glyphs stay ink.

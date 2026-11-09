@@ -8,10 +8,11 @@ This reference is the canonical intent-review method. Campaign briefs point here
 
 Inventory every check, state, code, custody mode, retry, cache and guard on the path. Owners answer the questions with primary evidence; the reviewer verifies the answers and assigns the verdict, rather than letting owners certify their own mechanisms. Separate observed facts from derived reasoning; mark an unknown origin or missing evidence explicitly.
 
-| Mechanism (file:line) | Intent, one plain sentence | Real harm prevented, concrete user-visible scenario | Reachable today? How? | Evidence of need (owner ruling, released contract, reproduced incident, named security threat) | What already covers it (which owner already decides this fact) | Reference does (same flow, `file:line`): same, nothing, or simpler | Cost: codes, branches, files, incidents it caused (cite board/lane evidence) | Origin: plan section, review finding or commit | Verdict |
-|---|---|---|---|---|---|---|---|---|---|
+| Mechanism (file:line) | Intent, one plain sentence | Real harm prevented, concrete user-visible scenario | Reachable today? How? | Evidence of need (owner ruling, released contract, reproduced incident, named security threat) | What already covers it (which owner already decides this fact) | Reference does (same flow, `file:line`): same, nothing, or simpler | Cost: codes, branches, files, incidents it caused (cite board/lane evidence) | Origin: plan section, review finding or commit | Placement (core / plugin / split) and the shared primitive or SDK seam that decides it | Verdict |
+|---|---|---|---|---|---|---|---|---|---|---|
 
 - Default: `DELETE`. `KEEP` requires a named reachable harm and evidence; "in case", "defense in depth", "possible race" and "future consumer" are not evidence.
+- Product logic in the host that the existing SDK could carry is `MERGE into <plugin owner>`. A host branch on a plugin or provider id is a split-brain. A proposed new SDK seam needs a named consuming flow, otherwise `DELETE`. Moving code into a plugin is not a cost fix; demand-loading is, so report idle and cold-load cost separately.
 - Other verdicts: `MERGE into <one owner>` or `SIMPLIFY to <smaller rule>`. Apply deletion recursively to machinery that exists only to support another mechanism. A second place deciding a fact its owner already decides is `MERGE into <owner>`.
 - Trace the origin to learn whether plans, reviews, security passes or implementation habits introduced it; name the plan wording that produced it. Do not infer historical intent from code shape.
 - For exactness/currentness claims, name the failure if approximate and try the domain's own revision check first, decided once at its owner. Preserve real security, released compatibility and user features; missing evidence is not authority to remove them.
@@ -38,7 +39,7 @@ Evidence and rulings to apply: `.project/OWNER-RULINGS.md`, especially its 2026-
 2. One minimal model: the smallest rules preserving every `KEEP` protection, including protections retained by merges/simplifications.
 3. An ordered merge/delete plan, each step naming its canonical owner, meaningful RED → GREEN test (usually a shape-contract count test flipping from `it.fails`) and blast radius; keep the real-protection tests green throughout.
 4. Exact plan/doc sections needing amendment, with the wording that produced each mechanism, and the inventory of tests encoding the protections that must survive. Distinguish recommendations from approved changes and source evidence from loaded reproductions.
-5. The net mechanism delta of the proposal (`+/−` checks, states, codes, timers, retries, files) and the measured shape counts before and after.
+5. The net mechanism delta of the proposal (`+/−` checks, states, codes, timers, retries, files) and measured current counts and predicted cleanup counts; the cleanup lane reports the measured after.
 
 Report in plain language and label observed versus derived. A finding needs a reproduction or concrete reachable scenario; unsupported concerns remain notes. After authorized fixes, review the finding delta rather than repeating the whole intent review unless its basis materially changed. No time limit.
 
@@ -53,6 +54,7 @@ Inputs: the named report, its evidence folder, the code it cites, and the owning
 3. **Everything the report proposes to add** (test infrastructure, pipelines, facades, owners, states, codes): apply the deletion test to the proposal itself. Prefer the smallest change that serves the real intent, often a deletion plus one existing owner.
 4. **Reference check:** for each `KEEP` or `SIMPLIFY` row, check what the cited references do for the same flow. If none has it and the report names no Happier-specific requirement, downgrade it. If the report skipped the comparison, do it for the rows that decide the plan.
 5. **What it missed:** mechanisms in scope it didn't list, or rated without evidence.
+6. **Authorization journey count:** for each user journey through an authorization flow, count the decisions, credentials and signed roots a person meets acting on their own Account, and compare with what the references need for the same journey. A count well above the references is a finding unless each extra step names its cross-person harm (Bot templates BT3, 2026-11-05: about 12 decisions, 4 credentials and 5 roots for a person on their own Account passed an earlier challenge and security review; the journey table exposed it at once).
 
 Output: `<REPORT>-CHALLENGE.md` next to the report, line 1 STATUS. Then a short "Where I disagree" table (row, original verdict, challenge verdict, one-line evidence); what the plan should drop or add; the corrected minimal plan in a few lines; and a plain-language owner summary of at most 10 lines. Label observed versus derived. No time limit.
 
@@ -63,7 +65,7 @@ When the owner asks every lead to review its own program for over-building, each
 1. **Intent review** by this method in full, naming which plan wording produced which mechanism.
 2. **Challenge pass** of that report, before anything is implemented.
 3. **Deletion lanes** implementing the corrected plan: shape RED → delete → GREEN, keeping the protection tests the review names, producers before consumers, and `pnpm check:entry-loads` per batch.
-4. **Security seams** (authorization, credentials, encryption) get the owner-designated security review before they count as done.
+4. **Security seams** (authorization, credentials, encryption) get the owner-designated security review before they count as done; that review applies the subtraction step in [review-standard.md](review-standard.md#security-auth-and-privacy).
 
 Cleanup plans that follow the approved rules (check once at admission with server per-call authorization and a local cancel signal; revocation at the next natural boundary; no invented limits; reference comparison; no lost user feature) are approved by default (`.project/OWNER-RULINGS.md`, 2026-10-29). Only real product questions go to the owner, through the campaign's reporting route with a recommendation. This grant does not approve changes to the rules or instructions themselves.
 

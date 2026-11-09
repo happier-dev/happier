@@ -66,6 +66,10 @@ Check:
 - stale, repeated, reordered, concurrent, and resumed operations where state/lifecycle makes them possible;
 - atomicity, idempotency, transaction boundaries, resource cleanup, and ownership transfer;
 - errors that are swallowed, silently converted, or leave misleading success state;
+- persisted or on-disk state with no event that settles or retires it (installed versions, per-operation caches or homes, failed staging, superseded operations, retired records); name the owner that should retire it;
+- refusal-code honesty: a refusal names the fact that decided it; "update required" is reserved for version or support gaps, and a terminal `succeeded` never carries `outcomeUnknown`;
+- cause transport: a failure that reaches a person keeps the typed code and redacted native text from the layer that observed it, through every layer above. A bare `catch`, a remap to a generic code (`Other`, `spawn_failed`, "Provider session failed") or a child whose exit and stderr are dropped is a finding. Most Fork C live failures on 2026-11-05/06 first appeared as generic codes, and each one cost a separate diagnosis lane (CLOUD-CAUSE3, TURN-FAIL, LAUNCH-DIAG, OWNER-PROVIDER);
+- transient states kept transient: an unavailable broker, a carrier timeout or a revoked-then-restored grant must not become a terminal refusal, a pinned choice or a row that is never re-evaluated. The existing recovery owner re-decides it at the next natural boundary (BROKER-FIRST, WAKE-ACTIVATE, PENDING-STUCK, 2026-11-06);
 - feature gates, state transitions, and impossible-state handling;
 - generated/built/runtime wiring and artifacts, not only source presence;
 - unsafe casts, unclear optionality, and weak models that permit reachable illegal states.
@@ -83,9 +87,17 @@ Activate when external input, protected resources, credentials, execution, files
 - secret exposure in logs, prompts, reports, artifacts, client bundles, and errors;
 - privacy-minimized responses and diagnostics;
 - fail-closed gates and explicit encryption envelopes;
-- dependency risk only for changed/new dependency surface.
+- dependency risk only for changed/new dependency surface;
+- for an admission or binding fix, every sibling read, write and effect admitted under the same signed root, in one pass. One sibling per review round is the failure mode to avoid.
 
 Do not report a security label without a concrete attack/failure path and impact.
+
+Security reviews (including the owner-designated Opus reviews of authorization, credential and encryption seams) subtract as well as add:
+
+- A finding needs a reproduced or concretely traced cross-person path: another person, Account, Team member or link recipient reaching what they should not, a secret reaching a transcript or log, or the server reaching E2EE content. Trusted in-process reuse, first-party code guarded from itself, and protection against the user's own plugins or choices are not findings. An imagined path is a note.
+- Look for re-decided admission. Find any later step that asks the server or another owner to decide again what admission already decided, for example a resume, probe or child launch re-authorizing through a stricter raw permission. It refuses legitimate admitted users, not attackers. It is a finding to remove; consuming the admitted lifetime is the fix (incidents 2026-11-03: `a9fd138e81`, `4897fec43d`).
+- The fix lands at the one owner that decides the fact (usually the server for cross-person authorization, the envelope owner for E2EE) and deletes the client and daemon copies of that check in the same change; it does not add a check beside the owner.
+- A PASS or APPROVE reports the checks removed as well as the checks added. A review whose fixes only add is a reason to run `intent` mode on that owner.
 
 ## Data, contracts, compatibility, and lifecycle
 
@@ -139,6 +151,7 @@ Use `.agents/skills/happier-testing`. Verify:
 
 - behavior changes have meaningful RED → GREEN evidence;
 - RED failed for the intended contract, not setup/mock/fixture drift;
+- for each fixed defect, the seam where the fact was dropped or re-decided is named, and the test enters above it through the production entry the failure used. An owner test entering below the seam cannot see it (Voice 11-03→06: five of six production defects were a fact lost crossing owners);
 - tests distinguish a plausible wrong implementation;
 - existing owner-level coverage was inventoried and consolidated;
 - internal domain logic remains real; only system boundaries are mocked;

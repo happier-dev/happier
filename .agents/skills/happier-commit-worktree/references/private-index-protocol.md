@@ -81,6 +81,18 @@ commit=$(printf '%s\n' "$finalization" | sed -n 's/^committed \([0-9a-f]*\):.*/\
 git show --no-patch --format=fuller "$commit"
 ```
 
+**Fast path (default for lane commits, owner 2026-11-07).** Skip the finalizer. After the focused tests and entry-loads pass:
+
+```bash
+tree=$(GIT_INDEX_FILE="$idx" git write-tree)
+commit=$(git commit-tree "$tree" -p "$head" -F /tmp/happier-commit-message.txt)
+# guard: the commit may change only the paths you staged
+diff <(git diff --name-only "$head" "$commit" | sort) <(printf '%s\n' "${files[@]}" | sort) || { echo 'commit touches unexpected paths: abort'; exit 1; }
+git update-ref "refs/heads/$(git symbolic-ref --short HEAD)" "$commit" "$head"
+```
+
+The tree and the parent must come from the same HEAD: `read-tree "$head"` and `-p "$head"` use one captured value. If `update-ref` refuses because HEAD moved, rebuild the private index from the new HEAD (fresh `read-tree`), re-add the same paths and retry. Never reuse an old tree with a new parent: that silently reverts every commit in between (2026-11-07: 5dce4fdca5 reverted Voice's and others' just-landed hunks). Then stop: don't write the shared index (`update-index`, `add`, `reset -- path`, `read-tree` on the default index) and don't touch `.git/index.lock`. A stale shared-index entry after a private-index commit is expected and harmless, while any write can change other lanes' staging (2026-11-07: three lanes did it; Systemic owns the shared index). Use the finalizer below only for a pre-push HEAD coherence pass or when someone explicitly asks for an exact-tree check.
+
 Verify the current-user identity and complete commit-specific co-authors in the message before invoking the finalizer, and inspect the created object with `git show --no-patch --format=fuller "$commit"` afterwards. The finalizer uses ordinary `git commit-tree` configuration, including configured signing; required hook-equivalent checks remain the caller's responsibility.
 
 Invoke the checker directly on the Git-owning machine for every packet. The Git-only changed-source decision skips compiler loading and admission for zero-TS packets, including replay and finalization. On Unix hosts, TS packets replace the CLI with canonical shell admission before loading compiler modules or Git blobs, so the CLI heap is released while queued. The admitted checker and API launcher reuse that reservation; an outer wrapper is unnecessary. Native Windows retains its existing native API path.
@@ -113,6 +125,8 @@ Do not edit the worktree to manufacture a clean file. Do not use zero-context fr
 After committing a partial file, synchronize its full committed HEAD blob into the shared index. The uncommitted hunks stay in the worktree and therefore remain visible as `M` relative to HEAD.
 
 ## 4. Shared-index synchronization
+
+**Not part of a lane commit.** Only the shared-index owner (Systemic) runs this, or a commit-campaign owner the user explicitly asked to. Lanes using the fast path skip this section.
 
 After `update-ref` succeeds, synchronize only the committed paths. Another authorized writer may already have advanced HEAD again, so first prove the created commit remains in current history and capture the latest tree.
 

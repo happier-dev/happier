@@ -129,7 +129,7 @@ GIT_INDEX_FILE="$idx" git diff --cached
 
 Run the narrowest deciding tests appropriate to each packet. Batch compatible package-wide typechecks, builds, and broader suites once per wave rather than repeating an identical expensive check after every commit. Record which packets a shared check covers and invalidate that evidence only when later bytes touch its deciding corridor. For pre-existing behavior changes, inspect whether tests and implementation agree rather than automatically changing whichever fails. Classify failures as a real defect, test drift, harness/environment failure, external-contract change, resource saturation, or unrelated concurrent failure.
 
-Check type resolution for every packet that changes TypeScript, on the private tree before `commit-tree`:
+Check type resolution for every packet that changes TypeScript. When committing, use the combined checker/finalizer in section 8 so the same result survives HEAD movement; do not run a separate check first. For inspection without committing, check the private tree with:
 
 ```bash
 tree=$(GIT_INDEX_FILE="$idx" git write-tree)
@@ -150,18 +150,20 @@ Use direct `node scripts/workspaces/checkCommitTypeCoherence.mjs ...` for every 
 
 ## 8. Commit from a private index
 
+Lane commits use the fast path in [private-index-protocol.md](references/private-index-protocol.md) (owner 2026-11-07): focused tests + entry-loads, then `git commit-tree` + CAS `update-ref`, with no coherence finalizer and no producer-first ordering. The checker/finalizer steps below and in section 7 apply only to a pre-push HEAD coherence pass or an explicitly requested exact-tree check.
+
 Follow [private-index-protocol.md](references/private-index-protocol.md) exactly. The essential transaction is:
 
 1. capture the current `HEAD` as the intended parent;
 2. initialize a unique temporary index from that parent;
 3. stage only the packet's explicit current paths and selected hunks;
-4. inspect and validate the private staged diff, including the type-resolution check in section 7;
-5. create a commit object with `git commit-tree`;
-6. advance `HEAD` with `git update-ref HEAD <commit> <expected-parent>`;
+4. inspect the private staged diff and run the packet's focused checks;
+5. invoke the checker with `--base=<parent> --tree=<tree> --message-file=<file>` to check and finalize the packet in one process;
+6. capture the finalizer's committed id (its ref update uses compare-and-swap);
 7. synchronize only committed paths in the shared index to the new HEAD;
 8. verify the shared index and selected worktree paths.
 
-Compare-and-swap is mandatory. If HEAD moved, discard only the temporary index and rebuild the packet from the new HEAD and current worktree bytes. Never force the ref and never assume the previously built tree can simply be attached to a different parent.
+Compare-and-swap is mandatory. The checker-owned finalizer replays the reviewed packet onto a moved HEAD, carries over disjoint checked program groups, and rechecks only intersecting groups. Never force the ref or attach an old whole tree to a different parent. Use the combined finalizer rather than checking a tree and later refusing it merely because HEAD moved; current selected-byte verification and shared-index synchronization remain the caller's responsibility.
 
 This transaction never rewrites the worktree. If new bytes land in a committed file after private staging, the committed snapshot becomes HEAD and the newer bytes remain visible as an uncommitted modification. That is the required behavior.
 

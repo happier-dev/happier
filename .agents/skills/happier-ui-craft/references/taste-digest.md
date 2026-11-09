@@ -60,8 +60,9 @@ Sources: `DESIGN.md` (Spacing, shape, and alignment; Accessibility); `happier-ui
   shadows, blur values, border colors, or radii into a feature component.
 - Borders, dividers, hover, and selection are low-alpha ink, never fixed gray.
 - In-flow rows, controls, cards, grouped sheets, and the composer use the flat edge.
-- Floating menus, popovers, dialogs, over-content sheets, toasts, tooltips, and message bubbles use
-  the directional rim from `@happier-dev/plugin-ui/presentation` raised-edge owners. Keep it a whisper.
+- Floating menus, popovers, dialogs, over-content sheets, toasts and tooltips use the directional rim
+  from `@happier-dev/plugin-ui/presentation` raised-edge owners. Keep it a whisper. The message bubble
+  is a fill only.
 - Use glass only for a functional floating layer or an Elements surface with real atmosphere behind
   it. Unbacked Elements retain their solid paint. Do not stack translucent coats.
 - `glassSurfacePaint` and the glass/material host decide paint once for core, plugin, and embedded

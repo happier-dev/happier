@@ -43,6 +43,12 @@ For vendor-owned behavior, use current official vendor documentation and keep at
 
 Use `.agents/skills/happier-compatibility` when documentation claims depend on released/predecessor formats, mixed versions, upgrades, rollback, migrations, or persisted historical data.
 
+Root `AGENTS.md` "Documentation ownership" rules (moved here verbatim):
+
+- Search for and update the existing canonical page before creating another. Do not leave similar-but-different explanations of the same concept.
+- Documentation is a claim, not proof of implementation. Verify Happier behavior against the implementing code and the target release/channel before documenting it.
+- Distinguish shipped, preview, development-only, experimental, deprecated, and planned behavior explicitly. Do not present an unreleased intermediate as available.
+
 ## 4. Choose the edit contract
 
 Use the narrowest mode that serves the reader. Every added section or sentence must improve a decision, action, mental model, evidence boundary, or material caveat; prose that only restates another canonical owner does not earn its place:

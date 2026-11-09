@@ -59,6 +59,8 @@ For a suitable read-only or ignored-output command without a public entry point:
 ./apps/stack/bin/hstack-exec -- <command> [args...]
 ```
 
+For ad hoc development dist refreshes, use `HAPPIER_WORKSPACE_BUILD_MODE=source-dev ./apps/stack/bin/hstack-exec -- node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs <workspace-package>`; CI and publication retain strict checking.
+
 Default to these automatic forms whenever the command is eligible for remote execution. Pin
 `--target=...` only when the evidence requires a particular platform, host or machine-local state.
 Explicit targets retain the same Linux memory, PSI and class-reservation admission as automatic
@@ -87,7 +89,7 @@ are native shell operations. `--script` starts Yarn only on the selected host. W
 locally for this POSIX-only routing feature.
 
 The repository command policy chooses the least-loaded healthy configured target from short-lived
-cached probes, without a probe-coalescing lock or controller dispatch mutex. It excludes targets whose repository filesystem reports no free space or
+cached probes, without a probe-coalescing lock or controller dispatch mutex. It excludes targets whose repository filesystem cannot meet the command class's disk headroom or
 that cannot launch the requested top-level executable
 and adjusts cached load for commands dispatched there but not yet reflected by the next probe. Pass
 the executable directly when practical; `sh -lc` hides inner tool requirements from this preflight.
@@ -140,7 +142,11 @@ only when the user asks with `dev-targets sync-service stop`.
 ### Worker disk headroom and lane scratch (0.3 development)
 
 Linux admission observes free bytes on the command's known write filesystems and refuses an
-already exhausted filesystem. Before a cold or failed sibling command-replica transition, the
+already exhausted filesystem. Validation classes additionally require more than
+1,931,718,656 free bytes, derived from the largest measured validation scratch root
+in the 2026-11-01 mac2-linux ENOSPC incident. Larger measured additional writes still
+govern; this is neither a guessed build peak nor a disk reservation.
+Before a cold or failed sibling command-replica transition, the
 source owner refreshes the executor through its existing causal synchronization barrier and
 measures source bytes using the synchronization owner's ignore rules. Admission also requires
 room for the positive difference from resident source bytes; replicas ready for the current
@@ -153,7 +159,7 @@ controller-owned synchronization session is inactive. Retirement needs separatel
 Unknown UID or same-UID process visibility retains data; processes whose status identifies
 only foreign UIDs do not block this user's reclamation. Explicit maintenance applies the same retention policy
 independently. Cold replicas lacking measured headroom are excluded before their source transition;
-ordinary AUTO excludes a still-exhausted worker, and pins fail with the disk diagnostic.
+ordinary AUTO excludes a worker below its class's measured headroom, and pins fail with the disk diagnostic.
 Status exposes free bytes. Future install/build writes and quotas are not guaranteed by admission.
 
 Lane scripts use a unique `happier-*`, `hstack-*` or `docs-check-*` scratch directory beneath the
@@ -196,20 +202,26 @@ Independent commands may run concurrently, but preserve the repository's existin
 
 ### Dedicated QA host (0.3 development)
 
-On nl3 (Ubuntu 24.04), Codex's bundled `codex-resources/bwrap` needs an AppArmor
-user-namespace exception. The owner-approved host setup in
-`/etc/apparmor.d/happier-codex-bwrap` attaches separate `flags=(unconfined)`
-profiles, granting `userns`, to the exact standalone and existing managed QA
-helper paths. Keep `kernel.apparmor_restrict_unprivileged_userns=1`; do not attach
-the exception to the Codex CLI or broaden other profiles. A different helper path
+On nl3 (Ubuntu 24.04), Codex needs a narrowly scoped AppArmor user-namespace
+exception. The owner-approved host setup in `/etc/apparmor.d/happier-codex-bwrap`
+uses `flags=(unconfined)` profiles granting `userns`. The 2026-10-30 repair covers
+only `bin/codex` and `codex-resources/bwrap` under
+`/home/happier/.local/share/codex-standalone/*-x86_64-unknown-linux-musl/` and
+`/home/happier/.happier/dev-targets/nl3/stack-state/*/cli/tools/providers/codex/current/`,
+alongside the retained exact helper attachments. Some installs invoke system
+bwrap, so their exception is inherited from the scoped Codex executable. Keep
+`kernel.apparmor_restrict_unprivileged_userns=1`; direct `/usr/bin/bwrap` and
+unrelated namespace commands remain restricted. A different executable layout
 needs its own narrowly scoped attachment and sandbox verification.
 
 Verify on the executing host with a disposable, empty `CODEX_HOME` and
 `codex sandbox -c 'permissions={}' -P :read-only -C <scratch-directory> -- /usr/bin/true`
 (observed with Codex 0.162.1). `bwrap: loopback: Failed RTM_NEWADDR` indicates the
-reproduced policy failure. A missing bundled helper is a separate install issue;
-its QA owner repairs the managed install through the normal Agent install Action.
-Host profile loading needs no QA stack restart. Yolo remains owner-approved on nl3.
+reproduced policy failure. Establish the live Agent's actual executable and
+AppArmor label rather than inferring them from its managed install directory.
+An explicit missing-helper startup error is a separate install issue; its QA
+owner repairs the install through the normal Agent install Action. Host profile
+loading needs no QA stack restart. Yolo remains owner-approved on nl3.
 
 The canonical QA browser launcher uses `--no-sandbox` under the approved QA-host policy for Happier's own QA app. Attach controller automation to that browser; do not introduce a separate per-lane launch policy. Retain a TTY-backed foreground tool handle and verify cleanup after SIGINT: cancelling a non-TTY checkout launcher can leave the actual command and forward running.
 

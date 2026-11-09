@@ -25,7 +25,7 @@ State the real intent, exclusions, and outermost observable result. Derive the i
 
 1. name the user-visible, operational, compatibility, and architectural truths that must hold;
 2. identify the canonical owners or artifacts that establish each truth;
-3. identify the real entry points, consumers, wiring, migrations, removals, and compatibility paths required to make those owners authoritative;
+3. identify the real entry points, consumers, wiring, migrations, removals, and compatibility paths required to make those owners authoritative — list every lifecycle entry that reaches the owner (each surface, fresh load, restart/native startup, reconnect, each credential mode) and route each through it, because an entry that bypasses an existing owner was the most common live defect in the Voice program;
 4. identify the two or three links whose failure would be most damaging or least visible;
 5. choose deciding evidence that observes the truths at the outermost practical contract surface.
 
@@ -46,6 +46,8 @@ Before production changes, inspect enough current evidence to name:
 
 Search by symbols and domain identifiers, not filenames alone. Stop once the material owner, corridor, risks, and deciding checks are established; do not keep searching for reassurance.
 
+**New actor checklist.** When work runs for someone other than the Machine/Account owner (guest, requester, or agent acting for a user), enumerate every follow-up call—get, cancel, recovery, publication, transcript follow, storage writes and settlement—and state whose authority each uses at the one owner that selects credentials. Why: successful admission does not prove later calls use the right bearer (FIN row 8e, 2026-11-02–04).
+
 Dirty or concurrently edited files are normal and do not establish ownership. Inspect current bytes, preserve compatible changes, and layer in-scope work on top. Coordinate only actual same-hunk edits, incompatible decisions at one conceptual seam, destructive moves, single-producer generated outputs, or exclusive runtime resources.
 
 ## 4. Select the smallest coherent systemic change
@@ -56,11 +58,15 @@ Prefer, in order, to add nothing when the complete outcome already holds; correc
 
 Smallest coherent does not mean smallest diff. Update every materially affected caller, reader, writer, consumer, platform path, and compatibility direction. Remove or migrate active competing owners and bypasses when the authorized outcome makes them obsolete. Do not centralize coincidental similarity across distinct bounded contexts or absorb unrelated debt.
 
-Before changing a shared fact or contract (shape, vocabulary, timing, readiness, acquisition, publication, error code, projection fields, geometry/policy, public prop/helper signature, union member, kind, enum or parameter type), inventory every writer and reader across packages by symbol, store slice, hook, schema and error code. Include strict-parse readers, tests/testkits and twin projections (tool list vs prompt docs, client vs daemon spelling, UI vs agent path); record one line per consumer naming its need and the test covering its distinct behaviour (consumers that read the owner's result the same way share one test), add missing coverage or explain why none is needed, update each in the same change or explain its unreachability, run existing suites importing the changed owner, and list the sweep in the handoff. Reviewers re-derive it from symbols. A fix that leaves a reachable sibling defective is incomplete.
+Before changing a shared fact or contract (shape, vocabulary, timing, readiness, acquisition, publication, error code, projection fields, geometry/policy, public prop/helper signature, union member, kind, enum or parameter type), inventory every writer and reader across packages by symbol, store slice, hook, schema and error code. Include strict-parse readers, tests/testkits and twin projections (tool list vs prompt docs, client vs daemon spelling, UI vs agent path); record one line per consumer naming its need and the test covering its distinct behaviour (consumers that read the owner's result the same way share one test), add missing coverage or explain why none is needed, update each in the same change or explain its unreachability, run existing suites importing the changed owner, and list the sweep in the handoff. Reviewers re-derive it from symbols. For a fix, audit every sibling path sharing the contract or bug class, including every write of the same credential scope or caller of the same Action operand; a reachable defective sibling makes the fix incomplete.
 
 Before tightening schema strictness, run the released/predecessor/stored-shape census in [happier-compatibility §2](../happier-compatibility/SKILL.md#2-establish-evidence-backed-baselines).
 
-Prefer exhaustive switches or `satisfies` checks for union consumers so the compiler names omissions; every map or list keyed by a canonical union is generated from that union, checked with `satisfies Record<Union, ...>` where applicable, or covered by an equivalence test against the canonical union. A hand-maintained subset must state its narrower domain rather than silently omitting members. A shared-checkout package typecheck may already be red or stop at an earlier package; it does not replace the inventory.
+Prefer exhaustive switches or `satisfies` checks for union consumers so the compiler names omissions; every map or list keyed by a canonical union is generated from that union, checked with `satisfies Record<Union, ...>` where applicable, or covered by an equivalence test against the canonical union. A hand-maintained subset must state its narrower domain rather than silently omitting members. Access-class lists are the same rule: RPC forwarding maps, HTTP purpose admission and custodian-only sets derive from the method's or Action's own declaration; until a list is derived, a change that adds a method names every hand list it must join (2026-11-04/06: two live omissions and one cross-person leak came from adding to one list and not the others). Generated outputs (Action DTOs, Protocol dist, manifests, lockfile) are regenerated and committed in the same packet as the producer change that alters them; a producer committed without its generated output breaks every consumer of the stale copy (2026-11-06: stale SDK DTOs blocked a 965-commit aggregate). A shared-checkout package typecheck may already be red or stop at an earlier package; it does not replace the inventory.
+
+Failures name themselves where they happen. When a boundary step knows why it failed (HTTP status, refusal code, thrown class, missing fact), its typed result carries that step and code, secret-free, to the caller. Never convert a known cause into `unknown`, `uncertain`, `outcome_unknown`, `unknown_error` or a generic schema mismatch, and never report success or "approved" for an effect that did not happen. In the 2026-11-03/04 deploy and Vercel work, flattened causes cost one reload round each, about eight times. An unclassified failure stays a typed internal error carrying its first cause; never map it onto a domain refusal (`forbidden`, `unavailable`, `not_found`). A failing part degrades only its own section with its reason, never the whole surface (PR4, 2026-11-07).
+
+An Action's input is built by one owner shared by the UI, CLI and agent paths. Two builders for the same input are a split-brain, even when both currently pass their own tests.
 
 Place code by root `AGENTS.md` "Files, folders, and moves". New behaviour goes in a focused module inside the owner's domain folder, named with the folder as context: don't restate the folder in the file name, and avoid `utils`/`helpers`/`manager`. Don't grow an already-large file. When a change touches a responsibility that lives inside one, extract that responsibility into its own sibling module as part of the change, keeping the original exports and package aliases so importers don't change. Delete what the change makes obsolete.
 
@@ -70,9 +76,9 @@ Every wait names the fact that ends it. A readiness gate, acquisition wait or lo
 
 Security guards ship with [happier-testing's owner-positive guard test](../happier-testing/SKILL.md#seam-tests-required-when-a-change-crosses-a-seam), including admission, isolation, custody and authority changes.
 
-Before adding a protocol, registry, table, state machine, gate, lease, generation, fallback, cache, or parallel path, name the approved requirement, reproduced failure, external contract, or reachable risk it serves. Apply the deletion test. If the mechanism only adds concepts while required behavior survives without it, do not build it.
+Before adding a protocol, registry, table, state machine, gate, lease, generation, fallback, cache, or parallel path, apply root **Choose good compromises**: name the approved requirement, reproduced failure, external contract, or reachable risk it serves and apply the deletion test; validate at the trust boundary and trust internal data behind it.
 
-Each fact is decided once at its owner, and consumers use its typed result. Do not add a re-check of an owner's fact in another function, process or surface; if one seems needed, fix the owner.
+Each fact is decided once at its owner, and consumers use its typed result. Authorization predicates live in the store or lookup accessor every caller must go through, not at each ingress. A check copied to N handlers is a split-brain waiting for handler N+1 (detached-Run ownership: RUN-OWNER-STORE). Do not add a re-check of an owner's fact in another function, process or surface; if one seems needed, fix the owner.
 
 Do not add consumer-side retries, caches or fallbacks before reproducing the cause; fix the producer at its canonical owner. Evidence: `.project/OWNER-RULINGS.md` (10-29 guardrails); `.project/plans/2026-10-29-program-census/RESUME-DECISIONS.md` §2.
 
@@ -97,7 +103,7 @@ Use the fastest reliable mechanism for the work:
 - formatters and deterministic validators;
 - batched retrieval with compact output.
 
-Before parking, identify the exact missing producer and its current owner, then recheck current source and the authoritative completion event. If the producer is unowned, necessary and within the approved scope, claim it at the existing owner and implement that consumed vertical. Otherwise name the external owner, decision or authority needed. Park only the dependent work, with a named resume trigger, and resume the existing lane when that trigger arrives.
+Before parking, identify the exact missing producer and its current owner, then recheck current source and the authoritative completion event. If the producer is unowned, necessary and within the approved scope, claim it at the existing owner and implement that consumed vertical. Otherwise name the external owner, decision or authority needed. Park only the dependent work, with a named resume trigger, and resume the existing lane when that trigger arrives. When a packet is refused for a foreign uncommitted producer, post an ASK to that producer's lead at once naming the path and symbol, rather than parking silently. Never park on a decision that belongs to your own orchestrator (commit grouping, fixture recreation) or on a producer RESULT that already names your next step: route the question to your orchestrator and keep working (RU2, 2026-11-06: about 5 h lost this way in one day).
 
 Preview broad transformations, establish their match set, inspect representative and aggregate diffs, and validate omissions plus unintended matches. Do not build tooling when a few direct edits are safer and faster.
 
@@ -115,11 +121,11 @@ Uncertainty is an investigation task, not a reason to skip in-scope work. Classi
 - Implement through the canonical/public owner boundary and a consumed path, not a dormant horizontal spine.
 - Add a consumer only with its producer's export, schema, migration, registration or declaration available. For removals/renames of shared exports, specs and Actions, migrate consumers first and remove the producer last in one atomic edit batch; retain temporary compatibility exports if work must stop midway. Before ending each such batch, run `pnpm check:entry-loads` (hstack-exec AUTO) for fresh-process loads of changed Protocol/SDK modules and shipped entry graphs (daemon, CLI, server, UI catalog and SDK browser); report results or missing graph coverage. Incident basis: `.project/plans/2026-10-29-program-census/RESUME-DECISIONS.md` §2 (10-29 shared-package load break).
 - Use `.agents/skills/happier-compatibility` for released wire, semantic, persistence, migration, upgrade, coexistence, or rollback seams.
-- Editing the name or bytes of a local-only or development-exposed migration that the current checkout's repo-local development stack has applied makes in-place reconciliation of that database authorized and mandatory in the same task: follow root `AGENTS.md` "Compatibility and version skew" and the procedure in `apps/stack/AGENTS.md`. The last migration editor owns it immediately before handoff; a source-level or clean migration test does not replace it.
+- Follow the 2026-10-31 **Migrations: no edits during development, one consolidation before 0.3 release** row in `.project/OWNER-RULINGS.md` for migration authoring, the named release check and accidental-edit reconciliation; the reconciliation procedure is in `apps/stack/AGENTS.md` **Repo-local development database reconciliation**. A source-level or clean migration test does not replace required in-place reconciliation.
 - Use relevant UI/design/React/React Native skills for user-facing work under `DESIGN.md` and package instructions.
 - Before fixing UI behaviour, apply [happier-testing's live-first reproduction and frame evidence](../happier-testing/SKILL.md#live-validation-gates).
 - Preserve performance, continuity, accessibility, security, privacy, and Windows/Linux/macOS behavior wherever the changed corridor can materially differ.
-- A failure that crosses a process, package or transport boundary carries its closed reason code, phase and retryability from the producer to one presenter. Never carry payloads or content in that failure metadata. Wrappers keep the canonical code rather than re-wrapping it into a generic `unavailable`, `unknown` or `invalid_parameters`. Readers that can't decide return an explicit unknown variant, never a negative fact. Callers never loop on a non-retryable code. The deciding test asserts the code at the outermost consumer, plus one "non-retryable code → settles with zero re-polls" case.
+- A failure that crosses a process, package or transport boundary carries its closed reason code, phase and retryability from the producer to one presenter. Never carry payloads or content in that failure metadata. Wrappers keep the canonical code rather than re-wrapping it into a generic `unavailable`, `unknown` or `invalid_parameters`. A sanitizer or redactor removes content only; it keeps the code and phase (on 2026-11-03/04 a sanitized native startup error reduced every member-Codex failure to "reason unknown" and cost six QA reload rounds). Readers that can't decide return an explicit unknown variant, never a negative fact. Callers never loop on a non-retryable code. The deciding test asserts the code at the outermost consumer, plus one "non-retryable code → settles with zero re-polls" case.
 
 In delivery/queue pipelines, every skip or `continue` records a settled decision or an explicit hold with its release trigger. Acknowledge a request or intent as consumed only after its effect is applied.
 
@@ -131,7 +137,11 @@ Run the narrowest deciding GREEN check, then broaden according to reachability, 
 
 Report verification gates per item, preserving each item's pass, failure or blocked prerequisite rather than marking an entire batch failed because one item failed.
 
-When the change crosses a seam, follow [happier-testing's seam tests](../happier-testing/SKILL.md#seam-tests-required-when-a-change-crosses-a-seam).
+For each execution unit crossing a seam, apply [happier-testing's composed entry-to-output and registration-parity rules](../happier-testing/SKILL.md#seam-tests-required-when-a-change-crosses-a-seam).
+
+When the fix is for a failure seen in live QA on a host, OS-identity, credential or platform boundary, and the fixing lane can reach that host, it reruns the failing recipe step there itself before handing back. A probe that omits the user's real inputs (for example no connected credentials) does not count.
+
+Before handing back any fix, walk the rest of the user journey past the corrected step in-process or in a composed test. A fix is done only when its root cause is corrected at the owner, the sibling-path audit above is complete, and that journey succeeds.
 
 For user-visible or environment-dependent changes, run the composed live browser/device/CLI/API/daemon recipe against the relevant loaded source/build when authorized and available. If that proof cannot run, use `IMPLEMENTED_NOT_VERIFIED` and name the missing prerequisite; do not substitute more internal checks and claim completion.
 
@@ -139,7 +149,7 @@ Do not guess an expected result that cannot be derived from the user request, ap
 
 ## 9. Review and correct at useful boundaries
 
-Continuously perform compact author self-review without creating a separate review program. Ask first which owner already decides each thing the change added and what it lets you delete, then inspect bypasses, split-brains, neighboring cases, environment gaps, and complexity introduced by the change; run `.agents/skills/attack-conclusion` before a non-trivial handoff.
+Continuously perform compact author self-review without creating a separate review program: it is `.agents/skills/attack-conclusion`'s one self-simplification pass, run as you go and in full before a non-trivial handoff.
 
 Use `.agents/skills/happier-review` for an explicit review request, a substantial integrated boundary, a risk-selected independent gate, or a review-plus-fix loop. Review findings are candidate claims. Re-derive accepted findings, separate defect from proposed mechanism, and cluster fixes by originating cause and canonical owner.
 

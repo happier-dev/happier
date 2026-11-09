@@ -11,7 +11,7 @@
 
 ## 1. Recovery principle
 
-Observe before mutating. The worktree, shared index, HEAD, reflog, and temporary private index are distinct states. Determine which transaction step completed; do not rerun the entire commit sequence by habit.
+Observe before mutating. The worktree, shared index, HEAD, reflog, and temporary private index are distinct states. Determine which transaction step completed; do not rerun the entire commit sequence by habit. A finalizer refusal or `no_commit` result is the next diagnosis step: fix the owned cause or name the missing producer, then continue the existing commit procedure. On terminal completion, replace stale queued or refused status in the report with the actual outcome and commit id (UI refinements, 2026-11-06: three lanes kept stale finalizer status).
 
 Never use destructive cleanup to recover. Do not run `reset`, `restore`, `clean`, `checkout`, or `switch`.
 
@@ -34,7 +34,7 @@ Then classify:
 - **Commit object created, HEAD unchanged:** the object is unreachable or referenced only by its id. Do not attach it blindly; rebuild from current HEAD/current bytes.
 - **HEAD advanced, index sync incomplete:** the commit already exists. Never create a duplicate commit. Synchronize its explicit paths from HEAD.
 - **HEAD advanced and worktree remains dirty:** compare bytes. These may be legitimate later edits or excluded hunks.
-- **HEAD moved by another writer:** inspect the new commits and rebuild the pending packet from that basis.
+- **HEAD moved by another writer:** use the checker-owned finalizer to replay the reviewed packet, carrying over disjoint checked groups and rechecking intersecting groups. A conflicting packet edit needs owner reconciliation; never force the ref or attach the old whole tree.
 
 ## 3. Index anomalies and locks
 

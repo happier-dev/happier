@@ -18,7 +18,7 @@ Route plan authoring and user-approved amendments to `.agents/skills/happier-pla
 
 ## 2. Recover current state without reopening design
 
-Read the complete approved plan when it is not already active in context. Recover:
+Read the approved plan's gate, the unit you are executing and the sections its "Also read" line names (the whole plan when it is small enough to read whole) when they are not already active in context. Recover:
 
 - approved intent, target state, decisions, exclusions, negative requirements, and acceptance criteria;
 - current execution statuses and evidence pointers;
@@ -48,7 +48,7 @@ Use maximum useful parallelism. Keep ready independent work moving when it short
 
 ## 4. Dispatch meaningful plan-aware lanes
 
-Delegate complete responsibilities, not tiny searches or isolated edits. Every meaningful implementation, review, or QA lane reads the complete approved plan once unless it is already active in that lane's context. Reference the on-disk plan rather than pasting it.
+Delegate complete responsibilities, not tiny searches or isolated edits. Every meaningful implementation, review, or QA lane reads the approved plan's gate, its own unit and that unit's "Also read" sections once unless they are already active in that lane's context. Reference the on-disk plan rather than pasting it.
 
 For Codex, set `fork_turns` explicitly and default to `fork_turns="none"`; inherit only the minimal recent context that is indispensable. Each brief includes:
 

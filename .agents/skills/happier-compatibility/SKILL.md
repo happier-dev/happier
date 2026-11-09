@@ -9,6 +9,28 @@ Preserve real released and prospective predecessor behavior at system seams with
 
 Read `docs/compatibility.md` before acting. Also read the owning package instructions and the domain document for the affected protocol, feature, encryption, provider, installer, or persistence surface.
 
+## 0. Constitution rules (moved from root AGENTS.md)
+
+Root `AGENTS.md` "Compatibility and version skew" points here; these are standing rules, not optional guidance.
+
+- New readers accept supported released shapes and new writes use the canonical current shape. Require old readers to accept new writes only when mixed-version coexistence or rollback makes that direction reachable. A field added to a request a supported older server still receives needs one test against that server's strict reader (from `../0.2` source), or the writer omits it for that server through the existing negotiated discriminator, never a new feature bit or a 400 retry (2026-11-05: `usageTimingV1` broke agent switching against 0.2's `.strict()` cutover route; fixed in `5bf1f77fa745`).
+- A changed published collection, record or wire shape takes a version step; never change it under the same version. Its RED is the previous version's stored row against the new reader (Channels V19, 2026-11-07: `collection_update_required` for every reader).
+- For incompatible format or protocol transitions, use the narrowest necessary prepare/expand → activate/migrate → contract sequence. Compatibility adapters remain seam-owned, delegate domain decisions to the single canonical owner, and record their source release/predecessor plus removal condition.
+- Validate affected reachable old/new directions without manufacturing Cartesian matrices, shims, fixture families, or fallbacks for seams the change cannot exercise. Prefer one discriminating test per material direction plus risk-selected end-to-end flows, using real artifacts or provenance-pinned vectors rather than reconstructed current-type fixtures.
+
+### `../0.2` predecessor frontier
+
+- `../0.2` is the moving predecessor expected to ship first. Inspect its real current relevant files—including committed, staged, and unstaged changes—not only releases or `HEAD`; record the inspected `HEAD`, dirty status, diff/basis, and paths without modifying the sibling.
+- Treat observable wire/data/state shapes its current code can produce or consume as prospective inputs, while released shapes remain hard obligations. Preserve those contracts, not sibling internals or every superseded intermediary; when it evolves before deployment, refresh the comparison and remove support needed only by a replaced never-released shape.
+- Dirty work may be incomplete or concurrently owned. Separate observation from inferred intent, do not encode contradictory speculative interpretations, and recheck affected sibling paths before handoff when they were dirty or advanced. Validate the reachable mixed-version directions and predecessor-created data against `dev`'s canonical implementation.
+
+
+### Repo-local development database reconciliation (root summary)
+
+- Follow the 2026-10-31 **Migrations: no edits during development, one consolidation before 0.3 release** row in `.project/OWNER-RULINGS.md` for migration authoring, the named release check and accidental-edit reconciliation; the reconciliation procedure is in `apps/stack/AGENTS.md` **Repo-local development database reconciliation**.
+- Reconciled means the database schema is equivalent to what a fresh canonical deploy of the current migration set produces, proven by a semantic schema comparison; a ledger checksum update alone is never a reconciliation. Follow the exact procedure in `apps/stack/AGENTS.md` ("Repo-local development database reconciliation").
+- The agent that makes the last edit to those migration bytes owns the fresh reconciliation. Re-check current migration bytes and the repo-local ledger immediately before handoff; earlier evidence is stale after any later edit.
+
 ## 1. Classify the surface
 
 Name the observable contract and classify it as wire, semantic, persistence, operational/installer, or internal-only.
@@ -117,13 +139,13 @@ Classify every affected migration before changing it:
 - `development-exposed`: the migration appeared on a shared development branch or `*-dev.*` artifact but still has no supported release obligation;
 - `released`: the migration shipped in an active stable/preview artifact.
 
-Local-only and development-exposed migrations may be consolidated in place before the next supported release. A development-exposed revision requires completed in-place reconciliation of the current checkout's retained repo-local development database when it applied that revision, not merely a documented path and not a permanent product adapter. Prefer one clear transition from the released schema to the intended final schema over retaining draft add/rename/contract/drop history. Multiple unreleased migrations remain justified only by a real rollout, backfill, transaction, provider, or mixed-version requirement.
+Follow the 2026-10-31 **Migrations: no edits during development, one consolidation before 0.3 release** row in `.project/OWNER-RULINGS.md` for migration authoring, the named release check and accidental-edit reconciliation; the reconciliation procedure is in `apps/stack/AGENTS.md` **Repo-local development database reconciliation**.
 
 Published and released migrations are append-only: never modify their name or bytes. If a published migration is wrong, preserve it and design the smallest forward correction that works from the published state. If the published migration cannot run at all for a supported provider, stop and resolve the release/deployment contract explicitly instead of silently rewriting history.
 
-A local database that applied an unpublished draft does not justify product compatibility code. For the deterministic repo-local development stack bound to the current checkout, reconcile in place automatically as part of the migration edit: no separate confirmation and no backup/snapshot/clone. Its database is retained and non-disposable; never delete, reset, recreate, replace, truncate, clean, or discard it. Inspect actual data, schema, and ledger; apply the exact provider-specific delta or canonical backfill; then deploy and verify. Do not add checksum allowlists, migration aliases, duplicate identities, no-op bridge migrations, or automatic runtime ledger rewriting solely for local development history.
+A local database that applied an unpublished draft does not justify product compatibility code. For accidental applied-migration edits, follow the migration-policy owner row and the Stack reconciliation procedure above. Its database is retained and non-disposable; never delete, reset, recreate, replace, truncate, clean, or discard it. Inspect actual data, schema, and ledger; apply the exact provider-specific delta or canonical backfill; then deploy and verify. Do not add checksum allowlists, migration aliases, duplicate identities, no-op bridge migrations, or automatic runtime ledger rewriting solely for local development history.
 
-Treat the migration edit and repo-local reconciliation as one work unit owned by the last editor. After the final edit and before handoff, compare complete physical schema—including data backfills, indexes, constraints, and foreign keys—run the canonical deploy twice, and verify current source checksums, ledger, provider integrity, and foreign keys. Any later migration edit invalidates earlier evidence and transfers reconciliation responsibility to the later editor.
+Reconciliation ownership and verification follow `apps/stack/AGENTS.md` **Repo-local development database reconciliation**, including refreshed evidence after any later accidental edit.
 
 If the repo-local stack has active stack-owned writers, quiesce only that stack through `hstack` and restore its prior state after reconciliation. Fail closed without mutation when current-checkout stack identity or database ownership is ambiguous. Backups and explicit approval remain required for `main`, shared, staging, production, external, another checkout's/named QA stack, or otherwise user-owned databases.
 
@@ -149,3 +171,12 @@ Report:
 - unsupported, unreachable, or unverified directions and why.
 
 Before handoff, recheck a dirty or advancing predecessor worktree and repeat the split-brain audit. If the prospective contract is contradictory or unknowable, report `[blocked]`; do not encode multiple speculative interpretations.
+
+## Compatibility and version skew
+
+- Compatibility obligations come from active released stable/preview component contracts and explicitly supported older releases. Resolve each component from immutable tags plus artifact/deploy evidence; rolling tags are only discovery pointers. `dev` builds, abandoned experiments, and undeployed internal paths are not lasting obligations unless a repository-specific predecessor rule says otherwise.
+- Map affected producers, consumers, readers, writers, and persisted artifacts. Distinguish wire, semantic, persistence, and operational compatibility; preserve the seam, not old internal architecture.
+- New clients must capability-negotiate or degrade safely with supported older servers. Routine server changes remain compatible with supported older clients. For a genuinely incompatible major server change, prefer keeping the connection and unaffected operations usable while returning a typed update requirement only for the unsafe operation.
+- If old-client/new-server support would require substantial machinery—such as dual writers, parallel persisted formats, rollout modes, operator flags, or socket-drain protocols—stop and obtain an explicit developer/product decision. Agents must neither silently add that machinery nor silently impose a client update floor. This exception applies only to high-cost incompatible transitions; do not require client updates for ordinary server changes.
+- New readers accept supported released shapes and new writes use the canonical current shape.
+

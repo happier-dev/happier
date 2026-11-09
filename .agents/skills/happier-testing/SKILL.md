@@ -151,6 +151,12 @@ Most live failures in 0.3 were correct owners wired together wrongly: an empty e
 - **Pending, empty and failed are three states.** Any owner that presents loaded data (counts, lists, coverage, availability, currency) gets one owner-level test with a held read (still pending: loading, never unavailable/zero/allowed), a settled empty result (a real zero), and a settled failure (unavailable). Its consumers branch on that status, never on the absence of data.
 - **Prefer fewer, stronger tests.** Delete or merge unit tests that only re-assert collaborator calls or mirror implementation; keep one owner test per decision plus the seam test. A lane may not report a seam-crossing change as done on mocked unit tests alone: it needs the seam test, or the named composed live recipe actually run, or an explicit deferral naming the recipe and its owner.
 
+- **Start at the real entry root.** A UI or runtime fix's RED starts at the real entry root (the platform root, not a subtree that omits a provider), or the report says why it can't. Read-aloud took three fixes because tests mounted below the web root.
+- **Real-user pass first.** A QA batch starts with one real-user pass from Home with no prepared targets, not only at the end: scripted recipes set up their own state and hide what a person hits.
+- **Producer through consumer.** A cross-layer seam fix has one test running the real producer through the real consumer's parser; stubbed boundaries hid 59 of 243 classified fixes.
+- **Four typed states.** Loading, unavailable, answered-empty and partial are distinct states, rendered through the mounted consumer.
+- **Composed journeys run as one uninterrupted session,** so one replay exposes every blocker instead of one per round.
+
 ## Fixture And Mock Policy
 
 - `test:policy` reports internal-module `vi.mock` counts per package (`--report-only` lists files) and rejects per-file growth above `scripts/testing/lib/internalModuleMockBaseline.json`; replace internal mocks with composed tests, and identify a genuine otherwise-unrecognized system adapter with an immediately preceding `test-policy-boundary:` comment explaining the boundary.

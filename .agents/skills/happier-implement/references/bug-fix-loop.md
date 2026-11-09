@@ -43,11 +43,20 @@ Name:
 
 The correct fix may be broad when one owner must govern several paths. Do not patch only the reproduced caller while leaving the same reachable defect or competing decision elsewhere. Do not absorb unrelated debt or centralize coincidental similarity.
 
+**Same-shape sweep (repo-wide, not only the corridor).** After naming the cause, write its shape in one line and search the whole tree for it, including sibling runtimes (server vs daemon vs UI) and sibling owners of the same kind. Fix each reachable instance at its owner in the same change, or name it with its owner in the report. The report carries one line: `Same-shape sweep: <shape> — <n> sites: fixed <list> / routed <owner: site>`. Shapes that recurred in 0.3 (2026-11-08):
+
+- an unclassified failure mapped to a domain refusal, or a failure rethrown so its caller replays the same work;
+- two readers deciding one fact (search vs execute catalogs, stored vs current revision, re-validation after admission);
+- a lock or transaction held across other reads or awaits;
+- a mitigation applied in one runtime but not its sibling (daemon allocator release existed; the server had none).
+- a producer or sibling path left behind: a consumer fix that never reached the real decoder, writer or actual consumer. Carry the fix through them and migrate the sibling path in the same change (83 audited findings; DOCS-FIX8's context fix passed on hand-built data while the real producer never wrote the fields).
+
 ## 5. Prove regression RED
 
 Use or strengthen the closest owner-level test that distinguishes the intended behavior from the observed defect or another plausible wrong implementation.
 
 - Confirm RED fails for the intended reason.
+- Build RED from the incident's exact input shape (the recorded payload, identity, Account mode, scale, null versus missing, cold versus warm, default versus exact selector), not the shape the author expects; a fix that crossed a process, Machine, Account or approval hop enters through that real chain ([happier-testing seam tests](../../happier-testing/SKILL.md#seam-tests-required-when-a-change-crosses-a-seam)). Twice on 2026-11-07 a test built on a sibling path passed while the live path failed (held approval, quota surface).
 - Keep internal behavior real and mock only the genuine external boundary.
 - If the defect exists only in a real browser/device/process/provider environment, preserve that live reproduction as the deciding gate and add the strongest useful automated contract below it.
 

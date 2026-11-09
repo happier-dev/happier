@@ -1,0 +1,6 @@
+- **10:18Z FX-125e PARTIAL.**
+  - **(a) N1 0/0 is correct.** 743 candidates: 59 resolve to other Projects by public key, 131 resolve by owner display/census, 550 are known-none, 3 are unavailable later. follow.preview's single match isn't in the Board's applied relation (includeInactive:false). No unknown-as-miss defect.
+  - **(b)** Run-window complete demand is fixed (`workflowLibraryReads.ts`; 2 byte-bounded pages instead of 11×32; RED→GREEN, 64 tests).
+  - LIVE-4 cold settle is still 5–6 min on the dev bundle. The dominant costs are Session admission gaps, Machine-transport `decryptEncryptionKey` and renderer saturation, owned by PERF/Sync/transport; posted to the board.
+  - Boards 272/273, the 1 failure being the foreign BoardsColumn title-read test.
+- 2026-11-03 12:32Z v4 staged (11:21 build, f72f3116). Likely lacks DEPLOY-DOMAIN-NATIVE + C-P21 SSH observer → GUEST-PAYLOAD-3 checks and rebuilds after C-P21-NEXT DONE (fallback: v4 as-is after ~60 min). Then #46: payload env line + P43-LINK-PRODUCERS + SOURCE-DELETE route + Domain native.

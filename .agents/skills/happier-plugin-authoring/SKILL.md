@@ -121,6 +121,29 @@ When deliberately preparing from an approved registry origin, pass `--sdk-regist
 
 The daemon owns prepared-change custody and activation. A failed in-process replacement keeps the incumbent plugin occurrence active only while that daemon lives. After a daemon restart, Happier rebuilds the current source; if it cannot build and activate, the development plugin is unavailable until corrected. Fix the source and let the normal development cycle retry; do not start another watcher or loader.
 
+## Bundled repository plugins
+
+The public scaffold creates an independent author project; it does not enroll a
+plugin in Happier's bundled workspaces. For a shippable `packages/plugins/<id>`
+integration, use the canonical bundled membership owner
+`apps/cli/scripts/build-owned/bundledPluginMembership.ts`. A plugin with nonempty
+executable UI graphs (including Account runtime and connected-account
+authentication artifacts) also needs its exact package version in
+`apps/ui/package.json` dependencies. Follow the root Dependency inputs rule:
+apply workspace wiring, run `pnpm install --lockfile-only`, and install through
+the dependency-refresh owner with a real installer; never run a raw install.
+
+After the batch's source and membership changes settle, run the CLI's canonical
+bundled generator once on the controller, last, as documented in
+`apps/cli/AGENTS.md`. Semantic publication does not prepare ignored package
+artifacts; when the existing packaged UI check needs those inputs, use that
+same publisher's `--package-artifacts` option. Then run the existing
+`pnpm --dir apps/ui run check:bundled-plugin-ui-artifacts` and entry-loads before
+reporting the bundled integration complete. Public author typecheck/build/test
+alone cannot validate host dependency wiring or app-preseed artifact membership.
+Do not add another gate or teach the independent-project scaffold to mutate a
+Happier host checkout.
+
 ## Explicit development install
 
 `happier plugins install . --dev --json` is the explicit code-trust action for that exact local development source, so the first install needs no redundant code-trust prompt. It selects no optional host resources, and cancels the pending change with `plugin_explicit_trust_target_mismatch` if the daemon review names any other source.

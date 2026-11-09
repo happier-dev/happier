@@ -13,6 +13,11 @@ The shapes every Happier page is built from. Values come from the owners named i
   that with `NavigationLargeTitleProvider` or page chrome's `largeTitle`, around the header. An entity
   (leading mark) keeps the page title.
 - **One scroll owner per pane.** A list and its detail scroll independently; nothing nests scrolling.
+- **A side pane has one text edge.** Its header title, every section label, every row's leading mark,
+  a toolbar's first control and a card drawn on the pane all start on `PANE_TEXT_INSET_PX` (the page
+  row inset), beside the transcript and on the phone alike. Content reads it from the pane body
+  (`useSidePaneTextEdge` / `usePaneContentInsetPx`), never a local 12; a card's own rows keep the card's
+  inset. Trailing icon buttons end where the header's ⋯ does.
 
 ## Page
 
@@ -143,7 +148,7 @@ names its current owners. Pages bind their data, routes and Actions to those own
 | Shape | When | Build |
 | --- | --- | --- |
 | List + detail | Named things with substantial configuration (agents, providers, machines, prompts) | `HappierListDetailLayout`; selection comes from the route |
-| Described catalog rows | Described collections, including narrow columns | `Collection` / core collection binding selects `catalogRow`; shared status leads line 2, count stays with title |
+| Described catalog rows | Described collections; in a column (Settings rail, phone collection page) the same row on the column geometry | `Collection` / core collection binding selects `catalogRow`; shared status leads line 2, count stays with title on a page and joins line 2 in a column (glyph box, one line each, 46 floor) |
 | Cards and rich widgets | A few choices, or retained domain content | `Collection` bounded card slots / existing `WidgetFrame`; one portable chrome, domain-owned data and body lifecycle |
 | Expand in place | Shallow things with two or three settings each (MCP bindings, channels) | `ExpandableItem` rows |
 | Tiles | A handful of actions or choices that benefit from space (devices, templates) | `SelectionTiles variant="action"` |

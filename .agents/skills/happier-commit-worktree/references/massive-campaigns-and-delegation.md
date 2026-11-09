@@ -105,7 +105,7 @@ Before a branch rename or push:
 - verify the target branch/ref situation rather than assuming it is unused;
 - after a rename, inspect whether Git retained an obsolete upstream and unset or replace it only as authorized;
 - never push merely because the branch was renamed;
-- after another writer pushes or advances HEAD, refresh from the live basis and discard stale private indexes.
+- after another writer advances HEAD, use checker-owned packet finalization to replay onto the live basis and reuse disjoint checked groups; reconcile conflicting packet edits before proceeding. Rebuild private staging when selected worktree bytes change.
 
 ## 7. Durable delegation anchor
 
