@@ -1,4 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
+import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
+import type { ToolNormalizationSourceV3 } from '@happier-dev/protocol/tools/v2/meta';
 import type { ExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import type { ExecutionRunLaunchOrigin } from '@happier-dev/protocol';
 
@@ -14,8 +17,26 @@ export function shouldPublishExecutionRunTranscriptMarker(
 export type ExecutionRunTranscriptPublisher = (
   provider: ACPProvider,
   body: ACPMessageData,
-  opts?: { meta?: Record<string, unknown> },
+  opts?: { meta?: Record<string, unknown>; toolNormalizationSource?: ToolNormalizationSourceV3 },
 ) => Promise<void>;
+
+/** Commits Run observations through their parent Session's existing custody boundary. */
+export function createCommittedExecutionRunTranscriptPublisher(params: Readonly<{
+  enqueueAgentMessageCommitted: NonNullable<TranscriptSessionPort['enqueueAgentMessageCommitted']>;
+  readParentToolNormalizationSource: () => ToolNormalizationSourceV3 | null;
+}>): ExecutionRunTranscriptPublisher {
+  return async (provider, body, opts) => {
+    const localId = 'id' in body && typeof body.id === 'string' ? body.id : randomUUID();
+    const toolNormalizationSource = opts?.toolNormalizationSource ?? params.readParentToolNormalizationSource();
+    const admission = await params.enqueueAgentMessageCommitted(provider, body, {
+      localId,
+      ...(toolNormalizationSource ? { toolNormalizationSource } : {}),
+      ...(opts?.meta ? { meta: opts.meta } : {}),
+      provenance: { kind: 'non_dependent', source: 'sidechain' },
+    });
+    if (!admission.persisted) throw createExecutionRunTranscriptCustodyError();
+  };
+}
 
 export function createExecutionRunTranscriptCustodyError(): Error & { code: string } {
   return Object.assign(

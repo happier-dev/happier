@@ -42,8 +42,7 @@ describe('transcriptDispatch', () => {
   it('records only provider-projected outbound tool trace events', async () => {
     await withToolTraceFile('runtime-outbound-trace-', async (filePath) => {
       recordRuntimeOutboundTranscriptToolTraceEvents('session-1', [{
-        protocol: 'acp',
-        provider: 'codex',
+        source: { protocol: 'acp', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
         kind: 'tool-call',
         payload: { type: 'tool-call' },
         localId: 'tool-local-1',
@@ -52,12 +51,26 @@ describe('transcriptDispatch', () => {
       expect(JSON.parse(readFileSync(filePath, 'utf8').trim())).toMatchObject({
         direction: 'outbound',
         sessionId: 'session-1',
-        protocol: 'acp',
-        provider: 'codex',
+        source: { protocol: 'acp', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
         kind: 'tool-call',
         localId: 'tool-local-1',
       });
     });
+  });
+
+  it('keeps the admitted native source through the ACP transcript envelope', () => {
+    const source = { protocol: 'native', agent: { pluginId: 'example.agent', localId: 'native' } } as const;
+    const prepared = prepareAcpTranscriptDispatch({
+      provider: 'example.agent/native', source,
+      body: { type: 'tool-call', callId: 'native-call', id: 'native-row', name: 'Bash', input: { command: 'pwd' } },
+      toolCallCanonicalNameByProviderAndId: new Map(),
+      permissionToolCallRawInputByProviderAndId: new Map(),
+      toolCallInputByProviderAndId: new Map(),
+    });
+    expect(prepared.source).toEqual(source);
+    expect(prepared.normalizedBody).toMatchObject({ input: { _happier: { v: 3, ...source } } });
+    expect(prepared.content).toMatchObject({ content: { type: 'acp', agentId: 'example.agent/native',
+      data: { input: { _happier: { v: 3, ...source } } } } });
   });
 
   it('prepares ACP transcript dispatch payloads through the host-generic seam', () => {

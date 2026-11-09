@@ -2,7 +2,7 @@ import type { ACPMessageData, ACPProvider } from './sessionMessageTypes';
 import type { TurnAssistantTextSnapshotStore } from './turns/assistantTextSnapshot';
 import type { SendAgentSessionMediaCommittedRequest } from './client/transcript/sessionMediaBridge';
 import type { EphemeralSendResult } from './client/transcript/ephemeralSendOutcome';
-import type { SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
+import type { SessionTranscriptObservationProvenanceV1, ToolNormalizationSourceV3 } from '@happier-dev/protocol';
 
 export type CommittedTranscriptAdmission = Readonly<{
   signal: AbortSignal;
@@ -39,6 +39,8 @@ export function assertCommittedTranscriptAdmission(
 }
 
 export type CommittedTranscriptMessageOptions = Readonly<{
+  /** Selected runtime provenance; independent of the transcript transport codec. */
+  toolNormalizationSource?: ToolNormalizationSourceV3;
   localId: string;
   meta?: Record<string, unknown>;
   createdAt?: number;
@@ -79,6 +81,7 @@ export type TranscriptSessionPort = Readonly<{
     provider: ACPProvider,
     body: ACPMessageData,
     opts: {
+      toolNormalizationSource?: ToolNormalizationSourceV3;
       localId: string;
       meta?: Record<string, unknown>;
       createdAt: number;
@@ -97,6 +100,7 @@ export type TranscriptSessionPort = Readonly<{
     provider: ACPProvider,
     body: ACPMessageData,
     opts: {
+      toolNormalizationSource?: ToolNormalizationSourceV3;
       localId: string;
       tick: number;
       baseLength: number;

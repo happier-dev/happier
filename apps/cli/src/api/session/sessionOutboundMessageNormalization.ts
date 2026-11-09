@@ -1,3 +1,4 @@
+import type { ToolNormalizationSourceV3 } from '@happier-dev/protocol';
 import { normalizeToolCallV2, normalizeToolResultV2 } from '@/agent/tools/normalization';
 import { setBoundedMap } from '@/utils/collections/lru';
 import { resolveHappierToolResultObservationProjector } from '@/agent/tools/happierTools/resultObservation';
@@ -58,6 +59,7 @@ function setToolCallCacheEntry<K, V>(params: Readonly<{
 }
 
 export function normalizeCodexSessionMessageBody(params: {
+  source: ToolNormalizationSourceV3;
   body: any;
   toolCallCanonicalNameByProviderAndId: Map<string, ToolCallNormalization>;
   maxToolCallCacheEntries?: number | undefined;
@@ -69,8 +71,7 @@ export function normalizeCodexSessionMessageBody(params: {
     const callId = typeof body.callId === 'string' ? body.callId : undefined;
     const rawToolName = String(body?.name ?? '');
     const { canonicalToolName, input } = normalizeToolCallV2({
-      protocol: 'codex',
-      provider: 'codex',
+      source: params.source,
       toolName: rawToolName,
       rawInput: body?.input,
       callId,
@@ -104,8 +105,7 @@ export function normalizeCodexSessionMessageBody(params: {
     const canonicalToolName = mapping?.canonicalToolName ?? 'Unknown';
     const rawToolName = mapping?.rawToolName ?? 'unknown';
     const output = normalizeToolResultV2({
-      protocol: 'codex',
-      provider: 'codex',
+      source: params.source,
       rawToolName,
       canonicalToolName,
       rawOutput: mapping?.projectObservationOutput ? mapping.projectObservationOutput(body?.output) : body?.output,
@@ -117,6 +117,7 @@ export function normalizeCodexSessionMessageBody(params: {
 }
 
 export function normalizeAcpSessionMessageBody(params: {
+  source: ToolNormalizationSourceV3;
   provider: ACPProvider;
   body: ACPMessageData;
   toolCallCanonicalNameByProviderAndId: Map<string, ToolCallNormalization>;
@@ -140,8 +141,7 @@ export function normalizeAcpSessionMessageBody(params: {
       return { ...(rawInputHint as Record<string, unknown>), ...(body.input as Record<string, unknown>) };
     })();
     const { canonicalToolName, input } = normalizeToolCallV2({
-      protocol: 'acp',
-      provider,
+      source: params.source,
       toolName: rawToolName,
       rawInput: hintedRawInput,
       callId,
@@ -181,8 +181,7 @@ export function normalizeAcpSessionMessageBody(params: {
       });
     }
     let { canonicalToolName } = normalizeToolCallV2({
-      protocol: 'acp',
-      provider,
+      source: params.source,
       toolName: body.toolName,
       rawInput: rawInputHint ?? nextOptions ?? {},
       callId: body.permissionId,
@@ -206,8 +205,7 @@ export function normalizeAcpSessionMessageBody(params: {
     const rawToolName = mapping?.rawToolName ?? 'unknown';
 
     const output = normalizeToolResultV2({
-      protocol: 'acp',
-      provider,
+      source: params.source,
       rawToolName,
       canonicalToolName,
       rawOutput: mapping?.projectObservationOutput ? mapping.projectObservationOutput(body.output) : body.output,

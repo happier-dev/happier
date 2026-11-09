@@ -384,12 +384,12 @@ export type SessionClientTranscriptApi = Readonly<{
     sendAgentMessageEphemeral: (
         provider: ACPProvider,
         body: ACPMessageData,
-        opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown>; tick?: number },
+        opts: Parameters<typeof sendAgentMessageEphemeralViaPort>[3],
     ) => EphemeralSendOutcome;
     sendAgentMessageEphemeralDelta: (
         provider: ACPProvider,
         body: ACPMessageData,
-        opts: { localId: string; tick: number; baseLength: number; createdAt: number; updatedAt?: number; meta?: Record<string, unknown>; snapshotBody?: ACPMessageData },
+        opts: Parameters<typeof sendAgentMessageEphemeralDeltaViaPort>[3],
     ) => EphemeralSendOutcome;
     fetchRecentTranscriptTextItemsForAcpImport: (
         opts?: { take?: number },
@@ -611,7 +611,7 @@ export function createSessionClientTranscriptApi(
         opts: CommittedTranscriptMessageOptions,
     ): Promise<Readonly<{ persisted: boolean; delivered: boolean; committedSequence?: number;
         whenCommitted?: Promise<CommittedTranscriptOriginal | null> }>> => {
-        const { normalizedBody, payload, localId, sidechainId, messageRole, surfaceItemReference, approvalRequestArtifactId, openedContent } = await prepareCommittedAgentMessageViaPort(
+        const { normalizedBody, payload, localId, sidechainId, messageRole, surfaceItemReference, approvalRequestArtifactId, openedContent, source } = await prepareCommittedAgentMessageViaPort(
             getTranscriptSendPort(),
             provider,
             body,
@@ -620,8 +620,8 @@ export function createSessionClientTranscriptApi(
 
         deps.outboundShapeLogger.log(`acp:${provider}:${normalizedBody.type}`, normalizedBody);
 
-        if (shouldTraceAcpMessageType(normalizedBody.type, { includeTaskComplete: true })) {
-            recordAcpToolTraceEventIfNeeded({ sessionId: deps.sessionId, provider, body: normalizedBody, localId });
+        if (source && shouldTraceAcpMessageType(normalizedBody.type, { includeTaskComplete: true })) {
+            recordAcpToolTraceEventIfNeeded({ sessionId: deps.sessionId, source, body: normalizedBody, localId });
         }
 
         const streamSegmentMeta = opts.meta?.happierStreamSegmentV1;

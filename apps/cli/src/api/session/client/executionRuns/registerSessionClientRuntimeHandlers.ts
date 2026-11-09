@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { actionStartTargetUnavailableV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { registerDiscussionAgentPublisher } from '@/discussions/discussionAgentPublisher';
 import { registerSessionMessageReplyObservation } from '@/rpc/handlers/sessionMessageReply';
@@ -101,15 +100,15 @@ import type { SessionTranscriptActionItem } from '@/api/session/sessionTranscrip
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { Metadata } from '@/api/types';
 import type { ACPMessageData, ACPProvider } from '../../sessionMessageTypes';
+import type { TranscriptSessionPort } from '../../transcriptPort';
 import { deriveVoiceAgentTurnLocalId, readVoiceAgentTurnPayloadFromMeta } from '@happier-dev/protocol/messages/structured/voiceAgentTurnLocalId';
 import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
 import type { SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
 import type { ExecutionRunPermissionRequestStoreProvider } from '@/agent/runtime/bridges/executionRun/executionRunPermissionResponseTarget';
 import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
-import type { EphemeralSendResult } from '@/api/session/client/transcript/ephemeralSendOutcome';
 import type { VoiceAgentTranscriptTurnCommitParams } from '@/api/session/client/transcript/sessionClientTranscriptApi';
 import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
-import { createExecutionRunTranscriptCustodyError } from '@/agent/runtime/bridges/executionRun/executionRunTranscriptPublisher';
+import { createCommittedExecutionRunTranscriptPublisher } from '@/agent/runtime/bridges/executionRun/executionRunTranscriptPublisher';
 import { resolveExecutionRunPublicBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { ExecutionRunHostBridgeContract } from '@/agent/runtime/bridges/executionRun/executionRunBridgeContract';
@@ -187,17 +186,13 @@ export function registerSessionClientRuntimeHandlers(
             text: string,
             opts: { localId: string; meta?: Record<string, unknown>; provenance: SessionTranscriptObservationProvenanceV1 },
         ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
-        enqueueAgentMessageCommitted: (
-            provider: ACPProvider,
-            body: ACPMessageData,
-            opts: { localId: string; meta?: Record<string, unknown>; provenance: SessionTranscriptObservationProvenanceV1 },
-        ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
+        enqueueAgentMessageCommitted: NonNullable<TranscriptSessionPort['enqueueAgentMessageCommitted']>;
         enqueueVoiceAgentTranscriptTurnCommitted: (
             provider: ACPProvider,
             params: VoiceAgentTranscriptTurnCommitParams,
         ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
-        sendAgentMessageEphemeral: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown>; tick?: number }) => EphemeralSendResult;
-        sendAgentMessageEphemeralDelta?: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; tick: number; baseLength: number; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> }) => EphemeralSendResult;
+        sendAgentMessageEphemeral: NonNullable<TranscriptSessionPort['sendAgentMessageEphemeral']>;
+        sendAgentMessageEphemeralDelta?: TranscriptSessionPort['sendAgentMessageEphemeralDelta'];
         getEphemeralStreamConnectionEpoch?: () => number;
         enqueueRegisteredSessionStateFieldMutation?: (mutation: RegisteredSessionStateFieldMutationV1) => void | Promise<void>;
         getTranscriptQueryContext: () => Readonly<
@@ -1298,29 +1293,10 @@ export function registerSessionClientRuntimeHandlers(
         // G9-E: forward the daemon-wide cached server-features accessor so the runtime-action front
         // door's feature gate reads the live server bits cold instead of failing closed.
         ...(params.getServerFeaturesSnapshot ? { getServerFeaturesSnapshot: params.getServerFeaturesSnapshot } : {}),
-        sendAcp: async (provider, body, opts) => {
-            const normalizedBody = body as ACPMessageData;
-            const localId = 'id' in normalizedBody && typeof normalizedBody.id === 'string'
-                ? normalizedBody.id
-                : randomUUID();
-            const admission = await params.enqueueAgentMessageCommitted(
-                provider as ACPProvider,
-                normalizedBody,
-                {
-                    localId,
-                    ...(opts?.meta ? { meta: opts.meta } : {}),
-                    provenance: {
-                        kind: 'non_dependent',
-                        // The final Run result belongs on its parent's tool call,
-                        // but retains the same independent Run output custody.
-                        source: 'sidechain',
-                    },
-                },
-            );
-            if (!admission.persisted) {
-                throw createExecutionRunTranscriptCustodyError();
-            }
-        },
+        sendAcp: createCommittedExecutionRunTranscriptPublisher({
+            enqueueAgentMessageCommitted: params.enqueueAgentMessageCommitted,
+            readParentToolNormalizationSource: () => params.sessionRuntimeControls?.readToolNormalizationSource?.() ?? null,
+        }),
         streamedTranscriptSession: {
             sendAgentMessageEphemeral: (provider, body, opts) =>
                 params.sendAgentMessageEphemeral(provider as ACPProvider, body as ACPMessageData, opts),

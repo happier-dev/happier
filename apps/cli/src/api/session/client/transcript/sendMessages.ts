@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { TranscriptSessionPort } from '../../transcriptPort';
 import { buildAgentEventLocalId } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import { readSessionCapabilityNoticeV1 } from '@happier-dev/protocol/sessions/messages/sessionCapabilityNoticeV1';
 import { projectUsageSessionMessageTimingV1, type UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
@@ -146,7 +147,7 @@ export function sendAgentMessageEphemeralViaPort(
     port: SessionClientTranscriptSendPort,
     provider: ACPProvider,
     body: ACPMessageData,
-    opts: Readonly<{ localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown>; tick?: number }>,
+    opts: Parameters<NonNullable<TranscriptSessionPort['sendAgentMessageEphemeral']>>[2],
 ): EphemeralSendOutcome {
     const epoch = readEphemeralStreamConnectionEpoch(port);
     if (!port.socket.connected) {
@@ -157,6 +158,7 @@ export function sendAgentMessageEphemeralViaPort(
     try {
         prepared = prepareAcpTranscriptDispatch({
             provider,
+            source: opts.toolNormalizationSource,
             body,
             meta: opts.meta,
             localId: opts.localId,
@@ -238,7 +240,7 @@ export function sendAgentMessageEphemeralDeltaViaPort(
     port: SessionClientTranscriptSendPort,
     provider: ACPProvider,
     body: ACPMessageData,
-    opts: Readonly<{ localId: string; tick: number; baseLength: number; createdAt: number; updatedAt?: number; meta?: Record<string, unknown>; snapshotBody?: ACPMessageData }>,
+    opts: Parameters<NonNullable<TranscriptSessionPort['sendAgentMessageEphemeralDelta']>>[2],
 ): EphemeralSendOutcome {
     const epoch = readEphemeralStreamConnectionEpoch(port);
     if (!port.socket.connected) {
@@ -249,6 +251,7 @@ export function sendAgentMessageEphemeralDeltaViaPort(
     try {
         prepared = prepareAcpTranscriptDispatch({
             provider,
+            source: opts.toolNormalizationSource,
             body,
             meta: opts.meta,
             localId: opts.localId,

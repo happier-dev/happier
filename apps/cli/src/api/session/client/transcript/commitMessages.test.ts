@@ -14,6 +14,8 @@ import {
 } from './commitMessages';
 import { buildOutboundSessionMessagePayload } from '../transport/outboundSessionMessagePayload';
 
+const TOOL_SOURCE = { protocol: 'acp', agent: { pluginId: 'example.agent', localId: 'fixture' } } as const;
+
 function createTranscriptSendPort(): SessionClientTranscriptSendPort {
   return {
     sessionId: 'session-1',
@@ -35,6 +37,28 @@ function createTranscriptSendPort(): SessionClientTranscriptSendPort {
 }
 
 describe('commitMessages', () => {
+  it('preserves historical tool provenance without looking up a current Agent', async () => {
+    const body = { type: 'tool-call', callId: 'historical-call', id: 'historical-row', name: 'Bash', input: {
+      command: 'pwd', _happier: { v: 2, protocol: 'acp', provider: 'retired.external',
+        rawToolName: 'shell', canonicalToolName: 'Bash' },
+    } } as const;
+    const prepared = await prepareCommittedAgentMessageViaPort(createTranscriptSendPort(), 'retired.external', body,
+      { localId: 'historical-row' });
+    expect(prepared.normalizedBody).toEqual(body);
+    expect(prepared.source).toBeUndefined();
+    expect(prepared.payload).toMatchObject({ t: 'plain', v: { content: { data: body } } });
+  });
+
+  it('carries selected native provenance to the normalizer before sealing', async () => {
+    const source = { protocol: 'native', agent: { pluginId: 'example.agent', localId: 'native' } } as const;
+    const prepared = await prepareCommittedAgentMessageViaPort(createTranscriptSendPort(), 'example.agent/native', {
+      type: 'tool-call', callId: 'native-tool', id: 'native-call', name: 'Bash', input: { command: 'pwd' },
+    }, { localId: 'native-call', toolNormalizationSource: source });
+    expect(prepared.payload).toMatchObject({ t: 'plain', v: { content: { data: {
+      input: { _happier: { v: 3, ...source } },
+    } } } });
+  });
+
   it('retains a per-record empty timing proof before encrypting ordinary user content', () => {
     const port = { ...createTranscriptSendPort(), buildOutboundSessionMessagePayload: (content: unknown) =>
       buildOutboundSessionMessagePayload({ mode: 'e2ee', ctx: { encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'legacy' } }, content) };
@@ -80,14 +104,13 @@ describe('commitMessages', () => {
       await prepareCommittedAgentMessageViaPort(port, provider, {
         type: 'tool-call', callId: 'token-call', id: 'call', name: `mcp__happier__${tool}`,
         input: tool === 'action_execute' ? { actionId: 'account.apiTokens.create', input: {} } : {},
-      }, { localId: 'call' });
+      }, { toolNormalizationSource: TOOL_SOURCE, localId: 'call' });
       for (const localId of ['result', 'repeated-result']) {
         const prepared = await prepareCommittedAgentMessageViaPort(port, provider, {
           type: 'tool-result', callId: 'token-call', id: localId, output: nativeOutput,
-        }, { localId });
+        }, { toolNormalizationSource: TOOL_SOURCE, localId });
         expect(JSON.stringify(prepared.payload)).not.toContain(bearer);
         if (prepared.normalizedBody.type !== 'tool-result') throw new Error('Expected tool result');
-        expect(prepared.normalizedBody.output).toMatchObject({ _raw: expect.anything() });
         expect(prepared.normalizedBody.output).toMatchObject({ apiToken: raw.apiToken });
         expect(JSON.stringify(prepared.normalizedBody.output)).not.toContain(bearer);
       }
@@ -96,10 +119,10 @@ describe('commitMessages', () => {
       await prepareCommittedAgentMessageViaPort(foreignPort, provider, {
         type: 'tool-call', callId: 'foreign-call', id: 'foreign-call', name: `mcp__foreign__${tool}`,
         input: { actionId: 'account.apiTokens.create', input: {} },
-      }, { localId: 'foreign-call' });
+      }, { toolNormalizationSource: TOOL_SOURCE, localId: 'foreign-call' });
       const foreign = await prepareCommittedAgentMessageViaPort(foreignPort, provider, {
         type: 'tool-result', callId: 'foreign-call', id: 'foreign-result', output: { text: 'External tool receipt' },
-      }, { localId: 'foreign-result' });
+      }, { toolNormalizationSource: TOOL_SOURCE, localId: 'foreign-result' });
       expect(foreign.normalizedBody).toMatchObject({ output: { text: 'External tool receipt' } });
     }
   });
@@ -147,13 +170,13 @@ describe('commitMessages', () => {
         item: { v: 1, title: 'Result', frame: 'frameless', height: { mode: 'auto', fallback: 'regular' },
           source: { kind: 'declarative', document: { version: 1, root: { kind: 'markdown', text: 'Result' } } } } },
     } as const;
-    await prepareCommittedAgentMessageViaPort(port, 'codex', call, { localId: 'call' });
+    await prepareCommittedAgentMessageViaPort(port, 'codex', call, { toolNormalizationSource: TOOL_SOURCE, localId: 'call' });
     const body = { type: 'tool-result' as const, callId: 'visual-call', id: 'result', output: {
       v: 1, serverId: 'home-a', sessionId: 'session-1', itemDestination: 'transcript', destination: null,
       result: { operation: 'upsert_item', itemId: 'visual', itemRevision, outcome: 'created' },
     } };
     const acknowledgedInput = port.toolCallInputByProviderAndId.get('codex:visual-call');
-    const prepared = await prepareCommittedAgentMessageViaPort(port, 'codex', body, { localId: 'result' });
+    const prepared = await prepareCommittedAgentMessageViaPort(port, 'codex', body, { toolNormalizationSource: TOOL_SOURCE, localId: 'result' });
     expect(resolveTranscriptSessionBoardItemReferenceV1({ toolName: 'session_board_item_upsert', state: 'completed',
       input: acknowledgedInput, result: prepared.normalizedBody.type === 'tool-result' ? prepared.normalizedBody.output : null,
       address: { serverId: 'home-a', sessionId: 'session-1' } }))
@@ -161,10 +184,10 @@ describe('commitMessages', () => {
     expect(prepared.payload).toBe('sealed-message');
     expect(prepared).toHaveProperty('surfaceItemReference', { v: 1, references: [{ v: 1, itemId: 'visual', itemRevision,
       sourceAddress: { serverId: 'home-a', sessionId: 'session-1' }, sourceItemId: 'visual', sourceItemRevision: itemRevision }] });
-    await prepareCommittedAgentMessageViaPort(port, 'codex', call, { localId: 'foreign-call' });
+    await prepareCommittedAgentMessageViaPort(port, 'codex', call, { toolNormalizationSource: TOOL_SOURCE, localId: 'foreign-call' });
     const foreign = await prepareCommittedAgentMessageViaPort(port, 'codex', {
       ...body, output: { ...body.output, serverId: 'other-home' },
-    }, { localId: 'foreign' });
+    }, { toolNormalizationSource: TOOL_SOURCE, localId: 'foreign' });
     expect(foreign).not.toHaveProperty('surfaceItemReference');
   });
 
@@ -181,11 +204,11 @@ describe('commitMessages', () => {
         input: { itemId: 'visual', expectedItemRevision: null, destination: 'transcript',
           item: { v: 1, title: 'Result', frame: 'frameless', height: { mode: 'auto', fallback: 'regular' },
             source: { kind: 'declarative', document: { version: 1, root: { kind: 'markdown', text: 'Result' } } } } },
-      }, { localId: 'native-call' });
+      }, { toolNormalizationSource: TOOL_SOURCE, localId: 'native-call' });
       const receipt = { kind: 'approval_request_created', artifactId: 'visual-approval', actionId: scenario.actionId };
       const prepared = await prepareCommittedAgentMessageViaPort(port, 'codex', {
         type: 'tool-result', callId: 'asked-visual-call', id: 'result', output: receipt, isError: scenario.isError,
-      }, { localId: 'native-result' });
+      }, { toolNormalizationSource: TOOL_SOURCE, localId: 'native-result' });
       expect(prepared.localId).toBe('native-result');
       expect(prepared.payload).toBe('sealed-receipt');
       expect(prepared.normalizedBody).toMatchObject({ type: 'tool-result', output: receipt });
@@ -215,13 +238,13 @@ describe('commitMessages', () => {
         buildOutboundSessionMessagePayload: () => 'sealed-message' };
       const call = await prepareCommittedAgentMessageViaPort(port, 'codex', {
         type: 'tool-call', callId: 'shell-call', id: 'call', name: scenario.name ?? 'Bash', input: { command: scenario.command },
-      }, { localId: 'call' });
+      }, { toolNormalizationSource: TOOL_SOURCE, localId: 'call' });
       const output = { stdout: JSON.stringify({ v: 1, ok: true, kind: 'tools_call',
         data: { source: scenario.source, tool: 'session_board_item_upsert', isError: false,
           output: { ...acknowledgement, serverId: scenario.serverId } } }), exit_code: 0 };
       const prepared = await prepareCommittedAgentMessageViaPort(port, 'codex', {
         type: 'tool-result', callId: 'shell-call', id: 'result', output,
-      }, { localId: 'result' });
+      }, { toolNormalizationSource: TOOL_SOURCE, localId: 'result' });
       expect(prepared.surfaceItemReference, JSON.stringify(scenario)).toEqual(scenario.linked
         ? { v: 1, references: [{ v: 1, itemId: 'visual', itemRevision, sourceAddress: { serverId: 'home-a', sessionId: 'session-1' },
           sourceItemId: 'visual', sourceItemRevision: itemRevision }] }

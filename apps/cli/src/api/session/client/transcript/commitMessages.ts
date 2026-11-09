@@ -7,6 +7,7 @@ import { buildUserTextMessageContent } from '../../outbound/shared';
 import { resolveAcpSessionMessageRole } from '../../messageRole';
 import { getToolCallNameKey } from '../../toolCallInputHints';
 import { resolveTranscriptVisualReference } from '@/session/board/resolveTranscriptVisualReference';
+import type { ToolNormalizationSourceV3 } from '@happier-dev/protocol';
 import type { SessionTranscriptSurfaceItemReferencesV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { readTranscriptSessionBoardItemApprovalV1 } from '@happier-dev/protocol/sessions/board/transcriptReference';
 import { projectUsageSessionMessageTimingV1, type UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
@@ -20,9 +21,10 @@ export async function prepareCommittedAgentMessageViaPort(
   port: SessionClientTranscriptSendPort,
   provider: ACPProvider,
   body: ACPMessageData,
-  opts: Readonly<{ localId: string; meta?: Record<string, unknown> }>,
+  opts: Readonly<{ localId: string; meta?: Record<string, unknown>; toolNormalizationSource?: ToolNormalizationSourceV3 }>,
 ): Promise<Readonly<{
   normalizedBody: ACPMessageData;
+  source?: ToolNormalizationSourceV3;
   localId: string;
   sidechainId: string | null;
   payload: PlainOrEncryptedPayload;
@@ -35,8 +37,9 @@ export async function prepareCommittedAgentMessageViaPort(
   const key = body.type === 'tool-result' ? getToolCallNameKey(provider, body.callId) : null;
   const acknowledgedInput = key ? port.toolCallInputByProviderAndId.get(key) : undefined;
   const mapping = key ? port.toolCallCanonicalNameByProviderAndId.get(key) : undefined;
-  const { normalizedBody, content, localId, sidechainId } = prepareAcpTranscriptDispatch({
+  const { normalizedBody, content, localId, sidechainId, source } = prepareAcpTranscriptDispatch({
     provider,
+    source: opts.toolNormalizationSource,
     body,
     meta: opts.meta,
     localId: opts.localId,
@@ -63,6 +66,7 @@ export async function prepareCommittedAgentMessageViaPort(
 
   return {
     normalizedBody,
+    ...(source ? { source } : {}),
     localId,
     sidechainId,
     payload: port.buildOutboundSessionMessagePayload(content),

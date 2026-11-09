@@ -12,7 +12,7 @@ import type {
   RuntimeOutboundTranscriptToolTraceEventV1,
 } from '@happier-dev/agents';
 import { SessionStateFieldIdSchema } from '@happier-dev/protocol/sessions/state/fieldRegistrySchema';
-import type { SessionStateFieldId } from '@happier-dev/protocol';
+import type { SessionStateFieldId, ToolNormalizationSourceV3 } from '@happier-dev/protocol';
 
 import { normalizeUsageObservation } from '../../../usage/usageObservation';
 import { buildLegacyUsageReportFromUsageObservation } from '../../../usage/legacy/legacyUsageTransport';
@@ -42,23 +42,29 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 export function prepareAcpTranscriptDispatch(params: Readonly<{
   provider: ACPProvider;
+  source?: ToolNormalizationSourceV3;
   body: ACPMessageData;
   meta?: Record<string, unknown>;
   localId?: string;
 }> & TranscriptDispatchToolMaps): Readonly<{
   normalizedBody: ACPMessageData;
+  source?: ToolNormalizationSourceV3;
   content: ReturnType<typeof buildAcpAgentMessageEnvelope>;
   localId: string;
   sidechainId: string | null;
 }> {
-  const normalizedBody = normalizeAcpSessionMessageBody({
+  // The envelope codec is ACP even when a selected native runtime publishes through it.
+  // Current producers carry their admitted source; historical replay retains its decoded provenance.
+  const source = params.source;
+  const normalizedBody = source ? normalizeAcpSessionMessageBody({
+    source,
     provider: params.provider,
     body: params.body,
     toolCallCanonicalNameByProviderAndId: params.toolCallCanonicalNameByProviderAndId,
     permissionToolCallRawInputByProviderAndId: params.permissionToolCallRawInputByProviderAndId,
     toolCallInputByProviderAndId: params.toolCallInputByProviderAndId,
     maxToolCallCacheEntries: params.maxToolCallCacheEntries,
-  });
+  }) : params.body;
   const localId = typeof params.localId === 'string' && params.localId.length > 0 ? params.localId : randomUUID();
   const sidechainId = readSidechainId(normalizedBody.sidechainId);
   const content = buildAcpAgentMessageEnvelope({
@@ -69,6 +75,7 @@ export function prepareAcpTranscriptDispatch(params: Readonly<{
 
   return {
     normalizedBody,
+    ...(source ? { source } : {}),
     content,
     localId,
     sidechainId,
@@ -170,8 +177,7 @@ export function recordRuntimeOutboundTranscriptToolTraceEvents(
     recordToolTraceEvent({
       direction: 'outbound',
       sessionId,
-      protocol: event.protocol,
-      provider: event.provider,
+      source: event.source,
       kind: event.kind,
       payload: event.payload,
       localId: event.localId,
@@ -181,6 +187,7 @@ export function recordRuntimeOutboundTranscriptToolTraceEvents(
 
 export function buildAcpRuntimeOutboundTranscriptDispatchPlan(params: Readonly<{
   provider: ACPProvider;
+  source?: ToolNormalizationSourceV3;
   body: ACPMessageData;
   meta?: Record<string, unknown>;
   localId?: string;

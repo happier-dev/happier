@@ -41,6 +41,8 @@ import {
 } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
 
 export type SessionRuntimeControls = {
+  /** Actual admitted Agent and transport selected by the current Session runtime. */
+  readToolNormalizationSource?: () => import('@happier-dev/protocol/tools/v2/meta').ToolNormalizationSourceV3 | null;
   /** Same host-captured Account/Agent reader used by the current native runtime.
    * It is withdrawn with these controls, not reconstructed by child Runs. */
   resolveAccountSettingsSnapshot?: import('@/settings/accountSettings/activeAccountSettingsSnapshot').AccountSettingsSnapshotResolver;

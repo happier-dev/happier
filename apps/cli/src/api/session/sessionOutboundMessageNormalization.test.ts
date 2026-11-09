@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SKILL_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 import { readHappierActionToolResultCandidates } from '@happier-dev/protocol/actions/happierActionToolResult';
+import { resolveCodeBuddyAcpToolName } from '../../../../../packages/plugins/codebuddy/src/agent/runtime/factory';
+import { buildAcpToolNameResolverInput } from '@/agent/acp/toolCalls/toolNameResolverInput';
 
 import {
   normalizeAcpSessionMessageBody,
   normalizeCodexSessionMessageBody,
 } from './sessionOutboundMessageNormalization';
+
+const SOURCE = { protocol: 'acp', agent: { pluginId: 'example.agent', localId: 'test' } } as const;
+const NATIVE_SOURCE = { ...SOURCE, protocol: 'native' } as const;
 
 describe('normalizeAcpSessionMessageBody', () => {
   it.each(['acp', 'codex'] as const)(
@@ -30,9 +35,21 @@ describe('normalizeAcpSessionMessageBody', () => {
               ? { command: `happier tools call --source happier --tool action_execute --args-json '${JSON.stringify(envelope)}' --json` }
               : envelope,
           };
+          const decodedTool = transport === 'deferred' ? resolveCodeBuddyAcpToolName({
+            toolName: toolCall.name,
+            toolCallId: toolCall.callId,
+            input: buildAcpToolNameResolverInput(toolCall.input, 'DeferExecuteTool', 'other'),
+            context: { toolCallCountSincePrompt: 1 },
+          }) : null;
+          if (transport === 'deferred' && (!decodedTool || typeof decodedTool === 'string')) {
+            throw new Error('expected CodeBuddy deferred-tool decoding');
+          }
+          const admittedToolCall = decodedTool && typeof decodedTool !== 'string'
+            ? { ...toolCall, name: decodedTool.toolName, input: decodedTool.input }
+            : toolCall;
           const call = protocol === 'acp'
-            ? normalizeAcpSessionMessageBody({ ...caches, provider: 'claude', body: toolCall })
-            : normalizeCodexSessionMessageBody({ ...caches, body: toolCall, debug: () => {} });
+            ? normalizeAcpSessionMessageBody({ source: SOURCE, ...caches, provider: 'claude', body: admittedToolCall })
+            : normalizeCodexSessionMessageBody({ source: NATIVE_SOURCE, ...caches, body: admittedToolCall, debug: () => {} });
           const native = JSON.stringify({ ok: true, result: { ok: true, text: 'private-clipboard-fixture' } });
           const toolResult = {
             type: 'tool-result' as const, callId: 'clipboard', id: 'clipboard-result', output: {
@@ -40,8 +57,8 @@ describe('normalizeAcpSessionMessageBody', () => {
             },
           };
           const result = protocol === 'acp'
-            ? normalizeAcpSessionMessageBody({ ...caches, provider: 'claude', body: toolResult })
-            : normalizeCodexSessionMessageBody({ ...caches, body: { ...toolResult, type: 'tool-call-result' }, debug: () => {} });
+            ? normalizeAcpSessionMessageBody({ source: SOURCE, ...caches, provider: 'claude', body: toolResult })
+            : normalizeCodexSessionMessageBody({ source: NATIVE_SOURCE, ...caches, body: { ...toolResult, type: 'tool-call-result' }, debug: () => {} });
           expect(JSON.stringify(call)).not.toContain('private-clipboard-fixture');
           expect(JSON.stringify(result)).not.toContain('private-clipboard-fixture');
         }
@@ -54,7 +71,7 @@ describe('normalizeAcpSessionMessageBody', () => {
       permissionToolCallRawInputByProviderAndId: new Map<string, unknown>(),
       toolCallInputByProviderAndId: new Map<string, unknown>(),
     };
-    normalizeAcpSessionMessageBody({ ...caches, provider: 'codex', body: {
+    normalizeAcpSessionMessageBody({ source: SOURCE, ...caches, provider: 'codex', body: {
       type: 'tool-call', callId: 'create', id: 'call', name: 'mcp__happier__action_execute',
       input: { actionId: 'skills.create', input: { name: 'review', files: [] } },
     } });
@@ -62,7 +79,7 @@ describe('normalizeAcpSessionMessageBody', () => {
       ? { kind: 'approval_request_created', artifactId: 'approval', actionId: 'skills.create' }
       : { ok: true, skillId: 'review', revision: '1:1', includedInSessionId: 'bot',
         summary: { name: 'Review', description: null }, inclusion: { ok: false, code: 'applies_to_new_sessions_only' }, incomplete: 'session_include' };
-    const result = normalizeAcpSessionMessageBody({ ...caches, provider: 'codex', body: {
+    const result = normalizeAcpSessionMessageBody({ source: SOURCE, ...caches, provider: 'codex', body: {
       type: 'tool-result', callId: 'create', id: 'result', output: { content: [{ type: 'text', text: JSON.stringify(receipt) }] },
     } });
     if (result.type !== 'tool-result') throw new Error('expected tool-result');
@@ -77,12 +94,12 @@ describe('normalizeAcpSessionMessageBody', () => {
       permissionToolCallRawInputByProviderAndId: new Map<string, unknown>(),
       toolCallInputByProviderAndId: new Map<string, unknown>(),
     };
-    normalizeAcpSessionMessageBody({ ...caches, provider: 'claude', body: {
+    normalizeAcpSessionMessageBody({ source: SOURCE, ...caches, provider: 'claude', body: {
       type: 'tool-call', callId: 'title', name: 'mcp__happier__change_title',
       input: { title: 'Explore project directory' }, id: 'title-call',
     } });
     const failure = JSON.stringify({ errorCode: 'change_title_failed', error: 'target_unavailable' });
-    const result = normalizeAcpSessionMessageBody({ ...caches, provider: 'claude', body: {
+    const result = normalizeAcpSessionMessageBody({ source: SOURCE, ...caches, provider: 'claude', body: {
       type: 'tool-result', callId: 'title', id: 'title-result', isError: true,
       output: { content: failure, tool_use_result: `Error: ${failure}` },
     } });
@@ -103,10 +120,10 @@ describe('normalizeAcpSessionMessageBody', () => {
       permissionToolCallRawInputByProviderAndId: new Map<string, unknown>(),
       toolCallInputByProviderAndId: new Map<string, unknown>(),
     };
-    normalizeAcpSessionMessageBody({ ...caches, provider: 'claude', body: {
+    normalizeAcpSessionMessageBody({ source: SOURCE, ...caches, provider: 'claude', body: {
       type: 'tool-call', callId: 'shell', name: 'Bash', input: { command: 'find /workspace -type f' }, id: 'shell-call',
     } });
-    const result = normalizeAcpSessionMessageBody({ ...caches, provider: 'claude', body: {
+    const result = normalizeAcpSessionMessageBody({ source: SOURCE, ...caches, provider: 'claude', body: {
       type: 'tool-result', callId: 'shell', id: 'shell-result', isError,
       output: { content, tool_use_result: isError ? `Error: ${content}` : { stdout: content, stderr: '' } },
     } });
@@ -114,10 +131,27 @@ describe('normalizeAcpSessionMessageBody', () => {
     expect(result.output).toMatchObject({ stdout: content });
   });
 
+  it('uses the admitted native Agent source for calls and results while retaining local-control metadata', () => {
+    const toolCallCanonicalNameByProviderAndId = new Map<string, { rawToolName: string; canonicalToolName: string }>();
+    const call = normalizeCodexSessionMessageBody({ source: NATIVE_SOURCE,
+      body: { type: 'tool-call', callId: 'native-call', name: 'Bash', input: {
+        command: 'pwd', _happier: { sessionMode: 'local_control', v: 3, protocol: 'acp',
+          agent: { pluginId: 'forged.agent', localId: 'other' } },
+      } },
+      toolCallCanonicalNameByProviderAndId, debug: () => {},
+    });
+    const result = normalizeCodexSessionMessageBody({ source: NATIVE_SOURCE,
+      body: { type: 'tool-call-result', callId: 'native-call', output: { stdout: '/workspace' } },
+      toolCallCanonicalNameByProviderAndId, debug: () => {},
+    });
+    expect(call.input._happier).toMatchObject({ v: 3, ...NATIVE_SOURCE, sessionMode: 'local_control' });
+    expect(result.output._happier).toMatchObject({ v: 3, ...NATIVE_SOURCE });
+  });
+
   it('diagnoses an unmatched Codex tool result at the normalization owner', () => {
     const debug = vi.fn();
 
-    normalizeCodexSessionMessageBody({
+    normalizeCodexSessionMessageBody({ source: NATIVE_SOURCE,
       body: { type: 'tool-call-result', callId: 'call-missing', output: { stdout: 'x' }, id: 'msg-1' },
       toolCallCanonicalNameByProviderAndId: new Map(),
       debug,
@@ -134,7 +168,7 @@ describe('normalizeAcpSessionMessageBody', () => {
     const permissionToolCallRawInputByProviderAndId = new Map<string, unknown>();
     const toolCallInputByProviderAndId = new Map<string, unknown>();
 
-    const normalized = normalizeAcpSessionMessageBody({
+    const normalized = normalizeAcpSessionMessageBody({ source: SOURCE,
       provider: 'opencode',
       body: { type: 'tool-call', callId: 'call_1', name: 'bash', input: {}, id: 'msg_1' },
       toolCallCanonicalNameByProviderAndId,
@@ -150,7 +184,7 @@ describe('normalizeAcpSessionMessageBody', () => {
       _acp: expect.anything(),
       _happier: expect.objectContaining({
         protocol: 'acp',
-        provider: 'opencode',
+        agent: SOURCE.agent,
         rawToolName: 'bash',
         canonicalToolName: 'Bash',
       }),
@@ -162,7 +196,7 @@ describe('normalizeAcpSessionMessageBody', () => {
     const permissionToolCallRawInputByProviderAndId = new Map<string, unknown>();
     const toolCallInputByProviderAndId = new Map<string, unknown>();
 
-    normalizeAcpSessionMessageBody({
+    normalizeAcpSessionMessageBody({ source: SOURCE,
       provider: 'opencode',
       body: { type: 'tool-call', callId: 'call_1', name: 'bash', input: {}, id: 'msg_1' },
       toolCallCanonicalNameByProviderAndId,
@@ -170,7 +204,7 @@ describe('normalizeAcpSessionMessageBody', () => {
       toolCallInputByProviderAndId,
     });
 
-    const normalized = normalizeAcpSessionMessageBody({
+    const normalized = normalizeAcpSessionMessageBody({ source: SOURCE,
       provider: 'opencode',
       body: {
         type: 'tool-result',
@@ -193,7 +227,7 @@ describe('normalizeAcpSessionMessageBody', () => {
       _acp: expect.anything(),
       _happier: expect.objectContaining({
         protocol: 'acp',
-        provider: 'opencode',
+        agent: SOURCE.agent,
         rawToolName: 'bash',
         canonicalToolName: 'Bash',
       }),
@@ -205,7 +239,7 @@ describe('normalizeAcpSessionMessageBody', () => {
     const permissionToolCallRawInputByProviderAndId = new Map<string, unknown>();
     const toolCallInputByProviderAndId = new Map<string, unknown>();
 
-    normalizeAcpSessionMessageBody({
+    normalizeAcpSessionMessageBody({ source: SOURCE,
       provider: 'copilot',
       body: {
         type: 'tool-call',
@@ -221,7 +255,7 @@ describe('normalizeAcpSessionMessageBody', () => {
       toolCallInputByProviderAndId,
     });
 
-    const normalized = normalizeAcpSessionMessageBody({
+    const normalized = normalizeAcpSessionMessageBody({ source: SOURCE,
       provider: 'copilot',
       body: {
         type: 'tool-result',
