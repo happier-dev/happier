@@ -45,7 +45,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
-import { SessionAuthoringControls, useSessionAuthoringEngineSummary } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
+import { useSessionAuthoringEngineSummary } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
 import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import type { AuthoringComposerScope } from '@/components/sessions/authoring/ScopedAuthoringComposer';
 import {
@@ -71,14 +71,13 @@ import {
     type WorkflowExistingSessionOption,
 } from '@/sync/domains/workflows/workflowAuthoring';
 import type { WorkflowValidationIssue } from '@happier-dev/protocol/workflows/workflowV1';
-import { withWorkflowAuthoringEngine, withWorkflowAuthoringEngineFields } from '@/sync/domains/workflows/workflowAuthoringEngineSelection';
+import { WorkflowDefaultEngineControls } from '../editor/WorkflowDefaultEngineControls';
 import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import type { WorkflowAuthoringTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
 import {
     findWorkflowBlock,
-    setWorkflowDefaultField,
     setWorkflowStepExecutionField,
     walkWorkflowBlocks,
 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
@@ -157,7 +156,6 @@ export const WORKFLOW_EDITOR_PANE_SCOPE_ID = 'workflow-editor';
 const WORKFLOW_FLOW_PANE_DESTINATION_ID = 'workflow-flow';
 
 /** The Agent & model chips the header shows; every field is in Workflow settings. */
-const HEADER_ENGINE_FIELDS = ['agentTarget', 'modelSelection'] as const;
 
 /** Starting from an example replaces nothing only while there is nothing to replace. */
 function documentIsUntouched(draft: WorkflowEditorDraft): boolean {
@@ -649,12 +647,9 @@ type ChipsLineProps = Readonly<{
     onChangeProjectTarget: WorkflowEditorBodyProps['onChangeProjectTarget'];
     showsWorkflowAgent: boolean;
     documentEditable: boolean;
-    authoringValues: React.ComponentProps<typeof SessionAuthoringControls>['values'];
-    engine: React.ComponentProps<typeof SessionAuthoringControls>['engine'];
-    workflowRoles: React.ComponentProps<typeof SessionAuthoringControls>['workflowRoles'];
-    onChangeEngine: NonNullable<React.ComponentProps<typeof SessionAuthoringControls>['onChangeEngine']>;
-    onChangeFields: NonNullable<React.ComponentProps<typeof SessionAuthoringControls>['onChangeFields']>;
-    onChangeField: React.ComponentProps<typeof SessionAuthoringControls>['onChangeField'];
+    defaults: WorkflowEditorDraft['defaults'];
+    roles: WorkflowEditorDraft['roles'];
+    onChange: (next: WorkflowEditorDraft) => void;
     authoringFacts: WorkflowEditorBodyProps['authoringFacts'];
     triggersSummary: string | undefined;
     openSettings: () => void;
@@ -682,14 +677,8 @@ function WorkflowEditorChipsLine(props: ChipsLineProps) {
             />
             </View>
             {props.showsWorkflowAgent ? <View style={styles.engineChip}>
-            <SessionAuthoringControls
-                disabled={!props.documentEditable}
-                fields={HEADER_ENGINE_FIELDS}
-                values={props.authoringValues} engine={props.engine} workflowRoles={props.workflowRoles}
-                onChangeEngine={props.onChangeEngine}
-                onChangeFields={props.onChangeFields}
-                overriddenFields="all"
-                onChangeField={props.onChangeField}
+            <WorkflowDefaultEngineControls defaults={props.defaults} roles={props.roles} readDraft={props.draftStore.get}
+                onChange={props.onChange} editable={props.documentEditable}
                 {...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts })}
                 testIDPrefix={`${testIDPrefix}-header-engine`}
             />
@@ -1158,17 +1147,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     const openSettings = React.useCallback(() => {
         if (canOpenSettings) setDetailsCompanion('settings');
     }, [canOpenSettings]);
-    // The workflow's Agent and model are edited from the draft as it is when chosen.
-    const changeDefaultEngine = React.useCallback((...[engine]: Parameters<ChipsLineProps['onChangeEngine']>) => {
-        const draft = readDraft();
-        if (documentEditable) onChange({ ...draft, defaults: withWorkflowAuthoringEngine(draft.defaults, engine) });
-    }, [documentEditable, onChange, readDraft]);
-    const changeDefaultEngineFields = React.useCallback((...[fields]: Parameters<ChipsLineProps['onChangeFields']>) => {
-        const draft = readDraft();
-        if (documentEditable) onChange({ ...draft, defaults: withWorkflowAuthoringEngineFields(draft.defaults, fields) });
-    }, [documentEditable, onChange, readDraft]);
-    const changeDefaultField = React.useCallback((...[field, value]: Parameters<ChipsLineProps['onChangeField']>) =>
-        onChange(setWorkflowDefaultField(readDraft(), field, value)), [onChange, readDraft]);
     const submitRun = React.useCallback(() => {
         // Run now is never a dead end for a missing machine: it opens the Where
         // owner's picker (the settings on a phone), and choosing continues here.
@@ -1744,8 +1722,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         <WorkflowEditorChipsLine testIDPrefix={testIDPrefix} draftStore={draftStore} accountLifetime={props.accountLifetime} whereRef={whereRef}
             projectTarget={props.projectTarget} machineName={props.machineName} projectMachines={props.projectMachines}
             onChangeProjectTarget={props.onChangeProjectTarget} showsWorkflowAgent={showsWorkflowAgent} documentEditable={documentEditable}
-            authoringValues={defaultAuthoringValues} engine={defaults.engine} workflowRoles={roles}
-            onChangeEngine={changeDefaultEngine} onChangeFields={changeDefaultEngineFields} onChangeField={changeDefaultField}
+            defaults={defaults} roles={roles} onChange={onChange}
             authoringFacts={props.authoringFacts} triggersSummary={props.triggersSummary}
             openSettings={openSettings} history={props.history} />
     );

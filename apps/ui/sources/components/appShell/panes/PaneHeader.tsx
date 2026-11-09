@@ -439,7 +439,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     identityMark: { flexShrink: 0, alignSelf: 'flex-start', marginTop: theme.space.s2 },
     // In the band the mark centres on the whole identity text (title over its live line).
     identityMarkCentered: { flexShrink: 0 },
-    lineTrailing: { flexShrink: 0, marginLeft: 'auto' },
+    // Controls aligned with the facts keep to the column: at a large text size they wrap within it rather than run past its edge.
+    lineTrailing: { flexShrink: 1, minWidth: 0, marginLeft: 'auto' },
     largeTitle: {
         ...pageTitleTypography(),
         color: theme.colors.text.primary,

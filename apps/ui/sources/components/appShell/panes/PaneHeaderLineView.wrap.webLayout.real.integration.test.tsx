@@ -131,6 +131,35 @@ describe("a phone header's wrapped facts, as a browser lays them out", () => {
     expect(byline.left).toBeGreaterThanOrEqual(last.right - 0.5);
     expect(byline.right).toBeLessThanOrEqual(clip.right + 0.5);
   });
+  it('keeps a band line\'s trailing controls inside the column when large text makes them wider than its room', async () => {
+    // A desktop step header's hold navigation (R171-2): at a large minimum font its words and buttons outgrow the band.
+    const { PaneHeaderLineView } = await import('./PaneHeader');
+    const { Text } = await import('@/components/ui/text/Text');
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <View testID="column" style={{ width: 320 }}>
+          <PaneHeaderLineView
+            testID="header"
+            line={{ segments: ['First review hold'] }}
+            lineTrailing={
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12 }}>
+                <Text style={{ fontSize: 24 }}>1 of 2</Text>
+                <Text numberOfLines={1} style={{ fontSize: 24, flexShrink: 1, minWidth: 0 }}>Next: Second review hold · Second</Text>
+                <View testID="previous" style={{ width: 36, height: 26 }} />
+                <View testID="next" style={{ width: 36, height: 26 }} />
+              </View>
+            }
+          />
+        </View>,
+      );
+    });
+    const layout = await measureWebLayout(host, { viewport: { width: 400, height: 300 }, texts: ['1 of 2'] });
+    const column = layout.rect('column');
+    for (const id of ['previous', 'next']) expect(layout.rect(id).right).toBeLessThanOrEqual(column.right + 0.5);
+  });
   it('keeps a glyph that leads the facts apart from the first fact', async () => {
     // A phone pane's live line led by a machine glyph ("Previews from MacBook Pro"): the glyph and its
     // first fact read as one item, but never touch.

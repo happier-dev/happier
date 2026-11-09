@@ -681,7 +681,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
         fireAndForget((async () => {
             setIsDeleting(true);
             try {
-                if (!await confirmSessionDelete() || !actionScopeIsCurrent()) return;
+                if (!await confirmSessionDelete({ detachedHistory: true }) || !actionScopeIsCurrent()) return;
                 const result = await executeAction('session.delete', { machineId, runId: props.runId }, { ...runOperation, confirmed: true });
                 if (!actionScopeIsCurrent() || isExecutionRunMutationCancelled(result)) return;
                 if (!result.ok) {

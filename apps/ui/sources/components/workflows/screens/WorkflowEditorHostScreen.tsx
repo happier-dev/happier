@@ -91,6 +91,7 @@ import {
     type WorkflowRunComposerModalProps,
 } from '../run/useWorkflowRunComposerModal';
 import { WorkflowEditorBody, type WorkflowEditorCommands, type WorkflowEditorView } from './WorkflowEditorBody';
+import { WorkflowDefaultEngineControls } from '../editor/WorkflowDefaultEngineControls';
 import { useWorkflowAuthoringHost } from './useWorkflowAuthoringHost';
 import type { WorkflowSaveConflict, WorkflowSaveStatusState } from '../editor/WorkflowSaveStatus';
 import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
@@ -1029,6 +1030,11 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
 
     // The Run review reads the draft only while it is open: typing never rebuilds a closed sheet.
     const runReviewDraft = useWorkflowEditorSelector(draftStore, identityDraft, inputSheetOpen ? Object.is : keepShownDraft);
+    // The review's Agent choice is an edit of the draft, recorded like any other.
+    const changeReviewedEngine = useEventCallback((next: WorkflowEditorDraft) => {
+        changeSnapshot({ draft: next }, t('workflows.editor.history.edited'));
+        setDraft(next);
+    });
     const inputModalProps = React.useMemo<WorkflowRunComposerModalProps | null>(() => runReviewDraft === null ? null : ({
         definition: retainedDefinition ?? testSource?.definition ?? validateWorkflowEditorDraft(runReviewDraft).normalizedDefinition,
         sourceArtifactId: saved?.definitionId ?? null,
@@ -1076,12 +1082,17 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 rightElement={<Switch testID="workflow-plan-report-switch" value={reportShown} onValueChange={setReportBack}
                     disabled={planPending || runRetained !== null} />} /> }),
             }] : [])],
+        // An editable draft's Run review changes its Agent with the editor's own picker, editing the draft itself.
+        ...(canEditDefinition && runRetained === null && testSource === null && !retainedTest ? { agentControl: <WorkflowDefaultEngineControls
+            defaults={runReviewDraft.defaults} roles={runReviewDraft.roles} readDraft={bodyDraftStore.get} editable
+            onChange={changeReviewedEngine}
+            facts={authoringHost.authoringFacts} testIDPrefix="workflow-run-inputs-review-engine" /> } : {}),
         onRun: (inputs, roleOverrides, visibleTeamId) => { void startRun(inputs, roleOverrides, visibleTeamId); },
         onCancel: dismissInputSheet,
         pending: planPending || runNow.isPending(pendingRunId ?? ''),
         reconciling: runNow.stateFor(pendingRunId ?? '') === 'reconciling',
         startProblem: runNow.refusal,
-    }), [activeAccountScope?.serverId, definitionDraftDirty, descriptionDraftDirty, description, dismissInputSheet, executionTarget, runReviewDraft, inputRawTextValues, inputValues, machineName, machines, pendingRunId, projectTarget, retainedDefinition, whereHomeDir, whereMachineName, runNow, runRetained, saved?.definitionId, startRun, planReview, ownedPlanOriginId, planOriginName, reportShown, planPending, retainedTest, testSource]);
+    }), [activeAccountScope?.serverId, definitionDraftDirty, descriptionDraftDirty, description, dismissInputSheet, executionTarget, runReviewDraft, inputRawTextValues, inputValues, machineName, machines, pendingRunId, projectTarget, retainedDefinition, whereHomeDir, whereMachineName, runNow, runRetained, saved?.definitionId, startRun, planReview, ownedPlanOriginId, planOriginName, reportShown, planPending, retainedTest, testSource, canEditDefinition, bodyDraftStore, changeReviewedEngine, authoringHost.authoringFacts]);
 
     const runComposer = useWorkflowRunComposerModal({ open: inputSheetOpen, props: inputModalProps,
         anchorRef: testSource === null && !retainedTest ? runNowAnchorRef : testRunAnchorRef });

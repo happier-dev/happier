@@ -47,7 +47,11 @@ async function readTargetWarningOptions(target: SessionActionTarget): Promise<Se
 
 /** One irreversible-delete confirmation for every single-Session surface. */
 export async function confirmSessionDelete(
-    options: SessionDeleteWarningOptions & Readonly<{ target?: SessionActionTarget }> = {},
+    options: SessionDeleteWarningOptions & Readonly<{
+        target?: SessionActionTarget;
+        /** Happier's detached-run history: deleting it leaves the Agent's own conversation on the Machine. */
+        detachedHistory?: boolean;
+    }> = {},
 ): Promise<boolean> {
     const warning = options.target ? { ...await readTargetWarningOptions(options.target), ...options } : options;
     const stopAndDelete = options.target?.canStopAndDelete === true;
@@ -57,7 +61,8 @@ export async function confirmSessionDelete(
         resolveSessionDeleteWarning({
             metadata: warning.metadata,
             machineOnline: warning.machineOnline ?? null,
-            defaultWarning: t(stopAndDelete ? 'sessionInfo.stopAndDeleteSessionWarning' : 'sessionInfo.deleteSessionWarning'),
+            defaultWarning: t(options.detachedHistory ? 'sessionInfo.deleteDetachedHistoryWarning'
+                : stopAndDelete ? 'sessionInfo.stopAndDeleteSessionWarning' : 'sessionInfo.deleteSessionWarning'),
             offlineManagedWarning: t('sessionDirectoryRecovery.offlineDelete', {
                 machine: warning.machineLabel ?? t('status.unknown'),
             }),

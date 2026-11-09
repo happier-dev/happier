@@ -272,6 +272,8 @@ export type WorkflowRunComposerProps = Readonly<{
   >;
   /** Catalog-facing input copy (built-ins); authored workflows name their inputs themselves. */
   inputPresentation?: WorkflowRunInputPresentation;
+  /** The host's own Agent and model picker for this draft, shown on the review's Agent row in place of its summary. */
+  agentControl?: React.ReactNode;
   /** Demand-mounted choice from the shared executable participant picker. */
   pickAgentParticipant?: React.ComponentProps<
     typeof InputTypePickerHostProvider
@@ -922,7 +924,10 @@ export function WorkflowRunComposer(
               {hasWhereChip ? null : <Item testID={`${prefix}-review-where`} title={t('workflows.page.sections.whereTitle')}
                 subtitle={whereSummary} showChevron={false} subtitleLines={0} />}
               {!acceptedRepeat && showsWorkflowAgent
-                ? <WorkflowRunAgentSummary definition={reviewedDefinition} serverId={props.serverId}
+                ? props.agentControl !== undefined && retained === null
+                  ? <Item testID={`${prefix}-review-agent`} title={t('workflows.page.sections.agentTitle')}
+                      showChevron={false} rightElementOutsidePressable accessoryLayout="adaptive" rightElement={props.agentControl} />
+                  : <WorkflowRunAgentSummary definition={reviewedDefinition} serverId={props.serverId}
                     testID={`${prefix}-review-agent`} /> : null}
               <Item testID={`${prefix}-review-target`} title={t('workflows.page.sections.eachStepRunsIn')}
                 subtitle={formatWorkflowRunTargetReviewSummary(targetReview, reviewedExecutionTarget)}
