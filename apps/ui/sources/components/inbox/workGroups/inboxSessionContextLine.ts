@@ -3,29 +3,33 @@ import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { resolveSessionContextLine } from '@/sync/domains/session/presentation/sessionContextPresentation';
 import { readSessionAwarenessPresentationV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import { t } from '@/text';
+import { sessionFollowSourceRuntimeStateLabel } from '@/components/sessions/follow/sessionFollowSourcePresentation';
 
 /**
  * What an Inbox session row says under its title: what the session needs from the person first (the
  * Session row's own words for its attention state, "ready for review", "Mentioned you"), then a
  * lead's working reports (ORC R-10), then where it runs. The Home is named only when the Inbox spans
- * more than one Home; otherwise it would repeat down every row. Pure, so the Voice brief draws the
- * same line without importing the row's component tree.
+ * more than one Home; otherwise it would repeat down every row. A worker reporting to a lead says
+ * that instead of where it runs (every report runs beside its lead, so the place only repeats down
+ * the list): its latest update, then "Reports to <lead>" (lab `inbox-I1`). Pure, so the Voice brief
+ * draws the same line without importing the row's component tree.
  */
 export function buildInboxSessionContextLine(
   candidate: InboxSessionAttentionEntry['candidate'],
   options: Readonly<{
     showHome: boolean;
     showNeed?: boolean;
+    /** The lead this Session reports to and its latest update, from the Inbox item (`reportsTo`, `workerUpdateHeadline`). */
+    worker?: Readonly<{ leadTitle: string | null; headline?: string }>;
   }> = { showHome: true },
 ): string | undefined {
+  if (candidate.followRuleEvaluationState) return sessionFollowSourceRuntimeStateLabel(candidate.followRuleEvaluationState);
   // The row states one status, through the work-status owner. When that status already reads
   // unknown or offline, the Home's currentness ("Offline", "Couldn't refresh") is the same fact
   // said twice, so the line drops it. Read from the candidate's own awareness, so every caller
   // (Needs you, Updates, the Voice brief) agrees without being told.
   const rowStatus = readSessionAwarenessPresentationV1(candidate.awareness);
   const statusSaysNotCurrent = rowStatus === 'unknown' || rowStatus === 'disconnected';
-  const reports = candidate.session.managedSessions;
-  const workingReports = reports?.working ?? 0;
   const need = options.showNeed !== false ? readInboxSessionNeed(candidate) : null;
   const context = candidate.context
     ? (resolveSessionContextLine(
@@ -38,15 +42,32 @@ export function buildInboxSessionContextLine(
         { showWorkspace: true },
       ) ?? candidate.subtitle.trim())
     : candidate.subtitle.trim();
+  const reportsTo = options.worker?.leadTitle ? t('inbox.work.rows.reportsTo', { lead: options.worker.leadTitle }) : null;
   return (
     joinHappierFacts(
       need,
-      workingReports > 0
-        ? t('sessionWork.strip.stillWorking', { count: workingReports })
-        : null,
-      context,
+      readWorkingReports(candidate),
+      reportsTo ? options.worker?.headline ?? null : null,
+      reportsTo ?? context,
     ) || undefined
   );
+}
+
+function readWorkingReports(candidate: InboxSessionAttentionEntry['candidate']): string | null {
+  const reports = candidate.presentationSource ? candidate.presentationSource.relations.managedSessions : candidate.session.managedSessions;
+  const working = reports?.working ?? 0;
+  return working > 0 ? t('sessionWork.strip.stillWorking', { count: working }) : null;
+}
+
+/**
+ * Why this session is in front of the person, and only that: the context line without where it runs,
+ * for a surface that already says what the row is about (the Voice brief).
+ */
+export function buildInboxSessionReasonLine(
+  candidate: InboxSessionAttentionEntry['candidate'],
+  options: Readonly<{ showNeed?: boolean }> = {},
+): string | undefined {
+  return joinHappierFacts(options.showNeed === false ? null : readInboxSessionNeed(candidate), readWorkingReports(candidate)) || undefined;
 }
 
 /**

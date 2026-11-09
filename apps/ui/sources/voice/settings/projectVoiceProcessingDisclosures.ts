@@ -12,7 +12,7 @@ import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { readBundledSpeechSettingsDescriptorFromEntry } from '@/voice/settings/panels/bundledSpeech/descriptor';
 import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 import { resolveSelectedVoiceProviderTitleKey } from '@/voice/registry/providerSelection';
-import type { VoiceProviderSettings } from '@happier-dev/protocol';
+import type { VoiceProviderSettings } from '@happier-dev/protocol/plugins/contributions/voice';
 
 type LocalizedDisclosure = string | Readonly<{ key: string; fallback: string }>;
 
@@ -23,6 +23,8 @@ export type VoiceProcessingDisclosureProjection = Readonly<{
   titleKey: string;
   disclosure: LocalizedDisclosure | null;
   facts: VoiceProviderSettings['privacyFacts'] | null;
+  /** Host truth for a built-in engine: it runs on the person's own hardware. */
+  localProcessing: boolean;
 }>;
 
 const defaultRegistry = createDefaultVoiceProviderRegistry();
@@ -52,6 +54,7 @@ export function projectVoiceProcessingDisclosures(
     disclosure: LocalizedDisclosure | null,
     titleKey: string,
     facts: VoiceProviderSettings['privacyFacts'] | null = null,
+    localProcessing = false,
   ): void => {
     const identity = `${disclosureIdentity(disclosure)}:${JSON.stringify(facts)}`;
     const existing = byDisclosure.get(identity);
@@ -74,6 +77,7 @@ export function projectVoiceProcessingDisclosures(
       titleKey,
       disclosure,
       facts,
+      localProcessing,
     }));
   };
 
@@ -99,7 +103,7 @@ export function projectVoiceProcessingDisclosures(
       add(providerId, role, {
         key: hostDisclosure.disclosureKey,
         fallback: hostDisclosure.disclosureKey,
-      }, hostDisclosure.titleKey, hostDisclosure.facts ?? null);
+      }, hostDisclosure.titleKey, hostDisclosure.facts ?? null, hostDisclosure.localProcessing === true);
       return;
     }
     const descriptor = readBundledSpeechSettingsDescriptorFromEntry(providerId, entry);

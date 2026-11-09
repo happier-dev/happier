@@ -79,7 +79,7 @@ export function resolveVoiceReadinessTone(readiness: VoiceRoleReadiness | null):
     }
 }
 
-function resolveWhere(step: VoiceSettingsPipelineStep): Readonly<{ text: string; icon: IconName }> {
+export function resolveVoicePipelineWhere(step: VoiceSettingsPipelineStep): Readonly<{ text: string; icon: IconName }> {
     switch (step.placement.kind) {
         case 'machine':
             return {
@@ -132,7 +132,7 @@ export function presentVoicePipeline(
     serviceTitle?: string,
 ): VoicePipelinePresentation {
     const steps = pipeline.steps.map((step, index): VoicePipelineStepPresentation => {
-        const where = resolveWhere(step);
+        const where = resolveVoicePipelineWhere(step);
         const progress = step.progress && step.progress.total > 0
             ? Math.max(0, Math.min(1, step.progress.done / step.progress.total))
             : null;

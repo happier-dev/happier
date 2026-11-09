@@ -103,8 +103,9 @@ export const VoiceSetupPanel = React.memo(function VoiceSetupPanel(props: Readon
 
     return (
         <View testID={props.testID} onLayout={onLayout} style={[styles.root, sideBySide ? null : styles.rootStacked]} accessibilityLabel={t('voiceMoments.setupTitle')}>
+            {daybreak ? <View pointerEvents="none" style={[styles.wash, daybreak]} /> : null}
             <View style={sideBySide ? styles.sideBySide : styles.stacked}>
-                <View style={sideBySide ? [styles.visualSide, daybreak] : styles.visualStacked}>
+                <View style={sideBySide ? styles.visualSide : styles.visualStacked}>
                     <VoiceMarkArt
                         pose={failed ? 'shade' : 'ready'}
                         light={light}
@@ -338,19 +339,16 @@ function buildStep(
 }
 
 /**
- * The planet's daybreak (lab SB–SD): Brand's Horizon material — its sky with the atmosphere rising
- * behind the disc — as the planet column's field, the same material the onboarding stage uses.
- * Native draws the sky's base colour; the layered gradients are web CSS.
+ * The panel's daybreak (lab SB–SD, home-index `.hi-qrp::before`): Brand's Horizon atmosphere as a wash
+ * that bleeds from the panel's corner and fades out, with no edge of its own. Web CSS only; native
+ * leaves the planet on the panel's surface rather than drawing a box behind it.
  */
-function useDaybreakWash(): ViewStyle {
+function useDaybreakWash(): ViewStyle | null {
     const { theme } = useUnistyles();
     const horizon = PLANET_PALETTES[(theme as { dark?: boolean }).dark ? 'dark' : 'light'].horizon;
-    return React.useMemo(() => ({
-        backgroundColor: horizon.backgroundColor,
-        ...(Platform.OS === 'web'
-            ? { backgroundImage: `radial-gradient(circle at 50% 42%, ${horizon.atmosphereColor} 0%, ${horizon.backgroundColorTransparent} 62%), ${horizon.skyGradient}` }
-            : null),
-    }) as ViewStyle, [horizon]);
+    return React.useMemo(() => (Platform.OS === 'web'
+        ? { backgroundImage: `radial-gradient(520px 260px at 0% 0%, ${horizon.atmosphereColor}, ${horizon.backgroundColorTransparent} 70%)` } as ViewStyle
+        : null), [horizon]);
 }
 
 function MicGlyph() {
@@ -394,17 +392,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     stacked: {
         gap: 14,
     },
-    // The field hugs the planet and its caption; stretched to the steps' height it read as a second,
-    // mostly empty card beside step 1's service grid.
+    wash: {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+    },
     visualSide: {
         width: PLANET_COLUMN_PX,
         alignSelf: 'flex-start',
         alignItems: 'center',
         gap: theme.space.s10,
-        paddingTop: 18,
-        paddingBottom: 18,
-        borderRadius: 16,
-        overflow: 'hidden',
+        paddingTop: theme.space.s10,
     },
     visualStacked: {
         flexDirection: 'row',

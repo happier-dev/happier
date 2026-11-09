@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -7,6 +7,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
+import { WidgetGlanceRow } from '@/components/widgets/glance/WidgetGlanceRow';
 import { Typography } from '@/constants/Typography';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import type { VoiceSurfaceViewModel } from '@/components/voice/surface/useVoiceSurfaceModel';
@@ -439,42 +440,28 @@ const VoiceGlanceHandoff = React.memo(function VoiceGlanceHandoff(
   // The row leads to the working session through ordinary Session navigation (`session.open`).
   const onOpenDelegatedSession = props.model.onOpenDelegatedSession;
   const onPress = React.useCallback(() => onOpenDelegatedSession(work), [onOpenDelegatedSession, work]);
+  const cell = work.thinking ? <VoiceStatusCell kind="working" size={12} /> : null;
   return (
-    <Pressable
+    <WidgetGlanceRow
       testID={props.testID}
-      accessibilityRole="link"
       accessibilityLabel={label}
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.handoff,
-        pressed ? styles.handoffPressed : null,
-      ]}
-    >
-      {agentId && hasAgentIconMark(agentId, theme) ? (
-        <AgentIcon agentId={agentId} size={15} />
-      ) : null}
-      {title ? (
-        <Text style={styles.handoffTitle} numberOfLines={1}>
-          {title}
-        </Text>
-      ) : null}
-      {status ? (
-        <View
-          style={[
-            styles.handoffStatus,
-            title ? styles.handoffStatusTrailing : null,
-          ]}
-        >
-          {work.thinking ? <VoiceStatusCell kind="working" size={12} /> : null}
-          <Text style={styles.handoffLabel} numberOfLines={1}>
-            {status}
-          </Text>
+      mark={agentId && hasAgentIconMark(agentId, theme) ? <AgentIcon agentId={agentId} size={15} /> : title ? undefined : cell}
+      title={title || status || ''}
+      trailing={
+        <View style={styles.handoffTrailing}>
+          {title && status ? (
+            <>
+              {cell}
+              <Text style={styles.handoffLabel} numberOfLines={1}>
+                {status}
+              </Text>
+            </>
+          ) : null}
+          <Icon name="caret-right" size={12} color={theme.colors.text.tertiary} />
         </View>
-      ) : null}
-      {onPress ? (
-        <Icon name="caret-right" size={12} color={theme.colors.text.tertiary} />
-      ) : null}
-    </Pressable>
+      }
+    />
   );
 });
 
@@ -536,28 +523,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     ...Typography.variant('meta'),
     color: theme.colors.text.secondary,
   },
-  handoff: {
+  handoffTrailing: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: theme.space.s6,
-    paddingVertical: theme.space.s6,
-    paddingHorizontal: theme.space.s8,
-    borderRadius: 10,
-    backgroundColor: theme.colors.surface.inset,
-  },
-  handoffPressed: { opacity: 0.7 },
-  handoffTitle: {
-    flexShrink: 1,
-    ...Typography.variant('meta', 'semiBold'),
-    color: theme.colors.text.primary,
-  },
-  handoffStatus: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexShrink: 0,
+    maxWidth: '60%',
     gap: theme.space.s4,
-    flexShrink: 1,
   },
-  handoffStatusTrailing: { marginLeft: 'auto', flexShrink: 0, maxWidth: '60%' },
   handoffLabel: {
     flexShrink: 1,
     ...Typography.variant('meta'),

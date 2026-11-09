@@ -60,6 +60,8 @@ type VoiceUiRuntimeContributionBase = Readonly<{
     titleKey: string;
     disclosureKey: string;
     facts?: NonNullable<ExternalVoiceProviderSettingsDescriptor['privacyFacts']>;
+    /** The engine runs on the person's own hardware (device or Voice computer): audio never leaves it. */
+    localProcessing?: boolean;
   }>>>>;
 }>;
 

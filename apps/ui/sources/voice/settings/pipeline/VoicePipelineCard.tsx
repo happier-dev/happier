@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { Pressable, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
-import { HappierPressable, happierPageTextMetrics, withHappierPageSectionDividers } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HappierProgress, happierPageTextMetrics, withHappierPageSectionDividers } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
@@ -169,6 +170,8 @@ export function VoiceReadinessLine(props: Readonly<{
 
 function StepReadiness(props: Readonly<{ readiness: VoicePipelineStepReadiness }>) {
     const { readiness } = props;
+    const { theme } = useUnistyles();
+    const progressTheme = usePluginUiTheme(theme);
     return (
         <View style={styles.readiness}>
             <VoiceReadinessLine tone={readiness.tone} message={readiness.message} />
@@ -185,13 +188,14 @@ function StepReadiness(props: Readonly<{ readiness: VoicePipelineStepReadiness }
                 </View>
             ) : null}
             {typeof readiness.progress === 'number' ? (
-                <View
-                    style={styles.progressTrack}
-                    accessibilityRole="progressbar"
-                    accessibilityValue={{ min: 0, max: 100, now: Math.round(readiness.progress * 100) }}
-                >
-                    <View style={[styles.progressFill, { width: `${Math.max(0, Math.min(1, readiness.progress)) * 100}%` }]} />
-                </View>
+                <HappierProgress
+                    value={readiness.progress}
+                    label={readiness.message}
+                    theme={progressTheme}
+                    height={4}
+                    fillColor={theme.colors.text.primary}
+                    trackColor={theme.colors.border.default}
+                />
             ) : null}
         </View>
     );
@@ -400,17 +404,6 @@ const styles = StyleSheet.create((theme) => ({
     },
     readinessAction: {
         flexDirection: 'row',
-    },
-    progressTrack: {
-        height: 4,
-        borderRadius: 2,
-        overflow: 'hidden',
-        backgroundColor: theme.colors.border.default,
-    },
-    progressFill: {
-        height: '100%',
-        borderRadius: 2,
-        backgroundColor: theme.colors.text.primary,
     },
     rows: {
         borderTopWidth: StyleSheet.hairlineWidth,

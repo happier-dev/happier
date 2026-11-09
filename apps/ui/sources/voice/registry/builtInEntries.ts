@@ -69,6 +69,7 @@ export const BUILT_IN_VOICE_UI_ENTRIES: readonly VoiceUiRuntimeContribution[] = 
       stt: {
         titleKey: 'settingsVoice.local.localNeuralStt.provider.title',
         disclosureKey: 'settingsVoice.pages.privacy.localDisclosure',
+        localProcessing: true,
         facts: {
           audioDestination: { key: 'settingsVoice.pages.privacy.localAudio', fallback: 'Your device or Voice computer' },
           processor: { key: 'settingsVoice.pages.privacy.localProcessor', fallback: 'Your selected speech model' },
@@ -78,6 +79,7 @@ export const BUILT_IN_VOICE_UI_ENTRIES: readonly VoiceUiRuntimeContribution[] = 
       tts: {
         titleKey: 'settingsVoice.local.localNeuralTts.provider.title',
         disclosureKey: 'settingsVoice.pages.privacy.localDisclosure',
+        localProcessing: true,
         facts: {
           audioDestination: { key: 'settingsVoice.pages.privacy.noMicrophoneAudio', fallback: 'No microphone audio; reply text only.' },
           processor: { key: 'settingsVoice.pages.privacy.localProcessor', fallback: 'Your selected speech model' },

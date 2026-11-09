@@ -10,9 +10,11 @@ import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRout
 import { resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
 import type { WorkflowAttentionSource } from '@/hooks/inbox/useWorkflowAttentionSource';
 import type { AutomationInboxItem } from '@/hooks/inbox/useInboxModel';
-import type { AgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
+import { buildAgentRequestSemanticSummary, type AgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { resolveVoiceSessionUpdatePolicyV1 } from '@happier-dev/protocol/voice/sourceDisclosureV1';
-import { buildInboxSessionContextLine } from '@/components/inbox/workGroups/inboxSessionContextLine';
+import { buildInboxSessionReasonLine } from '@/components/inbox/workGroups/inboxSessionContextLine';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
+import { t } from '@/text';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import { isUntitledSessionName } from '@/utils/sessions/sessionUtils';
 
@@ -24,7 +26,7 @@ export type VoiceBriefItem = Readonly<{
     key: string;
     category: 'needs_you' | 'failed' | 'ready';
     title: string;
-    /** The Inbox row's own second line (its context: reason or summary · where · when), drawn only. */
+    /** Why this row is here (the request it asks, else the Inbox's own reason), drawn only; never where it runs. */
     subtitle?: string;
     destination: Readonly<{ kind: 'session'; address: SessionAddress }>
         | Readonly<{ kind: 'workflow'; runId: string }>
@@ -51,10 +53,22 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
         const title = candidate.title;
         return title.trim() && !isUntitledSessionName(title) ? title : null;
     };
-    // The visual row repeats exactly what the Inbox row says under the title; never spoken.
-    const sessionSubtitle = (candidate: VoiceBriefSource['sessionPresentation']['readySessions'][number]) => {
+    // Drawn only, never spoken; a status-only row keeps its request's contents to itself.
+    const requestReason = (entry: VoiceBriefSource['sessionPresentation']['sessionsNeedingAttention'][number]): string | null => {
+        const kind = entry.pendingPermissions[0] ? 'permission' : entry.pendingUserActions[0] ? 'user_action' : null;
+        const request = entry.pendingPermissions[0] ?? entry.pendingUserActions[0];
+        if (!kind || !request || entry.candidate.personalAttention.presentation !== 'full') return null;
+        const semantic = buildAgentRequestSemanticSummary({ kind, toolName: request.tool, toolInput: request.arguments });
+        if (kind === 'user_action') return semantic.firstQuestionText;
+        if (semantic.permissionTitle) return semantic.permissionTitle;
+        const action = semantic.shellCommand ? t('voiceMoments.briefRunCommand', { command: semantic.shellCommand })
+            : semantic.filePath ? t('voice.readiness.permissionAccessFile', { path: semantic.filePath })
+                : t('voice.readiness.permissionUseTool', { tool: request.tool });
+        return t('voiceMoments.briefWantsTo', { action });
+    };
+    const sessionSubtitle = (candidate: VoiceBriefSource['sessionPresentation']['readySessions'][number], request: string | null = null) => {
         if (!isSessionAwarenessContentReadableV1(candidate.awareness.encryption)) return {};
-        const subtitle = buildInboxSessionContextLine(candidate);
+        const subtitle = joinHappierFacts(request, buildInboxSessionReasonLine(candidate, { showNeed: request === null }));
         return subtitle ? { subtitle } : {};
     };
     const projectSessionSpeech = (candidate: VoiceBriefSource['sessionPresentation']['readySessions'][number], requests: readonly (readonly [AgentRequestKind, string, string, unknown])[] = []) => {
@@ -77,7 +91,7 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
         if (!address || !title) continue;
         const requiresPerson = candidate.personalAttention.reasons.some((reason) => reason === 'permission_required' || reason === 'user_action_required');
         items.push({ key: sessionAddressKey(address), category: !requiresPerson && candidate.personalAttention.reasons.includes('failed') ? 'failed' : 'needs_you',
-            title, ...sessionSubtitle(candidate), destination: { kind: 'session', address }, ...(candidate.route ? { route: candidate.route } : {}) });
+            title, ...sessionSubtitle(candidate, requestReason(entry)), destination: { kind: 'session', address }, ...(candidate.route ? { route: candidate.route } : {}) });
         projectSessionSpeech(candidate, [...entry.pendingPermissions.map((request) => ['permission', request.id, request.tool, request.arguments] as const),
             ...entry.pendingUserActions.map((request) => ['user_action', request.id, request.tool, request.arguments] as const)]);
     }

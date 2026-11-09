@@ -50,9 +50,6 @@ export type VoiceSettingsPagesCopy = Readonly<{
       localProcessor: string;
       localRetention: string;
       localDisclosure: string;
-      audioTitle: string;
-      processorTitle: string;
-      retentionTitle: string;
       messagesUnit: string;
       secondsUnit: string;
       servicePolicy: string;
@@ -65,6 +62,18 @@ export type VoiceSettingsPagesCopy = Readonly<{
       devicePolicy: string;
       description: string;
       whereTitle: string;
+      pathThisDevice: string;
+      pathVoiceComputer: string;
+      pathReplyText: string;
+      staysLocal: string;
+      agentAccount: string;
+      audioRowTitle: string;
+      readsRowTitle: string;
+      repliesRowTitle: string;
+      recordingsRowTitle: string;
+      recordingOff: string;
+      recordingOn: string;
+      whereDescriptionFor: (params: { service: string }) => string;
       whereDescription: string;
       startTitle: string;
       startDescription: string;
@@ -303,9 +312,6 @@ export const en: VoiceSettingsPagesCopy = {
       localProcessor: "Your selected speech model",
       localRetention: "Managed by your device/runtime. Diagnostics follow your recording settings.",
       localDisclosure: "Selected speech models run on your device or Voice machine. Voice History and diagnostic recordings have separate settings on this page.",
-      audioTitle: "Audio goes to",
-      processorTitle: "Processed by",
-      retentionTitle: "Retention",
       messagesUnit: "messages",
       secondsUnit: "seconds",
       servicePolicy: "Follows your service account settings and terms.",
@@ -318,6 +324,18 @@ export const en: VoiceSettingsPagesCopy = {
       devicePolicy: "Follows your device’s speech settings and terms.",
       description: 'What your voice service hears and reads, and what Happier keeps.',
       whereTitle: 'Where your voice goes now',
+      pathThisDevice: 'This device',
+      pathVoiceComputer: 'Your Voice computer',
+      pathReplyText: 'Reply text',
+      staysLocal: 'Never leaves your computers',
+      agentAccount: 'Uses that agent’s own account',
+      audioRowTitle: 'Your audio',
+      readsRowTitle: 'What it reads',
+      repliesRowTitle: 'Replies',
+      recordingsRowTitle: 'Recordings',
+      recordingOff: 'Diagnostic recording is off',
+      recordingOn: 'Diagnostic recording is on',
+      whereDescriptionFor: ({ service }) => `For ${service}. It changes with the service you choose.`,
       whereDescription: 'It changes with the service you choose.',
       startTitle: 'When a conversation starts',
       startDescription: 'What the voice service can read about your work.',

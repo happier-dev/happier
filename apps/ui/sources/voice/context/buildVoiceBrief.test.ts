@@ -8,7 +8,7 @@ import { buildVoiceBrief, type VoiceBriefSource } from './buildVoiceBrief';
 import { createWorkflowRunSummaryFixture, createAutomationRunFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
 import { buildInboxWorkGroups } from '@/activity/presentation/buildInboxWorkGroups';
-import { buildInboxSessionContextLine } from '@/components/inbox/workGroups/inboxSessionContextLine';
+import { buildInboxSessionContextLine, buildInboxSessionReasonLine } from '@/components/inbox/workGroups/inboxSessionContextLine';
 import { t } from '@/text';
 import { WorkflowRunPrivateMetadataV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { readInboxSessionTitle } from '@/components/inbox/sessionAttention/inboxSessionPrivacy';
@@ -64,7 +64,7 @@ describe('Voice brief from the mounted Inbox', () => {
         }) }, settings: { voice: { privacy: { shareSessionSummary: true } } } });
         expect(brief.items).toHaveLength(3);
         for (const item of brief.items) {
-            expect(item.subtitle).not.toContain(t('sessionWork.strip.stillWorking', { count: reports.total }));
+            expect(item.subtitle ?? '').not.toContain(t('sessionWork.strip.stillWorking', { count: reports.total }));
             if (reports.working > 0) expect(item.subtitle).toContain(t('sessionWork.strip.stillWorking', { count: reports.working }));
         }
         expect(brief.context).not.toContain(t('sessionWork.strip.stillWorking', { count: reports.total }));
@@ -106,7 +106,7 @@ describe('Voice brief from the mounted Inbox', () => {
                 .toBe(readInboxSessionTitle(session, session.serverId ?? null));
             const candidate = [...sessionPresentation.sessionsNeedingAttention.map(entry => entry.candidate), ...sessionPresentation.readySessions]
                 .find(candidate => candidate.sessionId === session.id)!;
-            expect(item?.subtitle).toBe(buildInboxSessionContextLine(candidate));
+            expect(item?.subtitle).toBe(buildInboxSessionReasonLine(candidate));
         }
         expect(JSON.parse(brief.context).items.every((item: { title?: string }) => item.title === undefined)).toBe(true);
     });
@@ -137,7 +137,7 @@ describe('Voice brief from the mounted Inbox', () => {
         expect(brief.freshness.sessionHomes).toEqual({ 'home-a': { phase: 'ready', lastSuccessAt: 900 } });
     });
 
-    it('carries the Inbox row’s own second line for each session it lists, so the brief says more than titles', () => {
+    it('says why each session needs the person, never where it runs', () => {
         const inbox = source();
         const brief = buildVoiceBrief({ inbox, settings: {} });
         const candidates = [
@@ -145,11 +145,39 @@ describe('Voice brief from the mounted Inbox', () => {
             ...inbox.sessionPresentation.readySessions,
         ];
         for (const item of brief.items) {
-            const candidate = candidates.find((entry) => item.destination.kind === 'session' && entry.sessionId === item.destination.address.sessionId);
-            const expected = candidate ? buildInboxSessionContextLine(candidate) : undefined;
-            expect(expected).toBeTruthy();
-            expect(item.subtitle).toBe(expected);
+            const candidate = candidates.find((entry) => item.destination.kind === 'session' && entry.sessionId === item.destination.address.sessionId)!;
+            expect(item.subtitle).toBe(buildInboxSessionReasonLine(candidate));
+            // The Inbox row's "where" (Home, folder) is the context line's job; it is not a reason.
+            const place = buildInboxSessionContextLine(candidate, { showHome: true, showNeed: false });
+            if (place) expect(item.subtitle ?? '').not.toContain(place);
         }
+    });
+
+    it.each([
+        ['permission', { tool: 'Bash', arguments: { command: 'yarn test:e2e' } }, () => t('voiceMoments.briefWantsTo', { action: t('voiceMoments.briefRunCommand', { command: 'yarn test:e2e' }) })],
+        ['permission', { tool: 'Edit', arguments: { file_path: 'src/index.ts' } }, () => t('voiceMoments.briefWantsTo', { action: t('voice.readiness.permissionAccessFile', { path: 'src/index.ts' }) })],
+        ['permission', { tool: 'WebFetch', arguments: {} }, () => t('voiceMoments.briefWantsTo', { action: t('voice.readiness.permissionUseTool', { tool: 'WebFetch' }) })],
+        ['user_action', { tool: 'AskUserQuestion', arguments: { questions: [{ question: 'Which branch?', header: 'Branch', options: [], multiSelect: false }] } }, () => 'Which branch?'],
+    ] as const)('leads with what the %s request asks for (%#)', (kind, request, expected) => {
+        const inbox = source();
+        const sessionsNeedingAttention = inbox.sessionPresentation.sessionsNeedingAttention.map((entry) => entry.candidate.sessionId === 'needs'
+            ? { ...entry, ...(kind === 'permission'
+                ? { pendingPermissions: [{ id: 'r1', ...request, createdAt: 1 }] }
+                : { pendingUserActions: [{ id: 'r1', ...request, createdAt: 1 }] }) }
+            : entry);
+        const brief = buildVoiceBrief({ inbox: { ...inbox, sessionPresentation: { ...inbox.sessionPresentation, sessionsNeedingAttention } }, settings: {} });
+        const subtitle = brief.items.find((item) => item.destination.kind === 'session' && item.destination.address.sessionId === 'needs')?.subtitle;
+        expect(subtitle?.startsWith(expected())).toBe(true);
+    });
+
+    it('keeps request contents out of a status-only row', () => {
+        const inbox = source();
+        const sessionsNeedingAttention = inbox.sessionPresentation.sessionsNeedingAttention.map((entry) => entry.candidate.sessionId === 'needs'
+            ? { ...entry, candidate: { ...entry.candidate, personalAttention: { ...entry.candidate.personalAttention, presentation: 'status_only' as const } },
+                pendingPermissions: [{ id: 'r1', tool: 'Bash', arguments: { command: 'yarn secret' }, createdAt: 1 }] }
+            : entry);
+        const brief = buildVoiceBrief({ inbox: { ...inbox, sessionPresentation: { ...inbox.sessionPresentation, sessionsNeedingAttention } }, settings: {} });
+        expect(brief.items.find((item) => item.destination.kind === 'session' && item.destination.address.sessionId === 'needs')?.subtitle ?? '').not.toContain('yarn secret');
     });
 
     it('withholds titles, destinations and request details from speech unless the canonical privacy policy admits them', () => {
