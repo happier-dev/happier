@@ -107,7 +107,7 @@ import { createCustomProviderDraftFromTemplate } from '@/providers/authoring/sta
 import { ConnectedServiceGatewayUsedBy } from '@/components/settings/connectedServices/ConnectedServiceGatewayUsedBy';
 import { ProviderGatewaySections, resolveProviderGatewayChosenMachine, type ProviderGatewayHubReachability,
     type ProviderGatewayMachine } from './gateway/ProviderGatewaySections';
-import { buildProviderGatewaySlotMutation, readProviderGatewayModelRoles, type ProviderGatewayConfigurationPatch } from '@/providers/connection/gatewayConfiguration';
+import { buildProviderGatewaySlotMutation, readProviderGatewayModelRoles, presentProviderGatewayFamilyFacts, type ProviderGatewayConfigurationPatch } from '@/providers/connection/gatewayConfiguration';
 import { presentProviderGatewayServiceSummary } from '@/providers/connection/gatewayPresentation';
 import { useProviderGatewayConfiguration } from '@/providers/hooks/useProviderGatewayConfiguration';
 import { refreshProviderCatalog } from '@/sync/engine/settings/providerCatalogEngine';
@@ -780,6 +780,9 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const gatewayDeclarations = storedConnection ? readProviderGatewayPurposeDeclarations(storedConnection, query.declarationContext) : null;
     const gateway = storedConnection && gatewayDeclarations && gatewayDeclarations.length > 0
         ? { saved: storedConnection, declarations: gatewayDeclarations } : null;
+    const gatewayFamilyFacts = React.useMemo(() => gatewayDeclarations && connectionContributionKey
+        ? presentProviderGatewayFamilyFacts({ contributionKey: connectionContributionKey, purposes: gatewayDeclarations, localize: localizePluginText, catalogSnapshot: models.catalogSnapshot })
+        : {}, [gatewayDeclarations, connectionContributionKey, localizePluginText, models.catalogSnapshot]);
     const gatewayModelRoles = React.useMemo(() => gatewayDeclarations?.length
         ? readProviderGatewayModelRoles(query.declarationContext) : [], [gatewayDeclarations?.length, query.declarationContext]);
     const availabilityVisible = connection !== null && (connection.scope === 'account' || connection.grants.accountState !== 'absent');
@@ -1430,6 +1433,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                     key={connection.connectionId}
                     localizedTextPluginId={contributionAuthorPluginId}
                     declarations={gateway.declarations}
+                    familyFacts={gatewayFamilyFacts}
                     slots={gateway.saved.purposeBindingDefaults ?? NO_GATEWAY_SLOTS}
                     onChangeSlot={changeGatewaySlot}
                     onConnectService={connectGatewayService}

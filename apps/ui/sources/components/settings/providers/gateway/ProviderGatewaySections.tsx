@@ -1,3 +1,4 @@
+import type { ProviderGatewayFamilyFacts } from '@/providers/connection/gatewayConfiguration';
 import * as React from 'react';
 import { RowArrivalReveal, SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { PROVIDER_GATEWAY_SETTINGS } from '../providersSettings';
@@ -119,16 +120,7 @@ export type ProviderGatewaySectionsProps = Readonly<{
   familyFacts?: Readonly<Record<string, ProviderGatewayFamilyFacts>>;
 }>;
 
-/**
- * A family's facts on this gateway, already in words: the declaring plugin says what a restricted family
- * serves, and the typed owner of a "can't serve" reason maps it to copy. This page never parses either.
- */
-export type ProviderGatewayFamilyFacts = Readonly<{
-  /** `summary` ends the slot's line 2 ("chat requests only"); `sentence` opens its chooser. */
-  restriction?: Readonly<{ summary: string; sentence: string }>;
-  /** Why this family's account can't serve the gateway now; replaces what it needs on its Add more row. */
-  unavailableReason?: string;
-}>;
+export type { ProviderGatewayFamilyFacts } from '@/providers/connection/gatewayConfiguration';
 
 const NO_FAMILY_FACTS: Readonly<Record<string, ProviderGatewayFamilyFacts>> = Object.freeze({});
 const NO_PURPOSES: ReadonlySet<string> = new Set();

@@ -7,6 +7,8 @@ import type { QualifiedConnectedAccountPurposeBindingGroupTargetV1 } from '@happ
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { ProviderConnectionAuthoringScreen } from '@/components/settings/providers/ProviderConnectionAuthoringScreen';
 import { ProviderConnectionDetailScreen } from '@/components/settings/providers/ProviderConnectionDetailScreen';
+import { presentProviderGatewayFamilyFacts } from '@/providers/connection/gatewayConfiguration';
+import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { ProviderGatewaySections } from '@/components/settings/providers/gateway/ProviderGatewaySections';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { buildConnectedAccountSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
@@ -28,6 +30,7 @@ type GatewayPageProps = Readonly<{
 /** Navigation adapter only: Providers and Connected services consume the same live bodies/writers. */
 export function ConnectedServiceGatewayPage(props: GatewayPageProps = {}) {
     const router = useRouter();
+    const localize = useProjectedPluginLocalizedTextResolver();
     const params = useLocalSearchParams<Record<string, string | string[] | undefined>>();
     const first = (name: string) => {
         const value = params[name];
@@ -64,6 +67,7 @@ export function ConnectedServiceGatewayPage(props: GatewayPageProps = {}) {
         renderManagedDeployment={({ scope, deployment, declarations, modelRoles, machines, onChange, disabled }) => <ProviderGatewaySections
             localizedTextPluginId={contributionIdentity.pluginId}
             declarations={declarations} slots={deployment.purposeBindingDefaults}
+            familyFacts={presentProviderGatewayFamilyFacts({ contributionKey, purposes: declarations, localize })}
             onChangeSlot={(slotPurpose, target) => {
                 const slots = { ...deployment.purposeBindingDefaults };
                 if (target) slots[slotPurpose] = target; else delete slots[slotPurpose];

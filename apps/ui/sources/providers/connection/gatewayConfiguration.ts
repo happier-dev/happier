@@ -2,6 +2,8 @@ import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { ProviderGatewayPlacementV1, ProviderRoleModelsV1, ProviderConnectionV1,
     ProviderConnectionPurposeBindingDefaultsV1 } from '@happier-dev/protocol/providers/connections/v1';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import type { DaemonProviderModelsResponseV1 } from '@happier-dev/protocol/rpc';
+import type { ProviderModelDescriptorV1 } from '@happier-dev/protocol/models/descriptor';
 import type { DaemonProviderConnectionViewV1 } from '@happier-dev/protocol/rpc';
 import { PROVIDER_ACTION_INPUT_SCHEMAS_V1, type ProviderActionInputByIdV1 } from '@happier-dev/protocol/providers/providerActionsV1';
 import type { AccountProviderDeclarationV1 } from '@happier-dev/protocol/providers/catalog/accountModelProjectionV1';
@@ -11,6 +13,8 @@ export { listProviderGatewayContributionsV1, chooseProviderGatewayContributionV1
 import { readAccountAgentProviderDeclarations, readAccountProviderDeclarations,
     type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import type { AgentProviderRequirementsV1 } from '@happier-dev/protocol/providers/binding-compatibility';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { useProviderConnectionMutation } from '@/providers/hooks/useProviderConnectionMutation';
 
 export type ProviderGatewayConfigurationPatch = Readonly<{
@@ -82,6 +86,40 @@ export function readProviderGatewayContributionPurposes(contributionKey: string,
     declarations: readonly AccountProviderDeclarationV1[] = readAccountProviderDeclarations({ kind: 'account' }),
 ): NonNullable<DaemonProviderConnectionViewV1['managedLocalOption']>['connectedAccountPurposes'] | null {
     return readProviderGatewayContributionPurposesV1(contributionKey, declarations);
+}
+
+/** Already localized family facts; declaration and availability owners decide their meaning. */
+export type ProviderGatewayFamilyFacts = Readonly<{
+    restriction?: Readonly<{ summary: string; sentence: string }>;
+    unavailableReason?: string;
+    /** Purpose-local current usable models; null means no source observation. */
+    catalog?: Readonly<{ models: readonly ProviderModelDescriptorV1[] | null }>;
+}>;
+
+/** Localize the provider's declared facts without inferring operation support. */
+export function presentProviderGatewayFamilyFacts(input: Readonly<{
+    contributionKey: string;
+    purposes: NonNullable<DaemonProviderConnectionViewV1['managedLocalOption']>['connectedAccountPurposes'];
+    localize: PluginLocalizedTextResolver;
+    catalogSnapshot?: Extract<DaemonProviderModelsResponseV1, { status: 'success' }> | null;
+}>): Readonly<Record<string, ProviderGatewayFamilyFacts>> {
+    const identity = parseQualifiedPluginContributionKey(input.contributionKey);
+    if (!identity) return {};
+    return Object.fromEntries(input.purposes.flatMap(purpose => {
+        const source = input.catalogSnapshot?.sourceCatalogs?.find(source => source.purpose === purpose.purpose);
+        const facts: ProviderGatewayFamilyFacts = {
+            ...(purpose.operationRestriction ? { restriction: {
+                summary: input.localize(identity.pluginId, purpose.operationRestriction.summary),
+                sentence: input.localize(identity.pluginId, purpose.operationRestriction.sentence),
+            } } : {}),
+            ...(input.catalogSnapshot !== undefined ? { catalog: {
+                models: source && (source.catalogObserved || source.models.length > 0)
+                    ? source.models.map(model => model.descriptor ?? { id: model.id, name: model.name ?? model.id })
+                    : null,
+            } } : {}),
+        };
+        return Object.keys(facts).length ? [[purpose.purpose, facts]] : [];
+    }));
 }
 
 /**

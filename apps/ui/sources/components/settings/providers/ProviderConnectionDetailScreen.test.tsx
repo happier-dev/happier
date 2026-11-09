@@ -36,6 +36,7 @@ import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { renderReadyProviderDetail, pressAndFlush, openAdvanced } from './detailScreenTestHelpers';
@@ -92,6 +93,7 @@ const providerHarness = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(providerHarness);
 const account = createProviderSettingsAccountHarness();
 let foreignServerId = '';
+let restorePopoverGlobals: (() => void) | null = null;
 let machines = [createMachineFixture({ id: 'machine-a', kind: 'persistent', activeAt: Date.now(), metadata: {
     host: 'mac.local', platform: 'darwin', displayName: 'Mac', happyCliVersion: 'test',
     happyHomeDir: '/Users/tester/.happy', homeDir: '/Users/tester',
@@ -337,7 +339,7 @@ function findProviderRecoveryAction(screen: Awaited<ReturnType<typeof renderScre
 }
 
 describe('ProviderConnectionDetailScreen', () => {
-    afterEach(async () => { standardCleanup(); await account.reset(); });
+    afterEach(async () => { standardCleanup(); restorePopoverGlobals?.(); restorePopoverGlobals = null; await account.reset(); });
     beforeEach(async () => {
         providerHarness.reset();
         machines = machines.map(machine => createMachineFixture({ ...machine, activeAt: Date.now() }));
@@ -887,7 +889,109 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(providerHarness.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE)).toEqual([]);
     });
 
-    it('requests no Provider data when blurred and only selected-machine data for an account connection', async () => {
+    it.each(['all-absent', 'empty-and-absent', 'healthy-and-absent'] as const)(
+        'preserves %s source observation in the real helper chooser', async catalogCase => {
+            // The remote collect can outlive a fixture heartbeat; publish current Machine presence at this test's network boundary.
+            await account.publishMachines(account.serverId, machines.map(machine => ({ ...machine, activeAt: Date.now() })));
+            await account.selectMachine(account.serverId, 'machine-a');
+            restorePopoverGlobals = withPopoverWebGlobals();
+            installBundledProviderDeclarationsRpcBoundary(providerHarness, {}, {
+                contributionKeys: ['happier.provider.cliproxyapi/cliproxyapi'],
+            });
+            const { readProviderGatewayModelRoles } = await import('@/providers/connection/gatewayConfiguration');
+            const role = readProviderGatewayModelRoles({ kind: 'account' })[0];
+            if (!role) throw new Error('Expected the bundled Agent to declare a model role');
+            const helperTestId = `provider-gateway-helper:${role.id}`;
+            state.connection = connection({ deployment: { kind: 'managedLocal', targetMachineId: 'machine-a', effects: null } });
+            installManagedDetailCatalog();
+            const descriptor = { id: 'healthy', name: 'Healthy source model', capabilities: { toolRoundTrips: 'unsupported' as const } };
+            const row = { id: descriptor.id, source: 'probe' as const, stale: false,
+                loadState: 'unknown' as const, visibility: 'visible' as const, descriptor };
+            const models = catalogCase === 'healthy-and-absent' ? [row] : [];
+            const response = {
+                status: 'success', connectionId: 'pc_a', connectionRevision: 0,
+                manualModelPolicy: 'catalog-only', modelLoadAction: 'descriptor_absent', models,
+                sourceCatalogs: [
+                    { purpose: 'first', catalogObserved: catalogCase !== 'all-absent', models },
+                    { purpose: 'second', catalogObserved: false, models: [] },
+                ],
+            };
+            const pendingModels = createDeferred<typeof response>();
+            providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_MODELS, async () => pendingModels.promise);
+            const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+            await waitForHomeGovernance(() => expect(screen.findByTestId(helperTestId)).toBeTruthy());
+            await pressAndFlush(screen.findByTestId(helperTestId));
+            await waitForHomeGovernance(() => expect(providerHarness.state.requests.some(
+                request => request.method === RPC_METHODS.DAEMON_PROVIDERS_MODELS)).toBe(true));
+            const controls = () => screen.findAll(node => typeof node.props.onChangeHelperModels === 'function')[0];
+            await waitForHomeGovernance(() => expect(controls()?.props.modelsLoading).toBe(true));
+            await act(async () => { pendingModels.resolve(response); });
+            await waitForHomeGovernance(() => {
+                expect(controls()?.props.modelsLoading).toBe(false);
+                expect(controls()?.props.modelsError).toBeNull();
+            });
+            const helper = screen.findAllByType(Item).find(node => node.props.testID === helperTestId);
+            if (catalogCase === 'healthy-and-absent') {
+                expect(helper?.props.subtitle).toBeUndefined();
+                expect(screen.getTextContent()).toContain(descriptor.name);
+            } else {
+                expect(helper?.props.subtitle).toBe('common.unavailable');
+            }
+        },
+    );
+
+    it('renders only the declared family restriction from the real Provider projection', async () => {
+        // The remote collect can outlive a fixture heartbeat; publish current Machine presence at this test's network boundary.
+        await account.publishMachines(account.serverId, machines.map(machine => ({ ...machine, activeAt: Date.now() })));
+        await account.selectMachine(account.serverId, 'machine-a');
+        const { readAccountProviderDeclarations } = await import('@/providers/catalog/accountProviderDeclarations');
+        const declaration = readAccountProviderDeclarations({ kind: 'account' }).find(entry =>
+            entry.contributionKey === 'happier.provider.cliproxyapi/cliproxyapi');
+        const managedRuntime = declaration?.definition.managedRuntime;
+        const purposes = managedRuntime?.connectedAccounts;
+        if (!declaration || !managedRuntime || !purposes?.length) throw new Error('Expected the admitted gateway declaration');
+        const operationRestriction = { summary: 'Chat requests only', sentence: 'This family serves chat requests only.' };
+        installBundledProviderDeclarationsRpcBoundary(providerHarness, { [declaration.contributionKey]: {
+            managedRuntime: { ...managedRuntime,
+                connectedAccounts: purposes.map((purpose, index) =>
+                    index === 0 ? { ...purpose, operationRestriction } : purpose),
+            },
+        } }, { contributionKeys: [declaration.contributionKey] });
+        state.connection = connection({ deployment: { kind: 'managedLocal', targetMachineId: 'machine-a', effects: null } });
+        installManagedDetailCatalog();
+        const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        await waitForHomeGovernance(() => expect(providerHarness.state.requests.some(request =>
+            request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)).toBe(true));
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(operationRestriction.summary));
+    });
+
+    it('offers source refresh for an unobserved Models page and settles observed empty without an error', async () => {
+        installBundledProviderDeclarationsRpcBoundary(providerHarness);
+        state.connection = connection({ deployment: { kind: 'managedLocal', targetMachineId: 'machine-a', effects: null } });
+        installManagedDetailCatalog();
+        const response = (catalogObserved: boolean) => ({
+            status: 'success', connectionId: 'pc_a', connectionRevision: 0,
+            manualModelPolicy: 'catalog-only', modelLoadAction: 'descriptor_absent', models: [],
+            sourceCatalogs: [{ purpose: 'upstream', catalogObserved, models: [] }],
+        });
+        providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_MODELS, async () => response(false));
+        providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, async request => {
+            expect(request.payload).toEqual({ connectionId: 'pc_a', machineId: 'machine-a', forceRefresh: true });
+            return response(true);
+        });
+        const { ProviderConnectionModelsScreen } = await import('./models/ProviderConnectionModelsScreen');
+        const screen = await renderScreen(<ProviderConnectionModelsScreen connectionId="pc_a" />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-error:provider_catalog_unavailable')).toBeTruthy());
+        const retry = findProviderRecoveryAction(screen, 'settingsProviders.errors.actions.retry');
+        expect(retry).toBeDefined();
+        await pressAndFlush(retry);
+        await waitForHomeGovernance(() => expect(providerHarness.state.requests.some(
+            request => request.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION)).toBe(true));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-error:provider_catalog_unavailable')).toBeNull());
+        expect(screen.findByTestId('provider-connection-models-loading')).toBeNull();
+    });
+
+    it('keeps model inventory idle on focused details while preserving selected-machine identity reads', async () => {
         state.focused = false;
         const detail = () => <DetailNavigationBoundary>
             <ProviderConnectionDetailScreen connectionId="pc_a" />
@@ -903,7 +1007,7 @@ describe('ProviderConnectionDetailScreen', () => {
         await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-detail')).toBeTruthy());
         await flushHookEffects();
         expect(describeRequests()).toHaveLength(1);
-        expect(modelRequests()).toHaveLength(1);
+        expect(modelRequests()).toHaveLength(0);
         state.focused = false;
         await screen.update(detail());
         await flushHookEffects();
@@ -913,7 +1017,7 @@ describe('ProviderConnectionDetailScreen', () => {
         await flushHookEffects();
         expect(account.home.requestsFor(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1)).toHaveLength(reads);
         expect(describeRequests()).toHaveLength(1);
-        expect(modelRequests()).toHaveLength(1);
+        expect(modelRequests()).toHaveLength(0);
     });
 
     it('recovers a directly opened detail route when Provider availability finishes loading', async () => {

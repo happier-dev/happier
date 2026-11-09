@@ -512,7 +512,8 @@ export function installProviderSettingsRpcBoundary(harness: ProviderSettingsHarn
  * fields a test needs (for example `usageSources`) to one contribution, keyed by its contribution key.
  */
 export function installBundledProviderDeclarationsRpcBoundary(harness: ProviderSettingsHarness,
-    amend: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {}): void {
+    amend: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {},
+    options?: Readonly<{ contributionKeys: readonly string[] }>): void {
     harness.intercept(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, async () => {
         const { readAccountProviderDeclarations } = await import('@/providers/catalog/accountProviderDeclarations');
         const { BUNDLED_CANONICAL_AGENT_DECLARATIONS } = await import('@/agents/registry/generatedBundledPluginEntries');
@@ -523,7 +524,8 @@ export function installBundledProviderDeclarationsRpcBoundary(harness: ProviderS
                         ...(declaration.providerRequirements ? { providerRequirements: declaration.providerRequirements } : {}),
                     }]] : [])),
                 familiesById: { providers: { family: 'providers',
-                entriesById: Object.fromEntries(readAccountProviderDeclarations({ kind: 'account' }).map(row => [
+                entriesById: Object.fromEntries(readAccountProviderDeclarations({ kind: 'account' })
+                    .filter(row => !options || options.contributionKeys.includes(row.contributionKey)).map(row => [
                     row.contributionKey, { id: row.contributionKey,
                         pluginId: row.contributionKey.slice(0, row.contributionKey.indexOf('/')),
                         provenance: row.provenance, sourceKind: 'bundled', definition: { ...row.definition, ...amend[row.contributionKey] } },

@@ -37,6 +37,31 @@ describe('gateway configuration Action request', () => {
         });
     });
 
+    it('preserves each declared purpose catalog absence, observed emptiness and exact usable descriptors', () => {
+        const service = { pluginId: 'example.gateway', localId: 'subscription' };
+        const purposes = ['unread', 'absent', 'empty', 'healthy', 'usableStatic'].map(purpose => ({ purpose, service, required: false }));
+        const localize = createPluginLocalizedTextResolver({ locale: 'en', projection: null });
+        const descriptor = { id: 'chat-model', name: 'Chat model', capabilities: { toolRoundTrips: 'unsupported' as const } };
+        const row = { id: descriptor.id, source: 'probe' as const, stale: false,
+            loadState: 'unknown' as const, visibility: 'visible' as const, descriptor };
+        const result = presentProviderGatewayFamilyFacts({ contributionKey: 'example.gateway/gateway', purposes, localize,
+            catalogSnapshot: { status: 'success', connectionId: 'pc_gateway', connectionRevision: 1,
+                manualModelPolicy: 'catalog-only', modelLoadAction: 'descriptor_absent', models: [row],
+                sourceCatalogs: [
+                    { purpose: 'absent', catalogObserved: false, models: [] },
+                    { purpose: 'empty', catalogObserved: true, models: [] },
+                    { purpose: 'healthy', catalogObserved: true, models: [row] },
+                    { purpose: 'usableStatic', catalogObserved: false, models: [row] },
+                ] },
+        });
+        expect(result).toEqual({
+            unread: { catalog: { models: null } }, absent: { catalog: { models: null } },
+            empty: { catalog: { models: [] } }, healthy: { catalog: { models: [descriptor] } },
+            usableStatic: { catalog: { models: [descriptor] } },
+        });
+        expect(result.healthy?.catalog?.models?.[0]).toBe(descriptor);
+    });
+
     it('projects contributed roles once per connection role and preserves their declared labels', () => {
         const requirements = readAccountAgentProviderRequirements('agent:happier.agent.codex/codex', { kind: 'account' })!;
         const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, agentsById: {
