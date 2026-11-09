@@ -278,7 +278,10 @@ export function loadBundledPluginLocators(
     return result.loadedPlugins;
 }
 
-let admittedBundledPlugins: ReturnType<typeof loadBundledPluginLocatorResult> | null = null;
+let admittedBundledPlugins: Readonly<{
+    enabledPluginIdsKey: string;
+    result: ReturnType<typeof loadBundledPluginLocatorResult>;
+}> | null = null;
 
 /** Consume the admitted scope decision before acquiring declarations. */
 export function loadEnabledBundledPluginLocatorResult(params?: Readonly<{
@@ -297,11 +300,14 @@ export function loadCurrentBundledPluginLocatorResult(params?: Readonly<{
         ? generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.filter(locator =>
             params?.pluginEnablementById?.[locator.pluginId]?.enabled !== false)
         : generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS;
+    const enabledPluginIdsKey = JSON.stringify(enabledLocators.map(locator => locator.pluginId));
+    const admitted = admittedBundledPlugins?.enabledPluginIdsKey === enabledPluginIdsKey
+        ? admittedBundledPlugins.result : null;
     if (params?.pluginIds) {
         const requested = new Set(params.pluginIds);
         const selected = new Set(enabledLocators.filter(locator => requested.has(locator.pluginId))
             .map(locator => locator.pluginId));
-        if (hasWithdrawal || !admittedBundledPlugins) {
+        if (!admitted) {
             const result = loadBundledPluginLocatorResult(
                 enabledLocators.filter(locator => selected.has(locator.pluginId)),
                 defaultCanImportFirstPartyPluginSource()
@@ -325,10 +331,10 @@ export function loadCurrentBundledPluginLocatorResult(params?: Readonly<{
             }),
         });
     }
-    // Admit the executing closure's bundled declarations on the first catalog
-    // demand. Installed-plugin discovery then reuses that graph instead of
-    // rereading and validating every bundled manifest on each refresh.
-    if (!hasWithdrawal && admittedBundledPlugins) return admittedBundledPlugins;
+    // Retain one admission for the current enabled set. Repeated catalog reads
+    // reuse it even when a bundled plugin has been withdrawn; a changed set
+    // still resolves cross-plugin references against its own enabled graph.
+    if (admitted) return admitted;
     // Direct TypeScript loading has no publication claim. Compiled source
     // runtimes carry their own derived declarations and failure inventory,
     // just as package runtimes carry their own publication inventory.
@@ -340,7 +346,7 @@ export function loadCurrentBundledPluginLocatorResult(params?: Readonly<{
         BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS.filter(binding => enabledPluginIds.has(binding.identity.pluginId)),
         enabledPluginIds,
     );
-    if (!hasWithdrawal) admittedBundledPlugins = result;
+    admittedBundledPlugins = { enabledPluginIdsKey, result };
     return result;
 }
 
