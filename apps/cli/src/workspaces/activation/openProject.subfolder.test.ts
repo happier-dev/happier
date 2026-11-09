@@ -3,6 +3,7 @@ import { access, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 import {
   encodePlainMachineStoredContent,
@@ -80,7 +81,7 @@ describe('openProject with a subfolder the repository lacks', () => {
     );
   });
 
-  it('refuses by name after the clone, keeps the clone and writes no Project (TL-A 20:35Z on 3ca2)', async () => {
+  it.each(['clone-failed', 'native-auth-refused', 'subfolder-missing'] as const)('writes no Project for %s and retains only completed clones', async failure => {
     const parent = await mkdtemp(join(tmpdir(), 'happier-open-subfolder-'));
     temporaryRoots.push(parent);
     const remote = createBareRemoteRepository();
@@ -96,7 +97,15 @@ describe('openProject with a subfolder the repository lacks', () => {
         registration,
         hostingProviderRuntimeServices:
           createScmHostingProviderRuntimeServicesForTest(
-            makeProviderRegistry(makeCloneTargetDescription(remote)),
+            makeProviderRegistry(makeCloneTargetDescription(failure === 'clone-failed' ? join(remote, 'missing.git') : remote),
+              failure === 'native-auth-refused' ? { describeCloneTargets: async () => {
+                // The provider is the external boundary; its typed refusal must survive the real SCM and Project owners.
+                throw new PluginError({ code: 'plugin_connected_account_native_unavailable',
+                  message: 'native output https://secret@example.invalid/private',
+                  remediation: { kind: 'selectAccount', service: {
+                    pluginId: 'happier.scm.forge.github', localId: 'github',
+                  } } });
+              } } : undefined),
           ),
       }),
     ]);
@@ -154,6 +163,18 @@ describe('openProject with a subfolder the repository lacks', () => {
       ),
     );
 
+    if (failure === 'clone-failed' || failure === 'native-auth-refused') {
+      expect(result).toMatchObject({ kind: 'refused',
+        code: failure === 'clone-failed' ? 'REMOTE_NOT_FOUND' : 'REMOTE_AUTH_REQUIRED', effectAttempted: false });
+      if (failure === 'native-auth-refused') {
+        expect(result).toMatchObject({ failureCause: { phase: 'scm.hosting_provider',
+          errorCode: 'plugin_connected_account_native_unavailable' }, remediation: { kind: 'auth_required' } });
+        expect(JSON.stringify(result)).not.toContain('secret@example.invalid');
+      }
+      await expect(access(join(parent, 'checkout'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(rows).toEqual([]);
+      return;
+    }
     expect(result).toMatchObject({
       kind: 'refused',
       code: 'repository_subfolder_missing',
