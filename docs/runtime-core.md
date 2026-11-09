@@ -53,6 +53,12 @@ cause to the Session issue and Pending input settlement. Preparing input before
 dispatch does not turn an identified native configuration refusal into a
 document or Home dependency failure.
 
+Native startup authentication reasons and safe recovery text are projected by
+the Agent plugin before host classification. The host consumes their typed source
+and sanitized failure cause. The shared unstructured-output classifier recognizes
+explicit HTTP/authentication failures; mentioning a vendor environment variable
+alone does not establish an authentication failure.
+
 ## Idle compaction (unreleased 0.3)
 
 Idle compaction belongs to the Session host. One compaction descriptor, authored
@@ -894,6 +900,21 @@ is never replayed.
 [`AgentRuntime`](../packages/plugin-sdk/src/agentRuntime/runtime.ts) has two mutually exclusive forms: a Session factory or an execution-only Run factory. A Session-capable Agent does not add an independent Run lifecycle. For Session-owned Runs, the host binds its Session runtime into the shared Execution Run adapter in [`nativeAgentExecutionRun.ts`](../apps/cli/src/agent/runtime/bridges/executionRun/nativeAgentExecutionRun.ts). Detached execution requires the Session factory's declared `executionRunContextV1` facet; it cannot fabricate a parent Session. The shared SDK implementation in [`executionRun.ts`](../packages/plugin-sdk/src/agentRuntime/executionRun.ts) owns correlated Run events, cancellation, terminalization and disposal for the finite/conversation adapters.
 
 The engine registry's [`runtimeCore.ts`](../apps/cli/src/agent/runtime/registry/engineRegistry/runtimeCore.ts) resolves the admitted Agent runtime and composes host services. Agent code receives the scoped public context, not raw host lifecycle controls. Agent-native configuration in `RuntimeDescriptorV1.agent` is interpreted by its Agent; generic host code must not infer its meaning from an Agent id.
+
+In 0.3 development source, an Agent declares equivalent permission-request coverage
+through `requestCoverage` on its contribution, derived from the same Protocol shape
+as `AgentDefinition.requestCoverage`. The admitted host uses that exact declaration;
+the UI uses the selected Machine's existing Agent projection. The shared Session
+core consumes the supplied options. The live SDK and remote CLI Follow/awareness
+readers have no producing Machine contribution input and use the selected bundled
+declaration available to them; dynamic coverage is unavailable on those paths.
+Local CLI runtime readers use their selected installed declaration. Source names and
+completion reasons belong to the Agent declaration. The existing completion window
+and same-request comparison remain shared runtime behavior.
+Permission producers may provide a structural `traceSummary` through
+`session.services.permissions.requestDecision`. Generic permission traces retain
+the redacted marker and that safe summary, and never fall back to request input.
+Dialog text and choices remain private to the permission flow.
 
 In 0.3 development source, an Agent's accepted native mode completion uses the
 optional `session.services.modes.complete({ modeId })` operation. The host clears
@@ -2982,6 +3003,14 @@ retain their authorized publication path. Native model display names pass throug
 the shared display-name resolver, and unobserved discovery preserves retained
 facts rather than inventing a catalog or a friendly name.
 
+Session-native catalog controls also accept a `models` request through
+`AgentSessionCatalogControl.list`. Successful replies carry the existing
+`AgentSessionModel` rows and optional current/default model identities;
+unsupported catalogs retain the shared typed control failure. Before a Session
+exists, model discovery uses the declared `probeModels` preflight callback and
+its host-scoped JSON-RPC client, with the already-prepared account environment,
+working directory, cancellation and process cleanup.
+
 Current development source retains content-free failure diagnostics at the
 existing owners. External Session follow identity admission returns a private
 typed sub-reason and logs one local file record, including closed provider
@@ -3757,11 +3786,13 @@ first-answer and retry semantics, and records the external human as
 authenticated Happier Account user. Unsupported receivers refuse the operation;
 the sender does not remove the stamp or use an ordinary Account-user answer.
 
-Channels treats an `ownerMachineUnavailable` pending read from a stopped or
-unreachable Session as an empty projection. Its regular Session observations
-drive later reads, without unavailable-owner parking or a separate re-admission
-trigger. This projection does not move pending state or settlement into the
-daemon or Channels.
+Channels treats an `ownerMachineUnavailable` pending read as an incomplete
+projection, retaining any requests already read. An unavailable owner does not
+prove that a pending request is gone: unattempted notifications retain custody,
+and incoming approval or question-answer commands remain retryable. Regular
+Session observations drive later notification reads without availability polling
+or a separate re-admission trigger. Pending state and settlement remain in the
+Session.
 
 The approval reviewer is a request-scoped client of the existing permission
 owner. That owner rejects ineligible effects before starting a no-tools review

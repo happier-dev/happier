@@ -64,7 +64,7 @@ route remains unavailable (404). The format basis is the scoped-clean
 The existing closed private Account invocation confirmation also carries settled
 UI consent for a Plugin-origin `action.invoke`, without changing the Plugin caller
 or its automation authority. The receiver binds the same exact operand, approved
-target source and declaration, Account, Home, request and Machine before its target
+target source and declaration, Account, Home, request and execution target before its target
 gate consumes the confirmation.
 Host confirmation and reviewed-parent admission keep their existing restrictions.
 
@@ -7533,6 +7533,21 @@ the routing identity is not an ignorable extension for older closed readers.
 No migration, alternate routing owner or wire epoch is added.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 Connected Account completion results and V4 presentation metadata
+accept optional `includesApiKey: true`. It records an additional key actually
+created during successful authentication; credential kind, manual key mode and
+native imports do not establish it. The existing prepared settlement retains the
+fact, credential settlement stores it, and public attempt/profile responses carry
+it to the existing account views. Absence remains unknown. Refresh preserves the
+stored metadata rather than inferring a new fact.
+
+Matching Protocol, plugin SDK, daemon, server and UI readers reload together;
+older strict development readers reject the added field. New readers accept
+records and responses without it. The inspected `../0.2` frontier
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75` has neither the current V4 profile,
+daemon attempt schema nor authentication-completion owner, including scoped local
+changes. This adds no released predecessor adapter, wire epoch or storage owner.
 
 Unreleased 0.3 permission occurrences add closed optional `nativeChoices`, with
 canonical offered response payloads, and answer carriers add `nativeChoice`.

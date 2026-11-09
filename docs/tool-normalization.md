@@ -138,7 +138,8 @@ Important design choices:
   - `apps/cli/src/agent/tools/normalization/index.ts`
   - `apps/cli/src/agent/tools/normalization/families/*`
 - Entry points where tool events are normalized before sending/storing:
-  - `apps/cli/src/api/apiSession.ts` (ACP + Codex MCP paths)
+  - `apps/cli/src/api/session/sessionOutboundMessageNormalization.ts`
+  - `apps/cli/src/api/session/outbound/transcriptDispatch.ts`
 
 ### Canonical tool metadata (`_happier` + `_raw`)
 
@@ -158,16 +159,30 @@ the canonical tool content, including task/status/diff facts. Distinct text,
 annotations and ambiguous associations remain intact. Historical wrappers remain
 readable.
 
-The on-the-wire field name is `_happier`. Older *development* sessions may contain `_happy`; the app treats `_happy` as a legacy alias
-for routing and detail-level decisions.
+The on-the-wire field name is `_happier`. Released V2 metadata and its `_happy`
+alias remain readable through the same metadata owner.
 
-Example `_happier` fields (non-exhaustive):
+In **0.3 development source**, new tool inputs/results carry provenance V3
+inside the existing V2 tool envelope:
 
-- `v`: `2`
-- `protocol`: `acp | codex | claude`
-- `provider`: provider id string (e.g. `gemini`, `codex`, `opencode`, `claude`, `auggie`)
+- `v`: `3`
+- `protocol`: `native | acp`
+- `agent`: the closed qualified contribution identity `{ pluginId, localId }`
 - `rawToolName`: provider tool name
 - `canonicalToolName`: canonical renderer key
+
+The admitted runtime supplies `ToolNormalizationSourceV3` to the normalizer.
+An ACP message envelope can transport a native tool, so its envelope format
+does not determine provenance. Raw tool input cannot override that source.
+Loose metadata adjuncts such as `sessionMode: 'local_control'` remain intact.
+Canonical Diff metadata also retains `provider`, `sessionId` and `turnId` for
+change correlation. These adjuncts do not replace V3 `agent` provenance.
+
+`tools/v2/meta.ts#resolveToolEnvelopeMeta` decodes both metadata epochs.
+It maps historical native protocol tags to `native`, preserving the historical
+provider in an explicit legacy arm without inventing a qualified identity.
+`ToolHappierMetaV2Schema` and `resolveToolEnvelopeMetaV2` retain their released
+closed vocabulary; V3 does not widen those released contracts.
 
 ### Canonical tool names
 
@@ -176,6 +191,9 @@ Canonical tool names are selected so UI renderers can be provider-agnostic. The 
 - `canonicalizeToolNameV2(...)` in `apps/cli/src/agent/tools/normalization/index.ts`
 
 Per-tool normalization is implemented in `families/*` (intention-based groupings like search/tools, file edits, etc.).
+Agent-owned aliases and native wrappers are decoded by the Agent's plugin before
+shared semantic normalization. ACP wrapper decoding uses observed transport
+provenance; a user-shaped input alone cannot authorize unwrapping.
 
 ---
 
@@ -197,6 +215,11 @@ Optional overrides:
 Implementation:
 
 - `apps/cli/src/agent/tools/trace/toolTrace.ts`
+- `apps/cli/src/agent/tools/trace/toolTraceEvent.ts` owns the trace format and reader.
+
+Current development trace writers emit V2 JSONL with the same qualified source
+facts. Fixture readers retain released V1 JSONL without manufacturing a plugin
+identity for its provider tag.
 
 ### Curated fixtures (v1)
 

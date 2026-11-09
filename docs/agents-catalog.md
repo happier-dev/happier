@@ -46,6 +46,18 @@ exposure, and native permission-mode controls remain hidden. Cancellation
 closes and reloads the native session to stop pending tasks as well as active
 continuations. A detached idle shell creates no second activity owner.
 
+## Structured questions (0.3 development)
+
+The canonical transient question declaration carries optional `minSelections`
+and `maxSelections` for multiple-choice questions and `allowNote` for a separate
+comment. Selection bounds count selected options only. Custom text and notes do
+not satisfy a selection minimum or consume its maximum.
+
+Session question responses keep their existing per-question `answers` arrays.
+Optional `answerDetails` preserves `freeText` and `note` separately under the same
+question ids through the public Action, Session RPC, SDK, and native interaction
+result. Existing clients can continue sending the original answer arrays.
+
 ## Session compaction capabilities and preferences (0.3 development)
 
 The Agent definition owns `capabilities.sessions.compaction`: `events: true`,
@@ -57,6 +69,12 @@ An opened runtime's published capability takes precedence over the catalog;
 omitted or null compaction in that publication means unsupported. Before open,
 the plugin's existing terminal-presentation selection can supply the selected
 mode's descriptor without the host interpreting its opaque runtime descriptor.
+
+The shared Session-controls owner projects manual compact availability as
+`supported`, `unsupported` with the existing `unsupported` reason, or `unknown`
+when capability evidence is absent. Session status, the plugin UI Session reader
+and composer suggestions consume this result. A published events-only descriptor
+does not enable manual compact; native compact execution retains its own refusal.
 
 In 0.3 development, the opt-in `codingPromptBehaviorV1.sessionCompactionNudge`
 preference defaults off. The shared base prompt reads the published Session
@@ -380,6 +398,13 @@ does not create another Agent identity or runtime registry. The tolerant stored
 target reader maps the 0.2 `{ kind: 'configuredAcpBackend', backendId }` selection
 to this contribution and the same definition id; new requests and writes use the
 strict current target.
+
+The current configured selection owner also supplies the qualified contribution
+key, runtime descriptor, runtime authority and Session flavor. Machine inventory
+and install jobs retain that key with the definition id, within the admitted
+Account's existing namespace. CLI dispatch resolves the declared routing id
+separately; a local `custom-acp` routing or retained descriptor does not become
+the current published instance identity.
 
 Configured definitions can declare `runtime.permissionModeMapping`, using the
 same strict permission-intent mapping schema as authored ACP contributions.
@@ -747,6 +772,10 @@ then layers selected Connected Account materialization on top. The cold-probe sa
 removes unrelated ambient credentials; only explicitly selected profile/account material is added
 back before the Agent contribution runs. Model, mode, config-option, and passive-setup probes all
 consume that same environment and include the selected profile identity in their cache scope.
+In 0.3 development source, the sanitizer takes executable overrides, native-home keys and
+declared control keys from the selected Agent contribution. It preserves common operating-system
+keys without scanning the Agent catalog or admitting ambient authentication declarations. The
+shared passive-setup result is `AgentPassiveRealtimeSetupResultV1`; its wire shape is unchanged.
 In development source, every discovery method validates supplied Connected Account bindings;
 malformed input returns `connected-service-preflight-failed` before credential resolution.
 The app's shared capability invocation keeps CLI preflight replies under the daemon's native
@@ -786,13 +815,14 @@ It receives only that operation's Connected Accounts service and sanitized launc
 ordinary catalog callbacks continue to receive environment presence facts. The host removes
 prepared assets before retiring account materialization. Its complete prepared environment also
 retains explicit key removals; the daemon cannot reintroduce a removed native home. OpenCode,
-Pi use the same qualified-account preparer for this path and Session launch, so
+Pi and Oh My Pi use the same qualified-account preparer for this path and Session launch, so
 pre-start discovery sees the selected account's native configuration and request-auth assets.
 Oh My Pi declares its native credential environment destinations from its Connected Account
 purposes. Catalog probes and daemon launch prerequisites consume the same qualified launch
 materializer before running `omp models --json`; neither path performs separate account
-preparation or model discovery. Direct Session and execution-run opens retain their qualified
-account preparation and lifecycle subscriptions.
+preparation or model discovery. Direct Session and execution-run opens use that same account
+preparation. Sessions retain authority-change observation; finite runs release observation
+after native admission and retain their admitted credentials until explicit disposal.
 An unavailable catalog preserves an Agent's declared freeform selection capability, allowing
 an explicit model choice without treating discovery failure as proof that selection is unsupported.
 Explicit CLI model probes, including configured ACP definitions, run on the selected Machine.
@@ -802,6 +832,13 @@ the same client and model normalizer as bound Sessions. Standalone CLI model lis
 a second discovery source. Runtime-id and equivalent concrete Agent-target probes share one cached
 observation; selected accounts, profiles, runtime variants and configured definitions retain their
 separate scopes. OpenCode ACP discovery uses the host's native Session-controls snapshot instead.
+
+In 0.3 development source, OpenCode's qualified account descriptors own its
+purpose, service, credential kind and native delivery facts. Its manifest,
+supported-service projection, request-auth origins and native credential
+suppression derive from those same descriptors. Adding account support changes
+that declaration and its native serializer together; it does not add a second
+eligibility list in model discovery or launch.
 
 In development source, a declared stdio ACP preflight command also supplies model, mode and
 config-option discovery through the same host process and authentication owner. These reads
@@ -896,6 +933,14 @@ response contract has only optional metadata in the
 [ACP v0.10.8 schema](https://github.com/agentclientprotocol/agent-client-protocol/blob/v0.10.8/schema/schema.unstable.json);
 the current protocol prefers
 [session configuration options](https://agentclientprotocol.com/protocol/v1/session-config-options).
+
+In development source, an ACP Agent can project its public model catalog with
+`models.projectAvailableModels`. The shared Session publication owner applies that
+projection to both catalog rows and model configuration choices, while retaining
+native active-model state and controls for acknowledged model changes. Grok uses
+this boundary for selected Connected Accounts because its native ACP catalog can
+contain bundled fallback rows without exposing whether account discovery succeeded.
+Its model-list preflight consumes the same unavailable-catalog fact.
 
 In the current development source, daemon model, mode and config probes demand the exact Agent
 registration from the authoritative plugin runtime and retain its lease for the operation.
@@ -1422,6 +1467,18 @@ through the existing Account/Machine-scoped projection and uses one shared neutr
 when no valid hue is declared. Usage Agent series consume this owner; magnitude
 ramps remain presentation-owned. Hue accompanies the Agent's mark and name and
 never establishes Agent identity or routing.
+
+In 0.3 development source, `contributes.agents[].ui.behavior.accountingSourcePresentation`
+declares accounting source rows as `{ sourceId, title }`. The title uses the existing
+localized string shape: a string or `{ key, fallback, params? }`. Bundled Agents
+author the same rows in their UI descriptor. The existing behavior projection
+feeds Usage's source labels and source-to-Agent filter identity, including an
+installed Agent's qualified identity. Historical accounting IDs stay unchanged;
+different sources from one Agent can keep distinct titles.
+
+Analytics reads these already-published declarations without discovering native
+sources. The opened native-source inventory supplies its exact accounting IDs
+through `UsageSourceV1.accountingSources`; it does not own the presentation map.
 
 In 0.3 development source, full bundled-plugin generation publishes Agent ids,
 contribution identities, shared definitions, and UI cores from the current authored
@@ -1958,9 +2015,11 @@ command and release-selection helpers are confined to the daemon-realm
 `@happier-dev/plugin-sdk/managed-services/native` entry point, shared by the plugin
 and host instead of imported from a bundled plugin package.
 
-Codex's configured native-home policy lives in
-`packages/protocol/src/agents/codex/nativeHomePolicy.ts`. Its state-sharing
-declaration and standalone pet discovery consume the same policy. The SDK's
+In 0.3 development source, Codex's configured native-home facts live with its
+Agent plugin in `packages/plugins/codex/src/agent/nativeHome.ts`. Its state-sharing
+declaration supplies the existing data-only Protocol projection at
+`packages/protocol/src/agents/codex/nativeHomePolicy.ts`; standalone pet discovery
+and retained SDK imports consume that projection. The SDK's
 `fs/nativeHome.ts` owns shared configured-path resolution and physical custody
 for connected-service profile/group enumeration. Custody stops at the home:
 intentional shared-state symlinks inside it remain supported. This does not add a

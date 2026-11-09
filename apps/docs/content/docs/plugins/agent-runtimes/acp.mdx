@@ -233,6 +233,13 @@ heuristics. This optional executable contract requires the matching development
 host; it is separate from the ACP wire epoch and a declarative manifest's
 data-only definition.
 
+In 0.3 development, `toolNameResolver` can return a tool-name string or a
+`{ toolName, input }` projection when your native wrapper also changes the input.
+The host applies that same projection to tool updates and permission requests,
+including awaitable plugin callbacks. Decode native aliases and wrappers in the
+plugin; leave shared tool-family normalization to the host. A wrapper codec must
+use observed ACP provenance rather than trusting a wrapper-shaped user input.
+
 If your Agent temporarily emits a nonstandard prompt stop reason, the same
 codec object can implement `projectStopReason(raw)`. Return an equivalent ACP
 v1 value, or `null` when there is no equivalent. Unknown reasons end safely with
