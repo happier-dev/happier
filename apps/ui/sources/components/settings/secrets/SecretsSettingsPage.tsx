@@ -279,6 +279,20 @@ export const SecretsSettingsPage = React.memo(function SecretsSettingsPage(props
         );
     }
 
+    if (selectedRef && !props.personalSecrets.some((secret) => secret.id === selectedRef)) {
+        const loading = props.sharedCatalogStatus === 'loading';
+        return (
+            <ItemList keyboardShouldPersistTaps="handled">
+                <SurfaceStateCard
+                    testID={loading ? 'saved-secret-catalog-loading' : 'saved-secret-unavailable'}
+                    kind={loading ? 'loading' : 'unavailable'}
+                    title={t(loading ? 'common.loading' : 'secrets.catalog.unavailableName')}
+                    accessibilitySemantics="status"
+                />
+            </ItemList>
+        );
+    }
+
     return (
         <ItemList keyboardShouldPersistTaps="handled">
             <SettingsPageHeader description={t('secretsSettings.purpose')} />

@@ -135,6 +135,40 @@ describe('SecretUsedBySection', () => {
 });
 
 describe('SecretsSettingsPage', () => {
+    it('shows unavailable for an absent requested secret in another Account, while retaining its ordinary empty collection', async () => {
+        const foreign = ownedEntry();
+        const { screen, props } = await renderPage({
+            scope: { serverId: 'home', accountId: 'other-account' },
+            personalSecrets: [], sharedEntries: [], selectedRef: foreign.ref, sharedCatalogStatus: 'loading',
+        }, 'other-account');
+        expect(screen.findByTestId('saved-secret-catalog-loading')).not.toBeNull();
+        expect(screen.findByTestId('saved-secret-unavailable')).toBeNull();
+
+        await screen.update(<SecretsSettingsPage {...props} sharedCatalogStatus="ready" />);
+        expect(screen.findAllByProps({ testID: 'saved-secret-unavailable', kind: 'unavailable' })).not.toHaveLength(0);
+        expect(screen.findByTestId('saved-secret:empty')).toBeNull();
+        expect(screen.findByTestId('saved-secret-add')).toBeNull();
+        expect(screen.findByTestId(`saved-secret:${foreign.ref}:header`)).toBeNull();
+        for (const control of ['rotate', 'manageAccess', 'delete', 'reveal', 'copy']) {
+            expect(screen.findByTestId(`saved-secret:${foreign.ref}:${control}`)).toBeNull();
+        }
+        expect(screen.getTextContent()).not.toContain(foreign.name);
+
+        await screen.update(<SecretsSettingsPage {...props} sharedCatalogStatus="ready" selectedRef={null} />);
+        expect(screen.findByTestId('saved-secret-unavailable')).toBeNull();
+        expect(screen.findByTestId('saved-secret:empty')).not.toBeNull();
+        await screen.pressByTestIdAsync('saved-secret-add');
+        expect(props.onAdd).toHaveBeenCalledOnce();
+    });
+
+    it('keeps an owned personal selection available through its existing row', async () => {
+        const { screen } = await renderPage({ selectedRef: PERSONAL.id });
+        expect(screen.findByTestId('saved-secret-unavailable')).toBeNull();
+        expect(screen.findByTestId(`saved-secret:${PERSONAL.id}:header`)).not.toBeNull();
+        expect(screen.getTextContent()).toContain(PERSONAL.name);
+        expect(screen.getTextContent()).not.toContain('sk-never-rendered');
+    });
+
     it('beside the Credentials rail, leaves your secrets to it and asks for one with Add as the next step', async () => {
         const first = ownedEntry();
         const { renderInCollectionLayout } = await import('@/dev/testkit/render/renderInCollectionLayout');
