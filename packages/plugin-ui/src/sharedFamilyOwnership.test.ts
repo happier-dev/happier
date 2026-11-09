@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, posix, resolve } from 'node:path';
 
 import * as ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
@@ -43,9 +43,9 @@ const APPROVED_CATALOG_VOCABULARY = [
   'Text', 'Heading', 'Label',
   'Icon', 'Image', 'StoredImage', 'BrandMark', 'QRCode',
   'Divider', 'Badge', 'Metadata', 'Link',
-  'Markdown', 'CodeBlock', 'SceneArt',
+  'Markdown', 'CodeBlock', 'ContentPreview', 'SceneArt',
   'Spinner', 'Status', 'ReviewSeverity',
-  'ApprovalPrompt', 'ApprovalPendingNotice', 'Timeline',
+  'ApprovalPrompt', 'ApprovalFields', 'ApprovalPendingNotice', 'Timeline',
   'State', 'LoadingState', 'EmptyState', 'ErrorState',
   'Button', 'IconButton',
   // Owner ruling 2026-11-07 "Agent actions: one shared flow": one split for every agent action.
@@ -53,10 +53,10 @@ const APPROVED_CATALOG_VOCABULARY = [
   'Action.Control', 'Action.Execute', 'Action.Copy', 'Action.OpenExternal', 'Action.OpenSurface', 'Action.Refresh',
   'ActionPanel', 'ActionPanel.Section',
   'List', 'List.Section', 'List.Item', 'Item', 'ItemGroup', 'ItemAddRow',
-  'CountedDisclosureItem', 'TechnicalDetailsDisclosure',
+  'CountedDisclosureItem', 'TechnicalDetailsDisclosure', 'WorkflowRunFoldHeader',
   'List.SelectionActionBar', 'ListSelectionActionBar',
   'ListMultiSelectionProvider', 'createListMultiSelectionStore',
-  'Form', 'Field', 'TextField', 'Toggle', 'Checkbox', 'Select', 'ValidationMessage',
+  'Form', 'Field', 'TextField', 'Toggle', 'Checkbox', 'Select', 'ValidationMessage', 'PropertyList', 'RelationList',
   'Form.Field', 'Form.TextField', 'Form.Toggle', 'Form.Select', 'Form.ValidationMessage', 'Form.Actions',
   'Popover', 'Dropdown', 'Menu', 'SheetMenu', 'ContextMenu',
   'Tabs', 'Tabs.Item',
@@ -82,17 +82,18 @@ const APPROVED_CATALOG_VOCABULARY = [
   // configuration-surfaces pilot (consumed by that plan): measured list+detail and column layouts.
   'ListDetailLayout', 'Columns', 'Column',
   // r0.41 (Triage plan): the generic Collection (table, list, board, grid and their detail containers).
-  'Collection', 'CollectionLoadingRows', 'CollectionToolbar',
-  // Census reconciliation: exports already public in the author barrel.
-  'RowStatusLine', 'HappierRequesterDisclosureContent', 'widgetFootprintBodyRows',
-  // OB-FIX-PLUGINUI: the needs-you highlight Happier's own lists draw.
-  'CollectionRowNeedsYouHighlight',
+  'Collection', 'CollectionAddMenu', 'CollectionConditionEditor', 'CollectionLoadingRows', 'CollectionToolbar',
   // Embeddable Happier plan 05: a host-mediated live Session (one controller, composable parts).
   'SessionProvider', 'SessionTranscript', 'SessionComposer', 'SessionChat',
   // Pane states and shell columns: existing public adapters over shared presentation owners.
   'FreshnessLine', 'NavigationList', 'NavigationList.Group', 'NavigationList.Row',
-  'DetailsPane', 'DetailsPaneFooter', 'PaneHeaderContent', 'Avatar', 'AgentCursor', 'PresenceCapsule', 'StatusCapsule',
-  'TaskStatusGlyph',
+  'DetailsPane', 'DetailsPaneFooter', 'DetailsPaneOpenAsPageButton', 'PaneHeaderContent', 'Avatar', 'AgentCursor', 'PresenceCapsule', 'StatusCapsule',
+  'TaskStatusGlyph', 'ProgressRing', 'CheckStatusGlyph', 'AnsiText',
+  'HappierPublicProfile', 'HappierPublicProfileWidget', 'HappierPublicProfileDataProvider',
+  'UsageDailyChart', 'UsageRhythmChart', 'UsagePeriodSummaryBody', 'UsageFootprintBody', 'UsageSourceCoverageBody',
+  'UsageBreakdownsBody', 'UsageOutcomesBody', 'UsageRecapBody',
+  'UsageNinetyPlanets', 'UsageStreakThread', 'UsageWeeksSkyline', 'UsageAroundThePeriod', 'UsageDaysOnSurface', 'UsageRingedByStreaks',
+  'UsageAgentMoons', 'UsageMachines', 'UsageProjects', 'UsageAtmosphere',
   'UsageSkyOfDays', 'UsageWeekTide', 'UsageDaylight', 'UsageDayInAgents', 'UsageScore', 'UsageOrbit', 'UsageCrew',
   'UsageAgentRiver', 'UsageShipped', 'UsageConstellation', 'UsagePlanetPortrait', 'UsagePersonalRecords', 'UsageSteeringTide', 'UsageRunLength',
   // Entity drag-and-drop r1: declared sources/targets join the mounted host lifecycle.
@@ -102,17 +103,31 @@ const APPROVED_CATALOG_VOCABULARY = [
   // Widgets platform: declared areas delegate to the incumbent mounted host.
   'WidgetSurface',
   // Public setup and Voice author adapters documented by docs/plugin-platform.md.
-  'SetupSteps', 'SetupBlockTile', 'SetupBlockGrid', 'VoiceMarkArt', 'VoicePresence', 'VoiceMark', 'VoiceStatusLine', 'VoiceTransport', 'VoiceCompactTranscript', 'StatusCell', 'DictationButton',
+  'SetupSteps', 'SetupBlockTile', 'SetupBlockGrid', 'VoiceMarkArt', 'StatusCell', 'DictationButton',
+  'VoicePresence', 'VoiceMark', 'VoiceStatusLine', 'VoiceTransport', 'VoiceCompactTranscript',
   // Lane 12 Machines: the typed-or-picked local date and time (a provisioner's lease or expiry input).
   'LocalDateTimeField',
   // Lane 12 Projects: the widget-body glance row and the lines-added/removed readout, one owner each.
   'WidgetGlanceRow', 'DiffStat',
+  // Lane 12 Scripts/Session guidance: the inline command chip set inside a localized sentence.
+  'InlineCode',
+  // BADGEPUBLIC (Forge L05A / D-23): the composer instrument strip's status item, one owner for core and authors.
+  'ComposerStatusBadge',
   // C3 DISC-13: the existing Discussion frame shared with external author threads.
   'ThreadMessage',
   'ReplyQuote',
+  // INT-PLUGINREACH: who sent a message, from the host-classified Account label.
+  'AccountByline',
+  // Census reconciliation: exports already public in the author barrel.
+  'RowStatusLine', 'HappierRequesterDisclosureContent', 'SessionCard', 'BotFace', 'PageAsideColumns', 'PagePinnedBar', 'KeyboardStickyFooter', 'widgetFootprintBodyRows',
+  // OB-FIX-PLUGINUI: the spaces strip and needs-you highlight Happier's own lists draw.
+  'CollectionSavedViewsStrip',
+  'CollectionRowNeedsYouHighlight',
   // C2 U4: the answer another session returned to an Ask, shared by core and external authors.
   'ReturnedAnswerQuote',
   'FollowPolicyEditor',
+  // Cloudflare integrations A08 (plan §5.1): one endpoint's public request headers at one layer.
+  'EndpointHeadersEditor',
   // C3/C4 R7: one host-mediated, controlled participant choice/search presentation.
   'ExecutableParticipantPicker',
   // C6/C5 (N3 FR1-10): the controlled Memory duplicate choice and the Doc suggested-edit card.
@@ -122,7 +137,12 @@ const APPROVED_CATALOG_VOCABULARY = [
   // Capabilities A7 ruling 2: Where it's on, engine-agnostic (computed state in, the person's choice out as an intent).
   'WhereItsOnControl',
   // Capabilities A7 ruling 1: the Add dialog's body (tabs, catalog list, footer, registry selector); the frame stays the host's.
-  'CapabilityAddBody',
+  'CapabilityAddBody', 'CapabilityAddDetailAction',
+  'CapabilityListingSections',
+  // Public shared adapters already consumed by core, plugins or the maintained author reference.
+  'AvatarStack', 'CollectionConditionTokens', 'CollectionSpaceIcon', 'CollectionTitleButton',
+  'EntityFlatReorderList', 'HorizontalScrollEdgeMask', 'ModalCardFooterActions', 'PageLoadingRows',
+  'PlanChecklistCard', 'RegistryShelf', 'RegistryShelfAddControl', 'RegistrySourcesUnavailable',
 ] as const;
 
 type DeclarativeDisposition = Readonly<{
@@ -472,6 +492,26 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     declarative: { kind: 'not-applicable', reason: 'Declarative actions carry semantic labels; arbitrary icon-only controls are not nodes.' },
   },
   {
+    publicName: 'Action.Control',
+    propTypeName: 'ActionControlProps',
+    family: 'Hosted Action control',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    // This adapter registers with the host-owned Action slot; it draws no parallel button in the author tree.
+    sharedModule: 'components/ActionControl.tsx',
+    sharedSymbol: 'ActionControl',
+    pluginOwner: { module: 'components/ActionControl.tsx', symbol: 'ActionControl' },
+    coreConsumers: [],
+    positiveConsumer: {
+      kind: 'plugin-surface',
+      pathFromRepoRoot: 'packages/plugins/scm-github/src/ui/actions/local/LocalActRunFormView.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'The mounted host owns preparation, approval and execution; V2 has no Action control node.' },
+  },
+  {
     publicName: 'Action.Execute',
     propTypeName: 'ActionExecuteProps',
     family: 'Action',
@@ -777,6 +817,63 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     },
     devMountSymbols: ['CountedDisclosureItem as PluginCountedDisclosureItem'],
     declarative: { kind: 'not-applicable', reason: 'The fold carries executable React details; declarative documents retain their list/item composition.' },
+  },
+  {
+    publicName: 'WorkflowRunFoldHeader',
+    propTypeName: 'WorkflowRunFoldHeaderProps',
+    family: 'Workflow Run fold header',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/work/WorkflowRunFoldHeader.tsx',
+    sharedSymbol: 'HappierWorkflowRunFoldHeader',
+    pluginOwner: { module: 'components/WorkflowRunFoldHeader.tsx', symbol: 'WorkflowRunFoldHeader' },
+    coreConsumers: ['components/workflows/presentation/WorkflowRunFoldHeader.tsx'],
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/workflowPatternSurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'Run state, eligibility and navigation remain caller-owned; V2 has no workflow fold-header node.' },
+  },
+  {
+    publicName: 'PropertyList',
+    propTypeName: 'PropertyListProps',
+    family: 'Task properties',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'components/PropertyList.tsx',
+    sharedSymbol: 'PropertyList',
+    pluginOwner: { module: 'components/PropertyList.tsx', symbol: 'PropertyList' },
+    coreConsumers: [],
+    positiveConsumer: {
+      kind: 'plugin-surface',
+      pathFromRepoRoot: 'packages/plugins/triage/src/ui/detail/taskFields.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'Triage supplies controlled task properties and commit intents; V2 has no property editor node.' },
+  },
+  {
+    publicName: 'RelationList',
+    propTypeName: 'RelationListProps',
+    family: 'Task relations',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'components/RelationList.tsx',
+    sharedSymbol: 'RelationList',
+    pluginOwner: { module: 'components/RelationList.tsx', symbol: 'RelationList' },
+    coreConsumers: [],
+    positiveConsumer: {
+      kind: 'plugin-surface',
+      pathFromRepoRoot: 'packages/plugins/triage/src/ui/detail/taskFields.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'Triage owns relation reads, completeness and mutation intents; V2 has no task relation node.' },
   },
   {
     publicName: 'TechnicalDetailsDisclosure',
@@ -1143,7 +1240,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       ? []
       : [
           'components/plugins/permissions/PluginPermissionGrantSheet.tsx',
-          'components/plugins/shared/InstalledPluginBrandMark.tsx',
+          'components/ui/media/HappierBrandMark.tsx',
         ],
     positiveConsumer: {
       kind: 'plugin-surface',
@@ -1207,6 +1304,24 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     },
     devMountSymbols: ['CodeBlock as PluginCodeBlock'],
     declarative: { kind: 'not-applicable', reason: 'Preview V2 has Markdown but no standalone code-block node.' },
+  },
+  {
+    publicName: 'ContentPreview',
+    propTypeName: 'ContentPreviewProps',
+    family: 'Content preview',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/content/CollapsibleBody.tsx',
+    sharedSymbol: 'HappierCollapsibleBody',
+    pluginOwner: { module: 'components/ContentPreview.tsx', symbol: 'ContentPreview' },
+    coreConsumers: [],
+    // Actual author consumer: packages/triage-sources/src/ui/textPreview.tsx, reached by the installed
+    // scm-github/scm-gitlab/sentry/posthog/jira detailStory/activityTimeline consumers. This shared
+    // author module is not an exact direct plugin-surface render, so it does not claim graduation.
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'The author supplies reading content and disclosure labels; V2 has no clipped-preview node.' },
   },
   {
     publicName: 'DiffViewer',
@@ -1535,6 +1650,25 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     declarative: { kind: 'not-applicable', reason: 'Approval decisions require the host approval owner; V2 has no approval-prompt node.' },
   },
   {
+    publicName: 'ApprovalFields',
+    propTypeName: 'ApprovalFieldsProps',
+    family: 'Approval fields',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/interaction/ApprovalFields.tsx',
+    sharedSymbol: 'HappierApprovalFields',
+    pluginOwner: { module: 'components/ApprovalFields.tsx', symbol: 'ApprovalFields' },
+    coreConsumers: ['components/approvals/ActionApprovalFieldsCard.tsx'],
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/approvalFieldsSurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'Reviewed arguments and decision authority remain caller-owned; V2 has no approval-fields node.' },
+  },
+  {
     publicName: 'Timeline',
     propTypeName: 'TimelineProps',
     family: 'Timeline',
@@ -1835,6 +1969,42 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     declarative: { kind: 'not-applicable', reason: 'V2 has no collection node; a declarative surface uses List.' },
   },
   {
+    publicName: 'CollectionAddMenu',
+    propTypeName: 'CollectionAddMenuProps',
+    family: 'Collection add menu',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    // Core/author source mounts share one composition; loaded-platform and API gates remain separate.
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/collection/CollectionAddMenu.tsx',
+    sharedSymbol: 'HappierCollectionAddMenu',
+    pluginOwner: { module: 'components/CollectionAddMenu.tsx', symbol: 'CollectionAddMenu' },
+    coreConsumers: ['components/ui/lists/collection/CollectionAddMenu.tsx'],
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/collectionAddMenuSurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no collection-add-menu node; native and RNW authors supply held choices to the incumbent dropdown presenter.' },
+  },
+  {
+    publicName: 'CollectionConditionEditor',
+    propTypeName: 'CollectionConditionEditorProps',
+    family: 'Collection condition editor',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    // Core and plugin adapters share the editor; a maintained public product consumer is not yet recorded.
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/collection/CollectionConditionEditor.tsx',
+    sharedSymbol: 'HappierCollectionConditionEditor',
+    pluginOwner: { module: 'components/CollectionConditionEditor.tsx', symbol: 'CollectionConditionEditor' },
+    coreConsumers: ['components/ui/lists/collection/CollectionConditionEditor.tsx'],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no condition-editor node; controlled native surfaces consume the shared Collection condition model.' },
+  },
+  {
     publicName: 'CollectionLoadingRows',
     propTypeName: 'CollectionLoadingRowsProps',
     family: 'Collection loading rows',
@@ -1848,72 +2018,6 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     coreConsumers: [],
     devMountSymbols: [],
     declarative: { kind: 'not-applicable', reason: 'Collection loading is composed by its mounted owner.' },
-  },
-  {
-    publicName: 'RowStatusLine',
-    propTypeName: 'RowStatusLineProps',
-    family: 'Row status line',
-    disposition: 'required',
-    proofTier: 'behavior-owning',
-    phase: 'in-progress',
-    publiclyExported: true,
-    sharedModule: 'presentation/status/RowStatusLine.tsx',
-    sharedSymbol: 'HappierRowStatusLine',
-    pluginOwner: { module: 'components/RowStatusLine.tsx', symbol: 'RowStatusLine' },
-    coreConsumers: ['components/ui/status/RowStatusLine.tsx'],
-    positiveConsumer: {
-      kind: 'external-author-reference',
-      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/rowStatusLineSurface.tsx',
-    },
-  {
-    publicName: 'HappierRequesterDisclosureContent',
-    propTypeName: 'HappierRequesterDisclosureContentProps',
-    family: 'Requester disclosure',
-    disposition: 'required',
-    proofTier: 'behavior-owning',
-    phase: 'in-progress',
-    publiclyExported: true,
-    sharedModule: 'components/RequesterDisclosureContent.tsx',
-    sharedSymbol: 'HappierRequesterDisclosureContent',
-    pluginOwner: { module: 'components/RequesterDisclosureContent.tsx', symbol: 'HappierRequesterDisclosureContent' },
-    coreConsumers: ['components/machines/managed/RequesterDisclosure.tsx'],
-    positiveConsumer: {
-      kind: 'external-author-reference',
-      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/requesterDisclosureSurface.tsx',
-    },
-  {
-    publicName: 'widgetFootprintBodyRows',
-    propTypeName: 'ComponentProps<typeof widgetFootprintBodyRows>',
-    family: 'Widget presentation',
-    disposition: 'required',
-    proofTier: 'simple',
-    phase: 'in-progress',
-    publiclyExported: true,
-    sharedModule: 'components/WidgetPresentation.tsx',
-    sharedSymbol: 'widgetFootprintBodyRows',
-    pluginOwner: { module: 'components/WidgetPresentation.tsx', symbol: 'widgetFootprintBodyRows' },
-    coreConsumers: [],
-    devMountSymbols: [],
-    declarative: { kind: 'not-applicable', reason: 'A pure size helper, not a node: it has no declarative form.' },
-  },
-  {
-    publicName: 'CollectionRowNeedsYouHighlight',
-    propTypeName: 'CollectionRowNeedsYouHighlightProps',
-    family: 'Collection row needs-you highlight',
-    disposition: 'required',
-    proofTier: 'behavior-owning',
-    phase: 'in-progress',
-    publiclyExported: true,
-    sharedModule: 'presentation/collection/CollectionRowNeedsYouLayer.tsx',
-    sharedSymbol: 'HappierCollectionRowNeedsYouLayer',
-    pluginOwner: { module: 'components/CollectionRowNeedsYouHighlight.tsx', symbol: 'CollectionRowNeedsYouHighlight' },
-    coreConsumers: ['components/ui/lists/collection/CollectionRowNeedsYouHighlight.tsx'],
-    positiveConsumer: {
-      kind: 'external-author-reference',
-      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/builtInParitySurface.tsx',
-    },
-    devMountSymbols: [],
-    declarative: { kind: 'not-applicable', reason: 'V2 has no row highlight node; the preference and motion facts stay with the host.' },
   },
   {
     publicName: 'CollectionToolbar',
@@ -1951,6 +2055,28 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     declarative: { kind: 'not-applicable', reason: 'Follow policy composition uses the public form and row owners.' },
   },
   {
+    publicName: 'EndpointHeadersEditor',
+    propTypeName: 'EndpointHeadersEditorProps',
+    family: 'Endpoint headers editor',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'components/EndpointHeadersEditor.tsx',
+    sharedSymbol: 'EndpointHeadersEditor',
+    pluginOwner: { module: 'components/EndpointHeadersEditor.tsx', symbol: 'EndpointHeadersEditor' },
+    coreConsumers: [
+      'components/settings/providers/detail/ProviderConnectionDetailSections.tsx',
+      'components/settings/providers/authoring/BuiltInProviderAuthoringView.tsx',
+    ],
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/endpointHeadersEditorSurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'Endpoint header layers compose the public row, field and disclosure owners.' },
+  },
+  {
     publicName: 'SheetMenu',
     propTypeName: 'SheetMenuProps',
     family: 'Sheet menu',
@@ -1985,9 +2111,101 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     devMountSymbols: [],
     declarative: { kind: 'not-applicable', reason: 'V2 has no task-status glyph node; Triage renders the public adapter.' },
   },
+  {
+    publicName: 'ProgressRing',
+    propTypeName: 'ProgressRingProps',
+    family: 'Progress ring',
+    disposition: 'required',
+    proofTier: 'simple',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'components/ProgressRing.tsx',
+    sharedSymbol: 'ProgressRing',
+    pluginOwner: { module: 'components/ProgressRing.tsx', symbol: 'ProgressRing' },
+    coreConsumers: [],
+    positiveConsumer: { kind: 'plugin-surface', pathFromRepoRoot: 'packages/plugins/triage/src/ui/list/taskColumns.tsx' },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no progress-ring node; Triage renders the public adapter.' },
+  },
+  {
+    publicName: 'CheckStatusGlyph',
+    propTypeName: 'CheckStatusGlyphProps',
+    family: 'Check status glyph',
+    disposition: 'required',
+    proofTier: 'simple',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/status/StatusDot.tsx',
+    sharedSymbol: 'HappierStatusDot',
+    pluginOwner: { module: 'components/CheckStatusGlyph.tsx', symbol: 'CheckStatusGlyph' },
+    coreConsumers: [],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no check-status node; forge CI surfaces render the public adapter.' },
+  },
+  {
+    publicName: 'AnsiText',
+    propTypeName: 'AnsiTextProps',
+    family: 'ANSI text',
+    disposition: 'required',
+    proofTier: 'simple',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/content/ansiTokens.ts',
+    sharedSymbol: 'tokenizeAnsiText',
+    pluginOwner: { module: 'components/AnsiText.tsx', symbol: 'AnsiText' },
+    coreConsumers: [],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no terminal-text node; the CI log viewer renders the public adapter.' },
+  },
+  ...[
+    { name: 'HappierPublicProfile', consumer: 'PublicProfileEditor.tsx' },
+    { name: 'HappierPublicProfileWidget', consumer: 'PublicProfileWidgetSurface.tsx' },
+  ].map((entry): GraduatedFamily => ({
+    publicName: entry.name,
+    propTypeName: `ComponentProps<typeof ${entry.name}>`,
+    family: entry.name,
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/account/PublicProfile.tsx',
+    sharedSymbol: entry.name,
+    pluginOwner: { module: 'components/PublicProfile.tsx', symbol: entry.name },
+    coreConsumers: [`components/settings/account/publicProfile/${entry.consumer}`],
+    coreAdapter: { module: 'components/PublicProfile.tsx', symbol: entry.name },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'The public profile renderer consumes an admitted view, not a declarative page node.' },
+  })),
+  {
+    publicName: 'HappierPublicProfileDataProvider',
+    propTypeName: 'ComponentProps<typeof HappierPublicProfileDataProvider>',
+    family: 'Public profile data projection',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'components/PublicProfile.tsx',
+    sharedSymbol: 'HappierPublicProfileDataProvider',
+    pluginOwner: { module: 'components/PublicProfile.tsx', symbol: 'HappierPublicProfileDataProvider' },
+    coreConsumers: ['components/settings/account/publicProfile/PublicProfileWidgetSurface.tsx'],
+    coreAdapter: { module: 'components/PublicProfile.tsx', symbol: 'HappierPublicProfileDataProvider' },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'The provider shares one admitted profile projection among mounted page/widget children; it has no declarative node or maintained exact public author consumer yet.' },
+  },
   // Theme adapters over the chart owners already consumed by core Usage. No
   // maintained plugin renders these exact public adapters yet, so they do not graduate.
   ...[
+    { name: 'UsageDailyChart', module: 'UsageDailyChart.tsx', consumer: 'UsageDailyWidget.tsx' },
+    { name: 'UsageRhythmChart', module: 'UsageRhythmChart.tsx', consumer: 'UsageRhythmWidget.tsx' },
+    ...['UsagePeriodSummaryBody', 'UsageFootprintBody', 'UsageSourceCoverageBody'].map((name, index) => ({ name,
+      module: 'UsageSummaryPanels.tsx', consumer: ['UsagePeriodSummaryWidget.tsx', 'UsageFootprintWidget.tsx', 'UsageSourcePanels.tsx'][index]! })),
+    { name: 'UsageBreakdownsBody', module: 'UsageBreakdownsBody.tsx', consumer: 'UsageBreakdownsWidget.tsx' },
+    { name: 'UsageOutcomesBody', module: 'UsageOutcomesBody.tsx', consumer: 'UsageOutcomesWidget.tsx' },
+    { name: 'UsageRecapBody', module: 'UsageRecapBody.tsx', consumer: 'UsageRecapWidget.tsx' },
+    ...['UsageNinetyPlanets', 'UsageStreakThread', 'UsageWeeksSkyline', 'UsageAroundThePeriod', 'UsageDaysOnSurface', 'UsageRingedByStreaks']
+      .map(name => ({ name, module: 'UsageCalendarForms.tsx', consumer: 'UsagePlanetFamilyBodies.tsx' })),
+    ...['UsageAgentMoons', 'UsageMachines', 'UsageProjects', 'UsageAtmosphere']
+      .map(name => ({ name, module: 'UsagePlanetFamily.tsx', consumer: 'UsagePlanetFamilyBodies.tsx' })),
     { name: 'UsageSkyOfDays', module: 'UsageSkyOfDays.tsx' },
     { name: 'UsageWeekTide', module: 'UsageRhythmEncodings.tsx' },
     { name: 'UsageDaylight', module: 'UsageRhythmEncodings.tsx' },
@@ -2007,7 +2225,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     sharedModule: `presentation/usage/charts/${entry.module}`,
     sharedSymbol: entry.name,
     pluginOwner: { module: 'components/UsageCharts.tsx', symbol: entry.name },
-    coreConsumers: ['components/settings/usage/widgets/UsageChartStyleBodies.tsx'],
+    coreConsumers: [`components/settings/usage/widgets/${'consumer' in entry ? entry.consumer : 'UsageChartStyleBodies.tsx'}`],
     coreAdapter: { module: 'components/UsageCharts.tsx', symbol: entry.name },
     devMountSymbols: [],
     declarative: { kind: 'not-applicable', reason: 'V2 has no Usage chart node; callers supply finite chart models and labels.' },
@@ -2149,6 +2367,34 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     declarative: { kind: 'not-applicable', reason: 'This mounted presentation uses the host binding; V2 has no corresponding node.' },
   })),
   {
+    publicName: 'DetailsPaneOpenAsPageButton',
+    propTypeName: 'DetailsPaneOpenAsPageButtonProps',
+    family: 'Host-mediated details page action',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    // The SDK author reference consumes this action; loaded Project and package gates remain pending.
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentationHost/context.ts',
+    sharedSymbol: 'useOptionalPluginUiPresentationHost',
+    pluginOwner: { module: 'components/DetailsPaneOpenAsPageButton.tsx', symbol: 'DetailsPaneOpenAsPageButton' },
+    coreConsumers: [
+      'components/settings/plugins/PluginSettingsHomeScreen.tsx',
+      'components/artifacts/ArtifactsBrowserScreen.tsx',
+    ],
+    coreAdapter: { module: 'components/DetailsPaneOpenAsPageButton.tsx', symbol: 'DetailsPaneOpenAsPageButton' },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no page-expansion node; authored DetailsPane actions retain navigation through replacePageLocation.' },
+    hostComposition: {
+      adapter: { module: 'components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx', symbol: 'createPluginUiPrivatePresentationHost' },
+      physicalHost: {
+        module: 'components/ui/buttons/IconButton.tsx',
+        symbol: 'IconButton',
+        callbackSymbol: 'renderDetailsPaneOpenAsPageButton',
+      },
+    },
+  },
+  {
     publicName: 'SetupSteps',
     propTypeName: 'SetupStepsProps',
     family: 'Setup steps',
@@ -2209,6 +2455,36 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     declarative: { kind: 'not-applicable', reason: 'V2 has no diff-stat node.' },
   },
   {
+    publicName: 'InlineCode',
+    propTypeName: 'InlineCodeProps',
+    family: 'Inline code',
+    disposition: 'required',
+    proofTier: 'simple',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/text/InlineCode.tsx',
+    sharedSymbol: 'HappierInlineCode',
+    pluginOwner: { module: 'components/InlineCode.tsx', symbol: 'InlineCode' },
+    coreConsumers: ['components/ui/text/InlineCode.tsx'],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 text nodes carry plain strings; inline code is composed by executable surfaces.' },
+  },
+  {
+    publicName: 'ComposerStatusBadge',
+    propTypeName: 'ComposerStatusBadgeProps',
+    family: 'Composer status item',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/status/ComposerStatusBadge.tsx',
+    sharedSymbol: 'HappierComposerStatusBadge',
+    pluginOwner: { module: 'components/ComposerStatusBadge.tsx', symbol: 'ComposerStatusBadge' },
+    coreConsumers: ['components/sessions/agentInput/status/AgentInputStatusBadge.tsx'],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no composer status-item node.' },
+  },
+  {
     publicName: 'ThreadMessage',
     propTypeName: 'ThreadMessageProps',
     family: 'Authored thread message',
@@ -2245,6 +2521,199 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     },
     devMountSymbols: [],
     declarative: { kind: 'not-applicable', reason: 'V2 has no reply-quote node; source admission is caller-owned.' },
+  },
+  {
+    publicName: 'RowStatusLine',
+    propTypeName: 'RowStatusLineProps',
+    family: 'Row status line',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/status/RowStatusLine.tsx',
+    sharedSymbol: 'HappierRowStatusLine',
+    pluginOwner: { module: 'components/RowStatusLine.tsx', symbol: 'RowStatusLine' },
+    coreConsumers: ['components/ui/status/RowStatusLine.tsx'],
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/rowStatusLineSurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no row status node; the caller holds the operation state.' },
+  },
+  {
+    publicName: 'HappierRequesterDisclosureContent',
+    propTypeName: 'HappierRequesterDisclosureContentProps',
+    family: 'Requester disclosure',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'components/RequesterDisclosureContent.tsx',
+    sharedSymbol: 'HappierRequesterDisclosureContent',
+    pluginOwner: { module: 'components/RequesterDisclosureContent.tsx', symbol: 'HappierRequesterDisclosureContent' },
+    coreConsumers: ['components/machines/managed/RequesterDisclosure.tsx'],
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/requesterDisclosureSurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no requester disclosure node; the caller supplies the model.' },
+  },
+  {
+    publicName: 'SessionCard',
+    propTypeName: 'SessionCardProps',
+    family: 'Session card',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'components/SessionCard.tsx',
+    sharedSymbol: 'SessionCard',
+    pluginOwner: { module: 'components/SessionCard.tsx', symbol: 'SessionCard' },
+    coreConsumers: [],
+    positiveConsumer: {
+      kind: 'plugin-surface',
+      pathFromRepoRoot: 'packages/plugins/triage/src/ui/detail/linkedSessions.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no Session card node; it reads a live Session through the mounted host.' },
+  },
+  {
+    publicName: 'BotFace',
+    propTypeName: 'BotFaceProps',
+    family: 'Bot face',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentationHost/context.ts',
+    sharedSymbol: 'useOptionalPluginUiPresentationHost',
+    pluginOwner: { module: 'components/BotFace.tsx', symbol: 'BotFace' },
+    coreConsumers: ['components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx'],
+    corePresentationMechanism: { module: 'presentationHost/context.ts', symbol: 'renderBotFace' },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no Bot face node; the host draws the face and its motion.' },
+  },
+  {
+    publicName: 'PageAsideColumns',
+    propTypeName: 'PageAsideColumnsProps',
+    family: 'Page layout',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentationHost/context.ts',
+    sharedSymbol: 'useOptionalPluginUiPresentationHost',
+    pluginOwner: { module: 'components/PageLayout.tsx', symbol: 'PageAsideColumns' },
+    coreConsumers: ['components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx'],
+    corePresentationMechanism: { module: 'presentationHost/context.ts', symbol: 'renderPageAsideColumns' },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no page column node; the host owns page geometry.' },
+  },
+  {
+    publicName: 'PagePinnedBar',
+    propTypeName: 'PagePinnedBarProps',
+    family: 'Page layout',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentationHost/context.ts',
+    sharedSymbol: 'useOptionalPluginUiPresentationHost',
+    pluginOwner: { module: 'components/PageLayout.tsx', symbol: 'PagePinnedBar' },
+    coreConsumers: ['components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx'],
+    corePresentationMechanism: { module: 'presentationHost/context.ts', symbol: 'renderPagePinnedBar' },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no pinned bar node; the host owns page geometry.' },
+  },
+  {
+    publicName: 'KeyboardStickyFooter',
+    propTypeName: 'KeyboardStickyFooterProps',
+    family: 'Page layout',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentationHost/context.ts',
+    sharedSymbol: 'useOptionalPluginUiPresentationHost',
+    pluginOwner: { module: 'components/PageLayout.tsx', symbol: 'KeyboardStickyFooter' },
+    coreConsumers: ['components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx'],
+    corePresentationMechanism: { module: 'presentationHost/context.ts', symbol: 'renderKeyboardStickyFooter' },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no keyboard footer node; the host owns keyboard avoidance.' },
+  },
+  {
+    publicName: 'widgetFootprintBodyRows',
+    propTypeName: 'ComponentProps<typeof widgetFootprintBodyRows>',
+    family: 'Widget presentation',
+    disposition: 'required',
+    proofTier: 'simple',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'components/WidgetPresentation.tsx',
+    sharedSymbol: 'widgetFootprintBodyRows',
+    pluginOwner: { module: 'components/WidgetPresentation.tsx', symbol: 'widgetFootprintBodyRows' },
+    coreConsumers: [],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'A pure size helper, not a node: it has no declarative form.' },
+  },
+  {
+    publicName: 'CollectionSavedViewsStrip',
+    propTypeName: 'CollectionSavedViewsStripProps',
+    family: 'Collection spaces strip',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/collection/CollectionSpacesStrip.tsx',
+    sharedSymbol: 'HappierCollectionSpacesStrip',
+    pluginOwner: { module: 'components/CollectionSavedViewsStrip.tsx', symbol: 'CollectionSavedViewsStrip' },
+    coreConsumers: ['components/ui/lists/collection/CollectionSpacesStrip.tsx'],
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/builtInParitySurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no saved-view node; selection, catalog and persistence stay with the caller.' },
+  },
+  {
+    publicName: 'CollectionRowNeedsYouHighlight',
+    propTypeName: 'CollectionRowNeedsYouHighlightProps',
+    family: 'Collection row needs-you highlight',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/collection/CollectionRowNeedsYouLayer.tsx',
+    sharedSymbol: 'HappierCollectionRowNeedsYouLayer',
+    pluginOwner: { module: 'components/CollectionRowNeedsYouHighlight.tsx', symbol: 'CollectionRowNeedsYouHighlight' },
+    coreConsumers: ['components/ui/lists/collection/CollectionRowNeedsYouHighlight.tsx'],
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/builtInParitySurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no row highlight node; the preference and motion facts stay with the host.' },
+  },
+  {
+    publicName: 'AccountByline',
+    propTypeName: 'AccountBylineProps',
+    family: 'Account byline',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/account/AccountByline.tsx',
+    sharedSymbol: 'HappierAccountByline',
+    pluginOwner: { module: 'components/AccountByline.tsx', symbol: 'AccountByline' },
+    coreConsumers: ['components/sessions/transcript/SessionMessageAccountByline.tsx'],
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/accountBylineSurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no byline node; Account classification and access stay with Protocol and the host.' },
   },
   {
     publicName: 'ReturnedAnswerQuote',
@@ -2403,6 +2872,44 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     declarative: { kind: 'not-applicable', reason: 'The body carries the author\'s install handlers and detail renderers; it is a mounted composition.' },
   },
   {
+    publicName: 'CapabilityAddDetailAction',
+    propTypeName: 'ComponentProps<typeof CapabilityAddDetailAction>',
+    family: 'Capability Add detail action',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/capabilities/CapabilityAddBody.tsx',
+    sharedSymbol: 'HappierCapabilityAddDetailAction',
+    pluginOwner: { module: 'components/CapabilityAddBody.tsx', symbol: 'CapabilityAddDetailAction' },
+    coreConsumers: ['components/capabilities/add/CapabilityAddModal.tsx'],
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/capabilityKitSurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'The mounted Add detail places its context-owned primary operation after the item identity.' },
+  },
+  {
+    publicName: 'CapabilityListingSections',
+    propTypeName: 'CapabilityListingSectionsProps',
+    family: 'Capability listing sections',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/capabilities/CapabilityListingSections.tsx',
+    sharedSymbol: 'HappierCapabilityListingSections',
+    pluginOwner: { module: 'components/CapabilityListingSections.tsx', symbol: 'CapabilityListingSections' },
+    coreConsumers: ['components/capabilities/add/CapabilityListingSections.tsx'],
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/capabilityKitSurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'Held listing facts rendered through a mounted composition, not a new document node.' },
+  },
+  {
     publicName: 'capabilityCollectionAnatomy',
     propTypeName: 'CapabilityCollectionAnatomyInput',
     family: 'Capability collection row anatomy',
@@ -2471,7 +2978,208 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       },
     },
   },
-  // These five public adapters request the existing physical host. They do not duplicate its
+  // Source ownership evidence only: none of these rows asserts loaded-platform graduation.
+  {
+    publicName: 'AvatarStack',
+    propTypeName: 'AvatarStackProps',
+    family: 'Avatar stack',
+    disposition: 'required',
+    proofTier: 'simple',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/content/AvatarStack.tsx',
+    sharedSymbol: 'HappierAvatarStack',
+    pluginOwner: { module: 'components/AvatarStack.tsx', symbol: 'AvatarStack' },
+    coreConsumers: ['components/ui/avatar/AvatarStack.tsx'],
+    positiveConsumer: { kind: 'external-author-reference', pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/builtInParitySurface.tsx' },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no avatar-stack node; executable surfaces supply the identity marks.' },
+  },
+  {
+    publicName: 'CollectionConditionTokens',
+    propTypeName: 'CollectionConditionTokensProps',
+    family: 'Collection condition tokens',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/collection/CollectionConditionTokens.tsx',
+    sharedSymbol: 'HappierCollectionConditionTokens',
+    pluginOwner: { module: 'components/CollectionConditionTokens.tsx', symbol: 'CollectionConditionTokens' },
+    coreConsumers: ['components/ui/lists/collection/CollectionConditionTokens.tsx'],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no condition-token node; callers own filter removal and saving. No maintained exact public consumer is recorded yet.' },
+  },
+  {
+    publicName: 'CollectionSpaceIcon',
+    propTypeName: 'CollectionSpaceIconProps',
+    family: 'Collection space icon',
+    disposition: 'required',
+    proofTier: 'simple',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/collection/CollectionSpaceIcon.tsx',
+    sharedSymbol: 'HappierCollectionSpaceIcon',
+    pluginOwner: { module: 'components/CollectionSpaceIcon.tsx', symbol: 'CollectionSpaceIcon' },
+    coreConsumers: ['components/ui/lists/collection/CollectionSpaceIcon.tsx'],
+    positiveConsumer: { kind: 'external-author-reference', pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/builtInParitySurface.tsx' },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no Space-mark node; callers supply already-held icon and favicon facts.' },
+  },
+  {
+    publicName: 'CollectionTitleButton',
+    propTypeName: 'CollectionTitleButtonProps',
+    family: 'Collection title trigger',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/collection/CollectionTitleButton.tsx',
+    sharedSymbol: 'HappierCollectionTitleButton',
+    pluginOwner: { module: 'components/CollectionTitleButton.tsx', symbol: 'CollectionTitleButton' },
+    coreConsumers: ['components/ui/lists/collection/CollectionTitleButton.tsx'],
+    positiveConsumer: { kind: 'external-author-reference', pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/builtInParitySurface.tsx' },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no collection-title trigger node; the caller owns the scope menu and selection.' },
+  },
+  {
+    publicName: 'EntityFlatReorderList',
+    propTypeName: 'EntityFlatReorderListProps',
+    family: 'Entity flat reorder list',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentationHost/context.ts',
+    sharedSymbol: 'useOptionalPluginUiPresentationHost',
+    pluginOwner: { module: 'components/EntityFlatReorderList.tsx', symbol: 'EntityFlatReorderList' },
+    coreConsumers: ['components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx'],
+    corePresentationMechanism: { module: 'presentationHost/context.ts', symbol: 'renderEntityFlatReorderList' },
+    positiveConsumer: { kind: 'plugin-surface', pathFromRepoRoot: 'packages/plugins/scm-github/src/ui/detail/subIssueOrder.tsx' },
+    hostComposition: {
+      adapter: { module: 'components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx', symbol: 'createPluginUiPrivatePresentationRenderers' },
+      physicalHost: { module: 'components/ui/lists/collection/collectionSpacesStripHost.tsx', symbol: 'PluginEntityFlatReorderList', callbackSymbol: 'renderEntityFlatReorderList' },
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no flat-reorder node; the existing Entity reorder host presents moves and the caller Action settles them.' },
+  },
+  {
+    publicName: 'HorizontalScrollEdgeMask',
+    propTypeName: 'HorizontalScrollEdgeMaskProps',
+    family: 'Horizontal scroll edge mask',
+    disposition: 'required',
+    proofTier: 'simple',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/layout/HorizontalScrollEdgeMask.tsx',
+    sharedSymbol: 'HappierHorizontalScrollEdgeMask',
+    pluginOwner: { module: 'components/HorizontalScrollEdgeMask.tsx', symbol: 'HorizontalScrollEdgeMask' },
+    coreConsumers: ['components/ui/scroll/HorizontalScrollEdgeMask.tsx'],
+    positiveConsumer: { kind: 'external-author-reference', pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/builtInParitySurface.tsx' },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no scroll-mask node; the host supplies native alpha-mask leaves while the shared owner supplies geometry.' },
+  },
+  {
+    publicName: 'ModalCardFooterActions',
+    propTypeName: 'ModalCardFooterActionsProps',
+    family: 'Modal card footer actions',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/interaction/ModalCardFooterActions.tsx',
+    sharedSymbol: 'HappierModalCardFooterActions',
+    pluginOwner: { module: 'components/ModalCardFooterActions.tsx', symbol: 'ModalCardFooterActions' },
+    coreConsumers: ['modal/components/card/ModalCardFooterActions.tsx'],
+    positiveConsumer: { kind: 'external-author-reference', pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/builtInParitySurface.tsx' },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no short-card footer node; the containing host owns sheet dismissal and callers own effects.' },
+  },
+  {
+    publicName: 'PageLoadingRows',
+    propTypeName: 'PageLoadingRowsProps',
+    family: 'Page loading rows',
+    disposition: 'required',
+    proofTier: 'simple',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/layout/PageLoadingRows.tsx',
+    sharedSymbol: 'HappierPageLoadingRows',
+    pluginOwner: { module: 'components/PageLoadingRows.tsx', symbol: 'PageLoadingRows' },
+    coreConsumers: ['components/ui/layout/PageLoadingRows.tsx'],
+    positiveConsumer: { kind: 'plugin-surface', pathFromRepoRoot: 'packages/plugins/triage/src/ui/comparisonPicker.tsx' },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no page-loading node; the mounted page and host supply header and column geometry.' },
+  },
+  {
+    publicName: 'PlanChecklistCard',
+    propTypeName: 'PlanChecklistCardProps',
+    family: 'Plan checklist card',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentationHost/context.ts',
+    sharedSymbol: 'useOptionalPluginUiPresentationHost',
+    pluginOwner: { module: 'components/PlanChecklistCard.tsx', symbol: 'PlanChecklistCard' },
+    coreConsumers: ['components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx'],
+    corePresentationMechanism: { module: 'presentationHost/context.ts', symbol: 'renderPlanChecklistCard' },
+    hostComposition: {
+      adapter: { module: 'components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx', symbol: 'createPluginUiPrivatePresentationRenderers' },
+      physicalHost: { module: 'components/systemTasks/planChecklist/PlanChecklistCard.tsx', symbol: 'PlanChecklistCard', callbackSymbol: 'renderPlanChecklistCard' },
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no plan-checklist node; the existing deployment/onboarding host renders caller-held execution and selection. No maintained exact public consumer is recorded yet.' },
+  },
+  {
+    publicName: 'RegistryShelf',
+    propTypeName: 'RegistryShelfProps',
+    family: 'Registry shelf',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/capabilities/RegistryShelf.tsx',
+    sharedSymbol: 'HappierRegistryShelf',
+    pluginOwner: { module: 'components/RegistryShelf.tsx', symbol: 'RegistryShelf' },
+    coreConsumers: ['components/capabilities/add/RegistryShelf.tsx'],
+    positiveConsumer: { kind: 'external-author-reference', pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/builtInParitySurface.tsx' },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no registry-shelf node; callers own acquisition, projection and registry Actions.' },
+  },
+  {
+    publicName: 'RegistryShelfAddControl',
+    propTypeName: 'RegistryShelfAddControlProps',
+    family: 'Registry shelf add control',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/capabilities/RegistryShelfAddControl.tsx',
+    sharedSymbol: 'HappierRegistryShelfAddControl',
+    pluginOwner: { module: 'components/RegistryShelf.tsx', symbol: 'RegistryShelfAddControl' },
+    coreConsumers: ['components/capabilities/add/RegistryShelf.tsx'],
+    positiveConsumer: { kind: 'external-author-reference', pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/builtInParitySurface.tsx' },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no registry-add control node; callers publish operation state and execute the add Action.' },
+  },
+  {
+    publicName: 'RegistrySourcesUnavailable',
+    propTypeName: 'RegistrySourcesUnavailableProps',
+    family: 'Registry sources unavailable',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/capabilities/RegistrySourcesUnavailable.tsx',
+    sharedSymbol: 'HappierRegistrySourcesUnavailable',
+    pluginOwner: { module: 'components/RegistryShelf.tsx', symbol: 'RegistrySourcesUnavailable' },
+    coreConsumers: ['components/capabilities/add/RegistrySourcesUnavailable.tsx'],
+    positiveConsumer: { kind: 'external-author-reference', pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/builtInParitySurface.tsx' },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no registry-outage node; callers provide classified read failures and their retry operation.' },
+  },
+  // These public adapters request the existing physical host. They do not duplicate its
   // presentation or lifecycle and are source-present, not loaded-platform graduated.
   ...[
     { publicName: 'SetupBlockTile', module: 'components/Setup.tsx', callback: 'renderSetupBlockTile',
@@ -2645,16 +3353,50 @@ function sourceDeclaresSymbol(source: string, symbol: string): boolean {
   return new RegExp(`(?:export\\s+)?(?:const|function)\\s+${symbol}\\b`, 'u').test(source);
 }
 
-function sourceDeclaresExportedType(source: string, typeName: string): boolean {
+function sourceDeclaresExportedType(
+  source: string,
+  typeName: string,
+  sharedOwner?: Readonly<{ importPath: string; symbol: string; source: string }>,
+): boolean {
   const component = /^ComponentProps<typeof (\w+)>$/u.exec(typeName)?.[1];
   if (component) {
     const file = ts.createSourceFile('public-owner.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-    return file.statements.some(statement => ts.isFunctionDeclaration(statement)
+    if (file.statements.some(statement => ts.isFunctionDeclaration(statement)
       && statement.name?.text === component
       && statement.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)
-      && statement.parameters.length === 1 && statement.parameters[0]?.type !== undefined);
+      && statement.parameters.length === 1 && statement.parameters[0]?.type !== undefined)) return true;
+    if (!sharedOwner) return false;
+    // A prop-free public alias has no local props declaration: verify the exact
+    // import and its zero-argument shared function instead of accepting any alias.
+    const alias = file.statements.flatMap(statement => ts.isVariableStatement(statement)
+      && statement.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)
+      ? [...statement.declarationList.declarations] : [])
+      .find(declaration => ts.isIdentifier(declaration.name) && declaration.name.text === component);
+    const target = alias?.initializer;
+    if (!target || !ts.isIdentifier(target)) return false;
+    const imported = file.statements.some(statement => {
+      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)
+        || statement.moduleSpecifier.text !== sharedOwner.importPath || statement.importClause?.isTypeOnly) return false;
+      const bindings = statement.importClause?.namedBindings;
+      return bindings && ts.isNamedImports(bindings) && bindings.elements.some(element => !element.isTypeOnly
+        && element.name.text === target.text && (element.propertyName?.text ?? element.name.text) === sharedOwner.symbol);
+    });
+    const shared = ts.createSourceFile('shared-owner.tsx', sharedOwner.source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    return imported && shared.statements.some(statement => ts.isFunctionDeclaration(statement)
+      && statement.name?.text === sharedOwner.symbol
+      && statement.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)
+      && statement.parameters.length === 0 && statement.type !== undefined);
   }
-  return new RegExp(`export\\s+(?:type|interface)\\s+${typeName}\\b`, 'u').test(source);
+  if (new RegExp(`export\\s+(?:type|interface)\\s+${typeName}\\b`, 'u').test(source)) return true;
+  if (!sharedOwner) return false;
+  const file = ts.createSourceFile('public-owner.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  return file.statements.some(statement => {
+    if (!ts.isExportDeclaration(statement) || !statement.moduleSpecifier
+      || !ts.isStringLiteral(statement.moduleSpecifier) || statement.moduleSpecifier.text !== sharedOwner.importPath
+      || !statement.exportClause || !ts.isNamedExports(statement.exportClause)) return false;
+    return statement.exportClause.elements.some(entry => entry.name.text === typeName
+      && sourceDeclaresExportedType(sharedOwner.source, entry.propertyName?.text ?? entry.name.text));
+  });
 }
 
 function coreConsumerReachabilitySource(consumer: string, source: string): string {
@@ -2784,7 +3526,12 @@ function catalogProblems(
       if (!sourceDeclaresSymbol(ownerSource, entry.pluginOwner.symbol)) {
         problems.push(`${entry.publicName} does not resolve its declared plugin owner`);
       }
-      if (!sourceDeclaresExportedType(ownerSource, entry.propTypeName)) {
+      const relativeSharedModule = posix.relative(posix.dirname(entry.pluginOwner.module), entry.sharedModule).replace(/\.tsx?$/u, '.js');
+      if (!sourceDeclaresExportedType(ownerSource, entry.propTypeName, {
+        importPath: relativeSharedModule.startsWith('.') ? relativeSharedModule : `./${relativeSharedModule}`,
+        symbol: entry.sharedSymbol,
+        source: sourceFor(entry.sharedModule),
+      })) {
         problems.push(`${entry.publicName} does not resolve its declared prop type ${entry.propTypeName}`);
       }
       if (/createElement\(\s*['"][^'"]+['"]/u.test(withoutCommentProse(ownerSource))) {
@@ -3134,7 +3881,7 @@ describe('graduated shared presentation families (§8.2)', () => {
       phase: 'in-progress',
       coreConsumers: [
         'components/plugins/permissions/PluginPermissionGrantSheet.tsx',
-        'components/plugins/shared/InstalledPluginBrandMark.tsx',
+        'components/ui/media/HappierBrandMark.tsx',
       ],
       positiveConsumer: {
         kind: 'plugin-surface',
@@ -3205,8 +3952,12 @@ describe('graduated shared presentation families (§8.2)', () => {
       .map((entry) => entry.publicName);
 
     expect(unfinished).toEqual([
+      'Action.Control',
       'ItemAddRow',
       'AgentActionButton',
+      'WorkflowRunFoldHeader',
+      'PropertyList',
+      'RelationList',
       'createListMultiSelectionStore',
       'ListMultiSelectionProvider',
       'ListSelectionActionBar',
@@ -3216,6 +3967,7 @@ describe('graduated shared presentation families (§8.2)', () => {
       'Image',
       'BrandMark',
       'StoredImage',
+      'ContentPreview',
       'DiffViewer',
       'ChangedFilesReview',
       'HostedAnchoredMenu',
@@ -3228,6 +3980,7 @@ describe('graduated shared presentation families (§8.2)', () => {
       'SessionChat',
       'ApprovalPendingNotice',
       'ApprovalPrompt',
+      'ApprovalFields',
       'Timeline',
       'WidgetPresentationProvider',
       'Step',
@@ -3246,13 +3999,22 @@ describe('graduated shared presentation families (§8.2)', () => {
       'ListDetailLayout',
       'Columns',
       'Column',
+      'CollectionAddMenu',
+      'CollectionConditionEditor',
       'CollectionLoadingRows',
-      'RowStatusLine', 'HappierRequesterDisclosureContent', 'widgetFootprintBodyRows',
-      'CollectionRowNeedsYouHighlight',
       'CollectionToolbar',
       'FollowPolicyEditor',
+      'EndpointHeadersEditor',
       'SheetMenu',
       'TaskStatusGlyph',
+      'ProgressRing',
+      'CheckStatusGlyph',
+      'AnsiText',
+      'HappierPublicProfile', 'HappierPublicProfileWidget', 'HappierPublicProfileDataProvider',
+      'UsageDailyChart', 'UsageRhythmChart', 'UsagePeriodSummaryBody', 'UsageFootprintBody', 'UsageSourceCoverageBody',
+      'UsageBreakdownsBody', 'UsageOutcomesBody', 'UsageRecapBody',
+      'UsageNinetyPlanets', 'UsageStreakThread', 'UsageWeeksSkyline', 'UsageAroundThePeriod', 'UsageDaysOnSurface', 'UsageRingedByStreaks',
+      'UsageAgentMoons', 'UsageMachines', 'UsageProjects', 'UsageAtmosphere',
       'UsageSkyOfDays', 'UsageWeekTide', 'UsageDaylight', 'UsageDayInAgents', 'UsageScore', 'UsageOrbit', 'UsageCrew',
       'UsageAgentRiver', 'UsageShipped', 'UsageConstellation', 'UsagePlanetPortrait', 'UsagePersonalRecords', 'UsageSteeringTide', 'UsageRunLength',
       'SceneArt',
@@ -3262,7 +4024,15 @@ describe('graduated shared presentation families (§8.2)', () => {
       'NavigationList.Row',
       'DragSource', 'DropTarget',
       'DetailsPane', 'DetailsPaneFooter', 'PaneHeaderContent', 'Avatar', 'AgentCursor', 'PresenceCapsule', 'StatusCapsule',
-      'SetupSteps', 'LocalDateTimeField', 'WidgetGlanceRow', 'DiffStat', 'ThreadMessage', 'ReplyQuote', 'ReturnedAnswerQuote', 'MemoryDuplicateChoice', 'capabilityCollectionAnatomy', 'DocEditProposal', 'ExecutableParticipantPicker', 'SetupBlockTile', 'SetupBlockGrid', 'VoiceMarkArt', 'VoicePresence', 'VoiceMark', 'VoiceStatusLine', 'VoiceTransport', 'VoiceCompactTranscript', 'StatusCell', 'DictationButton',
+      'DetailsPaneOpenAsPageButton',
+      'SetupSteps', 'LocalDateTimeField', 'WidgetGlanceRow', 'DiffStat', 'InlineCode', 'ComposerStatusBadge', 'ThreadMessage', 'ReplyQuote',
+      'RowStatusLine', 'HappierRequesterDisclosureContent', 'SessionCard', 'BotFace', 'PageAsideColumns', 'PagePinnedBar', 'KeyboardStickyFooter', 'widgetFootprintBodyRows',
+      'CollectionSavedViewsStrip', 'CollectionRowNeedsYouHighlight', 'AccountByline', 'ReturnedAnswerQuote', 'MemoryDuplicateChoice', 'CapabilityAddDetailAction', 'CapabilityListingSections', 'capabilityCollectionAnatomy', 'DocEditProposal', 'ExecutableParticipantPicker',
+      'AvatarStack', 'CollectionConditionTokens', 'CollectionSpaceIcon', 'CollectionTitleButton',
+      'EntityFlatReorderList', 'HorizontalScrollEdgeMask', 'ModalCardFooterActions', 'PageLoadingRows',
+      'PlanChecklistCard', 'RegistryShelf', 'RegistryShelfAddControl', 'RegistrySourcesUnavailable',
+      'SetupBlockTile', 'SetupBlockGrid', 'VoiceMarkArt',
+      'VoicePresence', 'VoiceMark', 'VoiceStatusLine', 'VoiceTransport', 'VoiceCompactTranscript', 'StatusCell', 'DictationButton',
     ]);
   });
 
@@ -3609,6 +4379,28 @@ describe('graduated shared presentation families (§8.2)', () => {
     const problems = catalogProblems([fixture], () => 'export type SurfaceProps = {}; export function Surface() {}');
 
     expect(problems).toContain('Surface does not resolve its declared prop type MissingSurfaceProps');
+  });
+
+  it('validates prop-free aliases only against their exact shared import and function', () => {
+    const source = "import { Shared } from './shared.js'; export const Public = Shared;";
+    const typeName = 'ComponentProps<typeof Public>';
+    const owner = { importPath: './shared.js', symbol: 'Shared',
+      source: 'export function Shared(): React.ReactElement | null { return null; }' };
+    expect(sourceDeclaresExportedType(source, typeName, owner)).toBe(true);
+    expect(sourceDeclaresExportedType(source.replace('= Shared;', '= Other;'), typeName, owner)).toBe(false);
+    expect(sourceDeclaresExportedType(source.replace('./shared.js', './other.js'), typeName, owner)).toBe(false);
+    expect(sourceDeclaresExportedType(source, typeName, {
+      ...owner, source: 'export function Shared(props: { label: string }): React.ReactElement | null { return null; }',
+    })).toBe(false);
+  });
+
+  it('validates public prop re-exports against their exact declared shared owner', () => {
+    const source = "export type { SharedProps as PublicProps } from './shared.js';";
+    const owner = { importPath: './shared.js', symbol: 'Shared', source: 'export type SharedProps = { label: string };' };
+    expect(sourceDeclaresExportedType(source, 'PublicProps', owner)).toBe(true);
+    expect(sourceDeclaresExportedType(source.replace('./shared.js', './other.js'), 'PublicProps', owner)).toBe(false);
+    expect(sourceDeclaresExportedType(source, 'MissingProps', owner)).toBe(false);
+    expect(sourceDeclaresExportedType(source, 'PublicProps', { ...owner, source: 'export type OtherProps = {};' })).toBe(false);
   });
 
   it('would reject a duplicate shared implementation owner in a fixture', () => {

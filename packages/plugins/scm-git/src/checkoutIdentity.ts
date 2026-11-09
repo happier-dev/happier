@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
-import { runScmCommand } from './runtime.js';
+import { getScmCommandIndeterminateErrorCode, runScmCommand } from './runtime.js';
 import { buildScmNonInteractiveEnv } from './providers/shared/nonInteractiveEnv.js';
 import { parseGitWorktreeListRecords } from './worktreeListParser.js';
 
@@ -51,14 +51,18 @@ export function isGitLinkedWorktreeIdentity(identity: GitCheckoutIdentity): bool
     return identity.gitDirPath !== identity.commonDirPath;
 }
 
-async function readGitValue(cwd: string, args: string[]): Promise<string | null> {
-    const result = await runScmCommand({
+function readGitCommand(cwd: string, args: string[]) {
+    return runScmCommand({
         bin: 'git',
         cwd,
         args,
         timeoutMs: 10_000,
         env: buildScmNonInteractiveEnv(),
     });
+}
+
+async function readGitValue(cwd: string, args: string[]): Promise<string | null> {
+    const result = await readGitCommand(cwd, args);
     if (!result.success) {
         return null;
     }
@@ -169,13 +173,15 @@ async function inspectGitCheckoutIdentityFromAdminFiles(cwd: string): Promise<Gi
 export async function inspectGitCheckoutIdentity(params: Readonly<{
     cwd: string;
 }>): Promise<GitCheckoutIdentity | null> {
-    const [headRevision, rawBranchName, gitDirPath, commonDirPath, worktreePath] = await Promise.all([
-        readGitValue(params.cwd, ['rev-parse', '--verify', 'HEAD']),
-        readGitValue(params.cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD']),
+    const [head, branch, gitDirPath, commonDirPath, worktreePath] = await Promise.all([
+        readGitCommand(params.cwd, ['rev-parse', '--verify', 'HEAD']),
+        readGitCommand(params.cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD']),
         readGitAbsolutePathValue({ cwd: params.cwd, pathArgs: ['--git-dir'] }),
         readGitCommonDirPath(params),
         readGitAbsolutePathValue({ cwd: params.cwd, pathArgs: ['--show-toplevel'] }),
     ]);
+    // A command that never completed cannot establish an unborn or detached checkout.
+    if (getScmCommandIndeterminateErrorCode(head) || getScmCommandIndeterminateErrorCode(branch)) return null;
 
     if (!gitDirPath || !commonDirPath || !worktreePath) {
         return await inspectGitCheckoutIdentityFromAdminFiles(params.cwd);
@@ -188,8 +194,8 @@ export async function inspectGitCheckoutIdentity(params: Readonly<{
     });
 
     return {
-        branchName: rawBranchName,
-        headRevision,
+        branchName: branch.success ? branch.stdout.trim() || null : null,
+        headRevision: head.success ? head.stdout.trim() || null : null,
         gitDirPath,
         commonDirPath,
         worktreePath,

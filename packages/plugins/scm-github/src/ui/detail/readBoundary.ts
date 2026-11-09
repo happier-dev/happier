@@ -1,13 +1,9 @@
 import type { TriageDetailSurfaceInputV1, TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 import type { PluginActionExecution } from '@happier-dev/plugin-ui';
-import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
+import { projectTriageSourceReadFailureV1, type TriageSourceReadFailureV1 } from '@happier-dev/triage-sources/runtime';
 
 /** UI-local transport facts; the source's published failure envelope stays unchanged. */
-export type GithubReadFailureV1 = TriageSourceFailureV1 & Readonly<{
-  retryable?: boolean;
-  diagnostics?: readonly PluginDiagnosticData[];
-  requestId?: string;
-}>;
+export type GithubReadFailureV1 = TriageSourceReadFailureV1;
 
 /** A result the surface could not read is a contract break, not an empty read. */
 export const UNREADABLE_RESULT: TriageSourceFailureV1 = Object.freeze({
@@ -27,16 +23,7 @@ export const ROUTE_UNAVAILABLE: TriageSourceFailureV1 = Object.freeze({
 });
 
 export function dispatchFailure(execution: ExecuteResult, fallbackCode: string): GithubReadFailureV1 {
-  const { status } = execution;
-  return Object.freeze({
-    class: status === 'error' ? 'transient' : 'unknown',
-    code: status === 'idle' || status === 'pending' ? 'github-detail-read-not-dispatched'
-      : 'code' in execution ? execution.code : fallbackCode,
-    ...(status === 'error' ? { retryable: execution.retryable, diagnostics: execution.diagnostics } : {}),
-    // A missing mutation receipt is uncertain, but these executions are finite reads.
-    ...(status === 'outcomeUnknown' ? { retryable: true } : {}),
-    ...('requestId' in execution && execution.requestId !== undefined ? { requestId: execution.requestId } : {}),
-  });
+  return projectTriageSourceReadFailureV1(execution, fallbackCode, 'github-detail-read-not-dispatched');
 }
 
 export type ExecuteResult = PluginActionExecution;

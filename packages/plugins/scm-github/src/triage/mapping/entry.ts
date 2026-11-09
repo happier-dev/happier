@@ -1,6 +1,6 @@
 import { buildGithubEntryLocalRef } from '../identity.js';
 import { buildGithubEntryLocator } from '../locator.js';
-import { GITHUB_API_ORIGIN } from '../../observations/githubProviderContracts.js';
+import { GITHUB_API_ORIGIN, tryReadGithubPositiveDecimal } from '../../observations/githubProviderContracts.js';
 import {
   MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
   MAX_TRIAGE_REPOSITORY_PATH_UTF8_BYTES_V1,
@@ -61,15 +61,6 @@ function isRecord(value: unknown): value is JsonRecord {
 
 function readTrimmedString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function readPositiveDecimal(value: unknown): string | null {
-  if (typeof value === 'number') {
-    return Number.isSafeInteger(value) && value >= 1 ? String(value) : null;
-  }
-  if (typeof value !== 'string') return null;
-  const candidate = value.trim();
-  return /^[1-9][0-9]*$/u.test(candidate) ? candidate : null;
 }
 
 function readEpochMs(value: unknown): number | null {
@@ -145,7 +136,7 @@ function readRepositoryFacts(raw: JsonRecord): Readonly<{
         owner,
         name,
         label: readTrimmedString(repository.full_name) ?? `${owner}/${name}`,
-        repositoryId: readPositiveDecimal(repository.id),
+        repositoryId: tryReadGithubPositiveDecimal(repository.id),
       });
     }
   }
@@ -165,7 +156,7 @@ function readRepositoryFacts(raw: JsonRecord): Readonly<{
  */
 export function decodeGithubSearchItem(raw: unknown): GithubRawEntityViewV1 | null {
   if (!isRecord(raw)) return null;
-  const number = readPositiveDecimal(raw.number);
+  const number = tryReadGithubPositiveDecimal(raw.number);
   const title = readTrimmedString(raw.title);
   const createdAtMs = readEpochMs(raw.created_at);
   const updatedAtMs = readEpochMs(raw.updated_at);
@@ -195,7 +186,7 @@ export function decodeGithubSearchItem(raw: unknown): GithubRawEntityViewV1 | nu
 /** Decodes `GET /repos/{owner}/{repo}/pulls/{number}`. */
 export function decodeGithubPullRequestBody(raw: unknown): GithubRawEntityViewV1 | null {
   if (!isRecord(raw)) return null;
-  const number = readPositiveDecimal(raw.number);
+  const number = tryReadGithubPositiveDecimal(raw.number);
   const title = readTrimmedString(raw.title);
   const createdAtMs = readEpochMs(raw.created_at);
   const updatedAtMs = readEpochMs(raw.updated_at);
@@ -239,7 +230,7 @@ export function decodeGithubIssueBody(
   route: Readonly<{ owner: string; name: string }> | null,
 ): GithubRawEntityViewV1 | null {
   if (!isRecord(raw)) return null;
-  const number = readPositiveDecimal(raw.number);
+  const number = tryReadGithubPositiveDecimal(raw.number);
   const title = readTrimmedString(raw.title);
   const createdAtMs = readEpochMs(raw.created_at);
   const updatedAtMs = readEpochMs(raw.updated_at);

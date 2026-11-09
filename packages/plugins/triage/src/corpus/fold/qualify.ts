@@ -6,6 +6,7 @@ import {
     type TriageSourceObservationV1,
 } from '@happier-dev/triage-protocol/v1';
 
+import { sameTriageEntryReference } from '../identity/components.js';
 import type { ProjectedObservationV1 } from './projectedObservation.js';
 
 /**
@@ -87,14 +88,6 @@ function qualifyLocalRef(
     };
 }
 
-function sameEntry(left: TriageEntryRefV1, right: TriageEntryRefV1): boolean {
-    return left.source.pluginId === right.source.pluginId
-        && left.source.localId === right.source.localId
-        && left.kindId === right.kindId
-        && left.collisionScope === right.collisionScope
-        && left.entryId === right.entryId;
-}
-
 export function qualifySourceObservation(input: Readonly<{
     /** The invoked source contribution identity. A source never supplies it. */
     source: PluginContributionIdentity;
@@ -111,7 +104,7 @@ export function qualifySourceObservation(input: Readonly<{
     const declaredKindIds = new Set(input.declaredKindIds);
     const entryRef = qualifyLocalRef(input.source, declaredKindIds, input.observation.localRef);
     if (typeof entryRef === 'string') return { status: 'rejected', reason: entryRef };
-    if (input.requestedEntryRef && !sameEntry(entryRef, input.requestedEntryRef)) {
+    if (input.requestedEntryRef && !sameTriageEntryReference(entryRef, input.requestedEntryRef)) {
         return { status: 'rejected', reason: 'refMismatch' };
     }
 

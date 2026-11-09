@@ -4,6 +4,7 @@ import {
   AZURE_DEVOPS_PLUGIN_ID,
   AZURE_DEVOPS_SCM_HOSTING_PROVIDER_LOCAL_ID,
 } from '../azureDevopsContracts.js';
+import { readVisualStudioOrganization } from '../parsing/visualStudioOrganization.js';
 import { encodeCompareRef, parseScmRemoteUrl, stripTrailingSlash } from './remoteUrl.js';
 
 export { AZURE_DEVOPS_SCM_HOSTING_PROVIDER_LOCAL_ID };
@@ -46,13 +47,6 @@ type AzureProviderBaseContext = Readonly<{
   organization: string;
   baseUrl: string;
 }>;
-
-function readVisualStudioOrganization(host: string): string | null {
-  const suffix = '.visualstudio.com';
-  if (!host.endsWith(suffix) || host === suffix.slice(1)) return null;
-  const organization = host.slice(0, -suffix.length);
-  return organization && !organization.includes('.') ? organization : null;
-}
 
 function readCurrentHttpsProject(host: string, segments: readonly string[]): AzureRemoteProject | null {
   if (host !== 'dev.azure.com' || segments.length !== 4 || segments[2] !== '_git') return null;

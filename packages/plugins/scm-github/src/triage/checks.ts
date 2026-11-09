@@ -1,3 +1,4 @@
+import { tryReadGithubPositiveDecimal } from '../observations/githubProviderContracts.js';
 import {
   decodeGithubJsonResponse,
   type GithubApiClientV1,
@@ -135,15 +136,6 @@ function readTrimmedString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function readPositiveDecimal(value: unknown): string | null {
-  if (typeof value === 'number') {
-    return Number.isSafeInteger(value) && value >= 1 ? String(value) : null;
-  }
-  if (typeof value !== 'string') return null;
-  const candidate = value.trim();
-  return /^[1-9][0-9]*$/u.test(candidate) ? candidate : null;
-}
-
 function readEpochMs(value: unknown): number | null {
   const text = readTrimmedString(value);
   if (text === null) return null;
@@ -162,7 +154,7 @@ function readCheckOutput(value: unknown): string | null {
 
 function decodeCheckRun(raw: unknown): GithubCheckObservationV1 | null {
   if (!isRecord(raw)) return null;
-  const id = readPositiveDecimal(raw.id);
+  const id = tryReadGithubPositiveDecimal(raw.id);
   const name = readTrimmedString(raw.name);
   const status = readTrimmedString(raw.status);
   if (id === null || name === null || status === null) return null;
@@ -184,7 +176,7 @@ function decodeCheckRun(raw: unknown): GithubCheckObservationV1 | null {
 
 function decodeCommitStatus(raw: unknown): GithubCheckObservationV1 | null {
   if (!isRecord(raw)) return null;
-  const id = readPositiveDecimal(raw.id);
+  const id = tryReadGithubPositiveDecimal(raw.id);
   const context = readTrimmedString(raw.context);
   const state = readTrimmedString(raw.state);
   if (id === null || context === null || state === null) return null;
@@ -332,7 +324,7 @@ export async function readGithubPullRequestChecks(
         totalCount: typeof body.total_count === 'number' ? body.total_count : null,
         checkSuiteIds: body.check_runs.flatMap((raw) => {
           const id = isRecord(raw) && isRecord(raw.check_suite)
-            ? readPositiveDecimal(raw.check_suite.id) : null;
+            ? tryReadGithubPositiveDecimal(raw.check_suite.id) : null;
           return id === null ? [] : [id];
         }),
       });

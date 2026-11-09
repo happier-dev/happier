@@ -295,7 +295,7 @@ export function useGitlabNotes(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'gitlab-detail-read-failed'),
+        failure: dispatchFailure(execution, 'gitlab-detail-read-failed'),
       };
     }
     const parsed = GitlabNotesResultV1Schema.safeParse(execution.result);
@@ -353,7 +353,7 @@ export function useGitlabActivityEvents(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'gitlab-detail-read-failed'),
+        failure: dispatchFailure(execution, 'gitlab-detail-read-failed'),
       };
     }
     const parsed = GitlabActivityEventsResultV1Schema.safeParse(execution.result);
@@ -398,7 +398,7 @@ export function useGitlabDiscussions(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'gitlab-detail-read-failed'),
+        failure: dispatchFailure(execution, 'gitlab-detail-read-failed'),
       };
     }
     const parsed = GitlabDiscussionsResultV1Schema.safeParse(execution.result);
@@ -456,7 +456,7 @@ export function useGitlabChanges(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'gitlab-detail-read-failed'),
+        failure: dispatchFailure(execution, 'gitlab-detail-read-failed'),
       };
     }
     const parsed = GitlabChangesResultV1Schema.safeParse(execution.result);
@@ -535,7 +535,7 @@ export function useGitlabRawDiff(
       if (execution.status !== 'success') {
         setState({
           kind: 'unavailable',
-          failure: dispatchFailure(execution.status, execution.code ?? 'gitlab-raw-diff-read-failed'),
+          failure: dispatchFailure(execution, 'gitlab-raw-diff-read-failed'),
         });
         return;
       }
@@ -606,7 +606,7 @@ export function useGitlabPipelines(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'gitlab-detail-read-failed'),
+        failure: dispatchFailure(execution, 'gitlab-detail-read-failed'),
       };
     }
     const parsed = GitlabPipelinesResultV1Schema.safeParse(execution.result);
@@ -702,7 +702,7 @@ export function useGitlabApprovals(
       if (execution.status !== 'success') {
         setState({
           kind: 'unavailable',
-          failure: dispatchFailure(execution.status, execution.code ?? 'gitlab-detail-read-failed'),
+          failure: dispatchFailure(execution, 'gitlab-detail-read-failed'),
         });
         return;
       }

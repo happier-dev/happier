@@ -2,6 +2,7 @@ import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting'
 
 import { AZURE_DEVOPS_SCM_HOSTING_PROVIDER_ID } from '../detection/adapter.js';
 import { createAzureInvalidRequestError } from '../operations/errors.js';
+import { readVisualStudioOrganization } from './visualStudioOrganization.js';
 
 export type AzureDevopsRepositoryCoordinates = Readonly<{
   organization: string;
@@ -11,13 +12,6 @@ export type AzureDevopsRepositoryCoordinates = Readonly<{
   webOrigin: string;
   nameWithOwner: string;
 }>;
-
-function readVisualStudioOrganization(host: string): string | null {
-  const suffix = '.visualstudio.com';
-  if (!host.endsWith(suffix) || host === suffix.slice(1)) return null;
-  const organization = host.slice(0, -suffix.length);
-  return organization && !organization.includes('.') ? organization : null;
-}
 
 function isSafeSegment(value: string): boolean {
   return value.length > 0

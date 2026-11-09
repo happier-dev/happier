@@ -1,3 +1,5 @@
+import type { PluginActionExecution } from '@happier-dev/plugin-ui';
+import { projectTriageSourceReadFailureV1 } from '@happier-dev/triage-sources/runtime';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { mergeAbortSignals } from '@happier-dev/plugin-sdk/async';
 import { useExecutePluginAction, useTabPanelActivity } from '@happier-dev/plugin-ui';
@@ -56,16 +58,11 @@ const UNREADABLE_RESULT: TriageSourceFailureV1 = Object.freeze({
   code: 'azure-devops/detail-result-unreadable',
 });
 
-function dispatchFailure(status: string, code: string): TriageSourceFailureV1 {
-  return Object.freeze({
-    class: status === 'error' ? 'transient' : 'unknown',
-    code: status === 'idle' || status === 'pending'
-      ? 'azure-devops/detail-read-not-dispatched'
-      : code,
-  });
+function dispatchFailure(execution: ExecuteResult, fallbackCode: string): TriageSourceFailureV1 {
+  return projectTriageSourceReadFailureV1(execution, fallbackCode, 'azure-devops/detail-read-not-dispatched');
 }
 
-type ExecuteResult = Readonly<{ status: string; result?: unknown; code?: string }>;
+type ExecuteResult = PluginActionExecution;
 
 /**
  * The entry the mounted surface is about, as the three fields every source Action addresses it by.
@@ -212,7 +209,7 @@ export function useAzureIterations(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'azure-devops/detail-read-failed'),
+        failure: dispatchFailure(execution, 'azure-devops/detail-read-failed'),
       };
     }
     const parsed = AzureIterationsResultV1Schema.safeParse(execution.result);
@@ -412,7 +409,7 @@ export function useAzureCommits(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'azure-devops/detail-read-failed'),
+        failure: dispatchFailure(execution, 'azure-devops/detail-read-failed'),
       };
     }
     const parsed = AzureCommitsResultV1Schema.safeParse(execution.result);
@@ -481,7 +478,7 @@ export function useAzureIterationChanges(
       if (execution.status !== 'success') {
         return {
           kind: 'failed' as const,
-          failure: dispatchFailure(execution.status, execution.code ?? 'azure-devops/detail-read-failed'),
+          failure: dispatchFailure(execution, 'azure-devops/detail-read-failed'),
         };
       }
       const parsed = AzureIterationChangesResultV1Schema.safeParse(execution.result);
@@ -543,7 +540,7 @@ export function useAzurePolicies(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'azure-devops/detail-read-failed'),
+        failure: dispatchFailure(execution, 'azure-devops/detail-read-failed'),
       };
     }
     const parsed = AzurePoliciesResultV1Schema.safeParse(execution.result);
@@ -601,7 +598,7 @@ export function useAzureThreads(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'azure-devops/detail-read-failed'),
+        failure: dispatchFailure(execution, 'azure-devops/detail-read-failed'),
       };
     }
     const parsed = AzureThreadsResultV1Schema.safeParse(execution.result);

@@ -8,7 +8,7 @@ import type {
 } from '@happier-dev/plugin-sdk/scm';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
-import { runScmCommand, type ScmExecResult } from './runtime.js';
+import { getScmCommandIndeterminateErrorCode, runScmCommand, type ScmExecResult } from './runtime.js';
 import { buildGitSnapshot } from './statusSnapshot.js';
 import { inspectGitCheckoutIdentity, resolveGitMainWorktreePath } from './checkoutIdentity.js';
 import { enrichGitWorktreesWithStatus, readWorktreeStatusEnrichmentForPaths } from './worktreeStatusEnricher.js';
@@ -51,11 +51,6 @@ function detectionUnavailable(detail: string): Error {
     );
 }
 
-/** True when the command did not run to completion, so its exit code carries no meaning. */
-function commandProducedNoAnswer(result: ScmExecResult): boolean {
-    return result.timedOut === true || result.outputLimitExceeded === true || result.exitCode < 0;
-}
-
 export async function detectGitRepo(input: { cwd: string; includeRetainedWorktrees?: boolean }): Promise<ScmRepoDetection> {
     if (input.includeRetainedWorktrees) {
         const rootPath = await resolveGitRetainedWorktreeRepository(input.cwd);
@@ -80,7 +75,7 @@ export async function detectGitRepo(input: { cwd: string; includeRetainedWorktre
             errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_NOT_INSTALLED,
         });
     }
-    if (commandProducedNoAnswer(gitRepoCheck)) {
+    if (getScmCommandIndeterminateErrorCode(gitRepoCheck)) {
         throw detectionUnavailable(gitRepoCheck.stderr.trim() || 'the repository probe did not complete');
     }
     const discoveryAnswer = /^(true|false)\r?\n/.exec(gitRepoCheck.stdout);
@@ -129,7 +124,7 @@ export async function getGitSnapshot(input: {
     if (!statusResult.success) {
         return {
             success: false,
-            errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+            errorCode: getScmCommandIndeterminateErrorCode(statusResult) ?? SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
             error: statusResult.stderr || 'Failed to read repository status',
         };
     }
@@ -234,8 +229,10 @@ export async function getGitSnapshot(input: {
  * canonical status parser builds the branch facts without a working-copy walk.
  */
 async function readGitBranchHeaderAsStatus(cwd: string): Promise<ScmExecResult> {
-    const head = await runScmCommand({ bin: 'git', cwd, args: ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], timeoutMs: 10_000 });
-    const branch = await runScmCommand({ bin: 'git', cwd, args: ['symbolic-ref', '--quiet', '--short', 'HEAD'], timeoutMs: 10_000 });
+    const head = await runScmCommand({ bin: 'git', cwd, args: ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'] });
+    if (getScmCommandIndeterminateErrorCode(head)) return head;
+    const branch = await runScmCommand({ bin: 'git', cwd, args: ['symbolic-ref', '--quiet', '--short', 'HEAD'] });
+    if (getScmCommandIndeterminateErrorCode(branch)) return branch;
     if (!head.success && !branch.success) {
         // Neither a commit nor a branch: not a readable repository state.
         return head;
@@ -245,10 +242,12 @@ async function readGitBranchHeaderAsStatus(cwd: string): Promise<ScmExecResult> 
         `# branch.head ${branch.success ? branch.stdout.trim() : '(detached)'}`,
     ];
     if (branch.success) {
-        const upstream = await runScmCommand({ bin: 'git', cwd, args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], timeoutMs: 10_000 });
+        const upstream = await runScmCommand({ bin: 'git', cwd, args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'] });
+        if (getScmCommandIndeterminateErrorCode(upstream)) return upstream;
         if (upstream.success && upstream.stdout.trim()) {
             lines.push(`# branch.upstream ${upstream.stdout.trim()}`);
-            const counts = head.success ? await runScmCommand({ bin: 'git', cwd, args: ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], timeoutMs: 10_000 }) : null;
+            const counts = head.success ? await runScmCommand({ bin: 'git', cwd, args: ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'] }) : null;
+            if (counts && getScmCommandIndeterminateErrorCode(counts)) return counts;
             const [ahead, behind] = counts?.success ? counts.stdout.trim().split(/\s+/) : [];
             if (ahead !== undefined && behind !== undefined) lines.push(`# branch.ab +${ahead} -${behind}`);
         }

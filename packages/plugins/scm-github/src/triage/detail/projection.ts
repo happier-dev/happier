@@ -1,3 +1,4 @@
+import { tryReadGithubPositiveDecimal } from '../../observations/githubProviderContracts.js';
 import {
   MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
   MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
@@ -93,15 +94,6 @@ function readTimestampMs(value: unknown): number | null {
 
 function readCount(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
-}
-
-function readNativeId(value: unknown): string | null {
-  if (typeof value === 'number') {
-    return Number.isSafeInteger(value) && value >= 1 ? String(value) : null;
-  }
-  if (typeof value !== 'string') return null;
-  const candidate = value.trim();
-  return /^[1-9][0-9]*$/u.test(candidate) ? candidate : null;
 }
 
 /** Provider text becomes one bounded, single-line display value. */
@@ -350,7 +342,7 @@ function readTimelineSubject(raw: JsonRecord, kind: GithubTimelineKindV1): unkno
       const source = raw['source'];
       const issue = isRecord(source) ? source['issue'] : null;
       if (!isRecord(issue)) return null;
-      const number = readNativeId(issue['number']);
+      const number = tryReadGithubPositiveDecimal(issue['number']);
       const title = readString(issue['title']);
       return number === null ? title : title === null ? `#${number}` : `#${number} · ${title}`;
     }
@@ -385,7 +377,7 @@ function readTimelineIdentity(raw: JsonRecord, kind: GithubTimelineKindV1): stri
       return `github-timeline-commit:${sha.trim()}`;
     }
   }
-  const id = readNativeId(raw['id']);
+  const id = tryReadGithubPositiveDecimal(raw['id']);
   if (id !== null) return `github-timeline-event:${id}`;
   const nodeId = readString(raw['node_id']);
   if (nodeId !== null) return `github-timeline-node:${nodeId.trim()}`;
@@ -394,7 +386,7 @@ function readTimelineIdentity(raw: JsonRecord, kind: GithubTimelineKindV1): stri
   if (kind === 'crossReferenced') {
     const source = raw['source'];
     const issue = isRecord(source) && source['type'] === 'issue' ? source['issue'] : null;
-    const issueId = isRecord(issue) ? readNativeId(issue['id']) : null;
+    const issueId = isRecord(issue) ? tryReadGithubPositiveDecimal(issue['id']) : null;
     const createdAt = readTimestampMs(raw['created_at']);
     if (issueId !== null && createdAt !== null) {
       return `github-timeline-cross-reference:${issueId}:${createdAt}`;
@@ -478,7 +470,7 @@ export function projectGithubTimelineRows(
       // An event with no readable instant sorts last rather than to the epoch,
       // where it would claim to predate every dated event on the page.
       atMs: atMs ?? Number.MAX_SAFE_INTEGER,
-      ordinal: Number(readNativeId(entry['id']) ?? Number.MAX_SAFE_INTEGER),
+      ordinal: Number(tryReadGithubPositiveDecimal(entry['id']) ?? Number.MAX_SAFE_INTEGER),
     }));
   }
 

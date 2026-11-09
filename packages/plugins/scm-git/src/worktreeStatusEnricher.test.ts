@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { runWithGitScmCommandRunner, runWithRealGitScmRuntime } from './testkit/scmRuntime.test-support.js';
+import { createRealGitScmBackendRuntimeServices, runWithGitScmCommandRunner, runWithRealGitScmRuntime } from './testkit/scmRuntime.test-support.js';
 import { enrichGitWorktreesWithStatus, readWorktreeStatusEnrichmentForPaths } from './worktreeStatusEnricher.js';
 
 const execFile = promisify(execFileCallback);
@@ -93,6 +93,21 @@ describe('readWorktreeStatusEnrichmentForPaths', () => {
         expect(result).toHaveLength(1);
         expect(result[0]?.changeCount).toBeUndefined();
         expect(result[0]?.lastActivityAt).toBeUndefined();
+    });
+
+    it.each(['HEAD', 'symbolic-ref'] as const)('keeps identity-dependent enrichment unknown after interrupted %s inspection', async (probe) => {
+        const repoRoot = await initRepoWithCommit('git-plugin-enrich-interrupted-identity-');
+        cleanups.push(() => rm(repoRoot, { recursive: true, force: true }));
+        const realCommand = createRealGitScmBackendRuntimeServices().runCommand;
+        for (const interruption of [{ exitCode: 1, timedOut: true }, { exitCode: 1, outputLimitExceeded: true }, { exitCode: -1 }]) {
+            const result = await runWithRealGitScmRuntime(() => runWithGitScmCommandRunner(async (input) => {
+                const interrupted = probe === 'symbolic-ref' ? input.args[0] === 'symbolic-ref'
+                    : input.args[0] === 'rev-parse' && input.args.at(-1) === 'HEAD';
+                return interrupted ? { success: false, stdout: '', stderr: 'inspection interrupted', ...interruption }
+                    : realCommand(input);
+            }, () => readWorktreeStatusEnrichmentForPaths({ worktreePaths: [repoRoot] })));
+            expect(result).toEqual([{ path: repoRoot, changeCount: 0, hasSubmodules: false }]);
+        }
     });
 
     it('uses an explicitly configured existing local default when remote HEAD is unavailable', async () => {

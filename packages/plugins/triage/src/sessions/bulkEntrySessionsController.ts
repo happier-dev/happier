@@ -1,5 +1,6 @@
 import type { PluginUiHostApi, PluginUiTargetedContributionsV1 } from '@happier-dev/plugin-sdk/ui';
 
+import { sameTriageEntryReference } from '../corpus/identity/components.js';
 import type { TriageStartEntrySessionInputV1, TriageStartEntrySessionResultV1 } from '../actions/entrySessionProtocol.js';
 import type { TriageConfiguredStartRecoveryV1, TriageLegacyRunConfiguredActionResultV1 as TriageRunConfiguredActionResultV1 } from '../actions/configuredActionRunProtocol.js';
 import { triageEntryRowKey } from '../projection/listWindow.js';
@@ -353,17 +354,6 @@ function preferTriageBulkStartResultV1(
     return Object.freeze({ ...preferred, delivery });
 }
 
-function sameTriageBulkEntryRefV1(
-    left: TriageBulkEntryOutcomeV1['entryRef'],
-    right: TriageBulkEntryOutcomeV1['entryRef'],
-): boolean {
-    return left.source.pluginId === right.source.pluginId
-        && left.source.localId === right.source.localId
-        && left.kindId === right.kindId
-        && left.collisionScope === right.collisionScope
-        && left.entryId === right.entryId;
-}
-
 function preferKnownValue<T extends string>(
     previous: T,
     retried: T,
@@ -377,7 +367,7 @@ function mergeTriageBulkEntryOutcomesV1(
     retried: readonly TriageBulkEntryOutcomeV1[],
 ): readonly TriageBulkEntryOutcomeV1[] {
     return Object.freeze(retried.map((candidate) => {
-        const known = previous.find((entry) => sameTriageBulkEntryRefV1(entry.entryRef, candidate.entryRef));
+        const known = previous.find((entry) => sameTriageEntryReference(entry.entryRef, candidate.entryRef));
         if (known === undefined) return candidate;
         return Object.freeze({
             ...candidate,

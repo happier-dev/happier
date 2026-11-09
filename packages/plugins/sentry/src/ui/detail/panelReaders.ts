@@ -1,3 +1,5 @@
+import type { PluginActionExecution } from '@happier-dev/plugin-ui';
+import { projectTriageSourceReadFailureV1 } from '@happier-dev/triage-sources/runtime';
 /**
  * The panel-owned readers behind the Sentry detail body.
  *
@@ -58,16 +60,13 @@ const UNREADABLE_RESULT: TriageSourceFailureV1 = Object.freeze({
   code: 'sentry-detail-result-unreadable',
 });
 
-function dispatchFailure(status: string, code: string): TriageSourceFailureV1 {
-  return Object.freeze({
-    class: status === 'error' ? 'transient' : 'unknown',
-    code: status === 'idle' || status === 'pending' ? 'sentry-detail-read-not-dispatched' : code,
-  });
+function dispatchFailure(execution: ExecuteResult, fallbackCode: string): TriageSourceFailureV1 {
+  return projectTriageSourceReadFailureV1(execution, fallbackCode, 'sentry-detail-read-not-dispatched');
 }
 
 export { useSentryDetailRequest };
 
-type ExecuteResult = Readonly<{ status: string; result?: unknown; code?: string }>;
+type ExecuteResult = PluginActionExecution;
 
 function readIssueResult(result: unknown) {
   const parsed = SentryReadIssueResultV1Schema.safeParse(result);
@@ -147,7 +146,7 @@ export function useSentryIssueSummary(
       if (execution.status !== 'success') {
         setState({
           kind: 'unavailable',
-          failure: dispatchFailure(execution.status, execution.code ?? 'sentry-detail-read-failed'),
+          failure: dispatchFailure(execution, 'sentry-detail-read-failed'),
         });
         return;
       }
@@ -215,7 +214,7 @@ function useSentryPanelProjection<T>(
       if (execution.status !== 'success') {
         setState({
           kind: 'unavailable',
-          failure: dispatchFailure(execution.status, execution.code ?? 'sentry-detail-read-failed'),
+          failure: dispatchFailure(execution, 'sentry-detail-read-failed'),
         });
         return;
       }
@@ -419,7 +418,7 @@ export function useSentryOccurrences(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'sentry-detail-read-failed'),
+        failure: dispatchFailure(execution, 'sentry-detail-read-failed'),
       };
     }
     const parsed = SentryIssueEventsResultV1Schema.safeParse(execution.result);
@@ -470,7 +469,7 @@ export function useSentryTagValues(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'sentry-detail-read-failed'),
+        failure: dispatchFailure(execution, 'sentry-detail-read-failed'),
       };
     }
     const parsed = SentryTagValuesResultV1Schema.safeParse(execution.result);

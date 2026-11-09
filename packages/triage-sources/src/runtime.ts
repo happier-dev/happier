@@ -72,3 +72,8 @@ export {
 } from './sessionHandoff.js';
 export { publishTriageAttentionV1 } from './observations/attention.js';
 export { shouldCompleteTriagePostMutation, completeTriagePostMutationIfNeeded } from './invocation/postMutation.js';
+export {
+  projectTriageSourceInvocationFailureV1,
+  projectTriageSourceReadFailureV1,
+  type TriageSourceReadFailureV1,
+} from './invocation/failure.js';

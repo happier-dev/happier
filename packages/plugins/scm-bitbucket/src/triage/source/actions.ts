@@ -24,22 +24,9 @@ import {
   verifyBitbucketReviewWorkspace,
 } from './prepareReviewWorkspace.js';
 import { scanBitbucketSource } from './scan.js';
-import type { BitbucketSourceRuntime } from './authorization.js';
+import { toBitbucketRuntime } from './invocationAdmission.js';
 
 export { BITBUCKET_TRIAGE_ACTION_IDS } from './descriptor.js';
-
-function toRuntime(
-  context: Readonly<{ signal: PluginAccountActionContext['signal']; invocationId?: PluginAccountActionContext['invocationId']; services: Pick<PluginAccountActionContext['services'], 'connectedAccounts' | 'http'> }>,
-  signal: AbortSignal | undefined = context.signal,
-): BitbucketSourceRuntime {
-  return {
-    connectedAccounts: context.services.connectedAccounts,
-    http: context.services.http,
-    now: () => Date.now(),
-    invocationId: context.invocationId,
-    ...(signal === undefined ? {} : { signal }),
-  };
-}
 
 const INVALID_INPUT = createBitbucketFailure('unsupportedContract', 'operation-input-invalid');
 
@@ -59,7 +46,7 @@ export async function listBitbucketInstancesAction(
 ): Promise<TriageListInstancesResultV1> {
   const parsed = TriageListInstancesInputV1Schema.safeParse(input);
   if (!parsed.success) return { kind: 'failed', failure: toTriageSourceFailure(INVALID_INPUT) };
-  return await listBitbucketSourceInstances(toRuntime(context));
+  return await listBitbucketSourceInstances(toBitbucketRuntime(context));
 }
 
 export async function scanBitbucketSourceAction(
@@ -68,7 +55,7 @@ export async function scanBitbucketSourceAction(
 ): Promise<TriageScanResultV1> {
   const parsed = TriageScanInputV1Schema.safeParse(input);
   if (!parsed.success) return { kind: 'failed', failure: toTriageSourceFailure(INVALID_INPUT) };
-  return await scanBitbucketSource(toRuntime(context), parsed.data);
+  return await scanBitbucketSource(toBitbucketRuntime(context), parsed.data);
 }
 
 export async function getBitbucketSourceEntryAction(
@@ -81,7 +68,7 @@ export async function getBitbucketSourceEntryAction(
     // invocation is refused rather than answered about an invented entry.
     throw new TypeError('Bitbucket triage get received an invalid input');
   }
-  return await getBitbucketSourceEntry(toRuntime(context), parsed.data);
+  return await getBitbucketSourceEntry(toBitbucketRuntime(context), parsed.data);
 }
 
 export async function prepareBitbucketReviewWorkspaceAction(
@@ -93,7 +80,7 @@ export async function prepareBitbucketReviewWorkspaceAction(
     throw new TypeError('Bitbucket triage review-workspace preparation received an invalid input');
   }
   const result = await prepareBitbucketReviewWorkspace(parsed.data, {
-    ...toRuntime(context),
+    ...toBitbucketRuntime(context),
     actions: context.services.actions,
   });
   return TriagePrepareReviewWorkspaceResultV1Schema.parse(result);
@@ -108,7 +95,7 @@ export async function verifyBitbucketReviewWorkspaceAction(
     throw new TypeError('Bitbucket triage review-workspace verification received an invalid input');
   }
   const result = await verifyBitbucketReviewWorkspace(parsed.data, {
-    ...toRuntime(context),
+    ...toBitbucketRuntime(context),
     actions: context.services.actions,
   });
   return TriageVerifyReviewWorkspaceResultV1Schema.parse(result);

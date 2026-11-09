@@ -19,6 +19,7 @@ import {
     type TriageSessionHandoffInputV1,
 } from '@happier-dev/triage-protocol/v1';
 
+import { sameTriageEntryReference } from '../corpus/identity/components.js';
 import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
 import { buildTriageForgeEvidenceAttachmentDraftV1 } from '../composer/mutationPlan.js';
 import { openLinkedSession } from '../sessions/entrySessionOpen.js';
@@ -497,15 +498,6 @@ function readSendStatus(
         : 'none';
 }
 
-/** Component-wise entry identity, never a joined string. */
-function sameEntry(left: TriageEntryRefV1, right: TriageEntryRefV1): boolean {
-    return left.source.pluginId === right.source.pluginId
-        && left.source.localId === right.source.localId
-        && left.kindId === right.kindId
-        && left.collisionScope === right.collisionScope
-        && left.entryId === right.entryId;
-}
-
 export function createTriageEntrySessionStartController(
     host: TriageStartHostV1,
     options?: TriageEntrySessionStartOptionsV1,
@@ -796,7 +788,7 @@ export function createTriageEntrySessionStartController(
         // straight back to the start Action with the retained input, plus the
         // phase to resume when the first press stopped at one.
         const retained = custody.current;
-        if (retained && retained.actionId === action.actionId && sameEntry(retained.input.entryRef, request.entryRef)) {
+        if (retained && retained.actionId === action.actionId && sameTriageEntryReference(retained.input.entryRef, request.entryRef)) {
             setPhase(STARTING);
             void (async () => {
                 try {

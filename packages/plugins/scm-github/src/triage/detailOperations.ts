@@ -1,3 +1,4 @@
+import { tryReadGithubPositiveDecimal } from '../observations/githubProviderContracts.js';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { GithubTriageInvocationContext, GithubTriageObservationContext } from './invocation.js';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
@@ -812,8 +813,8 @@ async function readGithubBranchRulesForStatus(admitted: AdmittedStatusEntry, rep
       if (!rule || typeof rule.type !== 'string') { incomplete = true; continue; }
       const type = projectTriageDisplayTextV1(rule.type, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
       if (!type.value || type.truncated) { projectionTruncated = true; incomplete = true; continue; }
-      const nativeRulesetId = typeof rule.ruleset_id === 'number' && Number.isSafeInteger(rule.ruleset_id) && rule.ruleset_id > 0
-        ? String(rule.ruleset_id) : typeof rule.ruleset_id === 'string' && /^[1-9][0-9]*$/u.test(rule.ruleset_id) ? rule.ruleset_id : null;
+      const nativeRulesetId = typeof rule.ruleset_id === 'string' && rule.ruleset_id !== rule.ruleset_id.trim()
+        ? null : tryReadGithubPositiveDecimal(rule.ruleset_id);
       const rulesetId = nativeRulesetId === null ? null : projectGithubDetailIdentifierV1(nativeRulesetId);
       if (rulesetId?.truncated) { projectionTruncated = true; incomplete = true; }
       const sourceUrl = projectGithubDetailWebUrlV1(record(record(rule._links)?.html)?.href);

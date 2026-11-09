@@ -69,7 +69,7 @@ export function useGitlabOverview(input: TriageDetailSurfaceInputV1): GitlabOver
       if (signal.aborted) return;
       if (execution.status !== 'success') {
         setState(current => ({ ...current, refreshing: false,
-          failure: dispatchFailure(execution.status, execution.code ?? 'gitlab-overview-read-failed') }));
+          failure: dispatchFailure(execution, 'gitlab-overview-read-failed') }));
         return;
       }
       const parsed = GitlabOverviewResultV1Schema.safeParse(execution.result);

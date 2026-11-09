@@ -1,3 +1,4 @@
+import { tryReadGithubPositiveDecimal } from '../../observations/githubProviderContracts.js';
 import type { GithubCodeScanningInstanceV1 } from './actionContracts.js';
 
 /** Provider-native decoding stays inside scm-github; no shared alert schema. */
@@ -32,8 +33,8 @@ function instant(value: unknown): number | null {
 export function decodeGithubSecurityAlert(kindId: GithubSecurityAlertKindV1, body: unknown): GithubSecurityAlertV1 | null {
   const native = githubSecurityRecord(body);
   if (native === null) return null;
-  const number = typeof native.number === 'number' && Number.isSafeInteger(native.number) && native.number > 0
-    ? String(native.number) : typeof native.number === 'string' && /^[1-9][0-9]*$/u.test(native.number) ? native.number : null;
+  const number = typeof native.number === 'string' && native.number !== native.number.trim()
+    ? null : tryReadGithubPositiveDecimal(native.number);
   const createdAtMs = instant(native.created_at);
   const updatedAtMs = instant(native.updated_at) ?? createdAtMs;
   if (number === null || createdAtMs === null || updatedAtMs === null) return null;

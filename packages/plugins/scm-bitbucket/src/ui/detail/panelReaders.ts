@@ -1,3 +1,5 @@
+import type { PluginActionExecution } from '@happier-dev/plugin-ui';
+import { projectTriageSourceReadFailureV1 } from '@happier-dev/triage-sources/runtime';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useExecutePluginAction, useTabPanelActivity } from '@happier-dev/plugin-ui';
 import { useTriageDetailRequest } from '@happier-dev/triage-sources/ui';
@@ -54,16 +56,11 @@ const UNREADABLE_RESULT: TriageSourceFailureV1 = Object.freeze({
   code: 'bitbucket-detail-result-unreadable',
 });
 
-function dispatchFailure(status: string, code: string): TriageSourceFailureV1 {
-  return Object.freeze({
-    class: status === 'error' ? 'transient' : 'unknown',
-    code: status === 'idle' || status === 'pending'
-      ? 'bitbucket-detail-read-not-dispatched'
-      : code,
-  });
+function dispatchFailure(execution: ExecuteResult, fallbackCode: string): TriageSourceFailureV1 {
+  return projectTriageSourceReadFailureV1(execution, fallbackCode, 'bitbucket-detail-read-not-dispatched');
 }
 
-type ExecuteResult = Readonly<{ status: string; result?: unknown; code?: string }>;
+type ExecuteResult = PluginActionExecution;
 
 /** Provider routing changes independently of the canonical request authority. */
 function useBitbucketLocator(input: TriageDetailSurfaceInputV1) {
@@ -254,7 +251,7 @@ export function useBitbucketActivity(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'bitbucket-detail-read-failed'),
+        failure: dispatchFailure(execution, 'bitbucket-detail-read-failed'),
       };
     }
     const parsed = BitbucketActivityResultV1Schema.safeParse(execution.result);
@@ -317,7 +314,7 @@ export function useBitbucketBuilds(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'bitbucket-detail-read-failed'),
+        failure: dispatchFailure(execution, 'bitbucket-detail-read-failed'),
       };
     }
     const parsed = BitbucketBuildsResultV1Schema.safeParse(execution.result);
@@ -371,7 +368,7 @@ export function useBitbucketComments(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'bitbucket-detail-read-failed'),
+        failure: dispatchFailure(execution, 'bitbucket-detail-read-failed'),
       };
     }
     const parsed = BitbucketCommentsResultV1Schema.safeParse(execution.result);
@@ -438,7 +435,7 @@ export function useBitbucketOverview(
       } else {
         setFailure(parsed?.success === true && parsed.data.kind === 'unavailable'
           ? parsed.data.failure
-          : dispatchFailure(execution.status, execution.code ?? 'bitbucket-overview-read-failed'));
+          : dispatchFailure(execution, 'bitbucket-overview-read-failed'));
       }
       setPending(false);
     });

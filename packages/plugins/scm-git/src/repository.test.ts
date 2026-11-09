@@ -120,6 +120,53 @@ describe('Git repository worktree status enrichment', () => {
         expect(observedCommands.filter(args => args[0] === 'status' || args[0] === 'diff' || args.includes('--numstat'))).toEqual([]);
     });
 
+    it.each(['HEAD', 'symbolic-ref', 'upstream', 'ahead-behind'] as const)('reports interrupted %s facts instead of inventing branch state', async (probe) => {
+        const repoRoot = await initRepoWithCommit('git-snapshot-facts-interrupted-');
+        cleanups.push(() => rm(repoRoot, { recursive: true, force: true }));
+        await runGit(repoRoot, ['branch', 'upstream']);
+        await runGit(repoRoot, ['branch', '--set-upstream-to=upstream', 'main']);
+        const originalCommand = createRealGitScmBackendRuntimeServices().runCommand;
+        for (const interruption of [
+            { exitCode: 1, timedOut: true, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_TIMEOUT },
+            { exitCode: 1, outputLimitExceeded: true, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_OUTPUT_LIMIT_EXCEEDED },
+            { exitCode: -1, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_OUTCOME_UNKNOWN },
+        ]) {
+            const response = await runWithRealGitScmRuntime(() => runWithGitScmCommandRunner(async (input) => {
+                const interrupted = probe === 'HEAD' ? input.args.includes('HEAD^{commit}')
+                    : probe === 'symbolic-ref' ? input.args[0] === 'symbolic-ref'
+                        : probe === 'upstream' ? input.args[0] === 'rev-parse' && input.args.includes('@{upstream}')
+                            : input.args[0] === 'rev-list';
+                return interrupted ? { success: false, stdout: '', stderr: 'probe interrupted', ...interruption }
+                    : originalCommand(input);
+            }, () => getGitSnapshot({ context: buildContext(repoRoot), request: { detail: 'facts' } })));
+            expect(response).toEqual({ success: false, errorCode: interruption.errorCode, error: 'probe interrupted' });
+        }
+    });
+
+    it.each(['unborn', 'detached', 'no-upstream', 'upstream'] as const)('preserves genuine %s repository facts', async (state) => {
+        const repoRoot = state === 'unborn' ? await makeTempDir('git-snapshot-facts-unborn-')
+            : await initRepoWithCommit('git-snapshot-facts-state-');
+        cleanups.push(() => rm(repoRoot, { recursive: true, force: true }));
+        if (state === 'unborn') {
+            await runGit(repoRoot, ['init']);
+            await runGit(repoRoot, ['branch', '-M', 'main']);
+        } else if (state === 'detached') await runGit(repoRoot, ['checkout', '--detach']);
+        else if (state === 'upstream') {
+            await runGit(repoRoot, ['branch', 'upstream']);
+            await runGit(repoRoot, ['branch', '--set-upstream-to=upstream', 'main']);
+            await writeFile(join(repoRoot, 'README.md'), 'ahead\n');
+            await runGit(repoRoot, ['commit', '-am', 'ahead']);
+        }
+        const response = await readSnapshot({ context: buildContext(repoRoot), request: { detail: 'facts' } });
+        expect(response).toMatchObject({ success: true, snapshot: { detail: 'facts', entries: [], branch: {
+            head: state === 'detached' ? null : 'main',
+            ...(state === 'unborn' ? {} : { headOid: await runGit(repoRoot, ['rev-parse', 'HEAD']) }),
+            upstream: state === 'upstream' ? 'upstream' : null,
+            ahead: state === 'upstream' ? 1 : 0, behind: 0,
+        } } });
+        if (state === 'unborn') expect(response.snapshot?.branch.headOid).toBeUndefined();
+    });
+
     it.each(([['merge', false], ['rebase', false], ['merge', true]] as const).filter(([, newlineCheckout]) => !newlineCheckout || process.platform !== 'win32'))('keeps in-progress %s facts when reading snapshot metadata in batches (newline checkout: %s)', async (operation, newlineCheckout) => {
         const repoRoot = await initRepoWithCommit(`git-snapshot-operation-${newlineCheckout ? '\n' : ''}`);
         cleanups.push(() => rm(repoRoot, { recursive: true, force: true }));

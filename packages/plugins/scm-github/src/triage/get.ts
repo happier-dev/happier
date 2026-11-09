@@ -1,6 +1,6 @@
 import { projectTriageDisplayTextV1, readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 import type { SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
-import type { GithubMergeMethodV1 } from './mutations/contracts.js';
+import { GithubMergeMethodV1Schema, type GithubMergeMethodV1 } from './mutations/contracts.js';
 
 import {
   decodeGithubJsonResponse,
@@ -395,6 +395,9 @@ function readGithubPullRequestFacts(
 ): GithubPullRequestFactsV1 {
   const mergedAt = typeof raw.merged_at === 'string' ? raw.merged_at.trim() : '';
   const reviewRevision = readGithubPullRequestReviewRevision(raw, headRevision);
+  const autoMergeMethod = isRecord(raw.auto_merge)
+    ? GithubMergeMethodV1Schema.safeParse(raw.auto_merge.merge_method)
+    : null;
   return Object.freeze({
     ...readGithubIssueFacts(raw),
     number,
@@ -409,8 +412,7 @@ function readGithubPullRequestFacts(
     sourceTip: reviewRevision === null ? null : readGithubPullRequestSourceTip(raw, reviewRevision),
     autoMerge: raw.auto_merge === null ? { enabled: false, method: null }
       : isRecord(raw.auto_merge) ? { enabled: true,
-        method: raw.auto_merge.merge_method === 'merge' || raw.auto_merge.merge_method === 'squash'
-          || raw.auto_merge.merge_method === 'rebase' ? raw.auto_merge.merge_method : null }
+        method: autoMergeMethod?.success === true ? autoMergeMethod.data : null }
         : null,
   } satisfies GithubPullRequestFactsV1);
 }

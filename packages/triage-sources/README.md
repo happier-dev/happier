@@ -162,6 +162,14 @@ with `offer(write)` and cleared with `offer(null)` on cleanup. Keep the source's
 existing `execute` callback and Action operands; the frame forwards that callback
 through the ordinary confirmation path.
 
+For finite Action reads, `projectTriageSourceReadFailureV1` from
+`@happier-dev/triage-sources/runtime` preserves the host's refusal class, native
+diagnostic code, retryability and request ID. Pass the full execution result,
+your read fallback code and your not-dispatched code. Raw invocation adapters
+use `projectTriageSourceInvocationFailureV1` for the same classification without
+exposing raw error context. These projections do not settle uncertain writes;
+the source's mutation settlement remains responsible for that outcome.
+
 Presentation controls such as paging and disclosure use
 `useTriageSourcePanelIntentV1` inside the active panel, as described above.
 Publish the available `commands` and call the returned intent from visible

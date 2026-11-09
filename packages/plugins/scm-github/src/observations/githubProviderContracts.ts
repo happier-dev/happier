@@ -90,18 +90,24 @@ function readNonEmptyString(value: unknown, label: string): string {
   return value.trim();
 }
 
-export function readGithubPositiveDecimal(value: unknown, label: string): string {
+/** Native numeric identifiers share this grammar across tolerant and strict readers. */
+export function tryReadGithubPositiveDecimal(value: unknown): string | null {
   if (typeof value === 'number') {
-    if (!Number.isSafeInteger(value) || value < 1) {
-      throw new RangeError(`GitHub ${label} must be a positive safe integer`);
-    }
-    return String(value);
+    return Number.isSafeInteger(value) && value >= 1 ? String(value) : null;
   }
-  const candidate = readNonEmptyString(value, label);
-  if (!/^[1-9][0-9]*$/u.test(candidate)) {
-    throw new RangeError(`GitHub ${label} must be a canonical positive decimal string`);
+  if (typeof value !== 'string') return null;
+  const candidate = value.trim();
+  return /^[1-9][0-9]*$/u.test(candidate) ? candidate : null;
+}
+
+export function readGithubPositiveDecimal(value: unknown, label: string): string {
+  const parsed = tryReadGithubPositiveDecimal(value);
+  if (parsed !== null) return parsed;
+  if (typeof value === 'number') {
+    throw new RangeError(`GitHub ${label} must be a positive safe integer`);
   }
-  return candidate;
+  readNonEmptyString(value, label);
+  throw new RangeError(`GitHub ${label} must be a canonical positive decimal string`);
 }
 
 export function parseGithubRepositorySpecifier(value: unknown): Readonly<{

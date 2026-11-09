@@ -1,7 +1,7 @@
 import type { JsonValue, PluginContributionRef } from '@happier-dev/plugin-sdk';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
-import { TriageSourceFailureV1Schema, type TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import { projectTriageSourceInvocationFailureV1 as forgeCiInvocationFailureV1 } from '@happier-dev/triage-sources/runtime';
 import {
     ForgeCiActionInputSchemasV1, ForgeCiActionResultSchemasV1,
     type ForgeCiActionInputByOperationV1, type ForgeCiActionResultByOperationV1,
@@ -70,22 +70,8 @@ function unknownMutation(input: ForgeCiActionInputByOperationV1[ForgeCiOperation
     };
 }
 
-/** CI and Releases preserve the same canonical host refusal without disclosing private context. */
-export function forgeCiInvocationFailureV1(error: unknown, fallbackCode: string): TriageSourceFailureV1 {
-    if (isPluginError(error)) {
-        // Mounted transports keep the exact refusal in a diagnostic when the
-        // host's top-level code describes only availability or stale custody.
-        const wrapped = error.code === 'unavailable' || error.code === 'denied' || error.code === 'stale_surface';
-        const code = wrapped ? error.diagnostics?.find(diagnostic => diagnostic.severity === 'error')?.code ?? error.code : error.code;
-        const failure = TriageSourceFailureV1Schema.safeParse({
-            class: error.code === 'denied' ? 'permission' : error.retryable ? 'transient' : 'unsupportedContract',
-            code,
-        });
-        // Do not disclose arbitrary messages, diagnostic details or raw errors.
-        if (failure.success) return failure.data;
-    }
-    return { class: 'transient', code: fallbackCode };
-}
+/** Compatibility name for the shared invocation owner consumed by CI and Releases. */
+export { forgeCiInvocationFailureV1 };
 
 function failedInvocation(
     family: ReturnType<typeof resultFamily>,
