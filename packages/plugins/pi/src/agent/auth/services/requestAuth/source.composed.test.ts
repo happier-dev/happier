@@ -4,6 +4,11 @@ import { join, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import type { AgentProviderBindingMaterializeInput } from '@happier-dev/plugin-sdk/agents/runtime';
+
+import { activate, PLUGIN_MANIFEST } from '../../../../index.js';
+import { PI_PROVIDER_ID } from '../../../providerBinding.js';
 
 import {
   createConnectedAccountRequestAuthService,
@@ -1416,5 +1421,60 @@ describe('Pi request-auth exact-version AgentSession composed matrix', () => {
       }
     },
     120_000,
+  );
+});
+
+describe('Pi selected Provider native model configuration', () => {
+  it.each<PiVersion>(['0.81.0', '0.81.1', '0.82.0', '0.82.1'])(
+    '%s resolves the materialized sparse selected model and credential through native owners',
+    async (version) => {
+      const root = await createPiRequestAuthTestWorkspace('composed-');
+      const fixture = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+      const previousKey = process.env.HAPPIER_PI_PROVIDER_API_KEY;
+      try {
+        const adapter = fixture.registration('agents', 'pi')?.providerBinding;
+        if (!adapter) throw new Error('Selected Provider binding must be registered');
+        const model = { id: 'publisher/raw-selected-model', name: 'Selected model' };
+        const transport = { id: 'bearer', protocols: ['openai-responses'], uses: ['runtime'],
+          destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } } as const;
+        const input: AgentProviderBindingMaterializeInput = {
+          v: 1,
+          prepared: adapter.prepare({ v: 1, agentTargetKey: 'agent-target', connectionId: 'gateway', model }),
+          binding: { v: 1, agentTargetKey: 'agent-target', contributionKey: null,
+            selection: { connectionId: 'gateway', model },
+            endpoint: { endpointTemplateId: 'responses', normalizedUrl: 'http://127.0.0.1:7777/v1',
+              protocol: 'openai-responses', publicHeaders: { 'x-source': 'selected', 'x-literal': '!do-not-execute $HOME' } },
+            runtimeCredentialTransport: transport, compatibilityFingerprint: 'admitted' },
+          credential: { kind: 'apiKey', transport, value: 'fake-native-registry-key' },
+        };
+        const materialized = await adapter.materialize(input);
+        if (materialized.kind !== 'configFile') throw new Error('Expected native model configuration');
+        for (const file of materialized.files) await writeFile(join(root, file.relativePath), file.utf8, 'utf8');
+        const key = materialized.env.find(entry => entry.name === 'HAPPIER_PI_PROVIDER_API_KEY')?.value;
+        if (typeof key !== 'string') throw new Error('Expected selected Provider credential environment');
+        process.env.HAPPIER_PI_PROVIDER_API_KEY = key;
+        await writeFile(join(root, 'auth.json'), '{}', 'utf8');
+        const modules = await loadExactPiModules(version);
+        const runtime = await modules.coding.ModelRuntime.create({
+          authPath: join(root, 'auth.json'), modelsPath: join(root, 'models.json'),
+          modelsStorePath: join(root, 'model-store.json'), allowModelNetwork: false,
+        });
+        const registry = new modules.coding.ModelRegistry(runtime);
+        expect(registry.getError()).toBeUndefined();
+        const selected = registry.find(PI_PROVIDER_ID, model.id);
+        expect(selected).toMatchObject({ provider: PI_PROVIDER_ID, id: model.id,
+          api: 'openai-responses', baseUrl: input.binding.endpoint.normalizedUrl });
+        if (!selected) throw new Error('Selected model was not admitted by the native registry');
+        expect(await registry.getApiKeyAndHeaders(selected)).toMatchObject({
+          ok: true, apiKey: 'fake-native-registry-key',
+          headers: { 'x-source': 'selected', 'x-literal': '!do-not-execute $HOME' },
+        });
+      } finally {
+        if (previousKey === undefined) delete process.env.HAPPIER_PI_PROVIDER_API_KEY;
+        else process.env.HAPPIER_PI_PROVIDER_API_KEY = previousKey;
+        await fixture.dispose();
+        await rm(root, { recursive: true, force: true });
+      }
+    },
   );
 });
