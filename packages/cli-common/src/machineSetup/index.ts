@@ -3,7 +3,7 @@ import type { MachineElevationFailureV1, MachineFirewallRecoveryV1 as MachineSet
     MachineFirewallRestorationV1 as MachineSetupFirewallRestorationV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 export type { MachineFirewallRecoveryV1 as MachineSetupFirewallRecoveryV1,
     MachineFirewallRestorationV1 as MachineSetupFirewallRestorationV1 } from '@happier-dev/protocol/machines/adminAccessV1';
-import { MachineSetupElevatedEffectV1Schema, isMachineSetupBootstrapBasisV1, type MachineRecipeStepV1, type MachineRecipeCheckV1, type MachineSetupEffectPlanV1, type MachineSetupStepObservationV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import { MachineSetupElevatedEffectV1Schema, isMachineSetupBootstrapBasisV1, type MachineRecipeStepV1, type MachineRecipeCheckV1, type MachineSetupEffectPlanV1, type MachineSetupStepObservationV1, type MachineRecipeTargetFactKeyV1, type MachineRecipeTargetFactsV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { createMachineSetupEffectPlan, readMachineSetupEffectPlanV1, compareMachineSetupEffectPlansV1,
     type MachineSetupPlanComparisonV1 } from './planReview.js';
 export { createMachineSetupEffectPlan, readMachineSetupEffectPlanV1, compareMachineSetupEffectPlansV1,
@@ -64,6 +64,11 @@ export interface MachineSetupBackend {
     observe(step: MachineRecipeStepV1 | MachineRecipeCheckV1): Promise<MachineSetupStepObservationV1>;
     /** Only the native useradd owner can report that this invocation created an account. */
     apply(step: MachineRecipeStepV1): Promise<void | Readonly<{ createdUser: true }>>;
+    /** Retire private files owned by this finite invocation, including on cancellation. */
+    finishInvocation?(): Promise<void>;
+    /** Native OS metadata only; daemon identity stays with the captured P10 owner. */
+    readTargetFacts?(facts: readonly MachineRecipeTargetFactKeyV1[]): Promise<MachineRecipeTargetFactsV1>;
+    onChange?(service: Extract<MachineRecipeStepV1, { kind: 'serviceUnit' }>, action: 'reload' | 'restart'): Promise<void>;
     stage?(step: Extract<MachineRecipeStepV1, { kind: 'firewall' }>): Promise<MachineSetupNativeStageV1>;
     establishAdministrator?(input: Readonly<{ step: Extract<MachineRecipeStepV1, { kind: 'user' }>; password: Uint8Array }>): Promise<void>;
 }
@@ -99,6 +104,7 @@ export function machineSetupPlansRequireAdministratorV1(plans: readonly Pick<Mac
 }
 /** Host-private, one-use input. Never serialize this into a recipe, plan or event. */
 export type MachineSetupAdministratorEstablishmentV1 = Readonly<{ stepId: string; username: string; password: Uint8Array }>;
+/** A started check observes current native state; only a started apply attempts an effect. */
 export type MachineSetupProgressV1 = Readonly<{ stepId: string; phase: 'check' | 'apply' | 'verify'; status: string; reason?: string }>;
 export type MachineSetupNativeEffectIntentV1 = Readonly<{
     basis: Extract<MachineSetupEffectPlanV1['basis'], { kind: 'adminAccess' | 'reboot' }>;
@@ -164,16 +170,21 @@ export function isMachineSetupPackageManagerUnavailableV1(step: MachineRecipeSte
         && fact.reason === 'required_fact_unavailable' && fact.facts.requiredFact === 'packageManager'
         && fact.facts.manager === step.manager;
 }
-/** A reviewed source change can establish later package availability. The
- * current pre-effect observation determines which dependent packages wait. */
-function packageStepsAwaitingSource(plan: Pick<MachineSetupEffectPlanV1, 'steps' | 'nativeFacts'>): ReadonlySet<string> {
-    const sources = new Set<string>(), packages = new Set<string>();
+/** Ordered source/package effects can establish later package/tool availability.
+ * Missing tools stay unavailable until re-observed after the earlier install. */
+function stepsAwaitingEarlierEffects(plan: Pick<MachineSetupEffectPlanV1, 'steps' | 'nativeFacts'>): ReadonlySet<string> {
+    const sources = new Set<string>(), awaiting = new Set<string>();
+    let installingPackage = false;
     for (const [index, fact] of plan.nativeFacts.entries()) {
         const step = plan.steps[index];
         if (step?.kind === 'packageSource' && fact.status === 'drifted') sources.add(step.manager);
-        if (step?.kind === 'package' && sources.has(step.manager) && isMachineSetupPackageUnavailableV1(step, fact)) packages.add(step.id);
+        if (step?.kind === 'package' && sources.has(step.manager) && isMachineSetupPackageUnavailableV1(step, fact)) awaiting.add(step.id);
+        if (installingPackage && (fact.status === 'unsupported' || fact.status === 'unavailable')
+            && fact.reason === 'required_fact_unavailable' && fact.facts.requiredFact === 'commandExecutable'
+            && typeof fact.facts.executable === 'string') awaiting.add(fact.stepId);
+        if (step?.kind === 'package' && step.state !== 'absent' && (fact.status === 'drifted' || awaiting.has(step.id))) installingPackage = true;
     }
-    return packages;
+    return awaiting;
 }
 /** Selection evidence stays in the digest even when an alternative is unavailable.
  * Only selected branches can block a nonempty program; an empty unresolved
@@ -181,8 +192,8 @@ function packageStepsAwaitingSource(plan: Pick<MachineSetupEffectPlanV1, 'steps'
 export function findMachineSetupBlockingObservationV1(plan: Pick<MachineSetupEffectPlanV1,
     'steps' | 'nativeFacts' | 'checks' | 'checkFacts' | 'selectedCheckIds'>): MachineSetupStepObservationV1 | undefined {
     const selected = plan.selectedCheckIds === undefined ? undefined : new Set(plan.selectedCheckIds);
-    const awaitingSource = packageStepsAwaitingSource(plan);
-    return plan.nativeFacts.find(fact => (fact.status === 'unsupported' || fact.status === 'unavailable') && !awaitingSource.has(fact.stepId))
+    const awaiting = stepsAwaitingEarlierEffects(plan);
+    return plan.nativeFacts.find(fact => (fact.status === 'unsupported' || fact.status === 'unavailable') && !awaiting.has(fact.stepId))
         ?? plan.checkFacts?.find((fact, index) => {
             if (fact.status !== 'unsupported' && fact.status !== 'unavailable') return false;
             const check = plan.checks?.[index];
@@ -259,6 +270,7 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
     const entries: readonly (Readonly<{ plan: MachineSetupEffectPlanV1 }> | Readonly<{ intent: MachineSetupNativeEffectIntentV1 }>)[] =
         'plans' in input ? input.plans : [{ intent: input.intent }];
     const stages: MachineSetupNativeStageV1[] = [];
+    let nativeStopUnconfirmed = false;
     let stagesCommitted = false;
     const undoStages = async () => {
         const recovery = stages[0]?.recovery;
@@ -391,7 +403,7 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
                 continue;
             }
             const daemonUsername = input.daemonUsername ?? (isMachineSetupBootstrapBasisV1(plan.basis) ? 'happier' : undefined);
-            const awaitingSource = packageStepsAwaitingSource({ steps: plan.steps, nativeFacts });
+            const awaiting = stepsAwaitingEarlierEffects({ steps: plan.steps, nativeFacts });
             const potentialEffects = new Set(potentialEffectSteps[planIndex]);
             for (let index = 0; index < plan.steps.length; index++) {
                 const step = plan.steps[index]!;
@@ -401,8 +413,17 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
                 let observed: MachineSetupStepObservationV1;
                 // Earlier effects can invalidate an initially satisfied step
                 // in this same program (for example a user manager's groups).
-                try { observed = planIndex === 0 && completedStepIds.length === 0 && !awaitingSource.has(step.id)
-                    ? nativeFacts[index]! : await input.backend.observe(step); }
+                try {
+                    if (planIndex === 0 && completedStepIds.length === 0 && !awaiting.has(step.id)) observed = nativeFacts[index]!;
+                    else {
+                        // Re-observation can fail before Apply starts. Publish the
+                        // executing plan/step rather than retaining preflight success.
+                        input.onProgress?.({ planIndex, stepId: step.id, phase: 'check', status: 'started' });
+                        observed = await input.backend.observe(step);
+                        input.onProgress?.({ planIndex, stepId: step.id, phase: 'check', status: observed.status,
+                            ...(observed.reason ? { reason: observed.reason } : {}) });
+                    }
+                }
                 catch (error) {
                     if (isUnconfirmedNativeProcessStop(error)) throw error;
                     return result('outcome_unknown', step.id, input.signal?.aborted ? 'cancelled' : 'required_fact_unavailable');
@@ -417,9 +438,15 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
                 try {
                     let createdUser = false;
                     if (observed.status !== 'satisfied') {
+                        const handler = step.kind === 'file' ? step.onChange : undefined;
+                        const service = handler ? plan.steps.find(candidate => candidate.kind === 'serviceUnit' && candidate.id === handler.serviceStepId) : undefined;
+                        if (handler && (service?.kind !== 'serviceUnit' || !input.backend.onChange)) {
+                            throw new MachineSetupEffectError('required_fact_unavailable');
+                        }
                         const applied = await input.backend.apply(accountStep);
                         createdUser = applied?.createdUser === true;
                         completedStepIds.push(step.id);
+                        if (handler && service?.kind === 'serviceUnit') await input.backend.onChange!(service, handler.action);
                     }
                     if (establishesAdministrator && createdUser && administratorStep && establishment) {
                         const account = await input.backend.observe(accountStep);
@@ -461,8 +488,23 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
             }
         }
         return result('applied');
+    } catch (error) {
+        nativeStopUnconfirmed = isUnconfirmedNativeProcessStop(error);
+        throw error;
     } finally {
-        if (!stagesCommitted && stages.length) await undoStages();
-        establishment?.password.fill(0);
+        try {
+            if (!stagesCommitted && stages.length) await undoStages();
+        } catch (error) {
+            if (isUnconfirmedNativeProcessStop(error)) nativeStopUnconfirmed = true;
+            throw error;
+        } finally {
+            establishment?.password.fill(0);
+            // Unlinking invocation files preserves already-open descriptors; the
+            // process owner still retains custody of an unconfirmed child.
+            try { await input.backend.finishInvocation?.(); }
+            catch {
+                if (!nativeStopUnconfirmed) return result('outcome_unknown', undefined, 'native_effect_failed');
+            }
+        }
     }
 }

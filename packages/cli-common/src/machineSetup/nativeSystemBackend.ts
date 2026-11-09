@@ -117,7 +117,7 @@ export function createNativeSystemBackend(run: NativeRun, runAsDaemonUser?: Nati
         if (step.enabled && ['static', 'indirect', 'generated', 'transient', 'masked', 'masked-runtime'].includes(fields.UnitFileState)) return observation(step, 'unsupported', { requiredFact: 'serviceEnablement', unit: step.unit }, 'required_fact_unavailable');
         if (!['active', 'inactive', 'failed'].includes(fields.ActiveState)) return unavailable(step, { unit: step.unit, activeState: fields.ActiveState });
         const enabled = fields.UnitFileState === 'enabled', running = fields.ActiveState === 'active';
-        return observation(step, enabled === step.enabled && running === step.running ? 'satisfied' : 'drifted', { unit: step.unit, enabled, running, unitFileState: fields.UnitFileState, activeState: fields.ActiveState });
+        return observation(step, (step.enabled === undefined || enabled === step.enabled) && running === step.running ? 'satisfied' : 'drifted', { unit: step.unit, enabled, running, unitFileState: fields.UnitFileState, activeState: fields.ActiveState });
     };
     const observe = async (step: MachineRecipeStepV1): Promise<MachineSetupStepObservationV1> => {
         if (step.kind === 'user') return inspectUser(step);
@@ -133,6 +133,9 @@ export function createNativeSystemBackend(run: NativeRun, runAsDaemonUser?: Nati
             // Kernel verification is consumed by the composing native backend.
             if ('kind' in step.check) return observation(step, 'unsupported', {}, 'required_fact_unavailable');
             const result = await run(step.check.executable, step.check.args, locale);
+            if (result.errorCode === 'ENOENT') return unavailable(step, {
+                requiredFact: 'commandExecutable', executable: step.check.executable,
+            });
             if (result.code === 0 && step.check.stdoutJson !== undefined) {
                 let output: unknown;
                 try { output = JSON.parse(result.stdout); } catch { return unavailable(step, { exitCode: 0 }); }
@@ -201,7 +204,7 @@ export function createNativeSystemBackend(run: NativeRun, runAsDaemonUser?: Nati
             }
             if (step.kind === 'serviceUnit') {
                 if (state.facts.present === false) throw new MachineSetupEffectError('required_fact_unavailable');
-                if (state.facts.enabled !== step.enabled) await effect('systemctl', [step.enabled ? 'enable' : 'disable', '--', step.unit]);
+                if (step.enabled !== undefined && state.facts.enabled !== step.enabled) await effect('systemctl', [step.enabled ? 'enable' : 'disable', '--', step.unit]);
                 if (state.facts.running !== step.running) await effect('systemctl', [step.running ? 'start' : 'stop', '--', step.unit]);
                 return;
             }

@@ -26,7 +26,7 @@ description: Contribution families that a plugin can declare for projection and 
 | `registrySources` | Data-only catalogs shown alongside built-in and personal sources | `registrySources.<id>`: `title`, `format`, `kinds`, and either a remote `url` or app-only `packageContent.path` (0.3 development) |
 | `storeKinds` | Plugin-owned Store items, parsing, presentation and acquisition (0.3 development source) | `storeKinds.<id>`: `title`, `viewId` and `operations` referencing declared same-plugin Actions; see [Store item kinds](#store-item-kinds-03-development-source). |
 | `backupDestinations` | Declarative restic storage access (0.3 development source) | `backupDestinations.<id>`: closed nonsecret configuration, credential roles, transport/locality facts and qualified `test` / `open` Actions |
-| `deploymentTargets` | Runtime and managed-data target declarations (0.3 development metadata only) | `deploymentTargets.<id>`: closed target/link schemas and same-plugin Action/Resource references; executable target integration is not yet available |
+| `deploymentTargets` | Runtime and managed-data target declarations and executable role contracts (unreleased 0.3 development source) | `deploymentTargets.<id>`: closed target/link schemas and same-plugin Actions/Resources with validated role inputs and results; see [Deployment target declarations](#deployment-target-declarations-03-development-source) for integration limits. |
 | `healthCheckKinds` | Finite check declarations (unreleased 0.3 development source) | `healthCheckKinds.<id>`: recursively closed configuration and a same-plugin read-only daemon Action returning the canonical health result; see [Health check kinds](/plugins/guides/background-services#health-check-kinds-development-source). |
 | `machineRecipes` | Typed Machine setup effects (unreleased development contract) | `machineRecipes.<id>`: revision, presentation, closed input schema and checked steps; data only |
 | `machineSetupPresets` | Reusable Machine setup content (unreleased development contract) | `machineSetupPresets.<id>`: revision, presentation and the same setup part used by Account/Team Presets; data only |
@@ -390,7 +390,8 @@ Supported declaration fields can bind reviewed public input with
 Action input-path contract. A referenced value must exist and pass the concrete
 field validator; values are not coerced or recursively interpreted. Keep private
 keys and secret bytes out of inputs and template variables; secret-backed files
-use `secretGrant` references.
+use `secretGrant` references. The grant's `grantRef` may bind a reviewed input;
+the input contains the reference, never the secret bytes.
 
 Package declarations accept an input reference for the whole `packages` array
 or for an individual identity, as in the example. Binding an identity object
@@ -403,12 +404,15 @@ scope are optional. Removal uses explicit `removeSteps`, not an inferred inverse
 For the target daemon's actual primary group or username, bind a supported declaration
 field such as `group`, or a template variable, with
 `{ kind: 'targetFact', fact: 'daemon.primaryGroup' }` or `fact: 'daemon.username'`.
-These are the supported target facts in the development contract. The host resolves them from its existing
-daemon-identity observation once per Plan request, rather than accepting an identity in
-the recipe's public inputs. Missing evidence returns
-`machine_recipe_target_fact_unavailable`; no username or group is inferred. The resolved
-value is covered by the reviewed effect-plan digest and is replanned at Apply.
-Credentials continue to use admitted secret-grant references.
+The host resolves these from its existing daemon-identity observation once per
+Plan request. OS security-update declarations can also request
+`os.packageManager`, `os.automaticUpdatesPackage`, `os.automaticUpdatesTimer`
+and `os.securityOrigins`. The native OS fact owner reads only demanded facts;
+these neither change daemon identity nor become public recipe inputs. Missing
+requested evidence returns `machine_recipe_target_fact_unavailable` rather than
+an inferred value. Resolved facts are covered by the reviewed effect-plan digest
+and replanned at Apply. Credentials continue to use admitted secret-grant
+references.
 
 File templates retain their `value`/`variables` shape and render once:
 
@@ -422,9 +426,34 @@ content: {
 }
 ```
 
+Template variables accept reviewed strings and finite numbers; numeric inputs
+render as text. Rendered text is not interpreted as another template or reference.
+
 The same input-reference shape binds receiver and administrator user fields in
-`sshd` candidate-validation and effective-probe contexts. Optional `checks`
-contain package or checked-command declarations and never run as mutation steps.
+`sshd` candidate-validation and effective-probe contexts. A context can supply
+`expected` effective settings. Native SSH validation checks the main configuration
+and its Include graph with `sshd -t` and context-specific `sshd -T` before
+activation or removal. A context without `expected` preserves its existing
+effective configuration; an effective probe checks the declared expectations.
+Use file `onChange: { serviceStepId, action: 'reload' | 'restart' }` to apply the
+change through a service step declared in the same recipe.
+
+`serviceUnit` accepts `.service` and `.timer` units. Omit `enabled` to preserve
+native enablement while declaring `running`, including for static units such as
+journald. File `iniKeys` content updates declared section/key values through the
+native file owner. Typed fail2ban and audit probes express effective jail
+settings and audit-rule checks; host support remains a separate requirement.
+
+Use `lifetime: 'invocation'` only for a present secret-backed file. The native
+host requires root ownership and mode `0600`, refuses unrelated pre-existing
+files, and unlinks invocation-owned files as the invocation unwinds after success,
+failure or cancellation, even when child termination is unconfirmed. Already-open
+file descriptors remain usable and the original invocation error remains
+reported. The process owner separately retains custody of an unconfirmed child
+until exit is established.
+
+Optional `checks` contain package or checked-command declarations and never run
+as mutation steps.
 An effect can use ordered guards:
 
 ```ts

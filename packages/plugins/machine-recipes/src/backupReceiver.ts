@@ -21,10 +21,16 @@ Match User {username}
     AuthorizedKeysFile /etc/ssh/happier-backup-keys/{username}
 Match all
 `, { username: input('username'), chrootPath: input('chrootPath') });
+const administrator = { user: input('administrator.username'), host: input('administrator.host'), address: input('administrator.address') };
 const probe = { kind: 'sshd' as const, contexts: [
-  { user: input('username'), host: input('connection.host'), address: input('connection.address') },
-  { user: input('administrator.username'), host: input('administrator.host'), address: input('administrator.address') },
+  { user: input('username'), host: input('connection.host'), address: input('connection.address'), expected: {
+    chrootdirectory: input('chrootPath'), forcecommand: 'internal-sftp', authenticationmethods: 'publickey', pubkeyauthentication: 'yes',
+    passwordauthentication: 'no', kbdinteractiveauthentication: 'no', disableforwarding: 'yes', permittty: 'no',
+    permittunnel: 'no', permituserrc: 'no', authorizedkeysfile: keyPath,
+  } },
+  administrator,
 ] };
+const removalProbe = { kind: 'sshd' as const, contexts: [administrator] };
 const publicKey = { type: 'string' as const,
   pattern: '^(?:ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(?:256|384|521)) [A-Za-z0-9+/]+={0,2}(?: [^\\r\\n\\u0000]+)?$(?![\\s\\S])',
 };
@@ -45,7 +51,7 @@ const configFile = { kind: 'file' as const, path: configPath, owner: 'root', gro
 /** Opt-in data only. Unsupported native SSH probes never imply receiver readiness. */
 export const BACKUP_RECEIVER_RECIPE = {
   revision: '1', title: 'Backup receiver',
-  description: 'A dedicated key-only SFTP login. Removing access preserves the repository and every backup byte.',
+  description: 'A private login that another Machine sends its backups to. Removing it keeps every backup.',
   inputSchema: { type: 'object', properties: {
     username: { type: 'string', pattern: '^(?!(?:root|happier|happier-agent|nobody|daemon|bin|sys|sync|games|man|lp|mail|news|uucp|proxy|www-data|backup|list|irc|gnats|sshd|_sshd|messagebus|polkitd|sudo|docker|adm|wheel|shadow|disk|staff|users|nogroup)$)(?!systemd-)[a-z_][a-z0-9_-]*$(?![\\s\\S])' },
     chrootPath: path, repositoryPath: path, senderPublicKey: publicKey, previousSenderPublicKey: publicKey,
@@ -74,6 +80,7 @@ export const BACKUP_RECEIVER_RECIPE = {
   removeSteps: [
     { ...account, state: 'absent' },
     { ...keyFile, id: 'sender-key', state: 'absent', expectedContentDigest: { kind: 'renderedContent', content: keyContent('senderPublicKey') } },
-    { ...configFile, id: 'receiver-ssh-policy', state: 'absent', expectedContentDigest: { kind: 'renderedContent', content: policy } }, service,
+    { ...configFile, id: 'receiver-ssh-policy', state: 'absent', validate: removalProbe, probe: removalProbe,
+      expectedContentDigest: { kind: 'renderedContent', content: policy } }, service,
   ],
 } satisfies Omit<MachineRecipeV1, 'id'>;

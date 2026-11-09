@@ -22,6 +22,7 @@ export { MachineFirewallTransitionIntentV1Schema, type MachineFirewallTransition
 export { MachineRecipeReferenceV1Schema, type MachineRecipeReferenceV1 } from './machineRecipeReferenceV1.js';
 
 const Name = z.string().regex(/^[a-z_][a-z0-9_.-]*[$]?$/i);
+const ServiceUnitName = z.string().regex(/^[a-zA-Z0-9@_.-]+\.(?:service|timer)$/);
 const Path = z.string().startsWith('/').refine((value) => !value.includes('\0'));
 const NativeExecutable = z.string().min(1).refine(value => {
     if (value.includes('\0')) return false;
@@ -38,6 +39,12 @@ const KernelFact = z.object({ kind: z.literal('kernel'), capability: z.string().
     architectures: Architectures.optional() }).strict().refine(fact => !['binfmt', 'binfmtPersistent'].includes(fact.capability) || fact.architectures !== undefined,
     { message: 'Emulation facts require the exact requested architectures' });
 const UserManagerGroups = z.object({ kind: z.literal('userManagerGroups'), username: Name }).strict();
+const AuditProbe = z.object({ kind: z.literal('audit'), rules: z.array(z.string().min(1)).min(1),
+    state: z.enum(['present', 'absent']).optional() }).strict();
+const Fail2banProbe = z.object({ kind: z.literal('fail2ban'), jails: z.record(z.string().regex(/^[a-zA-Z0-9_-]+$/),
+    z.object({ maxRetry: z.number().int().positive(), findTimeSeconds: z.number().int().positive(),
+        banTimeSeconds: z.number().int().positive(), port: z.number().int().min(1).max(65535).optional() }).strict())
+    .refine(value => Object.keys(value).length > 0) }).strict();
 export const MachineRecipeRequiredFactV1Schema = z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('packageManager'), manager: z.string().regex(/^[a-z][a-z0-9-]*$/) }).strict(),
     z.object({ kind: z.literal('init'), system: z.enum(['systemd', 'launchd', 'windowsScm']) }).strict(),
@@ -61,13 +68,18 @@ export const MachineSetupScriptCheckV1Schema = MachineRecipeNativeCheckV1Schema.
 }).strict();
 const Step = { id: z.string().min(1), requiredFacts: z.array(MachineRecipeRequiredFactV1Schema).optional(),
     review: z.object({ title: PluginLocalizedStringV2Schema, description: z.optional(PluginLocalizedStringV2Schema) }).strict().optional() };
-const SshContext = z.object({ user: Name, host: z.string().min(1).refine(value => !/[\r\n\0]/.test(value)), address: z.string().min(1).refine(value => !/[\r\n\0]/.test(value)) }).strict();
+const SshContext = z.object({ user: Name, host: z.string().min(1).refine(value => !/[,\r\n\0]/.test(value)),
+    address: z.string().min(1).refine(value => !/[,\r\n\0]/.test(value)),
+    expected: z.record(z.string().regex(/^[a-z][a-z0-9]*$/), z.string().refine(value => !/[\r\n\0]/.test(value)))
+        .refine(value => Object.keys(value).length > 0).optional(),
+}).strict();
 export const MachineRecipeFileProbeV1Schema = z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('sshd'), contexts: z.array(SshContext).min(1) }).strict(),
     z.object({ kind: z.literal('docker') }).strict(),
     z.object({ kind: z.literal('caddy') }).strict(),
     z.object({ kind: z.literal('nft') }).strict(),
     z.object({ kind: z.literal('sudoers') }).strict(),
+    Fail2banProbe, AuditProbe,
 ]);
 const Handler = z.object({ serviceStepId: z.string().min(1), action: z.enum(['reload', 'restart']) }).strict();
 const Ownership = { owner: Name, group: Name, mode: z.number().int().min(0).max(0o7777) };
@@ -103,12 +115,15 @@ export const MachineRecipePackageObservationV1Schema = MachineRecipePackageIdent
     present: z.boolean(), version: PackageVersion.optional(),
 }).refine(value => value.present || value.version === undefined, { message: 'An absent package has no installed version.' });
 
-function refineFile(step: { state?: string; content?: { kind: string }; expectedContentDigest?: unknown }, context: z.RefinementCtx) {
+function refineFile(step: { state?: string; content?: { kind: string }; expectedContentDigest?: unknown; lifetime?: string }, context: z.RefinementCtx) {
     if (step.state === 'absent' ? step.content?.kind !== 'secretGrant' && (step.content !== undefined || !step.expectedContentDigest) : step.content === undefined) {
         context.addIssue({ code: 'custom', message: 'Present files require content; removal requires a secret grant reference or the exact prior digest without content' });
     }
     if (step.content?.kind === 'secretGrant' && step.expectedContentDigest !== undefined) {
         context.addIssue({ code: 'custom', path: ['expectedContentDigest'], message: 'Secret grants carry references only, never a content digest' });
+    }
+    if (step.lifetime === 'invocation' && (step.content?.kind !== 'secretGrant' || step.state === 'absent')) {
+        context.addIssue({ code: 'custom', path: ['lifetime'], message: 'Invocation files require a present secret grant' });
     }
 }
 
@@ -139,6 +154,7 @@ export const MachineRecipePathTraversalStepV1Schema =
 export const MachineRecipeFileStepV1Schema =
     z.object({ ...Step, kind: z.literal('file'), path: Path, ...Ownership,
         state: z.enum(['present', 'absent']).optional(),
+        lifetime: z.literal('invocation').optional(),
         content: z.discriminatedUnion('kind', [
             z.object({ kind: z.literal('literal'), value: z.string() }).strict(),
             z.object({ kind: z.literal('jsonMerge'), value: JsonObject }).strict(),
@@ -152,7 +168,7 @@ export const MachineRecipeFileStepV1Schema =
     }).strict().superRefine(refineFile);
 export const MachineRecipeCommandStepV1Schema =
     z.object({ ...Step, kind: z.literal('command'), ...Argv.shape,
-        check: z.union([MachineRecipeNativeCheckV1Schema, KernelFact, UserManagerGroups]), remove: Argv.optional(), affects: MachineRecipeImpactV1Schema.optional(),
+        check: z.union([MachineRecipeNativeCheckV1Schema, KernelFact, UserManagerGroups, AuditProbe]), remove: Argv.optional(), affects: MachineRecipeImpactV1Schema.optional(),
     }).strict();
 /** Exact POSIX shell bytes, reviewed and elevated with the containing recipe. */
 export const MachineRecipeScriptStepV1Schema = z.object({ ...Step, kind: z.literal('script'),
@@ -177,7 +193,7 @@ export const MachineRecipePackageSourceStepV1Schema =
         keyUrl: z.url().startsWith('https://'), keyFingerprint: z.string().regex(/^[A-F0-9]{40}$/),
     }).strict();
 export const MachineRecipeServiceUnitStepV1Schema =
-    z.object({ ...Step, kind: z.literal('serviceUnit'), unit: z.string().regex(/^[a-zA-Z0-9@_.-]+\.service$/), enabled: z.boolean(), running: z.boolean() }).strict();
+    z.object({ ...Step, kind: z.literal('serviceUnit'), unit: ServiceUnitName, enabled: z.boolean().optional(), running: z.boolean() }).strict();
 export const MachineRecipeFirewallStepV1Schema =
     z.object({ ...Step, kind: z.literal('firewall'), rules: z.string().min(1), exposures: z.array(FirewallExposure).optional() }).strict();
 // Host-built concrete effect only; recipes cannot declare reboot.
@@ -192,11 +208,20 @@ export type MachineRecipeStepV1 = z.infer<typeof MachineRecipeStepV1Schema>;
 
 export const MachineRecipeInputReferenceV1Schema = z.object({ kind: z.literal('input'), path: InputPathSchema }).strict();
 type InputReference = z.infer<typeof MachineRecipeInputReferenceV1Schema>;
-export const MachineRecipeTargetFactReferenceV1Schema = z.object({ kind: z.literal('targetFact'), fact: z.enum(['daemon.primaryGroup', 'daemon.username']) }).strict();
+const TargetFactValues = z.object({
+    'daemon.primaryGroup': Name,
+    'daemon.username': Name,
+    'os.packageManager': z.enum(['apt', 'dnf']),
+    'os.automaticUpdatesPackage': z.string().regex(/^[a-z0-9][a-z0-9+.-]*$/),
+    'os.automaticUpdatesTimer': ServiceUnitName,
+    'os.securityOrigins': z.string().min(1).refine(value => !value.includes('\0')),
+});
+export const MachineRecipeTargetFactReferenceV1Schema = z.object({ kind: z.literal('targetFact'), fact: TargetFactValues.keyof() }).strict();
+export type MachineRecipeTargetFactKeyV1 = z.infer<typeof MachineRecipeTargetFactReferenceV1Schema>['fact'];
 export type MachineRecipeTargetFactsV1 = Readonly<Partial<Record<z.infer<typeof MachineRecipeTargetFactReferenceV1Schema>['fact'], string | null>>>;
 export class MachineRecipeTargetFactUnavailableErrorV1 extends Error {
     readonly code = 'machine_recipe_target_fact_unavailable';
-    constructor() { super('machine_recipe_target_fact_unavailable'); }
+    constructor(readonly fact?: MachineRecipeTargetFactKeyV1) { super('machine_recipe_target_fact_unavailable'); }
 }
 const TemplateReference = z.object({ kind: z.literal('template'), value: z.string(),
     variables: z.record(z.string(), z.union([z.string(), MachineRecipeInputReferenceV1Schema, MachineRecipeTargetFactReferenceV1Schema])),
@@ -215,16 +240,28 @@ const User = MachineRecipeUserStepV1Schema, Directory = MachineRecipeDirectorySt
 const File = MachineRecipeFileStepV1Schema, Command = MachineRecipeCommandStepV1Schema, Package = MachineRecipePackageStepV1Schema;
 const Content = File.shape.content.unwrap();
 const LiteralContent = z.object({ ...Content.options[0].shape, value: bindable(Content.options[0].shape.value) }).strict();
+const JsonMergeContent = z.object({ ...Content.options[1].shape, value: bindable(Content.options[1].shape.value) }).strict();
 const TemplateContent = z.object({ ...Content.options[2].shape, variables: TemplateReference.shape.variables }).strict();
-const FileContent = z.discriminatedUnion('kind', [LiteralContent, Content.options[1], TemplateContent, Content.options[3], Content.options[4]]);
+const SecretGrantContent = z.object({ ...Content.options[4].shape, grantRef: bindable(Content.options[4].shape.grantRef) }).strict();
+const FileContent = z.discriminatedUnion('kind', [LiteralContent, JsonMergeContent, TemplateContent, Content.options[3], SecretGrantContent]);
 const SshdProbe = MachineRecipeFileProbeV1Schema.options[0];
 const ProbeContext = SshdProbe.shape.contexts.element;
+const JailPolicy = Fail2banProbe.shape.jails.valueType;
+const Fail2banProbeDeclaration = z.object({ ...Fail2banProbe.shape,
+    jails: z.record(z.string().regex(/^[a-zA-Z0-9_-]+$/), z.object({
+        maxRetry: bindable(JailPolicy.shape.maxRetry), findTimeSeconds: bindable(JailPolicy.shape.findTimeSeconds),
+        banTimeSeconds: bindable(JailPolicy.shape.banTimeSeconds), port: bindable(JailPolicy.shape.port.unwrap()).optional(),
+    }).strict()).refine(value => Object.keys(value).length > 0),
+}).strict();
 const ProbeDeclaration = z.discriminatedUnion('kind', [
     z.object({ ...SshdProbe.shape, contexts: z.array(z.object({ ...ProbeContext.shape,
         user: bindable(ProbeContext.shape.user), host: bindable(ProbeContext.shape.host), address: bindable(ProbeContext.shape.address),
+        expected: z.record(z.string().regex(/^[a-z][a-z0-9]*$/), bindable(z.string().refine(value => !/[\r\n\0]/.test(value))))
+            .refine(value => Object.keys(value).length > 0).optional(),
     }).strict()).min(1) }).strict(),
     MachineRecipeFileProbeV1Schema.options[1], MachineRecipeFileProbeV1Schema.options[2],
     MachineRecipeFileProbeV1Schema.options[3], MachineRecipeFileProbeV1Schema.options[4],
+    Fail2banProbeDeclaration, AuditProbe,
 ]);
 const UserDeclaration = z.object({ ...User.shape,
     username: bindable(User.shape.username), home: bindable(User.shape.home.unwrap()).optional(),
@@ -256,6 +293,10 @@ const FileDeclaration = z.object({ ...File.shape,
 }).strict().superRefine(refineFile);
 const ServiceDeclaration = z.object({ ...MachineRecipeServiceUnitStepV1Schema.shape,
     unit: bindable(MachineRecipeServiceUnitStepV1Schema.shape.unit) }).strict();
+const FirewallDeclaration = z.object({ ...MachineRecipeFirewallStepV1Schema.shape,
+    rules: bindable(MachineRecipeFirewallStepV1Schema.shape.rules),
+    exposures: bindable(MachineRecipeFirewallStepV1Schema.shape.exposures.unwrap()).optional(),
+}).strict();
 const Args = bindable(z.array(bindable(z.string().refine(value => !value.includes('\0')))));
 const KernelDeclaration = z.object({ ...KernelFact.shape, architectures: bindable(Architectures).optional() }).strict()
     .refine(fact => !['binfmt', 'binfmtPersistent'].includes(fact.capability) || fact.architectures !== undefined,
@@ -263,16 +304,16 @@ const KernelDeclaration = z.object({ ...KernelFact.shape, architectures: bindabl
 const CommandDeclaration = z.object({ ...Command.shape, args: Args,
     check: z.union([z.object({ ...MachineRecipeNativeCheckV1Schema.shape, args: Args,
         stdoutJson: z.optional(createInputPredicateSchema(z.union([InputPrimitiveSchema, MachineRecipeInputReferenceV1Schema, MachineRecipeTargetFactReferenceV1Schema]))),
-    }).strict(), KernelDeclaration, UserManagerGroups]),
+    }).strict(), KernelDeclaration, UserManagerGroups, AuditProbe]),
 }).strict();
 const PackageDeclaration = z.object({ ...Package.shape,
     manager: bindable(Package.shape.manager), packages: bindable(z.array(z.union([
-        Package.shape.packages.element, MachineRecipeInputReferenceV1Schema,
+        z.object({ ...Package.shape.packages.element.shape, name: bindable(Package.shape.packages.element.shape.name) }).strict(), MachineRecipeInputReferenceV1Schema,
     ])).min(1)),
 }).strict().superRefine((step, context) => {
     // Bound identities are admitted by the same concrete native schema.
     if (typeof step.manager !== 'string' || !Array.isArray(step.packages)) return;
-    const packages = step.packages.filter(entry => !isInputReference(entry));
+    const packages = step.packages.filter(entry => !isInputReference(entry) && typeof entry.name === 'string');
     if (packages.length === 0) return;
     const { when: _when, ...identity } = { when: undefined, ...step, packages };
     const parsed = Package.safeParse(identity);
@@ -287,7 +328,7 @@ export const MachineRecipeStepDeclarationV1Schema = z.discriminatedUnion('kind',
     MachineRecipePathTraversalStepV1Schema.safeExtend({ when: When }), FileDeclaration.safeExtend({ when: When }),
     CommandDeclaration.safeExtend({ when: When }), MachineRecipeScriptStepV1Schema.safeExtend({ when: When }), PackageDeclaration.safeExtend({ when: When }),
     MachineRecipePackageSourceStepV1Schema.safeExtend({ when: When }), ServiceDeclaration.safeExtend({ when: When }),
-    MachineRecipeFirewallStepV1Schema.safeExtend({ when: When }),
+    FirewallDeclaration.safeExtend({ when: When }),
 ]);
 export type MachineRecipeStepDeclarationV1 = z.infer<typeof MachineRecipeStepDeclarationV1Schema>;
 export type MachineRecipeCheckV1 = z.infer<typeof MachineRecipeCheckV1Schema>;
@@ -300,13 +341,13 @@ function boundValue(value: unknown, inputs: unknown, targetFacts?: MachineRecipe
     if (value !== null && typeof value === 'object' && 'kind' in value && value.kind === 'targetFact') {
         const reference = MachineRecipeTargetFactReferenceV1Schema.parse(value);
         const resolved = targetFacts?.[reference.fact];
-        if (!resolved || !Name.safeParse(resolved).success) throw new MachineRecipeTargetFactUnavailableErrorV1();
+        if (!TargetFactValues.shape[reference.fact].safeParse(resolved).success) throw new MachineRecipeTargetFactUnavailableErrorV1(reference.fact);
         return resolved;
     }
     if (value !== null && typeof value === 'object' && 'kind' in value && value.kind === 'template') {
         const template = TemplateReference.parse(value);
         const vars = Object.fromEntries(Object.entries(template.variables).map(([name, variable]) =>
-            [name, { t: 'literal' as const, v: z.string().parse(boundValue(variable, inputs, targetFacts)) }]));
+            [name, { t: 'literal' as const, v: String(z.union([z.string(), z.number()]).parse(boundValue(variable, inputs, targetFacts))) }]));
         const rendered = resolveValueRefPlaintextV1({ t: 'template', template: template.value, vars }, () => null);
         if (rendered === null) throw new TypeError('invalid_machine_recipe_inputs');
         return rendered;
@@ -320,13 +361,18 @@ function boundArgs(value: unknown, inputs: unknown, targetFacts?: MachineRecipeT
     return Array.isArray(value) ? value.map(arg => boundValue(arg, inputs, targetFacts)) : boundValue(value, inputs, targetFacts);
 }
 function boundProbe(probe: z.infer<typeof ProbeDeclaration>, inputs: unknown, targetFacts?: MachineRecipeTargetFactsV1): unknown {
+    if (probe.kind === 'fail2ban') return { ...probe, jails: Object.fromEntries(Object.entries(probe.jails).map(([jail, policy]) =>
+        [jail, Object.fromEntries(Object.entries(policy).map(([key, value]) => [key, boundValue(value, inputs, targetFacts)]))])) };
     return probe.kind === 'sshd' ? { ...probe, contexts: probe.contexts.map(context => ({
         user: boundValue(context.user, inputs, targetFacts), host: boundValue(context.host, inputs, targetFacts), address: boundValue(context.address, inputs, targetFacts),
+        ...(context.expected ? { expected: Object.fromEntries(Object.entries(context.expected).map(([key, value]) => [key, boundValue(value, inputs, targetFacts)])) } : {}),
     })) } : probe;
 }
 function boundContent(content: z.infer<typeof FileContent> | undefined, inputs: unknown, targetFacts?: MachineRecipeTargetFactsV1): unknown {
     if (content?.kind === 'literal') return { kind: 'literal', value: boundValue(content.value, inputs, targetFacts) };
+    if (content?.kind === 'jsonMerge') return { kind: 'jsonMerge', value: boundValue(content.value, inputs, targetFacts) };
     if (content?.kind === 'template') return { kind: 'literal', value: boundValue(content, inputs, targetFacts) };
+    if (content?.kind === 'secretGrant') return { kind: 'secretGrant', grantRef: boundValue(content.grantRef, inputs, targetFacts) };
     return content;
 }
 /** Resolve authored fields only; reviewed JSON values are never recursively interpreted. */
@@ -368,10 +414,14 @@ export function resolveMachineRecipeStepInputsV1(step: MachineRecipeStepDeclarat
         }
         case 'package':
             resolved = { ...concreteStep, manager: bind(step.manager),
-                packages: Array.isArray(step.packages) ? step.packages.map(entry => bind(entry)) : bind(step.packages) };
+                packages: Array.isArray(step.packages) ? step.packages.map(entry => isInputReference(entry)
+                    ? bind(entry) : { ...entry, name: bind(entry.name) }) : bind(step.packages) };
             break;
         case 'serviceUnit':
             resolved = { ...concreteStep, unit: bind(step.unit) };
+            break;
+        case 'firewall':
+            resolved = { ...concreteStep, rules: bind(step.rules), ...(step.exposures !== undefined ? { exposures: bind(step.exposures) } : {}) };
             break;
         case 'command':
             resolved = { ...concreteStep, args: boundArgs(step.args, inputs, targetFacts),

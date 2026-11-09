@@ -13,6 +13,9 @@ import { activateNativeFile, removeNativeFile, assertProtectedNativeTarget, insp
     inspectNativePath as inspectPath, nativeFileFacts as facts, nativeFileDigest as hash,
     isMissingNativeFile as isMissing, type NativeFileState as FileState } from './nativeFileSafety.js';
 import { createNativeFirewallBackend } from './nativeFirewall.js';
+import { probeNativeSshFile, validateNativeSshFile } from './nativeSshFile.js';
+import { readNativeSecurityTargetFacts } from './nativeSecurityTargetFacts.js';
+import { observeNativeFileProbe, renderNativeIniKeys, validateNativeFail2banFile } from './nativeFileFormats.js';
 
 export type MachineSetupNativeCommand = Readonly<{ executable: string; args: readonly string[]; signal?: AbortSignal; env?: Readonly<Record<string, string>>; inputBytes?: Uint8Array; discardOutput?: boolean }>;
 export type MachineSetupNativeCommandResult = Readonly<{ code: number | null; stdout: string; stderr: string; errorCode?: string }>;
@@ -37,10 +40,10 @@ function assertPortableFileTarget(path: string) {
 function hasUnsupportedNativeDeclaration(step: MachineRecipeStepV1, secretGrants = false): boolean {
     if (step.requiredFacts?.some(fact => fact.kind !== 'kernel' && fact.kind !== 'journalReadGroup' && !(fact.kind === 'init' && fact.system === 'systemd'))) return true;
     if (step.kind === 'command' && (step.affects !== undefined || step.remove !== undefined)) return true;
-    return step.kind === 'file' && (step.probe !== undefined || step.onChange !== undefined
-        || typeof step.validate === 'object'
-        || step.content !== undefined && step.content.kind !== 'literal' && step.content.kind !== 'jsonMerge'
-            && !(secretGrants && step.content.kind === 'secretGrant'));
+    return step.kind === 'file' && (step.probe !== undefined && step.probe.kind !== 'sshd' && step.probe.kind !== 'fail2ban' && step.probe.kind !== 'audit'
+        || typeof step.validate === 'object' && step.validate.kind !== 'sshd' && step.validate.kind !== 'fail2ban'
+        || step.content !== undefined && step.content.kind !== 'literal' && step.content.kind !== 'jsonMerge' && step.content.kind !== 'iniKeys'
+            && !((secretGrants || step.lifetime === 'invocation') && step.content.kind === 'secretGrant'));
 }
 
 async function directoryOwnershipMatches(step: DirectoryStep, owner: Readonly<{ uid: number; gid: number }>): Promise<boolean> {
@@ -61,6 +64,7 @@ function mergeJson(existing: Record<string, unknown>, desired: Record<string, un
 function desiredBytes(step: FileStep, state: FileState): string {
     if (!step.content) throw new MachineSetupEffectError('foreign_effect_conflict');
     if (step.content.kind === 'literal') return step.content.value;
+    if (step.content.kind === 'iniKeys') return renderNativeIniKeys(state.kind === 'file' ? state.bytes!.toString('utf8') : '', step.content.sections);
     if (step.content.kind !== 'jsonMerge') throw new MachineSetupEffectError('required_fact_unavailable');
     let existing: unknown = {};
     if (state.kind === 'file') {
@@ -100,6 +104,7 @@ export function createMachineSetupNativeBackend(options: Readonly<{
     runAsDaemonUser?: (command: MachineSetupNativeCommand) => Promise<MachineSetupNativeCommandResult>;
     materializeSecretGrant?: (grantRef: string) => Promise<MachineSetupSecretGrantMaterial>;
 }> = {}): MachineSetupBackend {
+    const invocationFiles = new Map<string, Uint8Array>();
     const run = (executable: string, args: readonly string[], env?: Readonly<Record<string, string>>, inputBytes?: Uint8Array, discardOutput?: boolean) => {
         options.signal?.throwIfAborted();
         return (options.run ?? runMachineSetupNativeCommand)({ executable, args, ...(env ? { env } : {}), ...(inputBytes ? { inputBytes } : {}), ...(discardOutput ? { discardOutput } : {}), ...(options.signal ? { signal: options.signal } : {}) }).then(result => {
@@ -113,6 +118,14 @@ export function createMachineSetupNativeBackend(options: Readonly<{
         return runAsDaemonUser({ executable, args, ...(env ? { env } : {}), ...(options.signal ? { signal: options.signal } : {}) });
     } : undefined;
     const system = createNativeSystemBackend(run, daemonRun, options.platform);
+    const inspectCommand = async (step: Extract<MachineRecipeStepV1, { kind: 'command' }>): Promise<MachineSetupStepObservationV1> => {
+        if (!('kind' in step.check)) return system.observe(step);
+        switch (step.check.kind) {
+            case 'userManagerGroups': return observeNativeUserManagerGroups(step.id, step.check.username, run);
+            case 'kernel': return observeNativeBinfmt({ id: step.id, ...step.check }, run);
+            case 'audit': return observeNativeFileProbe(step.id, step.check, run);
+        }
+    };
     const workspace = createWorkspaceAccessBackend(run);
     const requireProtectedDaemon = async () => {
         if (!('daemonUsername' in options)) return;
@@ -136,8 +149,10 @@ export function createMachineSetupNativeBackend(options: Readonly<{
             if (fact.kind === 'kernel') observed = await observeNativeBinfmt({ id: step.id, ...fact }, run);
             else if (fact.kind === 'journalReadGroup') observed = await observeNativeJournalReadGroup(step.id, fact.group, run);
             else if (fact.kind === 'init' && fact.system === 'systemd') {
+                const platform = options.platform ?? process.platform;
+                if (platform !== 'linux') return { stepId: step.id, status: 'unsupported', reason: 'platform_unsupported', facts: { platform } };
                 try {
-                    const init = (await readFile('/proc/1/comm')).toString('utf8').trim();
+                    const init = (await (options.readNativeInit ?? (() => readFile('/proc/1/comm', 'utf8')))()).trim();
                     observed = { stepId: step.id, status: init === 'systemd' ? 'satisfied' : 'unsupported',
                         ...(init === 'systemd' ? {} : { reason: 'required_fact_unavailable' }),
                         facts: { requiredFact: 'init', system: 'systemd', observed: init } };
@@ -173,6 +188,14 @@ export function createMachineSetupNativeBackend(options: Readonly<{
             await assertProtectedNativeTarget(step.path, 0o600);
             const expectedOwner = await requireIdentity(step);
             if (expectedOwner.uid !== 0 || expectedOwner.gid !== 0) throw new MachineSetupEffectError('foreign_effect_conflict');
+            if (step.lifetime === 'invocation' && !invocationFiles.has(step.path)) {
+                const state = await inspectPath(step.path, true, true);
+                try {
+                    return { stepId: step.id, status: state.kind === 'absent' ? 'drifted' : 'unavailable',
+                        ...(state.kind === 'absent' ? {} : { reason: 'foreign_effect_conflict' }), facts: facts(state) };
+                } finally { if (state.kind !== 'absent') state.bytes?.fill(0); }
+            }
+            if (!options.materializeSecretGrant) throw new MachineSetupEffectError('required_fact_unavailable');
             const material = await options.materializeSecretGrant!(step.content.grantRef);
             let state: FileState | undefined;
             try {
@@ -207,9 +230,18 @@ export function createMachineSetupNativeBackend(options: Readonly<{
             return { stepId: step.id, status: safe ? 'drifted' : 'unavailable', ...(!safe ? { reason: 'foreign_effect_conflict' } : {}), facts: facts(state) };
         }
         const bytes = desiredBytes(step, state);
-        const known = state.kind === 'absent' || state.digest === hash(bytes) || step.content?.kind === 'jsonMerge' || state.digest === step.expectedContentDigest;
+        const known = state.kind === 'absent' || state.digest === hash(bytes) || step.content?.kind === 'jsonMerge'
+            || step.content?.kind === 'iniKeys' || state.digest === step.expectedContentDigest;
         if (!known) return { stepId: step.id, status: 'unavailable', reason: 'foreign_effect_conflict', facts: facts(state) };
-        return { stepId: step.id, status: state.kind === 'file' && state.digest === hash(bytes) && state.uid === owner.uid && state.gid === owner.gid && state.mode === step.mode ? 'satisfied' : 'drifted', facts: facts(state) };
+        const matched = state.kind === 'file' && state.digest === hash(bytes) && state.uid === owner.uid && state.gid === owner.gid && state.mode === step.mode;
+        if (matched && step.probe?.kind === 'sshd' && !await probeNativeSshFile(step.probe, run)) {
+            return { stepId: step.id, status: 'drifted', facts: facts(state) };
+        }
+        if (matched && (step.probe?.kind === 'fail2ban' || step.probe?.kind === 'audit')) {
+            const observed = await observeNativeFileProbe(step.id, step.probe, run);
+            return { ...observed, facts: { ...facts(state), ...observed.facts } };
+        }
+        return { stepId: step.id, status: matched ? 'satisfied' : 'drifted', facts: facts(state) };
     };
     const activate = async (path: string, bytes: string | Uint8Array, mode: number, owner: Readonly<{ uid: number; gid: number }>, previous: FileState,
         validate?: (candidate: string) => Promise<void>, secret?: MachineSetupSecretGrantMaterial) => {
@@ -262,6 +294,30 @@ export function createMachineSetupNativeBackend(options: Readonly<{
             facts: { source: source.facts, key: facts(key), keyFingerprint: key.kind === 'file' ? step.keyFingerprint : null } };
     };
     return {
+        readTargetFacts: facts => readNativeSecurityTargetFacts(run, options.platform, facts),
+        async onChange(service, action) {
+            if ((options.platform ?? process.platform) !== 'linux') throw new MachineSetupEffectError('required_fact_unavailable');
+            const result = await run('systemctl', [action, '--', service.unit], { LC_ALL: 'C' });
+            if (result.code !== 0) throw new MachineSetupEffectError(result.errorCode === 'ENOENT' ? 'required_fact_unavailable' : 'native_effect_failed');
+        },
+        async finishInvocation() {
+            let failed = false;
+            for (const [path, bytes] of invocationFiles) {
+                let state: FileState | undefined;
+                try {
+                    await assertProtectedNativeTarget(path, 0o600);
+                    state = await inspectPath(path, true, true);
+                    if (state.kind !== 'absent') await removeNativeFile({ path, previous: state,
+                        secret: { bytes, async assertCurrent() {} } });
+                } catch { failed = true; }
+                finally {
+                    if (state && state.kind !== 'absent') state.bytes?.fill(0);
+                    bytes.fill(0);
+                    invocationFiles.delete(path);
+                }
+            }
+            if (failed) throw new MachineSetupEffectError('native_effect_failed');
+        },
         async observe(step) {
             try {
                 options.signal?.throwIfAborted();
@@ -271,9 +327,7 @@ export function createMachineSetupNativeBackend(options: Readonly<{
                 const missing = await prerequisites(step);
                 if (missing) return missing;
                 if (step.kind === 'firewall') { await requireProtectedDaemon(); return await firewall.observe(step); }
-                if (step.kind === 'command' && 'kind' in step.check) return step.check.kind === 'userManagerGroups'
-                    ? await observeNativeUserManagerGroups(step.id, step.check.username, run)
-                    : await observeNativeBinfmt({ id: step.id, ...step.check }, run);
+                if (step.kind === 'command') return await inspectCommand(step);
                 if (step.kind === 'workspaceAccess' || step.kind === 'pathTraversal') return await workspace.observe(step);
                 if (step.kind === 'file') return await inspectFile(step);
                 if (step.kind === 'packageSource') return await inspectSource(step);
@@ -336,9 +390,7 @@ export function createMachineSetupNativeBackend(options: Readonly<{
             if (missing) throw new MachineSetupEffectError(missing.reason === 'needs_admin_to_check' ? 'needs_admin_to_check' : 'required_fact_unavailable');
             if (step.kind === 'firewall') { await requireProtectedDaemon(); await firewall.apply(step); return; }
             if (step.kind === 'command' && 'kind' in step.check) {
-                const observation = step.check.kind === 'userManagerGroups'
-                    ? await observeNativeUserManagerGroups(step.id, step.check.username, run)
-                    : await observeNativeBinfmt({ id: step.id, ...step.check }, run);
+                const observation = await inspectCommand(step);
                 if (observation.status === 'satisfied') return;
                 if (observation.status !== 'drifted') throw new MachineSetupEffectError('required_fact_unavailable');
                 if ((await run(step.executable, step.args, { LC_ALL: 'C' })).code !== 0) throw new MachineSetupEffectError('native_effect_failed');
@@ -427,6 +479,7 @@ export function createMachineSetupNativeBackend(options: Readonly<{
                 await assertProtectedNativeTarget(step.path, 0o600);
                 const owner = await requireIdentity(step);
                 if (owner.uid !== 0 || owner.gid !== 0) throw new MachineSetupEffectError('foreign_effect_conflict');
+                if (!options.materializeSecretGrant) throw new MachineSetupEffectError('required_fact_unavailable');
                 const material = await options.materializeSecretGrant!(step.content.grantRef);
                 let previous: FileState | undefined;
                 try {
@@ -436,10 +489,14 @@ export function createMachineSetupNativeBackend(options: Readonly<{
                         || previous.uid !== owner.uid || previous.gid !== owner.gid || previous.mode !== step.mode)) {
                         throw new MachineSetupEffectError('foreign_effect_conflict');
                     }
+                    if (step.lifetime === 'invocation' && previous.kind !== 'absent' && !invocationFiles.has(step.path)) {
+                        throw new MachineSetupEffectError('foreign_effect_conflict');
+                    }
                     if (step.state === 'absent') {
                         if (previous.kind === 'absent') return;
                         await removeNativeFile({ path: step.path, previous, secret: material, signal: options.signal });
                     } else if (previous.kind !== 'file' || previous.bytes?.equals(material.bytes) !== true) {
+                        if (step.lifetime === 'invocation' && !invocationFiles.has(step.path)) invocationFiles.set(step.path, Uint8Array.from(material.bytes));
                         await activate(step.path, material.bytes, step.mode, owner, previous, undefined, material);
                     }
                 } finally {
@@ -454,10 +511,19 @@ export function createMachineSetupNativeBackend(options: Readonly<{
             const previous = await inspectPath(step.path), owner = await requireIdentity(step);
             if (step.state === 'absent') {
                 if (previous.kind !== 'file' || previous.digest !== step.expectedContentDigest || previous.uid !== owner.uid || previous.gid !== owner.gid || previous.mode !== step.mode) throw new MachineSetupEffectError('foreign_effect_conflict');
+                if (typeof step.validate === 'object' && step.validate.kind === 'sshd') await validateNativeSshFile({ path: step.path, candidate: null, probe: step.validate, run });
+                if (typeof step.validate === 'object' && step.validate.kind === 'fail2ban') await validateNativeFail2banFile(run, undefined, step.path);
                 await removeNativeFile({ path: step.path, previous, signal: options.signal }); return;
             }
             await activate(step.path, desiredBytes(step, previous), step.mode, owner, previous, step.validate ? async candidate => {
-                const validation = step.validate === 'sudoers' ? await run('visudo', ['-cf', candidate]) : await run('dockerd', ['--validate', '--config-file', candidate]);
+                if (typeof step.validate === 'object') {
+                    if (step.validate.kind === 'sshd') return validateNativeSshFile({ path: step.path, candidate, probe: step.validate, run });
+                    if (step.validate.kind === 'fail2ban') return validateNativeFail2banFile(run, candidate, step.path);
+                    throw new MachineSetupEffectError('required_fact_unavailable');
+                }
+                const validation = step.validate === 'sudoers' ? await run('visudo', ['-cf', candidate])
+                    : step.validate === 'docker' ? await run('dockerd', ['--validate', '--config-file', candidate]) : undefined;
+                if (!validation) throw new MachineSetupEffectError('required_fact_unavailable');
                 if (validation.code !== 0) throw new MachineSetupEffectError('validation_failed');
             } : undefined);
         },

@@ -613,17 +613,43 @@ Newly selected items in `machines.setup.plan` bind reviewed inputs through
 owner. Only own reviewed JSON fields resolve; a referenced value must exist even
 when its destination field is optional. File templates render once through the
 existing ValueRef renderer. Bound text is data, never another reference or
-template. Secret-backed files retain `secretGrant` references.
+template. Template variables accept reviewed strings and finite numbers; numbers
+render as text. Secret-backed files retain `secretGrant` references, and their
+`grantRef` can bind a reviewed input without exposing secret bytes.
 
-Authored fields and template variables can also bind
-`{kind:'targetFact',fact:'daemon.primaryGroup'}` or `fact:'daemon.username'`.
-P20 resolves these development-contract facts on demand from P10's existing daemon-identity
-observation, once per Plan request; it is not a caller-selected recipe input.
-Missing historical evidence or an unavailable identity blocks Plan with
-`machine_recipe_target_fact_unavailable`, never a guessed username or group. The resolved
-identity and rendered content enter the existing effect-plan digest. Apply replans
-through the same owner. Connector credentials remain admitted `secretGrant`
-references, not target facts or template plaintext.
+Authored fields and template variables can also bind target facts. The
+`daemon.primaryGroup` and `daemon.username` facts retain P10's existing
+daemon-identity observation, once per Plan request. OS security-update facts
+(`os.packageManager`, `os.automaticUpdatesPackage`, `os.automaticUpdatesTimer`
+and `os.securityOrigins`) come on demand from `nativeSecurityTargetFacts`;
+they do not change daemon identity or become caller-selected inputs. Missing
+requested evidence blocks Plan with `machine_recipe_target_fact_unavailable`,
+never guessed values. Resolved facts and rendered content enter the existing
+effect-plan digest, and Apply replans through the same owner. Connector
+credentials remain admitted `secretGrant` references, not target facts or
+template plaintext.
+
+`serviceUnit` declarations accept `.service` and `.timer` units. Omitting
+`enabled` preserves native enablement while `running` still declares the desired
+active state, allowing static units such as journald to retain their native
+registration. File `iniKeys` content delegates section/key updates to the native
+file owner. Typed file probes include fail2ban jail settings and audit rules;
+their declaration alone does not establish backend support.
+
+Structured `sshd` contexts may declare expected effective values. The native SSH
+file owner validates the candidate in the main configuration's full Include
+graph with `sshd -t` and context-specific `sshd -T` before activation or removal.
+Contexts without expectations preserve their existing effective configuration;
+effective probes check declared expectations after application. File `onChange`
+references the recipe's declared service step for reload or restart.
+
+Secret-backed files may declare `lifetime: 'invocation'`. The native file owner
+requires root ownership and mode `0600`, refuses an unrelated pre-existing file,
+and unlinks invocation-owned files as the finite native invocation unwinds after
+success, failure or cancellation, including an unconfirmed child stop. Unlinking
+preserves already-open file descriptors and the original invocation error remains
+reported. The process owner separately retains custody of an unconfirmed child
+until exit is established.
 
 Optional recipe `checks` are observe-only package or checked-command
 declarations. A step's `when` list is an ordered conjunction of shared
@@ -6358,6 +6384,13 @@ response's witnessed coverage sources, never the client read clock. The
 advanced Plugin UI Resource client's optional `onProgress` callback is a
 package construction seam; the public Host API and bridge wire stay unchanged.
 
+In 0.3 development source, public Resource hooks and contextual controls expose
+`refresh({ supersede? })`. Their explicit `refresh()` recovery cancels an
+unresolved read and starts a replacement through the existing Resource entry;
+`supersede: false` retains queued refresh behavior. Typed projections and the
+permission facade preserve this option. Automatic watch invalidations continue
+to coalesce behind the current read; no transport or Host API method changes.
+
 ### Mounted host Action controls (0.3 development)
 
 An installed plugin can bind `hostApi.actionControl({ action, presentation }, controller)`
@@ -8128,7 +8161,7 @@ not change read results or failure semantics.
 
 ### Voice schema composition (0.3 development)
 
-Conversation provider declarations remain discoverable before their executable modules load. The client demands the selected provider and retains the live attempt's provider when selection changes or turns Off. Generated first-party Voice entries import only a demanded provider; its import settles before the existing synchronous public `activate(api)` registration transaction. This describes 0.3 development source; live web, Hermes and desktop replay remains separate validation.
+Conversation provider declarations remain discoverable before their executable modules load. Saved selection stays descriptor-only; Start admits executable demand and retains the attempt's provider through preparation, cancellation and recovery. Generated first-party Voice entries import only a demanded provider; its import settles before the existing synchronous public `activate(api)` registration transaction. The lifecycle owner remains mounted after its first activation to handle media cleanup and Account retirement. Speech model catalogs acquire only for presented setup/settings/read-aloud controls or an active speech operation, through the shared catalog owner. This describes 0.3 development source; live web, Hermes and desktop replay remains separate validation.
 
 Realtime Voice runtimes may implement optional `playHostText({text, signal})`
 from `@happier-dev/plugin-sdk/voice/client`. This plays the host's exact prepared
@@ -8246,6 +8279,14 @@ not a hosted-web media bridge or a change to the app's presence composition.
 `VoiceCompactTranscript` binds that same attempt to the app's compact-caption
 renderer, which owns transcript visibility and latest-word selection. Its public
 props contain only `testID` and `fallback`; it exposes no transcript read API.
+
+The same binding subscribes to the existing `VoiceReadAloud` presentation owner.
+`useVoiceReadAloudPhase` exposes only `idle | preparing | speaking`, or null
+outside a supported binding. The host's existing standalone-reading decision
+selects its speaker glyph, preparation/reading status and Stop for the public
+parts. During a conversation the existing transport retains its independent
+read-aloud Stop alongside conversation controls. This adds no playback runtime,
+spoken-text projection, Action or provider lifecycle.
 
 Realtime declined and thrown safe failure codes use the same canonical machine
 classifier as Local Voice. Agent authentication, provider credential review and
