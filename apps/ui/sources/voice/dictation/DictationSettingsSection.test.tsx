@@ -187,6 +187,23 @@ function dictationRecoverActions(tree: { root: { findAll: (predicate: (node: any
 }
 
 describe('DictationSettingsSection', () => {
+  it('keeps a fresh daemon Dictation choice on its current engine while Account speech policy is off', async () => {
+    storageBoundary.platformOs = 'web';
+    onTestFinished(() => { storageBoundary.platformOs = 'ios'; });
+    const { DictationSettingsSection } = await import('./DictationSettingsSection');
+    const setVoice = vi.fn();
+    const screen = await renderScreen(<DictationSettingsSection
+      voice={voiceSettingsDefaults}
+      setVoice={setVoice}
+      executionMachineId="dictation-machine"
+      localAvailability={{ ...localAvailability, daemon: { ...localAvailability.daemon, featureEnabled: false } }}
+    />);
+    const row = findRenderedItem(screen.tree, 'settings.voice.dictation.engine.local_neural');
+    await act(async () => { row.props.onPress?.(); });
+    expect(setVoice).not.toHaveBeenCalled();
+    expect(row.props.disabled).toBe(true);
+  });
+
   it('seeds an external provider default envelope atomically with an explicit Dictation selection', async () => {
     registerExternalDictationSttProvider();
     const { DictationSettingsSection } = await import('./DictationSettingsSection');
