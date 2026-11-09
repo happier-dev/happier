@@ -16,6 +16,7 @@ import { sshFail2ban } from './sshFail2ban.js';
 import { auditLogging } from './auditLogging.js';
 import { boundedJournal } from './boundedJournal.js';
 import { tailscaleServer } from './tailscaleServer.js';
+import { securityPresets } from './securityPresets.js';
 
 /** Cold recipe declarations; native support and effects remain host-owned. */
 export const MACHINE_RECIPES_PLUGIN = definePlugin({
@@ -75,7 +76,7 @@ export const MACHINE_RECIPES_PLUGIN = definePlugin({
       ] }],
     },
   },
-  machineSetupPresets: { 'browser-bot-v1': browserBot },
+  machineSetupPresets: { 'browser-bot-v1': browserBot, ...securityPresets },
 });
 
 export const PLUGIN_MANIFEST = MACHINE_RECIPES_PLUGIN.manifest;
