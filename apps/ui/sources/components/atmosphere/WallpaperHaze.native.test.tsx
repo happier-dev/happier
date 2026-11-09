@@ -12,7 +12,7 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 // The secondary raster runtime and native image handles are unavailable in the host test.
 vi.mock('./renderBackdrop.native', () => ({
     NATIVE_TONE_SIDE: 16,
-    renderNativeBackdrop: async (request: BackdropRenderRequest) => { boundary.backdrops.push(request); return `native:${request.width}x${request.height}`; },
+    acquireNativeBackdrop: (request: BackdropRenderRequest) => { boundary.backdrops.push(request); return { promise: Promise.resolve(`native:${request.width}x${request.height}`), release() {} }; },
     renderNativeWallpaperHaze: async (_source: unknown, size: { width: number; height: number }) => { boundary.hazes.push(size); return { dispose() {} }; },
     readNativePicturePixels: vi.fn(),
 }));

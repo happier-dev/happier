@@ -6,9 +6,15 @@ import { useReduceTransparency } from '@/hooks/ui/useReduceTransparency';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { pictureStore } from './pictureStore';
+import { builtinThumbnailLocalId } from './ensureBuiltinPicture';
 import { useStoredPictureRecord } from './useStoredPictureRecord';
 import { atmospherePictureLocalId, atmospherePlace, atmosphereSurfaceKey, isAtmosphereShown, resolveAtmosphere, selectAtmosphereSettings, type AtmosphereTarget, type ResolvedAtmosphere } from './resolveAtmosphere';
+import { useAtmosphereDisplaySample } from './atmosphereStage';
+import { usePublicProfileAtmospherePreviewValue } from '@/sync/store/settingsPreview';
+import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { readProjectAtmosphere } from '@/sync/store/domains/projectAccountRows';
 import { useShallow } from 'zustand/react/shallow';
 import { readAtmosphereProject } from './atmosphereContext';
 
@@ -28,7 +34,8 @@ export function useAtmosphere(surface: AtmosphereTarget, enabled = true) {
     const reducedMotion = useReducedMotionPreference();
     const isPhone = useDeviceType() === 'phone';
     const surfaceKey = typeof surface === 'object' && 'publicProfile' in surface ? 'profile' : atmosphereSurfaceKey(surface);
-    const profile = typeof surface === 'object' && 'publicProfile' in surface ? surface.publicProfile : undefined;
+    const profileDraft = usePublicProfileAtmospherePreviewValue(typeof surface === 'object' && 'publicProfile' in surface ? surface.draftServerId : undefined);
+    const profile = typeof surface === 'object' && 'publicProfile' in surface ? profileDraft ?? surface.publicProfile : undefined;
     // The resolver uses the target kind and presentation; project identity belongs to its settings hook.
     const place = atmospherePlace(surface);
     const target = React.useMemo<AtmosphereTarget>(() => profile ? { publicProfile: profile }
@@ -36,26 +43,53 @@ export function useAtmosphere(surface: AtmosphereTarget, enabled = true) {
         // Identity is the qualified route/context key, not an object allocated by its caller.
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [surfaceKey, profile, place, project?.serverId, project?.projectKey]);
-    const settings = React.useMemo(() => selectAtmosphereSettings(target, home, projectOverride), [target, home, projectOverride]);
+    const scope = getStorage()(state => state.settingsScope);
+    const homeRef = home.picture.ref;
+    const homePictureKey = homeRef.kind === 'builtin' ? homeRef.id : homeRef.localId;
+    // A gesture changes the effective presentation, not the authored Home arrival's lifetime.
+    const inheritsHome = getStorage()(state => {
+        if (typeof surface === 'object' && 'publicProfile' in surface) return false;
+        const authored = project ? readProjectAtmosphere(state, project) : undefined;
+        return authored === undefined || authored === 'home';
+    });
+    const selection = resolvedContext && inheritsHome && isAtmosphereShown(target, projectOverride && projectOverride !== 'home'
+        ? { ...projectOverride, moments: home.moments } : home) && home.source === 'picture' && homeRef.kind === 'builtin'
+        ? JSON.stringify([scope?.serverId, scope?.accountId, home.source, homeRef.kind, homePictureKey, home.picture.selectedAtMs]) : null;
+    const nowMs = useAtmosphereDisplaySample(selection);
+    const settings = React.useMemo(() => selectAtmosphereSettings(target, home, projectOverride, nowMs), [target, home, projectOverride, nowMs]);
     const demanded = resolvedContext && isAtmosphereShown(target, settings);
     const localId = demanded ? atmospherePictureLocalId(settings) : null;
     const pictureRef = settings.picture.ref;
     const builtin = demanded && settings.source === 'picture' && pictureRef.kind === 'builtin'
         ? pictures.find(picture => picture.id === pictureRef.id) : undefined;
-    const stored = useStoredPictureRecord(localId);
-    // A failed download leaves the planet visible. Revisiting/remounting or choosing again tries once more.
-    React.useEffect(() => {
-        if (builtin) void pictureStore.ensureBuiltin(builtin).catch(() => {});
-    }, [builtin]);
+    const stored = useStoredPictureRecord(localId, builtin ? builtinThumbnailLocalId(builtin.id) : undefined);
+    const [failedAcquisition, setFailedAcquisition] = React.useState<typeof builtin>(undefined);
+    const activelyViewed = useHostActivelyViewed();
+    const presented = useLayoutPresentationActive();
+    const acquisitionDemand = activelyViewed && presented;
 
     const shown = React.useRef<ResolvedAtmosphere<(typeof pictures)[number]> | null>(null);
     const resolved = React.useMemo(() => resolveAtmosphere({ surface: target, home: resolvedContext ? home : { ...home, source: 'none' },
-        projectOverride: resolvedContext ? projectOverride : undefined, pictures,
+        projectOverride: resolvedContext ? projectOverride : undefined, pictures, nowMs,
         pictureRecord: stored.status === 'present' ? stored.record : undefined,
         shownPicture: shown.current, readingPicture: stored.status === 'loading',
+        pictureAcquisitionFailed: builtin !== undefined && failedAcquisition === builtin,
         isPhone, glassEnvironment: { reduceTransparency: environmentReduceTransparency },
-        reduceTransparency, reducedMotion }), [target, home, projectOverride, pictures, stored, localId, resolvedContext,
+        reduceTransparency, reducedMotion }), [target, home, projectOverride, pictures, stored, localId, nowMs, resolvedContext, builtin, failedAcquisition,
         isPhone, environmentReduceTransparency, reduceTransparency, reducedMotion]);
+    // The display read already established cache availability. Acquire only a missing/mismatched
+    // picture after that read settles; a cache hit needs no second IndexedDB read or preparation.
+    const needsAcquisition = stored.status !== 'loading' && (resolved.fallbackReason === 'picture-unavailable'
+        || stored.status === 'present' && stored.record.localId !== localId);
+    React.useEffect(() => {
+        if (!builtin || !acquisitionDemand || !needsAcquisition) return;
+        let disposed = false;
+        setFailedAcquisition(undefined);
+        void pictureStore.ensureBuiltin(builtin).catch(() => {
+            if (!disposed) setFailedAcquisition(builtin);
+        });
+        return () => { disposed = true; };
+    }, [builtin, acquisitionDemand, needsAcquisition]);
     shown.current = resolved;
     return resolved;
 }

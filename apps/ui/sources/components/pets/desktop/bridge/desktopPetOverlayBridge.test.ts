@@ -1,23 +1,34 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const invokeDesktopHostMock = vi.hoisted(() => vi.fn());
 const listenDesktopHostEventMock = vi.hoisted(() => vi.fn());
-const isDesktopHostMock = vi.hoisted(() => vi.fn(() => true));
-
-vi.mock('@/utils/platform/desktopHost', () => ({
-    isDesktopHost: () => isDesktopHostMock(),
-    invokeDesktopHost: (command: string, args?: Record<string, unknown>) => invokeDesktopHostMock(command, args),
-    listenDesktopHostEvent: (eventName: string, handler: (payload: unknown) => void) => listenDesktopHostEventMock(eventName, handler),
+// Keep the real host classifier and availability owner; only the native API is replaced.
+vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeDesktopHostMock }));
+vi.mock('@tauri-apps/api/event', () => ({
+    listen: (eventName: string, handler: (event: { payload: unknown }) => void) =>
+        listenDesktopHostEventMock(eventName, (payload: unknown) => handler({ payload })),
 }));
 
 describe('desktopPetOverlayBridge', () => {
+    beforeEach(async () => {
+        vi.resetModules();
+        vi.stubGlobal('isTauri', true);
+        vi.stubGlobal('navigator', { userAgent: 'Tauri' });
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: invokeDesktopHostMock });
+        invokeDesktopHostMock.mockResolvedValue({
+            activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' },
+        });
+        listenDesktopHostEventMock.mockResolvedValue(() => {});
+        await (await import('@/utils/platform/desktopHost')).getDesktopHostAvailability();
+        invokeDesktopHostMock.mockReset();
+        listenDesktopHostEventMock.mockClear();
+    });
     afterEach(() => {
         vi.useRealTimers();
         invokeDesktopHostMock.mockReset();
         listenDesktopHostEventMock.mockReset();
-        isDesktopHostMock.mockReset();
-        isDesktopHostMock.mockReturnValue(true);
+        vi.unstubAllGlobals();
     });
 
     it('syncs state using the native pet overlay command payload shape', async () => {
@@ -48,7 +59,7 @@ describe('desktopPetOverlayBridge', () => {
                 window: { width: 192, height: 208 },
                 nativeMouseTrackingEnabled: true,
                 activity: expect.objectContaining({
-                    state: 'waiting',
+                    state: 'needsYou',
                     sessionId: 'session-native',
                 }),
                 policy: expect.objectContaining({
@@ -102,6 +113,7 @@ describe('desktopPetOverlayBridge', () => {
         await bridge.resetDesktopPetOverlayPosition();
         await bridge.emitDesktopPetOverlayInteractionResult({ requestId: 'request-1', ok: true });
         await bridge.showMainWindowFromDesktopPetOverlay({ reason: 'mascot-click' });
+        await bridge.notifyDesktopPetOverlayPointerEnter();
 
         expect(invokeDesktopHostMock.mock.calls.map(([command]) => command)).toEqual([
             'desktop_pet_overlay_read_window_state',
@@ -115,6 +127,7 @@ describe('desktopPetOverlayBridge', () => {
             'desktop_pet_overlay_reset_position',
             'emit_desktop_pet_overlay_interaction_result',
             'desktop_pet_overlay_show_main_window',
+            'desktop_pet_overlay_pointer_enter',
         ]);
         expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_pet_overlay_apply_drag_delta', {
             payload: {
@@ -149,18 +162,25 @@ describe('desktopPetOverlayBridge', () => {
         });
     });
 
-    it('ignores element metric sync outside the Tauri desktop shell', async () => {
-        isDesktopHostMock.mockReturnValue(false);
-        const { syncDesktopPetOverlayElementMetrics } = await import('./desktopPetOverlayBridge');
-
-        await syncDesktopPetOverlayElementMetrics({
+    it('refuses pet commands and every subscription in Electron without touching native APIs', async () => {
+        vi.resetModules();
+        vi.stubGlobal('isTauri', false);
+        vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 Electron/43.4.0' });
+        const bridge = await import('./desktopPetOverlayBridge');
+        await expect(bridge.syncDesktopPetOverlayElementMetrics({
             isTrayVisible: false,
             mascot: { x: 0, y: 0, width: 1, height: 1 },
             tray: { x: 0, y: 0, width: 1, height: 1 },
             controls: { x: 0, y: 0, width: 1, height: 1 },
-        });
-
+        })).rejects.toMatchObject({ code: 'desktop_host_unavailable', role: 'pet' });
+        await expect(bridge.getDesktopPetOverlayWindowState()).rejects.toMatchObject({ code: 'desktop_host_unavailable' });
+        await expect(bridge.notifyDesktopPetOverlayPointerEnter()).rejects.toMatchObject({ code: 'desktop_host_unavailable' });
+        for (const listen of [bridge.listenDesktopPetOverlayWindowState, bridge.listenDesktopPetOverlayInteractionResult,
+            bridge.listenDesktopPetOverlayShowMainWindowRequested, bridge.listenDesktopPetOverlayNativeMouse]) {
+            await expect(listen(() => {})).rejects.toMatchObject({ code: 'desktop_host_unavailable', role: 'pet' });
+        }
         expect(invokeDesktopHostMock).not.toHaveBeenCalled();
+        expect(listenDesktopHostEventMock).not.toHaveBeenCalled();
     });
 
     it('schedules native momentum deltas from the release velocity plan', async () => {
@@ -289,12 +309,12 @@ describe('desktopPetOverlayBridge', () => {
 
     it('keeps TypeScript command labels aligned with registered Rust commands', async () => {
         const { DESKTOP_PET_OVERLAY_COMMANDS } = await import('./desktopPetOverlayBridge');
-        const rustLib = readFileSync('src-tauri/src/lib.rs', 'utf8');
+        const rustCommands = readFileSync('src-tauri/desktop_commands.rs', 'utf8');
         const rustOverlay = readFileSync('src-tauri/src/pet_overlay.rs', 'utf8');
 
         for (const command of Object.values(DESKTOP_PET_OVERLAY_COMMANDS)) {
             expect(rustOverlay).toContain(`pub fn ${command}`);
-            expect(rustLib).toContain(`pet_overlay::${command}`);
+            expect(rustCommands).toContain(`pet_overlay::${command}`);
         }
     });
 

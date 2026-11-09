@@ -2,7 +2,7 @@ import * as React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import type { FrameRect } from '@happier-dev/plugin-ui/presentation';
 
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -11,7 +11,9 @@ import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { PET_COMPANION_POSITION_DEFAULT, petCompanionPositionState } from '@/sync/domains/pets/companionPosition/companionPosition';
 import { storage } from '@/sync/domains/state/storageStore';
+import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import {
     SessionCockpitChromeRegistryProvider,
     useSessionCockpitPetRect,
@@ -75,6 +77,7 @@ function expectEnabledBuiltIn(screen: Awaited<ReturnType<typeof renderScreen>>) 
 const initialStorageState = storage.getState();
 
 beforeEach(async () => {
+    petCompanionPositionState.set('mobile-app-shell', PET_COMPANION_POSITION_DEFAULT);
     host.os = 'ios';
     host.width = 390;
     host.height = 844;
@@ -89,10 +92,7 @@ beforeEach(async () => {
             featureToggles: { ...settingsDefaults.featureToggles, 'pets.companion': true },
             petsEnabled: true, petsSelectedPetRef: { kind: 'builtIn', petId: 'milo' },
         },
-        localSettings: { ...localSettingsDefaults,
-            petsCompanionPosition: { schemaVersion: 1, surface: 'mobile-app-shell',
-                normalizedX: 0.82, normalizedY: 0.72, lastViewport: null },
-        },
+        localSettings: { ...localSettingsDefaults },
         isDataReady: true,
         sessions: {}, sessionListRowsByServerId: {}, ordinarySessionListMembershipByServerId: {},
         sessionListIndexByServerId: {}, concurrentSessionListCacheByServerId: {},
@@ -102,6 +102,8 @@ beforeEach(async () => {
 
 afterEach(() => {
     standardCleanup();
+    vi.restoreAllMocks();
+    petCompanionPositionState.remove('mobile-app-shell');
     storage.setState(initialStorageState, true);
     resetServerFeaturesClientForTests();
     vi.unstubAllGlobals();
@@ -117,22 +119,29 @@ describe('PetAppShellCompanionMount.native', () => {
             const resting = readRect(screen)!;
             expect(resting.width).toBe(92);
             expect(resting.x).toBeCloseTo(236.68, 2);
+            const preferences = storage.getState().localSettings;
+            const writes = vi.spyOn(getPersistenceStorage(), 'set');
+            const positionWrites = () => writes.mock.calls.filter(([key]) => key === 'ui-state:pet-companion-position-v1:mobile-app-shell');
             const gesture = screen.root.findByType('GestureDetector').props.gesture;
             await act(async () => {
                 gesture.__handlers.onBegin({ absoluteX: 120, absoluteY: 200 });
                 gesture.__handlers.onUpdate({ translationX: -999, translationY: 999 });
             });
             expect(readRect(screen)).toEqual(resting);
+            expect(positionWrites()).toHaveLength(0);
             await act(async () => {
                 gesture.__handlers.onEnd({ translationX: -999, translationY: 999, velocityX: 0, velocityY: 0 }, true);
             });
             expect(readRect(screen)!.x).toBeLessThan(resting.x);
             expect(readRect(screen)!.y).toBeGreaterThan(resting.y);
-            expect(storage.getState().localSettings.petsCompanionPosition?.normalizedX).toBe(0);
+            expect(petCompanionPositionState.read('mobile-app-shell')?.normalizedX).toBe(0);
+            expect(positionWrites()).toHaveLength(1);
+            expect(storage.getState().localSettings).toBe(preferences);
+            expect(writes.mock.calls.filter(([key]) => key === 'local-settings')).toHaveLength(0);
             await act(async () => {
-                storage.getState().applyLocalSettings({ petsCompanionPosition: {
+                petCompanionPositionState.set('mobile-app-shell', {
                     schemaVersion: 1, surface: 'mobile-app-shell', normalizedX: 1, normalizedY: 0, lastViewport: null,
-                } });
+                });
             });
             const restoredStyle = StyleSheet.flatten(screen.findByTestId('pet-app-shell-companion-root')!.props.style);
             expect(readRect(screen)!.x).toBeCloseTo(restoredStyle.transform[0].translateX, 6);
@@ -155,7 +164,7 @@ describe('PetAppShellCompanionMount.native', () => {
             expect(readRect(screen)!.y).toBeGreaterThan(restored.y);
             expect(readRect(screen)!.x).toBeCloseTo(cancelledStyle.transform[0].translateX, 6);
             expect(readRect(screen)!.y).toBeCloseTo(cancelledStyle.transform[1].translateY, 6);
-            expect(storage.getState().localSettings.petsCompanionPosition?.normalizedX).toBeLessThan(1);
+            expect(petCompanionPositionState.read('mobile-app-shell')?.normalizedX).toBeLessThan(1);
             await act(async () => {
                 storage.setState((state) => ({ settings: { ...state.settings,
                     featureToggles: { ...state.settings.featureToggles, 'pets.companion': false },

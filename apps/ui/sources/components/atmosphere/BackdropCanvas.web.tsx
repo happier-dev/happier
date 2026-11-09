@@ -6,7 +6,7 @@ import { atmosphereResettleFact } from './atmosphereStage';
 import { backdropSettle } from './backdropResettle';
 import type { BackdropCanvasProps, BackdropRenderRequest } from './backdropCanvas.types';
 import { backdropRenderRequest, backdropRequestKey } from './backdropRenderRequest';
-import { createBackdropWorker } from './backdropWorker.web';
+import { createBackdropWorker, retainBackdropWorker } from './backdropWorker.web';
 import { createBackdropRenderCache } from './backdropRenderCache';
 import { snapCanvasBox } from './planetCanvasScene';
 import { useCanvasRenderState } from './useCanvasRenderState';
@@ -16,15 +16,15 @@ import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 function createRenderer(initialRequest: BackdropRenderRequest) {
     let request = initialRequest;
     let worker: ReturnType<typeof createBackdropWorker> | null = null;
-    const cache = createBackdropRenderCache<AtmospherePixels>(() => {
+    const cache = createBackdropRenderCache<AtmospherePixels>((_key, signal) => {
         worker ??= createBackdropWorker();
-        return worker.render(request);
+        return worker.render(request, signal);
     });
     return {
         users: 0,
         render(next: BackdropRenderRequest) {
             request = next;
-            return cache.render(backdropRequestKey(next));
+            return cache.acquire(backdropRequestKey(next));
         },
         dispose() { worker?.dispose(); worker = null; cache.clear(); },
     };
@@ -63,7 +63,8 @@ export const BackdropCanvas = React.memo(function BackdropCanvas(props: Backdrop
     const request = backdropRenderRequest({ ...props, ...state.geometry }, dpr);
     const requestRef = React.useRef(request); requestRef.current = request;
     const key = backdropRequestKey(request);
-    // The last projection releases the worker and every retained buffer. Ordinary canvases have one user.
+    React.useEffect(() => retainBackdropWorker(), []);
+    // Source-scoped projections release their buffers; the physical worker follows mounted canvases.
     const renderer = React.useMemo(() => props.renderGroup
         ? groupedRenderer(props.renderGroup, requestRef.current)
         : createRenderer(requestRef.current), [props.renderGroup, props.source]);
@@ -76,7 +77,8 @@ export const BackdropCanvas = React.memo(function BackdropCanvas(props: Backdrop
         if (playbackRef.current?.key === key) return;
         setPlayback(null);
         let cancelled = false;
-        void renderer.render(requestRef.current).then(pixels => {
+        const render = renderer.render(requestRef.current);
+        void render.promise.then(pixels => {
             if (cancelled || !ref.current) return;
             const canvas = ref.current;
             const { source, job } = requestRef.current;
@@ -102,7 +104,7 @@ export const BackdropCanvas = React.memo(function BackdropCanvas(props: Backdrop
             ready.current?.();
             setPlayback({ key, context, target, frames, settle, elapsedMs: 0 });
         }).catch(error => { if (!cancelled) failed.current?.(error instanceof Error ? error : new Error(String(error))); });
-        return () => { cancelled = true; };
+        return () => { cancelled = true; render.release(); };
         // All configuration is in key; source changes select a new renderer/cache.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [renderer, key, state.visible, props.resettle]);

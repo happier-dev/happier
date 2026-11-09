@@ -2,13 +2,14 @@ import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
 import { Directory, File, Paths } from 'expo-file-system';
 
-import { createBuiltinPictureEnsurer, createBuiltinThumbnailEnsurer, readPictureSource } from './ensureBuiltinPicture';
+import { createBuiltinPictureAcquisition, readPictureSource } from './ensureBuiltinPicture';
 import { readPictureBase64 } from './pictureBytes.native';
 import type { PictureInfo, PictureInput, PictureRecord, PictureStore, PicturePreparationOptions } from './pictureStore.types';
-import { createPictureStorePublication } from './pictureStorePublication';
+import { createPictureStoreAccess } from './pictureStoreAccess';
 
 type StoredInfo = PictureInfo & { hasThumb: boolean; source?: PictureRecord['source'] };
-const publication = createPictureStorePublication();
+const access = createPictureStoreAccess(readRecordFromStore);
+const get = access.get;
 
 function storeDirectory() { return new Directory(Paths.document, 'atmosphere'); }
 
@@ -42,7 +43,7 @@ async function prepare(data: Blob | string, options?: PicturePreparationOptions)
     return prepareNativePicture(encoded, options);
 }
 
-async function get(localId: string): Promise<PictureRecord | undefined> {
+async function readRecordFromStore(localId: string): Promise<PictureRecord | undefined> {
     const directory = recordDirectory(localId);
     const info = await readInfo(directory);
     if (!info || info.localId !== localId) return undefined;
@@ -54,7 +55,8 @@ async function get(localId: string): Promise<PictureRecord | undefined> {
 }
 
 async function put(input: PictureInput): Promise<PictureRecord> {
-    const previous = await get(input.localId);
+    // A mutation must not wait on an older display snapshot before it can publish new bytes.
+    const previous = await readRecordFromStore(input.localId);
     const [dataBytes, thumbBytes] = await Promise.all([
         readPictureBase64(input.data), input.thumb === undefined ? undefined : readPictureBase64(input.thumb),
     ]);
@@ -70,7 +72,7 @@ async function put(input: PictureInput): Promise<PictureRecord> {
     new File(directory, 'info.json').write(JSON.stringify(info));
     const record: PictureRecord = { localId: info.localId, kind: info.kind, createdAtMs: info.createdAtMs, size: info.size, data: data.uri,
         ...(info.source ? { source: info.source } : {}), ...(info.hasThumb ? { thumb: thumb.uri } : {}) };
-    publication.changed(input.localId, input.kind, previous?.kind);
+    access.changed(input.localId, input.kind, previous?.kind);
     return record;
 }
 
@@ -83,20 +85,22 @@ export const pictureStore: PictureStore = {
         if (!directory.exists) return;
         const info = await readInfo(directory);
         directory.delete();
-        publication.changed(localId, info?.kind);
+        access.changed(localId, info?.kind);
     },
-    async list() {
+    async list(kind) {
         const directory = storeDirectory();
         if (!directory.exists) return [];
         const records = await Promise.all(directory.list().map(async (entry) => {
             if (!(entry instanceof Directory)) return undefined;
             const info = await readInfo(entry);
-            return info ? get(info.localId) : undefined;
+            if (!info || (kind !== undefined && info.kind !== kind)) return undefined;
+            const data = new File(entry, 'full.image'), thumb = new File(entry, 'thumb.image');
+            return data.exists && (!info.hasThumb || thumb.exists)
+                ? { localId: info.localId, kind: info.kind, createdAtMs: info.createdAtMs, size: info.size } : undefined;
         }));
-        return records.filter((record): record is PictureRecord => record !== undefined).map(({ localId, kind, createdAtMs, size }) => ({ localId, kind, createdAtMs, size }));
+        return records.filter((record): record is PictureInfo => record !== undefined);
     },
-    ensureBuiltin: createBuiltinPictureEnsurer({ get, put }, prepare),
-    ensureBuiltinThumbnail: createBuiltinThumbnailEnsurer({ get, put }, prepare),
-    subscribe: publication.subscribe,
-    getRevision: publication.getRevision,
+    ...createBuiltinPictureAcquisition({ get, put }, prepare),
+    subscribe: access.subscribe,
+    getRevision: access.getRevision,
 };

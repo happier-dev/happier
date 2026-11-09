@@ -72,7 +72,12 @@ export function measurePictureColor(pixels: AtmospherePixels, page: AtmosphereRg
     return `rgb(${sum.map(value => encode(value / count)).join(', ')})`;
 }
 
-/** Tones are rounded, so an unchanged picture republishes an equal value. */
+/** Luminance steps below this are measurement jitter (re-render dither); glass presents no difference. */
+const TONE_EPSILON = 0.01;
+
+/** A tone is republished only when it moves past the last published one, so every glass surface re-solves on real change only. */
 export function samePictureTone(a: GlassAtmosphereTone | undefined, b: GlassAtmosphereTone | undefined): boolean {
-    return a === b || (a !== undefined && b !== undefined && a.dark === b.dark && a.light === b.light && a.focus === b.focus && a.ink === b.ink);
+    if (a === b) return true;
+    if (a === undefined || b === undefined) return false;
+    return a.ink === b.ink && Math.abs(a.dark - b.dark) < TONE_EPSILON && Math.abs(a.light - b.light) < TONE_EPSILON && Math.abs(a.focus - b.focus) < TONE_EPSILON;
 }

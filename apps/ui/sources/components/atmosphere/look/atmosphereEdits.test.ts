@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ATMOSPHERE_PICTURES,
   releaseLook,
@@ -37,6 +37,39 @@ describe('Look edits: per-picture memory keeps only what differs from the releas
     expect(projectAtmosphereEdit(DEFAULT_HOME_ATMOSPHERE, 'home', current => ({ ...current,
       picture: { ...current.picture, layout: 'wallpaper' } })).showOn).toEqual(['home', 'new-session', 'projects', 'sessions', 'pages']);
     expect(binding.mutate(settingsDefaults, { ...next, showOn: ['pages'] })?.homeAtmosphere?.showOn).toEqual(['pages']);
+  });
+  it('freezes the currently shown Home when a person creates a project override', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const selectedAtMs = 1_800_000_000_000;
+    vi.setSystemTime(selectedAtMs + 3_600_000);
+    try {
+      const home = { ...DEFAULT_HOME_ATMOSPHERE, source: 'picture' as const,
+        picture: { ...DEFAULT_HOME_ATMOSPHERE.picture, selectedAtMs } };
+      const override = projectAtmosphereEdit(home, 'home', value => value);
+      expect(override.picture.ref).toEqual({ kind: 'builtin', id: pictures[1]!.id });
+      expect(home.picture.ref).toEqual(DEFAULT_HOME_ATMOSPHERE.picture.ref);
+      expect(projectAtmosphereEdit(home, override, value => ({ ...value, showOn: ['home', 'new-session', 'projects', 'sessions'] })).picture.ref).toEqual(override.picture.ref);
+      // A failed next-picture download can leave the previous picture on screen.
+      expect(projectAtmosphereEdit(home, 'home', value => value, home.picture.ref).picture.ref).toEqual(home.picture.ref);
+    } finally { vi.useRealTimers(); }
+  });
+  it('edits and resets the shown picture without replacing the saved selection', () => {
+    const shown = { kind: 'builtin' as const, id: pictures[0]!.id };
+    const changed = withPictureLook(onPainting, { strength: 0.3 }, pictures, shown);
+    expect(changed.picture).toEqual(onPainting.picture);
+    expect(changed.looks[shown.id]?.strength).toBe(0.3);
+    expect(withoutPictureLook(changed, shown).looks).toEqual({});
+  });
+  it('remembers the time of an explicit pick and Shuffle, so the selected picture appears immediately', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(1_800_000_000_000);
+    try {
+      const binding = homeAtmosphereStorageBinding('appearance.homeAtmosphere');
+      if (binding.scope !== 'account' || !('mutate' in binding)) throw new Error('Missing Home mutation owner');
+      const write = (value: HomeAtmosphere) => binding.mutate({ ...settingsDefaults, homeAtmosphere: onPainting }, value)?.homeAtmosphere;
+      expect(write(withPicture(onPainting, onPainting.picture.ref))?.picture).toMatchObject({ selectedAtMs: Date.now() });
+      expect(write(withShuffledPicture(onPainting, pictures, () => 0.5))?.picture).toMatchObject({ selectedAtMs: Date.now() });
+    } finally { vi.useRealTimers(); }
   });
   it('preserves an absent plugin release across unrelated Home and Project edits and reappearance', () => {
     const plugin = { id: 'com.acme/sky', look: { effect: 'original', strength: 0.5, dissolve: { style: 'gradient' } } } as const;

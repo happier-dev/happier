@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/brand/atmosphere';
 import {
   DEFAULT_HOME_ATMOSPHERE,
+  type HomeAtmosphere,
   type ProjectAtmosphere,
 } from '@happier-dev/protocol/account/settings/accountSettings';
 import { renderScreen } from '@/dev/testkit';
@@ -14,6 +15,8 @@ import { t } from '@/text';
 import type { AtmosphereEditor } from './atmosphereEditor';
 import { LookPanel } from './LookPanel';
 import { PictureControls } from './LookControls';
+import { homeAtmosphereStorageBinding } from '../atmosphereSettings';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 // This suite includes the browser Look contract. The default Node platform has no blur control.
 // Substitute only the platform boundary; the shared glass controls and capability owner stay real.
@@ -83,6 +86,37 @@ describe('Look panel writes', () => {
     );
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  it('anchors Shuffle when the saved choice differs from the shown picture and is picked again', async () => {
+    const epoch = 1_800_000_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(epoch + 3_600_000);
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const initial: HomeAtmosphere = { ...DEFAULT_HOME_ATMOSPHERE, source: 'picture',
+      picture: { ...DEFAULT_HOME_ATMOSPHERE.picture, selectedAtMs: epoch } };
+    let saved = initial;
+    const binding = homeAtmosphereStorageBinding('appearance.homeAtmosphere');
+    if (binding.scope !== 'account' || !('mutate' in binding)) throw new Error('Missing Home mutation owner');
+    const mutate = binding.mutate;
+    function Editor() {
+      const [value, setValue] = React.useState(initial);
+      const editor: AtmosphereEditor = { value,
+        shownPictureRef: { kind: 'builtin', id: ATMOSPHERE_PICTURES[1]!.id },
+        update: edit => {
+          const next = mutate({ ...settingsDefaults, homeAtmosphere: saved }, { ...saved, ...edit(saved) })?.homeAtmosphere;
+          if (!next) throw new Error('Rejected valid Shuffle');
+          saved = next;
+          setValue(next);
+        } };
+      return <PictureControls editor={editor} presentation="panel" pictures={ATMOSPHERE_PICTURES} />;
+    }
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    try {
+      screen = await renderScreen(<Editor />);
+      await screen.pressByTestIdAsync('look-shuffle');
+      expect(saved.picture.ref).toEqual(initial.picture.ref);
+      expect(saved.picture.selectedAtMs).toBe(epoch + 3_600_000);
+    } finally { await screen?.unmount(); vi.restoreAllMocks(); }
+  });
 
   it('places the right panels from Look, writing the one device setting the Appearance row writes', async () => {
     const { storage } = await import('@/sync/domains/state/storage');

@@ -32,10 +32,14 @@ export type LookTarget =
     }>;
 
 function LookContent(props: Readonly<{ target: LookTarget }>) {
+  return props.target.editor ? <LookPanel editor={props.target.editor} testID="look-panel" /> : <HomeLookContent />;
+}
+
+function HomeLookContent() {
   const home = useHomeAtmosphereEditor();
   return (
     <LookPanel
-      editor={props.target.editor ?? home}
+      editor={home}
       testID="look-panel"
     />
   );
@@ -153,5 +157,7 @@ export const LookChip = React.memo(function LookChip(
 });
 
 const styles = StyleSheet.create(() => ({
-  chip: { borderRadius: 999, overflow: 'hidden' },
+  // The glass clips its own material to the pill; the pill itself never clips, so the chip's hit area
+  // reaches past it (DESIGN.md → touch targets are hit areas).
+  chip: { borderRadius: 999 },
 }));

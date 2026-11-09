@@ -1,8 +1,10 @@
 import type {
-    ActionExecuteResult,
-    ActionExecutorContext,
+    ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
+import type {
+    ActionExecutorContext} from '@happier-dev/protocol/actions/executor/types';
+import type {
     ActionId,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/actionIds';
 
 import type { PetCompanionTrayItem } from '@/components/pets/activity';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';

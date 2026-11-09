@@ -10,14 +10,13 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { HAPPIER_PRESS_FEEDBACK_V1, HappierPressable, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
-import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import type { AtmospherePictureActions } from './atmosphereEditor';
 import type { PictureInfo } from '../pictureStore.types';
 import type { PictureRef } from './atmosphereEdits';
@@ -30,13 +29,35 @@ import {
 } from './usePictureBytes';
 
 const ADD_TILE_ID = 'add-your-picture';
+const MORE_TILE_ID = 'more-pictures';
 const USER_PREFIX = 'user:';
 
 function BuiltinThumbnail(props: Readonly<{ picture: AtmospherePicture }>) {
-  return <PictureImagePreview bytes={useBuiltinThumbnail(props.picture)} />;
+  const thumbnail = useBuiltinThumbnail(props.picture);
+  return <PictureImagePreview bytes={thumbnail.status === 'present' ? thumbnail.bytes : null} />;
 }
 function UserThumbnail(props: Readonly<{ localId: string }>) {
   return <PictureImagePreview bytes={useStoredPictureBytes(props.localId)} />;
+}
+function MoreThumbnail(props: Readonly<{ label: string }>) {
+  return (
+    <View style={styles.add}>
+      <Text style={styles.lineMeta} numberOfLines={1}>{props.label}</Text>
+    </View>
+  );
+}
+/**
+ * The pictures a collapsed picker shows: the first `count` in catalog order, with the chosen one taking
+ * the last place when it is further down, so the current picture is always in view.
+ */
+function collapsedPictures(
+  pictures: readonly AtmospherePicture[],
+  count: number,
+  selected: PictureRef | null,
+): readonly AtmospherePicture[] {
+  const head = pictures.slice(0, count);
+  const chosen = selected?.kind === 'builtin' ? pictures.find((picture) => picture.id === selected.id) : undefined;
+  return !chosen || head.includes(chosen) ? head : [...head.slice(0, count - 1), chosen];
 }
 function AddThumbnail() {
   const { theme } = useUnistyles();
@@ -105,15 +126,27 @@ export const PicturePicker = React.memo(function PicturePicker(
     pictureActions?: AtmospherePictureActions;
     /** Thumbnails per row: four in the Look panel, more across a Settings page. */
     columns?: number;
+    /**
+     * The Look panel keeps its controls in view: it shows this many pictures, then "Your picture…" and a
+     * tile that opens the whole gallery in place. Settings shows every picture.
+     */
+    collapsedCount?: number;
     testID?: string;
   }>,
 ) {
   const { onSelect } = props;
   const { add, remove } = useAtmospherePictureAcquisition(props.pictureActions);
   const userPictures = useUserPictures();
+  const [expanded, setExpanded] = React.useState(false);
+  const collapsed = !expanded && props.collapsedCount !== undefined && props.pictures.length > props.collapsedCount;
+  const shown = React.useMemo(
+    () => (collapsed ? collapsedPictures(props.pictures, props.collapsedCount!, props.selected) : props.pictures),
+    [collapsed, props.pictures, props.collapsedCount, props.selected],
+  );
+  const hiddenCount = props.pictures.length - shown.length;
   const options = React.useMemo(
     (): Array<SelectionTile<string>> => [
-      ...props.pictures.map((picture) => ({
+      ...shown.map((picture) => ({
         id: picture.id,
         title: pictureTitle(picture),
         preview: <BuiltinThumbnail picture={picture} />,
@@ -129,8 +162,15 @@ export const PicturePicker = React.memo(function PicturePicker(
         preview: <AddThumbnail />,
         previewEdge: 'dashed',
       },
+      ...(hiddenCount > 0
+        ? [{
+            id: MORE_TILE_ID,
+            title: t('common.more'),
+            preview: <MoreThumbnail label={t('common.more')} />,
+          }]
+        : []),
     ],
-    [props.pictures, userPictures],
+    [shown, userPictures, hiddenCount],
   );
   const value =
     props.selected === null
@@ -143,6 +183,10 @@ export const PicturePicker = React.memo(function PicturePicker(
       if (id === null) return;
       if (id === ADD_TILE_ID) {
         void add();
+        return;
+      }
+      if (id === MORE_TILE_ID) {
+        setExpanded(true);
         return;
       }
       onSelect(
@@ -187,18 +231,19 @@ export const PicturePicker = React.memo(function PicturePicker(
 function PictureCredit(props: Readonly<{ picture: AtmospherePicture }>) {
   const { picture } = props;
   const { theme } = useUnistyles();
-  const targetFloor = resolveTouchTargetFloorPx() ?? undefined;
   return (
     <HappierPressable
       accessibilityRole="link"
       accessibilityLabel={`${pictureTitle(picture)} · ${pictureCreditLine(picture)}`}
       testID="atmosphere-picture-credit"
+      // The picture tiles sit one picker gap above; the hit area stops at half of it.
+      hitReach={{ top: theme.space.s8 / 2 }}
       onPress={() => {
         void openExternalUrl(picture.credit.url);
       }}
       style={({ focused, pressed }) => [
         styles.line,
-        { minHeight: targetFloor, minWidth: targetFloor, opacity: pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacity : 1 },
+        { opacity: pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacity : 1 },
         focusRingStyle({ focused, color: theme.colors.border.focus }),
       ]}
     >

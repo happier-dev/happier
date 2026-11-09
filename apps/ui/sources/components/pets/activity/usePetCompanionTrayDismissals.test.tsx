@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
@@ -7,8 +7,12 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { settingsParse } from '@/sync/domains/settings/settings';
 
 import { usePetCompanionTrayDismissals } from './usePetCompanionTrayDismissals';
+import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+import { petActivityDismissalsState } from '@/sync/domains/state/onboardingUiState';
+import { resetPersistentUiStateForTest } from '@/dev/testkit/cleanup/persistentUiState';
 
 describe('usePetCompanionTrayDismissals', () => {
+    beforeEach(resetPersistentUiStateForTest);
     afterEach(() => {
         standardCleanup();
     });
@@ -18,7 +22,9 @@ describe('usePetCompanionTrayDismissals', () => {
         try {
             storage.setState(state => ({ settings: settingsParse({ ...state.settings,
                 actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } } }),
-                localSettings: { ...localSettingsDefaults, petsDismissedCompanionTrayItemKeys: [] } }));
+                localSettings: { ...localSettingsDefaults } }));
+            const writes = vi.spyOn(getPersistenceStorage(), 'set');
+            const localSettings = storage.getState().localSettings;
             const hook = await renderHook(() => usePetCompanionTrayDismissals());
             await act(async () => hook.getCurrent().dismissTrayItem({
                 id: 'session-a', dismissKey: 'waiting:session-a:1000',
@@ -27,10 +33,13 @@ describe('usePetCompanionTrayDismissals', () => {
                 title: 'Session', subtitle: null,
                 actions: { open: true, dismiss: true, quickReply: true },
             }));
-            expect(storage.getState().localSettings.petsDismissedCompanionTrayItemKeys).toEqual(['waiting:session-a:1000']);
+            expect(writes.mock.calls.filter(([key]) => key === 'local-settings')).toHaveLength(0);
+            expect(storage.getState().localSettings).toBe(localSettings);
+            expect(getPersistenceStorage().getString('ui-state:pet-activity-dismissals-v1:tray')).toBe('["waiting:session-a:1000"]');
             await hook.unmount();
             const nextVisit = await renderHook(() => usePetCompanionTrayDismissals());
             expect(nextVisit.getCurrent().dismissedTrayItemKeys.has('waiting:session-a:1000')).toBe(true);
+            writes.mockRestore();
         } finally { standardCleanup(); storage.setState(previousState, true); }
     });
 
@@ -42,9 +51,10 @@ describe('usePetCompanionTrayDismissals', () => {
                 ...state,
                 localSettings: {
                     ...localSettingsDefaults,
-                    petsDismissedCompanionTrayItemKeys: ['waiting:session-a:1000'],
                 },
             }));
+
+            petActivityDismissalsState.set('tray', ['waiting:session-a:1000']);
 
             let renderCount = 0;
             const hook = await renderHook(() => {

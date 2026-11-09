@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import {
     type PetAnimationStateV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/pets/constants';
 import type { ImageProps } from 'expo-image';
 
 import {

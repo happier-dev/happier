@@ -20,9 +20,9 @@ vi.mock('react-native', async () => {
 // The off-thread native renderer owns Skia/file handles. This boundary preserves the real Brand
 // transition math while replacing native handle allocation and filesystem output in Node.
 vi.mock('./renderBackdrop.native', () => ({
-    renderNativeBackdrop: async (request: BackdropRenderRequest) => {
+    acquireNativeBackdrop: (request: BackdropRenderRequest) => {
         native.requests.push(request);
-        return 'localId' in request.source ? request.source.localId : 'pixels';
+        return { promise: Promise.resolve('localId' in request.source ? request.source.localId : 'pixels'), release() {} };
     },
     createNativeBackdropTransition: async () => {
         const frames = createAtmosphereTransition('resettle', { from: pixels(10), to: pixels(210), page: [245, 245, 245], theme: 'light', dpr: 1 });

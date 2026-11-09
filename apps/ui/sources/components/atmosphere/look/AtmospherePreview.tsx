@@ -12,9 +12,10 @@ import { useAtmosphere, type AtmosphereTarget } from '../useAtmosphere';
 import { useAtmospherePictureCatalog } from '../useAtmospherePictureCatalog';
 import { atmospherePageRgb } from '../atmospherePage';
 import { effectivePictureLook } from './atmosphereEdits';
-import { HAPPIER_PUBLIC_PROFILE_HERO_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_PUBLIC_PROFILE_HERO_METRICS, resolveHappierPublicProfilePlanetBand } from '@happier-dev/plugin-ui/presentation';
 import type { PublicProfilePictureDescriptorV1 } from '@happier-dev/protocol/account/publicProfileAtmosphere';
 import type { PictureRecord } from '../pictureStore.types';
+import { LazyMountOnScreen } from '@/components/ui/performance/LazyMountOnScreen';
 
 /** In a small window preview the Horizon band covers the top of the page, as it does on Home. */
 const PREVIEW_BAND_SHARE = 0.62;
@@ -74,7 +75,7 @@ export const AtmospherePreview = React.memo(function AtmospherePreview(
           height={size.height}
           style={StyleSheet.absoluteFill}
           options={homePlanetSceneOptions(
-            homePlanetGeometry(atmosphere.planet.placement, pane),
+            homePlanetGeometry(atmosphere.planet.placement, pane, bandFrame ? resolveHappierPublicProfilePlanetBand(pane) : undefined),
             pane,
             {
               theme: mode,
@@ -119,7 +120,9 @@ export const AtmospherePreview = React.memo(function AtmospherePreview(
       pointerEvents="none"
       aria-hidden
     >
-      {art}
+      <LazyMountOnScreen unmountWhenHidden rootMargin="0px" style={{ position: 'absolute', inset: 0 }}>
+        {art}
+      </LazyMountOnScreen>
     </View>
   );
 });
@@ -191,15 +194,17 @@ export const PublicPictureBand = React.memo(function PublicPictureBand(
       pointerEvents="none"
       aria-hidden
     >
-      {size && size.width > 0 && size.height > 0 && source ? (
-        <BackdropCanvas
-          resettle={false}
-          source={source}
-          size={size}
-          {...backdrop}
-          style={styles.band}
-        />
-      ) : null}
+      <LazyMountOnScreen unmountWhenHidden rootMargin="0px" style={{ position: 'absolute', inset: 0 }}>
+        {size && size.width > 0 && size.height > 0 && source ? (
+          <BackdropCanvas
+            resettle={false}
+            source={source}
+            size={size}
+            {...backdrop}
+            style={styles.band}
+          />
+        ) : null}
+      </LazyMountOnScreen>
     </View>
   );
 });

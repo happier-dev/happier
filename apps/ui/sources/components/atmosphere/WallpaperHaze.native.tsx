@@ -3,7 +3,7 @@ import { PixelRatio } from 'react-native';
 import { Canvas, Image, useImage, type SkImage } from '@shopify/react-native-skia';
 import type { BackdropCanvasProps } from './backdropCanvas.types';
 import { backdropRenderRequest, backdropRequestKey } from './backdropRenderRequest';
-import { NATIVE_TONE_SIDE, readNativePicturePixels, renderNativeBackdrop, renderNativeWallpaperHaze } from './renderBackdrop.native';
+import { acquireNativeBackdrop, NATIVE_TONE_SIDE, readNativePicturePixels, renderNativeWallpaperHaze, type NativeBackdropRender } from './renderBackdrop.native';
 import { useCanvasRenderState } from './useCanvasRenderState';
 import type { WallpaperHaze as WallpaperHazeComposition } from './wallpaperHaze';
 
@@ -14,8 +14,13 @@ export function WallpaperHaze(props: Readonly<{ source: BackdropCanvasProps['sou
     const quarter = { width: Math.max(2, Math.round(state.geometry.size.width / 4)), height: Math.max(2, Math.round(state.geometry.size.height / 4)) };
     const request = backdropRenderRequest({ source: props.source, size: quarter, ...props.job }, 1);
     const key = backdropRequestKey(request);
-    const [uri, setUri] = React.useState<string | null>(null);
-    const source = useImage(uri);
+    const [renderedSource, setRenderedSource] = React.useState<{ uri: string; render: NativeBackdropRender } | null>(null);
+    const owned = React.useRef(new Set<NativeBackdropRender>());
+    React.useLayoutEffect(() => {
+        for (const render of owned.current) if (render !== renderedSource?.render) { render.release(); owned.current.delete(render); }
+    }, [renderedSource]);
+    React.useEffect(() => () => { for (const render of owned.current) render.release(); owned.current.clear(); }, []);
+    const source = useImage(renderedSource?.uri ?? null);
     const [image, setImage] = React.useState<SkImage | null>(null);
     const [error, setError] = React.useState<unknown>(null);
     const dpr = PixelRatio.get();
@@ -23,8 +28,13 @@ export function WallpaperHaze(props: Readonly<{ source: BackdropCanvasProps['sou
     React.useEffect(() => {
         if (!state.visible || resizing) return;
         let live = true;
-        void renderNativeBackdrop(latest.current).then(next => { if (live) setUri(next); }, error => { if (live) setError(error); });
-        return () => { live = false; };
+        const render = acquireNativeBackdrop(latest.current);
+        void render.promise.then(uri => {
+            if (!live) return;
+            owned.current.add(render);
+            setRenderedSource({ uri, render });
+        }, error => { render.release(); if (live) setError(error); });
+        return () => { live = false; if (!owned.current.has(render)) render.release(); };
     }, [key, props.source, state.visible, resizing]);
     const { width, height } = state.geometry.size;
     const { x, y } = props.focus;

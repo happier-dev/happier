@@ -107,7 +107,7 @@ it.each([false, true])('replaces a crashed shared picture worker once (replaceme
     expect(handles.every(handle => handle.stopped)).toBe(true);
 });
 
-it('paints both pane projections from one common worker render and releases it after the last projection', async () => {
+it('shares current pane pixels, retires superseded variants, and releases the last projection', async () => {
     const workers: { stopped: boolean }[] = [];
     let jobs = 0;
     vi.stubGlobal('Worker', class {
@@ -115,8 +115,8 @@ it('paints both pane projections from one common worker render and releases it a
         stopped = false;
         constructor() { workers.push(this); }
         postMessage(message: BackdropWorkerRequest) {
-            jobs++;
             if (!('request' in message)) return;
+            jobs++;
             const { width: w, height: h, source } = message.request;
             const value = 'rgba' in source ? source.rgba[0] : 125;
             queueMicrotask(() => this.onmessage?.({ data: { id: message.id, ok: true,
@@ -130,8 +130,8 @@ it('paints both pane projections from one common worker render and releases it a
     const painted: unknown[] = [];
     let source = { rgba: new Uint8ClampedArray(16).fill(10), w: 2, h: 2 };
     const renderGroup = {};
-    const picture = (id: string) => <BackdropCanvas key={id} source={source} size={{ width: 8, height: 4 }}
-        look="original" page={[245, 245, 245]} theme="light" dpr={1} renderGroup={renderGroup} testID={id} />;
+    const picture = (id: string, strength = 1) => <BackdropCanvas key={id} source={source} size={{ width: 8, height: 4 }}
+        look="original" params={{ strength }} page={[245, 245, 245]} theme="light" dpr={1} renderGroup={renderGroup} testID={id} />;
     const screen = await renderScreen(<>{picture('home')}{picture('project')}</>, {
         createNodeMock: element => element.type === 'canvas' ? {
             getContext: () => ({ putImageData: (pixels: unknown) => painted.push(pixels) }),
@@ -140,13 +140,18 @@ it('paints both pane projections from one common worker render and releases it a
     expect(painted).toHaveLength(2);
     expect(jobs).toBe(1);
     expect(workers).toHaveLength(1);
+    await screen.update(<>{picture('home', 0.5)}{picture('project', 0.5)}</>);
+    expect(jobs).toBe(2);
+    await screen.update(<>{picture('home')}{picture('project')}</>);
+    expect(jobs).toBe(3);
     await screen.update(<>{picture('project')}</>);
     expect(workers[0].stopped).toBe(false);
     source = { ...source, rgba: new Uint8ClampedArray(16).fill(90) };
     await screen.update(<>{picture('project')}</>);
     expect(painted.at(-1)).toMatchObject({ data: new Uint8ClampedArray(8 * 4 * 4).fill(90) });
-    expect(jobs).toBe(2);
-    expect(workers[0].stopped).toBe(true);
+    expect(jobs).toBe(4);
+    expect(workers).toHaveLength(1);
+    expect(workers[0].stopped).toBe(false);
     await screen.unmount();
     expect(workers.every(worker => worker.stopped)).toBe(true);
 });
@@ -159,8 +164,8 @@ it('computes one pixel render for the Wallpaper haze layers and releases their s
         stopped = false;
         constructor() { workers.push(this); }
         postMessage(message: BackdropWorkerRequest) {
-            jobs++;
             if (!('request' in message)) return;
+            jobs++;
             const { width: w, height: h } = message.request;
             queueMicrotask(() => this.onmessage?.({ data: { id: message.id, ok: true,
                 result: { rgba: new Uint8ClampedArray(w * h * 4).fill(125), w, h } } }));
@@ -188,4 +193,39 @@ it('computes one pixel render for the Wallpaper haze layers and releases their s
     expect(onRendered).toHaveBeenCalledTimes(1);
     await screen.unmount();
     expect(workers.every(worker => worker.stopped)).toBe(true);
+});
+
+it('retires intermediate strength requests through the real canvas lease and paints its final value', async () => {
+    const requests: Extract<BackdropWorkerRequest, { request: unknown }>[] = [];
+    let reply!: (data: BackdropWorkerResponse) => void;
+    vi.stubGlobal('Worker', class {
+        onmessage: ((event: { data: BackdropWorkerResponse }) => void) | null = null;
+        constructor() { reply = data => this.onmessage?.({ data }); }
+        postMessage(message: BackdropWorkerRequest) { if ('request' in message) requests.push(message); }
+        terminate() {}
+    });
+    vi.stubGlobal('ImageData', class {
+        constructor(public data: Uint8ClampedArray, public width: number, public height: number) {}
+    });
+    const source = { rgba: new Uint8ClampedArray(16), w: 2, h: 2 };
+    const rendered = vi.fn();
+    const paints: number[] = [];
+    const picture = (strength: number) => <BackdropCanvas source={source} size={{ width: 4, height: 4 }}
+        look="fine" params={{ strength }} page={[245, 245, 245]} theme="light" dpr={1} onRendered={rendered} />;
+    const screen = await renderScreen(picture(0), { createNodeMock: element => element.type === 'canvas'
+        ? { getContext: () => ({ putImageData(image: ImageData) { paints.push(image.data[0]); } }) } : null });
+    const finish = (index: number, pixel: number) => reply({ id: requests[index].id, ok: true,
+        result: { rgba: new Uint8ClampedArray(64).fill(pixel), w: 4, h: 4 } });
+    try {
+        for (let step = 1; step <= 15; step++) await screen.update(picture(step / 15));
+        expect(requests).toHaveLength(1);
+        await act(async () => { finish(0, 10); });
+        expect(rendered).not.toHaveBeenCalled();
+        expect(paints).toEqual([]);
+        expect(requests).toHaveLength(2);
+        expect(requests[1].request.job.params?.strength).toBe(1);
+        await act(async () => { finish(1, 200); });
+        expect(rendered).toHaveBeenCalledOnce();
+        expect(paints).toEqual([200]);
+    } finally { await screen.unmount(); }
 });

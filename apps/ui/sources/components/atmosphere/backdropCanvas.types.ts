@@ -19,7 +19,7 @@ export type BackdropCanvasProps = Readonly<{
     adjust?: AtmosphereBackdropJob['adjust'];
     toe?: boolean;
     dpr?: number;
-    /** Projections of one Horizon scene share its source-scoped render cache and worker. */
+    /** Projections of one Horizon scene share its source-scoped rendered pixels. */
     renderGroup?: object;
     /** Decorative/private review paints never inherit the app's Home idle resettle. Default preserves Home. */
     resettle?: boolean;
@@ -48,7 +48,11 @@ export type BackdropRenderRequest = Readonly<{
     job: Omit<AtmosphereBackdropJob, 'source' | 'grade'> & Readonly<{ grade?: BackdropGrade | null }>;
 }>;
 
-export type BackdropWorkerRequest = Readonly<{ id: number; request: BackdropRenderRequest }> | Readonly<{ id: string | number; job: AtmosphereBackdropJob }>;
+export type BackdropWorkerRequest =
+    | Readonly<{ cancel: number }>
+    | Readonly<{ id: number; sourceId: number; request: BackdropRenderRequest }>
+    | Readonly<{ releaseSource: number }>
+    | Readonly<{ id: string | number; job: AtmosphereBackdropJob }>;
 export type BackdropWorkerResponse =
     | Readonly<{ id: string | number; ok: true; result: AtmospherePixels }>
     | Readonly<{ id: string | number; ok: false; error: string }>;

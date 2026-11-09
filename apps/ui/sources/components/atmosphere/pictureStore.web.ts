@@ -1,11 +1,12 @@
 import { openBrowserRecordDatabase } from '@/sync/domains/state/browserRecordStorage';
 import { ATMOSPHERE_PICTURE_MAX_EDGE } from '@happier-dev/brand/atmosphere';
-import { createBuiltinPictureEnsurer, createBuiltinThumbnailEnsurer, readPictureSource } from './ensureBuiltinPicture';
+import { createBuiltinPictureAcquisition, readPictureSource } from './ensureBuiltinPicture';
 import type { PictureInfo, PictureInput, PictureStore, BuiltinPicture, PicturePreparationOptions } from './pictureStore.types';
-import { createPictureStorePublication } from './pictureStorePublication';
+import { createPictureStoreAccess } from './pictureStoreAccess';
 
 type WebPictureRecord = PictureInfo & Readonly<{ data: Blob; thumb?: Blob; source?: BuiltinPicture['src'] }>;
-const publication = createPictureStorePublication();
+const access = createPictureStoreAccess(readRecordFromStore);
+const get = access.get;
 
 function readRecord(value: unknown): WebPictureRecord | undefined {
     if (value === undefined) return undefined;
@@ -55,7 +56,7 @@ async function prepare(data: Blob | string, options?: PicturePreparationOptions)
     } finally { bitmap.close(); }
 }
 
-async function get(localId: string): Promise<WebPictureRecord | undefined> {
+async function readRecordFromStore(localId: string): Promise<WebPictureRecord | undefined> {
     const database = await openBrowserRecordDatabase('pictures');
     return new Promise((resolve, reject) => {
         const transaction = database.transaction('pictures', 'readonly');
@@ -67,7 +68,8 @@ async function get(localId: string): Promise<WebPictureRecord | undefined> {
 }
 async function put(input: PictureInput): Promise<WebPictureRecord> {
     const [data, thumb] = await Promise.all([asBlob(input.data), input.thumb === undefined ? undefined : asBlob(input.thumb)]);
-    const previous = await get(input.localId);
+    // A mutation must not wait on an older display snapshot before it can publish new bytes.
+    const previous = await readRecordFromStore(input.localId);
     const record: WebPictureRecord = { localId: input.localId, kind: input.kind,
         createdAtMs: previous?.createdAtMs ?? Date.now(), size: data.size + (thumb?.size ?? 0), data,
         ...(input.source ? { source: input.source } : {}),
@@ -80,7 +82,7 @@ async function put(input: PictureInput): Promise<WebPictureRecord> {
         transaction.onabort = () => reject(transaction.error ?? new Error('Atmosphere picture write aborted.'));
         transaction.onerror = () => reject(transaction.error);
     });
-    publication.changed(input.localId, input.kind, previous?.kind);
+    access.changed(input.localId, input.kind, previous?.kind);
     return record;
 }
 async function remove(localId: string): Promise<void> {
@@ -100,13 +102,14 @@ async function remove(localId: string): Promise<void> {
         transaction.onabort = () => reject(transaction.error ?? new Error('Atmosphere picture removal aborted.'));
         transaction.onerror = () => reject(transaction.error);
     });
-    publication.changed(localId, kind);
+    access.changed(localId, kind);
 }
-async function list(): Promise<PictureInfo[]> {
+async function list(kind?: PictureInfo['kind']): Promise<PictureInfo[]> {
     const database = await openBrowserRecordDatabase('pictures');
     return new Promise((resolve, reject) => {
         const transaction = database.transaction('pictures', 'readonly');
-        const request = transaction.objectStore('pictures').openCursor();
+        const store = transaction.objectStore('pictures');
+        const request = kind === undefined ? store.openCursor() : store.index('kind').openCursor(IDBKeyRange.only(kind));
         const pictures: PictureInfo[] = [];
         request.onsuccess = () => {
             const cursor = request.result;
@@ -124,8 +127,7 @@ async function list(): Promise<PictureInfo[]> {
 }
 export const pictureStore = {
     prepare, put, get, remove, list,
-    ensureBuiltin: createBuiltinPictureEnsurer({ get, put }, prepare, fetchBuiltinPicture),
-    ensureBuiltinThumbnail: createBuiltinThumbnailEnsurer({ get, put }, prepare, fetchBuiltinPicture),
-    subscribe: publication.subscribe,
-    getRevision: publication.getRevision,
+    ...createBuiltinPictureAcquisition({ get, put }, prepare, fetchBuiltinPicture),
+    subscribe: access.subscribe,
+    getRevision: access.getRevision,
 } satisfies PictureStore;

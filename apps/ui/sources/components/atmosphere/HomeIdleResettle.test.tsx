@@ -20,6 +20,8 @@ afterEach(() => {
 it('admits an overdue resettle only when the desktop window becomes visible', async () => {
   browser = await installBrowserRuntimeForTests({ url: 'http://localhost/' });
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] });
+  const selectedAtMs = 1_800_000_000_000;
+  vi.setSystemTime(selectedAtMs);
   let visibility: DocumentVisibilityState = 'hidden';
   // The desktop bridge and document are host boundaries; visibility policy stays real.
   vi.stubGlobal('__TAURI_INTERNALS__', { invoke: () => undefined });
@@ -34,6 +36,7 @@ it('admits an overdue resettle only when the desktop window becomes visible', as
   storage.setState(state => ({ ...state, settings: { ...state.settings, homeAtmosphere: {
     ...DEFAULT_HOME_ATMOSPHERE, source: 'picture', picture: {
       ...DEFAULT_HOME_ATMOSPHERE.picture, ref: { kind: 'builtin', id: picture.id },
+      selectedAtMs,
     },
   } } }));
   const screen = await renderScreen(<HomeIdleResettle picture={picture.id} focused writing={false} sending={false} />);

@@ -35,6 +35,33 @@ vi.mock('@/modal', async () => {
     return createModalModuleMock().module;
 });
 
+describe('the Look panel picker keeps its controls in view', () => {
+    afterEach(() => { standardCleanup(); vi.restoreAllMocks(); });
+    const tileIds = (screen: Awaited<ReturnType<typeof renderScreen>>) => [...new Set(screen.tree.root
+        .findAll((node) => typeof node.props.testID === 'string' && node.props.testID.startsWith('atmosphere-picture:'))
+        .map((node) => node.props.testID as string))];
+
+    it('shows two rows with the chosen picture in view, then opens the whole gallery in place', async () => {
+        const pictures = ATMOSPHERE_PICTURES.slice(0, 10);
+        const chosen = pictures[8]!;
+        const screen = await renderScreen(<PicturePicker pictures={pictures} collapsedCount={6} columns={4}
+            selected={{ kind: 'builtin', id: chosen.id }} onSelect={vi.fn()} />);
+        const shown = tileIds(screen);
+        expect(shown).toEqual([
+            ...pictures.slice(0, 5).map((picture) => `atmosphere-picture:${picture.id}`),
+            `atmosphere-picture:${chosen.id}`,
+            'atmosphere-picture:add-your-picture',
+            'atmosphere-picture:more-pictures',
+        ]);
+        await screen.pressByTestIdAsync('atmosphere-picture:more-pictures');
+        expect(tileIds(screen)).toEqual([
+            ...pictures.map((picture) => `atmosphere-picture:${picture.id}`),
+            'atmosphere-picture:add-your-picture',
+        ]);
+        await screen.unmount();
+    });
+});
+
 describe('picture credit and remove interactions', () => {
     beforeEach(() => vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 503 }))));
     afterEach(() => { standardCleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });

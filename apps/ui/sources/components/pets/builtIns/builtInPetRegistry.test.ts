@@ -1,7 +1,7 @@
 import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { PET_ATLAS_V1, PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol';
+import { PET_ATLAS_V1, PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
 import { describe, expect, it } from 'vitest';
 
 import {

@@ -21,6 +21,7 @@ import { atmospherePageRgb } from '../atmospherePage';
 import { usePictureUri } from './usePictureBytes';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { LazyMountOnScreen } from '@/components/ui/performance/LazyMountOnScreen';
 
 type Size = Readonly<{ width: number; height: number }>;
 
@@ -39,7 +40,9 @@ function Measured(
   }, []);
   return (
     <View style={StyleSheet.absoluteFill} onLayout={onLayout}>
-      {size && size.width > 0 && size.height > 0 ? props.children(size) : null}
+      <LazyMountOnScreen unmountWhenHidden rootMargin="0px" style={{ position: 'absolute', inset: 0 }}>
+        {size && size.width > 0 && size.height > 0 ? props.children(size) : null}
+      </LazyMountOnScreen>
     </View>
   );
 }

@@ -3,7 +3,7 @@ import { useAtmosphereMoment } from './atmosphereMoments';
 import { atmosphereResettleFact, useAtmosphereComposerEmpty } from './atmosphereStage';
 import { useIdleResettle } from './homeAtmosphereMoments';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
-import { useHomeAtmosphereEditor } from './look/atmosphereEditor';
+import { useSetting } from '@/sync/store/hooks';
 import { pictureStore } from './pictureStore';
 import type { BuiltinPicture } from './pictureStore.types';
 import { useAtmospherePictureCatalog } from './useAtmospherePictureCatalog';
@@ -11,7 +11,7 @@ import { useAtmospherePictureCatalog } from './useAtmospherePictureCatalog';
 const ensurePicture = (picture: BuiltinPicture) => pictureStore.ensureBuiltin(picture);
 
 /**
- * Home's idle resettle (plan UD-4), as a leaf: only it follows the composer, the Look editor and the
+ * Home's idle resettle (plan UD-4), as a leaf: only it follows the composer, the saved choice and the
  * picture catalog, so none of them renders Home. Idle is an empty, unfocused composer and no send.
  */
 export function HomeIdleResettle(props: Readonly<{
@@ -24,7 +24,7 @@ export function HomeIdleResettle(props: Readonly<{
     const moment = useAtmosphereMoment('idleResettle');
     const empty = useAtmosphereComposerEmpty();
     const active = useHostActivelyViewed();
-    const editor = useHomeAtmosphereEditor();
+    const value = useSetting('homeAtmosphere');
     const pictures = useAtmospherePictureCatalog();
     const idle = empty && !props.writing && !props.sending;
     const visible = props.focused && active;
@@ -40,7 +40,7 @@ export function HomeIdleResettle(props: Readonly<{
         idle,
         visible,
         reducedMotion: moment.reducedMotion,
-        editor,
+        value,
         pictures,
         ensure: ensurePicture,
     });

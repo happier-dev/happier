@@ -3,9 +3,13 @@ import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { countStoreNotifications, renderScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
+import { onboardingHistoryState } from '@/sync/domains/state/onboardingUiState';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { HomePlanet } from './HomePlanet';
 import { PlanetCanvas } from './PlanetCanvas';
+import { AtmosphereRipple } from './AtmosphereRipple';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { AtmosphereDissolve } from './AtmosphereDissolve';
 import { useHomeWelcome, type HomeWelcome } from './moments/useHomeWelcome';
 
@@ -22,6 +26,9 @@ vi.mock('react-native', async () =>
 vi.mock('react-native-unistyles', async () =>
   (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
 );
+// Select the real web ring adapter for this web completion journey. Only browser
+// font/Canvas2D ports below are synthetic; admission, playback and the ring stay real.
+vi.mock('./AtmosphereRipple', async () => import('./AtmosphereRipple.web'));
 const nativePictures = vi.hoisted(() => ({ count: 0 }));
 vi.mock('@shopify/react-native-skia', async () => ({
   ...(await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock(),
@@ -33,7 +40,12 @@ vi.mock('@shopify/react-native-skia', async () => ({
 const pane = { width: 280, height: 240 };
 beforeEach(() => {
   host.appState = 'active'; host.visibility = 'visible';
-  vi.stubGlobal('document', { get visibilityState() { return host.visibility; },
+  vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '' }));
+  vi.stubGlobal('document', { documentElement: {}, fonts: { load: async () => [] },
+    createElement: () => ({ width: 0, height: 0, getContext: () => ({ fillText() {},
+      getImageData: (_x: number, _y: number, width: number, height: number) => ({ data: new Uint8ClampedArray(width * height * 4) }),
+    }) }),
+    get visibilityState() { return host.visibility; },
     addEventListener: (event: string, listener: () => void) => { if (event === 'visibilitychange') host.documentListeners.add(listener); } });
 });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -101,9 +113,10 @@ describe('Welcome digits subscription locality', () => {
     });
     previous = storage.getState();
     nativePictures.count = 0;
+    onboardingHistoryState.set('homeWelcomeSeenAt', null);
     storage.setState((state) => ({
       ...state,
-      localSettings: { ...localSettingsDefaults, homeWelcomeSeenAt: null },
+      localSettings: { ...localSettingsDefaults },
     }));
   });
   afterEach(async () => {
@@ -112,6 +125,56 @@ describe('Welcome digits subscription locality', () => {
     });
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it('FX28 mounts one ripple per canonical completion and none on retained Home return', async () => {
+    const session = createSessionFixture({ id: 'canonical-finish', serverId: 'server-a',
+      latestTurnId: 'canonical-turn', latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: Date.now(),
+      lastTurnCompletedAt: null });
+    storage.getState().applySessions([session]);
+    storage.getState().applyServerScopedSessionListRows('server-a', [buildSessionListRenderableFromSession(session)], { source: 'ordinary', mode: 'append' });
+    const scene = (visible: boolean) => <React.Activity mode={visible ? 'visible' : 'hidden'}>
+      <HomePlanet pane={pane} placement="corner" style="balanced" digits
+        theme="dark" phone={false} hero={null} hidden={false} leave="fade" reducedMotion={false}
+        focused answerFinishes />
+    </React.Activity>;
+    const screen = await renderScreen(scene(true));
+    try {
+      await act(async () => { screen.findByType(PlanetCanvas).props.onReady(); });
+      expect(screen.findAllByType(AtmosphereRipple)).toHaveLength(0);
+      await act(async () => {
+        vi.advanceTimersByTime(21_500);
+        storage.getState().applyServerScopedSessionListRowPatches('server-a', [{ sessionId: session.id,
+          patch: { latestTurnStatus: 'completed', latestTurnStatusObservedAt: Date.now() } }]);
+      });
+      expect(screen.findAllByType(AtmosphereRipple)).toHaveLength(1);
+      await act(async () => { vi.advanceTimersByTime(10_000); });
+      expect(screen.findAllByType(AtmosphereRipple)).toHaveLength(0);
+      await act(async () => {
+        storage.getState().applyServerScopedSessionListRowPatches('server-a', [{ sessionId: session.id,
+          patch: { latestReadyEventAt: Date.now(), latestReadyEventSeq: 2 } }]);
+      });
+      expect(screen.findAllByType(AtmosphereRipple)).toHaveLength(0);
+      await screen.update(scene(false));
+      await screen.update(scene(true));
+      expect(screen.findAllByType(AtmosphereRipple)).toHaveLength(0);
+      // Returning must not swallow a later, genuinely new completion either.
+      await act(async () => {
+        storage.getState().applyServerScopedSessionListRowPatches('server-a', [{ sessionId: session.id,
+          patch: { latestTurnId: 'canonical-next-turn', latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: Date.now() } }]);
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(21_500);
+        storage.getState().applyServerScopedSessionListRowPatches('server-a', [{ sessionId: session.id,
+          patch: { latestTurnStatus: 'completed', latestTurnStatusObservedAt: Date.now() } }]);
+      });
+      expect(screen.findAllByType(AtmosphereRipple)).toHaveLength(1);
+      await act(async () => { vi.advanceTimersByTime(10_000); });
+      expect(screen.findAllByType(AtmosphereRipple)).toHaveLength(0);
+      await screen.update(scene(false));
+      await screen.update(scene(true));
+      expect(screen.findAllByType(AtmosphereRipple)).toHaveLength(0);
+    } finally { await screen.unmount(); }
   });
 
   it('redraws only the digits leaf every two seconds over settled Home, and pauses for writing, focus and reduced motion', async () => {

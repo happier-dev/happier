@@ -318,7 +318,7 @@ function ChosenPictureThumbnail(
     props.pictureRef.kind === 'user' ? props.pictureRef.localId : null,
   );
   return (
-    <PictureImagePreview bytes={props.pictureRef.kind === 'user' ? own : builtin} />
+    <PictureImagePreview bytes={props.pictureRef.kind === 'user' ? own : builtin.status === 'present' ? builtin.bytes : null} />
   );
 }
 
@@ -424,7 +424,7 @@ function usePreviewSource(
 ): PictureRecord | null {
   const builtin = useBuiltinThumbnail(picture);
   const own = useStoredPictureBytes(ref.kind === 'user' ? ref.localId : null);
-  const bytes = ref.kind === 'user' ? own : builtin;
+  const bytes = ref.kind === 'user' ? own : builtin.status === 'present' ? builtin.bytes : null;
   const key = pictureLookKey(ref);
   return React.useMemo(
     () =>
@@ -481,6 +481,8 @@ export function PictureControls(
         <PicturePicker
           pictureActions={props.editor.pictureActions}
           columns={presentation === 'page' ? 6 : 4}
+          // The panel's two rows: six pictures, "Your picture…" and the rest of the gallery.
+          collapsedCount={presentation === 'panel' ? 6 : undefined}
           pictures={pictures}
           selected={ref}
           onSelect={(next) => update((current) => withPicture(current, next))}

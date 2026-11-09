@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import Color from 'color';
-import { measurePictureColor, measurePictureTone } from './pictureTone';
+import { measurePictureColor, measurePictureTone, samePictureTone } from './pictureTone';
 
 /** A 100 × 10 picture: a night sky on the left half, a pale sky on the right, the bottom rows dissolved. */
 function picture() {
@@ -70,3 +70,15 @@ describe('measurePictureColor', () => {
   });
 });
 
+
+describe('samePictureTone', () => {
+  const tone = { dark: 0.1, light: 0.6, focus: 0.3, ink: 'theme' as const };
+  it('treats sub-perceptual measurement jitter as the published tone, so glass is not re-solved', () => {
+    expect(samePictureTone({ ...tone, dark: 0.103, light: 0.597, focus: 0.304 }, tone)).toBe(true);
+  });
+  it('publishes a real change in luminance or ink', () => {
+    expect(samePictureTone({ ...tone, light: 0.65 }, tone)).toBe(false);
+    expect(samePictureTone({ ...tone, ink: 'page' }, tone)).toBe(false);
+    expect(samePictureTone(undefined, tone)).toBe(false);
+  });
+});

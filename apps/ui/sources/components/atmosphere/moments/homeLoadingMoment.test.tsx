@@ -16,6 +16,13 @@ vi.mock('react-native', async () => {
   return createReactNativeWebMock();
 });
 
+// These lifecycle cases need a painted native frame. The default native boundary leaves fonts unloaded.
+vi.mock('@shopify/react-native-skia', async () => {
+  const { createReactNativeSkiaMock } = await import('@/dev/testkit/mocks/reactNativeSkia');
+  const font = {};
+  return { ...createReactNativeSkiaMock(), useFont: () => font };
+});
+
 const pane = { width: 1150, height: 900 };
 const orientation = { rotate: -1.5, mirror: false };
 const planet: PlanetMomentTarget = {

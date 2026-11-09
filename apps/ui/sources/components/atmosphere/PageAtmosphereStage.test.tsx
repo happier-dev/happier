@@ -3,6 +3,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Text } from 'react-native';
+import Color from 'color';
 import {
   DEFAULT_HOME_ATMOSPHERE,
   ATMOSPHERE_PLACES,
@@ -19,6 +20,11 @@ import {
 } from './PageAtmosphereStage';
 import { atmosphereStageStore } from './atmosphereStage';
 import { pictureStore } from './pictureStore';
+import { GlassRuntimeEnvironmentProvider } from '@/components/ui/glass/glassRuntimeEnvironment';
+import { glassPresetMaterials } from '@/components/ui/glass/glassMaterial';
+import { AppShellMaterialPlane } from '@/components/navigation/shell/appShellMaterialPlane';
+import { useAtmosphere } from './useAtmosphere';
+import { useAtmosphereStage } from './atmosphereStage';
 
 // Select the genuine browser persistence adapter over the fake IndexedDB system boundary.
 vi.mock('./pictureStore', async () => import('./pictureStore.web'));
@@ -112,6 +118,54 @@ describe('a page on the shell stage', () => {
     await pictureStore.remove('page-picture');
   });
   const carried = () => atmosphereStageStore.get().stage?.surface ?? null;
+
+  it.each(['/inbox', '/projects/open', '/projects/sources'])('keeps page %s on the shared reading coat through focus, inclusion and withdrawal', async pathname => {
+    setShowOn(['home']);
+    storage.setState(state => ({ ...state, settings: { ...state.settings, glassBlurEnabled: true,
+      glassSurfaceMaterials: glassPresetMaterials('everywhere'),
+    } }));
+    atmosphereStageStore.setPictureShown(true);
+    let mounts = 0, unmounts = 0;
+    function Content() {
+      React.useEffect(() => { mounts++; return () => { unmounts++; }; }, []);
+      return <Text testID="split-page-content">retained content</Text>;
+    }
+    function Home() {
+      const atmosphere = useAtmosphere('home');
+      useAtmosphereStage('home', null, false, atmosphere.shown);
+      return null;
+    }
+    const scene = (focused: boolean) => <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind: 'wallpaper' }}>
+      <AppShellMaterialPlane testID="shared-content-plane" group="content" color="#ffffff" translucentColor="transparent" style={{ flex: 1 }}>
+      <Home />
+      <Page pathname={pathname} focused={focused}><Content /></Page>
+      </AppShellMaterialPlane>
+    </GlassRuntimeEnvironmentProvider>;
+    const screen = await renderScreen(scene(false));
+    const alpha = () => Color(flattenTestStyle(screen.findHostByTestId('shared-content-plane')!.props.style).backgroundColor as string).alpha();
+    const content = screen.findHostByTestId('split-page-content');
+    try {
+      await vi.waitFor(() => expect(carried()).toBe('home'));
+      expect(atmosphereStageStore.get().panes).toHaveLength(2);
+      expect(alpha()).toBe(0.56);
+      await screen.update(scene(true));
+      expect(carried()).toBe('home');
+      expect(alpha()).toBe(0.56);
+      await act(async () => { atmosphereStageStore.setPictureShown(true); setShowOn(['home', 'pages']); });
+      await vi.waitFor(() => expect(carried()).toBe('pages'));
+      expect(alpha()).toBe(0.56);
+      await act(async () => setShowOn(['home']));
+      expect(carried()).toBe('home');
+      expect(alpha()).toBe(0.56);
+      await screen.update(scene(false));
+      expect(screen.findHostByTestId('split-page-content')).toBe(content);
+      expect(mounts).toBe(1);
+      expect(unmounts).toBe(0);
+    } finally {
+      await screen.unmount();
+      atmosphereStageStore.setPictureShown(false);
+    }
+  });
 
   it('changes showOn without remounting retained page content or rereading unchanged picture bytes', async () => {
     setShowOn([...ATMOSPHERE_PLACES]);

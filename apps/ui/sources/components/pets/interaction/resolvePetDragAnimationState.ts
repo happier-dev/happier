@@ -1,4 +1,4 @@
-import type { PetAnimationStateV1 } from '@happier-dev/protocol';
+import type { PetAnimationStateV1 } from '@happier-dev/protocol/pets/constants';
 
 import { COMPANION_DRAG_THRESHOLD_PX } from '@happier-dev/plugin-ui/presentation';
 

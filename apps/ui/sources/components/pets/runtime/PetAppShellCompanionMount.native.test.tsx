@@ -15,6 +15,8 @@ import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { storage } from '@/sync/domains/state/storageStore';
+import { petActivityDismissalsState } from '@/sync/domains/state/onboardingUiState';
+import { PET_COMPANION_POSITION_DEFAULT, petCompanionPositionState } from '@/sync/domains/pets/companionPosition/companionPosition';
 
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -36,9 +38,8 @@ type PetNativeMountTestState = {
         petsEnabled: boolean;
         petsSelectedPetRef: Settings['petsSelectedPetRef'];
     };
-    local: Pick<LocalSettings, 'petsEnabledOverride' | 'petsSelectedPetOverride' | 'petsCompanionPosition'> & {
+    local: Pick<LocalSettings, 'petsEnabledOverride' | 'petsSelectedPetOverride'> & {
         petsCompanionSizeScale: number;
-        petsDismissedCompanionTrayItemKeys: string[];
     };
 };
 
@@ -55,14 +56,6 @@ const settingsState = vi.hoisted((): PetNativeMountTestState => ({
         petsEnabledOverride: 'inherit',
         petsSelectedPetOverride: { kind: 'inherit' },
         petsCompanionSizeScale: 1,
-        petsCompanionPosition: {
-            schemaVersion: 1,
-            surface: 'mobile-app-shell',
-            normalizedX: 0.82,
-            normalizedY: 0.72,
-            lastViewport: null,
-        },
-        petsDismissedCompanionTrayItemKeys: [],
     },
 }));
 const hapticsSpy = vi.hoisted(() => vi.fn(async () => {}));
@@ -189,6 +182,7 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
 const initialStorageState = storage.getState();
 
 function seedPetsStorage(runtimeStorage = storage) {
+    petCompanionPositionState.set('mobile-app-shell', PET_COMPANION_POSITION_DEFAULT);
     const source = activitySourceState.source;
     runtimeStorage.setState({
         settings: settingsParse({ ...settingsDefaults, ...settingsState.account,
@@ -239,6 +233,8 @@ describe('PetAppShellCompanionMount.native', () => {
         await homes.reset();
         vi.restoreAllMocks();
         standardCleanup();
+        petActivityDismissalsState.set('tray', []);
+        petCompanionPositionState.remove('mobile-app-shell');
         storage.setState(initialStorageState, true);
         hapticsSpy.mockClear();
         featureState.companion = { state: 'enabled' };
@@ -251,14 +247,6 @@ describe('PetAppShellCompanionMount.native', () => {
             petsEnabledOverride: 'inherit',
             petsSelectedPetOverride: { kind: 'inherit' },
             petsCompanionSizeScale: 1,
-            petsCompanionPosition: {
-                schemaVersion: 1,
-                surface: 'mobile-app-shell',
-                normalizedX: 0.82,
-                normalizedY: 0.72,
-                lastViewport: null,
-            },
-            petsDismissedCompanionTrayItemKeys: [],
         };
         sessionsState.current = [];
         activitySourceState.source = createActivitySource([]);
@@ -367,7 +355,7 @@ describe('PetAppShellCompanionMount.native', () => {
             }, true);
         });
 
-        expect(storage.getState().localSettings.petsCompanionPosition).toMatchObject({
+        expect(petCompanionPositionState.read('mobile-app-shell')).toMatchObject({
             schemaVersion: 1,
             surface: 'mobile-app-shell',
             normalizedX: 0,
@@ -617,7 +605,7 @@ describe('PetAppShellCompanionMount.native', () => {
 
         expect(screen.findByTestId('desktop-pet-overlay-tray-item-native-close-reply-session')).not.toBeNull();
         expect(screen.findByTestId('desktop-pet-overlay-tray-reply-input-native-close-reply-session')).toBeNull();
-        expect(storage.getState().localSettings.petsDismissedCompanionTrayItemKeys).toEqual([]);
+        expect(petActivityDismissalsState.read('tray') ?? []).toEqual([]);
     });
 });
 

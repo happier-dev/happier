@@ -16,7 +16,8 @@ export function paintNativePlanetScene(canvas: SkCanvas, scene: PlanetScene, reg
             const typeface = (over ? strong : regular)?.getTypeface();
             if (!typeface) throw new Error('Atmosphere mono typeface is unavailable');
             const font = Skia.Font(typeface, Number(cell.fs.toFixed(2)));
-            font.setEmbolden(over && cell.cut);
+            // Native Skia 2.4.18 reads a JSI number despite its shared boolean declaration.
+            font.setEmbolden(Number(over && cell.cut) as unknown as boolean);
             paint.setColor(new Float32Array([Math.round(cell.rgb[0]) / 255, Math.round(cell.rgb[1]) / 255, Math.round(cell.rgb[2]) / 255, over ? Math.min(1, cell.a * (cell.cut ? 1.6 : 3.2)) : cell.a]));
             paint.setBlendMode(over && !cell.cut ? BlendMode.SrcATop : BlendMode.SrcOver);
             const metrics = font.getMetrics();

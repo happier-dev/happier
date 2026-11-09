@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createBuiltinPictureEnsurer, createBuiltinThumbnailEnsurer } from './ensureBuiltinPicture';
+import { createBuiltinPictureAcquisition } from './ensureBuiltinPicture';
 import type { PictureInput, PictureRecord } from './pictureStore.types';
 
 // Persistence and HTTP are the boundaries; the download/reuse decisions run unchanged.
@@ -15,8 +15,8 @@ function harness() {
     const fetchPicture = vi.fn(async (url: string) => new Response(new Blob([url])));
     const prepare = async (data: Blob | string) => data;
     return { records, store, fetchPicture, prepare,
-        full: () => createBuiltinPictureEnsurer(store, prepare, fetchPicture),
-        thumb: () => createBuiltinThumbnailEnsurer(store, prepare, fetchPicture) };
+        full: () => createBuiltinPictureAcquisition(store, prepare, fetchPicture).ensureBuiltin,
+        thumb: () => createBuiltinPictureAcquisition(store, prepare, fetchPicture).ensureBuiltinThumbnail };
 }
 const old = { id: 'com.acme/sky', src: { full: 'https://images/old-full', thumb: 'https://images/old-thumb' } };
 const updated = { ...old, src: { full: 'https://images/new-full', thumb: 'https://images/new-thumb' } };
@@ -34,6 +34,29 @@ describe('source-aware picture reuse', () => {
         expect(next.localId).toBe(first.localId);
         expect(h.fetchPicture).toHaveBeenCalledTimes(4);
     });
+    it('persists the small thumbnail before starting the full download, sharing both acquisitions', async () => {
+        const h = harness();
+        let release!: (response: Response) => void;
+        const full = new Promise<Response>(resolve => { release = resolve; });
+        const fetchPicture = vi.fn(async (url: string) => {
+            if (url === old.src.full) {
+                expect(h.records.has('builtin-thumb:' + old.id)).toBe(true);
+                return full;
+            }
+            return new Response(new Blob([url]));
+        });
+        const acquisition = createBuiltinPictureAcquisition(h.store, h.prepare, fetchPicture);
+        const first = acquisition.ensureBuiltin(old);
+        const second = acquisition.ensureBuiltin(old);
+        const settled = Promise.allSettled([first, second]);
+        await vi.waitFor(() => expect(fetchPicture).toHaveBeenCalledWith(old.src.full));
+        expect(fetchPicture.mock.calls.map(([url]) => url)).toEqual([old.src.thumb, old.src.full]);
+        expect(h.records.has('builtin:' + old.id)).toBe(false);
+        release(new Response(new Blob(['full'])));
+        await settled;
+        expect(await first).toBe(await second);
+        expect(fetchPicture).toHaveBeenCalledTimes(2);
+    });
     it('rejects stale full thumbnails and standalone thumbnails and reuses current ones', async () => {
         const h = harness();
         await h.full()(old);
@@ -42,7 +65,7 @@ describe('source-aware picture reuse', () => {
         expect(h.fetchPicture).toHaveBeenCalledTimes(3);
         await h.full()(updated);
         expect(await bytes(await h.thumb()(updated))).toBe(updated.src.thumb);
-        expect(h.fetchPicture).toHaveBeenCalledTimes(5);
+        expect(h.fetchPicture).toHaveBeenCalledTimes(4);
     });
     it('does not coalesce a changed source with the pending previous source or let its late completion overwrite it', async () => {
         const h = harness();
@@ -52,7 +75,7 @@ describe('source-aware picture reuse', () => {
             if (url.includes('old-')) await wait;
             return new Response(new Blob([url]));
         };
-        const ensure = createBuiltinPictureEnsurer(h.store, h.prepare, fetchPicture);
+        const ensure = createBuiltinPictureAcquisition(h.store, h.prepare, fetchPicture).ensureBuiltin;
         const previous = ensure(old);
         const next = ensure(updated);
         release();

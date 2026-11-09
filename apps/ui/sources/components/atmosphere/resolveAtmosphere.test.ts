@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_HOME_ATMOSPHERE, type HomeAtmosphere } from '@happier-dev/protocol/account/settings/accountSettings';
 import { glassPresetMaterials, resolveGlassSurfaceMaterial } from '@/components/ui/glass/glassMaterial';
-import { resolveAtmosphere } from './resolveAtmosphere';
+import { resolveAtmosphere, selectAtmosphereSettings } from './resolveAtmosphere';
+import { ATMOSPHERE_PICTURES } from '@happier-dev/brand/atmosphere';
 import type { PictureRecord } from './pictureStore.types';
 
 const picture = { id: 'p501', src: { full: 'https://pictures/full', thumb: 'https://pictures/thumb' } };
@@ -30,12 +31,29 @@ describe('effective atmosphere owner', () => {
             }
         }
     });
+    it('derives the hourly built-in picture from the saved choice without changing it, across independent readers', () => {
+        const selectedAtMs = 1_800_000_000_000;
+        const chosen = { ...DEFAULT_HOME_ATMOSPHERE, source: 'picture' as const,
+            picture: { ...DEFAULT_HOME_ATMOSPHERE.picture, selectedAtMs } };
+        const at = (nowMs: number) => selectAtmosphereSettings('home', chosen, undefined, nowMs);
+        expect(at(selectedAtMs).picture.ref).toEqual(chosen.picture.ref);
+        expect(at(selectedAtMs + 3_600_000).picture.ref).toEqual({ kind: 'builtin', id: ATMOSPHERE_PICTURES[1]!.id });
+        expect(at(selectedAtMs + 2 * 3_600_000).picture.ref).toEqual({ kind: 'builtin', id: ATMOSPHERE_PICTURES[2]!.id });
+        expect(at(selectedAtMs + 2 * 3_600_000).picture.ref).toEqual(at(selectedAtMs + 2 * 3_600_000 + 900).picture.ref);
+        expect(chosen.picture.ref).toEqual(DEFAULT_HOME_ATMOSPHERE.picture.ref);
+        expect(selectAtmosphereSettings('new-session', chosen, undefined, selectedAtMs + 3_600_000).picture.ref).toEqual(at(selectedAtMs + 3_600_000).picture.ref);
+        expect(selectAtmosphereSettings('home', { ...chosen, moments: { idleResettle: false } }, undefined, selectedAtMs + 3_600_000).picture.ref).toEqual(chosen.picture.ref);
+        const surface = { project: { serverId: 'home', projectKey: 'project' } };
+        expect(selectAtmosphereSettings(surface, chosen, chosen, selectedAtMs + 3_600_000).picture.ref).toEqual(chosen.picture.ref);
+        expect(selectAtmosphereSettings(surface, chosen, 'home', selectedAtMs + 3_600_000).picture.ref).toEqual(at(selectedAtMs + 3_600_000).picture.ref);
+    });
     it('resolves a profile candidate independently of Home and never substitutes missing reviewed pixels', () => {
         const { moments: _moments, showOn: _showOn, ...presentation } = home;
         const candidate = { ...presentation, planet: { ...presentation.planet, placement: 'rise' as const, style: 'rich' as const } };
         const surface = { publicProfile: candidate };
         const resolved = resolveAtmosphere({ ...input, home: { ...home, source: 'none' }, surface, isPhone: true });
-        expect(resolved).toMatchObject({ source: 'picture', showOn: [], planet: { placement: 'corner', style: 'rich' }, pictureRecord });
+        // A phone keeps the profile's own placement: the owner's preview paints what visitors' page paints.
+        expect(resolved).toMatchObject({ source: 'picture', showOn: [], planet: { placement: 'rise', style: 'rich' }, pictureRecord });
         expect(resolved.moments).toEqual({});
         const missing = resolveAtmosphere({ ...input, surface,
             pictureRecord: undefined, shownPicture: resolved, readingPicture: true });
@@ -58,6 +76,16 @@ describe('effective atmosphere owner', () => {
         expect(resolveAtmosphere({ ...input, home: own })).toMatchObject({ source: 'planet', planet: DEFAULT_HOME_ATMOSPHERE.planet });
         const ownRecord = { ...pictureRecord, localId: 'my-picture', kind: 'user' as const };
         expect(resolveAtmosphere({ ...input, home: own, pictureRecord: ownRecord }).source).toBe('picture');
+    });
+    it('shows a matching cached thumbnail until full bytes arrive, rejecting stale or failed acquisitions', () => {
+        const thumbnail = { ...pictureRecord, localId: 'builtin-thumb:p501', data: new Blob(['thumbnail']) };
+        const first = resolveAtmosphere({ ...input, pictureRecord: thumbnail });
+        expect(first).toMatchObject({ source: 'picture', fallbackReason: null, pictureRecord: thumbnail });
+        expect(resolveAtmosphere({ ...input, pictureRecord: thumbnail, pictureAcquisitionFailed: true }))
+            .toMatchObject({ source: 'planet', fallbackReason: 'picture-unavailable' });
+        expect(resolveAtmosphere({ ...input, shownPicture: first })).toMatchObject({ source: 'picture', pictureRecord });
+        expect(resolveAtmosphere({ ...input, pictureRecord: { ...thumbnail, source: { ...picture.src, thumb: 'https://old/thumb' } } }))
+            .toMatchObject({ source: 'planet', fallbackReason: 'picture-unavailable' });
     });
     it('maps Rise to Corner only on phone and carries motion preferences without changing authored strength', () => {
         const planet: HomeAtmosphere = { ...home, source: 'planet', planet: { ...home.planet, placement: 'rise' } };
@@ -97,9 +125,22 @@ describe('effective atmosphere owner', () => {
         const pending = { ...input, home: other, pictures: [picture, { ...picture, id: 'p347' }], pictureRecord: undefined };
         expect(resolveAtmosphere({ ...pending, shownPicture: shown, readingPicture: true })).toMatchObject({ source: 'picture', pictureRecord: shown.pictureRecord });
         expect(resolveAtmosphere({ ...pending, shownPicture: shown, readingPicture: false })).toEqual(reading);
-        expect(resolveAtmosphere({ ...pending, shownPicture: null, readingPicture: true })).toEqual(reading);
+        expect(resolveAtmosphere({ ...pending, shownPicture: null, readingPicture: true }))
+            .toMatchObject({ source: 'picture', pictureRecord: null, fallbackReason: null });
         const planet = resolveAtmosphere({ ...input, home: { ...home, source: 'planet' } });
-        expect(resolveAtmosphere({ ...pending, shownPicture: planet, readingPicture: true })).toEqual(reading);
+        expect(resolveAtmosphere({ ...pending, shownPicture: planet, readingPicture: true }))
+            .toMatchObject({ source: 'picture', pictureRecord: null, fallbackReason: null });
+    });
+    it.each(['projects', 'sessions', 'pages'] as const)('keeps the selected Project picture pending on %s, then resolves settled absence', place => {
+        const surface = { project: { serverId: 'home', projectKey: 'project' }, place };
+        const projectOverride = { ...home, showOn: [place] };
+        const pending = { ...input, surface, projectOverride, pictureRecord: undefined, shownPicture: null };
+        expect(resolveAtmosphere({ ...pending, readingPicture: true })).toMatchObject({
+            source: 'picture', pictureRecord: null, fallbackReason: null, shown: true,
+        });
+        expect(resolveAtmosphere({ ...pending, readingPicture: false })).toMatchObject({
+            source: place === 'projects' ? 'planet' : 'none', pictureRecord: null, fallbackReason: 'picture-unavailable',
+        });
     });
     it('holds available pixels while applying current layout, accessibility, planet and moment decisions', () => {
         const shown = resolveAtmosphere(input);

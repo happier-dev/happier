@@ -1,4 +1,6 @@
-import type { FeatureDecision, PetAssetMediaTypeV1, PetPackageSourceV1 } from '@happier-dev/protocol';
+import type { FeatureDecision} from '@happier-dev/protocol/features/decision';
+import type { PetAssetMediaTypeV1} from '@happier-dev/protocol/pets/accountLibrary';
+import type { PetPackageSourceV1 } from '@happier-dev/protocol/pets/source';
 import type { PetAccountReferenceV1, PetDeviceOverrideV1 } from '@happier-dev/protocol/pets/selection';
 import type { LocalPetDaemonTarget } from '@/sync/domains/pets/localPetSourceTypes';
 

@@ -1,5 +1,11 @@
+import type { z } from 'zod/mini';
+
+import {
+    DesktopPetOverlayAnchorSchema,
+} from '@/sync/domains/settings/registry/local/localSettingDefinitions.activitySurfaces';
+
 export type DesktopPetOverlayFeatureState = 'enabled' | 'disabled' | 'unknown';
-export type DesktopPetOverlayAnchor = 'bottomRight' | 'bottomLeft' | 'topRight' | 'topLeft';
+export type DesktopPetOverlayAnchor = z.infer<typeof DesktopPetOverlayAnchorSchema>;
 
 export type DesktopPetOverlayPolicyInput = Readonly<{
     companionFeatureState: DesktopPetOverlayFeatureState;
@@ -14,7 +20,7 @@ export type DesktopPetOverlayPolicy = Readonly<{
     anchor: DesktopPetOverlayAnchor;
 }>;
 
-const ANCHORS = ['bottomRight', 'bottomLeft', 'topRight', 'topLeft'] as const;
+const ANCHORS = DesktopPetOverlayAnchorSchema.options;
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> {
     return value !== null && typeof value === 'object' && !Array.isArray(value)

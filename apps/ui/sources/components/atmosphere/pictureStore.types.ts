@@ -13,9 +13,10 @@ export interface PictureStore {
     /** Prepare image bytes once before ingress; put only persists already-prepared bytes. */
     prepare(data: Blob | string, options?: PicturePreparationOptions): Promise<Blob | string>;
     put(input: PictureInput): Promise<PictureRecord>;
-    get(localId: string): Promise<PictureRecord | undefined>;
+    /** A backdrop may use its exact thumbnail record while full bytes are absent. */
+    get(localId: string, thumbnailLocalId?: string): Promise<PictureRecord | undefined>;
     remove(localId: string): Promise<void>;
-    list(): Promise<PictureInfo[]>;
+    list(kind?: PictureInfo['kind']): Promise<PictureInfo[]>;
     ensureBuiltin(picture: BuiltinPicture): Promise<PictureRecord>;
     ensureBuiltinThumbnail(picture: BuiltinPicture): Promise<Blob | string>;
     /** An exact picture, one library kind, or the whole device library when omitted. */

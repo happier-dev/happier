@@ -6,6 +6,7 @@ import {
   homeHorizonBand,
   homePlanetGeometry,
   homePlanetSceneOptions,
+  homeRiseFoot,
   homeRiseFootFade,
   homeRiseLimb,
 } from './homePlanetPlacement';
@@ -184,19 +185,27 @@ describe('Home atmosphere rhythm (lab layout())', () => {
   });
   it('ends the band below the composer and sets the horizon above the headline, clamped', () => {
     expect(
-      homeHorizonBand({ headlineTop: 334, composerBottom: 506, seam: 426, phone: false }),
+      homeHorizonBand({ headlineTop: 334, headlineBottom: 378, composerBottom: 506, phone: false }),
     ).toEqual({ band: 534, horizonAt: 0.491 });
     expect(
-      homeHorizonBand({ headlineTop: 60, composerBottom: 506, seam: 426, phone: false })
+      homeHorizonBand({ headlineTop: 60, headlineBottom: 104, composerBottom: 506, phone: false })
         .horizonAt,
     ).toBe(0.3);
     expect(
-      homeHorizonBand({ headlineTop: 200, composerBottom: 300, seam: 253, phone: true }),
+      homeHorizonBand({ headlineTop: 200, headlineBottom: 236, composerBottom: 300, phone: true }),
     ).toEqual({ band: 320, horizonAt: 0.5 });
-    // Without the composer in the hero, the band is the seam.
+    // Without the composer in the hero, the band ends the same step under the headline.
     expect(
-      homeHorizonBand({ headlineTop: 334, composerBottom: null, seam: 426, phone: false }),
-    ).toEqual({ band: 426, horizonAt: 0.615 });
+      homeHorizonBand({ headlineTop: 334, headlineBottom: 378, composerBottom: null, phone: false }),
+    ).toEqual({ band: 406, horizonAt: 0.645 });
+  });
+  it('ends a Rise hero so the first section stands just above the fold, never cutting the foot fade short', () => {
+    // Lab at4-planet-rise: "Your Home" stands just above the fold of an 852 px pane.
+    expect(homeRiseFoot({ paneHeight: 852, aboveBottom: 560 })).toBe(852 - 560 - 100);
+    // A tall hero keeps the whole ordered fade (130 px) rather than reaching the fold.
+    expect(homeRiseFoot({ paneHeight: 852, aboveBottom: 760 })).toBe(140);
+    // A short hero on a tall window stops at the lab's 200 px foot instead of filling the window.
+    expect(homeRiseFoot({ paneHeight: 1600, aboveBottom: 500 })).toBe(252);
   });
   it("puts Rise's limb under the composer top and fades its body before the widgets", () => {
     expect(homeRiseLimb(390)).toBe(400);

@@ -7,6 +7,9 @@ const boundary = vi.hoisted(() => ({
     decodeFails: false,
     encodeFails: false,
     runtimeJobs: 0,
+    infoReads: 0,
+    infoProbes: 0,
+    pictureProbes: 0,
 }));
 
 // The native filesystem, Skia handles and worker runtime are unavailable in Node.
@@ -19,9 +22,9 @@ vi.mock('expo-file-system', () => {
     class File {
         uri: string;
         constructor(...parts: (string | { uri: string })[]) { this.uri = path(parts); }
-        get exists() { return boundary.files.has(this.uri); }
+        get exists() { if (this.uri.endsWith('/info.json')) boundary.infoProbes++; if (this.uri.endsWith('/full.image') || this.uri.endsWith('/thumb.image')) boundary.pictureProbes++; return boundary.files.has(this.uri); }
         get size() { return boundary.files.get(this.uri)?.byteLength ?? 0; }
-        async text() { return new TextDecoder().decode(await this.bytes()); }
+        async text() { if (this.uri.endsWith('/info.json')) boundary.infoReads++; return new TextDecoder().decode(await this.bytes()); }
         async base64() { return Buffer.from(await this.bytes()).toString('base64'); }
         async bytes() {
             const bytes = boundary.files.get(this.uri);
@@ -101,6 +104,9 @@ beforeEach(() => {
     boundary.decodeFails = false;
     boundary.encodeFails = false;
     boundary.runtimeJobs = 0;
+    boundary.infoReads = 0;
+    boundary.infoProbes = 0;
+    boundary.pictureProbes = 0;
     vi.unstubAllGlobals();
     vi.stubGlobal('FileReader', class {
         result: string | null = null;
@@ -117,6 +123,53 @@ beforeEach(() => {
 });
 
 describe('native picture store', () => {
+    it('reads each metadata file once and checks bytes only for the requested kind', async () => {
+        const store = await openStore();
+        await store.put({ localId: 'kind-user', kind: 'user', data: 'data:image/webp;base64,AQID' });
+        for (let index = 0; index < 20; index++) await store.put({ localId: `kind-builtin-${index}`, kind: 'builtin', data: 'data:image/webp;base64,AQID' });
+        boundary.infoReads = 0; boundary.pictureProbes = 0;
+        expect(await store.list('user')).toEqual([expect.objectContaining({ localId: 'kind-user' })]);
+        expect(boundary.infoReads).toBe(21);
+        expect(boundary.pictureProbes).toBe(1);
+        expect(await store.list()).toHaveLength(21);
+    });
+    it('shares one physical exact-id read and record across concurrent display consumers', async () => {
+        const store = await openStore();
+        await store.put({ localId: 'concurrent-display', kind: 'user', data: 'data:image/webp;base64,AQID' });
+        boundary.infoReads = 0;
+        boundary.pictureProbes = 0;
+        const records = await Promise.all(Array.from({ length: 24 }, () => store.get('concurrent-display')));
+        expect(boundary.infoReads).toBe(1);
+        expect(boundary.pictureProbes).toBe(1);
+        expect(records.every(record => record === records[0])).toBe(true);
+        await store.put({ localId: 'concurrent-display', kind: 'user', data: 'data:image/webp;base64,BAUG' });
+        expect(await store.get('concurrent-display')).not.toBe(records[0]);
+        await store.remove('concurrent-display');
+        expect(await store.get('concurrent-display')).toBeUndefined();
+    });
+    it('shares thumbnail fallback reads and replaces them with the available full record', async () => {
+        const store = await openStore();
+        const fullId = 'builtin:thumbnail-display';
+        const thumbnailId = 'builtin-thumb:thumbnail-display';
+        await store.put({ localId: thumbnailId, kind: 'builtin', data: 'data:image/webp;base64,AQID' });
+        boundary.infoReads = 0;
+        boundary.infoProbes = 0;
+        boundary.pictureProbes = 0;
+        const first = await Promise.all(Array.from({ length: 24 }, () => store.get(fullId, thumbnailId)));
+        expect(first.every(record => record === first[0] && record?.localId === thumbnailId)).toBe(true);
+        expect(boundary.infoProbes).toBe(2);
+        expect(boundary.infoReads).toBe(1);
+        expect(boundary.pictureProbes).toBe(1);
+        await store.put({ localId: fullId, kind: 'builtin', data: 'data:image/webp;base64,BAUG' });
+        boundary.infoReads = 0;
+        boundary.infoProbes = 0;
+        boundary.pictureProbes = 0;
+        const next = await Promise.all(Array.from({ length: 24 }, () => store.get(fullId, thumbnailId)));
+        expect(next.every(record => record === next[0] && record?.localId === fullId)).toBe(true);
+        expect(boundary.infoProbes).toBe(1);
+        expect(boundary.infoReads).toBe(1);
+        expect(boundary.pictureProbes).toBe(1);
+    });
     it('does not wake a selected-picture reader when another picture changes', async () => {
         const store = await openStore();
         const selected = vi.fn();

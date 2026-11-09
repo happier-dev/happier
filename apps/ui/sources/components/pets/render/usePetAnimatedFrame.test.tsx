@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
-import { PET_ANIMATION_ROWS_V1 } from '@happier-dev/protocol';
+import { PET_ANIMATION_ROWS_V1 } from '@happier-dev/protocol/pets/constants';
 import { PET_ANIMATION_TICK_MS } from '@/components/pets/animation/petAnimationPlaybackConfig';
 
 import { usePetAnimatedFrame } from './usePetAnimatedFrame';

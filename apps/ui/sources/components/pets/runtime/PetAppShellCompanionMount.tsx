@@ -9,7 +9,7 @@ import {
 } from '@/components/companion/interaction/useCompanionPointerDragSession';
 import { PET_POINTER_DRAG_SELECTORS } from '@/components/pets/interaction/petPointerDragBindings';
 import { resolvePetDragAnimationState } from '@/components/pets/interaction/resolvePetDragAnimationState';
-import type { PetAnimationStateV1 } from '@happier-dev/protocol';
+import type { PetAnimationStateV1 } from '@happier-dev/protocol/pets/constants';
 import type { PetCompanionTrayItem } from '@/components/pets/activity';
 import {
     usePetCompanionActivityModel,

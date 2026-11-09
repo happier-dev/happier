@@ -1,7 +1,9 @@
 import { expect, it, vi } from 'vitest';
 import { pairingMomentFrame, qrMomentFrame, qrMomentModel, themeSwitchFrame, type MomentPaintCommand } from '@happier-dev/brand/planet-moments';
+import { createPlanetScene } from '@happier-dev/brand/planet';
 import { paintMomentCommands } from './momentPaint.web';
 import { paintNativeMomentCommands } from './momentPaint.native';
+import { paintNativePlanetScene } from './planetCanvasPaint.native';
 import { paintNativeThemeHorizon } from '../settings/appearance/themeHorizonPaint.native';
 
 // Canvas/Skia drawing and font metrics are system boundaries. Both real interpreters, the real
@@ -20,7 +22,12 @@ const boundary = vi.hoisted(() => {
         getTypeface: () => face, getMetrics: () => ({ ascent: -size * 0.8, descent: size * 0.2 }),
         getGlyphIDs: (text: string) => [...text].map(c => c.charCodeAt(0)),
         getGlyphWidths: (ids: number[]) => ids.map(() => size * 0.6),
-        setEmbolden(value: boolean) { this.embolden = value; } });
+        // Skia 2.4.18's native JsiSkFont.h uses Value::asNumber here, unlike its
+        // boolean TS/web API. Mirror that host boundary, including its refusal.
+        setEmbolden(value: unknown) {
+            if (typeof value !== 'number') throw new TypeError('Native setEmbolden expects a number');
+            this.embolden = value !== 0;
+        } });
     const paint = () => ({ color: [0, 0, 0, 1], shader: null as unknown, dash: [] as number[], style: 'fill', width: 1, blend: 'source-over',
         dispose() {}, setAntiAlias() {}, setColor(value: string | Float32Array) { this.color = colour(value); },
         setAlphaf(value: number) { this.color[3] = value; }, setShader(value: unknown) { this.shader = value; },
@@ -88,9 +95,10 @@ function gradient(base: object) { return { ...base, colors: [] as number[][], po
 function recordNative() {
     let draws: unknown[] = [], transforms: unknown[] = [];
     const root = draws;
+    const textWeights: boolean[] = [];
     const stack: { transforms: unknown[]; parent?: unknown[]; alpha?: number }[] = [];
     const brush = (paint: ReturnType<typeof boundary.paint>) => ({ color: [...paint.color], shader: paint.shader, stroke: paint.style === 'stroke', width: paint.style === 'stroke' ? paint.width : 1, dash: paint.style === 'stroke' ? paint.dash : [], blend: paint.blend, transforms: [...transforms] });
-    return { root, canvas: {
+    return { root, textWeights, canvas: {
         save() { stack.push({ transforms: [...transforms] }); },
         saveLayer(paint?: ReturnType<typeof boundary.paint>) { stack.push({ transforms: [...transforms], ...(paint ? { parent: draws, alpha: paint.color[3] } : {}) }); if (paint) draws = []; },
         restore() { const held = stack.pop()!; transforms = held.transforms; if (held.parent) { const layer = { kind: 'layer', alpha: held.alpha, draws }; draws = held.parent; draws.push(layer); } },
@@ -99,7 +107,7 @@ function recordNative() {
         drawPath(p: ReturnType<typeof boundary.path>, paint: ReturnType<typeof boundary.paint>) { draws.push({ kind: 'path', path: [...p.parts], rule: paint.style === 'stroke' ? 'nonzero' : p.fill, ...brush(paint) }); },
         drawRect(r: { x: number; y: number; width: number; height: number }, paint: ReturnType<typeof boundary.paint>) { draws.push({ kind: 'rect', rect: [r.x, r.y, r.width, r.height], ...brush(paint) }); },
         drawCircle(x: number, y: number, r: number, paint: ReturnType<typeof boundary.paint>) { draws.push({ kind: 'path', path: [['arc', x, y, r, 0, Math.PI * 2]], rule: 'nonzero', ...brush(paint) }); },
-        drawText(text: string, x: number, y: number, paint: ReturnType<typeof boundary.paint>, font: ReturnType<typeof boundary.font>) { draws.push({ kind: 'text', text, x, y, face: font.face, size: font.size, ...brush(paint) }); },
+        drawText(text: string, x: number, y: number, paint: ReturnType<typeof boundary.paint>, font: ReturnType<typeof boundary.font>) { textWeights.push(font.embolden); draws.push({ kind: 'text', text, x, y, face: font.face, size: font.size, ...brush(paint) }); },
         drawImageRect(_image: unknown, _src: unknown, r: { x: number; y: number; width: number; height: number }, paint?: ReturnType<typeof boundary.paint>) {
             const held = paint ?? boundary.paint();
             if (!paint) held.setColor('#fff');
@@ -122,7 +130,23 @@ function paintBoth(commands: readonly MomentPaintCommand[]) {
     const normalize = (value: unknown) => JSON.parse(JSON.stringify(value, (key, entry: unknown) => typeof entry === 'function' ? undefined : key === 'addColorStop' ? undefined : typeof entry === 'number' ? Math.round(entry * 1e5) / 1e5 : entry));
     expect(normalize(native.root)).toEqual(normalize(web.draws));
     vi.unstubAllGlobals();
+    return native.root;
 }
+
+it('paints cut and regular planet glyphs through the numeric native embolden boundary', () => {
+    for (const overStyle of ['ink', 'emboss'] as const) {
+        const scene = createPlanetScene({ R: 120, cx: 160, cy: 90, view: { w: 390, h: 260 },
+            theme: 'light', dpr: 2, field: { around: 1, over: 0.62, overStyle } });
+        const native = recordNative();
+        // Only opaque Skia canvas/font host objects are substituted here.
+        paintNativePlanetScene(native.canvas as unknown as Parameters<typeof paintNativePlanetScene>[0], scene,
+            boundary.font('mono400', 12) as unknown as Parameters<typeof paintNativePlanetScene>[2],
+            boundary.font('mono600', 12) as unknown as Parameters<typeof paintNativePlanetScene>[3]);
+        expect(native.textWeights).toContain(false);
+        if (overStyle === 'ink') expect(native.textWeights).toContain(true);
+        else expect(native.textWeights).not.toContain(true);
+    }
+});
 
 it('preserves command order, saved paint state, transforms, gradients, holes, dash and mark alpha', () => {
     paintBoth([['save'], ['translate', 2, 4], ['scale', 0.5, 0.5], ['set', 'globalAlpha', 0.4],
@@ -140,7 +164,9 @@ it('matches web paint output for actual QR/reform/scan, pairing and both Horizon
             paintBoth(qrMomentFrame(model, t, { size: 120, theme }).commands);
             paintBoth(qrMomentFrame(model, t, { size: 120, theme, phase: 'reform', next: model, wait: 0.2 }).commands);
             paintBoth(qrMomentFrame(model, t, { size: 120, theme, phase: 'scan' }).commands);
-            paintBoth(pairingMomentFrame(t, { w: 120, h: 120, theme, layout: 'square', phase: 'joined', devices: [{ n: 'Dev box' }, { n: 'Phone', isNew: true }] }));
+            const pairingPaint = paintBoth(pairingMomentFrame(t, { w: 120, h: 120, theme, layout: 'square', phase: 'joined', devices: [{ n: 'Dev box' }, { n: 'Phone', isNew: true }] }));
+            // An enabled flag or two empty adapters cannot establish native support.
+            expect(pairingPaint.length).toBeGreaterThan(0);
         }
     }
     for (const dir of ['sunrise', 'night'] as const) for (const t of [0, 0.3, 0.6, 0.9, 1.2]) paintBoth(themeSwitchFrame(t, { w: 120, h: 120, dir }).commands);

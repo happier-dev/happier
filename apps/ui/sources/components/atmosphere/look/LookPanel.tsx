@@ -7,6 +7,7 @@ import { useAtmospherePictureCatalog } from '../useAtmospherePictureCatalog';
 import type { AtmospherePicture } from '@happier-dev/brand/atmosphere';
 import type { AtmosphereEditor } from './atmosphereEditor';
 import { LookPanelBlock, LookSegments, PictureControls, PlanetControls, SourceControl } from './LookControls';
+import { AtmosphereShowOnPanel } from './AtmosphereShowOnControl';
 import { useRightPanelPlacement, type RightPanelPlacement } from '@/components/appShell/panes/arrangement/useRightPanelPlacement';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { Item } from '@/components/ui/lists/Item';
@@ -46,6 +47,7 @@ export const LookPanel = React.memo(function LookPanel(
         />
       ) : null}
       <LookBackdropControls editor={editor} pictures={pictures} />
+      {editor.value.source !== 'none' ? <AtmosphereShowOnPanel editor={editor} /> : null}
       <GlassAppearanceControls presentation="panel" />
       <RightPanelPlacementBlock />
     </View>

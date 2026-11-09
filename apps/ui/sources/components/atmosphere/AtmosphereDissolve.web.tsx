@@ -23,6 +23,11 @@ function maskUrl(mask: ReturnType<typeof orderedFadeMask>): string {
  */
 export function AtmosphereDissolve(props: AtmosphereDissolveProps) {
   const ref = React.useRef<HTMLElement | null>(null);
+  // A removed pane must not deliver an old send's completion into the shared stage.
+  React.useLayoutEffect(() => {
+    const node = ref.current;
+    return () => node?.getAnimations().forEach(animation => animation.cancel());
+  }, []);
   const onHidden = React.useRef(props.onHidden);
   onHidden.current = props.onHidden;
   const shown = React.useRef<boolean | null>(null);
@@ -56,9 +61,11 @@ export function AtmosphereDissolve(props: AtmosphereDissolveProps) {
       node.style.opacity = '0';
       return;
     }
+    // Completion belongs to this departure, not a later send while the art stays hidden.
+    const notifyHidden = onHidden.current;
     const done = () => {
       node.style.opacity = '0';
-      onHidden.current?.();
+      notifyHidden?.();
     };
     if (reducedMotion || leave === 'fade' || height <= 0) {
       node.animate([{ opacity: 1 }, { opacity: 0 }], {

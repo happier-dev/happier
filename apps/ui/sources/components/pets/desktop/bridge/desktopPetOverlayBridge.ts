@@ -1,4 +1,4 @@
-import { invokeDesktopHost, isDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
+import { invokeDesktopHost, listenDesktopHostEvent, requireDesktopHostRole } from '@/utils/platform/desktopHost';
 import type { PetCompanionActivityModel } from '@/components/pets/activity';
 
 export const DESKTOP_PET_OVERLAY_COMMANDS = {
@@ -12,6 +12,7 @@ export const DESKTOP_PET_OVERLAY_COMMANDS = {
     endDragSession: 'desktop_pet_overlay_end_drag_session',
     resetPosition: 'desktop_pet_overlay_reset_position',
     showMainWindow: 'desktop_pet_overlay_show_main_window',
+    pointerEnter: 'desktop_pet_overlay_pointer_enter',
 } as const;
 
 export const DESKTOP_PET_OVERLAY_EVENTS = {
@@ -168,16 +169,30 @@ export type DesktopPetOverlayInteractionResultPayload = Readonly<{
     error?: string;
 }>;
 
+async function invokePetOverlay<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+    await requireDesktopHostRole('pet');
+    return invokeDesktopHost<T>(command, args);
+}
+
+async function listenPetOverlay<T>(event: string, handler: (payload: T) => void): Promise<() => void> {
+    await requireDesktopHostRole('pet');
+    return listenDesktopHostEvent<T>(event, handler);
+}
+
+export async function notifyDesktopPetOverlayPointerEnter(): Promise<void> {
+    await invokePetOverlay<void>(DESKTOP_PET_OVERLAY_COMMANDS.pointerEnter);
+}
+
 export async function syncDesktopPetOverlayState(payload: DesktopPetOverlaySyncPayload): Promise<void> {
-    await invokeDesktopHost<void>('sync_desktop_pet_overlay_state', { payload });
+    await invokePetOverlay<void>('sync_desktop_pet_overlay_state', { payload });
 }
 
 export async function getDesktopPetOverlayWindowState(): Promise<DesktopPetOverlayWindowStatePayload | null> {
-    return invokeDesktopHost<DesktopPetOverlayWindowStatePayload | null>(DESKTOP_PET_OVERLAY_COMMANDS.readWindowState);
+    return invokePetOverlay<DesktopPetOverlayWindowStatePayload | null>(DESKTOP_PET_OVERLAY_COMMANDS.readWindowState);
 }
 
 export async function setDesktopPetOverlayInputLocked(payload: DesktopPetOverlayInputLocked): Promise<void> {
-    await invokeDesktopHost<void>(DESKTOP_PET_OVERLAY_COMMANDS.setInputLocked, { payload });
+    await invokePetOverlay<void>(DESKTOP_PET_OVERLAY_COMMANDS.setInputLocked, { payload });
 }
 
 function normalizePointerPayload<TPayload extends { pointerId: DesktopPetOverlayPointerId }>(
@@ -190,32 +205,32 @@ function normalizePointerPayload<TPayload extends { pointerId: DesktopPetOverlay
 }
 
 export async function startDesktopPetOverlayDragSession(payload: DesktopPetOverlayDragStart): Promise<void> {
-    await invokeDesktopHost<void>(DESKTOP_PET_OVERLAY_COMMANDS.startDragSession, {
+    await invokePetOverlay<void>(DESKTOP_PET_OVERLAY_COMMANDS.startDragSession, {
         payload: normalizePointerPayload(payload),
     });
 }
 
 export async function applyDesktopPetOverlayDragDelta(payload: DesktopPetOverlayDragDelta): Promise<void> {
-    await invokeDesktopHost<void>(DESKTOP_PET_OVERLAY_COMMANDS.applyDragDelta, {
+    await invokePetOverlay<void>(DESKTOP_PET_OVERLAY_COMMANDS.applyDragDelta, {
         payload: normalizePointerPayload(payload),
     });
 }
 
 export async function endDesktopPetOverlayDragSession(payload: DesktopPetOverlayDragEnd): Promise<void> {
-    await invokeDesktopHost<void>(DESKTOP_PET_OVERLAY_COMMANDS.endDragSession, {
+    await invokePetOverlay<void>(DESKTOP_PET_OVERLAY_COMMANDS.endDragSession, {
         payload: normalizePointerPayload(payload),
     });
 }
 
 export async function releaseDesktopPetOverlayDragVelocity(payload: DesktopPetOverlayDragVelocity): Promise<void> {
-    const plan = await invokeDesktopHost<DesktopPetOverlayMomentumPlan>(DESKTOP_PET_OVERLAY_COMMANDS.releaseDragVelocity, {
+    const plan = await invokePetOverlay<DesktopPetOverlayMomentumPlan>(DESKTOP_PET_OVERLAY_COMMANDS.releaseDragVelocity, {
         payload: normalizePointerPayload(payload),
     });
     scheduleDesktopPetOverlayMomentumPlan(plan);
 }
 
 export async function applyDesktopPetOverlayMomentumDelta(payload: DesktopPetOverlayMomentumDelta): Promise<void> {
-    await invokeDesktopHost<void>(DESKTOP_PET_OVERLAY_COMMANDS.applyMomentumDelta, { payload });
+    await invokePetOverlay<void>(DESKTOP_PET_OVERLAY_COMMANDS.applyMomentumDelta, { payload });
 }
 
 function scheduleDesktopPetOverlayMomentumPlan(plan: DesktopPetOverlayMomentumPlan | undefined): void {
@@ -239,42 +254,41 @@ function scheduleDesktopPetOverlayMomentumPlan(plan: DesktopPetOverlayMomentumPl
 export async function syncDesktopPetOverlayElementMetrics(
     payload: DesktopPetOverlayElementMetricsPayload,
 ): Promise<void> {
-    if (!isDesktopHost()) return;
-    await invokeDesktopHost<void>(DESKTOP_PET_OVERLAY_COMMANDS.syncElementMetrics, { payload });
+    await invokePetOverlay<void>(DESKTOP_PET_OVERLAY_COMMANDS.syncElementMetrics, { payload });
 }
 
 export async function resetDesktopPetOverlayPosition(): Promise<void> {
-    await invokeDesktopHost<void>(DESKTOP_PET_OVERLAY_COMMANDS.resetPosition);
+    await invokePetOverlay<void>(DESKTOP_PET_OVERLAY_COMMANDS.resetPosition);
 }
 
 export async function emitDesktopPetOverlayInteractionResult(
     payload: DesktopPetOverlayInteractionResultPayload,
 ): Promise<void> {
-    await invokeDesktopHost<void>('emit_desktop_pet_overlay_interaction_result', { payload });
+    await invokePetOverlay<void>('emit_desktop_pet_overlay_interaction_result', { payload });
 }
 
 export async function showMainWindowFromDesktopPetOverlay(
     payload: DesktopPetOverlayShowMainWindow = { reason: 'mascot-click' },
 ): Promise<void> {
-    await invokeDesktopHost<void>(DESKTOP_PET_OVERLAY_COMMANDS.showMainWindow, { payload });
+    await invokePetOverlay<void>(DESKTOP_PET_OVERLAY_COMMANDS.showMainWindow, { payload });
 }
 
 export async function listenDesktopPetOverlayWindowState(
     handler: (payload: DesktopPetOverlayWindowStatePayload) => void,
 ): Promise<() => void> {
-    return listenDesktopHostEvent<DesktopPetOverlayWindowStatePayload>(DESKTOP_PET_OVERLAY_EVENTS.windowStateChanged, handler);
+    return listenPetOverlay<DesktopPetOverlayWindowStatePayload>(DESKTOP_PET_OVERLAY_EVENTS.windowStateChanged, handler);
 }
 
 export async function listenDesktopPetOverlayInteractionResult(
     handler: (payload: DesktopPetOverlayInteractionResultPayload) => void,
 ): Promise<() => void> {
-    return listenDesktopHostEvent<DesktopPetOverlayInteractionResultPayload>(DESKTOP_PET_OVERLAY_EVENTS.interactionResult, handler);
+    return listenPetOverlay<DesktopPetOverlayInteractionResultPayload>(DESKTOP_PET_OVERLAY_EVENTS.interactionResult, handler);
 }
 
 export async function listenDesktopPetOverlayShowMainWindowRequested(
     handler: (payload: DesktopPetOverlayShowMainWindowRequestedPayload) => void,
 ): Promise<() => void> {
-    return listenDesktopHostEvent<DesktopPetOverlayShowMainWindowRequestedPayload>(
+    return listenPetOverlay<DesktopPetOverlayShowMainWindowRequestedPayload>(
         DESKTOP_PET_OVERLAY_EVENTS.showMainWindowRequested,
         handler,
     );
@@ -283,7 +297,7 @@ export async function listenDesktopPetOverlayShowMainWindowRequested(
 export async function listenDesktopPetOverlayNativeMouse(
     handler: (payload: DesktopPetOverlayNativeMousePayload) => void,
 ): Promise<() => void> {
-    return listenDesktopHostEvent<DesktopPetOverlayNativeMousePayload>(
+    return listenPetOverlay<DesktopPetOverlayNativeMousePayload>(
         DESKTOP_PET_OVERLAY_EVENTS.nativeMouseChanged,
         handler,
     );

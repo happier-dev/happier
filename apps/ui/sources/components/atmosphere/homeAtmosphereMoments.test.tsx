@@ -5,7 +5,6 @@ import { ATMOSPHERE_PICTURES } from '@happier-dev/brand/atmosphere';
 import {
   DEFAULT_HOME_ATMOSPHERE,
   type HomeAtmosphere,
-  type ProjectAtmosphere,
 } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { renderScreen } from '@/dev/testkit';
@@ -15,7 +14,6 @@ import type { ActivityAttentionSource } from '@/activity/source/activityAttentio
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { atmosphereResettleFact } from './atmosphereStage';
 import { builtinPictureLocalId } from './ensureBuiltinPicture';
-import { withShuffledPicture } from './look/atmosphereEdits';
 import {
   useIdleResettle,
   buildSessionTurnStates,
@@ -373,6 +371,21 @@ describe('session-finished ripple (Home owner, fake clock)', () => {
     );
     expect(home.ripples()).toBe(0);
   });
+
+  it('names each Session that finishes while visible, every time, for its own moment (Bot moons spark once each)', async () => {
+    const finishes: string[][] = [];
+    const observe = createSessionFinishedRippleObserver(() => {}, keys => finishes.push([...keys]));
+    // First sight learns: a completion seen before this Home mount never sparks.
+    observe({ enabled: true, visible: true, states: states({ a: finished, b: working, c: working }) });
+    expect(finishes).toEqual([]);
+    // Inside the ripple's merge window each finish is still its own Session's moment.
+    observe({ enabled: true, visible: true, states: states({ b: finished }) });
+    observe({ enabled: true, visible: true, states: states({ c: finished }) });
+    // A finish while hidden is consumed and never replayed; an approval is not a finish.
+    observe({ enabled: true, visible: false, states: states({ a: { lastTurnCompletedAt: 2, pendingApproval: false } }) });
+    observe({ enabled: true, visible: true, states: states({ b: { lastTurnCompletedAt: 2, pendingApproval: true } }) });
+    expect(finishes).toEqual([['b'], ['c']]);
+  });
 });
 
 describe('session-finished ripple playback', () => {
@@ -418,23 +431,12 @@ describe('idle resettle (Home owner, fake clock)', () => {
   const pictureHome: HomeAtmosphere = {
     ...DEFAULT_HOME_ATMOSPHERE,
     source: 'picture',
+    picture: { ...DEFAULT_HOME_ATMOSPHERE.picture, selectedAtMs: 1_800_000_000_000 },
   };
   type Input = Parameters<typeof useIdleResettle>[0];
 
-  function editorOf(value: ProjectAtmosphere) {
-    const editor = {
-      value,
-      writes: 0,
-      update(edit: (current: ProjectAtmosphere) => ProjectAtmosphere) {
-        editor.writes += 1;
-        editor.value = edit(editor.value);
-      },
-    };
-    return editor;
-  }
-
   async function mountResettle(overrides: Partial<Input> = {}) {
-    const editor = editorOf(pictureHome);
+    vi.setSystemTime(pictureHome.picture.selectedAtMs!);
     const ensured: string[] = [];
     const base: Input = {
       enabled: true,
@@ -442,7 +444,7 @@ describe('idle resettle (Home owner, fake clock)', () => {
       idle: true,
       visible: true,
       reducedMotion: false,
-      editor,
+      value: pictureHome,
       pictures,
       ensure: async (picture) => {
         ensured.push(picture.id);
@@ -455,7 +457,6 @@ describe('idle resettle (Home owner, fake clock)', () => {
     }
     const screen = await renderScreen(<Probe {...base} />);
     return {
-      editor,
       ensured,
       async set(patch: Partial<Input>) {
         await screen.update(<Probe {...base} {...patch} />);
@@ -468,50 +469,44 @@ describe('idle resettle (Home owner, fake clock)', () => {
     };
   }
 
-  it('waits an hour from Home opening, then writes another built-in picture through the Look edits', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.42);
+  it('waits for the next shared window, downloads its picture and announces the resettle', async () => {
     const home = await mountResettle();
     await home.advance(HOUR_MS - 1);
-    expect(home.editor.writes).toBe(0);
+    expect(home.ensured).toEqual([]);
     await home.advance(1);
-    const expected = withShuffledPicture(pictureHome, pictures, () => 0.42);
-    expect(home.editor.value).toEqual(expected);
-    expect(expected.picture.ref).not.toEqual(pictureHome.picture.ref);
-    const id =
-      expected.picture.ref.kind === 'builtin' ? expected.picture.ref.id : '';
+    const id = pictures[1]!.id;
     expect(home.ensured).toEqual([id]);
     expect(atmosphereResettleFact.get()).toMatchObject({
       localId: builtinPictureLocalId(id),
       reducedMotion: false,
     });
-    vi.mocked(Math.random).mockRestore();
   });
 
   it('waits while Home is not idle and settles once it is idle again', async () => {
     const home = await mountResettle({ idle: false });
     await home.advance(2 * HOUR_MS);
-    expect(home.editor.writes).toBe(0);
+    expect(home.ensured).toEqual([]);
     await home.set({ idle: true });
     await home.advance(0);
-    expect(home.editor.writes).toBe(1);
+    expect(home.ensured).toEqual([pictures[2]!.id]);
   });
 
   it('waits while Home is hidden', async () => {
     const home = await mountResettle({ visible: false });
     await home.advance(2 * HOUR_MS);
-    expect(home.editor.writes).toBe(0);
+    expect(home.ensured).toEqual([]);
   });
 
   it('only resettles a built-in picture', async () => {
     const home = await mountResettle({ picture: null });
     await home.advance(2 * HOUR_MS);
-    expect(home.editor.writes).toBe(0);
+    expect(home.ensured).toEqual([]);
   });
 
   it('stays still while switched off', async () => {
     const home = await mountResettle({ enabled: false });
     await home.advance(2 * HOUR_MS);
-    expect(home.editor.writes).toBe(0);
+    expect(home.ensured).toEqual([]);
   });
 
   it('keeps the picture when Home stops being idle while the next one downloads', async () => {
@@ -527,17 +522,16 @@ describe('idle resettle (Home owner, fake clock)', () => {
     await act(async () => {
       finishDownload();
     });
-    expect(home.editor.writes).toBe(0);
+    expect(atmosphereResettleFact.get()).toBeNull();
   });
 
   it('resettles on successive hourly windows', async () => {
     const home = await mountResettle();
     await home.advance(HOUR_MS);
-    expect(home.editor.writes).toBe(1);
-    await home.set({ picture: home.editor.value.picture.ref.kind === 'builtin' ? home.editor.value.picture.ref.id : null });
+    expect(home.ensured).toEqual([pictures[1]!.id]);
+    await home.set({ picture: pictures[1]!.id });
     await home.advance(HOUR_MS);
-    expect(home.editor.writes).toBe(2);
-    expect(home.ensured).toHaveLength(2);
+    expect(home.ensured).toEqual([pictures[1]!.id, pictures[2]!.id]);
   });
 
   it('waits the next hour after a failed download, then tries again', async () => {
@@ -547,22 +541,22 @@ describe('idle resettle (Home owner, fake clock)', () => {
       if (attempts === 1) throw new Error('offline');
     } });
     await home.advance(HOUR_MS);
-    expect(home.editor.writes).toBe(0);
+    expect(atmosphereResettleFact.get()).toBeNull();
     await home.advance(HOUR_MS - 1);
     expect(attempts).toBe(1);
     await home.advance(1);
     expect(attempts).toBe(2);
-    expect(home.editor.writes).toBe(1);
+    expect(atmosphereResettleFact.get()?.localId).toBe(builtinPictureLocalId(pictures[2]!.id));
   });
 
   it('waits the next hour when no alternative picture is available', async () => {
     const home = await mountResettle({ pictures: pictures.filter(picture => picture.id === 'white-rocks-open-sea') });
     await home.advance(HOUR_MS);
-    expect(home.editor.writes).toBe(0);
+    expect(atmosphereResettleFact.get()).toBeNull();
     expect(home.ensured).toEqual([]);
     await home.set({ pictures });
     await home.advance(HOUR_MS);
-    expect(home.editor.writes).toBe(1);
+    expect(home.ensured).toEqual([pictures[2]!.id]);
   });
 
   it('uses the current motion preference when an acquired picture lands', async () => {
@@ -579,11 +573,10 @@ describe('idle resettle (Home owner, fake clock)', () => {
     const home = await mountResettle({ ensure: () => new Promise<void>(resolve => { finishDownload = resolve; }) });
     await home.advance(HOUR_MS);
     const manual = pictures.at(-1)!;
-    home.editor.value = { ...home.editor.value, picture: { ...home.editor.value.picture, ref: { kind: 'builtin', id: manual.id } } };
-    await home.set({ picture: manual.id });
+    const value: HomeAtmosphere = { ...pictureHome, picture: { ...pictureHome.picture,
+      selectedAtMs: Date.now(), ref: { kind: 'builtin', id: manual.id } } };
+    await home.set({ picture: manual.id, value });
     await act(async () => { finishDownload(); });
-    expect(home.editor.writes).toBe(0);
-    expect(home.editor.value.picture.ref).toEqual({ kind: 'builtin', id: manual.id });
     expect(atmosphereResettleFact.get()).toBeNull();
   });
 });

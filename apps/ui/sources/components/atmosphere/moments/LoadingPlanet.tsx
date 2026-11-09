@@ -6,6 +6,7 @@ import {
   planetAssembly,
   type PlanetAssembly,
   type PlanetSceneDot,
+  type PlanetSceneOptions,
 } from '@happier-dev/brand/planet';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -101,25 +102,48 @@ export function LoadingPlanet(props: LoadingPlanetProps) {
     return () => cancelAnimationFrame(frame);
   }, [activelyViewed, presented, props.paused, landed, pane.height, pane.width, source, sourceKey, prepared]);
 
+  // The clock can finish before the canvas (for example while the browser loads its fonts).
+  // Settlement belongs to the final painted travel frame, before Home replaces that canvas.
+  const targetOptions = target?.kind === 'planet' ? target.options : null;
+  const travelProgress = phase.kind === 'travel' ? phase.k : 1;
+  const travelOptions = React.useMemo(() => targetOptions
+    ? loadingPlanetTravel(source, targetOptions, travelProgress)
+    : null, [source, targetOptions, travelProgress]);
+  const [travelDrawn, setTravelDrawn] = React.useState(false);
+  const [travelFailed, setTravelFailed] = React.useState(false);
+  // A failed decorative paint gives way to Home's already-painted canvas; the parent still
+  // requires Home's own drawn fact, so a font error cannot strand this moment awaiting a reply.
+  const onTravelError = React.useCallback(() => setTravelFailed(true), []);
+  const [paintedTravel, setPaintedTravel] = React.useState<Readonly<{
+    options: PlanetSceneOptions; from?: number; to?: number;
+  }> | null>(null);
+  const fadeFrom = target?.kind === 'planet' ? target.fade?.from : undefined;
+  const fadeTo = target?.kind === 'planet' ? target.fade?.to : undefined;
+  const onTravelReady = React.useCallback(() => {
+    setTravelDrawn(true);
+    if (travelOptions && travelOptions === targetOptions) setPaintedTravel({ options: travelOptions, from: fadeFrom, to: fadeTo });
+  }, [travelOptions, targetOptions, fadeFrom, fadeTo]);
+  const finalTravelPainted = target?.kind === 'planet' && paintedTravel?.options === target.options
+    && paintedTravel.from === fadeFrom && paintedTravel.to === fadeTo;
+  const awaitingFinalPaint = phase.kind === 'landed' && !phase.fast && toPlanet && !reducedMotion && !finalTravelPainted && !travelFailed;
   const stage: LoadingPlanetStage =
-    phase.kind === 'landed'
+    phase.kind === 'landed' && !awaitingFinalPaint
       ? 'landed'
       : readyAt.current !== null
         ? 'resolving'
         : phase.kind === 'none'
           ? 'grace'
           : 'waiting';
-  const fast = phase.kind === 'landed' && phase.fast;
+  const clockLanded = phase.kind === 'landed';
+  const fast = clockLanded && phase.fast;
   const onStage = React.useRef(props.onStage);
   onStage.current = props.onStage;
   React.useEffect(() => {
-    if (stage === 'landed') setLanded((current) => current ?? { fast });
+    if (clockLanded) setLanded((current) => current ?? { fast });
     onStage.current(stage, fast);
-  }, [fast, stage]);
+  }, [clockLanded, fast, stage]);
 
   // The travelling planet's first crisp frame replaces the assembled one only once it is drawn.
-  const [travelDrawn, setTravelDrawn] = React.useState(false);
-  const onTravelReady = React.useCallback(() => setTravelDrawn(true), []);
   const travelling =
     phase.kind === 'travel' ||
     (phase.kind === 'landed' && !phase.fast && toPlanet && !reducedMotion);
@@ -158,13 +182,14 @@ export function LoadingPlanet(props: LoadingPlanetProps) {
           testID="loading-planet.assembly"
         />
       ) : null}
-      {travelling && target?.kind === 'planet' ? (
+      {travelling && target?.kind === 'planet' && travelOptions ? (
         <PlanetCanvas
-          width={pane.width}
-          height={pane.height}
-          options={loadingPlanetTravel(source, target.options, phase.kind === 'travel' ? phase.k : 1)}
+          width={travelOptions.view?.w ?? pane.width}
+          height={travelOptions.view?.h ?? pane.height}
+          options={travelOptions}
           fade={target.fade}
           onReady={onTravelReady}
+          onError={onTravelError}
           style={styles.layer}
           testID="loading-planet.travel"
         />

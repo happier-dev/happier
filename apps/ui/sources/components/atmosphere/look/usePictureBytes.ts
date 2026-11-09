@@ -16,26 +16,30 @@ function useUserPictureRevision() {
   );
 }
 
-/** A built-in's picker thumbnail; null until it is cached (a failed download stays null for this visit). */
-export function useBuiltinThumbnail(picture: BuiltinPicture | null): Bytes | null {
-  const [bytes, setBytes] = React.useState<Readonly<{
-    id: string;
-    bytes: Bytes;
-  }> | null>(null);
+export type BuiltinThumbnail =
+  | Readonly<{ status: 'loading' }>
+  | Readonly<{ status: 'present'; bytes: Bytes }>
+  | Readonly<{ status: 'failed' }>;
+
+const THUMBNAIL_LOADING: BuiltinThumbnail = { status: 'loading' };
+const THUMBNAIL_FAILED: BuiltinThumbnail = { status: 'failed' };
+
+/** A failure settles on the existing placeholder. Only a new visit or source attempts acquisition again. */
+export function useBuiltinThumbnail(picture: BuiltinPicture | null): BuiltinThumbnail {
+  const id = picture?.id;
+  const full = picture?.src.full;
+  const thumb = picture?.src.thumb;
+  const [read, setRead] = React.useState<Readonly<{ id: string; thumb: string; result: BuiltinThumbnail }> | null>(null);
   React.useEffect(() => {
-    if (!picture) return;
+    if (id === undefined || full === undefined || thumb === undefined) return;
     let disposed = false;
-    void pictureStore.ensureBuiltinThumbnail(picture).then(
-      (next) => {
-        if (!disposed) setBytes({ id: picture.id, bytes: next });
-      },
-      () => {},
+    void pictureStore.ensureBuiltinThumbnail({ id, src: { full, thumb } }).then(
+      bytes => { if (!disposed) setRead({ id, thumb, result: { status: 'present', bytes } }); },
+      () => { if (!disposed) setRead({ id, thumb, result: THUMBNAIL_FAILED }); },
     );
-    return () => {
-      disposed = true;
-    };
-  }, [picture]);
-  return picture && bytes?.id === picture.id ? bytes.bytes : null;
+    return () => { disposed = true; };
+  }, [id, full, thumb]);
+  return picture && read !== null && read.id === id && read.thumb === thumb ? read.result : THUMBNAIL_LOADING;
 }
 
 /** A stored picture on this device: still being read, here with its full bytes, or not on this device. */
@@ -66,12 +70,11 @@ export function useUserPictures(): readonly PictureInfo[] {
   const [pictures, setPictures] = React.useState<readonly PictureInfo[]>([]);
   React.useEffect(() => {
     let disposed = false;
-    void pictureStore.list().then(
+    void pictureStore.list('user').then(
       (list) => {
         if (!disposed)
           setPictures(
             list
-              .filter((info) => info.kind === 'user')
               .sort((a, b) => a.createdAtMs - b.createdAtMs),
           );
       },

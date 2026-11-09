@@ -47,20 +47,26 @@ export function homeHeroTop(input: Readonly<{ paneHeight: number; phone: boolean
 export const HOME_HERO_COMPOSER_GAP_PX = 18;
 export const HOME_PHONE_HERO_COMPOSER_GAP_PX = 14;
 
+/** The hero's foot: the band and a composer-less hero end this far under the last thing in it. */
+export const HOME_HERO_FOOT_PX = 28;
+export const HOME_PHONE_HERO_FOOT_PX = 20;
+
 /**
  * The Horizon band ends a little below the composer so the whole composer sits over the picture; the
  * picture's horizon sits 72 px (phone 40 px) above the headline so the headline lands on calm sky.
+ * Without a composer in the hero the band ends the same step under the headline, so the greeting is
+ * the band's foot rather than a lone line in the middle of an empty picture.
  */
 export function homeHorizonBand(
   input: Readonly<{
     headlineTop: number;
-    /** Null when the composer is not in the hero: the band then ends at the seam. */
+    headlineBottom: number;
+    /** Null when the composer is not in the hero. */
     composerBottom: number | null;
-    seam: number;
     phone: boolean;
   }>,
 ) {
-  const band = input.composerBottom === null ? input.seam : Math.round(input.composerBottom + (input.phone ? 20 : 28));
+  const band = Math.round((input.composerBottom ?? input.headlineBottom) + (input.phone ? HOME_PHONE_HERO_FOOT_PX : HOME_HERO_FOOT_PX));
   const at = Math.max(
     0.3,
     Math.min(0.7, (input.headlineTop - (input.phone ? 40 : 72)) / band),
@@ -68,20 +74,18 @@ export function homeHorizonBand(
   return { band, horizonAt: Number(at.toFixed(3)) };
 }
 
-/** The Horizon dissolve runs from 58 % of the band to its foot, thinning through the composer. */
-import { ATMOSPHERE_HORIZON_FADE_FROM as HOME_HORIZON_FADE_FROM } from '@happier-dev/brand/atmosphere';
-export { HOME_HORIZON_FADE_FROM };
 
 /**
- * A Project's planet lives in its band (plan R-7): drawn only above the bottom of the Project tabs and
- * ending there in the ordered foot fade, so the page under the tabs keeps its own ground. Rise's limb
- * sits high in the band so its crown shows behind the header instead of falling below the tabs.
+ * Rise's foot: the space under the hero where the planet's body fades out in order. The lab keeps "Your
+ * Home" in view just above the fold, so the foot ends there; it never shortens the ordered fade (130 px
+ * plus its 4 px and 6 px margins) and never grows past the lab's 200 px under the hero's own 52.
  */
-export function projectPlanetBand(band: number) {
-  return {
-    fade: { from: Math.round(band * HOME_HORIZON_FADE_FROM), to: band },
-    riseLimb: Math.round(band * 0.4),
-  };
+const RISE_FOOT_MIN_PX = 140;
+const RISE_FOOT_MAX_PX = 252;
+/** From the hero's foot to the fold: the gap to the first section, its header row and about 40 px under it. */
+const RISE_FOLD_RESERVE_PX = 100;
+export function homeRiseFoot(input: Readonly<{ paneHeight: number; aboveBottom: number }>): number {
+  return Math.round(Math.max(RISE_FOOT_MIN_PX, Math.min(RISE_FOOT_MAX_PX, input.paneHeight - input.aboveBottom - RISE_FOLD_RESERVE_PX)));
 }
 
 /** Rise: the limb crosses the composer's top; its body leaves in order before the widgets. */

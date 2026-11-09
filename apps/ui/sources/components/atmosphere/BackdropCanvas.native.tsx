@@ -7,7 +7,7 @@ import { atmosphereResettleFact } from './atmosphereStage';
 import type { BackdropCanvasProps } from './backdropCanvas.types';
 import { backdropSettle } from './backdropResettle';
 import { backdropRenderRequest, backdropRequestKey } from './backdropRenderRequest';
-import { createNativeBackdropTransition, NATIVE_TONE_SIDE, readNativePicturePixels, renderNativeBackdrop } from './renderBackdrop.native';
+import { acquireNativeBackdrop, createNativeBackdropTransition, NATIVE_TONE_SIDE, readNativePicturePixels, type NativeBackdropRender } from './renderBackdrop.native';
 import { useCanvasRenderState } from './useCanvasRenderState';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
@@ -15,8 +15,15 @@ import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 export const BackdropCanvas = React.memo(function BackdropCanvas(props: BackdropCanvasProps) {
     type Drawn = { localId: string | null; w: number; h: number };
     const state = useCanvasRenderState({ size: props.size, span: props.span, horizon: props.horizon }, props.source);
-    const [shown, setShown] = React.useState<{ uri: string }>();
-    const [target, setTarget] = React.useState<Readonly<{ key: string; uri: string; settle: NonNullable<ReturnType<typeof backdropSettle>>; drawn: Drawn }> | null>(null);
+    const [shown, setShown] = React.useState<{ uri: string; render: NativeBackdropRender }>();
+    const [target, setTarget] = React.useState<Readonly<{ key: string; uri: string; render: NativeBackdropRender; settle: NonNullable<ReturnType<typeof backdropSettle>>; drawn: Drawn }> | null>(null);
+    const owned = React.useRef(new Set<NativeBackdropRender>());
+    React.useLayoutEffect(() => {
+        for (const render of owned.current) if (render !== shown?.render && render !== target?.render) {
+            render.release(); owned.current.delete(render);
+        }
+    }, [shown, target]);
+    React.useEffect(() => () => { for (const render of owned.current) render.release(); owned.current.clear(); }, []);
     const targetRef = React.useRef(target); targetRef.current = target;
     const [playback, setPlayback] = React.useState<{
         transition: Awaited<ReturnType<typeof createNativeBackdropTransition>>;
@@ -42,18 +49,21 @@ export const BackdropCanvas = React.memo(function BackdropCanvas(props: Backdrop
         if (!state.visible || request.width <= 0 || request.height <= 0) return;
         if (targetRef.current?.key === key) return;
         let cancelled = false;
-        void renderNativeBackdrop(request).then(next => {
+        const render = acquireNativeBackdrop(request);
+        void render.promise.then(next => {
             if (cancelled) return;
+            owned.current.add(render);
             const source = props.source;
             const drawn = { localId: 'localId' in source ? source.localId : null, w: request.width, h: request.height };
             const settle = backdropSettle({ enabled: props.resettle, fact: atmosphereResettleFact.get(), settled: settled.current, shown: frame.current, next: drawn });
             if (settle) settled.current = settle.id;
-            if (settle) setTarget({ key, uri: next, settle, drawn });
-            else { frame.current = drawn; setTarget(null); setAnimated(null); setShown({ uri: next }); }
+            if (settle) setTarget({ key, uri: next, render, settle, drawn });
+            else { frame.current = drawn; setTarget(null); setAnimated(null); setShown({ uri: next, render }); }
         }, error => {
+            render.release();
             if (!cancelled) failed.current?.(error instanceof Error ? error : new Error(String(error)));
         });
-        return () => { cancelled = true; };
+        return () => { cancelled = true; if (!owned.current.has(render)) render.release(); };
         // The serialized key includes all configuration; source is its own identity.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [key, props.source, state.visible, props.resettle]);
@@ -88,7 +98,7 @@ export const BackdropCanvas = React.memo(function BackdropCanvas(props: Backdrop
     React.useEffect(() => {
         if (target && (props.resettle === false || (reducedMotion && target.settle.kind === 'resettle'))) {
             frame.current = target.drawn;
-            setShown({ uri: target.uri });
+            setShown({ uri: target.uri, render: target.render });
             setAnimated(null);
             setTarget(null);
             return;
@@ -107,7 +117,7 @@ export const BackdropCanvas = React.memo(function BackdropCanvas(props: Backdrop
             setAnimated(next);
             if (progress >= 1) {
                 frame.current = playback.target.drawn;
-                setShown({ uri: playback.target.uri });
+                setShown({ uri: playback.target.uri, render: playback.target.render });
                 setTarget(null);
                 return;
             }

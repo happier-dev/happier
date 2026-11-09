@@ -1,6 +1,5 @@
 import * as React from 'react';
-import { useLocalSetting } from '@/sync/store/hooks';
-import { getStorage } from '@/sync/domains/state/storageStore';
+import { onboardingHistoryState, useOnboardingHistoryTimestamp } from '@/sync/domains/state/onboardingUiState';
 
 export type HomeWelcome = Readonly<{
   /** The assembly is on screen: Home's planet waits under it. */
@@ -27,14 +26,14 @@ export function useHomeWelcome(
     writing: boolean;
   }>,
 ): HomeWelcome {
-  const seenAt = useLocalSetting('homeWelcomeSeenAt');
+  const seenAt = useOnboardingHistoryTimestamp('homeWelcomeSeenAt');
   const [status, setStatus] = React.useState<
     'idle' | 'playing' | 'resting' | 'done'
   >('idle');
   const play = status === 'idle' && input.eligible && seenAt === null;
   React.useEffect(() => {
     if (!play) return;
-    getStorage().getState().applyLocalSettings({ homeWelcomeSeenAt: Date.now() }, { source: 'ui' });
+    onboardingHistoryState.set('homeWelcomeSeenAt', Date.now());
     setStatus(input.loadingShown || input.reducedMotion ? 'done' : 'playing');
   }, [input.loadingShown, input.reducedMotion, play]);
   const [instant, setInstant] = React.useState(false);

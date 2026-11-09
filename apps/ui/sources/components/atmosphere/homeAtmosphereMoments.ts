@@ -1,9 +1,9 @@
 import * as React from 'react';
 import type { AtmospherePicture } from '@happier-dev/brand/atmosphere';
+import type { HomeAtmosphere } from '@happier-dev/protocol/account/settings/accountSettings';
 import {
   MOMENT_TRIGGER_WINDOWS_MS,
   idleResettleTrigger,
-  sessionFinishedRippleTrigger,
 } from '@happier-dev/brand/planet-moments';
 import type { ActivityAttentionSource } from '@/activity/source/activityAttentionSourceTypes';
 import {
@@ -19,8 +19,9 @@ import { getActiveServerSnapshot, subscribeActiveServer, type ActiveServerSnapsh
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { atmosphereResettleFact } from './atmosphereStage';
 import { builtinPictureLocalId } from './ensureBuiltinPicture';
-import type { AtmosphereEditor } from './look/atmosphereEditor';
-import { withShuffledPicture } from './look/atmosphereEdits';
+import { homeIdleResettlePicture } from './resolveAtmosphere';
+import { createSessionFinishedRippleObserver, type SessionTurnState } from './sessionFinishedRippleObserver';
+export { createSessionFinishedRippleObserver, type SessionTurnState } from './sessionFinishedRippleObserver';
 
 /**
  * Home's two answering moments (plan UD-4): the session-finished ripple and the idle resettle. The brand
@@ -29,10 +30,6 @@ import { withShuffledPicture } from './look/atmosphereEdits';
  */
 const clock = () => performance.now();
 
-export type SessionTurnState = Readonly<{
-  lastTurnCompletedAt: number | null;
-  pendingApproval: boolean;
-}>;
 
 /**
  * Each personal session's canonical completion watermark and the same "needs you" classification
@@ -119,63 +116,20 @@ export function createSessionTurnStateSelector() {
   };
 }
 
-/**
- * Counts the ripples Home answers. Every observed session is compared with how it was last seen; a
- * session seen for the first time is learned, never answered, so nothing that finished while Home was
- * hidden, switched off or closed is replayed. Finishes inside the brand's window merge into one answer.
- */
-type SessionFinishedRippleInput = Readonly<{
-    enabled: boolean;
-    visible: boolean;
-    states: ReadonlyMap<string, SessionTurnState | null>;
-    reset?: boolean;
-}>;
-
-export function createSessionFinishedRippleObserver(onAnswer: () => void) {
-  let seen: Map<string, SessionTurnState> | null = null;
-  let last: number | null = null;
-  return ({ enabled, visible, states, reset }: SessionFinishedRippleInput): void => {
-    if (!enabled) {
-      seen = null;
-      return;
-    }
-    const learning = seen === null || reset;
-    const previous = seen ?? new Map<string, SessionTurnState>();
-    if (reset) previous.clear();
-    seen = previous;
-    const nowMs = clock();
-    let answer = false;
-    for (const [key, state] of states) {
-      const before = previous.get(key);
-      if (state === null) { previous.delete(key); continue; }
-      previous.set(key, state);
-      if (!before || learning) continue;
-      const completed = state.lastTurnCompletedAt !== null
-        && (before.lastTurnCompletedAt === null || state.lastTurnCompletedAt > before.lastTurnCompletedAt);
-      const decision = sessionFinishedRippleTrigger({
-        nowMs,
-        lastTriggeredAtMs: last,
-        wasFinished: false,
-        turnComplete: completed,
-        pendingApproval: state.pendingApproval,
-        homeVisible: visible,
-      });
-      last = decision.lastTriggeredAtMs;
-      answer ||= decision.trigger;
-    }
-    if (answer) onAnswer();
-  };
-}
-
 /** Admission consumes every store publication synchronously; React may batch its answer count. */
-export function useSessionFinishedRipple(input: Readonly<{ enabled: boolean; visible: boolean }>): number {
+export function useSessionFinishedRipple(
+  input: Readonly<{ enabled: boolean; visible: boolean; onFinished?: (keys: readonly string[]) => void }>,
+): number {
   const membership = useActivityPersonalSessionMembership();
   const activeServer = React.useSyncExternalStore(subscribeActiveServer, getActiveServerSnapshot, getActiveServerSnapshot);
   const project = React.useMemo(createSessionTurnStateSelector, [input.enabled]);
   const [ripples, setRipples] = React.useState(0);
-  const observe = React.useMemo(() => createSessionFinishedRippleObserver(() => setRipples(count => count + 1)), []);
   const latest = React.useRef(input);
   latest.current = input;
+  const observe = React.useMemo(() => createSessionFinishedRippleObserver(
+    () => setRipples(count => count + 1),
+    keys => latest.current.onFinished?.(keys),
+  ), []);
   React.useEffect(() => {
     if (!input.enabled) {
       observe({ enabled: false, visible: false, states: new Map() });
@@ -185,7 +139,11 @@ export function useSessionFinishedRipple(input: Readonly<{ enabled: boolean; vis
       const changes = project(state, membership, activeServer);
       if (changes) observe({ ...latest.current, ...changes });
     };
-    const unsubscribe = storage.subscribe(update);
+    const unsubscribe = storage.subscribe(update, {
+      profileScope: true, isDataReady: true, projectAccountRows: true,
+      sessionOrganizationTagAssignmentsBySessionKey: true, sessions: true,
+      sessionListRowsByServerId: true, ordinarySessionListMembershipByServerId: true,
+    });
     update(storage.getState());
     return unsubscribe;
   }, [input.enabled, project, membership, activeServer, observe]);
@@ -195,9 +153,8 @@ export function useSessionFinishedRipple(input: Readonly<{ enabled: boolean; vis
 /**
  * The idle resettle's admission at Home. While Home is idle (composer empty and unfocused, not
  * sending), visible and showing a built-in picture, one timer waits out the rest of the brand's
- * window, counted from Home opening so it never plays on launch. When it is admitted, the next picture
- * is chosen by the Look edits, downloaded, announced to the drawing owner as a resettle, and written
- * through Home's atmosphere editor, so the chip, the panel and other devices follow it.
+ * wall-clock window. A successful download announces the deterministic picture to the drawing owner
+ * and wakes the resolver's clock sample. The person's saved choice is never written automatically.
  */
 export function useIdleResettle(
   input: Readonly<{
@@ -207,17 +164,26 @@ export function useIdleResettle(
     idle: boolean;
     visible: boolean;
     reducedMotion: boolean;
-    editor: Pick<AtmosphereEditor, 'value' | 'update'>;
+    value: HomeAtmosphere;
     pictures: readonly AtmospherePicture[];
     ensure: (picture: AtmospherePicture) => Promise<unknown>;
   }>,
 ): void {
-  const [openedAt] = React.useState(clock);
-  const last = React.useRef(openedAt);
+  const selectedAtMs = input.value.picture.selectedAtMs ?? 0;
+  const choice = input.value.picture.ref;
+  const choiceKey = choice.kind === 'builtin' ? choice.id : choice.localId;
+  const [openedAt] = React.useState(Date.now);
+  const windowStart = (nowMs: number) => selectedAtMs
+    + Math.floor(Math.max(0, nowMs - selectedAtMs) / MOMENT_TRIGGER_WINDOWS_MS.resettle) * MOMENT_TRIGGER_WINDOWS_MS.resettle;
+  const last = React.useRef({ selectedAtMs, choiceKey, at: windowStart(openedAt) });
+  if (last.current.selectedAtMs !== selectedAtMs || last.current.choiceKey !== choiceKey) {
+    last.current = { selectedAtMs, choiceKey, at: windowStart(Date.now()) };
+  }
   const latest = React.useRef(input);
   latest.current = input;
   const armed =
-    input.enabled && input.picture !== null && input.idle && input.visible;
+    input.enabled && input.picture !== null && input.idle && input.visible
+      && homeIdleResettlePicture(input.value, Date.now()) !== null;
   React.useEffect(() => {
     if (!armed) return;
     let cancelled = false;
@@ -227,14 +193,14 @@ export function useIdleResettle(
         admit,
         Math.max(
           0,
-          last.current + MOMENT_TRIGGER_WINDOWS_MS.resettle - clock(),
+          last.current.at + MOMENT_TRIGGER_WINDOWS_MS.resettle - Date.now(),
         ),
       );
     };
     const admit = () => {
       const decision = idleResettleTrigger({
-        nowMs: clock(),
-        lastTriggeredAtMs: last.current,
+        nowMs: Date.now(),
+        lastTriggeredAtMs: last.current.at,
         homeIdle: true,
         homeVisible: true,
       });
@@ -242,31 +208,21 @@ export function useIdleResettle(
         arm();
         return;
       }
-      last.current = decision.lastTriggeredAtMs;
+      last.current.at = windowStart(decision.lastTriggeredAtMs);
       arm();
-      const { editor, pictures, ensure } = latest.current;
-      const source = editor.value.picture.ref;
-      if (source.kind !== 'builtin') return;
-      const ref = withShuffledPicture(editor.value, pictures).picture.ref;
-      const next =
-        ref.kind === 'builtin'
-          ? pictures.find((picture) => picture.id === ref.id)
-          : undefined;
-      if (!next || next.id === source.id) return;
+      const { value, pictures, ensure, picture } = latest.current;
+      const ref = homeIdleResettlePicture(value, Date.now());
+      const next = ref ? pictures.find(picture => picture.id === ref.id) : undefined;
+      if (!next || next.id === picture) return;
       // A failed download keeps the picture on screen; the next window tries again.
       void ensure(next).then(
         () => {
-          if (cancelled) return;
-          const current = latest.current.editor.value;
-          if (current.source !== 'picture' || current.picture.ref.kind !== 'builtin' || current.picture.ref.id !== source.id) return;
+          if (cancelled || !latest.current.enabled || !latest.current.idle || !latest.current.visible) return;
+          const current = homeIdleResettlePicture(latest.current.value, Date.now());
+          if (current?.id !== next.id) return;
           atmosphereResettleFact.announce(
             builtinPictureLocalId(next.id),
             latest.current.reducedMotion,
-          );
-          latest.current.editor.update((value) =>
-            value.source === 'picture' && value.picture.ref.kind === 'builtin' && value.picture.ref.id === source.id
-              ? { ...value, picture: { ...value.picture, ref: { kind: 'builtin', id: next.id } } }
-              : value,
           );
         },
         () => {},
@@ -277,6 +233,6 @@ export function useIdleResettle(
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [armed, input.picture]);
+  }, [armed, input.picture, selectedAtMs, choiceKey]);
   React.useEffect(() => () => atmosphereResettleFact.clear(), []);
 }

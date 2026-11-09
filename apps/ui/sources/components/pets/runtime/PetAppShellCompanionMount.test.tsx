@@ -17,6 +17,7 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storageStore';
+import { petActivityDismissalsState } from '@/sync/domains/state/onboardingUiState';
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 
@@ -238,6 +239,7 @@ describe('PetAppShellCompanionMount', () => {
         vi.restoreAllMocks();
         vi.useRealTimers();
         standardCleanup();
+        petActivityDismissalsState.set('tray', []);
         storage.setState(initialStorageState, true);
         platformState.os = 'web';
         platformState.tauri = false;
@@ -372,7 +374,7 @@ describe('PetAppShellCompanionMount', () => {
         });
 
         expect(screen.findByTestId('desktop-pet-overlay-tray-item-session-dismiss-web')).toBeNull();
-        expect(storage.getState().localSettings.petsDismissedCompanionTrayItemKeys).toEqual(
+        expect(petActivityDismissalsState.read('tray')).toEqual(
             expect.arrayContaining([
                 expect.stringContaining('session-dismiss-web'),
             ]),

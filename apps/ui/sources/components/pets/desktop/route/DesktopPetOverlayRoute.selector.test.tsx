@@ -14,6 +14,7 @@ import {
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { resolveBuiltInPetPackage } from '@/components/pets/builtIns/builtInPetRegistry';
 import { storage } from '@/sync/domains/state/storageStore';
+import { petActivityDismissalsState } from '@/sync/domains/state/onboardingUiState';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
@@ -130,6 +131,8 @@ const listenDesktopPetOverlayWindowStateMock = vi.hoisted(() =>
 const listenDesktopPetOverlayNativeMouseMock = vi.hoisted(() =>
     vi.fn(async (_handler: (payload: { inside: boolean; x: number; y: number }) => void) => () => {}),
 );
+const petPointerNativeListen = vi.hoisted(() => vi.fn(async () => () => {}));
+vi.mock('@tauri-apps/api/event', () => ({ listen: petPointerNativeListen }));
 const executePetOverlayActionMock = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
 const applyLocalSettingsMock = vi.hoisted(() => vi.fn());
 const platformState = vi.hoisted(() => ({
@@ -446,6 +449,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
     afterEach(() => {
         vi.useRealTimers();
         standardCleanup();
+        petActivityDismissalsState.set('tray', []);
         storage.setState(initialStorageState, true);
         settingsState.current = {
             petsEnabled: true,
@@ -503,6 +507,21 @@ describe('DesktopPetOverlayRoute selectors', () => {
         expect(screen.root.findAllByType('Image')[0]?.props.source).toBe(
             resolveBuiltInPetPackage('blink').spritesheetSource,
         );
+    });
+
+    it('starts native pointer observation when the pet DOM shape is entered', async () => {
+        const invoke = vi.fn(async (command: string) => command === 'desktop_host_get_availability'
+            ? { activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' } }
+            : undefined);
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+        vi.stubGlobal('navigator', { userAgent: 'Tauri' });
+        await (await import('@/utils/platform/desktopHost')).getDesktopHostAvailability();
+        const { DesktopPetOverlayRoute } = await import('./DesktopPetOverlayRoute');
+        const screen = await renderScreen(<DesktopPetOverlayRoute />);
+        await act(async () => {
+            invokeTestInstanceHandler(screen.findByTestId('desktop-pet-overlay-root'), 'onPointerEnter');
+        });
+        expect(invoke).toHaveBeenCalledWith('desktop_pet_overlay_pointer_enter', undefined);
     });
 
     it('keeps rendering the pet when the native window-state event bridge is not ready yet', async () => {
@@ -1312,7 +1331,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
 
         expect(screen.findByTestId('desktop-pet-overlay-tray-item-session-close-reply')).not.toBeNull();
         expect(screen.findByTestId('desktop-pet-overlay-tray-reply-input-session-close-reply')).toBeNull();
-        expect(storage.getState().localSettings.petsDismissedCompanionTrayItemKeys).not.toEqual(expect.arrayContaining([
+        expect(petActivityDismissalsState.read('tray') ?? []).not.toEqual(expect.arrayContaining([
             expect.stringContaining('session-close-reply'),
         ]));
     });
@@ -1411,7 +1430,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
         expect(screen.findByTestId(itemTestID)).toBeNull();
         expect(screen.findByTestId('desktop-pet-overlay-context-toggle')).toBeNull();
         // Presentation history persists through its keyed device owner.
-        expect(storage.getState().localSettings.petsDismissedCompanionTrayItemKeys).toEqual(expect.arrayContaining([
+        expect(petActivityDismissalsState.read('tray')).toEqual(expect.arrayContaining([
             expect.stringContaining('session-dismiss'),
         ]));
     });

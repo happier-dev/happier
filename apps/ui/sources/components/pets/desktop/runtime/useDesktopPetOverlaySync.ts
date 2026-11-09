@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { syncDesktopPetOverlayState } from '../bridge/desktopPetOverlayBridge';
@@ -22,11 +21,17 @@ export type DesktopPetOverlaySyncInput = Readonly<{
 }>;
 
 export function useDesktopPetOverlaySync(input: DesktopPetOverlaySyncInput): void {
+    const latestInput = React.useRef(input);
+    latestInput.current = input;
+    React.useEffect(() => () => {
+        fireAndForget(syncDesktopPetOverlayState({
+            ...latestInput.current,
+            visible: false,
+            expanded: false,
+            nativeMouseTrackingEnabled: false,
+        }), { tag: 'DesktopPetOverlayRuntime.hideOnUnmount' });
+    }, []);
     React.useEffect(() => {
-        if (!isDesktopHost()) {
-            return;
-        }
-
         fireAndForget(syncDesktopPetOverlayState({
             visible: input.visible && input.policy.enabled,
             expanded: input.expanded,

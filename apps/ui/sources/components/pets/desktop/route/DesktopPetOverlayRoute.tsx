@@ -46,6 +46,7 @@ import {
     getDesktopPetOverlayWindowState,
     listenDesktopPetOverlayNativeMouse,
     listenDesktopPetOverlayWindowState,
+    notifyDesktopPetOverlayPointerEnter,
     releaseDesktopPetOverlayDragVelocity,
     showMainWindowFromDesktopPetOverlay,
     startDesktopPetOverlayDragSession,
@@ -500,6 +501,9 @@ function DesktopPetOverlayRouteContent(props: DesktopPetOverlayRouteContentProps
                 { width: windowSize.width, height: windowSize.height },
             ]}
             testID="desktop-pet-overlay-root"
+            onPointerEnter={() => {
+                fireAndForget(notifyDesktopPetOverlayPointerEnter(), { tag: 'DesktopPetOverlay.pointerEnter' });
+            }}
         >
             {petVisible ? (
                 <PetCompanionSurface

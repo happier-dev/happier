@@ -4,9 +4,10 @@ import {
   type AtmosphereLookPicture,
   type AtmosphereRememberedLooks,
 } from '@happier-dev/brand/atmosphere';
-import type {
-  AtmosphereLookOverride,
-  AtmospherePresentation,
+import {
+  recordAtmospherePictureSelection,
+  type AtmosphereLookOverride,
+  type AtmospherePresentation,
 } from '@happier-dev/protocol/account/settings/accountSettings';
 import { normalizeAtmosphereLooks } from '../atmosphereSettings';
 
@@ -90,22 +91,30 @@ export function withPicture<T extends AtmospherePresentation>(
   atmosphere: T,
   ref: PictureRef,
 ): T {
-  return {
+  const next = {
     ...atmosphere,
-    source: 'picture',
+    source: 'picture' as const,
     picture: { ...atmosphere.picture, ref },
   };
+  const previous = atmosphere.picture.ref;
+  const reselected = atmosphere.source === 'picture' && (previous.kind === 'builtin'
+    ? ref.kind === 'builtin' && previous.id === ref.id
+    : ref.kind === 'user' && previous.localId === ref.localId);
+  // A same-picture click is explicit intent even though a full-object comparison sees no new choice.
+  // Changed selections are stamped once by the mutation owner, including Action-only callers.
+  return reselected ? recordAtmospherePictureSelection(next) : next;
 }
 
-/** Another built-in picture, never the current one. */
+/** Another built-in picture, excluding the shown one while preserving the saved selection's intent. */
 export function withShuffledPicture<T extends AtmospherePresentation>(
   atmosphere: T,
   pictures: Pictures,
   random: () => number = Math.random,
+  shownRef: PictureRef = atmosphere.picture.ref,
 ): T {
   const current =
     atmosphere.source === 'picture'
-      ? pictureLookKey(atmosphere.picture.ref)
+      ? pictureLookKey(shownRef)
       : null;
   const others = pictures.filter((picture) => picture.id !== current);
   const next =
@@ -133,22 +142,24 @@ export function withPictureLook<T extends AtmospherePresentation>(
   atmosphere: T,
   patch: AtmosphereLookOverride,
   pictures: Pictures,
+  ref: PictureRef = atmosphere.picture.ref,
 ): T {
-  const key = pictureLookKey(atmosphere.picture.ref);
+  const key = pictureLookKey(ref);
   const looks = {
     ...atmosphere.looks,
     [key]: { ...atmosphere.looks[key], ...patch },
   };
   return {
     ...atmosphere,
-    looks: normalizeAtmosphereLooks(looks, atmosphere.picture.ref.kind === 'user' ? withLookPicture(pictures, key) : pictures),
+    looks: normalizeAtmosphereLooks(looks, ref.kind === 'user' ? withLookPicture(pictures, key) : pictures),
   };
 }
 
 export function withoutPictureLook<T extends AtmospherePresentation>(
   atmosphere: T,
+  ref: PictureRef = atmosphere.picture.ref,
 ): T {
-  const key = pictureLookKey(atmosphere.picture.ref);
+  const key = pictureLookKey(ref);
   if (!(key in atmosphere.looks)) return atmosphere;
   const { [key]: _removed, ...looks } = atmosphere.looks;
   return { ...atmosphere, looks };

@@ -16,7 +16,6 @@ const noDragProps = {
 } as const;
 
 const CONTEXT_BUTTON_SIZE_PX = 24;
-const CONTEXT_BUTTON_HIT_SLOP_PX = 8;
 
 type DesktopPetOverlayContextMenuEvent = Readonly<{
     preventDefault?: () => void;
@@ -85,7 +84,6 @@ export function DesktopPetOverlayContextActions(props: Readonly<{
                 data-pet-tray-count={String(props.trayCount)}
                 accessibilityRole="button"
                 accessibilityLabel={hasTrayItems ? t('settingsPets.overlayTrayTitle') : t('settingsPets.overlayClosePetAction')}
-                hitSlop={CONTEXT_BUTTON_HIT_SLOP_PX}
                 onLongPress={() => openContextMenu()}
                 onPress={(event) => {
                     event?.stopPropagation?.();
