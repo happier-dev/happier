@@ -14,6 +14,7 @@ import { AgentInstallJobSchema, DaemonAgentInstallCancelRequestSchema, DaemonAge
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createAccountTokenForTests, createHomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -52,11 +53,12 @@ beforeEach(async () => {
     setRuntimeFetch(async (input, init) => {
         const url = new URL(String(input));
         const home = homes.findByServerUrl(url.origin);
-        if (home && /^\/v1\/machines\/[^/]+$/.test(url.pathname)) {
-            const machineId = url.pathname.split('/').at(-1)!;
-            return Response.json({ machine: { ...createPlainMachineRowFixture({ id: machineId, accountId: home.accountId! }),
-                kind: 'persistent', active: true, installationId: 'installation', revokedAt: null, replacedByMachineId: null,
-                dataEncryptionKey: null, runnerContentKeyBinding: null } });
+        if (home && url.pathname === '/v1/machines/read-batch') {
+            const request = MachineReadBatchRequestV1Schema.parse(JSON.parse(String(init?.body)));
+            return Response.json(MachineReadBatchResponseV1Schema.parse({ results: request.machineIds.map(machineId => ({
+                machineId, status: 'found', machine: { ...createPlainMachineRowFixture({ id: machineId, accountId: home.accountId! }),
+                    active: true, installationId: 'installation', runnerContentKeyBinding: null },
+            })) }));
         }
         const method = url.pathname === '/v1/actions/machines.agents.install.status' ? RPC_METHODS.DAEMON_AGENTS_INSTALL_READ
             : url.pathname === '/v1/actions/machines.agents.install.cancel' ? RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL : null;

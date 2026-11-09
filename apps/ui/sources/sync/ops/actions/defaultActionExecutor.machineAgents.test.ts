@@ -543,7 +543,8 @@ describe('UI machine Agent inventory Action transport', () => {
     it('reads and cancels a shared Machine job through its admitted Actions from the executor and job store', async () => {
         const serverUrl = 'https://setup.test';
         const homeId = 'srv_install_status';
-        const serverId = await addHome({ name: 'Setup Home', serverUrl, serverIdentityId: homeId, accountId: 'alice', currentAccount: true });
+        const serverId = await harness.addHome({ name: 'Setup Home', serverUrl, serverIdentityId: homeId, accountId: 'alice', currentAccount: true });
+        await network.addHome(serverUrl, 'alice', { serverIdentityId: homeId });
         const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
         const machine = { ...createPlainMachineRowFixture({ id: 'machine-1', accountId: 'custodian' }),
             kind: 'persistent', active: true, installationId: 'installation', installationPublicKey: encodeBase64(installation.publicKey),
