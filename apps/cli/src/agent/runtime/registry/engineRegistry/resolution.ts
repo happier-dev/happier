@@ -326,6 +326,7 @@ export async function resolveEngineAdapterResolutionFromRegistry(params: Readonl
         ...runnerRuntimeCoreParams,
         ...(startupRuntimeDescriptorV1 ? { startupRuntimeDescriptorV1 } : {}),
         ...(configuredLaunch ? {
+            startupRuntimeDescriptorV1: configuredLaunch.runtimeDescriptorV1,
             nativeAgentSessionCapabilities: configuredLaunch.sessionCapabilities,
             nativeAgentSessionProjection: configuredLaunch.sessionProjection,
             nativeAgentAcpRuntimeDefinition: configuredLaunch.runtimeDefinition,
