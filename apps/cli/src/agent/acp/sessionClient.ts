@@ -1,6 +1,6 @@
 import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { Metadata } from '@/api/types';
-import type { SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
+import type { SessionTranscriptObservationProvenanceV1, ToolNormalizationSourceV3 } from '@happier-dev/protocol';
 
 /**
  * Minimal session client surface required by ACP runtimes + replay importers.
@@ -32,3 +32,22 @@ export type AcpRuntimeSessionClient = AcpReplayHistorySessionClient & Readonly<{
   sendAgentMessageEphemeralDelta?: TranscriptSessionPort['sendAgentMessageEphemeralDelta'];
   getEphemeralStreamConnectionEpoch?: TranscriptSessionPort['getEphemeralStreamConnectionEpoch'];
 }>;
+
+/** Binds the admitted runtime source to replay writes before history is imported. */
+export function bindAcpReplaySessionToolSource(params: Readonly<{
+  session: AcpReplayHistorySessionClient;
+  source: ToolNormalizationSourceV3;
+}>): AcpReplayHistorySessionClient {
+  const { session, source } = params;
+  return {
+    enqueueAgentMessageCommitted: (provider, body, opts) => session.enqueueAgentMessageCommitted(
+      provider, body, { ...opts, toolNormalizationSource: source },
+    ),
+    enqueueUserTextMessageCommitted: (text, opts) => session.enqueueUserTextMessageCommitted(text, opts),
+    updateMetadata: (handler) => session.updateMetadata(handler),
+    fetchRecentTranscriptTextItemsForAcpImport: (opts) => session.fetchRecentTranscriptTextItemsForAcpImport(opts),
+    ...(session.sendAgentSessionMediaCommitted
+      ? { sendAgentSessionMediaCommitted: session.sendAgentSessionMediaCommitted.bind(session) }
+      : {}),
+  };
+}

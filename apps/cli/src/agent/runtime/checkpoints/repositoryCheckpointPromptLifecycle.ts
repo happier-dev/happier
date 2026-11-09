@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { CheckpointCodeRollbackRequest, CheckpointCodeRollbackResult, ToolNormalizationProtocol, TurnChangeSet } from '@happier-dev/protocol';
+import type { CheckpointCodeRollbackRequest, CheckpointCodeRollbackResult, ToolNormalizationSourceV3, TurnChangeSet } from '@happier-dev/protocol';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';
@@ -163,7 +163,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
     session: ApiSessionClient;
     runtimeDirectory: string;
     provider: ACPProvider;
-    protocol: ToolNormalizationProtocol;
+    source: ToolNormalizationSourceV3;
     attributionRegistry?: WorktreeAttributionRegistry;
     sessionIsNew?: boolean;
     scmCommandRunner?: ScmCommandRunner;
@@ -228,7 +228,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
         await publishRuntimeTurnChangeSet({
             session: params.session,
             provider: params.provider,
-            protocol: params.protocol,
+            source: params.source,
             ...input.binding.publication,
             eventKind: input.binding.publication?.eventKind ?? 'turn-final',
             turnChangeSet,
@@ -248,7 +248,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                 return;
             }
             // Native turns without a dispatched prompt have no checkpoint binding to join.
-            await publishRuntimeTurnChangeSet({ ...publication, session: params.session, provider: params.provider, protocol: params.protocol });
+            await publishRuntimeTurnChangeSet({ ...publication, session: params.session, provider: params.provider, source: params.source });
         },
         onBeforePromptDispatch({ messageId }) {
             const capture = (async () => {

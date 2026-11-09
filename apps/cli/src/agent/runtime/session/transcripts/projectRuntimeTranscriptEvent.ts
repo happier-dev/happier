@@ -5,7 +5,7 @@ import type { AgentSessionSkillDelivery } from '@happier-dev/plugin-sdk/agents/r
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { UsageMcpBindingUsageSchema } from '@happier-dev/protocol/usage/coach/usageMcpBindingUsage';
 import { buildSessionTranscriptMessageProvenanceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
-import type { SessionTranscriptObservationProvenanceV1, ToolNormalizationProtocol, TurnChangeSet } from '@happier-dev/protocol';
+import type { SessionTranscriptObservationProvenanceV1, ToolNormalizationSourceV3, TurnChangeSet } from '@happier-dev/protocol';
 
 import { createAcpToolIdentity } from '@/agent/acp/toolCalls';
 import { resolveHappierSkillIdentity } from '@/prompts/skills/runtime/resolveHappierSkillIdentity';
@@ -83,6 +83,7 @@ export type RuntimeTranscriptProjectionSession = Readonly<{
       createdAt: number;
       updatedAt?: number;
       meta?: Record<string, unknown>;
+      toolNormalizationSource?: ToolNormalizationSourceV3;
     }>,
   ) => EphemeralSendResult;
   getEphemeralStreamConnectionEpoch?: () => number;
@@ -263,7 +264,7 @@ function commitRuntimeTurnCancellation(
   return commitRequiredRuntimeTranscriptMessage({
     session: params.session,
     provider: params.provider,
-    body: { type: 'turn_cancelled', id: markerId },
+    body: { type: 'turn_cancelled', id: markerId, cause: event.cause },
     localId,
     meta: { source: 'runtime', runtimeEventKind: event.kind, runtimeTurnId: event.turnId },
     createdAt: event.emittedAtMs,
@@ -475,7 +476,7 @@ export type RuntimeTurnChangeSetPublication = Readonly<{
 export async function publishRuntimeTurnChangeSet(params: RuntimeTurnChangeSetPublication & Readonly<{
   session: RuntimeTranscriptProjectionSession;
   provider: ACPProvider;
-  protocol: ToolNormalizationProtocol;
+  source: ToolNormalizationSourceV3;
   publishTurnChangeSet?: (publication: RuntimeTurnChangeSetPublication) => Promise<void>;
 }>): Promise<void> {
   if (params.publishTurnChangeSet) {
@@ -490,7 +491,7 @@ export async function publishRuntimeTurnChangeSet(params: RuntimeTurnChangeSetPu
   const messages: Array<Readonly<{ body: ACPMessageData; localId: string }>> = [];
   emitCanonicalTurnDiffTool({
     turnChangeSet: params.turnChangeSet,
-    protocol: params.protocol,
+    source: params.source,
     rawToolName: 'NormalizedRuntimeToolDiff',
     sendToolCall: ({ toolName, input, callId }) => {
       const resolvedCallId = callId ?? `normalized-tool-diff-${params.turnChangeSet.turnId}`;
@@ -515,6 +516,7 @@ export async function publishRuntimeTurnChangeSet(params: RuntimeTurnChangeSetPu
       localId: message.localId,
       provenance: { kind: 'non_dependent', source: 'external' },
       eventKind: params.eventKind,
+      toolNormalizationSource: params.source,
       ...(params.admission === undefined ? {} : { admission: params.admission }),
     });
   }
@@ -543,6 +545,7 @@ export async function commitRequiredRuntimeTranscriptMessage(params: Readonly<{
   session: RuntimeTranscriptProjectionSession;
   provider: ACPProvider;
   body: ACPMessageData;
+  toolNormalizationSource?: ToolNormalizationSourceV3;
   localId: string;
   meta?: Record<string, unknown>;
   createdAt?: number;
@@ -558,6 +561,7 @@ export async function commitRequiredRuntimeTranscriptMessage(params: Readonly<{
     ...(params.createdAt === undefined ? {} : { createdAt: params.createdAt }),
     ...(params.updatedAt === undefined ? {} : { updatedAt: params.updatedAt }),
     provenance: params.provenance,
+    ...(params.toolNormalizationSource ? { toolNormalizationSource: params.toolNormalizationSource } : {}),
     ...(params.admission === undefined ? {} : { admission: params.admission }),
   };
   if (!params.session.enqueueAgentMessageCommitted) {
@@ -691,7 +695,7 @@ export function projectRuntimeTranscriptEvent(params: Readonly<{
   normalizedToolTurnChangeTracker?: NormalizedToolTurnChangeTracker;
   /** Foreground checkpoint finalization joins native evidence before publishing the single card. */
   publishTurnChangeSet?: (publication: RuntimeTurnChangeSetPublication) => Promise<void>;
-  toolNormalizationProtocol?: ToolNormalizationProtocol;
+  toolNormalizationSource?: ToolNormalizationSourceV3;
   /** Host-owned yield witness captured before asynchronous transcript projection. */
   questionWaitTurnId?: string | null;
   /** The first result snapshot's source timestamp, retained for a late native correction. */
@@ -832,6 +836,7 @@ async function projectRuntimeTranscriptEventContent(
         createdAt: event.emittedAtMs,
         updatedAt: event.emittedAtMs,
         meta: buildRuntimeToolMeta(event, 'tool-progress', true),
+        ...(params.toolNormalizationSource ? { toolNormalizationSource: params.toolNormalizationSource } : {}),
       },
     );
     const outcome = normalizeEphemeralSendOutcome(rawOutcome, readEphemeralEpoch(params.session));
@@ -866,6 +871,7 @@ async function projectRuntimeTranscriptEventContent(
         ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}),
       },
       meta: buildRuntimeToolMeta(event, 'tool-call', false),
+      ...(params.toolNormalizationSource ? { toolNormalizationSource: params.toolNormalizationSource } : {}),
       provenance: { kind: 'non_dependent', source: event.sidechainId ? 'sidechain' : 'external' },
       eventKind: event.kind,
       ...(params.admission === undefined ? {} : { admission: params.admission }),
@@ -899,6 +905,7 @@ async function projectRuntimeTranscriptEventContent(
         ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}),
       },
       meta: buildRuntimeToolMeta(event, 'tool-result', false),
+      ...(params.toolNormalizationSource ? { toolNormalizationSource: params.toolNormalizationSource } : {}),
       createdAt,
       updatedAt: Math.max(createdAt, event.emittedAtMs),
       provenance: { kind: 'non_dependent', source: event.sidechainId ? 'sidechain' : 'external' },
@@ -936,6 +943,7 @@ async function projectRuntimeTranscriptEventContent(
         runtimeEventKind: event.kind,
         ...(event.turnId ? { runtimeTurnId: event.turnId } : {}),
       },
+      ...(params.toolNormalizationSource ? { toolNormalizationSource: params.toolNormalizationSource } : {}),
       provenance: { kind: 'non_dependent', source: event.sidechainId ? 'sidechain' : 'external' },
       eventKind: event.kind,
       ...(params.admission === undefined ? {} : { admission: params.admission }),
@@ -968,12 +976,12 @@ async function projectRuntimeTranscriptEventContent(
       sequence: event.sequence,
       status: 'completed',
     });
-    if (normalizedTurnChangeSet && params.provider && params.toolNormalizationProtocol) {
+    if (normalizedTurnChangeSet && params.provider && params.toolNormalizationSource) {
       await publishRuntimeTurnChangeSet({
         publishTurnChangeSet: params.publishTurnChangeSet,
         session: params.session,
         provider: params.provider,
-        protocol: params.toolNormalizationProtocol,
+        source: params.toolNormalizationSource,
         turnChangeSet: normalizedTurnChangeSet,
         hasToolActivity: params.normalizedToolTurnChangeTracker!.hasToolActivity,
         eventKind: event.kind,
@@ -1029,12 +1037,12 @@ async function projectRuntimeTranscriptEventContent(
       sequence: event.sequence,
       status: 'interrupted',
     });
-    if (normalizedTurnChangeSet && params.provider && params.toolNormalizationProtocol) {
+    if (normalizedTurnChangeSet && params.provider && params.toolNormalizationSource) {
       await publishRuntimeTurnChangeSet({
         publishTurnChangeSet: params.publishTurnChangeSet,
         session: params.session,
         provider: params.provider,
-        protocol: params.toolNormalizationProtocol,
+        source: params.toolNormalizationSource,
         turnChangeSet: normalizedTurnChangeSet,
         hasToolActivity: params.normalizedToolTurnChangeTracker!.hasToolActivity,
         eventKind: event.kind,
@@ -1070,12 +1078,12 @@ async function projectRuntimeTranscriptEventContent(
       sequence: event.sequence,
       status: 'aborted',
     });
-    if (normalizedTurnChangeSet && params.provider && params.toolNormalizationProtocol) {
+    if (normalizedTurnChangeSet && params.provider && params.toolNormalizationSource) {
       await publishRuntimeTurnChangeSet({
         publishTurnChangeSet: params.publishTurnChangeSet,
         session: params.session,
         provider: params.provider,
-        protocol: params.toolNormalizationProtocol,
+        source: params.toolNormalizationSource,
         turnChangeSet: normalizedTurnChangeSet,
         hasToolActivity: params.normalizedToolTurnChangeTracker!.hasToolActivity,
         eventKind: event.kind,

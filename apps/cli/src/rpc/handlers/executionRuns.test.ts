@@ -1503,7 +1503,7 @@ describe('executionRuns session RPC handlers', () => {
     const repoDir = mkdtempSync(join(tmpdir(), 'happier-scm-diff-summary-'));
     const session = createMutableApiSessionClientFixture({ sessionId: 'sess_1' });
     const checkpoints = createRepositoryCheckpointPromptLifecycle({
-      session, runtimeDirectory: repoDir, provider: 'codex', protocol: 'codex',
+      session, runtimeDirectory: repoDir, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
     });
     try {
       runGit(repoDir, ['init', '--initial-branch=main']);

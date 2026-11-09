@@ -31,7 +31,7 @@ describe('emitCanonicalTurnDiffTool', () => {
 
         const emittedCallId = emitCanonicalTurnDiffTool({
             turnChangeSet,
-            protocol: 'codex',
+            source: { protocol: 'native', agent: { pluginId: 'example.native', localId: 'selected-agent' } },
             rawToolName: 'RepositoryCheckpointDiff',
             sendToolCall: (params) => {
                 calls.push(params);
@@ -47,7 +47,7 @@ describe('emitCanonicalTurnDiffTool', () => {
         expect(results).toEqual([]);
     });
 
-    it('emits one canonical Diff tool call/result pair with turn metadata', () => {
+    it.each(['native', 'acp'] as const)('emits one canonical Diff tool call/result pair with selected %s provenance', (protocol) => {
         const calls: Array<{ toolName: string; input: unknown; callId?: string }> = [];
         const results: Array<{ callId: string; output: unknown }> = [];
 
@@ -83,7 +83,7 @@ describe('emitCanonicalTurnDiffTool', () => {
 
         emitCanonicalTurnDiffTool({
             turnChangeSet,
-            protocol: 'codex',
+            source: { protocol, agent: { pluginId: 'example.native', localId: 'selected-agent' } },
             rawToolName: 'CodexDiff',
             sendToolCall: (params) => {
                 calls.push(params);
@@ -112,7 +112,10 @@ describe('emitCanonicalTurnDiffTool', () => {
                         }),
                     ],
                     _happier: expect.objectContaining({
+                        v: 3,
+                        protocol,
                         provider: 'codex',
+                        agent: { pluginId: 'example.native', localId: 'selected-agent' },
                         rawToolName: 'CodexDiff',
                         canonicalToolName: 'Diff',
                         workspaceMutationSignal: 'turn-change-set',
@@ -168,7 +171,7 @@ describe('emitCanonicalTurnDiffTool', () => {
         const replay = (derivedAt: number): void => {
             emitCanonicalTurnDiffTool({
                 turnChangeSet: { ...turnChangeSet, derivedAt },
-                protocol: 'codex',
+                source: { protocol: 'native', agent: { pluginId: 'example.native', localId: 'selected-agent' } },
                 rawToolName: 'CodexDiff',
                 sendToolCall: (params) => {
                     callIds.push(params.callId ?? '');
@@ -210,7 +213,7 @@ describe('emitCanonicalTurnDiffTool', () => {
             let emittedCallId = '';
             emitCanonicalTurnDiffTool({
                 turnChangeSet,
-                protocol: 'codex',
+                source: { protocol: 'native', agent: { pluginId: 'example.native', localId: 'selected-agent' } },
                 rawToolName: 'RepositoryCheckpointDiff',
                 sendToolCall: (params) => {
                     emittedInput = params.input;

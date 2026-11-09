@@ -176,7 +176,7 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
   it('deletes only the selected saved comparison and its owned pins, preserving other sessions and the initial baseline', async () => {
     const cwd = await repo(); const sessionId = 'deletion-session-a';
     const session = createMutableApiSessionClientFixture({ sessionId });
-    const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd, provider: 'codex', protocol: 'codex', sessionIsNew: true });
+    const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, sessionIsNew: true });
     await lifecycle.onBeforePromptDispatch?.({ messageId: 'first', prompt: 'edit' });
     await writeFile(join(cwd, 'tracked.txt'), 'retained deletion basis\n');
     const first = await captureScmComparison({ cwd, source: { kind: 'workingTree' }, sessionId });
@@ -352,7 +352,7 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
   it('resolves trusted turn receipts and ignores caller fabricated file evidence', async () => {
     const cwd = await repo();
     const session = createMutableApiSessionClientFixture({ overrides: { sessionId: 'trusted-turn' } });
-    const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd, provider: 'codex', protocol: 'codex' });
+    const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } } });
     await lifecycle.onBeforePromptDispatch?.({ messageId: 'first', prompt: 'edit' });
     await lifecycle.onTurnStarted?.({ messageId: 'first', turnId: 'turn-1', sequence: 1 });
     await writeFile(join(cwd, 'tracked.txt'), 'trusted\n');
@@ -385,7 +385,7 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
   it('uses the initial dirty snapshot for session net across edit, commit, resume and reversion', async () => {
     const cwd = await repo();
     const session = createMutableApiSessionClientFixture({ overrides: { sessionId: 'session-net' } });
-    const makeLifecycle = () => createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd, provider: 'codex', protocol: 'codex', sessionIsNew: true });
+    const makeLifecycle = () => createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, sessionIsNew: true });
     let lifecycle = makeLifecycle();
     await writeFile(join(cwd, 'tracked.txt'), 'pre-existing dirt\n');
     await lifecycle.onBeforePromptDispatch?.({ messageId: 'first', prompt: 'edit' });

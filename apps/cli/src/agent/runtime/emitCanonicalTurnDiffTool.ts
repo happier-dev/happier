@@ -1,11 +1,11 @@
-import type { TurnChangeSet, ToolNormalizationProtocol } from '@happier-dev/protocol';
+import type { TurnChangeSet, ToolNormalizationSourceV3 } from '@happier-dev/protocol';
 
 import { buildTurnChangeSetDiffInput } from '@/agent/tools/diff/buildTurnChangeSetDiffInput';
 import { resolveCanonicalTurnDiffCallId } from '@/agent/tools/diff/canonicalTurnDiffIdentity';
 
 export function emitCanonicalTurnDiffTool(params: Readonly<{
     turnChangeSet: TurnChangeSet;
-    protocol: ToolNormalizationProtocol;
+    source: ToolNormalizationSourceV3;
     rawToolName: string;
     sendToolCall: (params: { toolName: string; input: unknown; callId?: string }) => string;
     sendToolResult: (params: { callId: string; output: unknown }) => void;
@@ -21,7 +21,7 @@ export function emitCanonicalTurnDiffTool(params: Readonly<{
 
     const input = buildTurnChangeSetDiffInput({
         turnChangeSet: params.turnChangeSet,
-        protocol: params.protocol,
+        source: params.source,
         rawToolName: params.rawToolName,
     });
     const callId = params.sendToolCall({

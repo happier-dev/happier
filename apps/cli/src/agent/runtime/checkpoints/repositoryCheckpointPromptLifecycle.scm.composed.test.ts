@@ -174,7 +174,7 @@ describe('Session checkpoint execution and captured-turn reads', () => {
                     .toMatchObject({ success: false, stderr: 'plugin_exec_system_tool_undeclared' });
             }
             const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd,
-                provider: 'codex', protocol: 'codex', sessionIsNew: true, scmCommandRunner: runner });
+                provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, sessionIsNew: true, scmCommandRunner: runner });
             const captures: Awaited<ReturnType<typeof captureScmComparison>>[] = [];
             try {
                 for (const [turnId, before, after] of [['turn-1', null, 'added\n'], ['turn-2', 'added\n', 'modified\n']] as const) {

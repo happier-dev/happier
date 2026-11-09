@@ -808,17 +808,17 @@ describe('runSessionLoopLifecycle checkpoint controls', () => {
     );
   });
 
-  it('uses provider-neutral checkpoint protocol config instead of inferring from provider id', async () => {
+  it('uses selected checkpoint provenance independently of the transcript provider', async () => {
     checkpointFactory.mockClear();
     const params = createLifecycleParams({
       policyAgentId: 'codex',
-      checkpointToolProtocol: 'claude',
+      checkpointToolSource: { protocol: 'native', agent: { pluginId: 'happier.agent.claude', localId: 'claude' } },
     });
 
     await runSessionLoopLifecycle(params);
 
     expect(checkpointFactory).toHaveBeenCalledWith(expect.objectContaining({
-      protocol: 'claude',
+      source: { protocol: 'native', agent: { pluginId: 'happier.agent.claude', localId: 'claude' } },
       provider: 'codex',
     }));
   });
@@ -4475,7 +4475,7 @@ describe('runSessionLoopLifecycle runtime transcript projection', () => {
   it('wires normalized provider tool evidence into the durable canonical Diff transcript', async () => {
     const baseParams = createLifecycleParams({
       policyAgentId: 'codex',
-      checkpointToolProtocol: 'codex',
+      checkpointToolSource: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
     });
     let runtimeEventHandler: RuntimeTurnMessageHandler | null = null;
     const runtime = baseParams.runtime as unknown as {

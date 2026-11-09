@@ -1,5 +1,5 @@
 import type { TurnChangeSet } from '@happier-dev/protocol';
-import type { ToolNormalizationProtocol } from '@happier-dev/protocol';
+import type { ToolNormalizationSourceV3 } from '@happier-dev/protocol';
 
 import { boundTurnDiffFiles, type TurnDiffFileEntry } from './boundTurnDiffFiles';
 import { buildSessionChangeToolMetadata } from './sessionChangeToolMetadata';
@@ -7,7 +7,7 @@ import { resolveTurnDiffFileBudgetBytes, resolveTurnDiffTurnBudgetBytes } from '
 
 export function buildTurnChangeSetDiffInput(params: Readonly<{
     turnChangeSet: TurnChangeSet;
-    protocol: ToolNormalizationProtocol;
+    source: ToolNormalizationSourceV3;
     rawToolName: string;
     fileBudgetBytes?: number;
     turnBudgetBytes?: number;
@@ -38,7 +38,7 @@ export function buildTurnChangeSetDiffInput(params: Readonly<{
         _happier: {
             ...buildSessionChangeToolMetadata({
                 turnChangeSet: params.turnChangeSet,
-                protocol: params.protocol,
+                source: params.source,
                 rawToolName: params.rawToolName,
             }),
             ...(bounded.truncatedFileCount > 0 ? { confidence: 'best_effort' as const } : {}),

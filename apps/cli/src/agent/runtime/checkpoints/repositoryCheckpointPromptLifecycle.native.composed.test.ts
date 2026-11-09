@@ -65,7 +65,7 @@ it('holds an opened native mutation until checkpoint preparation completes and p
             permissionHandler: createProviderEnforcedPermissionHandler({ session, logPrefix: '[checkpoint]' }), memoryRecallGuidanceEnabled: false,
         });
         const operations = resolveHostSessionRuntimeFactoryResult(created).runtime;
-        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd, provider: 'claude', protocol: 'claude',
+        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd, provider: 'claude', source: { protocol: 'native', agent: { pluginId: 'happier.agent.claude', localId: 'claude' } },
             scmCommandRunner: async input => {
                 if (input.args[0] === 'add') { entered.resolve(); await release.promise; }
                 const stdout = execFileSync(input.bin, [...input.args], { cwd: input.cwd,

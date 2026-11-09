@@ -1,5 +1,5 @@
 import type { ChangeConfidence, ChangeEvidenceSource, TurnChangeSet } from '@happier-dev/protocol';
-import type { ToolHappierMetaV2, ToolNormalizationProtocol } from '@happier-dev/protocol';
+import type { ToolHappierMetaV3, ToolNormalizationSourceV3 } from '@happier-dev/protocol';
 
 const SOURCE_PRECEDENCE: Record<ChangeEvidenceSource, number> = {
     scm_checkpoint: 0,
@@ -42,9 +42,10 @@ function summarizeTurnSources(turnChangeSet: TurnChangeSet): Readonly<{
 
 export function buildSessionChangeToolMetadata(params: Readonly<{
     turnChangeSet: TurnChangeSet;
-    protocol: ToolNormalizationProtocol;
+    source: ToolNormalizationSourceV3;
     rawToolName: string;
-}>): ToolHappierMetaV2 & {
+}>): ToolHappierMetaV3 & {
+    provider: string;
     workspaceMutationSignal: 'turn-change-set';
     sessionChangeScope: 'turn';
     turnId: string;
@@ -57,8 +58,8 @@ export function buildSessionChangeToolMetadata(params: Readonly<{
 } {
     const summary = summarizeTurnSources(params.turnChangeSet);
     return {
-        v: 2,
-        protocol: params.protocol,
+        v: 3,
+        ...params.source,
         provider: params.turnChangeSet.provider,
         rawToolName: params.rawToolName,
         canonicalToolName: 'Diff',

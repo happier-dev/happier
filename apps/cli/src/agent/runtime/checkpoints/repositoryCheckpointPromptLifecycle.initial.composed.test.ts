@@ -64,7 +64,7 @@ describe('initial checkpoint of an attached Session', () => {
                     createSessionSocketTransport: () => ({ socket: socket as never, transport: createSocketTransportAdapter(socket as never) }) },
             });
             const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot,
-                provider: 'codex', protocol: 'codex', sessionIsNew: false });
+                provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, sessionIsNew: false });
             try {
                 const messageId = earliestLocalId?.startsWith('plugin-input-v1:') ? earliestLocalId : 'first';
                 await lifecycle.onBeforePromptDispatch?.({ messageId, prompt: 'edit' });

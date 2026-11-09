@@ -119,7 +119,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
             entered.resolve(); await release.promise; return 'message';
         };
         const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot,
-            provider: 'claude', protocol: 'claude' });
+            provider: 'claude', source: { protocol: 'native', agent: { pluginId: 'happier.agent.claude', localId: 'claude' } } });
         const capturing = Promise.resolve(lifecycle.onBeforePromptDispatch?.({ messageId: 'message', prompt: 'reply' }));
         let starting: Promise<void> | undefined;
         let terminal: Promise<void> | undefined;
@@ -146,14 +146,14 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
     it.each(['none', 'shell'] as const)('reports peer-only edits only when the turn ran tools (%s)', async tools => {
         const repoRoot = await createGitRepo();
         const { session, messages } = createMessageCapturingSession(`peer-edits-${tools}`);
-        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', protocol: 'codex' });
+        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } } });
         const bridge = createKeyedStreamedTranscriptBridge({ provider: 'codex', createSessionForStream: () => session });
         const project = createRuntimeTranscriptProjector();
         const tracker = new NormalizedToolTurnChangeTracker({ provider: 'codex' });
         let sequence = 0;
         const projectEvent = (event: Record<string, unknown>) => project({
             session, provider: 'codex', runtimeMessageDeltaBridge: bridge, normalizedToolTurnChangeTracker: tracker,
-            toolNormalizationProtocol: 'codex', publishTurnChangeSet: lifecycle.publishTurnChangeSet,
+            toolNormalizationSource: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, publishTurnChangeSet: lifecycle.publishTurnChangeSet,
             event: AgentSessionRuntimeEventSchema.parse({ sessionId: session.sessionId, turnId: 'turn', emittedAtMs: ++sequence, sequence, ...event }),
         });
         try {
@@ -194,7 +194,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
     ] as const)('publishes one combined card for a $status runtime turn ($checkpoint/$evidence)', async ({ status, checkpoint, evidence }) => {
         const repoRoot = checkpoint === 'not_repo' ? await mkdtemp(join(tmpdir(), 'happier-no-checkpoint-')) : await createGitRepo();
         const { session, messages } = createMessageCapturingSession(`combined-${status}-${checkpoint}-${evidence}`);
-        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', protocol: 'codex' });
+        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } } });
         const bridge = createKeyedStreamedTranscriptBridge({ provider: 'codex', createSessionForStream: () => session });
         const project = createRuntimeTranscriptProjector();
         const tracker = new NormalizedToolTurnChangeTracker({ provider: 'codex' });
@@ -208,7 +208,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
         let sequence = 0;
         const projectEvent = (event: Record<string, unknown>) => project({
             session, provider: 'codex', runtimeMessageDeltaBridge: bridge, normalizedToolTurnChangeTracker: tracker,
-            toolNormalizationProtocol: 'codex', publishTurnChangeSet: lifecycle.publishTurnChangeSet,
+            toolNormalizationSource: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, publishTurnChangeSet: lifecycle.publishTurnChangeSet,
             event: { sessionId: session.sessionId, turnId: 'turn', emittedAtMs: ++sequence, sequence, ...event },
         });
         try {
@@ -282,14 +282,14 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
         const repoRoot = await createGitRepo();
         const { session, messages } = createMessageCapturingSession('interrupted-history');
         const scopeId = `${session.sessionId}:${repoRoot}`;
-        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', protocol: 'codex', sessionIsNew: true });
+        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, sessionIsNew: true });
         const bridge = createKeyedStreamedTranscriptBridge({ provider: 'codex', createSessionForStream: () => session });
         const tracker = new NormalizedToolTurnChangeTracker({ provider: 'codex' });
         const project = createRuntimeTranscriptProjector();
         const captures: Awaited<ReturnType<typeof captureScmComparison>>[] = [];
         let sequence = 0;
         const projectEvent = (event: Record<string, unknown>) => project({ session, provider: 'codex', runtimeMessageDeltaBridge: bridge,
-            normalizedToolTurnChangeTracker: tracker, toolNormalizationProtocol: 'codex', publishTurnChangeSet: lifecycle.publishTurnChangeSet,
+            normalizedToolTurnChangeTracker: tracker, toolNormalizationSource: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, publishTurnChangeSet: lifecycle.publishTurnChangeSet,
             event: { sessionId: session.sessionId, turnId: 'interrupted', emittedAtMs: ++sequence, sequence, ...event } });
         const capture = () => captureScmComparison({ cwd: repoRoot, sessionId: session.sessionId,
             source: { kind: 'turnCheckpoint', turnId: 'interrupted' }, readTranscriptPage: async () => ({
@@ -350,7 +350,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
         const repoRoot = await createGitRepo();
         const { session } = createMessageCapturingSession('old-session-with-pruned-checkpoints');
         const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot,
-            provider: 'codex', protocol: 'codex', sessionIsNew: false });
+            provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, sessionIsNew: false });
         try {
             await writeFile(join(repoRoot, 'tracked.txt'), 'already changed before resume\n');
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'resumed', prompt: 'continue' });
@@ -365,7 +365,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
         const { session } = createMessageCapturingSession(sessionId);
         Object.defineProperty(session, 'sessionId', { get: () => sessionId });
         const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot,
-            provider: 'codex', protocol: 'codex', sessionIsNew: true });
+            provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, sessionIsNew: true });
         try {
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'first', prompt: 'edit' });
             await lifecycle.onTurnStarted?.({ messageId: 'first', turnId: 'first' });
@@ -380,7 +380,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
         const { session } = createMessageCapturingSession('session-initial');
         const initialRef = `${buildRepositoryCheckpointRefs({ scopeId: `${session.sessionId}:${repoRoot}` }).encodedScope}`;
         const ref = `refs/happier/checkpoints/${initialRef}/session-initial`;
-        let lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', protocol: 'codex', sessionIsNew: true });
+        let lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, sessionIsNew: true });
         try {
             await writeFile(join(repoRoot, 'tracked.txt'), 'pre-existing dirt\n');
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'first', prompt: 'edit' });
@@ -389,7 +389,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
             expect(await runGit(repoRoot, ['show', `${baseline}:tracked.txt`])).toBe('pre-existing dirt');
             await writeFile(join(repoRoot, 'tracked.txt'), 'agent change\n');
             await lifecycle.onSessionEnd?.();
-            lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', protocol: 'codex' });
+            lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } } });
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'resumed', prompt: 'continue' });
             await lifecycle.onTurnStarted?.({ messageId: 'resumed', turnId: 'resumed' });
             expect(await runGit(repoRoot, ['rev-parse', '--verify', ref])).toBe(baseline);
@@ -402,7 +402,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
         const repoRoot = await createGitRepo(); const { session, messages } = createMessageCapturingSession('legacy-initial');
         const scopeId = `${session.sessionId}:${repoRoot}`;
         const firstMessageId = 'plugin-input-v1:first-id';
-        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', protocol: 'codex', sessionIsNew: true });
+        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, sessionIsNew: true });
         try {
             await writeFile(join(repoRoot, 'tracked.txt'), 'legacy initial dirt\n');
             await lifecycle.onBeforePromptDispatch?.({ messageId: firstMessageId, prompt: 'edit' });
@@ -434,7 +434,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
         const { session } = createMessageCapturingSession('opaque-history');
         const scopeId = `${session.sessionId}:${repoRoot}`;
         const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot,
-            provider: 'codex', protocol: 'codex', sessionIsNew: true });
+            provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, sessionIsNew: true });
         try {
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'plugin-input-v1:first-id', prompt: 'edit' });
             await lifecycle.onTurnStarted?.({ messageId: 'plugin-input-v1:first-id', turnId: 'first' });
@@ -465,7 +465,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
             }
             return await realCommand(input);
         });
-        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', protocol: 'codex', sessionIsNew: true });
+        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, sessionIsNew: true });
         try {
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'first', prompt: 'edit' });
             await lifecycle.onTurnStarted?.({ messageId: 'first', turnId: 'first' });
@@ -483,7 +483,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
         const repoRoot = await createGitRepo();
         const { session, messages } = createMessageCapturingSession('chronology');
         const lifecycle = createRepositoryCheckpointPromptLifecycle({
-            session, runtimeDirectory: repoRoot, provider: 'codex', protocol: 'codex',
+            session, runtimeDirectory: repoRoot, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
         });
         const tracker = new NormalizedToolTurnChangeTracker({ provider: 'codex' });
         try {
@@ -504,7 +504,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
             expect(toolTurn).not.toBeNull();
             const checkpointInput = messages.find((message) => message.type === 'tool-call');
             if (!checkpointInput || checkpointInput.type !== 'tool-call' || !toolTurn) throw new Error('Missing turn evidence');
-            const toolInput = buildTurnChangeSetDiffInput({ turnChangeSet: toolTurn, protocol: 'codex', rawToolName: 'Edit' });
+            const toolInput = buildTurnChangeSetDiffInput({ turnChangeSet: toolTurn, source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, rawToolName: 'Edit' });
             const toMessage = (id: string, input: unknown, createdAt: number): Message => ({
                 kind: 'tool-call', id, localId: null, createdAt, children: [],
                 tool: { name: 'Diff', state: 'completed', input, createdAt, startedAt: createdAt,
@@ -539,7 +539,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
             for (const [index, runtimeDirectory] of [repoRoot, join(repoRoot, 'nested'), linkedRoot].entries()) {
                 const { session } = createMessageCapturingSession(`root-${index}`);
                 const lifecycle = createRepositoryCheckpointPromptLifecycle({
-                    session, runtimeDirectory, provider: 'codex', protocol: 'codex', attributionRegistry: registry,
+                    session, runtimeDirectory, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, attributionRegistry: registry,
                 });
                 lifecycles.push(lifecycle);
                 await lifecycle.onBeforePromptDispatch?.({ messageId: 'message', prompt: 'inspect' });
@@ -561,7 +561,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
         const registry = createWorktreeAttributionRegistry();
         const { session } = createMessageCapturingSession('cleanup');
         const lifecycle = createRepositoryCheckpointPromptLifecycle({
-            session, runtimeDirectory: repoRoot, provider: 'codex', protocol: 'codex', attributionRegistry: registry,
+            session, runtimeDirectory: repoRoot, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, attributionRegistry: registry,
         });
         try {
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'message', prompt: 'inspect' });
@@ -594,7 +594,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
                 session,
                 runtimeDirectory: repoRoot,
                 provider: 'codex',
-                protocol: 'codex',
+                source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
                 attributionRegistry,
             });
 
@@ -624,7 +624,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
                 session,
                 runtimeDirectory: repoRoot,
                 provider: 'codex',
-                protocol: 'codex',
+                source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
                 attributionRegistry,
             });
 
@@ -653,7 +653,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
                 session,
                 runtimeDirectory,
                 provider: 'codex',
-                protocol: 'codex',
+                source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             });
 
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'message-1', prompt: 'change nothing' });
@@ -674,7 +674,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
                 session,
                 runtimeDirectory: repoRoot,
                 provider: 'codex',
-                protocol: 'codex',
+                source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             });
 
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'message-1', prompt: 'change nothing' });
@@ -695,7 +695,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
                 session,
                 runtimeDirectory: repoRoot,
                 provider: 'codex',
-                protocol: 'codex',
+                source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             });
 
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'message-1', prompt: 'change tracked.txt' });
@@ -741,7 +741,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
                 session,
                 runtimeDirectory: repoRoot,
                 provider: 'codex',
-                protocol: 'codex',
+                source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             });
 
             await writeFile(join(repoRoot, 'tracked.txt'), 'before prompt\n', 'utf8');
@@ -777,7 +777,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
                 session,
                 runtimeDirectory: repoRoot,
                 provider: 'codex',
-                protocol: 'codex',
+                source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             });
             const refs = buildRepositoryCheckpointRefs({
                 scopeId: `session-alias:${repoRoot}`,
@@ -804,7 +804,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
                 session,
                 runtimeDirectory: repoRoot,
                 provider: 'codex',
-                protocol: 'codex',
+                source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             });
 
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'message-1', prompt: 'change nothing' });
@@ -826,7 +826,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
                 session,
                 runtimeDirectory: repoRoot,
                 provider: 'codex',
-                protocol: 'codex',
+                source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             });
             const refs = buildRepositoryCheckpointRefs({
                 scopeId: `session-diff:${repoRoot}`,

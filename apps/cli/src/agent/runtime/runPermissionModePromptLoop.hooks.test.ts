@@ -155,7 +155,7 @@ it('collects observable runtime input while initial checkpoint retention is pend
         return 'checkpoint-send';
       },
     } });
-    const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd, provider: 'codex', protocol: 'codex' });
+    const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } } });
     // An observable runtime has no before-tool callback: capture must still
     // precede send, but Home's optional evidence retention must not hold input.
     const runtime = createRuntime();

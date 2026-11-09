@@ -301,8 +301,7 @@ describe('projectRuntimeTranscriptEvent tool lifecycle', () => {
       const body = fixture.session.sendAgentMessageEphemeral.mock.calls[0]?.[1];
       if (!body) throw new Error('expected projected tool call');
       const normalized = normalizeToolCallV2({
-        protocol: 'acp',
-        provider: 'codebuddy',
+        source: { protocol: 'acp', agent: { pluginId: 'happier.agent.codebuddy', localId: 'codebuddy' } },
         toolName: String(body.name),
         rawInput: body.input,
       });

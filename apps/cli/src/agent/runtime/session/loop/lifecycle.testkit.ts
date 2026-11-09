@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import type { RuntimeCheckpointToolProtocolV1 } from '@happier-dev/agents';
+import type { RuntimeCheckpointToolSourceV1 } from '@happier-dev/agents';
 import type { Metadata } from '@/api/types';
 import type { RuntimeTurnMessageHandler } from '@/agent/runtime/turns/runtimeTurnOperations';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
@@ -34,7 +34,7 @@ export const machineMetadata = {
 
 export function createLifecycleParams(overrides?: Readonly<{
   policyAgentId?: string;
-  checkpointToolProtocol?: RuntimeCheckpointToolProtocolV1;
+  checkpointToolSource?: RuntimeCheckpointToolSourceV1;
   runPermissionModePromptLoopFn?: RunPermissionModePromptLoopFn;
   hookRuntime?: SessionLoopLifecycleParams['hookRuntime'];
 }>): SessionLoopLifecycleParams {
@@ -96,14 +96,14 @@ export function createLifecycleParams(overrides?: Readonly<{
       providerName: 'Test Agent',
       waitingForCommandLabel: 'Test Agent',
       agentMessageType: overrides?.policyAgentId ?? 'codex',
+      checkpointToolSource: overrides?.checkpointToolSource ?? {
+        protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+      },
       runtimeActivityApplicability: 'not_applicable',
       machineMetadata,
       loadTerminalDisplay: async () => () => null,
       formatPromptErrorMessage: (error: unknown) => String(error),
       shouldRenderTerminalDisplay: () => false,
-      ...(overrides?.checkpointToolProtocol
-        ? { checkpointToolProtocol: overrides.checkpointToolProtocol }
-        : {}),
     } as SessionLoopLifecycleParams['config'],
     api: {
       push: () => ({

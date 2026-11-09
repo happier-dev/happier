@@ -139,7 +139,7 @@ describe('NormalizedToolTurnChangeTracker', () => {
             toolName: 'Diff',
             args: buildTurnChangeSetDiffInput({
                 turnChangeSet: sourceTurn,
-                protocol: 'claude',
+                source: { protocol: 'native', agent: { pluginId: 'happier.agent.claude', localId: 'claude' } },
                 rawToolName: 'RepositoryCheckpointDiff',
             }),
             parentToolUseId: null,

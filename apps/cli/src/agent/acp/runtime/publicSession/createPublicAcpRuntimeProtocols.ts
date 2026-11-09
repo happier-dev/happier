@@ -66,6 +66,8 @@ export function createPublicAcpRuntimeProtocols(params: Readonly<{
   agentId: string;
   signal: AbortSignal;
   isCurrent(): boolean;
+  /** Reports the selected concrete transport before the Session handshake. */
+  onSessionOpening?: () => void;
   services: PluginServices;
   nativeLaunch?: PublicAcpComposerDependencies['nativeLaunch'];
   interactions?: HostCurrentSessionInteractionsService;
@@ -120,6 +122,7 @@ export function createPublicAcpRuntimeProtocols(params: Readonly<{
   return Object.freeze({
     acp: Object.freeze({
       async open(request: AgentSessionOpenRequest, options: AgentAcpRuntimeOptions) {
+        params.onSessionOpening?.();
         const defaults = params.configurationDefaults;
         const configuration = request.configuration;
         const openRequest = request.kind === 'create' && defaults
@@ -144,6 +147,7 @@ export function createPublicAcpRuntimeProtocols(params: Readonly<{
         request: AgentExecutionRunOpenRequest,
         options: AgentAcpRuntimeOptions,
       ): Promise<AgentExecutionRunRuntime> {
+        params.onSessionOpening?.();
         const { createPublicAcpExecutionRun } = await import('./createPublicAcpSession');
         return await createPublicAcpExecutionRun(request,
           params.runtimeDefinition ? { ...options, definition: params.runtimeDefinition } : options,
@@ -153,6 +157,7 @@ export function createPublicAcpRuntimeProtocols(params: Readonly<{
         request: AgentExecutionRunOpenRequest,
         options: AgentAcpRuntimeOptions,
       ): Promise<AgentExecutionRunConversationRuntimeV1> {
+        params.onSessionOpening?.();
         const { createPublicAcpExecutionRunConversation } = await import('./createPublicAcpSession');
         return await createPublicAcpExecutionRunConversation(request,
           params.runtimeDefinition ? { ...options, definition: params.runtimeDefinition } : options,

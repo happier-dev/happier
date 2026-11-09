@@ -53,6 +53,31 @@ function createCommittedAgentMessageCapture() {
   return { bodies, enqueueAgentMessageCommitted };
 }
 
+it('keeps selected runtime provenance on durable tools and ephemeral progress', async () => {
+  const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
+  const source = { protocol: 'native', agent: { pluginId: 'example.native', localId: 'selected-agent' } } as const;
+  const { enqueueAgentMessageCommitted } = createCommittedAgentMessageCapture();
+  const sendAgentMessageEphemeral = vi.fn<NonNullable<RuntimeTranscriptProjectionSession['sendAgentMessageEphemeral']>>(
+    () => ({ accepted: true, epoch: 0 }),
+  );
+  const session: RuntimeTranscriptProjectionSession = {
+    sessionId: 'native-source-session', enqueueAgentMessageCommitted, sendAgentMessageEphemeral,
+  };
+  const project = (event: Readonly<Record<string, unknown>>) => projectRuntimeTranscriptEvent({
+    session, provider: 'selected-agent', toolNormalizationSource: source,
+    event: canonicalRuntimeEvent({ sessionId: session.sessionId, turnId: 'turn', emittedAtMs: 1, ...event }),
+  });
+  await project({ kind: 'tool-call', toolCallId: 'call', toolName: 'Read', input: { file_path: 'file.ts' } });
+  await project({ kind: 'tool-progress', toolCallId: 'call', progress: { toolName: 'Read', rawInput: { file_path: 'file.ts' } } });
+  await project({ kind: 'tool-result', toolCallId: 'call', output: { text: 'contents' } });
+  expect(enqueueAgentMessageCommitted).toHaveBeenCalledWith('selected-agent', expect.objectContaining({ type: 'tool-call' }),
+    expect.objectContaining({ toolNormalizationSource: source }));
+  expect(enqueueAgentMessageCommitted).toHaveBeenCalledWith('selected-agent', expect.objectContaining({ type: 'tool-result' }),
+    expect.objectContaining({ toolNormalizationSource: source }));
+  expect(sendAgentMessageEphemeral).toHaveBeenCalledWith('selected-agent', expect.objectContaining({ type: 'tool-call' }),
+    expect.objectContaining({ toolNormalizationSource: source }));
+});
+
 function findCanonicalDiffCall(bodies: readonly CommittedAgentMessageBody[]): CommittedToolCallBody {
   const body = bodies.find(
     (candidate): candidate is CommittedToolCallBody => candidate.type === 'tool-call' && candidate.name === 'Diff',
@@ -415,7 +440,7 @@ describe('projectRuntimeTranscriptEvent', () => {
         // Another exact turn still carries genuine terminal evidence.
         await project({ kind, turnId: 'other-turn', ...(kind === 'turn-cancelled' ? { cause: 'user' } : {}) });
         expect(bodies.filter(body => body.type === 'turn_cancelled' || body.type === 'task_complete')).toEqual([
-          { type: kind === 'turn-cancelled' ? 'turn_cancelled' : 'task_complete', id: 'other-turn' },
+          { type: kind === 'turn-cancelled' ? 'turn_cancelled' : 'task_complete', id: 'other-turn', ...(kind === 'turn-cancelled' ? { cause: 'user' } : {}) },
         ]);
       } finally { bridge.clear(); }
     },
@@ -1029,7 +1054,7 @@ describe('projectRuntimeTranscriptEvent', () => {
       provider: 'codex',
       runtimeMessageDeltaBridge,
       normalizedToolTurnChangeTracker,
-      toolNormalizationProtocol: 'codex',
+      toolNormalizationSource: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
       event: canonicalRuntimeEvent({
         kind: 'turn-start', sessionId: 'session-1', emittedAtMs: 1, turnId: 'host-turn-1',
         startedBy: 'provider',
@@ -1040,7 +1065,7 @@ describe('projectRuntimeTranscriptEvent', () => {
       provider: 'codex',
       runtimeMessageDeltaBridge,
       normalizedToolTurnChangeTracker,
-      toolNormalizationProtocol: 'codex',
+      toolNormalizationSource: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
       event: canonicalRuntimeEvent({
         kind: 'tool-call', sessionId: 'session-1', emittedAtMs: 2, turnId: 'host-turn-1',
         toolCallId: 'edit-1', toolName: 'Edit',
@@ -1052,7 +1077,7 @@ describe('projectRuntimeTranscriptEvent', () => {
       provider: 'codex',
       runtimeMessageDeltaBridge,
       normalizedToolTurnChangeTracker,
-      toolNormalizationProtocol: 'codex',
+      toolNormalizationSource: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
       event: canonicalRuntimeEvent({
         kind: 'tool-result', sessionId: 'session-1', emittedAtMs: 3, turnId: 'host-turn-1',
         toolCallId: 'edit-1', output: { status: 'completed' },
@@ -1063,7 +1088,7 @@ describe('projectRuntimeTranscriptEvent', () => {
       provider: 'codex',
       runtimeMessageDeltaBridge,
       normalizedToolTurnChangeTracker,
-      toolNormalizationProtocol: 'codex',
+      toolNormalizationSource: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
       event: canonicalRuntimeEvent({
         kind: 'turn-complete', sessionId: 'session-1', emittedAtMs: 4, turnId: 'host-turn-1',
         agentTurnId: 'provider-turn-1',
@@ -1100,7 +1125,7 @@ describe('projectRuntimeTranscriptEvent', () => {
       provider: 'codex' as const,
       runtimeMessageDeltaBridge: createKeyedStreamedTranscriptBridge({ provider: 'codex', createSessionForStream: () => ({ enqueueAgentMessageCommitted }) }),
       normalizedToolTurnChangeTracker: new NormalizedToolTurnChangeTracker({ provider: 'codex' }),
-      toolNormalizationProtocol: 'codex' as const,
+      toolNormalizationSource: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const,
     };
 
     await projectRuntimeTranscriptEvent({
@@ -1173,7 +1198,7 @@ describe('projectRuntimeTranscriptEvent', () => {
       provider: 'codex' as const,
       runtimeMessageDeltaBridge: createKeyedStreamedTranscriptBridge({ provider: 'codex', createSessionForStream: () => ({ enqueueAgentMessageCommitted }) }),
       normalizedToolTurnChangeTracker: new NormalizedToolTurnChangeTracker({ provider: 'codex' }),
-      toolNormalizationProtocol: 'codex' as const,
+      toolNormalizationSource: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const,
     };
 
     await projectRuntimeTranscriptEvent({
@@ -1231,7 +1256,7 @@ describe('projectRuntimeTranscriptEvent', () => {
       provider: 'codex' as const,
       runtimeMessageDeltaBridge,
       normalizedToolTurnChangeTracker,
-      toolNormalizationProtocol: 'codex' as const,
+      toolNormalizationSource: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const,
     };
 
     await projectRuntimeTranscriptEvent({
@@ -1527,7 +1552,7 @@ describe('projectRuntimeTranscriptEvent', () => {
 
     expect(session.enqueueAgentMessageCommitted).toHaveBeenCalledWith(
       'opencode',
-      { type: 'turn_cancelled', id: 'agent-turn-1' },
+      { type: 'turn_cancelled', id: 'agent-turn-1', cause: 'user' },
       {
         localId: 'agent-turn-1:turn_cancelled',
         meta: {

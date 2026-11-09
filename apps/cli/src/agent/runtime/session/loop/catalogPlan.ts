@@ -69,7 +69,6 @@ export function createCatalogHostSessionRuntimeConfig<TRuntime extends HostSessi
     providerName = displayName,
     waitingForCommandLabel = displayName,
     agentMessageType = params.agentId,
-    checkpointToolProtocol = 'acp',
     attachMetadataLogLabel = params.agentId,
     runtimeActivityApplicability: runtimeActivityApplicabilityDeclaration,
     ...config
@@ -82,7 +81,6 @@ export function createCatalogHostSessionRuntimeConfig<TRuntime extends HostSessi
     providerName,
     waitingForCommandLabel,
     agentMessageType,
-    checkpointToolProtocol,
     runtimeActivityApplicability: resolveRuntimeActivityApplicability(
       runtimeActivityApplicabilityDeclaration,
       { declarationPresent: runtimeActivityApplicabilityDeclarationPresent },

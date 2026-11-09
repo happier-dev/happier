@@ -49,7 +49,7 @@ import {
     resolvePermissionIntentFromSessionMetadata,
     type TerminalHostHandle,
 } from '@happier-dev/agents';
-import { applyAcpConfigOptionIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import { applyAcpConfigOptionIntentSessionMetadata, applyPermissionModeIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import { resolveApplicableSessionConfigOptionOverridesFromMetadataSnapshot } from '@/agent/runtime/sessionConfigOptionOverrideSync';
 import { createDaemonRuntimeAuthRefreshService, type RuntimeAuthRefreshViaDaemon } from '@/plugins/runtime/context/runtimeAuthRefresh';
 import type {
@@ -198,6 +198,7 @@ import { logger } from '@/ui/logger';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { createPublicAcpRuntimeProtocols } from '@/agent/acp/runtime/publicSession/createPublicAcpRuntimeProtocols';
+import { bindAcpReplaySessionToolSource } from '@/agent/acp/sessionClient';
 import type { UsageObservation } from '@/usage/usageObservation';
 import type { UsageObservationPublishResult } from '@/usage/createUsageObservationPublisher';
 import { deriveNativeUsageAccountingIdentity, type NativeUsageAccountingIdentityInput } from '@/usage/collector/nativeUsageAccountingIdentity';
@@ -1574,6 +1575,10 @@ function createNativeAgentSessionControlContext(params: Readonly<{
             cwd: params.cwd,
             activity: params.activity,
             ...(params.launchEnvironment ? { launchEnvironment: params.launchEnvironment } : {}),
+            // Controls reach the Session's native store only as its own launch identity
+            // (a separated member UID); the daemon UID cannot read that home.
+            ...(params.context.session.services.nativeLaunch
+                ? { nativeLaunch: params.context.session.services.nativeLaunch } : {}),
             ...(params.providerSessionId ? { providerSessionId: params.providerSessionId } : {}),
             connectedAccounts: Object.freeze([...params.connectedAccounts]),
         }),
@@ -4465,6 +4470,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             }
             : {}),
         createSessionRuntime: async (openIntent, hostRuntimeParams) => {
+            hostRuntimeParams.onToolNormalizationSource?.({
+                protocol: 'native', agent: { pluginId: identity.pluginId, localId: contributionId },
+            });
             const invokedAtMs = Date.now();
             const sessionId = hostRuntimeParams.session.sessionId;
             const openPhases = createNativeAgentSessionOpenPhaseRecorder(sessionId, openIntent.kind);
@@ -5087,6 +5095,11 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             };
             let readActiveTurnAdmissionWitness = ():
                 NativeAgentNewTurnAdmissionWitness | null => null;
+            const applyPermissionModeIntent: NonNullable<NativeAgentSessionInteractionParams['applyPermissionModeIntent']> = async (permissionMode) => {
+                await hostRuntimeParams.session.updateMetadataAsCurrentPublisher((metadata) => (
+                    applyPermissionModeIntentSessionMetadata(metadata, { permissionMode, updatedAt: Date.now() })
+                ));
+            };
             const nativeSessionServiceParams = {
                 permissionHandler: livePermissionHandler,
                 credentials: params.sessionInput.credentials,
@@ -5095,6 +5108,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     ? { resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot }
                     : {}),
                 readPermissionMode: hostRuntimeParams.getPermissionMode,
+                applyPermissionModeIntent,
                 pluginId: identity.pluginId,
                 contributionId,
                 runtimeId: identity.agentId,
@@ -5133,6 +5147,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 capabilities: {
                     ...(livePermissionHandler ? { permissionHandler: livePermissionHandler } : {}),
                     readPermissionMode: hostRuntimeParams.getPermissionMode,
+                    applyPermissionModeIntent,
                     ...(mediaAdapter ? {
                         createMediaService: (authorizeSourceRoot) => (
                             mediaAdapter.forAuthorizedSession(sessionId, authorizeSourceRoot)
@@ -5521,6 +5536,14 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     toolsDelivery: resolveAgentToolsDelivery(identity.agentId),
                     subagents: readAgentSessionSubagentObservationPublisher(services),
                 }), nativeLaunch });
+            const acpToolNormalizationSource = {
+                protocol: 'acp' as const,
+                agent: { pluginId: identity.pluginId, localId: contributionId },
+            };
+            const acpReplaySession = bindAcpReplaySessionToolSource({
+                session: hostRuntimeParams.session,
+                source: acpToolNormalizationSource,
+            });
             const context = composeNativeAgentSessionRuntimeContext({
                 identity,
                 contributionId,
@@ -5545,6 +5568,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         : {}),
                 }),
                 protocols: createPublicAcpRuntimeProtocols({
+                    onSessionOpening: () => hostRuntimeParams.onToolNormalizationSource?.(acpToolNormalizationSource),
                     nativeLaunch,
                     pluginId: identity.pluginId,
                     agentId: identity.agentId,
@@ -5570,9 +5594,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                                 }),
                         }
                         : {}),
-                    sidechainSession: hostRuntimeParams.session,
+                    sidechainSession: acpReplaySession,
                     ...(openIntent.kind === 'resume' && openIntent.importHistory
-                        ? { resumeHistorySession: hostRuntimeParams.session }
+                        ? { resumeHistorySession: acpReplaySession }
                         : {}),
                     ...(params.resolveAcpHostLaunch
                         ? { resolveHostLaunch: params.resolveAcpHostLaunch }

@@ -2,7 +2,6 @@ import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol/sessions/
 import { isForegroundTurnRuntimeTranscriptEvent, isSessionScopedRuntimeTranscriptEvent } from '../events/runtimeTranscriptScope';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { readSessionExplicitStopV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
-import { resolveRuntimeCheckpointToolProtocol } from '@happier-dev/agents/session/controls/checkpoints';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isRecord } from '@happier-dev/plugin-sdk';
 import { SessionCompactRequestV1Schema } from '@happier-dev/protocol/sessions/control/index';
@@ -388,19 +387,19 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
             }),
       } : {}),
     });
-  const toolNormalizationProtocol = resolveRuntimeCheckpointToolProtocol(params.config.checkpointToolProtocol);
+  const toolNormalizationSource = params.config.checkpointToolSource;
   const configuredCheckpointLifecycle = await params.config.lifecycleHooks?.createCheckpointLifecycle?.({
     session: params.session,
     runtime: hookRuntimeForCallbacks,
     runtimeDirectory: params.runtimeDirectory,
     policyAgentId: params.policyAgentId,
   }) ?? null;
-  const repositoryCheckpointLifecycle = configuredCheckpointLifecycle ? null : createRepositoryCheckpointPromptLifecycle({
+  const repositoryCheckpointLifecycle = configuredCheckpointLifecycle || !toolNormalizationSource ? null : createRepositoryCheckpointPromptLifecycle({
     session: params.session,
     sessionIsNew: params.sessionIsNew,
     runtimeDirectory: params.runtimeDirectory,
     provider: params.config.agentMessageType,
-    protocol: toolNormalizationProtocol,
+    source: toolNormalizationSource,
     scmCommandRunner: input => hookRuntimeForCallbacks.runScmCommand?.(input)
       ?? Promise.resolve({ success: false, stdout: '', stderr: 'scm_exec_unavailable', exitCode: -1 }),
   });
@@ -840,7 +839,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       provider: runtimeTranscriptProvider,
       runtimeMessageDeltaBridge,
       normalizedToolTurnChangeTracker,
-      toolNormalizationProtocol,
+      toolNormalizationSource,
       publishTurnChangeSet: repositoryCheckpointLifecycle?.publishTurnChangeSet,
       mcpServerIdentities: params.config.mcpServerIdentities,
       skillDelivery: params.config.readSkillDelivery?.(),
