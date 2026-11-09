@@ -85,3 +85,10 @@ test('browser-start preflight and cyclic Protocol schema maps load from their re
     });
   }
 });
+
+test('entry loads enforce the Protocol evaluation-cycle baseline', async t => {
+  const graph = ENTRY_GRAPHS.find(graph => graph.id === 'protocol-import-cycles');
+  assert.ok(graph, 'missing Protocol cycle guard in entry loads');
+  const result = await loadEntryGraph(graph, { signal: t.signal });
+  assert.equal(result.status, 'passed', JSON.stringify(result));
+});

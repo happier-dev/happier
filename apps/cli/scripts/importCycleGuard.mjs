@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { collectImportBindingReads, findEvaluationCycles } from './importCycleEvaluation.mjs';
 
 const require = createRequire(import.meta.url);
 const ts = require('typescript');
@@ -12,6 +13,8 @@ const CLI_ROOT = resolve(SCRIPT_DIR, '..');
 const DEFAULT_SOURCE_ROOT = resolve(CLI_ROOT, 'src');
 const DEFAULT_TSCONFIG_PATH = resolve(CLI_ROOT, 'tsconfig.json');
 const DEFAULT_BASELINE_PATH = resolve(SCRIPT_DIR, 'importCycleGuard.baseline.json');
+const PROTOCOL_ROOT = resolve(CLI_ROOT, '../../packages/protocol');
+const PROTOCOL_BASELINE_PATH = resolve(SCRIPT_DIR, 'importCycleGuard.protocol.baseline.json');
 const RUNTIME_SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts']);
 const TEST_FILE_PATTERN = /(^|\.)(test|spec)\.[cm]?tsx?$/;
 const TEST_SUPPORT_FILE_PATTERN = /\.(?:testkit|testUtils)\.[cm]?tsx?$/;
@@ -27,7 +30,7 @@ export function analyzeRuntimeImportCycles(params = {}) {
     .filter((filePath) => isRuntimeSourceFile(filePath, sourceRoot))
     .sort(compareStrings);
   const runtimeFileSet = new Set(runtimeFiles);
-  const graph = buildRuntimeImportGraph({
+  const { graph, eagerReads } = buildRuntimeImportGraph({
     compilerOptions: parsedConfig.options,
     runtimeFiles,
     runtimeFileSet,
@@ -36,7 +39,10 @@ export function analyzeRuntimeImportCycles(params = {}) {
   });
 
   return {
-    cycles: findRuntimeImportCycles({ graph, sourceRoot }),
+    cycles: params.evaluationOnly
+      ? findEvaluationCycles({ graph, eagerReads, components: findStronglyConnectedComponents(graph),
+        relativePath: filePath => toPosixRelative(sourceRoot, filePath) }).sort(compareCycleKeys)
+      : findRuntimeImportCycles({ graph, sourceRoot }),
     graph: toRelativeGraph(graph, sourceRoot),
     sourceRoot: toPosixPath(sourceRoot),
   };
@@ -60,6 +66,7 @@ export function compareCyclesToBaseline(params) {
 }
 
 export function formatCycleKey(cycle) {
+  if (cycle.read) return `${cycle.read.from}\n${cycle.read.to}\n${cycle.read.binding}`;
   return [...cycle.files].sort(compareStrings).join('\n');
 }
 
@@ -88,6 +95,7 @@ export function serializeBaselineCycles(cycles) {
       version: BASELINE_VERSION,
       cycles: cycles.map((cycle) => ({
         files: [...cycle.files].sort(compareStrings),
+        ...(cycle.read ? { read: cycle.read } : {}),
       })),
     },
     null,
@@ -97,13 +105,14 @@ export function serializeBaselineCycles(cycles) {
 
 export function formatGuardFailure(newCycles) {
   const lines = [
-    `CLI runtime import-cycle guard failed: ${newCycles.length} new cycle SCC(s) found.`,
+    `Runtime import-cycle guard failed: ${newCycles.length} new cycle(s) found.`,
     '',
     'Update the baseline only for known debt. Otherwise remove the runtime import cycle.',
   ];
 
   newCycles.forEach((cycle, index) => {
     lines.push('', `New cycle ${index + 1}:`);
+    if (cycle.read) lines.push(`  Eager read: ${cycle.read.from} -> ${cycle.read.to} (${cycle.read.binding})`);
     for (const file of cycle.files) {
       lines.push(`  - ${file}`);
     }
@@ -119,16 +128,19 @@ export function formatGuardFailure(newCycles) {
 }
 
 export function parseImportCycleGuardArgs(argv) {
+  const protocol = argv.includes('--protocol');
   const options = {
-    baselinePath: DEFAULT_BASELINE_PATH,
+    baselinePath: protocol ? PROTOCOL_BASELINE_PATH : DEFAULT_BASELINE_PATH,
+    evaluationOnly: protocol,
     help: false,
-    sourceRoot: DEFAULT_SOURCE_ROOT,
-    tsconfigPath: DEFAULT_TSCONFIG_PATH,
+    sourceRoot: protocol ? resolve(PROTOCOL_ROOT, 'src') : DEFAULT_SOURCE_ROOT,
+    tsconfigPath: protocol ? resolve(PROTOCOL_ROOT, 'tsconfig.json') : DEFAULT_TSCONFIG_PATH,
     writeBaseline: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    if (arg === '--protocol') continue;
     if (arg === '--baseline') {
       options.baselinePath = resolveRequiredArg(argv, index, arg);
       index += 1;
@@ -160,7 +172,9 @@ export function parseImportCycleGuardArgs(argv) {
 
 function buildRuntimeImportGraph(params) {
   const graph = new Map(params.runtimeFiles.map((filePath) => [filePath, new Set()]));
+  const eagerReads = [];
   const moduleResolutionHost = createModuleResolutionHost(dirname(params.tsconfigPath));
+  const moduleResolutionCache = ts.createModuleResolutionCache(dirname(params.tsconfigPath), path => path, params.compilerOptions);
 
   for (const filePath of params.runtimeFiles) {
     const sourceText = readFileSync(filePath, 'utf8');
@@ -171,24 +185,33 @@ function buildRuntimeImportGraph(params) {
       true,
       ts.getScriptKindFromFileName(filePath),
     );
-    const imports = collectRuntimeModuleSpecifiers(sourceFile);
+    const bindingReads = collectImportBindingReads(sourceFile);
+    const imports = collectRuntimeModuleSpecifiers(sourceFile,
+      params.compilerOptions.verbatimModuleSyntax ? undefined : bindingReads.runtimeBindings);
+    const targets = new Map();
 
     for (const moduleSpecifier of imports) {
       const resolvedFile = resolveModuleSpecifier({
         compilerOptions: params.compilerOptions,
         containingFile: filePath,
         moduleResolutionHost,
+        moduleResolutionCache,
         moduleSpecifier,
         runtimeFileSet: params.runtimeFileSet,
         sourceRoot: params.sourceRoot,
       });
       if (resolvedFile) {
         graph.get(filePath)?.add(resolvedFile);
+        targets.set(moduleSpecifier, resolvedFile);
       }
+    }
+    for (const read of bindingReads.eagerReads) {
+      const to = targets.get(read.moduleSpecifier);
+      if (to) eagerReads.push({ ...read, from: filePath, to });
     }
   }
 
-  return sortGraph(graph);
+  return { graph: sortGraph(graph), eagerReads };
 }
 
 function readTsconfig(tsconfigPath) {
@@ -211,11 +234,11 @@ function readTsconfig(tsconfigPath) {
   return parsedConfig;
 }
 
-function collectRuntimeModuleSpecifiers(sourceFile) {
+function collectRuntimeModuleSpecifiers(sourceFile, runtimeBindings) {
   const specifiers = [];
 
   sourceFile.forEachChild((node) => {
-    if (ts.isImportDeclaration(node) && importDeclarationHasRuntimeEdge(node)) {
+    if (ts.isImportDeclaration(node) && importDeclarationHasRuntimeEdge(node, runtimeBindings)) {
       const specifier = readStringModuleSpecifier(node.moduleSpecifier);
       if (specifier) specifiers.push(specifier);
       return;
@@ -242,18 +265,19 @@ function collectRuntimeModuleSpecifiers(sourceFile) {
   return specifiers;
 }
 
-function importDeclarationHasRuntimeEdge(node) {
+function importDeclarationHasRuntimeEdge(node, runtimeBindings) {
   const importClause = node.importClause;
   if (!importClause) return true;
   if (importClause.isTypeOnly) return false;
-  if (importClause.name) return true;
+  if (importClause.name && (!runtimeBindings || runtimeBindings.has(importClause.name.text))) return true;
 
   const namedBindings = importClause.namedBindings;
   if (!namedBindings) return false;
-  if (ts.isNamespaceImport(namedBindings)) return true;
+  if (ts.isNamespaceImport(namedBindings)) return !runtimeBindings || runtimeBindings.has(namedBindings.name.text);
   if (namedBindings.elements.length === 0) return true;
 
-  return namedBindings.elements.some((element) => !element.isTypeOnly);
+  return namedBindings.elements.some((element) => !element.isTypeOnly
+    && (!runtimeBindings || runtimeBindings.has(element.name.text)));
 }
 
 function exportDeclarationHasRuntimeEdge(node) {
@@ -279,6 +303,7 @@ function resolveModuleSpecifier(params) {
     params.containingFile,
     params.compilerOptions,
     params.moduleResolutionHost,
+    params.moduleResolutionCache,
   );
   const resolvedFileName = resolution.resolvedModule?.resolvedFileName;
   if (!resolvedFileName) return null;
@@ -384,6 +409,7 @@ function normalizeCycle(cycle) {
   return {
     edges: Array.isArray(cycle.edges) ? cycle.edges.map((edge) => [...edge]).sort(compareTuple) : [],
     files: [...cycle.files].sort(compareStrings),
+    ...(cycle.read ? { read: cycle.read } : {}),
   };
 }
 
@@ -395,7 +421,15 @@ function normalizeBaselineCycle(cycle) {
   return {
     edges: [],
     files: [...new Set(files)].sort(compareStrings),
+    ...(cycle.read ? { read: normalizeEvaluationRead(cycle.read) } : {}),
   };
+}
+
+function normalizeEvaluationRead(read) {
+  if (![read.from, read.to, read.binding].every(value => typeof value === 'string')) {
+    throw new Error('Invalid import-cycle baseline entry: expected eager read from, to and binding');
+  }
+  return { from: read.from, to: read.to, binding: read.binding };
 }
 
 function sortGraph(graph) {
@@ -483,6 +517,7 @@ Checks apps/cli/src for static runtime import/export SCCs.
 
 Options:
   --baseline <path>       Baseline JSON path (default: scripts/importCycleGuard.baseline.json)
+  --protocol              Check Protocol module-evaluation reads against its own baseline
   --source-root <path>    Source root to analyze (default: src)
   --tsconfig <path>       tsconfig used for module resolution (default: tsconfig.json)
   --write-baseline        Replace the baseline with the currently detected SCCs
@@ -500,11 +535,12 @@ function runCli() {
   const result = analyzeRuntimeImportCycles({
     sourceRoot: options.sourceRoot,
     tsconfigPath: options.tsconfigPath,
+    evaluationOnly: options.evaluationOnly,
   });
 
   if (options.writeBaseline) {
     writeFileSync(options.baselinePath, serializeBaselineCycles(result.cycles), 'utf8');
-    console.log(`Wrote ${result.cycles.length} CLI runtime import-cycle baseline SCC(s) to ${options.baselinePath}`);
+    console.log(`Wrote ${result.cycles.length} runtime import-cycle baseline entries to ${options.baselinePath}`);
     return;
   }
 
@@ -525,7 +561,7 @@ function runCli() {
       ? `; ${comparison.staleBaselineCycles.length} stale baseline SCC(s) can be pruned`
       : '';
   console.log(
-    `CLI runtime import-cycle guard passed: ${comparison.allowedCycles.length} baseline SCC(s), 0 new SCC(s)${staleSuffix}.`,
+    `Runtime import-cycle guard passed: ${comparison.allowedCycles.length} baseline cycles, 0 new cycles${staleSuffix}.`,
   );
 }
 

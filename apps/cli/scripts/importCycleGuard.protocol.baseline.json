@@ -1,0 +1,260 @@
+{
+  "version": 1,
+  "cycles": [
+    {
+      "files": [
+        "actions/externalActionApi.ts",
+        "artifacts/artifactMutationHttpV1.ts",
+        "deployments/deploymentCandidatePublicationV1.ts",
+        "deployments/deploymentDomainV1.ts",
+        "discussions/content.ts",
+        "discussions/messageRefs.ts",
+        "discussions/models.ts",
+        "workflows/workflowDefinitionV1.ts",
+        "workflows/workflowProgressV1.ts"
+      ],
+      "read": {
+        "from": "artifacts/artifactMutationHttpV1.ts",
+        "to": "discussions/messageRefs.ts",
+        "binding": "CoordinationMessageRefV1Schema"
+      }
+    },
+    {
+      "files": [
+        "actions/externalActionApi.ts",
+        "actions/operations/v1.ts",
+        "auth/apiTokenGrant.ts",
+        "automations/automationActionSpecsV1.ts",
+        "automations/automationEventDeclarationV1.ts",
+        "automations/automationEventV1.ts",
+        "automations/automationTriggerDefinition.ts",
+        "automations/automationTriggerProjectionV1.ts",
+        "deployments/deploymentReceiptEventsV1.ts",
+        "plugins/actions/v2.ts",
+        "sessions/creation/sessionSpawnNewInputV2.ts",
+        "sessions/follow/sessionFollowPolicyV1.ts",
+        "sessions/relations/workerUpdateV1.ts",
+        "workflows/triggers/workflowTriggerActionsV1.ts",
+        "workflows/workflowDefinitionV1.ts",
+        "workflows/workflowProgressV1.ts"
+      ],
+      "read": {
+        "from": "automations/automationEventV1.ts",
+        "to": "automations/automationActionSpecsV1.ts",
+        "binding": "AutomationConversationTargetsListInputV1Schema"
+      }
+    },
+    {
+      "files": [
+        "actions/externalActionApi.ts",
+        "actions/operations/v1.ts",
+        "auth/apiTokenGrant.ts",
+        "automations/automationActionSpecsV1.ts",
+        "automations/automationEventDeclarationV1.ts",
+        "automations/automationEventV1.ts",
+        "automations/automationTriggerDefinition.ts",
+        "automations/automationTriggerProjectionV1.ts",
+        "deployments/deploymentReceiptEventsV1.ts",
+        "plugins/actions/v2.ts",
+        "sessions/creation/sessionSpawnNewInputV2.ts",
+        "sessions/follow/sessionFollowPolicyV1.ts",
+        "sessions/relations/workerUpdateV1.ts",
+        "workflows/triggers/workflowTriggerActionsV1.ts",
+        "workflows/workflowDefinitionV1.ts",
+        "workflows/workflowProgressV1.ts"
+      ],
+      "read": {
+        "from": "automations/automationEventV1.ts",
+        "to": "automations/automationActionSpecsV1.ts",
+        "binding": "AutomationEventSourcesListInputV1Schema"
+      }
+    },
+    {
+      "files": [
+        "actions/externalActionApi.ts",
+        "actions/operations/v1.ts",
+        "auth/apiTokenGrant.ts",
+        "automations/automationActionSpecsV1.ts",
+        "automations/automationEventDeclarationV1.ts",
+        "automations/automationEventV1.ts",
+        "automations/automationTriggerDefinition.ts",
+        "automations/automationTriggerProjectionV1.ts",
+        "deployments/deploymentReceiptEventsV1.ts",
+        "plugins/actions/v2.ts",
+        "sessions/creation/sessionSpawnNewInputV2.ts",
+        "sessions/follow/sessionFollowPolicyV1.ts",
+        "sessions/relations/workerUpdateV1.ts",
+        "workflows/triggers/workflowTriggerActionsV1.ts",
+        "workflows/workflowDefinitionV1.ts",
+        "workflows/workflowProgressV1.ts"
+      ],
+      "read": {
+        "from": "automations/automationEventV1.ts",
+        "to": "automations/automationActionSpecsV1.ts",
+        "binding": "AutomationEventSourceStatusReportV1Schema"
+      }
+    },
+    {
+      "files": [
+        "actions/externalActionApi.ts",
+        "discussions/content.ts",
+        "discussions/secondOpinionActions.ts",
+        "rpc/socket.ts",
+        "workflows/workflowDefinitionV1.ts",
+        "workflows/workflowProgressV1.ts"
+      ],
+      "read": {
+        "from": "discussions/secondOpinionActions.ts",
+        "to": "discussions/content.ts",
+        "binding": "DiscussionAddressV1Schema"
+      }
+    },
+    {
+      "files": [
+        "actions/externalActionApi.ts",
+        "discussions/content.ts",
+        "discussions/secondOpinionActions.ts",
+        "rpc/socket.ts",
+        "workflows/workflowDefinitionV1.ts",
+        "workflows/workflowProgressV1.ts"
+      ],
+      "read": {
+        "from": "discussions/secondOpinionActions.ts",
+        "to": "discussions/content.ts",
+        "binding": "DiscussionLocalIdSchema"
+      }
+    },
+    {
+      "files": [
+        "actions/externalActionApi.ts",
+        "actions/operations/v1.ts",
+        "automations/automationTriggerDefinition.ts",
+        "automations/automationTriggerProjectionV1.ts",
+        "connect/connectedAccountDaemonRpcV1.ts",
+        "deployments/deploymentReceiptEventsV1.ts",
+        "machines/managed/managedConfigurationV1.ts",
+        "machines/managed/managedDependencyV1.ts",
+        "machines/managed/managedMachineV1.ts",
+        "machines/peer/mediation/rpc/routePolicyV1.ts",
+        "plugins/actions/v2.ts",
+        "plugins/contributions/machineProvisioners.ts",
+        "rpc/socket.ts",
+        "sessions/follow/sessionFollowPolicyV1.ts",
+        "sessions/relations/workerUpdateV1.ts",
+        "workflows/workflowDefinitionV1.ts",
+        "workflows/workflowProgressV1.ts"
+      ],
+      "read": {
+        "from": "machines/peer/mediation/rpc/routePolicyV1.ts",
+        "to": "connect/connectedAccountDaemonRpcV1.ts",
+        "binding": "CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD"
+      }
+    },
+    {
+      "files": [
+        "actions/externalActionApi.ts",
+        "actions/operations/v1.ts",
+        "automations/automationTriggerDefinition.ts",
+        "automations/automationTriggerProjectionV1.ts",
+        "connect/connectedAccountDaemonRpcV1.ts",
+        "deployments/deploymentReceiptEventsV1.ts",
+        "machines/managed/managedConfigurationV1.ts",
+        "machines/managed/managedDependencyV1.ts",
+        "machines/managed/managedMachineV1.ts",
+        "machines/peer/mediation/rpc/routePolicyV1.ts",
+        "plugins/actions/v2.ts",
+        "plugins/contributions/machineProvisioners.ts",
+        "rpc/socket.ts",
+        "sessions/follow/sessionFollowPolicyV1.ts",
+        "sessions/relations/workerUpdateV1.ts",
+        "workflows/workflowDefinitionV1.ts",
+        "workflows/workflowProgressV1.ts"
+      ],
+      "read": {
+        "from": "machines/peer/mediation/rpc/routePolicyV1.ts",
+        "to": "connect/connectedAccountDaemonRpcV1.ts",
+        "binding": "CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD"
+      }
+    },
+    {
+      "files": [
+        "actions/externalActionApi.ts",
+        "actions/operations/v1.ts",
+        "automations/automationTriggerDefinition.ts",
+        "automations/automationTriggerProjectionV1.ts",
+        "connect/connectedAccountDaemonRpcV1.ts",
+        "daemon/agentSignIn.ts",
+        "deployments/deploymentReceiptEventsV1.ts",
+        "machines/managed/managedConfigurationV1.ts",
+        "machines/managed/managedDependencyV1.ts",
+        "machines/managed/managedMachineV1.ts",
+        "machines/peer/mediation/rpc/routePolicyV1.ts",
+        "plugins/actions/v2.ts",
+        "plugins/contributions/machineProvisioners.ts",
+        "rpc/socket.ts",
+        "sessions/follow/sessionFollowPolicyV1.ts",
+        "sessions/relations/workerUpdateV1.ts",
+        "workflows/workflowDefinitionV1.ts",
+        "workflows/workflowProgressV1.ts"
+      ],
+      "read": {
+        "from": "machines/peer/mediation/rpc/routePolicyV1.ts",
+        "to": "daemon/agentSignIn.ts",
+        "binding": "AGENT_SIGN_IN_STATUS_RPC_METHOD"
+      }
+    },
+    {
+      "files": [
+        "registries/formats/happierCatalog.ts",
+        "registries/formats/index.ts"
+      ],
+      "read": {
+        "from": "registries/formats/index.ts",
+        "to": "registries/formats/happierCatalog.ts",
+        "binding": "happierCatalogRegistryAdapterV1"
+      }
+    },
+    {
+      "files": [
+        "browser/profile/extensionsV1.ts",
+        "registries/registryBrowserExtensionV1.ts",
+        "registries/registryItemsV1.ts"
+      ],
+      "read": {
+        "from": "registries/registryBrowserExtensionV1.ts",
+        "to": "browser/profile/extensionsV1.ts",
+        "binding": "BrowserExtensionWebStoreSourceV1Schema"
+      }
+    },
+    {
+      "files": [
+        "actions/operations/v1.ts",
+        "automations/automationTriggerDefinition.ts",
+        "automations/automationTriggerProjectionV1.ts",
+        "browser/recording/v1.ts",
+        "browser/target/v1.ts",
+        "deployments/deploymentReceiptEventsV1.ts",
+        "local/services/actions/v1.ts",
+        "local/services/preview/v1.ts",
+        "machines/pools/v1.ts",
+        "plugins/actions/v2.ts",
+        "plugins/contributions/machineProvisioners.ts",
+        "runtime/input/composerAttachmentV1.ts",
+        "runtime/input/composerContentV1.ts",
+        "sessions/follow/sessionFollowPolicyV1.ts",
+        "sessions/messages/sessionInputAdmission.ts",
+        "sessions/messages/sessionInputAuthoringV1.ts",
+        "sessions/messages/sessionMediaV1.ts",
+        "sessions/messages/sessionMessageReplyV1.ts",
+        "sessions/relations/workerUpdateV1.ts",
+        "workflows/workflowProgressV1.ts",
+        "workspaces/projectWorkerPreferencesV1.ts"
+      ],
+      "read": {
+        "from": "sessions/messages/sessionInputAdmission.ts",
+        "to": "sessions/messages/sessionInputAuthoringV1.ts",
+        "binding": "PluginSessionInputAttachmentsV1Schema"
+      }
+    }
+  ]
+}

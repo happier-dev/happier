@@ -27,6 +27,7 @@ export const ENTRY_GRAPHS = Object.freeze([
   { id: 'protocol-service-placement-actions', entry: 'packages/protocol/src/actions/specs/projectServicePlacement.ts', cwd: 'packages/protocol' },
   { id: 'protocol-managed-credential-delivery', entry: 'packages/protocol/src/machines/managed/credentialDeliveryV1.ts', cwd: 'packages/protocol' },
   { id: 'protocol-service-placement', entry: 'packages/protocol/src/workspaces/projectServicePlacementV1.ts', cwd: 'packages/protocol' },
+  { id: 'protocol-import-cycles', entry: 'apps/cli/scripts/importCycleGuard.mjs', cwd: '.', args: ['--protocol'] },
   { id: 'sdk-browser', entry: 'packages/sdk/scripts/validateBrowserConsumer.mjs', cwd: 'packages/sdk' },
 ]);
 

@@ -80,7 +80,12 @@ describe('importCycleGuard analyzer', () => {
     for (const [initializer, eager] of [
       ['class A { field = b; method() { return b; } }', false],
       ['class A { static field = b; }', true],
+      ['class A extends b {}', true],
+      ['class A { static { void b; } }', true],
       ['const A = (() => b)();', true],
+      ['const initialize = () => b; const A = initialize();', true],
+      ['const A = ((b: number) => b)(1);', false],
+      ['const initialize = () => b; const A = ((initialize: () => number) => initialize())(() => 1);', false],
     ] as const) {
       withFixtureProject({
         'a.ts': `import { b } from './b.js'; ${initializer} export { A };`,
@@ -89,6 +94,49 @@ describe('importCycleGuard analyzer', () => {
         expect(analyzeRuntimeImportCycles({ sourceRoot, tsconfigPath, evaluationOnly: true }).cycles.length > 0).toBe(eager);
       });
     }
+  });
+
+  it('ignores imports used only in implicit type positions', () => {
+    withFixtureProject({
+      'a.ts': "import { B } from './b.js'; export const a = 1; export type A = typeof B; export interface Shape extends B {}",
+      'b.ts': "import { a } from './a.js'; export const B = a;",
+    }, ({ sourceRoot, tsconfigPath }) => {
+      expect(analyzeRuntimeImportCycles({ sourceRoot, tsconfigPath, evaluationOnly: true }).cycles).toEqual([]);
+    });
+  });
+
+  it('detects another eager read inside an already baselined component', () => {
+    const original = { files: ['a.ts', 'b.ts'], read: { from: 'a.ts', to: 'b.ts', binding: 'b' } };
+    const added = { ...original, read: { ...original.read, binding: 'secondBinding' } };
+    expect(compareCyclesToBaseline({ baselineCycles: [original], currentCycles: [original, added] }).newCycles)
+      .toEqual([expect.objectContaining({ read: added.read })]);
+  });
+
+  it('keeps re-export return paths and detects parsing that forces a deferred schema cycle', () => {
+    withFixtureProject({
+      'a.ts': "import { b } from './b.js'; export const a = b;",
+      'b.ts': "export { c as b } from './c.js';",
+      'c.ts': "import { a } from './a.js'; export const c = () => a;",
+    }, ({ sourceRoot, tsconfigPath }) => {
+      const result = analyzeRuntimeImportCycles({ sourceRoot, tsconfigPath, evaluationOnly: true });
+      expect(result.cycles[0]?.files).toEqual(['a.ts', 'b.ts', 'c.ts']);
+    });
+    withFixtureProject({
+      'entry.ts': "import { ASchema } from './a.js'; export const value = ASchema.parse;",
+      'a.ts': "import { BSchema } from './b.js'; export const ASchema = () => BSchema;",
+      'b.ts': "import { ASchema } from './a.js'; export const BSchema = () => ASchema;",
+    }, ({ sourceRoot, tsconfigPath }) => {
+      expect(analyzeRuntimeImportCycles({ sourceRoot, tsconfigPath, evaluationOnly: true }).cycles).toEqual([]);
+    });
+    withFixtureProject({
+      'entry.ts': "import { ASchema } from './a.js'; export const value = ASchema.parse({});",
+      'a.ts': "import { BSchema } from './b.js'; export const ASchema = () => BSchema;",
+      'b.ts': "import { ASchema } from './a.js'; export const BSchema = () => ASchema;",
+    }, ({ sourceRoot, tsconfigPath }) => {
+      const result = analyzeRuntimeImportCycles({ sourceRoot, tsconfigPath, evaluationOnly: true });
+      expect(result.cycles).toHaveLength(1);
+      expect(result.cycles[0]?.read).toEqual({ from: 'entry.ts', to: 'a.ts', binding: 'ASchema' });
+    });
   });
 
   it('rejects a seeded new Protocol cycle at the command boundary and accepts its baseline', () => {
