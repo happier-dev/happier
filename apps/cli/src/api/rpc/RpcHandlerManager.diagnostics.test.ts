@@ -7,6 +7,7 @@ import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client'
 import { encrypt, decrypt, encodeBase64, decodeBase64 } from '@/api/encryption';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { RpcHandlerManager } from './RpcHandlerManager';
+import { createSessionRpcAuthorization } from '@/api/session/client/sessionRpcAuthorization';
 import { logger as fileLogger } from '@/ui/logger';
 import { createActionExecutor } from '@happier-dev/protocol';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
@@ -18,8 +19,63 @@ import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketH
 import type { Socket } from 'socket.io-client';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
+import { createCapabilitiesService } from '@/capabilities/service';
+import { CHECKLIST_IDS } from '@/capabilities/checklistIds';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 describe('RPC completion diagnostics', () => {
+    it('records the Session upload-init authorization cause once without request content', async () => {
+        const logger = vi.fn();
+        const method = RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT;
+        const requestId = 'rpc_12345678-1234-4123-8123-123456789abc';
+        const rpc = new RpcHandlerManager({ scopePrefix: 'session', scopeKind: 'session', encryptionMode: 'plain', logger,
+            authorizeRequest: createSessionRpcAuthorization({ sessionId: 'session', serverUrl: 'https://home.invalid',
+                isClosed: () => false, readHomeServerIdentityId: () => null,
+                readOwnerCredentials: async () => null, readSessionAttachmentRequester: () => null }) });
+        const handler = vi.fn(() => ({ ok: true }));
+        rpc.registerHandler(method, handler);
+        const response = await rpc.handleRequest({ method: `session:${method}`, traceId: requestId,
+            params: { path: 'never-log-private-path', token: 'never-log-secret' } }, undefined, 'authenticated_home_socket');
+        expect(response).toMatchObject({ errorCode: 'agent_isolation_unavailable', effectAttempted: false,
+            failureCause: { phase: 'session.rpc.authorization.unrestricted_owner_required' } });
+        expect(handler).not.toHaveBeenCalled();
+        const completions = logger.mock.calls.filter(([message]) => message === '[RPC] Request completed');
+        expect(completions).toEqual([['[RPC] Request completed', expect.objectContaining({ method, requestId,
+            errorCode: 'agent_isolation_unavailable', effectAttempted: false,
+            failureCause: { phase: 'session.rpc.authorization.unrestricted_owner_required' } })]]);
+        expect(JSON.stringify(logger.mock.calls)).not.toContain('never-log');
+    });
+
+    it.each(['invoke', 'detect'] as const)('retains native preparation cause through capability %s and code-only completion', async kind => {
+        const logger = vi.fn();
+        const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger });
+        const details = { reason: 'member_setup_required', phase: 'native_execution_preparation',
+            outcome: 'not_applied', reasonCode: 'not_preauthorized' };
+        const service = createCapabilitiesService({ capabilities: [{
+            descriptor: { id: 'cli.fixture', kind: 'cli', methods: { probeModels: {} } },
+            effects: { detect: ['process'], invoke: { probeModels: ['process'] } },
+            detect: async () => ({}), invoke: async () => ({ ok: true, result: {} }),
+        }], checklists: { [CHECKLIST_IDS.NEW_SESSION]: [], [CHECKLIST_IDS.MACHINE_DETAILS]: [] },
+            buildContext: async () => ({ cliSnapshot: null }) });
+        const executeEffects = async () => { throw Object.assign(new PluginError({
+            code: 'agent_isolation_unavailable', message: 'never-log-private', retryable: false,
+            details: { ...details, environment: { TOKEN: 'never-log-secret' }, output: 'never-log-child-output' },
+        }), { rpcErrorCode: 'agent_isolation_unavailable' }); };
+        const method = kind === 'invoke' ? RPC_METHODS.CAPABILITIES_INVOKE : RPC_METHODS.CAPABILITIES_DETECT;
+        rpc.registerHandler(method, () => kind === 'invoke'
+            ? service.invoke({ id: 'cli.fixture', method: 'probeModels' }, { executeEffects })
+            : service.detect({ requests: [{ id: 'cli.fixture' }] }, { executeEffects }));
+        const response = await rpc.handleRequest({ method: `machine:${method}`, params: {} });
+        expect(response).toMatchObject(kind === 'invoke'
+            ? { ok: false, error: { code: 'agent_isolation_unavailable', details } }
+            : { errorCode: 'agent_isolation_unavailable', details });
+        expect(logger.mock.calls).toEqual([['[RPC] Request completed', expect.objectContaining({
+            outcomeCode: 'agent_isolation_unavailable', capabilityFailure: details,
+        })]]);
+        expect(JSON.stringify(logger.mock.calls)).not.toContain('never-log');
+        expect(JSON.stringify(response)).not.toContain('never-log');
+    });
+
     it.each(['plain', 'encrypted', 'local'] as const)('records the closed nested model probe outcome through %s dispatch', async transport => {
         const logger = vi.fn();
         const key = new Uint8Array(32).fill(7);
@@ -476,6 +532,7 @@ describe('RPC completion diagnostics', () => {
         expect(logger.mock.calls.filter(([message]) => message === '[RPC] Request completed')).toEqual([['[RPC] Request completed', {
             method: 'demo', requestId: 'rpc_12345678-1234-4123-8123-123456789abc', durationMs: 0,
             outcomeCode: RPC_ERROR_CODES.FORBIDDEN, callerClass: 'unadmitted', admissionPredicate: 'machine_installation',
+            errorCode: RPC_ERROR_CODES.FORBIDDEN, failureCause: { phase: 'rpc.authorize_request' }, effectAttempted: false,
             failedPhase: 'authorize_request', cancelled: false,
             phaseDurationsMs: { request_admission: 0, authorize_request: 0 },
         }]]);

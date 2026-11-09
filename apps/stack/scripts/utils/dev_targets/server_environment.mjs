@@ -2,7 +2,28 @@ import { resolveStackSocketAdapterScope } from '../server/server_env.mjs';
 
 import { resolveEffectiveDbProvider } from "../server/effective_db_provider.mjs";
 
+// Relay hints travel to consumers; the controller's host-lifecycle opt-out does
+// not grant a placed process authority to retire another host's shared relay.
+const IROH_RUNTIME_ENV_KEYS = ['HAPPIER_IROH_RELAY_POLICY', 'HAPPIER_IROH_RELAY_URLS'];
+
+// Only dev-target launchers consume this projection; shipped server/daemon
+// startup keeps its existing opt-in. Preserve an operator's explicit opt-out.
+export function projectDevTargetDiagnosticsEnvironment(env = {}) {
+  return { HAPPIER_WEB_LATENCY_TRACE: env.HAPPIER_WEB_LATENCY_TRACE ?? '1' };
+}
+
+// Include empty values: an opt-out withdraws the prior target's relay URL.
+export function projectRemoteIrohEnvironment(env = {}) {
+  if (!IROH_RUNTIME_ENV_KEYS.some(key => env[key] !== undefined)) return {};
+  return Object.fromEntries(IROH_RUNTIME_ENV_KEYS.map(key => {
+    const value = String(env[key] ?? '').trim();
+    if (/[\0\r\n]/u.test(value)) throw new Error('[dev-targets] invalid remote Iroh environment value');
+    return [key, value];
+  }));
+}
+
 const REMOTE_SERVER_LIGHT_SEMANTIC_ENV_KEYS = new Set([
+  ...IROH_RUNTIME_ENV_KEYS,
   // Preserve an explicit host allocator choice; never impose an arena limit here.
   'MALLOC_ARENA_MAX',
   'HAPPIER_SOCKET_ADAPTER_SCOPE',
@@ -33,7 +54,8 @@ const REMOTE_SERVER_LIGHT_SEMANTIC_ENV_PREFIXES = [
   // wherever it is placed, or mail-dependent sign-in silently stays off on a remote target.
   'HAPPIER_AUTH_EMAIL_',
 ];
-// Secrets never enter a remote command line or its persisted env file.
+// Inherited server settings never project secrets. Explicit operator stack-env
+// entries use the separate file-scoped projection at Stack initialization.
 const REMOTE_SERVER_LIGHT_NEVER_FORWARDED_ENV_KEYS = new Set(['HAPPIER_AUTH_EMAIL_SMTP_PASSWORD']);
 
 function isRemoteServerLightSemanticEnvKey(key) {
@@ -76,6 +98,7 @@ export function resolveRemoteServerRuntimeConfig({ serverComponentName, env = {}
     dbProvider: effectiveProvider.provider,
     environment: projectRemoteServerLightSemanticEnvironment({
       ...env,
+      ...projectDevTargetDiagnosticsEnvironment(env),
       HAPPIER_SOCKET_ADAPTER_SCOPE: resolveStackSocketAdapterScope(env),
     }),
   };

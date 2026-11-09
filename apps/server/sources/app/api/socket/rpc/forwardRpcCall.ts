@@ -55,6 +55,7 @@ import { classifySocketClusterFetchFailureReason, discoverRpcTargets, readMachin
 import { readSocketRoomSnapshot, subscribeToSocketRoomJoins } from '../socketRoomDiscovery';
 import { readVerifiedMachineSocketInstallationIdFromSocketData } from '../machineSocketInstallationProof';
 import { buildRpcMethodRoom } from './rpcMethodRoom';
+import { projectRpcFailureDiagnostic } from './rpcFailureDiagnostic';
 import type { RpcAckResponseEmitter, RpcForwardTargetGuard } from "./_types";
 
 export type RpcForwardResult =
@@ -140,13 +141,13 @@ function rpcLogCorrelation(params: Readonly<{
 export async function forwardRpcCall(params: Parameters<typeof executeRpcForwardCall>[0]): Promise<RpcForwardResult> {
     const result = await executeRpcForwardCall(params);
     const method = params.method.slice(params.method.indexOf(':') + 1);
-    if (!result.ok && 'errorCode' in result && result.errorCode
-        && (method === CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD || method === CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD)) {
-        log({ module: 'websocket-rpc', event: 'connected-account-rpc-failed',
-            code: result.errorCode,
-            phase: 'failureCause' in result ? result.failureCause?.phase ?? 'rpc.forward' : 'rpc.forward',
-            ...rpcLogCorrelation(params),
-        }, 'Connected Account RPC failed');
+    const failure = projectRpcFailureDiagnostic(params.method, result, 'rpc.forward');
+    if (failure) {
+        const connectedAccount = method === CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD || method === CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD;
+        log({ module: 'websocket-rpc', event: connectedAccount ? 'connected-account-rpc-failed' : 'rpc-failed',
+            ...failure, code: failure.errorCode, phase: failure.failureCause.phase,
+            ...(rpcLogCorrelation(params) ?? { requestId: randomUUID() }),
+        }, 'RPC failed');
     }
     return result;
 }

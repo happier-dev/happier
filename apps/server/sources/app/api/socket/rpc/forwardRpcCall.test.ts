@@ -29,9 +29,27 @@ vi.mock('@/utils/logging/log', () => ({ log: vi.fn() }));
 
 import { forwardRpcCall } from './forwardRpcCall';
 import { buildRpcMethodRoom } from './rpcMethodRoom';
+import { registerSocketRoomDiscovery } from '../socketRoomDiscovery';
 import { log } from '@/utils/logging/log';
 
 describe('forwardRpcCall', () => {
+    it('records an ordinary unavailable upload-init once with safe correlation and failure facts', async () => {
+        const io = new Server();
+        const method = `private-session:${RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT}`;
+        vi.mocked(log).mockClear();
+        const response = await forwardRpcCall({ io, targetUserId: 'user', method,
+            traceId: 'private-token/path', callParams: { token: 'never-log-secret' } });
+        expect(response).toMatchObject({ ok: false });
+        const failures = vi.mocked(log).mock.calls.filter(([metadata]) =>
+            typeof metadata === 'object' && metadata.event === 'rpc-failed');
+        expect(failures).toEqual([[expect.objectContaining({
+            method: RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT, errorCode: expect.any(String),
+            requestId: expect.stringMatching(/^sha256:/), failureCause: { phase: 'rpc.forward' },
+            effectAttempted: null,
+        }), expect.any(String)]]);
+        expect(JSON.stringify(failures)).not.toMatch(/private-token|private-session|never-log/);
+    });
+
     it.each([
         { status: 'received', cancellable: true }, { status: 'disconnected', cancellable: true },
         { status: 'received', cancellable: false }, { status: 'disconnected', cancellable: false },
@@ -77,11 +95,15 @@ describe('forwardRpcCall', () => {
                 rejectAcknowledgement(Object.assign(new Error('private-transport-detail'), { code: 'SOCKET_DISCONNECTED' }));
                 await expect(forwarded).resolves.toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN });
             }
-            expect(events()).toHaveLength(3);
+            expect(events()).toHaveLength(status === 'received' ? 3 : 4);
             expect(events()[2]).toMatchObject({ event: 'rpc-target-ack', requestId: 'relay-trace-1',
                 callerSocketId: 'browser-namespace', targetSocketId: 'daemon-namespace',
                 status: status === 'received' ? 'received' : 'failed',
                 ...(status === 'disconnected' ? { failure: 'disconnected' } : {}) });
+            if (status === 'disconnected') expect(events()[3]).toMatchObject({
+                event: 'rpc-failed', requestId: 'relay-trace-1', errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN,
+                effectAttempted: null,
+            });
             expect(JSON.stringify(events())).not.toContain('private-');
         } finally { acknowledge?.({}); io.sockets.sockets.clear(); }
     });
@@ -103,8 +125,12 @@ describe('forwardRpcCall', () => {
             ]);
             const phases = vi.mocked(log).mock.calls.map(([facts]) => facts)
                 .filter(facts => typeof facts === 'object' && facts !== null && 'event' in facts);
-            expect(phases).toEqual([expect.objectContaining({ event: 'rpc-target-lookup',
-                requestId: 'relay-trace-2', status: 'not-available', discoveryFailed: true })]);
+            expect(phases).toEqual([
+                expect.objectContaining({ event: 'rpc-target-lookup',
+                    requestId: 'relay-trace-2', status: 'not-available', discoveryFailed: true }),
+                expect.objectContaining({ event: 'rpc-failed', requestId: 'relay-trace-2',
+                    errorCode: 'RPC_TRANSPORT_UNAVAILABLE', failureCause: { phase: 'rpc.discovery.target' }, effectAttempted: null }),
+            ]);
         } finally { vi.restoreAllMocks(); }
     });
 
@@ -112,12 +138,14 @@ describe('forwardRpcCall', () => {
         vi.useFakeTimers();
         const io = new Server();
         const emitWithAck = vi.fn().mockResolvedValue('recovered-result');
+        registerSocketRoomDiscovery(io);
         const target = { id: 'remote-app', data: { clientType: 'user-scoped' }, timeout: () => ({ emitWithAck }) };
         const fetchSockets = vi.fn().mockRejectedValueOnce(new Error('cluster unavailable')).mockResolvedValue([target]);
         vi.spyOn(io, 'in').mockReturnValue({ fetchSockets, timeout: () => ({ fetchSockets }) } as unknown as ReturnType<Server['in']>);
         try {
             const result = forwardRpcCall({ io, targetUserId: 'user-1', method: 'machine-1:read', callParams: {} });
-            await vi.runAllTimersAsync();
+            await vi.advanceTimersByTimeAsync(0);
+            io.sockets.adapter.emit('join-room', buildRpcMethodRoom({ userId: 'user-1', method: 'machine-1:read' }), target.id);
             await expect(result).resolves.toMatchObject({ ok: true, result: 'recovered-result' });
             expect(emitWithAck).toHaveBeenCalledOnce();
         } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
@@ -159,7 +187,7 @@ describe('forwardRpcCall', () => {
             Object.assign(target.data, { clientType: 'machine-scoped', machineId: 'revoked-machine' });
             machineFindFirstMock.mockResolvedValue({ revokedAt: new Date(), replacedByMachineId: null });
             expect(await forwardRpcCall({ io, targetUserId: 'user-1', method, callParams: {} }))
-                .toMatchObject({ ok: false, errorCode: 'RPC_TRANSPORT_UNAVAILABLE' });
+                .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
             expect(emitWithAck).toHaveBeenCalledOnce();
         } finally { io.sockets.sockets.clear(); vi.restoreAllMocks(); }
     });

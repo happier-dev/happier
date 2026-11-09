@@ -1801,9 +1801,6 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     : readStructuredMessageActionRoutingV1(machineRpcMethod, callParams);
                 // The encrypted body remains opaque. Its receiver binds these admitted
                 // selectors to the opened invocation before any handler can run.
-                if (typeof callParams !== 'string' && parsed?.success && !isDeepStrictEqual(parsed.data, projected)) {
-                    callback?.(buildForbiddenRpcResponse()); return;
-                }
                 structuredMessageRouting = (typeof callParams === 'string'
                     ? parsed?.success ? parsed.data : null : projected) ?? undefined;
                 // Raw Machine Actions enter through action.invoke's Manage policy.

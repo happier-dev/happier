@@ -18,8 +18,9 @@ import { isCliTestBuildSkipped } from '../../../../cli/scripts/vitestPreparation
 import { readVitestSourcePreparation } from './vitest_config_preparation.mjs';
 import { sourceWebExportDiagnosticEnv } from '../../build/sourceWebExportArgs.mjs';
 import { resolveExpoExportWorkers } from '../expo/exportWorkers.mjs';
+import { parseEnvToObject } from '../env/dotenv.mjs';
 import { buildRuntimeSnapshotObservationExpression } from './runtime_snapshot_observation.mjs';
-import { resolveRemoteServerRuntimeConfig } from './server_environment.mjs';
+import { resolveRemoteServerRuntimeConfig, projectRemoteIrohEnvironment, projectDevTargetDiagnosticsEnvironment } from './server_environment.mjs';
 export { resolveRemoteServerRuntimeConfig } from './server_environment.mjs';
 import { resolveRemoteValidationPlacementClass } from './validation_preparation_policy.mjs';
 import { readShellCommandPrefix, workspaceBuildCommands, workspaceBuildSequence } from './shell_command_sequence.mjs';
@@ -74,6 +75,11 @@ export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
   compilerNativeTestFiles: COMPILER_NATIVE_TEST_FILES,
   compilerTestSuites: COMPILER_TEST_SUITES,
   sourceConditionNativeTestPaths: Object.freeze([
+    // Source-runtime producer fixtures replace OS watchers/compiler/SSH boundaries.
+    'apps/stack/scripts/utils/dev_targets/source_runtime_producer.test.mjs',
+    'apps/stack/scripts/build/source_runtime_producer.test.mjs',
+    'apps/stack/scripts/build/build_source_web_ui.test.mjs',
+    'apps/stack/scripts/runtime/shared/source_reload_refusal.test.mjs',
     // Patch recovery exercises a scratch pnpm installation through source owners.
     'apps/stack/scripts/utils/proc/dependency_refresh.patch_relock.test.mjs',
     'apps/stack/scripts/utils/proc/dependency_refresh.remote.test.mjs',
@@ -372,12 +378,16 @@ const COMMAND_RULES = [
   // first makes ordinary foreign-lease contention an admission-order refusal.
   // The worker's static imports consume emitted workspace packages before
   // those producers run, so prepare that closure through the runtime owner.
-  { when: { command: ['node', 'nodejs'], nativeTest: ['0'], entryRepositoryPath: ['apps/stack/scripts/runtime/launch/prepareSourceRuntimeReload.mjs'] },
+  { when: { command: ['node', 'nodejs'], nativeTest: ['0'], entryRepositoryPath: [
+    'apps/stack/scripts/runtime/launch/prepareSourceRuntimeReload.mjs',
+    'apps/stack/scripts/utils/dev_targets/source_runtime_producer.mjs',
+  ] },
     set: { ...validation, kind: 'runtime', componentOverride: 'apps/stack', heavyClass: 'source-bundle', selfPublisher: '1' } },
   // Explicit source workers preload the canonical resolver before linking
   // their static graph. They must not prepare/read a shared emitted closure.
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], sourceCondition: ['1'],
-    entryRepositoryPath: ['apps/stack/scripts/runtime/launch/prepareSourceRuntimeReload.mjs'] },
+    entryRepositoryPath: ['apps/stack/scripts/runtime/launch/prepareSourceRuntimeReload.mjs',
+      'apps/stack/scripts/utils/dev_targets/source_runtime_producer.mjs'] },
     set: { kind: 'source-test' } },
   // Content checking prepares Protocol's reference renderer through the
   // finite workspace publisher. Fit that producer's existing envelope for
@@ -1871,6 +1881,9 @@ export function buildRemoteExecCommand(
   if (target.platform !== 'windows' && (preparation || admissionClass)) {
     const repoDir = requireRemoteRelativeWorkingDirectory(target, '.');
     const policy = commandPolicy ?? resolveRemoteCommandPolicy(args, { cwd: workingDirectory, repoRoot: repoDir, env: environment });
+    if (policy.admissionScript && ['sh', 'bash'].includes(commandBasename(args[0])) && args.length === 3) {
+      args = [args[0], args[1], policy.admissionScript];
+    }
     const body = ['set -euo pipefail', `cd -- ${posixQuote(repoDir)}`];
     const defaultBuildMode = environment.HAPPIER_WORKSPACE_BUILD_MODE ?? preparation?.defaultBuildMode
       ?? policy.preparationBuildMode;
@@ -1879,6 +1892,8 @@ export function buildRemoteExecCommand(
     if (preparation?.bootstrap) {
       const prefix = `${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache/pnpm-toolchain`;
       body.push(`export npm_config_prefix=${posixQuote(prefix)}`, `export PATH=${posixQuote(`${prefix}/bin`)}:"$PATH"`);
+      const diskOwner = posix.join(target.executorRepoDir ?? repoDir, 'apps/stack/scripts/utils/dev_targets/worker_disk_budget.mjs');
+      body.push(`${cacheEnv} node ${posixQuote(diskOwner)} --admit --cold-dependencies --class=dependency-install ${posixQuote(`--repo=${repoDir}`)} >/dev/null`);
       body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs --execution-placement=remote ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--component-relative-dir=${preparation.bootstrapComponentRelativeDir ?? '.'}`)} ${posixQuote(`--default-build-mode=${defaultBuildMode}`)}`);
     }
     if (preparation?.componentRelativeDir != null) {
@@ -1892,7 +1907,7 @@ export function buildRemoteExecCommand(
       // reserve the payload envelope once preparation has released its locks;
       // dist compilers acquire their own canonical admission before their lock.
       // Resolve physical installed-tree identity on the executing worker.
-      body.push(`workspace_locks=$(node ${posixQuote(`${repoDir}/apps/stack/scripts/utils/dev_targets/remote_commands.mjs`)} --workspace-locks ${[repoDir, policy.workspaceLock, policy.bootstrap, policy.validation].map(posixQuote).join(' ')})`);
+      body.push(`workspace_locks=$(node ${posixQuote(`${repoDir}/apps/stack/scripts/utils/dev_targets/remote_commands.mjs`)} --workspace-locks ${[repoDir, policy.workspaceLock, policy.bootstrap, policy.validation, policy.commandClass].map(posixQuote).join(' ')})`);
       const admittedArgs = ['env', `HAPPIER_STACK_PM_CACHE_BASE_DIR=${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`, `${repoDir}/apps/stack/bin/hstack-exec`, '--heavyweight-admission',
         `--class=${admissionClass}`, `--machine=${target.name}`, `--failure-id=${normalizedExecutionId}`,
         ...(admissionMode === 'try' ? ['--no-wait'] : [])];
@@ -1985,7 +2000,7 @@ export function buildRemoteCancelCommand(target, { executionId } = {}) {
   return wrapRemoteScript(target, `bash ${posixQuote(custody)} cancel ${posixQuote(pidFile)} ${posixQuote(normalizedExecutionId)}`);
 }
 
-function wrapRemoteScript(target, script) {
+export function wrapRemoteScript(target, script) {
   const wrappedScript = prependRemotePath(target, script);
   if (target.platform === 'windows') {
     return buildRemotePowerShellCommand(wrappedScript);
@@ -2100,12 +2115,24 @@ export function buildRemoteDoctorCommand(target) {
   );
 }
 
-export function buildRemoteInstallCredentialCommand(target, { stagedPath, finalPath }) {
+export function buildRemoteInstallCredentialCommand(target, { stagedPath, finalPath, clearAll = false }) {
   // Preserve target enrollment within an Account, but carry an explicit
   // controller re-login across Accounts. CLI auth owns selecting the Machine
   // for the new token subject; do not copy or rewrite its settings here.
   // Inline the existing decoder: credential seeding can precede mirror refresh.
-  const expression = [
+  const expression = stagedPath === null ? [
+    "const fs = require('node:fs'), path = require('node:path');",
+    `const finalPath = ${JSON.stringify(finalPath)};`,
+    'const home = path.dirname(path.dirname(path.dirname(finalPath)));',
+    "fs.rmSync(finalPath, { force: true });",
+    "fs.rmSync(path.join(home, 'access.key'), { force: true });",
+    ...(clearAll ? [
+      "const servers = path.join(home, 'servers');",
+      "if (fs.existsSync(servers)) for (const entry of fs.readdirSync(servers, { withFileTypes: true })) {",
+      "  if (entry.isDirectory()) fs.rmSync(path.join(servers, entry.name, 'access.key'), { force: true });",
+      '}',
+    ] : []),
+  ].join('\n') : [
     "const fs = require('node:fs'), path = require('node:path');",
     `const decodeJwtPayloadUnsafe = ${decodeJwtPayloadUnsafe.toString()};`,
     `const stagedPath = ${JSON.stringify(stagedPath)}, finalPath = ${JSON.stringify(finalPath)};`,
@@ -2243,7 +2270,7 @@ function resolveRemoteTargetStackName(target, { stackName } = {}) {
   return `dev-target-${targetToken}-${fingerprint}`;
 }
 
-function usesRetainedRemoteStackState(runtimeMode) {
+export function usesRetainedRemoteStackState(runtimeMode) {
   return runtimeMode === 'controlled' || runtimeMode === 'source-snapshot';
 }
 
@@ -2294,10 +2321,9 @@ export function buildRemoteStackRetirementProbeCommand(target, { stackName, runt
     "    const bootedAt = Date.now() - require('node:os').uptime() * 1000;",
     `    if (!(fs.statSync(${JSON.stringify(runtimeStatePath)}).mtimeMs < bootedAt)) process.exit(1);`,
     '  }',
-    // A preserved daemon does not complete an interrupted full Stop. Let the
-    // native Stop owner settle its request before the next startup consumes it.
-    '  if (state?.stopRequest) process.exit(1);',
-    `  if (await hasTrustedStackRuntimeLifecycle(state, ${JSON.stringify({ stackName: remoteStackName, envPath: stackEnvPath, cliHomeDir })}, ${JSON.stringify({ preserveDaemon: preserveDaemon === true })})) process.exit(1);`,
+    // An interrupted full Stop must still account for a preserved daemon, but
+    // its request alone cannot keep an already-retired runtime alive forever.
+    `  if (await hasTrustedStackRuntimeLifecycle(state, ${JSON.stringify({ stackName: remoteStackName, envPath: stackEnvPath, cliHomeDir })}, { preserveDaemon: ${preserveDaemon === true} && !state?.stopRequest })) process.exit(1);`,
     '}',
     `const base = ${JSON.stringify(stackBaseDir)};`,
     "for (const [kind, file] of [['expo-dev','expo.state.json'],['mobile','expo.state.json'],['ui-dev','ui.state.json'],['mobile-dev','mobile.state.json']]) {",
@@ -2338,6 +2364,26 @@ export function buildRemoteRuntimeSnapshotImportCommand(target, { stackName, arc
   return wrapRemoteScript(target, target.platform === 'windows'
     ? `$ErrorActionPreference = 'Stop'; Set-Location -LiteralPath ${quote(target.repoDir)}; node ${args.map(quote).join(' ')}; exit $LASTEXITCODE`
     : `set -euo pipefail; cd -- ${quote(target.repoDir)}; exec node ${args.map(quote).join(' ')}`);
+}
+
+export function buildRemoteStackDatabaseIdentityCommand(target, { stackName, configuredOnly = true }) {
+  const paths = resolveRemoteStackStatePaths(target, { stackName, runtimeMode: 'source-snapshot' });
+  const expression = configuredOnly ? [
+    '(async () => {',
+    "const { readFile } = require('node:fs/promises'); const { pathToFileURL } = require('node:url');",
+    `const { parseEnvToObject } = await import(pathToFileURL(${JSON.stringify(target.repoDir + '/apps/stack/scripts/utils/env/dotenv.mjs')}).href);`,
+    `const { readLocalStackDatabaseIdentity } = await import(pathToFileURL(${JSON.stringify(target.repoDir + '/apps/stack/scripts/stack/stack_database_identity.mjs')}).href);`,
+    `const env = parseEnvToObject(await readFile(${JSON.stringify(paths.stackEnvPath)}, 'utf8'));`,
+    `const identity = await readLocalStackDatabaseIdentity({ env, stackBaseDir: ${JSON.stringify(paths.stackBaseDir)} });`,
+    'process.stdout.write(JSON.stringify(identity));',
+    '})().catch(() => { process.exitCode = 1; });',
+  ].join('\n') : [
+    'function fail() { process.exitCode = 1; }',
+    buildRuntimeSnapshotObservationExpression({ target, paths, services: { server: true }, databaseOnly: true }),
+  ].join('\n');
+  const quote = target.platform === 'windows' ? powershellQuote : posixQuote;
+  return wrapRemoteScript(target, target.platform === 'windows'
+    ? `node -e ${quote(expression)}; exit $LASTEXITCODE` : `exec node -e ${quote(expression)}`);
 }
 
 export function buildRemoteRuntimeSnapshotProbeCommand(target, { stackName, snapshotId, runtimeMode = 'controlled', services = {}, sourceUi = 'export', includeDaemonServerUrl = false, observeLive = false }) {
@@ -2387,6 +2433,135 @@ export function buildRemoteRuntimeSnapshotProbeCommand(target, { stackName, snap
   ].join('');
   const quote = target.platform === 'windows' ? powershellQuote : posixQuote;
   return wrapRemoteScript(target, target.platform === 'windows' ? `node -e ${quote(expression)}; exit $LASTEXITCODE` : `exec node -e ${quote(expression)}`);
+}
+
+// These belong to the target's Stack wrapper/initializer even when the current
+// service selection does not emit them. Other explicit stack env entries are
+// operator configuration, rather than inherited controller process state.
+const REMOTE_STACK_PLACEMENT_ENV_KEYS = new Set([
+  'PATH', 'HOME', 'USERPROFILE', 'PWD', 'OLDPWD',
+  'HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID',
+  'HAPPIER_STACK_HOME_DIR', 'HAPPIER_STACK_STORAGE_DIR', 'HAPPIER_STACK_WORKSPACE_DIR',
+  'HAPPIER_STACK_RUNTIME_DIR', 'HAPPIER_STACK_RUNTIME_STATE_PATH', 'HAPPIER_STACK_ENV_FILE',
+  'HAPPIER_STACK_STACK', 'HAPPIER_STACK_REPO_DIR', 'HAPPIER_STACK_CLI_HOME_DIR',
+  'HAPPIER_STACK_PM_CACHE_BASE_DIR', 'HAPPIER_STACK_INVOKED_CWD', 'HAPPIER_STACK_UI_BUILD_DIR',
+  'HAPPIER_STACK_LOG_TEE_DIR', 'HAPPIER_STACK_RUNNER_LOG_PATH', 'HAPPIER_STACK_CLI_ROOT_DISABLE',
+  'HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES', 'HAPPIER_STACK_UPDATE_CHECK',
+  'HAPPIER_STACK_SERVER_COMPONENT', 'HAPPIER_STACK_SERVER_PORT', 'HAPPIER_DB_PROVIDER',
+  'HAPPIER_SERVER_LIGHT_DATA_DIR', 'HAPPIER_SERVER_LIGHT_FILES_DIR', 'HAPPIER_SERVER_LIGHT_DB_DIR',
+  'HAPPIER_SERVER_URL', 'HAPPIER_LOCAL_SERVER_URL', 'HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_CANONICAL_SERVER_URL',
+  'HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH', 'HAPPIER_DEV_TARGET_EXECUTION',
+  'HAPPIER_STACK_EXPO_DEV_PORT', 'HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY', 'HAPPIER_STACK_EXPO_HOST',
+  'HAPPIER_STACK_EXPO_PUBLIC_PORT', 'EXPO_PACKAGER_PROXY_URL', 'HAPPIER_STACK_EXPO_SOURCE_STACK',
+  // This is an invocation-only diagnostic, not retained Stack configuration.
+  'HAPPIER_STACK_SERVER_CPU_PROF',
+]);
+
+// stack new creates these worker-local defaults. Storage, identity, auth-seed
+// ownership and managed-infrastructure credentials must survive projection;
+// arbitrary worker hand edits are not another operator configuration source.
+const REMOTE_STACK_RETAINED_ENV_KEYS = [
+  ...REMOTE_STACK_PLACEMENT_ENV_KEYS,
+  'HAPPIER_STACK_STACK_REMOTE', 'HAPPIER_STACK_AUTO_AUTH_SEED', 'HAPPIER_STACK_AUTH_SEED_FROM',
+  'HAPPIER_STACK_QA_DAEMON_TARGETS', 'HAPPIER_STACK_QA_BROWSER_TARGETS', 'HAPPIER_STACK_RUNTIME_MODE',
+  'HAPPIER_STACK_MANAGED_INFRA', 'HAPPIER_STACK_PG_USER', 'HAPPIER_STACK_PG_PASSWORD', 'HAPPIER_STACK_PG_DATABASE',
+  'HAPPIER_STACK_HANDY_MASTER_SECRET_FILE', 'HAPPIER_STACK_SERVER_BACKEND_PORT',
+  'HAPPIER_STACK_PG_PORT', 'HAPPIER_STACK_REDIS_PORT', 'HAPPIER_STACK_MINIO_PORT', 'HAPPIER_STACK_MINIO_CONSOLE_PORT',
+  'DATABASE_URL', 'REDIS_URL', 'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'S3_BUCKET',
+  'S3_HOST', 'S3_PORT', 'S3_USE_SSL', 'S3_PUBLIC_URL',
+];
+
+function readRemoteOperatorStackEnvironment(target, env, stackEnvLines) {
+  const envPath = env.HAPPIER_STACK_ENV_FILE;
+  if (!envPath) return [];
+  let stackEnv;
+  try { stackEnv = parseEnvToObject(readFileSync(envPath, 'utf8')); }
+  catch {
+    throw Object.assign(new Error('[dev-targets] Cannot read the controller stack env file; restore it before starting placed services.'),
+      { code: 'remote_stack_env_unreadable', retryable: false, phase: 'environment' });
+  }
+  const normalizeName = key => target.platform === 'windows' ? key.toUpperCase() : key;
+  const projectedKeys = new Set(stackEnvLines.map(line => normalizeName(line.slice(0, line.indexOf('=')))));
+  return Object.entries(stackEnv).map(([key, value]) => [normalizeName(key), value]).filter(([key, value]) => {
+    // The server-host preparation owner handles lifecycle opt-out. A placed
+    // consumer receives relay facts, never authority to stop its host relay.
+    if (key === 'HAPPIER_STACK_IROH_RELAY') return false;
+    if (REMOTE_STACK_PLACEMENT_ENV_KEYS.has(key) || projectedKeys.has(key)) return false;
+    // SQLite names retained storage on one host. Its initializer owns that
+    // URL; projecting the controller's file URL would relocate the database.
+    if (key === 'DATABASE_URL' && value.trim().startsWith('file:')) return false;
+    if (/[\0]/.test(key) || /[\0]/.test(value)) {
+      throw Object.assign(new Error('[dev-targets] Invalid operator stack env entry; environment names and values cannot contain NUL.'),
+        { code: 'remote_stack_env_invalid', retryable: false, phase: 'environment' });
+    }
+    return true;
+  });
+}
+
+const REMOTE_STACK_ENV_PATH_RECOVERY = 'Provision a readable file or directory at the configured path on this target, then update the controller stack env if its target path differs and start again. Files are not copied automatically.';
+
+export function parseRemoteStackEnvironmentRefusal(line) {
+  if (!line.startsWith('{"ok":false,"error":{"code":"remote_stack_env_path_unavailable",')) return null;
+  let result;
+  try { result = JSON.parse(line); } catch { return null; }
+  const error = result?.error;
+  if (result?.ok !== false || error?.code !== 'remote_stack_env_path_unavailable'
+    || error.phase !== 'environment' || error.retryable !== false
+    || typeof error.variable !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(error.variable)) return null;
+  // Consume only the closed reason and variable name, never target-supplied
+  // prose or payloads that might include an operator's environment value.
+  const missingManagedNode = error.variable === 'HAPPIER_MANAGED_NODE_BIN' && error.reason === 'not_found'
+    && typeof error.path === 'string' && error.path.length > 0;
+  const detail = missingManagedNode
+    ? ` Configured path ${JSON.stringify(error.path)} does not exist. Remove or correct HAPPIER_MANAGED_NODE_BIN in the controller stack env, then start again.`
+    : ` ${REMOTE_STACK_ENV_PATH_RECOVERY}`;
+  return Object.assign(new Error(`[dev-targets] ${error.code}: ${error.variable}.${detail}`), {
+    code: error.code, phase: 'environment', retryable: false, variable: error.variable,
+    ...(missingManagedNode ? { path: error.path, reason: error.reason } : {}),
+    recovery: REMOTE_STACK_ENV_PATH_RECOVERY,
+  });
+}
+
+function prepareRemoteOperatorStackEnvironment(target, entries) {
+  const fileVariables = new Set(['NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'GIT_SSL_CAINFO',
+    'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE', 'HAPPIER_MANAGED_NODE_BIN']);
+  const configured = new Map(entries);
+  const targetPath = target.platform === 'windows' ? win32 : posix;
+  const delimiter = target.platform === 'windows' ? ';' : ':';
+  const paths = [];
+  const environment = entries.map(([variable, value]) => {
+    const index = /^GIT_CONFIG_VALUE_(\d+)$/.exec(variable)?.[1];
+    const gitSetting = index === undefined ? '' : configured.get(`GIT_CONFIG_KEY_${index}`) ?? '';
+    const file = fileVariables.has(variable) || /^http(?:\..+)?\.sslCAInfo$/i.test(gitSetting);
+    const directory = variable === 'NODE_PATH' || variable === 'GIT_SSL_CAPATH' || /^http(?:\..+)?\.sslCAPath$/i.test(gitSetting);
+    // An arbitrary value starting with '/' may be an HTTP prefix or another
+    // scalar. Only settings with file/directory semantics are interpreted here.
+    if (!value || (!file && !directory)) return [variable, value];
+    const values = variable === 'NODE_PATH' ? value.split(delimiter).filter(Boolean) : [value];
+    const resolved = values.map(value => targetPath.resolve(target.repoDir, value));
+    paths.push(...resolved.map(path => ({ variable, path, file })));
+    return [variable, resolved.join(variable === 'NODE_PATH' ? delimiter : '')];
+  });
+  if (!paths.length) return { environment, pathCheck: [] };
+  const expression = [
+    "const fs = require('node:fs');",
+    `for (const entry of ${JSON.stringify(paths)}) {`,
+    '  try {',
+    '    fs.accessSync(entry.path, fs.constants.R_OK);',
+    // Git's explicit /dev/null configuration is a readable file input too.
+    '    const directory = fs.statSync(entry.path).isDirectory();',
+    '    if (entry.file ? directory : !directory) throw new Error();',
+    '  } catch (error) {',
+    "    const detail = entry.variable === 'HAPPIER_MANAGED_NODE_BIN' && error.code === 'ENOENT' ? { path: entry.path, reason: 'not_found' } : {};",
+    `    process.stderr.write(JSON.stringify({ ok: false, error: { code: 'remote_stack_env_path_unavailable', phase: 'environment', retryable: false, variable: entry.variable, ...detail, recovery: ${JSON.stringify(REMOTE_STACK_ENV_PATH_RECOVERY)} } }) + '\\n');`,
+    '    process.exit(1);',
+    '  }',
+    '}',
+  ].join('\n');
+  const pathCheck = target.platform === 'windows'
+    ? [`node -e ${powershellNativeArgument(expression)}`, 'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }']
+    : [`node -e ${posixQuote(expression)}`];
+  return { environment, pathCheck };
 }
 
 function resolveRemoteStackStartInvocation(target, {
@@ -2460,11 +2635,13 @@ function resolveRemoteStackStartInvocation(target, {
   } = resolveRemoteStackStatePaths(target, { stackName, runtimeMode });
   const stackServerComponent = serverRuntimeConfig?.serverComponentName ?? 'happier-server-light';
   const stackDbProvider = serverRuntimeConfig?.dbProvider ?? 'sqlite';
-  const serviceEnvironment = { ...(serverRuntimeConfig?.environment ?? {}) };
+  const serviceEnvironment = { ...(serverRuntimeConfig?.environment ?? {}), ...projectRemoteIrohEnvironment(env) };
+  if (runtimeMode === 'source-snapshot' && env.HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK) {
+    serviceEnvironment.HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK = env.HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK;
+  }
   if (runtimeMode === 'source-snapshot' && normalizedServices.server) Object.assign(serviceEnvironment, sourceWebExportDiagnosticEnv(env));
-  // Co-located services already share the server's projected setting. A daemon
-  // placed separately consumes the controller's opt-in, including its withdrawal.
-  if (normalizedServices.daemon) serviceEnvironment.HAPPIER_WEB_LATENCY_TRACE ??= env.HAPPIER_WEB_LATENCY_TRACE === '1' ? '1' : '';
+  // Co-located and separately placed services consume the same dev-only default.
+  if (normalizedServices.daemon) serviceEnvironment.HAPPIER_WEB_LATENCY_TRACE ??= projectDevTargetDiagnosticsEnvironment(env).HAPPIER_WEB_LATENCY_TRACE;
   // The operator's source-built guest CLI (a path on this target) reaches the
   // daemon's managed installer, which reads it before any release download.
   if (normalizedServices.daemon) Object.assign(serviceEnvironment, projectRemoteGuestCliPayloadEnvironment(env));
@@ -2495,6 +2672,9 @@ function resolveRemoteStackStartInvocation(target, {
     ...(stablePublicExpoPort ? [`HAPPIER_STACK_EXPO_PUBLIC_PORT=${stablePublicExpoPort}`] : []),
     ...(expoPublicUrl && !resolveExpoPublicUrlOnTarget ? [`EXPO_PACKAGER_PROXY_URL=${expoPublicUrl}`] : []),
   ];
+  const { environment: operatorEnvironment, pathCheck: operatorPathCheck } = prepareRemoteOperatorStackEnvironment(
+    target, readRemoteOperatorStackEnvironment(target, env, stackEnvLines));
+  stackEnvLines.push(...operatorEnvironment.map(([key, value]) => `${key}=${value}`));
   const devArgs = usesRetainedRemoteStackState(runtimeMode)
     ? [runtimeMode === 'source-snapshot' ? '--runtime=source' : '--runtime', '--no-dev-targets', '--no-browser',
       // Source startup defaults to borrowed Expo; carry the explicit export
@@ -2516,6 +2696,8 @@ function resolveRemoteStackStartInvocation(target, {
     publicServerUrl: stablePublicServerUrl,
     startMobile,
   });
+  // Per-start diagnostics travel as arguments, never retained Stack environment.
+  if (normalizedServices.server && env.HAPPIER_STACK_SERVER_CPU_PROF === '1') devArgs.push('--server-cpu-prof');
   return {
     activeServerId,
     attended: attended === true,
@@ -2526,6 +2708,8 @@ function resolveRemoteStackStartInvocation(target, {
     devArgs,
     stackBaseDir,
     stackEnvLines,
+    projectOperatorEnvironment: Boolean(env.HAPPIER_STACK_ENV_FILE),
+    operatorPathCheck,
     stackEnvPath,
     stackServerComponent,
     stackDbProvider,
@@ -2581,26 +2765,46 @@ function buildPosixRemoteStackPrelude(target, invocation) {
 function buildWindowsRemoteStackInitializationCommands(target, invocation) {
   const launcher = remoteStackLauncher(invocation);
   return [
+    ...invocation.operatorPathCheck,
     `${launcher} stack new ${powershellQuote(invocation.stackName)} --server=${powershellQuote(invocation.stackServerComponent)} --db-provider=${powershellQuote(invocation.stackDbProvider)} --repo=${powershellQuote(target.repoDir)} --no-copy-auth --non-interactive --if-missing`,
-    `${launcher} stack env ${powershellQuote(invocation.stackName)} set ${invocation.stackEnvLines.map(powershellQuote).join(' ')}`,
+    ...buildRemoteStackEnvironmentProjection(target, invocation),
   ];
 }
 
 function buildPosixRemoteStackInitializationCommands(target, invocation) {
   const launcher = remoteStackLauncher(invocation);
   return [
+    ...invocation.operatorPathCheck,
     `${launcher} stack new ${posixQuote(invocation.stackName)} --server=${posixQuote(invocation.stackServerComponent)} --db-provider=${posixQuote(invocation.stackDbProvider)} --repo=${posixQuote(target.repoDir)} --no-copy-auth --non-interactive --if-missing`,
-    `${launcher} stack env ${posixQuote(invocation.stackName)} set ${invocation.stackEnvLines.map(posixQuote).join(' ')}`,
+    ...buildRemoteStackEnvironmentProjection(target, invocation),
   ];
 }
 
-function remoteStackLauncher(invocation) {
+function buildRemoteStackEnvironmentProjection(target, invocation) {
+  const windows = target.platform === 'windows';
+  if (!invocation.projectOperatorEnvironment) {
+    const quote = windows ? powershellQuote : posixQuote;
+    return [`${remoteStackLauncher(invocation)} stack env ${quote(invocation.stackName)} set ${invocation.stackEnvLines.map(quote).join(' ')}`];
+  }
+  const expression = [
+    "import('./apps/stack/scripts/utils/env/env_file.mjs').then(async ({ ensureEnvFileMutated }) => {",
+    `  const updates = ${JSON.stringify(invocation.stackEnvLines)}.map(entry => {`,
+    "    const equals = entry.indexOf('='); return { key: entry.slice(0, equals), value: entry.slice(equals + 1) };",
+    '  });',
+    `  await ensureEnvFileMutated({ envPath: ${JSON.stringify(invocation.stackEnvPath)}, updates, retainKeys: ${JSON.stringify(REMOTE_STACK_RETAINED_ENV_KEYS)} });`,
+    '}).catch(() => { process.stderr.write("[dev-targets] Stack environment projection failed.\\n"); process.exitCode = 1; });',
+  ].join('\n');
+  return windows ? [`node -e ${powershellNativeArgument(expression)}`, 'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }']
+    : [`node -e ${posixQuote(expression)}`];
+}
+
+function remoteStackLauncher(invocation, quiet = false) {
   // Source QA executes the existing repository entry using the target toolchain
   // PATH selected at provisioning. Runtime children still use the managed JS
   // launch owner; no package-manager wrapper or publication belongs here.
   return invocation.runtimeMode === 'source-snapshot'
     ? 'node ./apps/stack/bin/hstack.mjs'
-    : 'pnpm --filter @happier-dev/stack run';
+    : `pnpm ${quiet ? '--silent ' : ''}--filter @happier-dev/stack run`;
 }
 
 export function buildRemoteStackStopCommand(target, options) {
@@ -2620,7 +2824,7 @@ export function buildRemoteStackStopCommand(target, options) {
         ...buildWindowsRemoteStackPrelude(target, invocation),
         "$env:HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES = '0'",
         "$env:HAPPIER_STACK_UPDATE_CHECK = '0'",
-        `${remoteStackLauncher(invocation)} stack stop ${powershellQuote(invocation.stackName)} --yes --no-docker${preserveDaemonArg}`,
+        `${remoteStackLauncher(invocation, true)} stack stop ${powershellQuote(invocation.stackName)} --yes --no-docker${preserveDaemonArg} --json`,
         'exit $LASTEXITCODE',
       ].join('; '),
     );
@@ -2631,7 +2835,7 @@ export function buildRemoteStackStopCommand(target, options) {
       ...buildPosixRemoteStackPrelude(target, invocation),
       'export HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES=0',
       'export HAPPIER_STACK_UPDATE_CHECK=0',
-      `exec ${remoteStackLauncher(invocation)} stack stop ${posixQuote(invocation.stackName)} --yes --no-docker${preserveDaemonArg}`,
+      `exec ${remoteStackLauncher(invocation, true)} stack stop ${posixQuote(invocation.stackName)} --yes --no-docker${preserveDaemonArg} --json`,
     ].join('; '),
   );
 }
@@ -2647,7 +2851,9 @@ export function buildRemoteStackCommand(target, options) {
           command,
           'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
         ]),
-        `${remoteStackLauncher(invocation)} stack ${usesRetainedRemoteStackState(invocation.runtimeMode) ? 'start' : 'dev'} ${powershellQuote(invocation.stackName)} ${invocation.devArgs.map(formatPowerShellDevArg).join(' ')}`,
+        `${remoteStackLauncher(invocation)} stack ${usesRetainedRemoteStackState(invocation.runtimeMode) ? 'start' : 'dev'} ${powershellQuote(invocation.stackName)} --background ${invocation.devArgs.map(formatPowerShellDevArg).join(' ')}`,
+        'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
+        remoteStackObserverInvocation(target, invocation),
         'exit $LASTEXITCODE',
       ].join('; '),
     );
@@ -2657,9 +2863,22 @@ export function buildRemoteStackCommand(target, options) {
     [
       ...buildPosixRemoteStackPrelude(target, invocation),
       ...buildPosixRemoteStackInitializationCommands(target, invocation),
-      `exec ${remoteStackLauncher(invocation)} stack ${usesRetainedRemoteStackState(invocation.runtimeMode) ? 'start' : 'dev'} ${posixQuote(invocation.stackName)} ${invocation.devArgs.map(formatPosixDevArg).join(' ')}`,
+      `${remoteStackLauncher(invocation)} stack ${usesRetainedRemoteStackState(invocation.runtimeMode) ? 'start' : 'dev'} ${posixQuote(invocation.stackName)} --background ${invocation.devArgs.map(formatPosixDevArg).join(' ')}`,
+      `exec ${remoteStackObserverInvocation(target, invocation)}`,
     ].join('; '),
   );
+}
+
+function remoteStackObserverInvocation(target, paths) {
+  const quote = target.platform === 'windows' ? powershellQuote : posixQuote;
+  return `node ./apps/stack/scripts/utils/dev_targets/runtime_observer.mjs ${quote(paths.stackBaseDir + '/stack.runtime.json')}`;
+}
+
+export function buildRemoteStackAttachCommand(target, { stackName, runtimeMode = 'source' }) {
+  const invocation = { ...resolveRemoteStackStatePaths(target, { stackName, runtimeMode }), runtimeMode };
+  return wrapRemoteScript(target, target.platform === 'windows'
+    ? [...buildWindowsRemoteStackPrelude(target, invocation), remoteStackObserverInvocation(target, invocation), 'exit $LASTEXITCODE'].join('; ')
+    : [...buildPosixRemoteStackPrelude(target, invocation), `exec ${remoteStackObserverInvocation(target, invocation)}`].join('; '));
 }
 
 export function buildRemoteStackHappierCommand(target, { stackName, runtimeMode = 'source', passthrough = [] }) {
@@ -2667,20 +2886,24 @@ export function buildRemoteStackHappierCommand(target, { stackName, runtimeMode 
 }
 
 export function buildRemoteStackOperationCommand(target, { stackName, runtimeMode = 'source', passthrough = [], operation }) {
-  if (!['happier', 'daemon', 'build'].includes(operation)) throw new Error('[dev-targets] unsupported remote Stack operation');
+  if (!['happier', 'daemon', 'build', 'auth', 'server-readiness'].includes(operation)) throw new Error('[dev-targets] unsupported remote Stack operation');
   const invocation = { ...resolveRemoteStackStatePaths(target, { stackName, runtimeMode }), runtimeMode };
+  const quote = target.platform === 'windows' ? powershellQuote : posixQuote;
+  const command = operation === 'server-readiness'
+    ? 'node ./apps/stack/scripts/utils/server/readiness_probe.mjs'
+    : `${remoteStackLauncher(invocation)} stack ${operation} ${quote(invocation.stackName)}`;
   if (target.platform === 'windows') {
     return wrapRemoteScript(target, [
       ...buildWindowsRemoteStackPrelude(target, invocation),
       "$env:HAPPIER_DEV_TARGET_EXECUTION = '1'",
-      `${remoteStackLauncher(invocation)} stack ${operation} ${powershellQuote(invocation.stackName)} ${passthrough.map(powershellQuote).join(' ')}`,
+      `${command} ${passthrough.map(quote).join(' ')}`,
       'exit $LASTEXITCODE',
     ].join('; '));
   }
   return wrapRemoteScript(target, [
     ...buildPosixRemoteStackPrelude(target, invocation),
     'export HAPPIER_DEV_TARGET_EXECUTION=1',
-    `exec ${remoteStackLauncher(invocation)} stack ${operation} ${posixQuote(invocation.stackName)} ${passthrough.map(posixQuote).join(' ')}`,
+    `exec ${command} ${passthrough.map(quote).join(' ')}`,
   ].join('; '));
 }
 
@@ -2717,34 +2940,24 @@ export function buildRemoteForwardProbeCommand(target, { remoteServerPort }) {
 
 export function buildRemoteDaemonReadinessProbeCommand(target, { stackName, runtimeMode = 'source' }) {
   const { activeServerId, cliHomeDir } = resolveRemoteStackStatePaths(target, { stackName, runtimeMode });
-  const statePath = `${cliHomeDir}/servers/${String(activeServerId)}/daemon.state.json`;
-  if (target.platform === 'windows') {
-    return wrapRemoteScript(
-      target,
-      [
-        '$ErrorActionPreference = "Stop"',
-        `$statePath = ${powershellQuote(statePath)}`,
-        'if (-not (Test-Path -LiteralPath $statePath)) { exit 1 }',
-        '$state = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json',
-        'if ($null -eq $state.pid) { exit 1 }',
-        '$daemonProcess = Get-Process -Id ([int]$state.pid) -ErrorAction SilentlyContinue',
-        'if ($null -eq $daemonProcess) { exit 1 }',
-        'exit 0',
-      ].join('; '),
-    );
-  }
-  return wrapRemoteScript(
-    target,
-    [
-      'set -euo pipefail',
-      `state_path=${posixQuote(statePath)}`,
-      '[ -f "$state_path" ] || exit 1',
-      'daemon_pid=$(sed -n \'s/.*"pid"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p\' "$state_path" | head -n 1)',
-      'case "$daemon_pid" in \'\'|*[!0-9]*) exit 1 ;; esac',
-      'kill -0 "$daemon_pid" 2>/dev/null',
-    ].join('; '),
-  );
+  const pathApi = target.platform === 'windows' ? win32 : posix;
+  const expression = [
+    '(async () => {',
+    "const { pathToFileURL } = require('node:url');",
+    `const { readDaemonReadiness } = await import(pathToFileURL(${JSON.stringify(pathApi.join(target.repoDir, 'apps/stack/scripts/utils/dev_targets/daemon_readiness.mjs'))}).href);`,
+    `const readiness = await readDaemonReadiness({ cliHomeDir: ${JSON.stringify(cliHomeDir)}, activeServerId: ${JSON.stringify(activeServerId)} });`,
+    'process.stdout.write(JSON.stringify(readiness));',
+    "process.exit(readiness.state === 'running' ? 0 : readiness.state === 'sign-in-required' ? 2 : 1);",
+    '})().catch(() => process.exit(1));',
+  ].join('\n');
+  return wrapRemoteScript(target, target.platform === 'windows'
+    ? `node -e ${powershellQuote(expression)}; exit $LASTEXITCODE`
+    : `exec node -e ${posixQuote(expression)}`);
 }
+
+// Persistent listeners follow their owner's lifetime. A controller/network
+// stall must not retire them on an independent 45-second silence deadline.
+const FORWARD_SSH_SERVER_ALIVE_INTERVAL = 0;
 
 export function buildSshTunnelArgs(
   target,
@@ -2764,9 +2977,7 @@ export function buildSshTunnelArgs(
     '-o',
     'ExitOnForwardFailure=yes',
     '-o',
-    'ServerAliveInterval=15',
-    '-o',
-    'ServerAliveCountMax=3',
+    `ServerAliveInterval=${FORWARD_SSH_SERVER_ALIVE_INTERVAL}`,
     '-N',
     '-R',
     `127.0.0.1:${remoteServerPort}:127.0.0.1:${localServerPort}`,
@@ -2801,13 +3012,14 @@ function formatSshForward(forward) {
   };
 }
 
-export function buildSshForwardArgs(target, { forwards, sshArgs = [] } = {}) {
+export function buildSshForwardArgs(target, { forwards, sshArgs = [], observeReadiness = false } = {}) {
   if (!Array.isArray(forwards) || forwards.length === 0) {
     throw new Error('[dev-targets] at least one SSH forward is required');
   }
   // Keep browser SOCKS/CDP and service listeners under their foreground owner;
   // killing a multiplex client cannot retire master-owned forward listeners.
   return [
+    ...(observeReadiness ? ['-v'] : []),
     '-T',
     '-o',
     'ControlMaster=no',
@@ -2819,9 +3031,7 @@ export function buildSshForwardArgs(target, { forwards, sshArgs = [] } = {}) {
     '-o',
     'ExitOnForwardFailure=yes',
     '-o',
-    'ServerAliveInterval=15',
-    '-o',
-    'ServerAliveCountMax=3',
+    `ServerAliveInterval=${FORWARD_SSH_SERVER_ALIVE_INTERVAL}`,
     ...forwards.flatMap((forward) => {
       const formatted = formatSshForward(forward);
       return [formatted.flag, formatted.specification];

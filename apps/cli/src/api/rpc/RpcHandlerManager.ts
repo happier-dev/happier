@@ -123,6 +123,8 @@ type RequestDiagnostic = {
     goalControlFailure?: SessionGoalControlFailureV1;
     modelProbe?: ModelProbeDiagnostic;
     capabilityFailure?: ReturnType<typeof readCapabilityRefusalDetails>;
+    failureCause?: Readonly<{ phase: string }>;
+    effectAttempted?: boolean | null;
     failure?: Readonly<{
         failedPhase?: string;
         cancelled?: boolean;
@@ -412,6 +414,7 @@ export class RpcHandlerManager {
                 diagnostic.outcomeCode = readOutcomeCode(response, false, diagnostic.method);
                 diagnostic.modelProbe = readModelProbeDiagnostic(diagnostic.method, response);
                 diagnostic.capabilityFailure = readCapabilityFailureDiagnostic(diagnostic.method, response);
+                this.recordFailureDiagnostic(diagnostic, response);
                 const failure = SessionGoalControlFailureV1Schema.safeParse(
                     response && typeof response === 'object' ? Reflect.get(response, 'goalControlFailure') : undefined);
                 if (failure.success) diagnostic.goalControlFailure = failure.data;
@@ -420,12 +423,20 @@ export class RpcHandlerManager {
         } catch (error) {
             diagnostic.outcomeCode = readOutcomeCode(error, true);
             diagnostic.capabilityFailure = readCapabilityFailureDiagnostic(diagnostic.method, error);
+            this.recordFailureDiagnostic(diagnostic, error);
             throw error;
         } finally {
             this.completionLogger('[RPC] Request completed', {
                 method: diagnostic.method, requestId: diagnostic.requestId,
                 durationMs: Math.max(0, Math.round(this.nowMs() - receivedAtMs)),
                 outcomeCode: diagnostic.outcomeCode, callerClass: diagnostic.callerClass,
+                ...(diagnostic.outcomeCode === 'ok' ? {} : {
+                    errorCode: diagnostic.outcomeCode,
+                    failureCause: diagnostic.failureCause ?? { phase: diagnostic.failure?.failedPhase
+                        ? `rpc.${diagnostic.failure.failedPhase}` : diagnostic.admissionDenied
+                            ? `rpc.admission.${diagnostic.admissionPredicate}` : 'rpc.handler' },
+                    effectAttempted: diagnostic.effectAttempted ?? null,
+                }),
                 ...(diagnostic.admissionDenied || diagnostic.outcomeCode === RPC_ERROR_CODES.FORBIDDEN
                     ? { admissionPredicate: diagnostic.admissionPredicate } : {}),
                 ...(diagnostic.acknowledgementOutcomeCode ? { acknowledgementOutcomeCode: diagnostic.acknowledgementOutcomeCode } : {}),
@@ -435,6 +446,16 @@ export class RpcHandlerManager {
                 ...(diagnostic.failure ?? {}),
             });
         }
+    }
+
+    private recordFailureDiagnostic(diagnostic: RequestDiagnostic, value: unknown): void {
+        if (diagnostic.outcomeCode === 'ok' || !value || typeof value !== 'object') return;
+        // The typed cause owner excludes prose/operands. Retain only its phase,
+        // never raw error objects, returned content, headers or request payloads.
+        const cause = ActionFailureCauseV1Schema.safeParse(Reflect.get(value, 'failureCause'));
+        if (cause.success) diagnostic.failureCause = { phase: cause.data.phase };
+        const attempted = Reflect.get(value, 'effectAttempted');
+        diagnostic.effectAttempted = typeof attempted === 'boolean' ? attempted : null;
     }
 
     private reportAdmissionDenial(diagnostic: RequestDiagnostic, predicate: RpcAdmissionPredicate): void {
@@ -474,6 +495,7 @@ export class RpcHandlerManager {
             diagnostic.outcomeCode = readOutcomeCode(result, false, diagnostic.method);
             diagnostic.modelProbe = readModelProbeDiagnostic(diagnostic.method, result);
             diagnostic.capabilityFailure = readCapabilityFailureDiagnostic(diagnostic.method, result);
+            this.recordFailureDiagnostic(diagnostic, result);
             const failure = SessionGoalControlFailureV1Schema.safeParse(
                 result && typeof result === 'object' ? Reflect.get(result, 'goalControlFailure') : undefined);
             if (failure.success) diagnostic.goalControlFailure = failure.data;

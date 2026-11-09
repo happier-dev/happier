@@ -1375,6 +1375,7 @@ test('compiler-consuming suites include native compiler owner and SDK scripts wi
     ['scripts/codemods/zod-mini/index.test.mjs', 'compilation'],
     ['packages/plugin-sdk/scripts/publicDeclarationReport.test.mjs', 'compilation'],
     ['packages/plugin-sdk/scripts/generateActionTypeMap.test.mjs', 'compilation'],
+    ['packages/plugin-sdk/scripts/projectCatalogMetadata.test.mjs', 'compilation'],
     ['packages/sdk/scripts/generateActions.test.mjs', 'compilation'],
     ['scripts/workspaces/turboFiniteTaskGraph.test.mjs', 'validation'],
     ['apps/ui/scripts/tauri_package_scripts.test.mjs', 'validation'],
@@ -1390,6 +1391,19 @@ test('compiler-consuming suites include native compiler owner and SDK scripts wi
       'policy', artifact, root, ...args], { encoding: 'utf8' });
     assert.equal(native.status, 0, native.stderr);
     assert.equal(native.stdout, expected, String(path));
+  }
+  for (const args of [
+    ['tsc', '--noEmit'],
+    ['pnpm', 'run', 'typecheck'],
+    ['node', 'scripts/workspaces/buildTypeScriptPackageDist.mjs', '--project', 'tsconfig.json'],
+  ]) {
+    const env = { ...process.env, HAPPIER_WORKSPACE_BUILD_MODE: 'strict' };
+    assert.equal(resolveRemoteCommandPolicy(args, { repoRoot: root, cwd: root, env }).heavyClass, 'compilation');
+    if (process.platform === 'win32') continue;
+    const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2; shift 2; resolve_native_command_policy "$@"; printf "%s" "$policy_heavyClass"',
+      'policy', artifact, root, ...args], { encoding: 'utf8', env });
+    assert.equal(native.status, 0, native.stderr);
+    assert.equal(native.stdout, 'compilation', args.join(' '));
   }
   const tooling = await commandPolicy.resolvePackageCommandPolicy(['pnpm', 'run', 'test:tooling:self'], { repoRoot: root, cwd: root });
   assert.equal(tooling.heavyClass, 'compilation', 'the mixed tooling suite includes real compiler owner tests');
@@ -2981,18 +2995,23 @@ test('source snapshot remote commands retain the QA stack home and start source 
       stackName: 'agent-qa', runtimeMode: 'source-snapshot',
       services: { server: false, expo: false, daemon: true },
       serverUrl: 'http://127.0.0.1:43001', publicServerUrl: 'http://127.0.0.1:3005',
+      env: { HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'repo-producer' },
     };
     assert.deepEqual(resolveRemoteStackStatePaths(target, options), resolveRemoteStackStatePaths(target, { ...options, runtimeMode: 'controlled' }));
     const invocation = buildRemoteStackCommand(target, options);
     const command = target.platform === 'windows' ? Buffer.from(invocation.split(' ').at(-1), 'base64').toString('utf16le') : invocation;
     assert.match(command, /stack start/);
     assert.match(command, /--runtime=.*source/);
+    assert.match(command, /HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK=repo-producer/,
+      'native workers must preserve the controller repository producer authority');
     assert.match(command, /--restart/,
       'an initial remote source launch must activate current source before native readiness can admit it');
     assert.doesNotMatch(command, /--reuse-source-runtime/,
       'only recovery may satisfy readiness from the previously selected source');
     assert.match(command, /--no-dev-targets/);
     assert.match(command, /--no-browser/);
+    assert.match(command, /--background/, 'SSH observes a detached Stack owner, so session loss cannot trigger owner-death cleanup');
+    assert.doesNotMatch(command, /--from-start/, 'late observation must not replay old preparation phases after readiness');
     assert.match(command, /--no-server/);
     assert.match(command, /--no-ui/);
     assert.doesNotMatch(command, /stack dev|--watch/);
@@ -3024,6 +3043,10 @@ test('source snapshot launches the canonical Stack entry directly and preserves 
   const recorded = join(root, 'invocations');
   mkdirSync(repoDir, { recursive: true });
   mkdirSync(binDir, { recursive: true });
+  // This fixture exercises shell dispatch and failure propagation; observation
+  // is a separate process boundary, covered with a real owner in its suite.
+  mkdirSync(join(repoDir, 'apps/stack/scripts/utils/dev_targets'), { recursive: true });
+  writeFileSync(join(repoDir, 'apps/stack/scripts/utils/dev_targets/runtime_observer.mjs'), '');
   // The remote JavaScript executable is an OS/process boundary; Stack argument
   // selection and shell error propagation remain the real command owner.
   // Source builders admit their finite work themselves; startup must not hold
@@ -3041,7 +3064,7 @@ test('source snapshot launches the canonical Stack entry directly and preserves 
   });
   const env = buildNativeAdmissionFixtureEnv();
   await execFileAsync('/bin/bash', ['-c', command], { env });
-  const invocations = readFileSync(recorded, 'utf8').trim().split('\n');
+  const invocations = readFileSync(recorded, 'utf8').trim().split('\n').filter(line => line.includes('hstack.mjs stack '));
   assert.equal(invocations.length, 3);
   assert.match(invocations[0], /^\.\/apps\/stack\/bin\/hstack\.mjs stack new agent-qa /);
   assert.match(invocations[1], /^\.\/apps\/stack\/bin\/hstack\.mjs stack env agent-qa set /);
@@ -3468,6 +3491,10 @@ test('remote Stack retirement probe accepts rebooted runtime records but require
     await once(child, 'spawn');
     writeFileSync(statePath, JSON.stringify({ ownerPid: child.pid, processes: { daemonPid: child.pid } }));
     await assert.rejects(execFileAsync('/bin/bash', ['-lc', command]), 'a surviving owned runtime is not retired');
+    writeFileSync(statePath, JSON.stringify({ ownerPid: null, processes: { daemonPid: child.pid },
+      processInstances: { processes: { daemonPid: { pid: child.pid, fingerprint: 'pre-reboot-incarnation' } } } }));
+    await execFileAsync('/bin/bash', ['-lc', command]); // Even matching Stack markers cannot make a replacement process the retained instance.
+    writeFileSync(statePath, JSON.stringify({ ownerPid: child.pid, processes: { daemonPid: child.pid } }));
     const preservedCommand = buildRemoteStackRetirementProbeCommand(target, {
       stackName: 'agent-qa-reboot', runtimeMode: 'source-snapshot', preserveDaemon: true,
     });
@@ -3484,6 +3511,8 @@ test('remote Stack retirement probe accepts rebooted runtime records but require
     const exited = once(child, 'exit');
     child.kill('SIGTERM');
     await exited;
+    writeFileSync(statePath, JSON.stringify({ ownerPid: null, processes: { daemonPid: child.pid },
+      stopRequest: { preserveDaemon: false, requestedBy: 'stack restart', reason: 'interrupted stop after reboot' } }));
     await execFileAsync('/bin/bash', ['-lc', command]);
     assert.equal(existsSync(statePath), true, 'absence observation must not mutate retained state');
     writeFileSync(statePath, '{invalid');
@@ -3949,12 +3978,13 @@ test('remote doctor checks prerequisites without changing the target', () => {
 
 test('remote daemon readiness probe requires a live pid from the server-scoped state', async () => {
   const root = mkdtempSync(join(tmpdir(), 'hstack-daemon-readiness-'));
-  const target = { ...posix, cliHomeDir: root };
+  const target = { ...posix, cliHomeDir: root, repoDir: fileURLToPath(new URL('../../../../../', import.meta.url)) };
   const stackName = 'repo-local-dev';
   const { activeServerId } = resolveRemoteStackStatePaths(target, { stackName });
   const serverDir = join(root, 'servers', activeServerId);
   try {
     await execFileAsync('/bin/mkdir', ['-p', serverDir]);
+    await writeFile(join(serverDir, 'access.key'), (await import('node:crypto')).randomBytes(32));
     const statePath = join(serverDir, 'daemon.state.json');
     await execFileAsync('/bin/sh', ['-c', `printf '%s\\n' '{"pid":${process.pid}}' > "$1"`, 'sh', statePath]);
     const command = buildRemoteDaemonReadinessProbeCommand(target, { stackName });
@@ -3963,11 +3993,6 @@ test('remote daemon readiness probe requires a live pid from the server-scoped s
     await execFileAsync('/bin/sh', ['-c', `printf '%s\\n' '{"pid":99999999}' > "$1"`, 'sh', statePath]);
     await assert.rejects(execFileAsync('/bin/bash', ['-lc', command]));
 
-    const windowsCommand = buildRemoteDaemonReadinessProbeCommand(windows, { stackName });
-    const decodedPowerShell = Buffer.from(windowsCommand.split(' ').at(-1), 'base64').toString('utf16le');
-    assert.match(decodedPowerShell, /daemon\.state\.json/);
-    assert.match(decodedPowerShell, /ConvertFrom-Json/);
-    assert.match(decodedPowerShell, /Get-Process -Id/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -4179,6 +4204,71 @@ test('POSIX remote execution forwards wrapper termination to its live command tr
   }
 });
 
+test('controller SIGKILL releases remote native admission while preserving an intentional detached child', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-orphaned-dispatch-' });
+  const native = await installNativeAdmissionFixture({ root: fixture.root });
+  writeFakeBin({ root: fixture.root, name: 'awk', content: '#!/bin/sh\ncase "$*" in */proc/meminfo*) printf "28000000 30000000\\n" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n' });
+  writeFakeBin({ root: fixture.root, name: 'systemctl', content: '#!/bin/sh\nexit 1\n' });
+  const marker = fixture.path('payload.json');
+  const liveTarget = { ...posix, name: 'worker', repoDir: fixture.path('native-owner'),
+    cliHomeDir: fixture.path('worker-home'), remotePath: [fixture.path('bin'), ...process.env.PATH.split(':')] };
+  const command = buildRemoteExecCommand(liveTarget, {
+    executionId, lifetimeStdin: true, admissionClass: 'validation',
+    commandPolicy: { bootstrap: '0', validation: '0', workspaceLock: '', kind: 'source-test' },
+    commandArgs: [process.execPath, '--input-type=module', '-e', `
+      import { spawn } from 'node:child_process';
+      import { writeFileSync } from 'node:fs';
+      const detached = spawn('/bin/sleep', ['300'], { detached: true, stdio: 'ignore' });
+      detached.unref();
+      const descendant = spawn('/bin/sleep', ['300'], { stdio: 'ignore' });
+      writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ pid: process.pid,
+        descendant: descendant.pid, detached: detached.pid,
+        admission: process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT }));
+      setInterval(() => {}, 1000);
+    `],
+  });
+  // The pipe writer belongs only to this controller. Its SIGKILL models the
+  // transport's EOF without sending a cooperative cancellation to the worker.
+  const controller = spawn(process.execPath, ['--input-type=module', '-e', `
+    import { spawn } from 'node:child_process';
+    const worker = spawn('/bin/bash', ['-c', ${JSON.stringify(command)}], { stdio: ['pipe', 1, 2] });
+    worker.on('exit', code => process.exit(code ?? 1));
+  `], { env: { ...buildNativeAdmissionFixtureEnv(), TMPDIR: fixture.root }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const controllerClosed = once(controller, 'exit');
+  let error = '';
+  controller.stderr.on('data', chunk => { error += chunk; });
+  const identityFile = join(liveTarget.cliHomeDir, 'remote-exec', `${executionId}.pid`);
+  let payload;
+  t.after(async () => {
+    controller.kill('SIGKILL');
+    if (existsSync(identityFile)) await execFileAsync('/bin/bash', ['-c', buildRemoteCancelCommand(liveTarget, { executionId })]).catch(() => {});
+    for (const pid of payload ? [payload.pid, payload.descendant, payload.detached] : []) {
+      try { process.kill(pid, 'SIGKILL'); } catch {}
+    }
+  });
+  const running = pid => {
+    const observed = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+    return observed.status === 0 && observed.stdout.trim() && !observed.stdout.trim().startsWith('Z');
+  };
+  const waitFor = async (predicate, message) => {
+    const deadline = Date.now() + 10_000;
+    while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.ok(predicate(), `${message}: ${error}`);
+  };
+  await waitFor(() => existsSync(marker), 'admitted worker did not start');
+  payload = JSON.parse(readFileSync(marker, 'utf8'));
+  assert.ok(payload.admission, 'fixture must hold native admission before killing its controller');
+  assert.equal((await requestAdmissionSample(native.admissionRoot)).activeCount, 1);
+  const wrapperPid = Number(readFileSync(identityFile, 'utf8').split('\n')[0]);
+  controller.kill('SIGKILL');
+  assert.deepEqual(await controllerClosed, [null, 'SIGKILL']);
+  await waitFor(() => !running(wrapperPid) && !running(payload.pid) && !running(payload.descendant)
+    && !existsSync(identityFile), 'orphaned worker tree survived controller death');
+  assert.equal((await requestAdmissionSample(native.admissionRoot)).activeCount, 0,
+    'orphaned worker admission must be released after controller death');
+  assert.ok(running(payload.detached), 'intentional detached child must outlive its command session');
+});
+
 test('remote execution ids are mandatory and path-safe', () => {
   assert.throws(
     () => buildRemoteExecCommand(posix, { commandArgs: ['pwd'] }),
@@ -4192,7 +4282,7 @@ test('remote execution ids are mandatory and path-safe', () => {
 
 test('remote daemon launch projects the controller latency switch on POSIX and Windows', () => {
   for (const target of [posix, windows]) {
-    for (const setting of ['1', '']) {
+    for (const setting of ['1', '0', '', undefined]) {
       const command = buildRemoteStackCommand(target, {
         services: { server: false, expo: false, daemon: true },
         serverUrl: 'http://127.0.0.1:43005', stackName: 'remote-qa',
@@ -4200,7 +4290,7 @@ test('remote daemon launch projects the controller latency switch on POSIX and W
       });
       const rendered = target.platform === 'windows'
         ? Buffer.from(command.split(' ').at(-1), 'base64').toString('utf16le') : command;
-      assert.ok(rendered.includes(`HAPPIER_WEB_LATENCY_TRACE=${setting}`));
+      assert.ok(rendered.includes(`HAPPIER_WEB_LATENCY_TRACE=${setting ?? '1'}`));
       assert.doesNotMatch(rendered, /UNRELATED_SETTING|excluded-value/);
     }
   }
@@ -4217,6 +4307,14 @@ test('remote daemon launch projects the controller latency switch on POSIX and W
     assert.match(rendered, /HAPPIER_WEB_LATENCY_TRACE=1/);
     assert.equal([...rendered.matchAll(/HAPPIER_WEB_LATENCY_TRACE=/gu)].length, 1,
       'co-located services must consume one trace setting without a later daemon override');
+  }
+});
+
+test('dev-target server defaults latency tracing on while honoring explicit opt-outs', () => {
+  for (const setting of [undefined, '1', '0']) {
+    const config = resolveRemoteServerRuntimeConfig({ serverComponentName: 'happier-server-light',
+      env: setting === undefined ? {} : { HAPPIER_WEB_LATENCY_TRACE: setting } });
+    assert.equal(config.environment.HAPPIER_WEB_LATENCY_TRACE, setting ?? '1');
   }
 });
 
@@ -4245,7 +4343,7 @@ test('remote daemon command reuses the Stack dev owner and adopts a last-green d
   });
   assert.match(
     command,
-    new RegExp(`pnpm --filter @happier-dev/stack run stack dev .*${posixRemoteStack}.* --no-server --no-ui --no-browser --no-dev-targets --watch`),
+    new RegExp(`pnpm --filter @happier-dev/stack run stack dev .*${posixRemoteStack}.* --background --no-server --no-ui --no-browser --no-dev-targets --watch`),
   );
   assert.doesNotMatch(command, /--restart/);
   assert.match(command, new RegExp(`stack new .*${posixRemoteStack}.*--if-missing`));
@@ -4278,7 +4376,7 @@ test('remote daemon command reuses the Stack dev owner and adopts a last-green d
   assert.match(decodedPowerShell, new RegExp(`\\$env:HAPPIER_STACK_STACK = '${windowsRemoteStack}'`));
   assert.match(
     decodedPowerShell,
-    new RegExp(`pnpm --filter @happier-dev/stack run stack dev '${windowsRemoteStack}' --no-server --no-ui --no-browser --no-dev-targets --watch`),
+    new RegExp(`pnpm --filter @happier-dev/stack run stack dev '${windowsRemoteStack}' --background --no-server --no-ui --no-browser --no-dev-targets --watch`),
   );
   assert.doesNotMatch(decodedPowerShell, /stack stop/);
   assert.doesNotMatch(decodedPowerShell, /--restart/);
@@ -4759,9 +4857,7 @@ test('SSH tunnel owns the reverse forward independently from the monitored worke
       '-o',
       'ExitOnForwardFailure=yes',
       '-o',
-      'ServerAliveInterval=15',
-      '-o',
-      'ServerAliveCountMax=3',
+      'ServerAliveInterval=0',
       '-N',
       '-R',
       '127.0.0.1:43005:127.0.0.1:3005',
@@ -4793,6 +4889,26 @@ test('SSH tunnel owns the reverse forward independently from the monitored worke
   });
   assert.equal(windowsArgs[0], '-T');
   assert.equal(windowsArgs.includes('-tt'), false);
+});
+
+test('forward transports preserve listeners through silence while retaining explicit stop custody', () => {
+  for (const target of [posix, windows]) {
+    const forwards = [{ direction: 'reverse', listenPort: 43005, targetPort: 3005 }];
+    for (const args of [
+      buildSshForwardArgs(target, { forwards }),
+      buildSshTunnelArgs(target, { localServerPort: 3005, remoteServerPort: 43005 }),
+    ]) {
+      const configuration = spawnSync('ssh', ['-G', ...args], { encoding: 'utf8' });
+      assert.equal(configuration.status, 0, 'OpenSSH effective configuration must load');
+      const settings = new Map(configuration.stdout.trim().split(/\r?\n/u).map(line => {
+        const separator = line.indexOf(' ');
+        return [line.slice(0, separator), line.slice(separator + 1)];
+      }));
+      assert.equal(settings.get('serveraliveinterval'), '0', 'a controller stall must not expire the listener');
+      assert.equal(settings.get('controlmaster'), 'false');
+      assert.equal(settings.get('controlpath'), undefined);
+    }
+  }
 });
 
 test('SSH forwarding supports local and reverse routes in one transport owner', () => {
@@ -4837,6 +4953,28 @@ test('policy CLI resolves a CLI package typecheck whose policy imports modules t
   const result = spawnSync(process.execPath, [cli, '--package-policy', root, join(root, 'apps/cli'), 'pnpm', 'run', 'typecheck'], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /^policy_kind='typecheck'$/mu);
+});
+
+test('runtime relay configuration reaches the separately placed server', () => {
+  const relay = { HAPPIER_IROH_RELAY_POLICY: 'automatic', HAPPIER_IROH_RELAY_URLS: 'https://relay.example.ts.net:8443' };
+  const config = resolveRemoteServerRuntimeConfig({ serverComponentName: 'happier-server-light', env: { ...relay,
+    HAPPIER_DB_PROVIDER: 'sqlite' } });
+  assert.deepEqual(config.environment, relay);
+});
+
+test('runtime relay configuration and its withdrawal reach separately placed daemons on both platforms', () => {
+  for (const target of [posix, windows]) for (const enabled of [true, false]) {
+    const relay = { HAPPIER_IROH_RELAY_POLICY: enabled ? 'automatic' : 'disabled',
+      HAPPIER_IROH_RELAY_URLS: enabled ? 'https://relay.example.ts.net:8443' : '',
+      HAPPIER_STACK_IROH_RELAY: '0' };
+    const command = buildRemoteStackCommand(target, { services: { daemon: true },
+      serverUrl: 'http://127.0.0.1:43005', stackName: 'relay-qa', env: relay });
+    const text = target.platform === 'windows' ? Buffer.from(command.split(' ').at(-1), 'base64').toString('utf16le') : command;
+    for (const [key, value] of Object.entries(relay).filter(([key]) => key !== 'HAPPIER_STACK_IROH_RELAY')) {
+      assert.ok(text.includes(`${key}=${value}`), `omitted ${key}`);
+    }
+    assert.ok(!text.includes('HAPPIER_STACK_IROH_RELAY='), 'a controller opt-out must not retire a different host relay');
+  }
 });
 
 test('a cold command-replica probe reports the marker with status 0 under a login shell whose logout hook fails', { skip: process.platform === 'win32' }, async t => {
