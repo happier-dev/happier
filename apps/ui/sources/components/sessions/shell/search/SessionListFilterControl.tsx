@@ -157,13 +157,21 @@ export function buildSessionListConditionLabels(): SessionListConditionCopy {
 }
 
 /** Quiet summary of the two work-kind facets, shared by the Sessions and Runs headers. */
+/** The list shows what it shows by default: nothing here narrows it, so there is nothing to reset. */
+export function isSessionListWorkFilterDefault(
+    controller: Pick<SessionListViewFilterController, 'filters' | 'defaultFilters' | 'fixedShow'>,
+): boolean {
+    const { filters, defaultFilters } = controller;
+    return filters.show === (controller.fixedShow ?? defaultFilters.show)
+        && filters.startedBy.length === defaultFilters.startedBy.length
+        && filters.startedBy.every((starter) => defaultFilters.startedBy.includes(starter));
+}
+
 export function readSessionListWorkFilterSummary(
     controller: Pick<SessionListViewFilterController, 'filters' | 'defaultFilters' | 'fixedShow'>,
 ): string | null {
-    const { filters, defaultFilters } = controller;
-    const startersMatch = filters.startedBy.length === defaultFilters.startedBy.length
-        && filters.startedBy.every((starter) => defaultFilters.startedBy.includes(starter));
-    if (controller.fixedShow !== 'runs' && filters.show === (controller.fixedShow ?? defaultFilters.show) && startersMatch) return null;
+    const { filters } = controller;
+    if (controller.fixedShow !== 'runs' && isSessionListWorkFilterDefault(controller)) return null;
     const labels = buildSessionListFilterEditorLabels();
     const showLabel = filters.show === 'sessions'
         ? labels.sessions

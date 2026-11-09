@@ -123,20 +123,21 @@ describe('WorkflowReviewCard', () => {
         expect(read.includes('@source')).toBe(false);
         expect(screen.findHostByTestId('input-value-input-0')).toBeFalsy();
     });
-    it('leads with the result and one decision; the other choices are quiet words, not described rows (owner 09.16.46)', async () => {
+    it('leads with the result and one decision; Edit and Discuss are quiet words, Generate states its consequence (07 §Hold card, audit F9)', async () => {
         const { screen } = await mount({ onDiscuss: () => {} });
         const text = screen.getTextContent();
-        // The label says the consequence itself, so no paragraph competes with the result.
-        expect(text).not.toContain('workflows.review.generateBody');
+        expect(text).toContain('workflows.review.generateBody');
         expect(text).not.toContain('workflows.review.discussBody');
         expect(text).toContain('workflows.review.generate');
         expect(screen.findByTestId('review-state')).toBeTruthy();
         expect(screen.findByTestId('review-copy')).toBeTruthy();
         expect(screen.findByTestId('review-show-full')).toBeTruthy();
         const quiet = screen.findByTestId('review-quiet-actions')!;
-        for (const testID of ['review-edit', 'review-generate', 'review-discuss']) {
+        for (const testID of ['review-edit', 'review-discuss']) {
             expect(quiet.findAll((node) => node.props.testID === testID).length).toBeGreaterThan(0);
         }
+        expect(quiet.findAll((node) => node.props.testID === 'review-generate')).toHaveLength(0);
+        expect(screen.findByTestId('review-generate')).not.toBeNull();
         const order = screen.getTextContent();
         expect(order.indexOf('Published')).toBeLessThan(order.indexOf('workflows.review.useResult'));
         expect(order.indexOf('workflows.review.useResult')).toBeLessThan(order.indexOf('workflows.review.generate'));
@@ -430,6 +431,20 @@ describe('WorkflowReviewCard', () => {
         expect(onComplete).toHaveBeenCalledWith({ mode: 'use_result', expectedContentRevision: '7' });
         await screen.pressByTestIdAsync('review-stop-wait');
         expect(stop).toHaveBeenCalledOnce();
+    });
+    it('claims nothing was edited when Edit opens the field and the value is unchanged (§2.3 item 8)', async () => {
+        const { screen } = await mount();
+        await screen.pressByTestIdAsync('review-edit');
+        expect(screen.findByTestId('review-field-summary')).not.toBeNull();
+        expect(screen.findByTestId('review-draft-provenance')).toBeNull();
+        await changeText(screen, 'review-field-summary', 'A real change');
+        expect(screen.findByTestId('review-draft-provenance')).not.toBeNull();
+    });
+    it('renders a text answer through the Markdown owner, never as raw pipes', async () => {
+        const screen = await renderScreen(<WorkflowReviewValue value={'| File | Size |\n| --- | --- |\n| a | 1 |'} contract={undefined} testIDPrefix="answer" />);
+        const text = screen.getTextContent();
+        expect(text).toContain('File');
+        expect(text).not.toContain('---');
     });
     it('lets a person read the agent version without replacing their unpublished edits', async () => {
         const { screen, readDraft } = await mount();

@@ -193,6 +193,8 @@ export function AgentInputOverlayLayer(props: Readonly<{
 
     activeExtraCollapsedPopoverChip: AgentInputExtraActionChip | null;
     activeExtraCollapsedPopoverAnchor: AgentInputPopoverAnchor;
+    /** A request from outside the composer (the Goal row in the Work tab) hangs the popover from its own view. */
+    activeExtraCollapsedPopoverExternalAnchorRef?: React.RefObject<View | null> | null;
     extraChipAnchorRefsByKey: Readonly<Record<string, React.RefObject<View | null>>>;
     onActiveExtraCollapsedPopoverChipClose: () => void;
 
@@ -305,7 +307,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
         sharedContentPopovers.push({
             key: `collapsedExtra:${props.activeExtraCollapsedPopoverChip.key}`,
             open: true,
-            anchorRef: resolvePopoverAnchorRef(props.activeExtraCollapsedPopoverAnchor,
+            anchorRef: props.activeExtraCollapsedPopoverExternalAnchorRef ?? resolvePopoverAnchorRef(props.activeExtraCollapsedPopoverAnchor,
                 props.extraChipAnchorRefsByKey[props.activeExtraCollapsedPopoverChip.key], menuAnchors),
             submenu: props.activeExtraCollapsedPopoverAnchor === 'actionMenuRow',
             content: props.activeExtraCollapsedPopoverChip.collapsedContentPopover.renderContent,
@@ -447,7 +449,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
                 const chip = props.activeExtraCollapsedPopoverChip;
                 const renderCollapsedPopover = chip.renderCollapsedPopover;
                 if (!renderCollapsedPopover) return null;
-                const anchorRef = resolvePopoverAnchorRef(props.activeExtraCollapsedPopoverAnchor,
+                const anchorRef = props.activeExtraCollapsedPopoverExternalAnchorRef ?? resolvePopoverAnchorRef(props.activeExtraCollapsedPopoverAnchor,
                     props.extraChipAnchorRefsByKey[chip.key], menuAnchors);
                 return place(props.activeExtraCollapsedPopoverAnchor, renderCollapsedPopover({
                     anchorRef,
@@ -458,7 +460,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
             {!props.activeExtraCollapsedPopoverChip?.renderCollapsedPopover
                 && props.activeExtraCollapsedPopoverChip?.collapsedOptionsPopover ? (() => {
                 const popover = props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover;
-                const anchorRef = resolvePopoverAnchorRef(props.activeExtraCollapsedPopoverAnchor,
+                const anchorRef = props.activeExtraCollapsedPopoverExternalAnchorRef ?? resolvePopoverAnchorRef(props.activeExtraCollapsedPopoverAnchor,
                     props.extraChipAnchorRefsByKey[props.activeExtraCollapsedPopoverChip.key], menuAnchors);
 
                 if (popover.presentation === 'list') {

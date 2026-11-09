@@ -6993,7 +6993,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         selectPathTitle: 'Selecciona camí',
         selectWorkingDirectoryTitle: 'Selecciona el directori de treball',
         /** An empty composer opened from an item names it. */
-        seededInputPlaceholder: ({ subject }: { subject: string }) => `Afegeix instruccions per a «${subject}»…`,
+        seededInputPlaceholder: ({ subject }: { subject: string }) => `Pregunta sobre «${subject}» o digues què cal fer…`,
         recipeComposerTitle: "On s’ha d’executar?",
         recipeComposerSubmit: "Fes servir aquesta configuració",
         recipeComposerMachine: "Màquina",

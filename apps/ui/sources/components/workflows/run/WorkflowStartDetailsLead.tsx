@@ -19,9 +19,8 @@ export function WorkflowStartDetailsLead(props: Readonly<{
     return <ContextualStartLead testID="workflow-start-lead" title={props.name} description={props.description}
         marks={<Icon name="tree-structure" size={ICON_SIZE.xl} color={theme.colors.text.secondary} />}>
         {props.source ? <Text style={styles.meta}>{props.source}</Text> : null}
-        <Text style={styles.meta}>{props.inputs.length
-            ? t('workflows.start.asksFor', { names: props.inputs.join(' · ') })
-            : t('workflows.start.noInputs')}</Text>
+        {/* Silent without inputs: nothing to ask needs no line of its own. */}
+        {props.inputs.length ? <Text style={styles.meta}>{t('workflows.start.asksFor', { names: props.inputs.join(' · ') })}</Text> : null}
         <Text style={styles.meta}>{props.summary}</Text>
         {props.children}
     </ContextualStartLead>;

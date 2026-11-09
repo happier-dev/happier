@@ -1,4 +1,3 @@
-import { getWorkflowStartWhereChipPlacement } from '../workflowComposerControlPlacements';
 import * as React from 'react';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
@@ -7,11 +6,15 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { WorkflowAuthoringTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import { t } from '@/text';
+import { getWorkflowStartWhereChipPlacement } from '../workflowComposerControlPlacements';
+export { getWorkflowStartWhereChipPlacement } from '../workflowComposerControlPlacements';
 
 import {
   formatWorkflowWhereSummary,
   WorkflowProjectTargetControl,
 } from '../editor/WorkflowProjectTargetControl';
+
+export const WORKFLOW_START_WHERE_CHIP_KEY = 'workflow-start-where';
 
 /**
  * The start composer's one Where chip. With `onChange` it chooses the next start's target; without
@@ -35,7 +38,7 @@ export function createWorkflowStartWhereChip(
 ): AgentInputExtraActionChip {
   return {
     ...createExecutionRunStartContentChip({
-      key: 'workflow-start-where',
+      key: WORKFLOW_START_WHERE_CHIP_KEY,
       controlId: params.controlId ?? 'machine',
       placementId: 'machine:workflow-start-where',
       pending: true,

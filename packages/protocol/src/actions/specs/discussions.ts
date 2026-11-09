@@ -8,6 +8,16 @@ import { DISCUSSION_ARCHIVE_CLI_PROJECTION, DISCUSSION_CREATE_CLI_PROJECTION, DI
 
 function createDiscussionActionSpecsV1() {
   const fromChannel = { op: 'eq', path: 'content.externalSource.kind', value: 'channel' } as const;
+  // A message reads as its words; only a document proposal keeps the structured value row (audit F11).
+  const contentIsDocProposal = { op: 'eq', path: 'content.kind', value: 'doc_edit_proposal' } as const;
+  const contentIsMessage = { op: 'not', predicate: contentIsDocProposal } as const;
+  const messageContentFields = (title: string) => [
+    { path: 'content.parts.[].text', title, widget: 'textarea', visibleWhen: contentIsMessage },
+    { path: 'content.parts.[].participant', title: 'Mention', widget: 'json', visibleWhen: contentIsMessage },
+    { path: 'content.parts.[].reference', title: 'Reference', widget: 'json', visibleWhen: contentIsMessage },
+    { path: 'content.parts.[].attachment', title: 'Attachment', widget: 'json', visibleWhen: contentIsMessage },
+    { path: 'content', title, widget: 'json', required: true, visibleWhen: contentIsDocProposal },
+  ] as const;
   return Object.freeze(defineActionSpecs([
   {
     id: 'discussion.second_opinion.start',
@@ -190,12 +200,7 @@ function createDiscussionActionSpecsV1() {
         { path: 'discussionId', title: 'Discussion', widget: 'text', required: true },
         { path: 'content.externalSource.senderDisplayName', title: 'From', widget: 'text', visibleWhen: fromChannel },
         { path: 'content.externalSource.conversationDisplayName', title: 'Conversation', widget: 'text', required: true, visibleWhen: fromChannel },
-        { path: 'content.parts.[].text', title: 'Message', widget: 'textarea', visibleWhen: fromChannel },
-        { path: 'content.parts.[].participant', title: 'Mention', widget: 'json', visibleWhen: fromChannel },
-        { path: 'content.parts.[].reference', title: 'Reference', widget: 'json', visibleWhen: fromChannel },
-        { path: 'content.parts.[].attachment', title: 'Attachment', widget: 'json', visibleWhen: fromChannel },
-        { path: 'content', title: 'Message', widget: 'json', required: true,
-          visibleWhen: { op: 'not', predicate: fromChannel } },
+        ...messageContentFields('Message'),
         { path: 'mentionedAccountIds', title: 'Mentioned Accounts', widget: 'text_list', listSeparator: 'comma' },
         { path: 'mentionedSessionIds', title: 'Mentioned Sessions', widget: 'text_list', listSeparator: 'comma' },
       ] },
@@ -305,7 +310,13 @@ function createDiscussionActionSpecsV1() {
     ] },
     inputSchema: DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.reply'],
     outputSchema: DISCUSSION_ACTION_OUTPUT_SCHEMAS_V1['discussion.reply'],
-    approvalPresentation: { technicalInputPaths: ['discussionId', 'replyTarget', 'localId'] },
+    approvalPresentation: { technicalInputPaths: ['discussionId', 'replyTarget', 'localId'],
+      inputHints: { title: 'Reply in a discussion', fields: [
+        { path: 'discussionId', title: 'Discussion', widget: 'text', required: true },
+        ...messageContentFields('Reply'),
+        { path: 'replyTarget', title: 'Reply target', widget: 'json', required: true },
+        { path: 'localId', title: 'Durable message identity for retry', widget: 'text' },
+      ] } },
     cli: { acceptsServerId: true, commands: [{ path: ['discussions', 'reply'], positionals: ['discussionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {

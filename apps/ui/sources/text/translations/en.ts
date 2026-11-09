@@ -8789,7 +8789,7 @@ const enNewSession = {
   selectPathTitle: 'Select path',
   selectWorkingDirectoryTitle: 'Select working directory',
   /** An empty composer opened from an item names it. */
-  seededInputPlaceholder: ({ subject }: { subject: string }) => `Add instructions for “${subject}”…`,
+  seededInputPlaceholder: ({ subject }: { subject: string }) => `Ask about “${subject}”, or say what to do…`,
   recipeComposerTitle: "Where should it run?",
   recipeComposerSubmit: "Use this setup",
   recipeComposerMachine: "Machine",

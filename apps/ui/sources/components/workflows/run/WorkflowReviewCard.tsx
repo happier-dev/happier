@@ -183,6 +183,10 @@ export function WorkflowReviewValue({ value, contract, testIDPrefix: prefix }: R
     }
     const plan = contract?.kind === 'json' ? readWorkflowPlanResult(value) : null;
     if (plan) return <SectionContentRow><MarkdownView testID={`${prefix}-plan-document`} markdown={plan.document} /></SectionContentRow>;
+    // A plain answer is the agent's Markdown: it reads here as it reads in the conversation below it.
+    if (typeof value === 'string' && (contract === undefined || contract.kind === 'text')) {
+        return <SectionContentRow><MarkdownView testID={`${prefix}-value`} markdown={value} /></SectionContentRow>;
+    }
     // A structured result reads as label/value rows (lab run-A_completed): fields by their human names, a list
     // one row per item. Raw serialization is only ever behind Copy.
     const titles = contract?.kind === 'json' ? Object.fromEntries(Object.entries(contract.schema.properties ?? {})
@@ -247,6 +251,8 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     const singleField = fields === null || Object.keys(fields).length === 1;
     const editing = supplied || (props.waitForYou && !noValueNeeded && held && !props.readOnly);
     const changed = props.contentRevision !== revision;
+    // Opening Edit is not an edit: provenance speaks only once the draft differs from what it was seeded with.
+    const draftEdited = props.draft !== undefined && (shown === undefined || !sameStrictJsonValue(shown, reading.value));
     const plan = !props.waitForYou && props.contract?.kind === 'json' && shown !== undefined ? readWorkflowPlanResult(shown) : null;
     const planValue = plan !== null && valid ? shown : undefined;
     const issues = validation && !validation.ok ? validation.issues ?? [] : [];
@@ -321,11 +327,13 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
         {props.onDiscuss ? <RoundButton testID={`${prefix}-discuss`} size="small" display="inverted"
             title={t('workflows.review.discuss')} accessibilityHint={t('workflows.review.discussBody')}
             disabled={props.pending} onPress={props.onDiscuss} /> : null}
-        {props.canGenerate !== false && !generatePrimary ? <RoundButton testID={`${prefix}-generate`} size="small" display="inverted"
-            title={t('workflows.review.generate')} titleNumberOfLines="complete"
-            accessibilityHint={props.parentPaused ? t('workflows.review.startsResume') : t('workflows.review.generateBody')}
-            disabled={blocked} onPress={generate} /> : null}
     </View> : null;
+    // Generate commits and continues without asking again: unlike the quiet words it states its consequence (lab H1).
+    const generateRow = !props.readOnly && held && !editing && !props.waitForYou && !props.generation && props.canGenerate !== false && !generatePrimary
+        ? <Item title={t('workflows.review.generate')} subtitle={props.parentPaused ? t('workflows.review.startsResume') : t('workflows.review.generateBody')}
+            showChevron={false} rightElement={<RoundButton testID={`${prefix}-generate`} size="small" display="secondary"
+                title={t('workflows.review.generateShort')} accessibilityLabel={t('workflows.review.generate')}
+                disabled={blocked} onPress={generate} />} /> : null;
     const primaryAction = props.generation && !props.readOnly ? <View testID={`${prefix}-primary`} style={styles.decision}>
         {props.generation.onStop ? <RoundButton testID={`${prefix}-stop-generation`} size="normal" display="secondary"
             title={t('common.stop')} disabled={stopDisabled} loading={props.pending}
@@ -344,6 +352,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                 : !noValueNeeded ? <Text style={[styles.secondary, styles.footnote]}>{generatePrimary ? props.parentPaused ? t('workflows.review.startsResume')
                 : t('workflows.review.generateBody') : plan ? t('workflows.review.usePlanBody') : t('workflows.review.useBody')}</Text> : null}
             {quietActions}
+            {generateRow ? <ListPresentationProvider value="page" pageInsets="contained">{generateRow}</ListPresentationProvider> : null}
             {props.waitForYou && props.waitIdentity?.onStop ? <>
                 <RoundButton testID={`${prefix}-stop-wait`} size="small" display="inverted" title={t('common.stop')}
                     disabled={stopDisabled} onPress={async () => { if (!stopDisabled) await props.waitIdentity?.onStop?.(); }} />
@@ -355,10 +364,11 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     const headerActions = shown === undefined || editing ? null : <View style={styles.headerActions}>
         <IconButton testID={`${prefix}-copy`} variant="plain" iconName="copy" accessibilityLabel={t('common.copy')} tooltip={t('common.copy')}
             onPress={() => { void writeClipboard(serializeWorkflowReviewValue(shown, props.contract)); }} />
-        <IconButton testID={`${prefix}-show-full`} variant="plain" iconName="arrows-out"
+        {/* A sheet reads the whole value already (its header offers the step itself): no second expand glyph there. */}
+        {props.fillHeight === true ? null : <IconButton testID={`${prefix}-show-full`} variant="plain" iconName="arrows-out"
             accessibilityLabel={t(plan ? 'workflows.review.showFullPlan' : 'workflows.review.showFullResult')}
             tooltip={t(plan ? 'workflows.review.showFullPlan' : 'workflows.review.showFullResult')}
-            onPress={() => setFullValue({ value: shown, contract: props.contract, testIDPrefix: `${prefix}-full` })} />
+            onPress={() => setFullValue({ value: shown, contract: props.contract, testIDPrefix: `${prefix}-full` })} />}
     </View>;
     const heldReading = held && !props.waitForYou && !editing;
     const stateLine = heldReading ? <View testID={`${prefix}-state`} style={styles.stateLine}>
@@ -440,6 +450,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                         accessibilityLabel={label} error={fieldError} editable={!blocked}
                         // Sized to its content: a one-line value is one line; only long text asks for room.
                         multiline={field.definition.valueType === 'string' && isLongTextField(schema, valueObject[field.definition.name])}
+                        growWithText
                         keyboardType={field.definition.valueType === 'number' ? 'numeric' : undefined}
                         onChangeText={(text) => {
                             const parsed = parseWorkflowInputTextDraft(field.definition, text);
@@ -448,7 +459,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
             }) : <Item title={t('workflows.input.result')} showChevron={false} accessoryLayout="stacked"
                 rightElement={<FieldTextInput testID={`${prefix}-editor`} value={props.draft?.text ?? serializeWorkflowReviewValue(reading.value, props.contract)}
                     onChangeText={(text) => { if (!blocked) { touch(VALUE_FIELD); updateText(text); } }} accessibilityLabel={t('workflows.input.result')}
-                    error={valueError} editable={!blocked} multiline monospace={props.contract !== undefined && props.contract.kind !== 'text'} />} />)
+                    error={valueError} editable={!blocked} multiline growWithText monospace={props.contract !== undefined && props.contract.kind !== 'text'} />} />)
                 : shown !== undefined ? <>
                     <View testID={`${prefix}-preview`} style={styles.preview}>
                         <ScrollView testID={`${prefix}-preview-scroll`} style={props.primaryActionPlacement === 'footer' ? undefined : styles.previewScroll} nestedScrollEnabled
@@ -460,7 +471,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                             edges={previewFades.visibility} />
                     </View>
                 </> : null}
-            {props.draft ? <SectionContentRow testID={`${prefix}-draft-provenance`}>
+            {draftEdited && props.draft ? <SectionContentRow testID={`${prefix}-draft-provenance`}>
                 <Text variant="meta" style={styles.secondary}>{[t('workflows.review.editedNotUsed'),
                     props.draft.editedAt === undefined ? null : formatAsOfTime(props.draft.editedAt)].filter(Boolean).join(' · ')}</Text>
                 {props.progress.result !== undefined ? <RoundButton testID={`${prefix}-show-agent-version`} size="small" display="inverted"

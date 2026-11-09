@@ -99,7 +99,7 @@ export const SessionTriggersSectionView = React.memo(function SessionTriggersSec
         <WorkSection
             testID="session-work-triggers"
             anatomy="page"
-            title={t('workflows.triggers.section.habitsHere')}
+            title={t('workflows.triggers.section.title')}
             count={empty ? '' : t('workflows.triggers.section.countOn', { count: onCount })}
             info={t('workflows.triggers.section.info')}
             action={(
@@ -269,7 +269,13 @@ type OpenPopover = Readonly<{ anchor: React.RefObject<View | null>; row: Session
  * popover each one immediate call with its own result. Last outcomes and expanded history read
  * the shared Account Run store; a firing timestamp alone never supplies a Run's lifecycle.
  */
+export type SessionTriggersSectionActions = Readonly<{
+    /** Opens the blank trigger popover at a view outside the section (the Work tab's "+" › Add a trigger…). */
+    openNewTrigger: (anchor: React.RefObject<View | null>) => void;
+}>;
+
 type SessionTriggersSectionProps = Readonly<{
+    actionsRef?: React.Ref<SessionTriggersSectionActions>;
     sessionId: string;
     serverId?: string | null;
     read: SessionTriggersRead;
@@ -435,10 +441,10 @@ function SessionTriggersContent(props: SessionTriggersSectionProps) {
             });
             return;
         }
-        // A trigger whose workflow is gone offers only Delete trigger (07 S16).
+        // A trigger whose workflow is gone offers only Remove trigger (07 S16).
         if (openedRow.sourceUnavailable) {
-            void Modal.confirm(t('workflows.triggers.row.workflowDeleted'), undefined, {
-                confirmText: t('workflows.triggers.popover.deleteTrigger'), destructive: true,
+            void Modal.confirm(t('workflows.triggers.row.workflowUnavailable'), undefined, {
+                confirmText: t('workflows.triggers.row.removeTrigger'), destructive: true,
             }).then((confirmed) => (confirmed ? readRef.current.remove(openedRow.triggerId) : null)).catch(() => readRef.current.retry());
             return;
         }
@@ -455,6 +461,7 @@ function SessionTriggersContent(props: SessionTriggersSectionProps) {
         setBoundWhen(undefined);
         setPopover({ anchor, row: null });
     }, []);
+    React.useImperativeHandle(props.actionsRef, () => ({ openNewTrigger: openBlankTrigger }), [openBlankTrigger]);
     const add = React.useCallback((anchor: React.RefObject<View | null>) => {
         if (exampleSession === undefined) { openBlankTrigger(anchor); return; }
         setExamplesAnchor(anchor);

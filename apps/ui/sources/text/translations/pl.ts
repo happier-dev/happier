@@ -7402,7 +7402,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     selectPathTitle: "Wybierz ścieżkę",
     selectWorkingDirectoryTitle: "Wybierz katalog roboczy",
     /** An empty composer opened from an item names it. */
-    seededInputPlaceholder: ({ subject }: { subject: string }) => `Dodaj instrukcje dla „${subject}”…`,
+    seededInputPlaceholder: ({ subject }: { subject: string }) => `Zapytaj o „${subject}” lub napisz, co zrobić…`,
     recipeComposerTitle: "Gdzie ma działać?",
     recipeComposerSubmit: "Użyj tej konfiguracji",
     recipeComposerMachine: "Maszyna",

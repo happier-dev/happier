@@ -10,7 +10,8 @@ import { SessionAgentsLaunchMenu } from '@/components/sessions/agents/launch/Ses
 import { useSessionGoalControlEntry } from '@/components/sessions/workState/openSessionGoalControl';
 import { SessionGoalValueRow } from '@/components/sessions/workState/SessionGoalControlContent';
 import { SessionAgentStartDraftRows } from '@/components/sessions/agents/launch/SessionAgentStartDraftRows';
-import { useSessionRetainedLauncherDraftKeys } from '@/components/sessions/agents/launch/useSessionRetainedLauncherDraftKeys';
+import { useReadRetainedComparisonReviewDraft, useSessionRetainedLauncherDraftKeys } from '@/components/sessions/agents/launch/useSessionRetainedLauncherDraftKeys';
+import { createComparisonReviewExecutionRunDraftDetailsTab } from '@/components/sessions/runs/launcher/executionRunLauncherModel';
 import { projectAgentStartDrafts, type AgentStartDraft } from '@/components/sessions/agents/launch/agentStartDrafts';
 import { useSessionAgentLauncher, type SessionAgentLauncher } from '@/components/sessions/agents/launch/useSessionAgentLauncher';
 import { groupSessionSubagents } from '@/components/sessions/agents/list/groupSessionSubagents';
@@ -48,22 +49,30 @@ import { Typography } from '@/constants/Typography';
 import { describeWorkStatusBucket } from '@/components/work/status/workStatusBuckets';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import type { CurrentSessionPresentationIntentResultV1 } from '@happier-dev/protocol/sessions';
 
 import { useSessionWorkSources } from './sessionWorkSources';
 import { useSessionWorkMap } from './useSessionWorkMap';
+import { showPutUnderSessionModal } from './PutUnderSessionModal';
 import { SessionWorkMapView } from './SessionWorkMapView';
 import { useSessionWorkMenuActions } from './sessionWorkMenuActions';
 import { useSessionLineage } from './sessionLineage';
-import { createSessionWorkMapDetailsTab } from './SessionWorkMapDetailsView';
+import { createSessionWorkMapDetailsTab, isSessionWorkMapDetailsResource } from './SessionWorkMapDetailsView';
 import { WorkItemRow, WorkViewportContext, useWorkScrollViewport } from './WorkItemRow';
-import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { SessionWorkPresentationContext, type SessionWorkPresentationBinding } from './sessionWorkPresentation';
 import { useSessionContentDemand } from '@/sync/domains/session/useSessionContentDemand';
 import { useSessionArchivedReports } from './useSessionArchivedReports';
 import { WorkRowUnarchive } from './WorkRowUnarchive';
 import { readSessionWorkflowStepRunId, SessionStepWork } from './SessionStepWork';
 import { describeWorkPaneLine } from './workPaneLine';
 import { SessionWorkPlanRow } from './SessionWorkPlanRow';
+import { SessionWorkDigest } from './SessionWorkDigest';
+import { deriveSessionCoordinatorV1 } from '@happier-dev/protocol/sessions/follow/sessionCoordinatorV1';
 import { WorkFlatSheet, WorkSection } from './WorkSection';
+import { SessionHabitsSection } from './SessionSetupSections';
+import type { SessionTriggersSectionActions } from '@/components/workflows/triggers/SessionTriggersSection';
 import {
     groupWorkByState, resolveWorkMachineNotices, resolveWorkReadPresentation, resolveWorkTitleTailStarts,
     type WorkItem, type WorkStateGroups,
@@ -157,6 +166,8 @@ export const SessionWorkView = React.memo((props: Readonly<{
     const sessionServerId = props.serverId ?? session?.serverId ?? null;
     const router = useRouter();
     const sources = useSessionWorkSources();
+    const presentationRef = React.useContext(SessionWorkPresentationContext);
+    const presented = useLayoutPresentationActive();
     const projection = sources?.projection ?? null;
     const agentActivity = sources?.agentActivity ?? null;
     const subagents = agentActivity?.subagents ?? EMPTY_SUBAGENTS;
@@ -220,7 +231,17 @@ export const SessionWorkView = React.memo((props: Readonly<{
     const onLaunchTeammate = hasSessionTeammateLauncher(session) ? launchTeammate : null;
 
     // List | Map is a view of the same work, remembered only while the pane lives.
-    const [view, setView] = React.useState<'list' | 'map'>('list');
+    const [preferredView, setView] = React.useState<'list' | 'map'>('list');
+    const pane = useAppPaneScope(props.scopeId);
+    const details = pane.scopeState?.details;
+    const detailsGroups = details?.groups ?? (details ? [{ id: null, tabs: details.tabs, activeTabKey: details.activeTabKey }] : []);
+    const expandedMapTab = details?.isOpen ? detailsGroups
+        .filter(group => !details.maximizedGroupId || group.id === details.maximizedGroupId)
+        .flatMap(group => group.tabs.filter(tab => tab.key === group.activeTabKey))
+        .find(tab => isSessionWorkMapDetailsResource(tab.resource) && tab.resource.sessionId === props.sessionId) : undefined;
+    // Details borrows Map; closing or unmounting that tab reveals the untouched local preference.
+    const view = expandedMapTab ? 'list' : preferredView;
+    const [recentExpanded, setRecentExpanded] = React.useState(false);
     const { map: workMap, openItem, showItemInTranscript, openSubagentPreview, openSubagentFull, openSubagentAdvanced } = useSessionWorkMap({
         sessionId: props.sessionId,
         serverId: sessionServerId,
@@ -231,21 +252,21 @@ export const SessionWorkView = React.memo((props: Readonly<{
         active: view === 'map',
     });
 
-    const pane = useAppPaneScope(props.scopeId);
-    const openMapInDetails = React.useCallback(() => {
-        pane.openDetailsTab(createSessionWorkMapDetailsTab({ sessionId: props.sessionId }), { intent: 'pinned' });
-    }, [pane, props.sessionId]);
     const canExpandMap = deviceType !== 'phone';
-    // "Add a trigger…" (the "+" menu) opens this Session's Triggers, on its Info page.
+    // "Add a trigger…" (the "+" menu) opens the Triggers section's popover right here, anchored at that
+    // menu (07 S16, W9): the person stays in the Work pane, and the new trigger appears in the section below.
     const scrollRef = React.useRef<ScrollView>(null);
+    const triggersActionsRef = React.useRef<SessionTriggersSectionActions>(null);
+    const addMenuAnchorRef = React.useRef<View>(null);
     const openTriggers = React.useCallback(() => {
-        router.push(buildScopedSessionRouteHref({ sessionId: props.sessionId, serverId: sessionServerId, suffix: '/triggers' }) as never);
-    }, [props.sessionId, router, sessionServerId]);
+        triggersActionsRef.current?.openNewTrigger(addMenuAnchorRef);
+    }, []);
     // Rows that carry live content (a working run's mini-map) mount it only while on screen here.
     const workViewport = useWorkScrollViewport(scrollRef);
     // Unsent starts lead the list until their first Send (the Start row): the tabs open beside the
     // Session, and the text kept on the Session's draft when no tab shows it (a phone, a closed tab).
     const retainedDraftKeys = useSessionRetainedLauncherDraftKeys({ sessionId: props.sessionId, serverId: sessionServerId });
+    const readComparisonReview = useReadRetainedComparisonReviewDraft({ sessionId: props.sessionId, serverId: sessionServerId });
     const startDrafts = React.useMemo(
         () => projectAgentStartDrafts(pane.scopeState?.details, retainedDraftKeys),
         [pane.scopeState?.details, retainedDraftKeys],
@@ -255,6 +276,11 @@ export const SessionWorkView = React.memo((props: Readonly<{
     const openLauncherRun = launcher.openRun;
     const openStartDraft = React.useCallback((draft: AgentStartDraft) => {
         if (draft.tabKey === null) {
+            if (draft.comparison) {
+                const comparisonReview = readComparisonReview(draft.key);
+                if (comparisonReview) openLauncherStartDraft(createComparisonReviewExecutionRunDraftDetailsTab(comparisonReview));
+                return;
+            }
             // Nothing shows it: start the same ask again, whose launcher reads the retained text back.
             if (draft.intent === null) openLauncherConversation();
             else openLauncherRun(draft.intent, draft.roleId
@@ -266,7 +292,7 @@ export const SessionWorkView = React.memo((props: Readonly<{
         const tabs = details?.groups?.flatMap(group => group.tabs) ?? details?.tabs;
         const tab = tabs?.find(candidate => candidate.key === draft.tabKey);
         if (tab) openLauncherStartDraft(tab);
-    }, [openLauncherConversation, openLauncherRun, openLauncherStartDraft, pane.scopeState?.details]);
+    }, [openLauncherConversation, openLauncherRun, openLauncherStartDraft, pane.scopeState?.details, readComparisonReview]);
     const hasReports = (projection?.summary.sessions ?? 0) > 0;
     // A workflow step's checks are the workflow's (lab `session-F`): no List | Map, ⤢ or "+".
     const stepRunId = readSessionWorkflowStepRunId(session);
@@ -283,6 +309,17 @@ export const SessionWorkView = React.memo((props: Readonly<{
     }, [projection, sessionServerId]);
     useSessionContentDemand(shownSessionAddresses, { tag: 'sessionWork.hydrateShownSessions', hydrate: 'unsettled', active: stepRunId === null });
     const summary = projection?.summary ?? null;
+    // The digest is a coordinator's (C1 R12): the same derived fact as the list's row mark, never a role or stored flag.
+    const isCoordinator = deriveSessionCoordinatorV1({
+        managedSessions: session?.managedSessions, receivedRuleCount: session?.receivedRuleCount,
+    }) === true;
+    const sessionItemById = React.useMemo(() => {
+        const items = new Map<string, WorkItem>();
+        for (const item of [...(projection?.sessions ?? []), ...(projection?.archivedSessions ?? [])]) {
+            if (item.open.kind === 'session') items.set(item.open.sessionId, item);
+        }
+        return items;
+    }, [projection]);
     const liveLine = React.useMemo(() => (summary ? describeWorkPaneLine(summary, archivedCount) : EMPTY_LINE), [archivedCount, summary]);
     const { nothingYet, holdWorkingPlace, managedUnavailable } = resolveWorkReadPresentation({
         projection, managedRuns: sources?.managedRuns ?? null, transcriptLoaded: useSessionTranscriptLoaded(props.sessionId),
@@ -290,6 +327,19 @@ export const SessionWorkView = React.memo((props: Readonly<{
     });
     // The invitation is for a Session that never started anything: an archived child is something it did.
     const nothingStarted = nothingYet && archivedCount === 0;
+    const controlsAvailable = presented && stepRunId === null && !nothingYet;
+    const selectWorkView = React.useCallback((next: 'list' | 'map'): CurrentSessionPresentationIntentResultV1 => {
+        if (!controlsAvailable) return { status: 'unavailable' };
+        if (next === view) return { status: 'unchanged' };
+        if (next === 'map' && expandedMapTab) pane.closeDetailsTab(expandedMapTab.key);
+        setView(next);
+        return { status: 'applied' };
+    }, [controlsAvailable, expandedMapTab, pane, view]);
+    const openMapInDetails = React.useCallback((): CurrentSessionPresentationIntentResultV1 => {
+        if (!controlsAvailable || !canExpandMap) return { status: 'unavailable' };
+        pane.openDetailsTab(createSessionWorkMapDetailsTab({ sessionId: props.sessionId }), { intent: 'pinned' });
+        return { status: 'applied' };
+    }, [canExpandMap, controlsAvailable, pane, props.sessionId]);
     // List | Map: in the pane header beside the lead; full width at the top of a phone's pushed page,
     // whose nav bar holds only "+" and ⋯ (lab `convo-P1`). One rule for both widths: the switch exists only
     // while there is live work to list or map; an invitation or archived-only Session has nothing to switch.
@@ -306,7 +356,7 @@ export const SessionWorkView = React.memo((props: Readonly<{
                 { id: 'map' as const, label: t('sessionWork.view.map') },
             ]}
             activeTabId={view}
-            onSelectTab={setView}
+            onSelectTab={selectWorkView}
         />
     );
     const headerAction = React.useMemo(() => stepRunId ? null : (
@@ -323,14 +373,16 @@ export const SessionWorkView = React.memo((props: Readonly<{
                     onPress={openMapInDetails}
                 />
             ) : null}
-            <SessionAgentsLaunchMenu
-                launcher={launcher}
-                onAddTrigger={openTriggers}
-                onKeepGoing={goalControlEntry.available ? goalControlEntry.open : null}
-                unavailableText={resolveUnavailableText(launcher, machineName)}
-            />
+            <View ref={addMenuAnchorRef} collapsable={false}>
+                <SessionAgentsLaunchMenu
+                    launcher={launcher}
+                    onAddTrigger={openTriggers}
+                    onKeepGoing={goalControlEntry.available ? goalControlEntry.open : null}
+                    unavailableText={resolveUnavailableText(launcher, machineName)}
+                />
+            </View>
         </View>
-    ), [canExpandMap, goalControlEntry, launcher, machineName, nothingYet, openMapInDetails, openTriggers, phone, stepRunId, styles.headerActions, view]);
+    ), [canExpandMap, goalControlEntry, launcher, machineName, nothingYet, openMapInDetails, openTriggers, phone, selectWorkView, stepRunId, styles.headerActions, view]);
     const menuActions = useSessionWorkMenuActions({
         sessionId: props.sessionId, serverId: sessionServerId, hasReports,
     });
@@ -341,6 +393,9 @@ export const SessionWorkView = React.memo((props: Readonly<{
     const openManager = React.useCallback(() => {
         if (manager) router.push(buildScopedSessionRouteHref({ sessionId: manager.sessionId, serverId: sessionServerId }) as never);
     }, [manager, router, sessionServerId]);
+    const openPutUnder = React.useCallback(() => {
+        showPutUnderSessionModal({ sessionId: props.sessionId, serverId: sessionServerId });
+    }, [props.sessionId, sessionServerId]);
     const headerLine = React.useMemo(
         () => ({ segments: stepRunId ? [t('sessionWork.step.drivenBy')] : liveLine.length > 0 ? liveLine : nothingStarted ? [t('sessionWork.subtitle.nothingStarted')] : [] }),
         [liveLine, nothingStarted, stepRunId],
@@ -369,6 +424,43 @@ export const SessionWorkView = React.memo((props: Readonly<{
         previousStateGroups.current = { sessionId: props.sessionId, serverId: sessionServerId, groups };
         return groups;
     }, [projection, props.sessionId, sessionServerId]);
+    const recentCount = stateGroups?.recent.length ?? 0;
+    // The digest repeats a Session row only where the lab does: one that needs you. A Working or Recent
+    // row the list above already shows is not drawn twice (the Map shows no rows, so there it is).
+    const listedQuietSessionIds = React.useMemo(() => {
+        const ids = new Set<string>();
+        if (!stateGroups || (view === 'map' && workMap)) return ids;
+        for (const item of [...stateGroups.working, ...stateGroups.recent]) {
+            if (item.open.kind === 'session') ids.add(item.open.sessionId);
+        }
+        return ids;
+    }, [stateGroups, view, workMap]);
+    const showAllRecent = React.useCallback((): CurrentSessionPresentationIntentResultV1 => {
+        if (!presented || view !== 'list' || recentCount === 0) return { status: 'unavailable' };
+        if (recentExpanded || recentCount <= RECENT_COLLAPSED_ROWS) return { status: 'unchanged' };
+        setRecentExpanded(true);
+        return { status: 'applied' };
+    }, [presented, recentCount, recentExpanded, view]);
+    const recentDisclosure = React.useMemo(() => ({ expanded: recentExpanded, showAll: showAllRecent }), [recentExpanded, showAllRecent]);
+
+    React.useLayoutEffect(() => {
+        const address = normalizeSessionAddress(sessionServerId, props.sessionId);
+        if (!presentationRef || !address || !presented) return;
+        const binding: SessionWorkPresentationBinding = {
+            address,
+            apply: intent => {
+                switch (intent.kind) {
+                    case 'work.view.select': return selectWorkView(intent.view);
+                    case 'work.recent.show_more': return showAllRecent();
+                    case 'work.map.expand': return openMapInDetails();
+                }
+            },
+        };
+        presentationRef.current = binding;
+        return () => {
+            if (presentationRef.current === binding) presentationRef.current = null;
+        };
+    }, [openMapInDetails, presented, presentationRef, props.sessionId, selectWorkView, sessionServerId, showAllRecent]);
     // Rows named from one stem keep the words that tell them apart when the pane truncates them.
     const titleTailStartByKey = React.useMemo(() => {
         const items = stateGroups ? WORK_STATE_SECTIONS.flatMap((section) => stateGroups[section.key]) : [];
@@ -447,6 +539,7 @@ export const SessionWorkView = React.memo((props: Readonly<{
                             <WorkStateSection
                                 key={section.key}
                                 section={section}
+                                disclosure={section.key === 'recent' ? recentDisclosure : undefined}
                                 items={stateGroups[section.key]}
                                 loading={false}
                                 titleTailStartByKey={titleTailStartByKey}
@@ -460,15 +553,15 @@ export const SessionWorkView = React.memo((props: Readonly<{
                     {/* The top value rows (Managed by, Goal; lab P1w) lie flat on the pane (INT r0.4 §6 I4):
                         page `Item` rows on the flat sheet, on the list's inset. */}
                     <WorkFlatSheet testID="session-work-top">
-                        {manager ? (
-                            <Item
-                                testID="session-work-managed-by"
-                                title={t('sessionWork.managedBy')}
-                                detail={manager.title}
-                                density="compact"
-                                onPress={openManager}
-                            />
-                        ) : null}
+                        {/* One row, always (lab P1w): its manager, which opens it; or Top level, which is where
+                            Put under starts (the session menu's Put under… opens the same chooser). */}
+                        <Item
+                            testID="session-work-managed-by"
+                            title={t('sessionWork.managedBy')}
+                            detail={manager ? manager.title : t('entityDragDrop.keyboard.topLevel')}
+                            density="compact"
+                            onPress={manager ? openManager : openPutUnder}
+                        />
                         {/* FIN 04's slot: the Goal row opens the one Goal control, the composer's. */}
                         <SessionGoalValueRow sessionId={props.sessionId} serverId={sessionServerId} entry={goalControlEntry} testID="session-work-goal" />
                         <SessionWorkPlanRow sessionId={props.sessionId} serverId={sessionServerId} />
@@ -515,12 +608,13 @@ export const SessionWorkView = React.memo((props: Readonly<{
                             )}
                         </View>
                     ) : view === 'map' && workMap && projection ? (
-                        <SessionWorkMapView map={workMap} projection={projection} testIDPrefix="session-work-map" onOpenItem={openItem} />
+                        <SessionWorkMapView map={workMap} projection={projection} showFacts={false} testIDPrefix="session-work-map" onOpenItem={openItem} />
                     ) : stateGroups ? (
                         WORK_STATE_SECTIONS.map((section) => (
                             <WorkStateSection
                                 key={section.key}
                                 section={section}
+                                disclosure={section.key === 'recent' ? recentDisclosure : undefined}
                                 items={stateGroups[section.key]}
                                 // Workflow runs are still arriving and nothing else is shown: Working keeps
                                 // its place instead of claiming nothing is going.
@@ -530,6 +624,10 @@ export const SessionWorkView = React.memo((props: Readonly<{
                             />
                         ))
                     ) : null}
+                    {/* After the list, as the lab's coordinator Work ends (P1 `W_COORD`): what the work adds up to. */}
+                    {isCoordinator ? (
+                        <SessionWorkDigest sessionId={props.sessionId} serverId={sessionServerId} sessionItemById={sessionItemById} listedQuietSessionIds={listedQuietSessionIds} onOpenItem={openItem} />
+                    ) : null}
                     {unavailableText && machineNotices.unavailable ? (
                         <SurfaceStateCard
                             testID="session-work-unavailable"
@@ -537,6 +635,10 @@ export const SessionWorkView = React.memo((props: Readonly<{
                             kind="denied"
                             title={unavailableText}
                         />
+                    ) : null}
+                    {/* The session's Triggers live with its work (07 S16, lab W9); "+" and rows open popovers in place. */}
+                    {sessionServerId ? (
+                        <SessionHabitsSection sessionId={props.sessionId} serverId={sessionServerId} actionsRef={triggersActionsRef} />
                     ) : null}
                     </>)}
                 </ScrollView>
@@ -601,10 +703,11 @@ type WorkStateSectionSpec = Readonly<{
     collapsedRows: number | null;
 }>;
 
+const RECENT_COLLAPSED_ROWS = 4;
 const WORK_STATE_SECTIONS: readonly WorkStateSectionSpec[] = [
     { key: 'needsYou', title: () => describeWorkStatusBucket('needs_you'), countMode: 'attention', collapsedRows: null },
     { key: 'working', title: () => describeWorkStatusBucket('working'), countMode: 'quiet', collapsedRows: null },
-    { key: 'recent', title: () => t('sessionWork.states.recent'), countMode: 'none', collapsedRows: 4 },
+    { key: 'recent', title: () => t('sessionWork.states.recent'), countMode: 'none', collapsedRows: RECENT_COLLAPSED_ROWS },
     // Sessions this one led and archived: after everything live, short, each with its Unarchive.
     { key: 'archived', title: () => t('sessionWork.states.archived'), countMode: 'quiet', collapsedRows: 3 },
 ];
@@ -663,10 +766,12 @@ const WorkStateSection = React.memo(function WorkStateSection(props: Readonly<{
     loading: boolean;
     titleTailStartByKey: ReadonlyMap<string, number>;
     roster: WorkRoster;
+    disclosure?: Readonly<{ expanded: boolean; showAll: () => void }>;
 }>) {
     const workTheme = useWorkTheme();
     const { section, items, roster } = props;
-    const [expanded, setExpanded] = React.useState(false);
+    const [localExpanded, setExpanded] = React.useState(false);
+    const expanded = props.disclosure?.expanded ?? localExpanded;
     const limit = section.collapsedRows;
     const hiddenCount = limit !== null && !expanded ? Math.max(0, items.length - limit) : 0;
     const visibleItems = hiddenCount > 0 && limit !== null ? items.slice(0, limit) : items;
@@ -719,7 +824,7 @@ const WorkStateSection = React.memo(function WorkStateSection(props: Readonly<{
                 <HappierWorkDisclosureLine
                     testID={`session-work-state-${section.key}-more`}
                     label={t('sessionWork.showMore', { count: hiddenCount })}
-                    onPress={showAll}
+                    onPress={props.disclosure?.showAll ?? showAll}
                     theme={workTheme}
                     host={WORK_HOST}
                 />

@@ -255,7 +255,7 @@ export function SessionGoalControlContent(props: Readonly<{
                             {t('session.workState.goal.setTitle')}
                         </Text>
                         <Text style={[styles.setSubtitle, { color: theme.colors.text.secondary }]}>
-                            {t('session.workState.goal.setSubtitle')}
+                            {t(props.continuation?.nativeGoalOwner ? 'session.workState.goal.setSubtitleStarts' : 'session.workState.goal.setSubtitle')}
                         </Text>
                     </View>
                 </View>
@@ -437,7 +437,9 @@ export const SessionGoalValueRow = React.memo(function SessionGoalValueRow(props
         () => resolveEditableGoalItem(readSessionWorkStateFromMetadata(metadata)),
         [metadata],
     );
+    const rowRef = React.useRef<View>(null);
     if (!props.entry.available) return null;
+    const open = () => props.entry.open(rowRef);
     const value = goal ? t(resolveGoalStatusLabelKey(goal)) : t('goalControl.row.notSet');
     return (
         <Item
@@ -446,7 +448,8 @@ export const SessionGoalValueRow = React.memo(function SessionGoalValueRow(props
             detail={value}
             density="compact"
             accessibilityLabel={`${t('session.workState.goal.title')}, ${value}`}
-            onPress={props.entry.open}
+            pressableRef={rowRef}
+            onPress={open}
         />
     );
 });

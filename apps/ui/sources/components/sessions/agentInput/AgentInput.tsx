@@ -570,7 +570,7 @@ interface AgentInputProps {
      * A new `key` opens that action chip's popover for an explicit request from another surface (the
      * Work tab opening the Goal control). Collapsed chips open from the action menu's anchor.
      */
-    openActionChipRequest?: Readonly<{ chipKey: string; key: string }> | null;
+    openActionChipRequest?: Readonly<{ chipKey: string; key: string; anchorRef?: React.RefObject<View | null> }> | null;
     metadata?: Metadata | null;
     composerOptionsInput?: ComposerOptionsInputV1 | null;
     onAbort?: () => void | Promise<void>;
@@ -3461,10 +3461,17 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // Another surface (a recovery line, the Goal control) asks for a chip: open it where it is placed,
     // from its row when shown there, otherwise from the + button as a command would.
     const openActionChipRequest = props.openActionChipRequest ?? null;
+    // A request from another surface can bring its own anchor (the Goal row in the Work tab): the popover
+    // opens there until it closes; the next open from the composer hangs from the chip again.
+    const [externalChipAnchorRef, setExternalChipAnchorRef] = React.useState<React.RefObject<View | null> | null>(null);
+    React.useEffect(() => {
+        if (activeSelectionOverlay === null) setExternalChipAnchorRef(null);
+    }, [activeSelectionOverlay]);
     useAgentInputExternalPickerRequest({
         requestKey: openActionChipRequest?.key,
         open: React.useCallback(() => {
             if (!openActionChipRequest) return;
+            setExternalChipAnchorRef(openActionChipRequest.anchorRef ?? null);
             const chip = extraActionChips.find(candidate => candidate.key === openActionChipRequest.chipKey);
             const id = chip?.placement?.id;
             const inRow = id !== undefined && (resolvedControls.primary.includes(id) || resolvedControls.secondary.includes(id));
@@ -4064,6 +4071,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             onSessionModeRequestClose={closeSessionModePicker}
             activeExtraCollapsedPopoverChip={activeExtraCollapsedPopoverChip}
             activeExtraCollapsedPopoverAnchor={activeExtraCollapsedPopoverAnchor}
+            activeExtraCollapsedPopoverExternalAnchorRef={externalChipAnchorRef}
             extraChipAnchorRefsByKey={extraChipAnchorRefsByKey}
             onActiveExtraCollapsedPopoverChipClose={closeActiveExtraCollapsedPopoverChip}
             showMachinePopover={showMachinePopover}

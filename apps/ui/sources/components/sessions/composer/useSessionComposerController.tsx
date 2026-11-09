@@ -51,6 +51,7 @@ import { presentSessionCredentialReconnectFailure } from "@/sync/ops/actions/ses
 import { buildPluginDetailRoute, storeMachineRouteParams } from "@/components/settings/plugins/model/pluginsSurfaceRoutes";
 import { resolvePortableServerIdentityForRoutingId } from "@/sync/domains/server/resolvePortableServerIdentityForRoutingId";
 import { alertActionFailure, showActionFailureDetails } from "@/utils/errors/alertActionFailure";
+import { readSessionAutoResumeRefusalV1 } from "@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1";
 import {
     alertComposerActionResultFailure,
     alertComposerError,
@@ -1026,7 +1027,7 @@ export function useSessionComposerController({
     }, []);
     // Another surface asking this composer to open one of its action chips (the Work tab opening the
     // Goal control through the presentation-target registry). The keys are this render's chips.
-    const [composerActionChipOpenRequest, setComposerActionChipOpenRequest] = React.useState<Readonly<{ chipKey: string; key: string }> | null>(null);
+    const [composerActionChipOpenRequest, setComposerActionChipOpenRequest] = React.useState<Readonly<{ chipKey: string; key: string; anchorRef?: React.RefObject<View | null> }> | null>(null);
     const composerActionChipKeysRef = React.useRef<ReadonlySet<string>>(new Set());
     /**
      * The one place a selection the Home accepted but the running runner has not
@@ -4310,6 +4311,17 @@ export function useSessionComposerController({
     }, [currentAgentLabel, ownerMetadata?.machineId, presentMachineAgentRefusal, reachableMachineTarget?.machineId,
         router, sessionAccountScopeKey, sessionRouteServerId]);
 
+    // A send that could not resume a stopped Session keeps the row queued behind
+    // "Stopped by you"; the banner cannot say why, so the true reason is presented here.
+    const presentSubmitWakeFailure = React.useCallback((result: Readonly<{
+        errorCode?: string; errorMessage?: string; errorDetail?: unknown; stopHoldResumeFailed?: true;
+    }>) => {
+        const presentation = resolveResumeFailurePresentation(result, t('session.resumeFailed'));
+        if (presentResumeFailureRecovery(presentation) || !result.stopHoldResumeFailed
+            || presentation.kind !== 'alert' || readSessionAutoResumeRefusalV1(result.errorDetail) === 'held_by_person') return;
+        alertActionFailure({ reason: presentation.message, code: null });
+    }, [presentResumeFailureRecovery]);
+
     // Handle resuming an inactive session
     const handleResumeSession = React.useCallback(async (opts?: { silent?: boolean; approvedNewDirectoryCreation?: boolean;
         invocation?: CurrentUiContextCommandInvocation }): Promise<boolean> => {
@@ -4532,7 +4544,7 @@ export function useSessionComposerController({
     // request until this surface is focused and presented again.
     const hasComposerActionChip = (chipKey: string): boolean => chipKey === SESSION_MODEL_PICKER_CHIP_KEY
         ? canSelectModel : composerActionChipKeysRef.current.has(chipKey);
-    const requestComposerActionChipOpen = (chipKey: string): boolean => {
+    const requestComposerActionChipOpen = (chipKey: string, anchorRef?: React.RefObject<View | null>): boolean => {
         if (!surfaceFocused || !surfacePresented || !hasComposerActionChip(chipKey)) return false;
         // The model picker is the status line's own picker; its entry is the one the banner's "Choose another" takes.
         if (chipKey === SESSION_MODEL_PICKER_CHIP_KEY) {
@@ -4541,6 +4553,7 @@ export function useSessionComposerController({
         }
         setComposerActionChipOpenRequest((current) => ({
             chipKey,
+            ...(anchorRef ? { anchorRef } : {}),
             key: String((Number.parseInt(current?.key ?? '0', 10) || 0) + 1),
         }));
         return true;
@@ -5514,7 +5527,7 @@ export function useSessionComposerController({
                         : connectionStatus.pendingQueueAction
                             ? { ...connectionStatus, action: {
                                 label: connectionStatus.pendingQueueAction === 'sign_in_again' ? t('connectionStatus.summary.signInAgain')
-                                    : connectionStatus.pendingQueueAction === 'new_session' ? t('session.newSessionSameSetup')
+                                    : connectionStatus.pendingQueueAction === 'new_session' ? t('sessionInfo.newSessionSameSetup')
                                     : t(`session.pendingActivation.actions.${connectionStatus.pendingQueueAction === 'keep_queued' ? 'keepQueued' : connectionStatus.pendingQueueAction === 'choose_account' ? 'chooseAccount' : connectionStatus.pendingQueueAction}`),
                                 onPress: () => fireAndForget(handlePendingQueueAction(connectionStatus.pendingQueueAction!), { tag: 'SessionView.pendingQueueAction' }),
                             } }
@@ -7392,7 +7405,7 @@ export function useSessionComposerController({
                                     if (!outboundAccountLifetime.isCurrent()) return { status: 'rejected' };
                                     clearReviewDraftsAfterSubmit(result);
                                     if (!composerPresentationMountedRef.current) return { status: 'rejected' };
-                                    if (result.type === 'wake_failed') presentResumeFailureRecovery(resolveResumeFailurePresentation(result, t('session.resumeFailed')));
+                                    if (result.type === 'wake_failed') presentSubmitWakeFailure(result);
                                     if (result.type === 'send_failed' || result.type === 'rejected') {
                                         // An unavailable ACK does not revoke custody already
                                         // published by canonical Pending or the transcript.
@@ -7659,7 +7672,7 @@ export function useSessionComposerController({
                                 clearReviewDraftsAfterSubmit(result);
                                 if (!composerPresentationMountedRef.current) return { status: 'rejected' };
 
-                                if (result.type === 'wake_failed') presentResumeFailureRecovery(resolveResumeFailurePresentation(result, t('session.resumeFailed')));
+                                if (result.type === 'wake_failed') presentSubmitWakeFailure(result);
                                 if (result.type === 'send_failed' || result.type === 'rejected') {
                                     if (acceptCanonicalOutboundHandoff(result.localId, () => admissionHandoff.accept())) {
                                         Modal.alert(t('common.error'), result.errorMessage ?? t('common.unavailable'));

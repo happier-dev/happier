@@ -41,6 +41,7 @@ import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEng
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
+import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
@@ -98,7 +99,6 @@ import { WorkflowInvocationList } from './WorkflowInvocationList';
 import { WorkflowRunSteps } from './WorkflowRunSteps';
 import { WorkflowAcceptedRunRoles } from './WorkflowRunRoles';
 import { findWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
-import { workflowStepPromptLabel } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { resolveWorkflowConditionHeadline } from '../presentation/workflowConditionPresentation';
 import {
     compareWorkflowOccurrences,
@@ -114,7 +114,6 @@ import {
     formatWorkflowRunOriginLabel,
     formatWorkflowRunOutcomeLabel,
     formatWorkflowRunOutcomeLine,
-    workflowRunOutcomeIsAttention,
     formatWorkflowRunOutcomeSentence,
     describeWorkflowSetupOutcome,
     formatWorkflowRunConsequenceSentence,
@@ -127,7 +126,7 @@ import {
     type WorkflowRunFailurePresentation,
     type WorkflowRecoveryContinuation,
 } from './workflowRunDetailPresentation';
-import { formatWorkflowRunFailureCauseLine } from './workflowRunDetailPresentation';
+import { formatWorkflowRunFailureCauseLine, workflowRunOutcomeIsAttention } from './workflowRunDetailPresentation';
 
 /**
  * One managed Run's detail body, shared by the exact Run route, the Automation
@@ -718,14 +717,13 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     }, [derivedStructure, flowProjection]);
 
     /**
-     * In a log every row has to say what ran on its own: an unnamed step reads as its prompt and an
-     * unnamed If as its sentence, never "Agent step" eight times.
+     * An unnamed If reads as its sentence in the log. Step names already come from the same Run
+     * projection used by Map, Steps and the column's conversation rows.
      */
     const activityInvocationLabel = React.useCallback((invocation: WorkflowRunInvocationIndexV1): string | null => {
         const blockId = derivedStructure.get(invocation.id)?.blockId;
         const block = blockId == null || blockId === '$root' || props.definition === null ? null : findWorkflowBlock(props.definition, blockId);
         if (block !== null && !block.name?.trim()) {
-            if (block.kind === 'step') return workflowStepPromptLabel(block) ?? invocationLabel(invocation);
             if (block.kind === 'if') {
                 const headline = resolveWorkflowConditionHeadline(props.definition!, block.when, 'run');
                 return headline.unconditional === true ? headline.sentence : t('workflows.page.inspector.ifSentence', { condition: headline.sentence });
@@ -896,6 +894,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const phoneDock = phone && props.embedded !== true && attentionIndexRows.length > 0;
     const [dockHeightPx, setDockHeightPx] = React.useState(0);
     const firstAttentionLabel = firstAttention === undefined ? null : invocationLabel(firstAttention);
+    const firstAttentionOccurrence = firstAttention === undefined ? null : invocationOccurrenceLabel(firstAttention);
     const failureInvocation = props.firstFailedInvocationResolution === 'resolved'
         ? selectWorkflowRunFailureInvocation({ invocations: props.invocations, structure: derivedStructure,
             firstFailedInvocationId: props.firstFailedInvocationId, runState: props.run.state }) ?? firstAttention ?? null
@@ -968,13 +967,6 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         machineReachable: props.machineReachable,
     }), [derivedStructure, props.definition, props.frozenChildren, props.invocationHistoryComplete, props.invocations,
         props.invocationsLoaded, props.machineReachable, props.run]);
-    // Needs you explains the hold; the Run keeps its overall state word above that request.
-    const outcomeRepeatsNeedsYou = attentionRows.length > 0 && workflowRunOutcomeIsAttention({
-        state: props.run.state,
-        workflowCustodyState: props.run.workflowCustodyState,
-        cancelRequested: props.cancelRequested,
-        inAttentionWindow: true,
-    });
     const outcomeFailed = describeWorkflowRunState(props.run.state).variant === 'danger'
         || (props.run.state === 'succeeded' && coverage.knownFailure);
     // A Run made only of Machine setup steps says what they installed instead of counting steps.
@@ -987,7 +979,13 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 machine: setupMachine })
             : null;
     }, [props.definition, setupMachine]);
-    const outcomeLine = outcomeRepeatsNeedsYou ? outcomeWord : formatWorkflowRunOutcomeLine({
+    const runningInvocation = props.run.state === 'running' && firstAttention === undefined
+        ? activityInvocations.find(invocation => invocation.lifecycle === 'running'
+            && derivedStructure.get(invocation.id)?.coverageKind === 'executable')
+        : undefined;
+    const runningStep = runningInvocation === undefined ? null : invocationLabel(runningInvocation);
+    const runningOccurrence = runningInvocation === undefined ? null : invocationOccurrenceLabel(runningInvocation);
+    const outcomeLine = formatWorkflowRunOutcomeLine({
         word: outcomeWord,
         sentence: formatWorkflowRunOutcomeSentence({
             run: props.run,
@@ -996,10 +994,15 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             historyComplete: props.invocationHistoryComplete,
             failure: failedStepLabel === null ? null : { step: failedStepLabel, lifecycle: failurePresentation?.invocationLifecycle },
             setup: runSetupOutcome,
+            runningStep: runningStep === null ? null : runningOccurrence === null ? runningStep : `${runningStep} · ${runningOccurrence}`,
             attention: firstAttention === undefined || firstAttentionLabel === null ? null : {
-                step: firstAttentionLabel,
+                step: firstAttentionOccurrence === null ? firstAttentionLabel : `${firstAttentionLabel} · ${firstAttentionOccurrence}`,
                 waitForYou: attentionWaitsForYou(firstAttention),
                 waitsForApproval: firstAttention.lifecycle === 'waiting_for_approval',
+                reviewCount: props.run.state === 'waiting_for_review' && firstAttention.lifecycle === 'waiting_for_review'
+                    && coverage.coverage === 'complete'
+                    ? attentionRows.reduce((count, row) => count + (row.lifecycle === 'waiting_for_review' && !attentionWaitsForYou(row) ? 1 : 0), 0)
+                    : undefined,
             },
             ...(props.machineReachable === undefined ? {} : {
                 machine: {
@@ -1279,11 +1282,14 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 <DetailsTabHeader
                     testID={`${testIDPrefix}-header`}
                     title={props.title ?? t('workflows.contentUnavailable')}
+                    columnMaxWidthPx={maxWidthStyle.maxWidth}
                     leading={<Icon name="tree-structure" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
                     meta={embeddedHeaderMeta}
                     controls={<View testID={`${testIDPrefix}-controls`}>{runControls}</View>}
                 />
             ) : (
+                // On a phone the title hangs from the bar that named the page (lab P1), not the page's top rhythm.
+                <NavigationLargeTitleProvider largeTitle={phone}>
                 <PageHeader
                     testID={`${testIDPrefix}-header`}
                     title={props.title ?? t('workflows.contentUnavailable')}
@@ -1298,6 +1304,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                     // (lab run-A); a narrow main beside an open details pane never drops them under the title.
                     {...(phone ? {} : { actionsLayout: 'hang' as const })}
                 />
+                </NavigationLargeTitleProvider>
             )}
             <View
                 testID={`${testIDPrefix}-outcome-region`}
@@ -1831,7 +1838,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     });
 
     // Complete history distinguishes work the Run skipped from later work a failure prevented.
-    const notStartedLabel = !isTerminalWorkflowRunState(props.run.state) ? t('workflows.run.notStarted')
+    const notStartedLabel = !isTerminalWorkflowRunState(props.run.state) ? t('workflows.invocationState.pending')
         : props.invocationsLoaded && props.invocationHistoryComplete
             ? props.run.state === 'succeeded' ? t('workflows.invocationState.skipped')
                 : props.run.state === 'failed' ? t('workflows.run.notReached') : undefined

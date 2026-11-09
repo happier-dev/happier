@@ -49,7 +49,8 @@ export const en = {
         runNeedsYou: 'When the run needs you',
     },
     row: {
-        workflowDeleted: 'Workflow deleted',
+        workflowUnavailable: 'This workflow is no longer available',
+        removeTrigger: 'Remove trigger',
         legacyCreated: 'Created in Happier 0.2',
         legacyUnavailable: 'Legacy trigger unavailable',
         sessionKeyRequired: 'Session key required',
@@ -71,12 +72,11 @@ export const en = {
     },
     section: {
         add: 'Add a trigger',
-        emptyTitle: 'No habits yet',
+        emptyTitle: 'No triggers',
         emptyBody: 'Add one to review each turn or keep going toward a goal.',
         loadFailed: "Could not load this session's triggers.",
         accountLoadFailed: 'Some workflows couldn’t load.',
         title: 'Triggers',
-        habitsHere: 'Habits',
         startsHere: 'Starts here',
         countOn: ({ count }: Count) => `${count} on`,
         info: 'What starts from this session, and what writes into it.',

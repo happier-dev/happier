@@ -16,7 +16,7 @@ import { useNavigationSurfacePlacement } from '@/components/ui/navigation/useNav
 import { RIGHT_SIDEBAR_BUILTIN_TABS } from '@/components/appShell/rightSidebar/rightSidebarBuiltinTabs';
 import { resolveNavigationPlacements } from '@/sync/domains/settings/mobileSurfacePinning';
 import { SessionTriggerHistoryScope } from '@/components/workflows/triggers/SessionTriggerHistoryScope';
-import { SessionTriggersSection } from '@/components/workflows/triggers/SessionTriggersSection';
+import { SessionTriggersSection, type SessionTriggersSectionActions } from '@/components/workflows/triggers/SessionTriggersSection';
 import { SessionWritesHereSection } from '@/components/workflows/triggers/SessionWritesHereSection';
 import { useSessionTriggers } from '@/components/workflows/triggers/useSessionTriggers';
 import { projectScheduledWorkflowRows } from '@/components/workflows/triggers/scheduledWorkflowRows';
@@ -144,6 +144,8 @@ type SessionHabitsSectionProps = Readonly<{
     sessionId: string;
     serverId: string;
     onOpenAllAutomations?: () => void;
+    /** The Work tab's "+" › Add a trigger… opens the section's popover from outside it. */
+    actionsRef?: React.Ref<SessionTriggersSectionActions>;
 }>;
 
 export const SessionHabitsSection = React.memo(function SessionHabitsSection(props: SessionHabitsSectionProps) {
@@ -173,7 +175,7 @@ function SessionHabitsContent(props: SessionHabitsSectionProps) {
     <WorkSectionPlacementProvider value="page">
       <SessionTriggerHistoryScope>
         <View nativeID={SESSION_SETUP_TRIGGERS_ANCHOR_ID} collapsable={false}>
-          <SessionTriggersSection sessionId={props.sessionId} serverId={props.serverId}
+          <SessionTriggersSection sessionId={props.sessionId} serverId={props.serverId} actionsRef={props.actionsRef}
             read={{ ...read, status, retry }} excludedTriggerKeys={writesHereKeys}
             hasRetainedContent={scheduledRows.length > 0 || destination.runIds.length > 0}>
             <SessionWritesHereSection sessionId={props.sessionId} serverId={props.serverId}

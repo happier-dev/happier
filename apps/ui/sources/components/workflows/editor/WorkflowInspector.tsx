@@ -307,12 +307,12 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                 valueSet={draft.defaults.conversation !== undefined || draft.defaults.workspace !== undefined}
                 testID={`${testIDPrefix}-group-conversation`}
             >
-                <SectionContentRow testID={`${testIDPrefix}-defaults-continuity-row`}>
-                    {readOnly ? <Text style={workflowEditorStyles.metaText}>{formatWorkflowContinuitySummary({
+                {/* Editing, the controls are page rows with their own inset; a content row around them would indent a second grid. */}
+                <View testID={`${testIDPrefix}-defaults-continuity-row`}>{readOnly ? <SectionContentRow><Text style={workflowEditorStyles.metaText}>{formatWorkflowContinuitySummary({
                         draft, conversation: draft.defaults.conversation, workspace: draft.defaults.workspace,
                         sessionLabel: continuedSessionLabel,
                         existingSessions: props.existingSessions,
-                    })}</Text> : <WorkflowContinuityControls
+                    })}</Text></SectionContentRow> : <WorkflowContinuityControls
                         draft={draft}
                         conversation={draft.defaults.conversation}
                         workspace={draft.defaults.workspace}
@@ -326,8 +326,7 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                         })}
                         onChangeWorkspace={(value) => onChange(setWorkflowDefaultField(draft, 'workspace', value))}
                         testIDPrefix={`${testIDPrefix}-defaults-continuity`}
-                    />}
-                </SectionContentRow>
+                    />}</View>
             </WorkflowInspectorGroup>
 
             <WorkflowInspectorGroup

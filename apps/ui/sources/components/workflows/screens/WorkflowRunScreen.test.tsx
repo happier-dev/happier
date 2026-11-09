@@ -544,6 +544,32 @@ describe('wide Run opening selection', () => {
         expect(routerSpy.push).not.toHaveBeenCalled();
     });
 
+    it('moves the opening selection from a resolved hold to the final output when the Run completes (A7)', async () => {
+        Object.assign(platformViewport, { width: 1440, height: 900 });
+        const run = createWorkflowRunSummaryFixture({ state: 'waiting_for_review', revision: 2 });
+        const root = createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333', lifecycle: 'waiting_for_review', contentRevision: '2' });
+        const final = createWorkflowInvocationIndexFixture({ parentRecordId: root.id, sequence: '1', lifecycle: 'completed' });
+        const invocation = { index: root, parentRevision: 2, progress: WorkflowProgressEnvelopeV1Schema.parse({
+            kind: 'happier.workflow-progress.v1', blockKind: 'step', attempt: root.attempt,
+            logicalInvocationRecordId: root.id, invocationPath: { blockId: 'analyze', scope: [] }, result: 'Review this',
+        }) };
+        detailActions.getInvocation.mockResolvedValue({ invocation });
+        keyInvocationReads([root]);
+        await renderRunScreen({ run, invocations: [root], invocationDetails: [invocation] });
+        await vi.waitFor(() => expect(readContentProps()?.selectedInvocationId).toBe(root.id));
+        const completed = { ...run, state: 'succeeded' as const, revision: 3 };
+        detailActions.listRuns.mockResolvedValue({ runs: [completed], metadataByRunId: {} });
+        detailActions.getRun.mockResolvedValue({
+            run: completed, callerAccess: { canEdit: true }, definition: DEFINITION, authoredDefinition: DEFINITION,
+            acceptedContext: ACCEPTED_CONTEXT, checkpoint: null, result: 'Done', finalOutputInvocationId: final.id,
+        });
+        const settled = { ...root, lifecycle: 'completed' as const, contentRevision: '3' };
+        detailActions.listInvocations.mockImplementation(async () => ({ invocations: [settled, final], parentRevision: 3 }));
+        await act(async () => publishHomeAccountChange('server-a', [`workflow-run:${run.id}`]));
+        await act(async () => {});
+        await vi.waitFor(() => expect(readContentProps()?.selectedInvocationId).toBe(final.id));
+    });
+
     it.each([false, true])('selects a hold arriving after mount without replacing an explicit choice (%s)', async explicitChoice => {
         Object.assign(platformViewport, { width: 1440, height: 900 });
         const run = createWorkflowRunSummaryFixture({ state: 'running' });
@@ -1735,7 +1761,7 @@ describe('WorkflowRunScreen', () => {
         expect(screen.findByTestId(`workflow-run-publication-request-${other.id}.open`)).toBeNull();
     });
 
-    it('reviews a new Run with one explicit engine replacement after a step loses its agent', async () => {
+    it.each(['target_unavailable', 'agent_signed_out'])('reviews a new Run with one explicit engine replacement after %s', async code => {
         restoreRunPopoverGlobals = withPopoverWebGlobals({ frameScheduler: globalThis.requestAnimationFrame });
         routeState.invocationId = '44444444-4444-4444-8444-444444444444';
         const root = createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333', lifecycle: 'failed' });
@@ -1743,7 +1769,8 @@ describe('WorkflowRunScreen', () => {
         const invocation = { index: step, parentRevision: 1,
             progress: WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'analyze', scope: [] },
                 attempt: '0', logicalInvocationRecordId: step.id,
-                blockKind: 'step', reason: { code: 'target_unavailable' } }) };
+                blockKind: 'step', reason: code === 'target_unavailable' ? { code }
+                    : { code: 'spawn_failed', failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: code, httpStatus: null } } }) };
         detailActions.getInvocation.mockResolvedValue({ invocation });
         const acceptedLeaf = WorkflowMaterializedLeafV1Schema.parse({
                 sourceKey: '$root', blockId: 'analyze', kind: 'step', selection: {},
@@ -1753,7 +1780,9 @@ describe('WorkflowRunScreen', () => {
             invocations: [root, step], invocationDetails: [invocation], acceptedContext: { ...ACCEPTED_CONTEXT, materializedLeaves: [acceptedLeaf] } });
         await act(async () => readContentProps()?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
         await act(async () => {});
-        expect(readContentProps()?.selectedInvocationProgress).toMatchObject({ blockKind: 'step', reason: { code: 'target_unavailable' } });
+        expect(readContentProps()?.selectedInvocationProgress).toMatchObject({ blockKind: 'step', reason: {
+            code: code === 'target_unavailable' ? code : 'spawn_failed',
+        } });
         expect(readContentProps()?.onRunWithAnotherAgent).toEqual(expect.any(Function));
         await screen.pressByTestIdAsync('workflow-run-run-another-agent');
         expect(runStartCalls()).toHaveLength(0);

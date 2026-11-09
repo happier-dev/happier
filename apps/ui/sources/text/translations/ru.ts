@@ -7311,7 +7311,7 @@ export const ru: TranslationStructure = {
     selectPathTitle: "Выбрать путь",
     selectWorkingDirectoryTitle: "Выбрать рабочую директорию",
     /** An empty composer opened from an item names it. */
-    seededInputPlaceholder: ({ subject }: { subject: string }) => `Добавьте инструкции для «${subject}»…`,
+    seededInputPlaceholder: ({ subject }: { subject: string }) => `Спросите о «${subject}» или скажите, что сделать…`,
     recipeComposerTitle: "Где запустить?",
     recipeComposerSubmit: "Использовать эту настройку",
     recipeComposerMachine: "Машина",

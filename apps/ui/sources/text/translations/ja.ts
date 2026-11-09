@@ -7861,7 +7861,7 @@ localTailscale: {
     selectPathTitle: "パスを選択",
     selectWorkingDirectoryTitle: "作業ディレクトリを選択",
     /** An empty composer opened from an item names it. */
-    seededInputPlaceholder: ({ subject }: { subject: string }) => `「${subject}」への指示を追加…`,
+    seededInputPlaceholder: ({ subject }: { subject: string }) => `「${subject}」について質問、または指示を入力…`,
     recipeComposerTitle: "どこで実行しますか？",
     recipeComposerSubmit: "この設定を使用",
     recipeComposerMachine: "マシン",

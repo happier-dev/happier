@@ -5,6 +5,10 @@ import { act } from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { projectSessionTriggerGroups } from './sessionTriggerGroups';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
+import { storage } from '@/sync/domains/state/storage';
+import { UserProfileSchema } from '@happier-dev/protocol/social/friends';
+import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { t } from '@/text';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 // Native Markdown SDK boundary; trigger summaries do not use streaming text.
@@ -20,7 +24,7 @@ vi.mock('@/text', async () => {
 const { SessionTriggersSectionView } = await import('./SessionTriggersSection');
 const { WorkflowTriggerSection } = await import('./WorkflowTriggerSection');
 const { EMPTY_WORKFLOW_TRIGGER_DRAFT } = await import('./workflowTriggerDraft');
-const { WorkflowTriggerSetV1Schema, AutomationTriggerIdSchema } = await import('@happier-dev/protocol');
+const [{ WorkflowTriggerSetV1Schema}, { AutomationTriggerIdSchema}] = await Promise.all([import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1'), import('@happier-dev/protocol/automations/automationTriggerIdentity')]);
 
 type Groups = React.ComponentProps<typeof SessionTriggersSectionView>['groups'];
 afterEach(async () => { await standardCleanup(); vi.useRealTimers(); });
@@ -51,6 +55,41 @@ function separators(screen: Awaited<ReturnType<typeof renderScreen>>) {
 }
 
 describe('SessionTriggersSectionView', () => {
+    it('renders the current source saver, not the last occurrence saver, and omits own or absent saves', async () => {
+        // Keep this timed row at the neighboring clock test's epoch, not a test-only backwards jump.
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(2026, 9, 10, 10).getTime());
+        storage.setState({ profileScope: { serverId: 'home', accountId: 'viewer' } });
+        storage.getState().applyUsers({ editor: UserProfileSchema.parse({ id: 'editor', name: 'Ada Chen',
+            firstName: '', lastName: null, username: '', avatar: null, bio: null, status: 'none', publicKey: null }) });
+        try {
+            for (const savedBy of [{ kind: 'person', accountId: 'editor' }, { kind: 'person', accountId: 'viewer' },
+                { kind: 'agent', accountId: 'viewer' }, undefined] as const) {
+                const set = WorkflowTriggerSetV1Schema.parse({ automationId: 'source-provenance', revision: 1,
+                    enabled: true, health: 'available', target: { kind: 'workflow', ref: '2364abf8-14b8-4877-8f00-a11111111111' },
+                    ...(savedBy ? { sourceSavedBy: savedBy, sourceSavedAt: Date.now() - 120_000 } : {}),
+                    triggers: [{ id: 'source-timer', revision: 1, enabled: true, kind: 'schedule', nextRunAt: null,
+                        createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null,
+                        schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } }] });
+                const groups = projectSessionTriggerGroups({ sets: [set], lastRunAtByAutomationId: {},
+                    lastRunsByAutomationId: { [set.automationId]: createWorkflowRunSummaryFixture({
+                        ownerAccountId: 'viewer', state: 'succeeded',
+                        ...{ sourceSavedBy: { kind: 'person' as const, accountId: 'viewer' } },
+                    }) },
+                    resolveWorkflowTitle: () => 'Saved workflow', formatAge: String });
+                const screen = await renderScreen(<SessionTriggersSectionView groups={groups} status="ready"
+                    pendingKeys={new Set()} onToggle={vi.fn()} onOpen={vi.fn()} onAdd={vi.fn()} onRetry={vi.fn()} />);
+                const label = savedBy?.kind === 'agent' ? t('workflows.run.editedByAgent')
+                    : savedBy?.accountId === 'editor' ? t('workflows.run.editedBy', { name: 'Ada Chen' }) : null;
+                if (label) {
+                    expect(screen.getTextContent()).toContain(label);
+                    expect(screen.getTextContent()).toContain(formatRelativeTimeShort(Date.now() - 120_000, Date.now()));
+                }
+                else expect(screen.getTextContent()).not.toContain(t('workflows.run.editedByYou'));
+                await standardCleanup();
+            }
+        } finally { storage.setState(storage.getInitialState(), true); }
+    });
     it('refreshes mounted next-run and last-result labels with the same projected groups', async () => {
         vi.useFakeTimers();
         const now = new Date(2026, 9, 10, 10).getTime();
@@ -170,7 +209,7 @@ describe('SessionTriggersSectionView', () => {
         );
         const text = screen.getTextContent();
 
-        expect(text).toContain('workflows.triggers.section.habitsHere');
+        expect(text).toContain('workflows.triggers.section.title');
         // Only switched-on triggers count.
         expect(text).toContain('workflows.triggers.section.countOn(count=2)');
         expect(screen.findByTestId('session-work-triggers-info')?.props.accessibilityLabel).toBe('workflows.triggers.section.info');

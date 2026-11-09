@@ -21,6 +21,16 @@ describe('Discussion message approval', () => {
     }
   });
 
+  it.each([['discussion.post', 'Message'], ['discussion.reply', 'Reply']] as const)('reads a %s draft as one %s row, never its structured parts', (actionId, title) => {
+    const actionArgs = getActionSpec(actionId).inputSchema.parse({
+      discussionId: 'd-1', localId: 'l-1', replyTarget: { kind: 'message', messageId: 'm-1' },
+      content: { v: 1, parts: [{ t: 'text', text: 'Run two practice mornings.' }] },
+    });
+    const presentation = describeApprovalActionFields({ actionId, actionArgs });
+    const visible = presentation.rows.filter(row => row.kind !== 'value' || !row.technical);
+    expect(visible).toEqual([expect.objectContaining({ path: 'content.parts.[].text', title, value: 'Run two practice mornings.' })]);
+  });
+
   it('shows the proposed before/after and reason without passage routing or retry identities', () => {
     const actionArgs = getActionSpec('doc.edit.propose').inputSchema.parse({
       target: { ref: { kind: 'doc', artifactId: 'doc-1', serverId: 'home-1' },

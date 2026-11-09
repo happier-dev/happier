@@ -47,7 +47,8 @@ export function formatAccountWorkflowLine(
     return t('workflows.triggers.legacy.reviewRequired');
   const when =
     row.accountTrigger.triggers.length > 0 ? row.triggerSummary : null;
-  if (!isAccountWorkflowOff(row)) return when;
+  // A first trigger that is off already says so in `triggerSummary` (the set summary owner).
+  if (!isAccountWorkflowOff(row) || (when !== null && row.accountTrigger.triggers[0]?.enabled === false)) return when;
   return [t('workflows.triggers.row.off'), when].filter(Boolean).join(' · ');
 }
 

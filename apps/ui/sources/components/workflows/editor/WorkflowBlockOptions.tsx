@@ -551,7 +551,8 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
     return (
         <>
             <ItemGroup title={t('workflows.page.sections.conversationTitle')}>
-                <SectionContentRow testID={`${testIDPrefix}-continuity-row`}>
+                {/* The controls are page rows with their own inset: a content row around them indents a second grid. */}
+                <View testID={`${testIDPrefix}-continuity-row`}>
                     <WorkflowContinuityControls
                         draft={draft}
                         consumerBlockId={step.id}
@@ -569,7 +570,7 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                         onChangeWorkspace={(value) => onChange(setWorkflowStepExecutionField(draft, step.id, 'workspace', value))}
                         testIDPrefix={`${testIDPrefix}-continuity`}
                     />
-                </SectionContentRow>
+                </View>
             </ItemGroup>
 
 

@@ -1,3 +1,4 @@
+import { getDefaultCollectionSpaceIdV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import React from 'react';
 import { View, Platform, RefreshControl } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -10,7 +11,7 @@ import { SessionListDropOverlay } from './drag/SessionListDropOverlay';
 import { SessionListVirtualizedContent } from './sessionListVirtualizedContent';
 import { ScheduledWorkflowSection } from '@/components/workflows/triggers/ScheduledWorkflowSection';
 import { SessionListSearchChrome } from './search/SessionListSearchChrome';
-import { buildSessionListActiveFilterChips, readSessionListWorkFilterSummary } from './search/SessionListFilterControl';
+import { buildSessionListActiveFilterChips, isSessionListWorkFilterDefault, readSessionListWorkFilterSummary } from './search/SessionListFilterControl';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
     SessionListAttentionInteractionContext,
@@ -24,7 +25,7 @@ import {
     type SessionListViewFilterController,
 } from './search/useSessionListViewFilterController';
 import { preloadEnrichedMarkdownRuntime } from '@/components/markdown/enriched/preloadEnrichedMarkdownRuntime';
-import { SessionListExternalStatusDemandPublisher, useSessionListViewStateFromPaneState } from './useSessionListViewState';
+import { SessionListViewportDemandPublisher, useSessionListViewStateFromPaneState } from './useSessionListViewState';
 import {
     releaseSessionListScrollRetention,
     useSessionListScrollRetention,
@@ -55,6 +56,7 @@ import {
     setRetainedSessionListPaneQueryMembershipActive,
     setRetainedSessionListPaneReferenceCorpusActive,
 } from './sessionListPaneRetention';
+import { SessionListRowFactsProvider } from './sessionListRowFacts';
 import type { SessionListViewContext } from './search/sessionListViewFilters';
 import type { SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import {
@@ -490,6 +492,8 @@ function VisibleSessionsListViewContent(
         );
     }, [handleRefreshSessions, refreshingSessions, surfaceOwnership.dataActive]);
     const queryVisibleSessionCount = viewState.visibleEntityCount;
+    const activeSpace = props.filterController.activeSpace;
+    const emptySpaceName = activeSpace && activeSpace.id !== getDefaultCollectionSpaceIdV1('sessionWork') ? activeSpace.name : null;
     const queryPresentationState = React.useMemo(() => {
         const presentation = props.paneState.queryPresentation;
         if (!presentation) return undefined;
@@ -502,6 +506,7 @@ function VisibleSessionsListViewContent(
             viewContext: props.filterController.viewContext,
             includeInactive: props.filterController.includeInactive,
             hasHiddenInactiveSessions: props.paneState.hasHiddenInactiveSessions,
+            emptySpaceName: emptySpaceName,
             onRetry: handleRetrySessions,
             onLoadMore: handleLoadMoreSessions,
             onClearFilters: handleClearFilters,
@@ -509,6 +514,7 @@ function VisibleSessionsListViewContent(
             onShowInactive: handleShowInactive,
         };
     }, [
+        emptySpaceName,
         handleBrowseAllAccessible,
         handleClearFilters,
         handleLoadMoreSessions,
@@ -532,7 +538,7 @@ function VisibleSessionsListViewContent(
         ),
         [props.filterController, theme.colors.text.secondary],
     );
-    const filterSummaryLabel = readSessionListWorkFilterSummary(props.filterController);
+    const filterSummaryLabel = isSessionListWorkFilterDefault(props.filterController) ? null : readSessionListWorkFilterSummary(props.filterController);
     const filterSummary = React.useMemo(
         () => filterSummaryLabel
             ? { label: filterSummaryLabel, onReset: props.filterController.resetFilters }
@@ -545,7 +551,7 @@ function VisibleSessionsListViewContent(
         <SessionListSelectionStoreProvider store={viewState.sessionListSelectionStore}>
         <SessionListOrganizeModeProvider>
         <SessionListStagedMoveProvider handleRowKey={viewState.stagedMove.handleRowKey}>
-            <SessionListExternalStatusDemandPublisher {...viewState.externalStatusDemand} />
+            <SessionListViewportDemandPublisher {...viewState.viewportDemand} />
         <KeyboardAwareScreen
             testID="sessions-list-keyboard-frame"
             mode="form"
@@ -570,6 +576,7 @@ function VisibleSessionsListViewContent(
                         relevantServerIds={queryPresentationState?.selectedHomeServerIds}
                     >{null}</HomeReachabilityGate>
                 ) : null}
+                <SessionListRowFactsProvider value={viewState.rowFacts}>
                 <SyncPerformanceReactProfiler id="sessions.list.virtualized">
                     <SessionListVirtualizedContent
                         listRef={viewState.virtualizedListRef}
@@ -602,6 +609,7 @@ function VisibleSessionsListViewContent(
                         layout={layout}
                     />
                 </SyncPerformanceReactProfiler>
+                </SessionListRowFactsProvider>
                 <SessionListDropOverlay
                     shared={viewState.dropOverlayShared}
                     testID="session-list-drop-overlay"

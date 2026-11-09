@@ -4916,7 +4916,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         remoteAlerts: {
             title: "應用程式關閉時的工作階段提醒",
             accountTitle: "允許遠端工作階段提醒",
-            disclosure: "允許此Home讀取您的提醒類別、勿擾時段與時區、預覽限制及音效偏好，以便在應用程式關閉時傳送獲准的提醒。不會分享工作階段內容和加密金鑰。",
+            disclosure: "讓此 Home 在應用程式關閉時提醒你工作階段動態。它只讀取提醒類型、勿擾時段與時區、預覽限制和聲音，絕不讀取工作階段內容或加密金鑰。",
             footer: "即使不同意，現有的擁有者通知和前景更新仍可使用。遠端變更需要網路連線；已傳送的提醒無法收回。",
             deviceTitle: "在此裝置上接收",
             deviceSubtitle: "僅適用於此裝置上的遠端工作階段提醒。",
@@ -4978,8 +4978,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         push: {
             title: '推播通知',
-            footer: ({ home }: { home: string }) => `${home} 的推播同意會同步儲存。裝置通知權限與覆寫設定適用於整台裝置。`,
-            enabledSubtitle: ({ home }: { home: string }) => `允許來自 ${home} 的推播通知`,
+            footer: ({ home }: { home: string }) => `Happier 關閉時，${home} 會通知你的手機與電腦。`,
+            enabledSubtitle: ({ home }: { home: string }) => `關閉後，將停止 ${home} 的通知及下方所有類型。`,
             troubleshootTitle: '疑難排解',
             troubleshootSubtitle: '查看權限與已註冊裝置',
         },
@@ -6200,6 +6200,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             'Happier 無法連線到此機器上的守護程序。它可能離線、仍在啟動，或與Home中斷連線。',
         agentIsolationMemberSetupAskManager: "請讓機器管理員為你設定獨立使用者。",
         agentIsolationMemberSetupOpenSecurity: "開啟此機器的「安全性」頁面，檢查獨立使用者設定。",
+        pluginCodeUnreadableAskManager: "你的獨立使用者無法存取外掛程式碼。請讓機器管理員設定獨立使用者並重新啟動機器上的 Happier，然後重試。",
+        pluginCodeUnreadableOpenSecurity: "你的獨立使用者無法存取外掛程式碼。請開啟此機器的「安全性」頁面，設定獨立使用者，然後重新啟動機器上的 Happier 並重試。",
         agentIsolationUnavailable:
             '這台機器上的智慧體隔離尚未就緒。請讓機器擁有者檢查設定，然後重試。',
         tryAgain: '請重試',
@@ -6724,6 +6726,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           },
         pendingActivation: {
     held: { title: "已由你停止", body: "在你恢復此工作階段之前，訊息會一直保留在佇列中。" },
+    held_offline: { title: "已由你停止", body: "此機器已離線。訊息會保留在佇列中；機器恢復後請重新傳送或恢復。" },
             waiting_offline: { title: '訊息已加入此機器的佇列', body: '這台機器及其背景服務重新上線後，訊息將被處理。' },
             waiting: { title: '等待恢復', body: '背景服務恢復此工作階段時，你的訊息會安全地保留在佇列中。' },
             failed: { title: '無法恢復工作階段', body: '你的訊息仍安全地保留在佇列中。準備好後請重試。' },
@@ -6872,6 +6875,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               statusBlocked: '已阻塞',
               setTitle: '設定目標',
               setSubtitle: '為此工作階段設定重點，讓智能體保持專注。',
+              setSubtitleStarts: '設定後智能體會立即開始。',
               addBudget: '+ 新增預算上限（選填）',
               removeBudget: '移除預算',
               noUsageYet: '尚無使用',

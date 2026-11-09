@@ -7553,7 +7553,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     selectPathTitle: "Seleccionar ruta",
     selectWorkingDirectoryTitle: "Seleccionar directorio de trabajo",
     /** An empty composer opened from an item names it. */
-    seededInputPlaceholder: ({ subject }: { subject: string }) => `Añade instrucciones para «${subject}»…`,
+    seededInputPlaceholder: ({ subject }: { subject: string }) => `Pregunta sobre «${subject}» o di qué hacer…`,
     recipeComposerTitle: "¿Dónde debe ejecutarse?",
     recipeComposerSubmit: "Usar esta configuración",
     recipeComposerMachine: "Máquina",

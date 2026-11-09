@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { View } from 'react-native';
 
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ComposerContentHandleV1Schema, type ComposerContentHandleV1 } from '@happier-dev/protocol/runtime/input/composerContentV1';
@@ -234,7 +235,7 @@ export type ComposerPresentationTarget = Readonly<{
      * surface, such as the Work tab opening the Goal control. `false` while the chip is absent or the
      * input is not on screen; the request then waits for that same input.
      */
-    openActionChip?: (chipKey: string) => boolean;
+    openActionChip?: (chipKey: string, anchorRef?: React.RefObject<View | null>) => boolean;
     /** Whether this input offers the action chip now; read by surfaces that offer to open it. */
     hasActionChip?: (chipKey: string) => boolean;
     /** The mounted New Session directory owner; never a launch or filesystem write. */
@@ -362,7 +363,7 @@ export function useStableComposerPresentationTarget(
                     openAttachmentPicker: () => readCurrent().openAttachmentPicker?.() ?? false,
                 } : {}),
                 ...(target.openActionChip ? {
-                    openActionChip: (chipKey) => readCurrent().openActionChip?.(chipKey) ?? false,
+                    openActionChip: (chipKey, anchorRef) => readCurrent().openActionChip?.(chipKey, anchorRef) ?? false,
                 } : {}),
                 ...(target.hasActionChip ? {
                     hasActionChip: (chipKey) => readCurrent().hasActionChip?.(chipKey) ?? false,
@@ -418,7 +419,7 @@ const targets = new Map<string | symbol, ComposerPresentationFocusTarget[]>();
 // contain the same raw Session id.
 const qualifiedSessionTargets = new Map<string, ComposerPresentationTarget[]>();
 let pendingSessionComposerFocusAddressKey: string | null = null;
-let pendingSessionComposerActionChip: Readonly<{ addressKey: string; chipKey: string }> | null = null;
+let pendingSessionComposerActionChip: Readonly<{ addressKey: string; chipKey: string; anchorRef?: React.RefObject<View | null> }> | null = null;
 const listeners = new Set<() => void>();
 const listenersByTargetKey = new Map<string, Set<() => void>>();
 
@@ -3048,10 +3049,10 @@ export function flushPendingRegisteredSessionComposerFocus(addressRaw: SessionAd
     return target ? deliverPendingSessionComposerFocus(addressKey, target) : false;
 }
 
-function tryOpenSessionComposerActionChip(target: ComposerPresentationTarget | null, chipKey: string): boolean {
+function tryOpenSessionComposerActionChip(target: ComposerPresentationTarget | null, chipKey: string, anchorRef?: React.RefObject<View | null>): boolean {
     if (!target?.openActionChip || target.isCurrent?.() === false) return false;
     try {
-        return target.openActionChip(chipKey) === true;
+        return target.openActionChip(chipKey, anchorRef) === true;
     } catch {
         return false;
     }
@@ -3061,7 +3062,7 @@ function deliverPendingSessionComposerActionChip(addressKey: string, target: Com
     const pending = pendingSessionComposerActionChip;
     if (pending?.addressKey !== addressKey) return false;
     if (resolveQualifiedSessionTarget(addressKey) !== target) return false;
-    if (!tryOpenSessionComposerActionChip(target, pending.chipKey)) return false;
+    if (!tryOpenSessionComposerActionChip(target, pending.chipKey, pending.anchorRef)) return false;
     pendingSessionComposerActionChip = null;
     return true;
 }
@@ -3071,15 +3072,15 @@ function deliverPendingSessionComposerActionChip(addressKey: string, target: Com
  * composer's goal chip), or retains one qualified request until that same Home/Session composer can
  * open it. Like focus, this is presentation state only: no navigation owner and no persistence.
  */
-export function requestRegisteredSessionComposerActionChip(addressRaw: SessionAddress, chipKey: string): boolean {
+export function requestRegisteredSessionComposerActionChip(addressRaw: SessionAddress, chipKey: string, anchorRef?: React.RefObject<View | null>): boolean {
     const address = normalizeSessionAddress(addressRaw.serverId, addressRaw.sessionId);
     if (!address) return false;
     const addressKey = sessionAddressKey(address);
-    if (tryOpenSessionComposerActionChip(resolveQualifiedSessionTarget(addressKey), chipKey)) {
+    if (tryOpenSessionComposerActionChip(resolveQualifiedSessionTarget(addressKey), chipKey, anchorRef)) {
         pendingSessionComposerActionChip = null;
         return true;
     }
-    pendingSessionComposerActionChip = { addressKey, chipKey };
+    pendingSessionComposerActionChip = { addressKey, chipKey, ...(anchorRef ? { anchorRef } : {}) };
     return false;
 }
 

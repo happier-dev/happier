@@ -98,6 +98,7 @@ import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/
 import { formatWorkflowWhereSummary } from '../editor/WorkflowProjectTargetControl';
 import { resolveAgentInputColumn } from '@/components/sessions/agentInput/layout/agentInputColumn';
 import { WorkflowStartDetailsLead } from './WorkflowStartDetailsLead';
+import { WORKFLOW_START_WHERE_CHIP_KEY } from './workflowStartWhereChip';
 import {
   getWorkflowStartVisibilityChipPlacement,
   getWorkflowStepTargetsChipPlacement,
@@ -347,6 +348,8 @@ export function WorkflowRunComposer(
   const scopedMachineName = useServerScopedMachineLabel(props.serverId, suppliedMachineName ? null : reviewedMachineId);
   const reviewedProject = retained?.project ?? (reviewedMachineId && props.directory
     ? { machineId: reviewedMachineId, directory: props.directory } : null);
+  // One Where: the composer's chip already says it and changes it; the review row stands in only without one.
+  const hasWhereChip = props.extraActionChips?.some((chip) => chip.key === WORKFLOW_START_WHERE_CHIP_KEY) === true;
   const whereSummary = formatWorkflowWhereSummary({ target: reviewedProject,
     machineName: suppliedMachineName ?? scopedMachineName, machineHomeDir: props.machineHomeDir })
     ?? t('workflows.page.inspector.whereMissing');
@@ -581,6 +584,8 @@ export function WorkflowRunComposer(
             : []),
         ].join(' → ')
       : '';
+    // One step's name is the composer's own text: the route line adds only the count.
+    if (!last || last === first) return t('workflows.examples.stepCount', { count: countWorkflowStepsV1(props.definition.blocks) });
     return [
       t('workflows.examples.stepCount', {
         count: countWorkflowStepsV1(props.definition.blocks),
@@ -896,7 +901,7 @@ export function WorkflowRunComposer(
         <View style={columnStyle}>
           <View style={columnInnerStyle}>
             {props.definition && props.workflowName ? <WorkflowStartDetailsLead
-              name={props.workflowName} description={props.preview} summary={summary}
+              name={props.workflowName} description={main === null ? undefined : props.preview} summary={summary}
               source={props.sourceArtifactId ? t('workflows.start.library')
                 : props.optionsConsumer?.workflow ? (props.optionsConsumer.workflow.startsWith('builtin:')
                   ? t('workflows.start.builtin') : t('workflows.plugins.fromPlugins')) : undefined}
@@ -904,8 +909,8 @@ export function WorkflowRunComposer(
               {props.leadContent}
             </WorkflowStartDetailsLead> : null}
             {reviewedDefinition ? <>
-              <Item testID={`${prefix}-review-where`} title={t('workflows.page.sections.whereTitle')}
-                subtitle={whereSummary} showChevron={false} subtitleLines={0} />
+              {hasWhereChip ? null : <Item testID={`${prefix}-review-where`} title={t('workflows.page.sections.whereTitle')}
+                subtitle={whereSummary} showChevron={false} subtitleLines={0} />}
               {!acceptedRepeat && showsWorkflowAgent
                 ? <WorkflowRunAgentSummary definition={reviewedDefinition} serverId={props.serverId}
                     testID={`${prefix}-review-agent`} /> : null}

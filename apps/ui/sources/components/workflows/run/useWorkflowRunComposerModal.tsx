@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
 import type { CustomModalInjectedProps } from '@/modal';
 import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
@@ -33,8 +34,10 @@ function WorkflowRunComposerModal(
     const { keyboardContext, accountLifetime, ...composerProps } = props;
     return <WorkflowAccountLifetimeProvider value={accountLifetime}><KeyboardShortcutContextBridge snapshot={keyboardContext}>
         {/* The identity lead and form share the card's edge at every width. */}
-        <WorkflowRunComposer {...composerProps} autoFocusComposer={composerProps.autoFocusComposer ?? true}
-            contentPaddingHorizontal={composerProps.contentPaddingHorizontal ?? COMPOSER_CONTENT_HORIZONTAL_INSET} />
+        <View style={styles.inset}>
+            <WorkflowRunComposer {...composerProps} autoFocusComposer={composerProps.autoFocusComposer ?? true}
+                contentPaddingHorizontal={composerProps.contentPaddingHorizontal ?? COMPOSER_CONTENT_HORIZONTAL_INSET} />
+        </View>
     </KeyboardShortcutContextBridge></WorkflowAccountLifetimeProvider>;
 }
 
@@ -84,3 +87,8 @@ export function useWorkflowRunComposerModal(params: Readonly<{
     });
     return null;
 }
+
+const styles = StyleSheet.create((theme) => ({
+    /** The anchored sheet has no header of its own: the composer's lead keeps its marks clear of the top edge. */
+    inset: { paddingTop: theme.space.s12 },
+}));

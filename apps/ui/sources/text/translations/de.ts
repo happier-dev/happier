@@ -7514,7 +7514,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         selectPathTitle: 'Pfad wählen',
         selectWorkingDirectoryTitle: 'Arbeitsverzeichnis wählen',
         /** An empty composer opened from an item names it. */
-        seededInputPlaceholder: ({ subject }: { subject: string }) => `Anweisungen für „${subject}“ hinzufügen…`,
+        seededInputPlaceholder: ({ subject }: { subject: string }) => `Frage zu „${subject}“ stellen oder sagen, was zu tun ist…`,
         recipeComposerTitle: "Wo soll es laufen?",
         recipeComposerSubmit: "Diese Einrichtung verwenden",
         recipeComposerMachine: "Rechner",

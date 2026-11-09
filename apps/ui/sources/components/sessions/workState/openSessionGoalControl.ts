@@ -1,8 +1,9 @@
 import * as React from 'react';
+import type { View } from 'react-native';
 
 import { useRouter, type Href } from '@/components/appShell/workspace/destinationRoute';
 import {
-    readSessionComposerActionChipAvailable,
+    readSessionComposerActionChipOffer,
     requestRegisteredSessionComposerActionChip,
     subscribeSessionComposerPresentationTargets,
 } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
@@ -23,14 +24,19 @@ import { SESSION_GOAL_CHIP_KEY } from './sessionGoalChipKey';
  */
 
 /** Opens the Goal control of the exact session composer, or retains the request until it can. */
-export function openSessionGoalControl(address: SessionAddress): boolean {
-    return requestRegisteredSessionComposerActionChip(address, SESSION_GOAL_CHIP_KEY);
+export function openSessionGoalControl(address: SessionAddress, anchorRef?: React.RefObject<View | null>): boolean {
+    return requestRegisteredSessionComposerActionChip(address, SESSION_GOAL_CHIP_KEY, anchorRef);
 }
 
 export type SessionGoalControlEntry = Readonly<{
-    /** The session's composer offers the Goal control (it can hold a goal and this person may edit it). */
+    /**
+     * The session's composer offers the Goal control (it can hold a goal and this person may edit it). On a
+     * phone the Work page has no composer mounted beside it to ask, so the entry stays offered and the
+     * request waits for the Chat surface it opens (see `open`).
+     */
     available: boolean;
-    open: () => void;
+    /** Beside the composer, a row passes its own view so the popover opens where it was pressed. */
+    open: (anchorRef?: React.RefObject<View | null>) => void;
 }>;
 
 /**
@@ -47,15 +53,17 @@ export function useSessionGoalControlEntry(params: Readonly<{
     const cockpitNavigation = useSessionCockpitSurfaceNavigation();
     const { sessionId } = params;
     const serverId = params.serverId?.trim() || null;
-    const readAvailable = React.useCallback(
-        () => (serverId ? readSessionComposerActionChipAvailable({ serverId, sessionId }, SESSION_GOAL_CHIP_KEY) : false),
+    const readOffer = React.useCallback(
+        () => (serverId ? readSessionComposerActionChipOffer({ serverId, sessionId }, SESSION_GOAL_CHIP_KEY) : 'no_composer' as const),
         [serverId, sessionId],
     );
-    const available = React.useSyncExternalStore(subscribeSessionComposerPresentationTargets, readAvailable, readAvailable);
+    const offer = React.useSyncExternalStore(subscribeSessionComposerPresentationTargets, readOffer, readOffer);
+    const available = offer === 'offered' || (offer === 'no_composer' && phone && serverId !== null);
 
-    const open = React.useCallback(() => {
+    const open = React.useCallback((anchorRef?: React.RefObject<View | null>) => {
         if (!serverId) return;
-        const opened = openSessionGoalControl({ serverId, sessionId });
+        // On a phone the composer is the Chat surface: there is no row beside it to hang from.
+        const opened = openSessionGoalControl({ serverId, sessionId }, phone ? undefined : anchorRef);
         if (opened || !phone) return;
         if (cockpitNavigation) {
             cockpitNavigation.switchSurface('chat');

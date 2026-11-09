@@ -7269,7 +7269,7 @@ export const zhHans: TranslationStructure = {
     selectPathTitle: "选择路径",
     selectWorkingDirectoryTitle: "选择工作目录",
     /** An empty composer opened from an item names it. */
-    seededInputPlaceholder: ({ subject }: { subject: string }) => `为“${subject}”添加说明…`,
+    seededInputPlaceholder: ({ subject }: { subject: string }) => `询问“${subject}”，或说明要做什么…`,
     recipeComposerTitle: "在哪里运行？",
     recipeComposerSubmit: "使用此设置",
     recipeComposerMachine: "机器",

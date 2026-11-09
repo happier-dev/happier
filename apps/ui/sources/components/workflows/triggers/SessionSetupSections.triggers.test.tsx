@@ -375,6 +375,19 @@ describe('the Session Info page Triggers section', () => {
     }
   });
 
+  it('opens the blank trigger popover from outside the section through its actions (Work tab + › Add a trigger, 07 S16)', async () => {
+    const actionsRef = React.createRef<import('@/components/workflows/triggers/SessionTriggersSection').SessionTriggersSectionActions>();
+    const anchorRef = React.createRef<import('react-native').View>();
+    const screen = await renderScreen(<InjectedAuthProvider credentials={workflowHttp?.credentials ?? null}>
+      <AppPaneProvider><ItemList><SessionHabitsSection sessionId="session-1" serverId={home.serverId} actionsRef={actionsRef} /></ItemList></AppPaneProvider>
+    </InjectedAuthProvider>);
+    await settle();
+    expect(screen.findByTestId('session-work-trigger-popover')).toBeNull();
+    await act(async () => { actionsRef.current?.openNewTrigger(anchorRef); });
+    await settle();
+    expect(screen.findByTestId('session-work-trigger-popover')).not.toBeNull();
+  });
+
   it('presents concurrent Habit read failures once and retries the section together', async () => {
     failAutomationReads = true;
     failRunReads = true;

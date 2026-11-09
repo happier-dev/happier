@@ -1069,7 +1069,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
         if (invocationWindow?.loaded) setAnnouncementsEnabled(true);
     }, [invocationWindow?.loaded]);
     const announcementProjection = React.useMemo(() => visibleDefinition === null ? null
-        : projectWorkflowFlow(visibleDefinition, visibleAcceptedContext?.frozenChildren),
+        : projectWorkflowFlow(visibleDefinition, visibleAcceptedContext?.frozenChildren, undefined, { presentation: 'run' }),
     [visibleAcceptedContext?.frozenChildren, visibleDefinition]);
     const failureInvocation = selectWorkflowRunFailureInvocation({ invocations: allInvocations, structure: invocationStructure,
         firstFailedInvocationId: visibleFirstFailedInvocation?.id ?? null, runState: summary?.state })
@@ -1091,11 +1091,17 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
     // failure discovery so a completed output cannot briefly displace the failed step.
     const openingInvocationId = summary !== null && isTerminalWorkflowRunState(summary.state)
         && firstFailedInvocationResolution !== 'resolved' ? null
-        : failurePresentation?.invocationId ?? (summary?.state === 'succeeded' ? visibleFinalOutputInvocationId : null);
+        : failurePresentation?.invocationId ?? (summary?.state === 'succeeded'
+            ? visibleFinalOutputInvocationId ?? allInvocations.at(-1)?.id ?? null : null);
+    // The opening selection follows the Run (a hold, then its final output or last step) until the person
+    // picks a row themselves; a deliberate choice, closing the pane included, is never moved.
+    const followedOpeningIdRef = React.useRef<string | null>(null);
     React.useEffect(() => {
         if (!activelyViewed || !detailsPaneAvailable || openingInvocationId === null) return;
-        setSelectedInvocationId(current => current === undefined ? openingInvocationId : current);
-    }, [activelyViewed, detailsPaneAvailable, openingInvocationId]);
+        if (invocationSelection !== undefined && invocationSelection !== followedOpeningIdRef.current) return;
+        followedOpeningIdRef.current = openingInvocationId;
+        setSelectedInvocationId(openingInvocationId);
+    }, [activelyViewed, detailsPaneAvailable, openingInvocationId, invocationSelection]);
 
     const announcementState = React.useMemo(() => ({
         blockIds: announcementProjection?.nodes.map((node) => node.nodeId) ?? [],
