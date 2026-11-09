@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as React from 'react';
+import { renderHook } from '@/dev/testkit';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useSessionProjectScmSnapshot } from '@/sync/store/scmHooks';
 
 import { storage } from '@/sync/domains/state/storage';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -10,9 +14,7 @@ import { log } from '@/log';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { ScmStatusSync } from './scmStatusSync';
-import { ATTRIBUTION_INVALIDATION_WINDOW_MS, shouldAttributeChangedPaths } from './sync/attribution';
 import { isSessionPathWithinRepoRoot } from './sync/paths';
-import { collectChangedPaths } from './sync/snapshotDiff';
 import { resolveWorkspaceTargetForSessionFromState } from '@/sync/domains/session/resolveWorkspaceTargetForSessionFromState';
 import { registerSuggestionFileSearchCacheClearer } from '@/sync/domains/input/suggestionFileCacheInvalidation';
 import {
@@ -239,6 +241,167 @@ describe('repository scope snapshot publication and reuse', () => {
     });
 });
 
+describe('changed-file delivery follows consumption', () => {
+    const initialState = storage.getState();
+    afterEach(() => {
+        storage.setState(initialState, true);
+        machineRpc.mockReset();
+        vi.restoreAllMocks();
+    });
+
+    it.each([undefined, 'exact-home'])('reads counts only until a list consumer is presented, and agent edits read no list (Home %s)', async (serverId) => {
+        const machine = createMachineFixture({ id: `delivery-machine-${serverId ?? 'active'}` });
+        const base = createSessionFixture();
+        const session = createSessionFixture({ id: `delivery-session-${serverId ?? 'active'}`,
+            metadata: { ...base.metadata!, machineId: machine.id, path: `/delivery-repo-${serverId ?? 'active'}` } });
+        storage.setState({
+            machines: { [machine.id]: machine }, sessions: { [session.id]: session },
+            ...(serverId ? {
+                machineListByServerId: { [serverId]: [machine] },
+                sessionListRowsByServerId: { [serverId]: { [session.id]: session } },
+            } : {}),
+        });
+        const rootPath = `/delivery-repo-${serverId ?? 'active'}`;
+        const entry = (path: string) => ({ path, previousPath: null, kind: 'modified' as const, includeStatus: '.', pendingStatus: 'M',
+            hasIncludedDelta: false, hasPendingDelta: true,
+            stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 2, pendingRemoved: 1, isBinary: false } });
+        let edits = 1;
+        machineRpc.mockImplementation(async (request) => {
+            // A Machine read takes time: a pane's own refresh arrives while the list upgrade is in flight.
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const full = makeSnapshot(Array.from({ length: edits }, (_, index) => entry(`src/file-${index}.ts`)));
+            const snapshot = { ...full, repo: { isRepo: true, rootPath }, capabilities: EMPTY_SCM_CAPABILITIES };
+            return { success: true, snapshot: request.payload?.detail === 'summary'
+                ? { ...snapshot, entries: [], detail: 'summary', summary: { changedFiles: edits, includedAdded: 0, includedRemoved: 0, pendingAdded: 2 * edits, pendingRemoved: edits } }
+                : snapshot };
+        });
+        const details = () => machineRpc.mock.calls.filter(([request]) => request?.method === RPC_METHODS.SCM_STATUS_SNAPSHOT)
+            .map(([request]) => request.payload?.detail ?? 'full');
+        const syncer = new ScmStatusSync();
+        try {
+            // Session open (composer only), then three agent edits.
+            await syncer.getSync(session.id, serverId).invalidateAndAwait();
+            for (let edit = 0; edit < 3; edit += 1) {
+                edits += 1;
+                await syncer.invalidateFromMutationAndAwait(session.id, serverId);
+            }
+            expect(details()).toEqual(['summary', 'summary', 'summary', 'summary']);
+            expect(storage.getState().getSessionProjectScmSnapshot(session.id, serverId)?.detail).toBe('summary');
+            expect(storage.getState().getSessionProjectScmSnapshot(session.id, serverId)?.summary?.changedFiles).toBe(4);
+
+            // The Git/Review pane is presented (list demand + its visible refresh): one full read, and
+            // edits read the list while it stays.
+            machineRpc.mockClear();
+            const release = syncer.retainEntriesDemand(session.id, serverId);
+            const stopAutoRefresh = syncer.retainAutoRefresh({ sessionId: session.id, serverId, intervalMs: 0 });
+            await vi.waitFor(() => expect(details()).toHaveLength(1));
+            await syncer.getSync(session.id, serverId).awaitQueue();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            expect(details()).toEqual(['full']);
+            stopAutoRefresh();
+            edits += 1;
+            await syncer.invalidateFromMutationAndAwait(session.id, serverId);
+            expect(details()).toEqual(['full', 'full']);
+            expect(storage.getState().getSessionProjectScmSnapshot(session.id, serverId)?.entries).toHaveLength(edits);
+
+            release();
+            machineRpc.mockClear();
+            edits += 1;
+            await syncer.invalidateFromMutationAndAwait(session.id, serverId);
+            expect(details()).toEqual(['summary']);
+        } finally {
+            syncer.stop(session.id, serverId);
+        }
+    });
+});
+
+describe('a retained Session surface holds its list without reading it', () => {
+    const initialState = storage.getState();
+    afterEach(() => {
+        storage.setState(initialState, true);
+        machineRpc.mockReset();
+        vi.restoreAllMocks();
+    });
+
+    it('keeps rows hidden, reads counts while hidden, re-reads on show only if moved, and frees them on close', async () => {
+        const machine = createMachineFixture({ id: 'retained-machine' });
+        const base = createSessionFixture();
+        const rootPath = '/retained-repo';
+        const session = createSessionFixture({ id: 'retained-session', metadata: { ...base.metadata!, machineId: machine.id, path: rootPath } });
+        storage.setState({ machines: { [machine.id]: machine }, sessions: { [session.id]: session } });
+        const entry = (path: string) => ({ path, previousPath: null, kind: 'modified' as const, includeStatus: '.', pendingStatus: 'M',
+            hasIncludedDelta: false, hasPendingDelta: true,
+            stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 2, pendingRemoved: 1, isBinary: false } });
+        let edits = 1;
+        let listRead: Promise<void> | null = null;
+        machineRpc.mockImplementation(async (request) => {
+            if (request?.payload?.detail !== 'summary' && listRead) await listRead;
+            const full = makeSnapshot(Array.from({ length: edits }, (_, index) => entry(`src/file-${index}.ts`)));
+            const snapshot = { ...full, repo: { isRepo: true, rootPath }, capabilities: EMPTY_SCM_CAPABILITIES };
+            return { success: true, snapshot: request.payload?.detail === 'summary'
+                ? { ...snapshot, entries: [], detail: 'summary', summary: { changedFiles: edits, includedAdded: 0, includedRemoved: 0, pendingAdded: 2 * edits, pendingRemoved: edits } }
+                : snapshot };
+        });
+        const details = () => machineRpc.mock.calls.filter(([request]) => request?.method === RPC_METHODS.SCM_STATUS_SNAPSHOT)
+            .map(([request]) => request.payload?.detail ?? 'full');
+        let presented = true;
+        const wrapper = ({ children }: { children?: React.ReactNode }) => React.createElement(PluginSurfaceFocusEligibilityProvider,
+            { active: true, presentationActive: presented, children });
+        const syncer = new ScmStatusSync();
+        const hook = await renderHook(() => useSessionProjectScmSnapshot(session.id, null), { wrapper });
+        const stored = () => storage.getState().getSessionProjectScmSnapshot(session.id, null);
+        try {
+            await syncer.getSync(session.id, null).invalidateAndAwait();
+            await vi.waitFor(() => expect(hook.getCurrent()?.entries).toHaveLength(1));
+            const shown = hook.getCurrent();
+
+            // Hidden with nothing moved: rows stay everywhere, and the read carries counts only.
+            presented = false;
+            await hook.rerender();
+            expect(hook.getCurrent()).toBe(shown);
+            machineRpc.mockClear();
+            await syncer.invalidateFromMutationAndAwait(session.id, null);
+            expect(details()).toEqual(['summary']);
+            expect(stored()?.entries).toHaveLength(1);
+
+            // Shown again unchanged: no read.
+            machineRpc.mockClear();
+            presented = true;
+            await hook.rerender();
+            await syncer.getSync(session.id, null).awaitQueue();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            expect(details()).toEqual([]);
+            expect(hook.getCurrent()).toBe(shown);
+
+            // Hidden while an edit lands: the slot moves to counts, the hidden reader keeps its rows.
+            presented = false;
+            await hook.rerender();
+            edits += 1;
+            await syncer.invalidateFromMutationAndAwait(session.id, null);
+            expect(stored()).toMatchObject({ detail: 'summary', summary: { changedFiles: 2 } });
+            expect(hook.getCurrent()).toBe(shown);
+
+            // Shown after moving: rows at once, one background list read, then the new rows.
+            machineRpc.mockClear();
+            let answerListRead!: () => void;
+            listRead = new Promise((resolve) => { answerListRead = resolve; });
+            presented = true;
+            await hook.rerender();
+            expect(hook.getCurrent()).toBe(shown);
+            answerListRead();
+            await vi.waitFor(() => expect(hook.getCurrent()?.entries).toHaveLength(2));
+            expect(details()).toEqual(['full']);
+
+            // Closing frees the slot's rows.
+            await hook.unmount();
+            await vi.waitFor(() => expect(stored()?.entries).toEqual([]));
+            expect(stored()).toMatchObject({ detail: 'summary', summary: { changedFiles: 2 } });
+        } finally {
+            syncer.stop(session.id, null);
+        }
+    });
+});
+
 describe('active-Home refresh lifecycle through real repository publication', () => {
     const initialState = storage.getState();
     afterEach(() => {
@@ -441,170 +604,5 @@ describe('active-Home refresh lifecycle through real repository publication', ()
         } finally {
             syncer.stop(id);
         }
-    });
-});
-
-describe('collectChangedPaths', () => {
-    it('returns added, removed and materially changed paths between snapshots', () => {
-        const before = makeSnapshot([
-            {
-                path: 'a.ts',
-                previousPath: null,
-                kind: 'modified',
-                includeStatus: 'M',
-                pendingStatus: ' ',
-                hasIncludedDelta: true,
-                hasPendingDelta: false,
-                stats: {
-                    includedAdded: 1,
-                    includedRemoved: 0,
-                    pendingAdded: 0,
-                    pendingRemoved: 0,
-                    isBinary: false,
-                },
-            },
-            {
-                path: 'old.ts',
-                previousPath: null,
-                kind: 'modified',
-                includeStatus: ' ',
-                pendingStatus: 'M',
-                hasIncludedDelta: false,
-                hasPendingDelta: true,
-                stats: {
-                    includedAdded: 0,
-                    includedRemoved: 0,
-                    pendingAdded: 2,
-                    pendingRemoved: 1,
-                    isBinary: false,
-                },
-            },
-        ]);
-
-        const after = makeSnapshot([
-            {
-                path: 'a.ts',
-                previousPath: null,
-                kind: 'modified',
-                includeStatus: 'M',
-                pendingStatus: 'M',
-                hasIncludedDelta: true,
-                hasPendingDelta: true,
-                stats: {
-                    includedAdded: 1,
-                    includedRemoved: 0,
-                    pendingAdded: 4,
-                    pendingRemoved: 0,
-                    isBinary: false,
-                },
-            },
-            {
-                path: 'new.ts',
-                previousPath: null,
-                kind: 'added',
-                includeStatus: 'A',
-                pendingStatus: ' ',
-                hasIncludedDelta: true,
-                hasPendingDelta: false,
-                stats: {
-                    includedAdded: 8,
-                    includedRemoved: 0,
-                    pendingAdded: 0,
-                    pendingRemoved: 0,
-                    isBinary: false,
-                },
-            },
-        ]);
-
-        expect(collectChangedPaths(before, after).sort()).toEqual(['a.ts', 'new.ts', 'old.ts']);
-    });
-});
-
-describe('shouldAttributeChangedPaths', () => {
-    it('returns true when attribution source is mutation, actor is in scope, changes exist, invalidation is fresh, and scope is single-session', () => {
-        expect(
-            shouldAttributeChangedPaths({
-                actorSessionId: 's1',
-                actorSource: 'mutation',
-                scopeSessionIds: ['s1'],
-                changedPathCount: 2,
-                invalidatedAt: 1000,
-                now: 1000 + ATTRIBUTION_INVALIDATION_WINDOW_MS - 1,
-            })
-        ).toBe(true);
-    });
-
-    it('returns false when multiple sessions are active in the same repository scope', () => {
-        expect(
-            shouldAttributeChangedPaths({
-                actorSessionId: 's1',
-                actorSource: 'mutation',
-                scopeSessionIds: ['s1', 's2'],
-                changedPathCount: 2,
-                invalidatedAt: 1000,
-                now: 1000 + ATTRIBUTION_INVALIDATION_WINDOW_MS - 1,
-            })
-        ).toBe(false);
-    });
-
-    it('returns false when invalidation source is not mutation', () => {
-        expect(
-            shouldAttributeChangedPaths({
-                actorSessionId: 's1',
-                actorSource: 'unknown',
-                scopeSessionIds: ['s1'],
-                changedPathCount: 2,
-                invalidatedAt: 1000,
-                now: 1000 + ATTRIBUTION_INVALIDATION_WINDOW_MS - 1,
-            })
-        ).toBe(false);
-    });
-
-    it('returns false when invalidation is stale', () => {
-        expect(
-            shouldAttributeChangedPaths({
-                actorSessionId: 's1',
-                actorSource: 'mutation',
-                scopeSessionIds: ['s1'],
-                changedPathCount: 1,
-                invalidatedAt: 1000,
-                now: 1000 + ATTRIBUTION_INVALIDATION_WINDOW_MS + 1,
-            })
-        ).toBe(false);
-    });
-
-    it('returns false when actor is missing, out of scope, or no changed paths exist', () => {
-        expect(
-            shouldAttributeChangedPaths({
-                actorSessionId: null,
-                actorSource: null,
-                scopeSessionIds: ['s1'],
-                changedPathCount: 1,
-                invalidatedAt: 1000,
-                now: 1001,
-            })
-        ).toBe(false);
-
-        expect(
-            shouldAttributeChangedPaths({
-                actorSessionId: 's3',
-                actorSource: 'mutation',
-                scopeSessionIds: ['s1', 's2'],
-                changedPathCount: 1,
-                invalidatedAt: 1000,
-                now: 1001,
-            })
-        ).toBe(false);
-
-        expect(
-            shouldAttributeChangedPaths({
-                actorSessionId: 's1',
-                actorSource: 'mutation',
-                scopeSessionIds: ['s1'],
-                changedPathCount: 0,
-                invalidatedAt: 1000,
-                now: 1001,
-            })
-        ).toBe(false);
     });
 });

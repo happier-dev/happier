@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { ScmStashEntry, ScmStashListResponse, ScmWorkingSnapshot } from '@happier-dev/protocol';
+import type { ScmStashEntry, ScmStashListResponse} from '@happier-dev/protocol/scm';
+import type { ScmWorkingSnapshot } from '@happier-dev/protocol/scm/workingSnapshot';
 
 type ScmStashSummaryResponse = Pick<ScmStashListResponse, 'success' | 'stashes' | 'totalCount'>;
 

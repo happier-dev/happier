@@ -1,4 +1,4 @@
-import type { ScmLogEntry, ScmLogListRequest, ScmLogListResponse } from '@happier-dev/protocol';
+import type { ScmLogEntry, ScmLogListRequest, ScmLogListResponse } from '@happier-dev/protocol/scm';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { machineScmLogList } from '@/sync/ops/scm/machineScm';
@@ -35,7 +35,8 @@ export type WorkspaceCommitSearchOutcome =
     | Readonly<{ status: 'recentOnly'; entries: readonly ScmLogEntry[] }>
     | Readonly<{
         status: 'unavailable';
-        reason: 'noWorkspaceScope' | 'notRepository' | 'rootNotFound' | 'backendUnavailable' | 'unsupported' | 'error';
+        /** `unreachable`: the machine did not answer the read (network failure or timeout), not a Git fact. */
+        reason: 'noWorkspaceScope' | 'notRepository' | 'rootNotFound' | 'backendUnavailable' | 'unsupported' | 'unreachable' | 'error';
         message?: string;
     }>;
 
@@ -56,6 +57,9 @@ function mapFailureToOutcome(response: ScmLogListResponse): WorkspaceCommitSearc
             return unavailable('backendUnavailable', response.error);
         case SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED:
             return unavailable('unsupported', response.error);
+        case SCM_OPERATION_ERROR_CODES.REMOTE_NETWORK_FAILED:
+        case SCM_OPERATION_ERROR_CODES.COMMAND_TIMEOUT:
+            return unavailable('unreachable', response.error);
         default:
             return unavailable('error', response.error);
     }

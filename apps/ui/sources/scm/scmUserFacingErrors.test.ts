@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm';
 
 import { getScmUserFacingError, isRecoverableGitIndexLockError } from './scmUserFacingErrors';
+import { t } from '@/text';
 
 describe('getScmUserFacingError', () => {
     it('explains a missing root without blaming the source control tool', () => {
@@ -188,5 +189,12 @@ describe('getScmUserFacingError', () => {
                 fallback: 'Failed operation',
             })
         ).toContain('not supported');
+    });
+    it('says an unconfirmed outcome could not be confirmed instead of echoing the raw code', () => {
+        const code = SCM_OPERATION_ERROR_CODES.COMMAND_OUTCOME_UNKNOWN;
+        const message = getScmUserFacingError({ errorCode: code, error: code, fallback: code });
+        expect(message).not.toContain(code);
+        expect(message).toBe(t('errors.scmOutcomeUnknown'));
+        expect(getScmUserFacingError({ errorCode: code, error: code, fallback: code, subject: 'message' })).toBe(t('errors.scmMessageOutcomeUnknown'));
     });
 });

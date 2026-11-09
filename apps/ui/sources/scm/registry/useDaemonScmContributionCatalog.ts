@@ -8,7 +8,8 @@ export function useDaemonScmContributionCatalog(params: Readonly<{
     machineId: string | null | undefined;
     serverId?: string | null;
 }>): ScmContributionCatalog {
-    const daemonProjection = useDaemonMergedProjectionInputs(params);
+    const daemonProjection = useDaemonMergedProjectionInputs({ ...params,
+        sections: ['familiesById.scmBackends', 'familiesById.scmHostingProviders'] });
 
     return React.useMemo(() => {
         const catalog = createScmContributionCatalog(

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 
 const showDaemonUnavailableAlert = vi.hoisted(() => vi.fn());
 

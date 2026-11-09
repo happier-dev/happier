@@ -1,4 +1,4 @@
-import type { ScmLogEntry } from '@happier-dev/protocol';
+import type { ScmLogEntry } from '@happier-dev/protocol/scm';
 import * as React from 'react';
 
 import { searchWorkspaceCommits } from '@/scm/search/searchWorkspaceCommits';

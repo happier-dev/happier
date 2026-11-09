@@ -1,4 +1,4 @@
-import type { ScmLogEntry, ScmLogListResponse } from '@happier-dev/protocol';
+import type { ScmLogEntry, ScmLogListResponse } from '@happier-dev/protocol/scm';
 
 /** An older daemon may ignore `range: incoming`; never show its current-branch page as commits to pull. */
 export function selectScmIncomingLogEntries(response: ScmLogListResponse): readonly ScmLogEntry[] | null {

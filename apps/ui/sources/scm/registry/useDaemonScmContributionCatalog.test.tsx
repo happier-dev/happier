@@ -1,4 +1,4 @@
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';

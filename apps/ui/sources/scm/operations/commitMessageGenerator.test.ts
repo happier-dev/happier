@@ -83,8 +83,7 @@ describe('commitMessageGenerator', () => {
             backendId: 'claude', scopePaths: ['file ', ' ', ''],
         })).toMatchObject({ ok: true, message: 'feat: update stuff' });
         expect(executionRunStart).toHaveBeenCalledWith(null, expect.objectContaining({
-            // sessionPermissionModes owns the retained wire alias; the native profile enforces no_tools.
-            cwd: '/repo', kind: 'scm_commit_message.v1', intent: 'scm_commit_message', permissionMode: 'read_only',
+            cwd: '/repo', kind: 'scm_commit_message.v1', intent: 'scm_commit_message', permissionMode: 'no_tools',
             retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
             intentInput: { scope: { kind: 'paths', include: ['file ', ' '] } },
         }), expect.objectContaining({ serverId: 'home_a', targetMachineId: 'machine_a', exactMachineId: 'machine_a' }));

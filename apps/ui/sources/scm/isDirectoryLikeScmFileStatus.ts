@@ -1,9 +1,10 @@
+import { isDirectoryLikeScmPath } from '@happier-dev/protocol/scm';
+
 import type { ScmFileStatus } from './scmStatusFiles';
 
+/** The shared counting owner decides directory rows; the producer's summary uses the same rule. */
 export function isDirectoryLikeScmFileStatus(file: Pick<ScmFileStatus, 'fullPath'>): boolean {
-    const fullPath = typeof file.fullPath === 'string' ? file.fullPath.trim() : '';
-    if (!fullPath) return false;
-    return fullPath.endsWith('/') || fullPath.endsWith('\\');
+    return isDirectoryLikeScmPath(file.fullPath);
 }
 
 export function filterDirectoryLikeScmFileStatuses(files: readonly ScmFileStatus[]): ScmFileStatus[] {

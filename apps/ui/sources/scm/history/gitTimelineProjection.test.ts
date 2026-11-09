@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ScmLogEntry } from '@happier-dev/protocol';
+import type { ScmLogEntry } from '@happier-dev/protocol/scm';
 import { projectGitTimeline, selectScmIncomingLogEntries } from './gitTimelineProjection';
 
 const commit = (sha: string, timestamp: number): ScmLogEntry => ({

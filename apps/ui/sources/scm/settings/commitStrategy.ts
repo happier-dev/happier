@@ -1,4 +1,4 @@
-import type { ScmCommitCreateRequest } from '@happier-dev/protocol';
+import type { ScmCommitCreateRequest } from '@happier-dev/protocol/scm';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 export const SCM_COMMIT_STRATEGIES = ['atomic', 'git_staging'] as const;

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ScmDiffArea } from '@happier-dev/protocol';
+import type { ScmDiffArea } from '@happier-dev/protocol/scm/workingSnapshot';
 import { resolveDefaultDiffModeForFile } from './defaultMode';
 import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
 

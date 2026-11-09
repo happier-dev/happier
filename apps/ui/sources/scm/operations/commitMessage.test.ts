@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { SCM_COMMIT_MESSAGE_MAX_LENGTH } from '@happier-dev/protocol';
+import { SCM_COMMIT_MESSAGE_MAX_LENGTH } from '@happier-dev/protocol/scm';
 
 import { validateCommitMessage } from './commitMessage';
 

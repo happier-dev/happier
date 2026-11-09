@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { SCM_OPERATION_ERROR_CODES, SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES} from '@happier-dev/protocol/scm/operationError';
+import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol/scm/worktrees';
 
 import { installRepositoryScmCommonModuleMocks } from './repositoryScmTestHelpers';
 import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';

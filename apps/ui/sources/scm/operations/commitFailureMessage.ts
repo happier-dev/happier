@@ -1,4 +1,4 @@
-import type { ScmOperationErrorCode } from '@happier-dev/protocol';
+import type { ScmOperationErrorCode } from '@happier-dev/protocol/scm/operationError';
 
 import { getScmUserFacingError } from './userFacingErrors';
 

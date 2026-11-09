@@ -1,4 +1,4 @@
-import type { FileChangeEvidence } from '@happier-dev/protocol';
+import type { FileChangeEvidence } from '@happier-dev/protocol/sessions/changes/types';
 
 import { deriveFileChangeDiff } from '@/sync/domains/session/changes/derivation/deriveFileChangeDiff';
 

@@ -1,4 +1,4 @@
-import type { ScmBranchListEntry } from '@happier-dev/protocol';
+import type { ScmBranchListEntry } from '@happier-dev/protocol/scm/branches';
 
 export function sortScmBranchListEntries(
     entries: ReadonlyArray<ScmBranchListEntry>,

@@ -1,4 +1,4 @@
-import type { ScmDiffArea } from '@happier-dev/protocol';
+import type { ScmDiffArea } from '@happier-dev/protocol/scm/workingSnapshot';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { getFirstPartyScmBackendLegacyLocalId } from '@/scm/registry/firstPartyScmBackendIdentity';
 import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';

@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { ScmLogEntry, ScmLogListResponse } from '@happier-dev/protocol';
+import type { ScmLogEntry, ScmLogListResponse } from '@happier-dev/protocol/scm';
 
 import { SCM_HISTORY_PAGE_SIZE } from './historyPresentation';
 
@@ -12,6 +12,7 @@ export function usePagedScmCommitHistory(input: Readonly<{
     const { enabled, loadPage, historyIdentity } = input;
     const [historyEntries, setHistoryEntries] = React.useState<ScmLogEntry[]>([]);
     const [historyLoading, setHistoryLoading] = React.useState(false);
+    const [historyError, setHistoryError] = React.useState(false);
     const [historySkip, setHistorySkip] = React.useState(0);
     const [historyHasMore, setHistoryHasMore] = React.useState(false);
     const [loadedIdentity, setLoadedIdentity] = React.useState(historyIdentity);
@@ -24,6 +25,7 @@ export function usePagedScmCommitHistory(input: Readonly<{
         setHistorySkip(0);
         setHistoryHasMore(false);
         setHistoryLoading(false);
+        setHistoryError(false);
         legacySkipIgnoredRef.current = false;
     }
 
@@ -38,12 +40,14 @@ export function usePagedScmCommitHistory(input: Readonly<{
             setHistorySkip(0);
             setHistoryHasMore(false);
             setHistoryLoading(false);
+            setHistoryError(false);
             legacySkipIgnoredRef.current = false;
             return;
         }
         if (historyLoading) return;
 
         setHistoryLoading(true);
+        setHistoryError(false);
         try {
             const skip = opts?.reset ? 0 : historySkip;
             const pageSize = SCM_HISTORY_PAGE_SIZE;
@@ -56,6 +60,7 @@ export function usePagedScmCommitHistory(input: Readonly<{
             let response = await loadPage({ limit: requestLimit, skip: requestSkip });
             if (currentIdentityRef.current !== historyIdentity) return;
             if (!response.success) {
+                setHistoryError(true);
                 setHistoryHasMore(false);
                 return;
             }
@@ -70,6 +75,7 @@ export function usePagedScmCommitHistory(input: Readonly<{
                     response = await loadPage({ limit: requestLimit, skip: incoming.length });
                     if (currentIdentityRef.current !== historyIdentity) return;
                     if (!response.success) {
+                        setHistoryError(true);
                         setHistoryHasMore(false);
                         return;
                     }
@@ -82,6 +88,7 @@ export function usePagedScmCommitHistory(input: Readonly<{
                         response = await loadPage({ limit: requestLimit, skip: 0 });
                         if (currentIdentityRef.current !== historyIdentity) return;
                         if (!response.success || (response.entries?.length ?? 0) <= incoming.length) {
+                            setHistoryError(!response.success);
                             setHistoryHasMore(false);
                             return;
                         }
@@ -128,6 +135,7 @@ export function usePagedScmCommitHistory(input: Readonly<{
                 const legacyResponse = await loadPage({ limit: legacyLimit, skip: 0 });
                 if (currentIdentityRef.current !== historyIdentity) return;
                 if (!legacyResponse.success) {
+                    setHistoryError(true);
                     setHistoryHasMore(false);
                     return;
                 }
@@ -150,6 +158,10 @@ export function usePagedScmCommitHistory(input: Readonly<{
             }
 
             setHistoryHasMore(false);
+        } catch {
+            if (currentIdentityRef.current !== historyIdentity) return;
+            setHistoryError(true);
+            setHistoryHasMore(false);
         } finally {
             if (currentIdentityRef.current === historyIdentity) setHistoryLoading(false);
         }
@@ -159,6 +171,7 @@ export function usePagedScmCommitHistory(input: Readonly<{
         historyIdentity,
         historyEntries,
         historyLoading,
+        historyError,
         historyHasMore,
         loadCommitHistory,
     };

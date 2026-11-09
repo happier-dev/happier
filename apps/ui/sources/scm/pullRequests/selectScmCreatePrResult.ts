@@ -1,7 +1,7 @@
-import { normalizeScmOperationOutcome, ScmFollowupActionSchema, type ScmOperationErrorCode, type ScmOperationOutcome, type ScmPullRequestOpenOrReuseResponse } from '@happier-dev/protocol/scm';
+import { normalizeScmOperationOutcome, ScmFollowupActionSchema, type ScmOperationErrorCode, type ScmOperationOutcome, type ScmPullRequestOpenOrReuseResponse, type ScmPullRequestSummary } from '@happier-dev/protocol/scm';
 
 export type ScmCreatePrResult =
-    | Readonly<{ kind: 'created' | 'reused'; number?: number; url: string; outcome?: ScmOperationOutcome }>
+    | Readonly<{ kind: 'created' | 'reused'; number?: number; url: string; pullRequest: ScmPullRequestSummary; outcome?: ScmOperationOutcome }>
     | Readonly<{ kind: 'provider-page'; url: string; outcome?: ScmOperationOutcome }>
     | Readonly<{ kind: 'failed'; errorCode: ScmOperationErrorCode; message: string; outcome?: ScmOperationOutcome }>;
 
@@ -12,6 +12,7 @@ export function selectScmCreatePrResult(response: ScmPullRequestOpenOrReuseRespo
             kind: response.reused ? 'reused' : 'created',
             ...(response.pullRequest.number ? { number: response.pullRequest.number } : {}),
             url: response.pullRequest.url,
+            pullRequest: response.pullRequest,
             outcome,
         };
     }

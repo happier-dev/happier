@@ -1,5 +1,6 @@
 import type { ComponentProps } from 'react';
-import type { PluginContributionIdentityV1, ScmBackendId } from '@happier-dev/protocol';
+import type { PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ScmBackendId } from '@happier-dev/protocol/scm';
 import type { IconName } from '@/components/ui/icons/Icon';
 
 export type ScmBackendSettingsIconName = IconName;

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { installRepositoryScmCommonModuleMocks } from './repositoryScmTestHelpers';
-import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { machineScmBranchList } from '@/sync/ops/scm/machineScm';
 
 const storageGetStateMock = vi.hoisted(() => vi.fn());
@@ -9,7 +9,9 @@ const sessionScmBranchListMock = vi.hoisted(() => vi.fn());
 const resolvePreferredServerIdForSessionIdMock = vi.hoisted(() => vi.fn());
 
 installRepositoryScmCommonModuleMocks({
-    storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
+    // A stub, not importOriginal: the real storage graph reaches this service's own resolver, which
+    // would then bind the real store instead of this fixture (and costs a full app-graph load).
+    storage: async () => createStorageModuleStub({
         storage: {
             getState: storageGetStateMock,
         },

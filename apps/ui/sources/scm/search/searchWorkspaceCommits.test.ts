@@ -6,8 +6,8 @@ vi.mock('@/sync/ops/scm/machineScm', () => ({
     machineScmLogList: (...args: unknown[]) => machineScmLogListSpy(...args),
 }));
 
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
-import type { ScmLogEntry } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
+import type { ScmLogEntry } from '@happier-dev/protocol/scm';
 
 import { searchWorkspaceCommits } from './searchWorkspaceCommits';
 
@@ -83,6 +83,8 @@ describe('searchWorkspaceCommits', () => {
         ['workspace root is not a repository', SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY, 'notRepository', 'not a repository'],
         ['daemon does not implement the SCM method', SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, 'unsupported', 'Method not found'],
         ['workspace root is missing', SCM_OPERATION_ERROR_CODES.ROOT_NOT_FOUND, 'rootNotFound', 'root missing'],
+        ['machine did not answer the read', SCM_OPERATION_ERROR_CODES.REMOTE_NETWORK_FAILED, 'unreachable', 'network'],
+        ['machine read timed out', SCM_OPERATION_ERROR_CODES.COMMAND_TIMEOUT, 'unreachable', 'timeout'],
         ['failure carries no recognised code', undefined, 'error', 'boom'],
     ])('fails typed when the %s', async (_title, errorCode, reason, error) => {
         machineScmLogListSpy.mockResolvedValue({ success: false, error, errorCode });

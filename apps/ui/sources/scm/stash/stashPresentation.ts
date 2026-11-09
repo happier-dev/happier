@@ -1,4 +1,4 @@
-import type { ScmStashEntry } from '@happier-dev/protocol';
+import type { ScmStashEntry } from '@happier-dev/protocol/scm';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 

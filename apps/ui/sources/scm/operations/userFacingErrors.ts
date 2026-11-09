@@ -6,6 +6,8 @@ export function getScmUserFacingError(input: {
     errorCode?: ScmOperationErrorCode;
     error?: string;
     fallback: string;
+    /** What the operation carried, when its copy differs: a sent message names the conversation to check. */
+    subject?: 'message';
 }): string {
     const rawError = input.error?.toLowerCase() ?? '';
     const rawFallback = input.fallback.toLowerCase();
@@ -61,6 +63,9 @@ export function getScmUserFacingError(input: {
             return 'This operation is not supported by the active source control backend.';
         case SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE:
             return 'The active source control backend is unavailable.';
+        case SCM_OPERATION_ERROR_CODES.COMMAND_OUTCOME_UNKNOWN:
+            // The command was dispatched but its reply was lost: say so, never the raw code, and never claim it failed.
+            return input.subject === 'message' ? t('errors.scmMessageOutcomeUnknown') : t('errors.scmOutcomeUnknown');
         case SCM_OPERATION_ERROR_CODES.COMMAND_FAILED:
             if (looksLikeLockContention(rawError, rawFallback)) {
                 return 'Another source control operation is in progress (working copy lock). Wait for it to finish and try again.';

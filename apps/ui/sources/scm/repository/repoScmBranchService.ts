@@ -1,4 +1,4 @@
-import type { ScmBranchListEntry } from '@happier-dev/protocol';
+import type { ScmBranchListEntry } from '@happier-dev/protocol/scm/branches';
 
 import { machineScmBranchList } from '@/sync/ops/scm/machineScm';
 import { sessionScmBranchList } from '@/sync/ops';

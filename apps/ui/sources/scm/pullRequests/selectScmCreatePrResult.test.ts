@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ScmPullRequestOpenOrReuseResponse } from '@happier-dev/protocol';
+import type { ScmPullRequestOpenOrReuseResponse } from '@happier-dev/protocol/scm/pullRequests';
 import { selectScmCreatePrResult } from './selectScmCreatePrResult';
 
 describe('selectScmCreatePrResult', () => {

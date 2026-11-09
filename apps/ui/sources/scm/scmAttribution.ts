@@ -2,7 +2,7 @@ import {
     type SessionChangeAttribution,
     type CheckpointOverlapObservation,
     type FileChangeEvidence,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/changes/types';
 
 import type { ScmFileStatus } from './scmStatusFiles';
 import { isDirectoryLikeScmFileStatus } from './isDirectoryLikeScmFileStatus';

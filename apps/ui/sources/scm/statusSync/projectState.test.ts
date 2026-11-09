@@ -167,6 +167,23 @@ describe('buildSnapshotSignature', () => {
     expect(buildSnapshotSignature({ ...observed, branch: { ...observed.branch, headOid: 'c'.repeat(40) } })).not.toBe(buildSnapshotSignature(observed));
     expect(buildSnapshotSignature({ ...observed, branch: { ...observed.branch, upstreamOid: 'd'.repeat(40) } })).not.toBe(buildSnapshotSignature(observed));
   });
+
+  it('keeps a 59,404-row signature small, since the module diff cache and status sync retain it past the review', () => {
+    const entry: ScmWorkingSnapshot['entries'][number] = {
+      path: 'src/file.ts', previousPath: null, kind: 'modified', includeStatus: ' ', pendingStatus: 'M',
+      hasIncludedDelta: false, hasPendingDelta: true,
+      stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 1, pendingRemoved: 0, isBinary: false },
+    };
+    const entries = Array.from({ length: 59_404 }, (_, index) => ({ ...entry, path: `packages/app/src/feature-${index}/file-${index}.ts` }));
+    const snapshot = makeSnapshot({ repo: { isRepo: true, rootPath: '/repo' }, entries });
+    expect(buildSnapshotSignature(snapshot).length).toBeLessThan(256);
+    expect(buildScmDiffSnapshotSignature(snapshot).length).toBeLessThan(256);
+    // Still one row's change anywhere in the list moves it.
+    const moved = entries.slice();
+    moved[40_000] = { ...entry, path: moved[40_000]!.path, stats: { ...entry.stats, pendingAdded: 2 } };
+    expect(buildSnapshotSignature({ ...snapshot, entries: moved })).not.toBe(buildSnapshotSignature(snapshot));
+    expect(buildSnapshotSignature({ ...snapshot, entries: entries.slice() })).toBe(buildSnapshotSignature(snapshot));
+  });
 });
 
 

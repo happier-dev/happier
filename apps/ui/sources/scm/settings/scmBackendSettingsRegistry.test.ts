@@ -1,4 +1,4 @@
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { describe, expect, it } from 'vitest';
 import { createScmContributionCatalog } from '@/scm/registry/scmContributionCatalog';
 import { createScmBackendSettingsRegistry } from '@/scm/settings/scmBackendSettingsRegistry';
@@ -20,8 +20,6 @@ describe('scmBackendSettingsRegistry', () => {
             installedPackagesById: {},
             agentsById: {},
             actionsById: {},
-
-
             resourcesById: {},
             settingsById: {},
             familiesById: {
