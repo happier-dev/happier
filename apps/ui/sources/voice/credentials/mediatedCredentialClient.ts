@@ -2,6 +2,7 @@ import { DaemonVoiceClientAccountOperationRequestV1Schema, DaemonVoiceClientAcco
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { normalizeVoiceFailureCode } from '@happier-dev/protocol/voice/providerOperations';
 import type { VoiceAccountOperationService } from '@happier-dev/plugin-sdk/voice';
 import { decodeBase64 } from '@/encryption/base64';
 
@@ -14,18 +15,13 @@ type SelectedVoiceMachineClient = Readonly<{
   invoke(method: string, payload: unknown, signal?: AbortSignal | null): Promise<unknown>;
 }>;
 
-/** Mirrors the safe-code shape the Voice failure surfaces already admit. */
-const SAFE_CAUSE_PATTERN = /^[A-Za-z][A-Za-z0-9_.:-]{0,127}$/;
-
 function operationError(code: string): Error {
   return Object.assign(new Error(code), { code });
 }
 
 function readSafeCause(error: unknown): string {
   const code = (error as Readonly<{ code?: unknown }> | null)?.code;
-  if (typeof code !== 'string') return 'unknown';
-  const normalized = code.trim();
-  return SAFE_CAUSE_PATTERN.test(normalized) ? normalized : 'unknown';
+  return normalizeVoiceFailureCode(code) ?? 'unknown';
 }
 
 export function createVoiceClientAccountOperationExecutor(input: Readonly<{

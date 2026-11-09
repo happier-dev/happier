@@ -2,11 +2,23 @@ import { describe, expect, it } from 'vitest';
 
 import {
   classifyVoiceProviderHttpFailure,
+  normalizeVoiceFailureCode,
   readVoiceProviderCredentialRemediationCode,
   VoiceProviderCredentialRemediationCodeSchema,
 } from './providerOperations';
 
 describe('Voice provider operation failure classification', () => {
+  it.each([
+    [' provider:error-1.2 ', 'provider:error-1.2'],
+    ['A'.repeat(128), 'A'.repeat(128)],
+    ['A'.repeat(129), null],
+    ['1provider_error', null],
+    ['private provider message /Users/private', null],
+    [{ private: 'provider detail' }, null],
+  ])('retains the existing diagnostic-code boundary for %s', (code, expected) => {
+    expect(normalizeVoiceFailureCode(code)).toBe(expected);
+  });
+
   it.each([401, 403])(
     'classifies provider HTTP %s as unavailable credentials without inspecting provider text',
     (status) => {

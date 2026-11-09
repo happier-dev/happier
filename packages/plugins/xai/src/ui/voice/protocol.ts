@@ -1,6 +1,7 @@
 /** xAI Realtime Voice protocol translation. */
 import {
   createVoiceTranscriptLadderMapper,
+  normalizeVoiceFailureCode,
   VoiceRealtimeJsonValueSchema,
   VoiceRealtimeToolCallV1Schema,
   type VoiceRealtimeJsonValue,
@@ -172,11 +173,14 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
         if (/(?:client_secret|auth|token).*(?:expired|invalid)|(?:expired|invalid).*(?:client_secret|auth|token)/iu.test(code)) {
           result.push({ type: 'auth_expired' });
         } else {
-          // Provider messages and unknown codes are not safe diagnostics.
-          // Recovery remains with the host's canonical provider-error policy.
+          // Keep code-shaped diagnostics, never provider prose or payloads.
+          // End this failed host attempt through canonical user-action recovery;
+          // xAI may keep its socket open after rejecting the request.
+          const providerCode = normalizeVoiceFailureCode(code);
           result.push({ type: 'provider_error',
             code: code === 'rate_limit_exceeded' ? 'rate_limited' : 'provider_response_invalid',
-            terminal: false });
+            ...(providerCode ? { providerCode } : {}),
+            terminal: true });
         }
       }
       const itemId = text(event.item_id) ?? text(event.response_id);

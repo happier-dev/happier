@@ -1,11 +1,11 @@
 import { log } from '@/log';
+import { normalizeVoiceFailureCode } from '@happier-dev/protocol/voice/providerOperations';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 import { isVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types';
 import type {
   VoiceConversationSessionMetadataCommitReason,
 } from '@/voice/persistence/voiceConversationSession';
 
-const SAFE_VOICE_RUNTIME_FAILURE_CODE_PATTERN = /^[A-Za-z][A-Za-z0-9_.:-]{0,127}$/;
 const VOICE_CONVERSATION_METADATA_COMMIT_FAILED =
   'VOICE_CONVERSATION_METADATA_COMMIT_FAILED';
 
@@ -122,17 +122,12 @@ export function readSafeVoiceRuntimeFailureCode(error: unknown): string | null {
   for (const candidate of [cause, error]) {
     if (!candidate || typeof candidate !== 'object') continue;
     const code = readRpcErrorCode(candidate) ?? (candidate as Readonly<{ code?: unknown }>).code;
-    if (typeof code !== 'string') continue;
-    const normalized = code.trim();
-    if (SAFE_VOICE_RUNTIME_FAILURE_CODE_PATTERN.test(normalized)) return normalized;
+    const normalized = normalizeVoiceFailureCode(code);
+    if (normalized) return normalized;
   }
   return null;
 }
 
 export function normalizeVoiceRuntimeFailureCode(code: unknown): string {
-  if (typeof code !== 'string') return 'voice_connection_failed';
-  const normalized = code.trim();
-  return SAFE_VOICE_RUNTIME_FAILURE_CODE_PATTERN.test(normalized)
-    ? normalized
-    : 'voice_connection_failed';
+  return normalizeVoiceFailureCode(code) ?? 'voice_connection_failed';
 }

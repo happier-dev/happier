@@ -3,7 +3,7 @@ import {
     LaunchProfileCheckoutPreferenceV1ProtocolSchema,
     resolveLaunchProfilePlacementDirectoryIntentV1,
 } from '@happier-dev/protocol/profiles/v2/schema';
-import type { PluginActionInputById } from '../actions/service.js';
+import type { PluginActionInputById } from '../actions/actionTypeMap.generated.js';
 import type { ProtocolComposableSchema } from './protocolFacade.js';
 
 type Profile = PluginActionInputById['launch_profiles.create']['profile'];

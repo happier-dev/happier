@@ -5,6 +5,7 @@ import { presentVoiceUsageLimitMessage, resolveVoiceMachineErrorTranslationKey }
 import { translateVoiceReadiness } from '@/voice/settings/panels/voiceProviderReadinessPresentation';
 import type { VoiceMachineRecoveryAction } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
 import { resolveVoiceSurfaceRecovery } from '@/components/voice/surface/resolveVoiceSurfaceRecovery';
+import { resolveVoiceSurfaceStatusPresentation } from '@/components/voice/surface/resolveVoiceSurfaceStatusPresentation';
 import type { VoiceAttemptControl } from './resolveVoiceAttemptControl';
 import { opensAgentRuntimeSettings, type VoiceAttemptRecoveryContext } from './voiceAttemptRecovery';
 import type { ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
@@ -47,6 +48,7 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
                     ? t('voiceSurface.setUpAgent', { agent: agentTitle }) : t(recovery.labelKey), icon: recovery.icon }
                 : { label: t('voicePresence.recovery.setUp'), icon: 'gear' as const };
     const failureKind = input.errorCode ? resolveVoiceMachineErrorKind(input.errorCode) : null;
+    const statusPresentation = resolveVoiceSurfaceStatusPresentation(control.surfaceState, input.errorMessage);
     const failureMessage = provider ? t(provider.descriptionKey) : connectedService ? t(connectedService.bodyKey) : failureKind === null ? null
         : failureKind === 'provider_error' && input.errorMessage === 'usage_limit' ? presentVoiceUsageLimitMessage(input.errorUsageLimit)
         : failureKind === 'provider_error' && input.errorProviderMessage ? input.errorProviderMessage
@@ -63,6 +65,9 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
             : {}),
         ...(failureKind === 'provider_error' && input.errorMessage?.toLowerCase() === 'usage_limit'
             ? { failureTitle: translateVoiceReadiness(resolveVoiceMachineErrorTranslationKey(failureKind, input.errorMessage), { service: input.serviceTitle }) }
+            : {}),
+        ...(failureKind === 'provider_error' && statusPresentation.labelKey === 'voiceAssistant.connectionError'
+            ? { failureTitle: t(statusPresentation.labelKey) }
             : {}),
         ...(provider ? { failureTitle: t(provider.titleKey), providerError: input.errorProviderError } : {}),
         recovery: recoveryPresentation ? { ...recoveryPresentation, action: recoveryAction,

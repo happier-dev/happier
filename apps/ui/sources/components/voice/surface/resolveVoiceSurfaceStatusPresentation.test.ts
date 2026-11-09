@@ -19,7 +19,7 @@ const expectedByState = {
   speaking: { tone: 'active', labelKey: 'voiceAssistant.speaking' },
   permission_required: { tone: 'error', labelKey: 'voiceAssistant.microphonePermissionRequired', wordKey: 'voiceAssistant.microphoneBlocked' },
   interrupted: { tone: 'pending', labelKey: 'voiceAssistant.interrupted' },
-  error: { tone: 'error', labelKey: 'voiceAssistant.connectionError' },
+  error: { tone: 'error', labelKey: 'common.failed' },
 } satisfies Record<VoiceSurfaceState, VoiceSurfaceStatusPresentation>;
 
 const allStates = Object.keys(expectedByState) as readonly VoiceSurfaceState[];
@@ -27,5 +27,14 @@ const allStates = Object.keys(expectedByState) as readonly VoiceSurfaceState[];
 describe('resolveVoiceSurfaceStatusPresentation', () => {
   it.each(allStates)('projects %s to its own semantic tone and label key', (state) => {
     expect(resolveVoiceSurfaceStatusPresentation(state)).toEqual(expectedByState[state]);
+  });
+
+  it.each([
+    ['voice_connection_failed', 'voiceAssistant.connectionError'],
+    ['voice_connection_timeout', 'voiceAssistant.connectionError'],
+    ['provider_response_invalid', 'common.failed'],
+    ['rate_limited', 'common.failed'],
+  ] as const)('only identifies an explicit connection failure for %s', (reason, labelKey) => {
+    expect(resolveVoiceSurfaceStatusPresentation('error', reason)).toEqual({ tone: 'error', labelKey });
   });
 });

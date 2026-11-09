@@ -22,6 +22,7 @@ export type VoiceSurfaceStatusPresentation = Readonly<{
     | 'voiceAssistant.speaking'
     | 'voiceAssistant.microphonePermissionRequired'
     | 'voiceAssistant.interrupted'
+    | 'common.failed'
     | 'voiceAssistant.connectionError';
 }>;
 
@@ -32,6 +33,7 @@ export type VoiceSurfaceStatusPresentation = Readonly<{
  */
 export function resolveVoiceSurfaceStatusPresentation(
   state: VoiceSurfaceState,
+  failureReason?: string | null,
 ): VoiceSurfaceStatusPresentation {
   switch (state) {
     case 'idle':
@@ -55,7 +57,11 @@ export function resolveVoiceSurfaceStatusPresentation(
     case 'interrupted':
       return { tone: 'pending', labelKey: 'voiceAssistant.interrupted' };
     case 'error':
-      return { tone: 'error', labelKey: 'voiceAssistant.connectionError' };
+      return {
+        tone: 'error',
+        labelKey: failureReason === 'voice_connection_failed' || failureReason === 'voice_connection_timeout'
+          ? 'voiceAssistant.connectionError' : 'common.failed',
+      };
   }
   const exhaustive: never = state;
   throw new Error(`Unhandled voice surface state: ${String(exhaustive)}`);

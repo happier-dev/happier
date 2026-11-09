@@ -1,6 +1,13 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
+/** Existing Voice diagnostic-code boundary, shared by provider and host ingress. */
+export function normalizeVoiceFailureCode(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return /^[A-Za-z][A-Za-z0-9_.:-]{0,127}$/.test(normalized) ? normalized : null;
+}
+
 export const VoiceProviderOperationErrorCodeSchema = lazyZodSchema(() => z.enum([
   'invalid_parameters',
   'credential_unavailable',

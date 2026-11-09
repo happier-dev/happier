@@ -12,9 +12,10 @@ import { createXaiRealtimeProtocolAdapter, createXaiSessionUpdate, encodeXaiTool
 
 describe('xAI Realtime protocol adapter', () => {
   it.each([
-    ['rate_limit_exceeded', { type: 'provider_error', code: 'rate_limited', terminal: false }],
-    ['server_error', { type: 'provider_error', code: 'provider_response_invalid', terminal: false }],
-    ['private-provider-data', { type: 'provider_error', code: 'provider_response_invalid', terminal: false }],
+    ['rate_limit_exceeded', { type: 'provider_error', code: 'rate_limited', providerCode: 'rate_limit_exceeded', terminal: true }],
+    ['server_error', { type: 'provider_error', code: 'provider_response_invalid', providerCode: 'server_error', terminal: true }],
+    ['invalid_request_error', { type: 'provider_error', code: 'provider_response_invalid', providerCode: 'invalid_request_error', terminal: true }],
+    ['private provider message /Users/private', { type: 'provider_error', code: 'provider_response_invalid', terminal: true }],
     ['invalid_token', { type: 'auth_expired' }],
   ] as const)('projects %s once without exposing provider text', (code, expected) => {
     const adapter = createXaiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
