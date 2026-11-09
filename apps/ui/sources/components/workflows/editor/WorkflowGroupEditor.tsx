@@ -205,7 +205,7 @@ export function WorkflowGroupEditor(props: Readonly<{
         <View testID={idPrefix} style={workflowEditorStyles.blockBody}>
             <WorkflowBlockHeading
                 nameEditor={props.nameEditor}
-                kindMark={<Icon name={WORKFLOW_BLOCK_KIND_GLYPH.parallel} size={ICON_SIZE.sm} />}
+                kindMark={<Icon name={WORKFLOW_BLOCK_KIND_GLYPH.parallel} size={ICON_SIZE.xxs} />}
                 ordinal={props.ordinal}
                 selected={props.selected}
                 unnamed={resolveWorkflowUnnamedHeading(props.block)}

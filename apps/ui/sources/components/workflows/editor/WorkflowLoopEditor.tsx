@@ -27,7 +27,7 @@ import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
 import { formatWorkflowConditionSentence, resolveWorkflowConditionHeadline } from '../presentation/workflowConditionPresentation';
 import { WorkflowConditionEditor } from './WorkflowConditionEditor';
-import { WorkflowContainerBody, WorkflowContainerLane, WorkflowContainerOptionsControl } from './WorkflowContainerBody';
+import { WorkflowContainerBody, WorkflowContainerLane, WorkflowContainerOptionsControl, WorkflowSpineSegment } from './WorkflowContainerBody';
 import { failurePolicyLabel, WorkflowFailurePolicyControl, WorkflowMaxConcurrentControl } from './WorkflowGroupEditor';
 import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/workflowBlockKindGlyph';
 import { WorkflowNumberField } from './WorkflowNumberField';
@@ -351,11 +351,19 @@ export function WorkflowLoopEditor(props: Readonly<{
     const sentence = formatWorkflowLoopSentence(props.draft, block);
     const stopHeadline = stopWhen === null ? null : resolveWorkflowConditionHeadline(props.draft, stopWhen);
 
+    const optionsControl = (
+        <WorkflowContainerOptionsControl
+            {...(repetition.kind === 'items' ? { label: failurePolicyLabel(repetition.failurePolicy) } : {})}
+            optionsLabel={t('workflows.page.inspector.options')}
+            {...(props.onOpenOptions === undefined ? {} : { onOpenOptions: props.onOpenOptions })}
+            testID={`${idPrefix}-summary`}
+        />
+    );
     return (
         <View testID={idPrefix} style={workflowEditorStyles.blockBody}>
             <WorkflowBlockHeading
                 nameEditor={props.nameEditor}
-                kindMark={<Icon name={WORKFLOW_BLOCK_KIND_GLYPH.loop} size={ICON_SIZE.sm} />}
+                kindMark={<Icon name={WORKFLOW_BLOCK_KIND_GLYPH.loop} size={ICON_SIZE.xxs} />}
                 ordinal={props.ordinal}
                 selected={props.selected}
                 unnamed={resolveWorkflowUnnamedHeading(block)}
@@ -369,25 +377,28 @@ export function WorkflowLoopEditor(props: Readonly<{
                             : repetition.kind === 'items' ? [repetition.items]
                                 : stopHeadline?.references ?? []} />
                 </Text>}
-                trailing={<WorkflowContainerOptionsControl
-                    {...(repetition.kind === 'items' ? { label: failurePolicyLabel(repetition.failurePolicy) } : {})}
-                    optionsLabel={t('workflows.page.inspector.options')}
-                    {...(props.onOpenOptions === undefined ? {} : { onOpenOptions: props.onOpenOptions })}
-                    testID={`${idPrefix}-summary`}
-                />}
+                // A control with words wraps with the sentence; a bare caret keeps the heading's fixed slot,
+                // so it never sits alone on a line (owner 2026-11-06, as the If does).
+                {...(repetition.kind === 'items' ? { trailing: optionsControl } : {})}
                 actions={props.actions}
-                accessory={props.headingAccessory}
+                accessory={repetition.kind === 'items' ? props.headingAccessory : <>{props.headingAccessory}{optionsControl}</>}
                 onSelect={props.onSelect}
                 testID={`${idPrefix}-label`}
                 actionsTestID={`${idPrefix}-actions`}
             />
 
             <WorkflowContainerBody>
-                {props.renderBody()}
+                {/* Each round is a lane that forks off the flow and joins back (lab round 1106 F1). */}
+                <WorkflowContainerLane label={t('workflows.editor.loopBody')} labelTestID={`${idPrefix}-body-label`}>
+                    {props.renderBody()}
+                </WorkflowContainerLane>
                 {repetition.kind === 'evaluate' ? (
                     <WorkflowContainerLane label={t('workflows.editor.continuation')} labelTestID={`${idPrefix}-continuation-label`}>
                         {/* The deciding step sits on its lane's grid like a listed block: ordinal in the gutter. */}
-                        <View style={workflowEditorStyles.blockColumn}>{props.renderContinuation?.()}</View>
+                        <View>
+                            <WorkflowSpineSegment reach="end" />
+                            <View style={workflowEditorStyles.blockColumn}>{props.renderContinuation?.()}</View>
+                        </View>
                     </WorkflowContainerLane>
                 ) : null}
             </WorkflowContainerBody>

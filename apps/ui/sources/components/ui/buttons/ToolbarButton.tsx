@@ -7,7 +7,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { resolveThemeControlEdge, resolveThemeGloss, resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
-import { HappierPressable, type HappierSurfaceProps, HappierSurfaceGradientLayer, happierSurfaceGradientWebStyle } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, type HappierPressableProps, type HappierSurfaceProps, HappierSurfaceGradientLayer, happierSurfaceGradientWebStyle } from '@happier-dev/plugin-ui/presentation';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { happierRaisedEdgeStyle } from '@happier-dev/plugin-ui/presentation';
 import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
@@ -65,6 +65,8 @@ export type ToolbarButtonProps = Readonly<{
     labelColor?: string;
     testID?: string;
     accessibilityLabel?: string;
+    /** How far the hit area may reach past the button on each side (half the gap to a neighbour; `0` toward a row that owns that space). */
+    hitReach?: HappierPressableProps['hitReach'];
     /**
      * The side this button shares with its sibling in a split button (Publish branch | ⌄), as
      * `RoundButton` names it: that side is drawn square and the two halves meet with no gap, so they read
@@ -74,6 +76,9 @@ export type ToolbarButtonProps = Readonly<{
     joinedEdge?: 'start' | 'end';
     style?: StyleProp<ViewStyle>;
 }>;
+
+/** The `md` toolbar button's height, for a row that reserves the place of a button that arrives later. */
+export const TOOLBAR_BUTTON_MD_HEIGHT_PX = 34;
 
 const stylesheet = StyleSheet.create((theme) => ({
     base: {
@@ -92,7 +97,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.base,
     },
     md: {
-        minHeight: 34,
+        minHeight: TOOLBAR_BUTTON_MD_HEIGHT_PX,
     },
     // A quiet button stands on its raised edge at rest and hover; pressed, active or disabled it sits flat.
     raised: {
@@ -175,6 +180,7 @@ export const ToolbarButton = React.memo((props: ToolbarButtonProps) => {
             accessibilityRole="button"
             accessibilityLabel={props.accessibilityLabel ?? props.label}
             busy={props.busy}
+            hitReach={props.hitReach}
             style={({ hovered, pressed, focused }) => [
                 styles.base,
                 props.size === 'md' ? styles.md : null,

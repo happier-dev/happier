@@ -1,5 +1,3 @@
-import { isHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
-import { Platform } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { resolveAgentInputPanelLayoutStyle } from '@/components/sessions/agentInput/components/agentInputChromeStyles';
@@ -15,19 +13,19 @@ import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
  */
 
 /**
- * Whether the document is under a finger. There is no hover there, so the between-block inserter
- * shows while a block in its list is selected; under a precise pointer it shows on hover or focus only.
- */
-export const WORKFLOW_EDITOR_TOUCH_POINTER = isHappierTouchPrimaryPointer(Platform.OS);
-
-/**
  * The document's ordinal column (lab `.uwe-ord`, 22 px): every heading starts with a ring this wide,
  * a container's lanes hang from a rail through its centre, and a nested list starts one column in.
  */
 const ORDINAL_SIZE = ICON_SIZE.lg;
 
-/** A lane caption's line: the caption's own type (`rowMeta`), which its tick and caret hang on. */
+/** A lane caption's line: the caption's own type (`rowMeta`), which its fork and caret hang on. */
 const LANE_LINE = Number(Typography.variant('meta').lineHeight);
+
+/** The spine's stroke: a hairline-weight line that still reads at a glance. */
+const SPINE_WIDTH = 1;
+
+/** The radius of the spine's bends where a lane forks off and joins back (lab round 1106 F1). */
+const LANE_BEND = 8;
 
 /**
  * The document's grid (lab `editor-E1`, `editor-P1`): every block's ordinal (or a container's kind
@@ -45,6 +43,13 @@ export const WORKFLOW_PAGE_TITLE_EDGE_PX = HAPPIER_PAGE_METRICS.pageTextInsetPx
  */
 export const WORKFLOW_ORDINAL_GAP_PX = HAPPIER_PAGE_METRICS.pageHeaderMarkSlotPx / 2
     + HAPPIER_PAGE_METRICS.pageHeaderMarkGapPx - ORDINAL_SIZE / 2;
+
+/**
+ * The mark edge (owner 2026-11-06): where the header's mark, the step marks and the page's controls
+ * (selectors, view tabs) start, so the header and the steps share one left edge; words keep the title edge.
+ */
+export const WORKFLOW_PAGE_MARK_EDGE_PX = HAPPIER_PAGE_METRICS.pageTextInsetPx
+    + HAPPIER_PAGE_METRICS.pageHeaderMarkSlotPx / 2 - ORDINAL_SIZE / 2;
 
 /** The document's gutter: from a list's edge to its name column (the ordinal and the gap after it). */
 export const WORKFLOW_DOCUMENT_GUTTER_PX = ORDINAL_SIZE + WORKFLOW_ORDINAL_GAP_PX;
@@ -84,7 +89,7 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         marginBottom: theme.space.s16,
         paddingLeft: WORKFLOW_DOCUMENT_GUTTER_PX,
     },
-    /** The root's end row (Add · Start from an example), one gap below the last block. */
+    /** The root's end row (Add · Start from an example), one gap below the last block, on the name column. */
     listEnd: {
         paddingTop: theme.space.s20,
         paddingLeft: WORKFLOW_DOCUMENT_GUTTER_PX,
@@ -117,47 +122,107 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     nestedList: {
         gap: theme.space.s12,
     },
-    /**
-     * A container's body (lab `.uwe-cb`): its lists start one ordinal column in, beside a rail that
-     * runs through the centre of the container's ordinal. The rail is the structure, not a card.
-     */
+    /** A container's body (lab `.uwe-cb`): its lanes, one ordinal column in. */
     containerBody: {
         position: 'relative',
         minWidth: 0,
     },
-    containerRail: {
+    /**
+     * The spine (lab round 1106 F1): one line through the ordinal column joining a block's mark to the
+     * next block's, at every depth, so the steps read as one flow rather than separate islands. It runs
+     * from under this block's mark through the gap below it and stops at the next mark's edge, so no
+     * mark needs a fill to hide it (the page may be glass).
+     */
+    spineSegment: {
         position: 'absolute',
-        left: -(WORKFLOW_DOCUMENT_GUTTER_PX - ORDINAL_SIZE / 2),
-        top: 0,
-        bottom: theme.space.s8,
-        borderLeftWidth: 1,
-        borderColor: theme.colors.border.default,
+        left: ORDINAL_SIZE / 2 - SPINE_WIDTH / 2,
+        top: ORDINAL_SIZE,
+        borderLeftWidth: SPINE_WIDTH,
+        borderColor: theme.colors.border.strong,
     },
-    /** An If's branches hang from a dashed rail (lab `.uwe-ctr.if`): they may not run. */
-    containerRailConditional: {
-        borderStyle: 'dashed',
+    /** To the next block's mark: through the one gap between them (`blockGap`). */
+    spineToNext: {
+        bottom: -(theme.space.s20 + theme.space.s8),
+    },
+    /** A lane's last block, or a list's last container: to the block's own end. */
+    spineToEnd: {
+        bottom: 0,
+    },
+    /** A lane's last block while editing: past the lane's end inserter, to where the lane joins back. */
+    spineToEndPastInserter: {
+        bottom: -theme.space.s20,
     },
     /**
-     * One lane's label on the tree line (lab `.uwe-ll`): a tick from the rail, then its name, then its
-     * caret. The tick and caret hang on the name's first line, so a long name that wraps keeps them
-     * level with its first words (DESIGN-7 M1 d).
+     * One lane's label (lab `.uwe-ll`, round 1106 F1): on the lane's name column, with the lane
+     * forking off its container's spine beside it. The caret hangs on the name's first line, so a long
+     * name that wraps keeps it level with its first words (DESIGN-7 M1 d).
      */
     laneLabelRow: {
         flexDirection: 'row',
         alignItems: 'flex-start',
         gap: theme.space.s8,
         paddingTop: theme.space.s8,
+        // The lane's first block may be selected: its plate reaches one s8 above the block, and the
+        // name stays clear of it rather than sitting on its edge.
+        paddingBottom: theme.space.s8,
+        paddingLeft: WORKFLOW_DOCUMENT_GUTTER_PX,
     },
-    laneTick: {
+    /**
+     * The fork: from the container's spine, bending into the lane's line at the label's first line.
+     * With `laneLead` it is one S-bend from the container's mark column to the lane's.
+     */
+    laneFork: {
+        position: 'absolute',
+        top: theme.space.s8 + LANE_LINE / 2 - LANE_BEND,
+        left: -(WORKFLOW_DOCUMENT_GUTTER_PX - ORDINAL_SIZE / 2) - SPINE_WIDTH / 2,
+        width: WORKFLOW_DOCUMENT_GUTTER_PX - LANE_BEND,
+        height: LANE_BEND + SPINE_WIDTH,
+        borderLeftWidth: SPINE_WIDTH,
+        borderBottomWidth: SPINE_WIDTH,
+        borderBottomLeftRadius: LANE_BEND,
+        // The bends are quieter than the spine, so the flow reads first and nesting does not shout (owner 2026-11-06).
+        borderColor: theme.colors.border.subtle,
+    },
+    /** The lane's line from the fork down to its first block's mark. */
+    laneLead: {
         position: 'absolute',
         top: theme.space.s8 + LANE_LINE / 2,
-        left: -(WORKFLOW_DOCUMENT_GUTTER_PX - ORDINAL_SIZE / 2),
-        width: WORKFLOW_DOCUMENT_GUTTER_PX - ORDINAL_SIZE / 2 - theme.space.s4,
-        borderTopWidth: 1,
-        borderColor: theme.colors.border.default,
+        left: ORDINAL_SIZE / 2 - LANE_BEND - SPINE_WIDTH / 2,
+        width: LANE_BEND + SPINE_WIDTH,
+        bottom: 0,
+        borderTopWidth: SPINE_WIDTH,
+        borderRightWidth: SPINE_WIDTH,
+        borderTopRightRadius: LANE_BEND,
+        // The bends are quieter than the spine, so the flow reads first and nesting does not shout (owner 2026-11-06).
+        borderColor: theme.colors.border.subtle,
     },
-    laneTickConditional: {
-        borderStyle: 'dashed',
+    /** Where a lane joins back: its line bends from its mark column into the container's spine. */
+    laneJoin: {
+        height: theme.space.s12,
+    },
+    laneJoinBend: {
+        position: 'absolute',
+        top: 0,
+        bottom: 0,
+        left: -(WORKFLOW_DOCUMENT_GUTTER_PX - ORDINAL_SIZE / 2) - SPINE_WIDTH / 2,
+        width: WORKFLOW_DOCUMENT_GUTTER_PX + SPINE_WIDTH,
+        borderRightWidth: SPINE_WIDTH,
+        borderBottomWidth: SPINE_WIDTH,
+        borderBottomRightRadius: LANE_BEND,
+        // The bends are quieter than the spine, so the flow reads first and nesting does not shout (owner 2026-11-06).
+        borderColor: theme.colors.border.subtle,
+    },
+    /** A lane's label that opens what it states (an If's condition): its words, with a press frame. */
+    laneLabelButton: {
+        flexShrink: 1,
+        minWidth: 0,
+        paddingHorizontal: theme.space.s4,
+        marginLeft: -theme.space.s4,
+        borderRadius: theme.borderRadius.md,
+    },
+    /** A lane's end inserter, on the name column like every gap's, so it never crosses the lane's line. */
+    laneEndInserter: {
+        paddingLeft: WORKFLOW_DOCUMENT_GUTTER_PX,
     },
     /**
      * The lane's caret, centred on the name's first line and pulled in by the row gap, so its glyph
@@ -268,10 +333,24 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    /** A container's kind mark in the ordinal column, the ring's size so the column stays aligned. */
+    /**
+     * The ordinal column keeps the ring's width; a wider number ("10", "250") grows its ring into the
+     * gutter, so the name never moves off the column the block's prompt and lines share.
+     */
+    ordinalColumn: {
+        width: ORDINAL_SIZE,
+        alignItems: 'flex-end',
+    },
+    /**
+     * A container's kind mark in the ordinal column: the same ring as a step's number (lab round 1106
+     * F1), so every block on the spine is one kind of node.
+     */
     ordinalMark: {
         width: ORDINAL_SIZE,
         height: ORDINAL_SIZE,
+        borderRadius: ORDINAL_SIZE / 2,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.border.strong,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -302,6 +381,31 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         color: theme.colors.text.primary,
         flexShrink: 1,
     },
+    /** An unnamed leaf's kind label when it can't be edited: quiet, not a disabled-looking placeholder. */
+    headingNamePlaceholder: {
+        color: theme.colors.text.secondary,
+    },
+    /** An unnamed block's name field while a sentence is its title: reachable from the keyboard, taking no room. */
+    headingNameCollapsed: {
+        position: 'absolute',
+        width: 1,
+        height: 1,
+        opacity: 0,
+    },
+    /** A summarised prompt block (lab S1): its heading with the prompt line close beneath it. */
+    summaryBody: {
+        flex: 1,
+        gap: theme.space.s2,
+    },
+    /** The summary's lines under its heading, one target that opens the block. */
+    summaryPress: {
+        gap: theme.space.s2,
+    },
+    /** A summarised prompt block's first prompt line (lab S1), on the name column. */
+    summaryPrompt: {
+        ...Typography.variant('body'),
+        color: theme.colors.text.primary,
+    },
     /** The block name as the control that selects the block. */
     headingButton: {
         // Its meta measures its own wrap against this box (react-native-web reports a child's layout
@@ -330,13 +434,6 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         flexGrow: 1,
     },
     /** The editable name's box is its text; its line is `headingButton`. */
-    /** An unnamed block's name field while a sentence is its title: reachable from the keyboard, taking no room. */
-    headingNameCollapsed: {
-        position: 'absolute',
-        width: 1,
-        height: 1,
-        opacity: 0,
-    },
     headingNameInput: {
         ...Typography.variant('heading'),
         color: theme.colors.text.primary,

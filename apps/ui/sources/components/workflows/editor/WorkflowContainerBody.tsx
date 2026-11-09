@@ -11,38 +11,59 @@ import { InlineTextField, type InlineTextEditor } from '@/components/ui/text/Inl
 import { WorkflowBlockActionsMenu, type WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { workflowEditorStyles } from './workflowEditorStyles';
 
-/**
- * A container's body (lab `.uwe-cb`): its lists one ordinal column in, beside
- * one continuous rail through the container's ordinal. An If's rail is dashed:
- * its branches may not run.
- */
+/** A container's body (lab `.uwe-cb`): its lanes one ordinal column in, each forking off its spine. */
 export function WorkflowContainerBody(props: Readonly<{
-    conditional?: boolean;
     children: React.ReactNode;
 }>): React.ReactElement {
+    return <View style={workflowEditorStyles.containerBody}>{props.children}</View>;
+}
+
+/**
+ * Where a block's spine runs (lab round 1106 F1): to the next block's mark, to the block's own end
+ * (a lane's last block, a list's last container), or past a lane's end inserter while editing.
+ */
+export type WorkflowSpineReach = 'next' | 'end' | 'endPastInserter';
+
+/** The spine below one block's mark, in its ordinal column. Drawing only: hidden from assistive technology. */
+export function WorkflowSpineSegment(props: Readonly<{
+    reach: WorkflowSpineReach;
+    testID?: string;
+}>): React.ReactElement {
     return (
-        <View style={workflowEditorStyles.containerBody}>
-            <View
-                accessibilityElementsHidden
-                importantForAccessibility="no-hide-descendants"
-                style={[workflowEditorStyles.containerRail, props.conditional === true ? workflowEditorStyles.containerRailConditional : null]}
-            />
-            {props.children}
-        </View>
+        <View
+            testID={props.testID}
+            pointerEvents="none"
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            style={[
+                workflowEditorStyles.spineSegment,
+                props.reach === 'next' ? workflowEditorStyles.spineToNext
+                    : props.reach === 'end' ? workflowEditorStyles.spineToEnd : workflowEditorStyles.spineToEndPastInserter,
+            ]}
+        />
     );
 }
 
 /**
- * One lane of a container, named on the tree line (its authored name or
- * "Lane 1", "Then", "Otherwise", "After each round"). A lane's own actions
- * (Remove) open from a caret beside its name, never as a destructive word at
- * rest and never as a second `⋯` above its first step's.
+ * One lane of a container (its authored name or "Lane 1", "Then", "Otherwise", "Repeat these
+ * steps"): it forks off the container's spine at its label and joins back where the lane ends, so a
+ * branch reads as a detour that returns to the flow; an If's header says when it runs. A lane's own
+ * actions (Remove) open from a caret beside its name, never as a destructive word at rest
+ * and never as a second `⋯` above its first step's.
  */
 export function WorkflowContainerLane(props: Readonly<{
     label: string;
+    /**
+     * The label's words when they are richer than `label` (an If's condition with its reference
+     * tokens); `label` still names the lane for its menu.
+     */
+    content?: React.ReactNode;
+    /** Opens what the label states (an If's condition), anchored on the label; absent when reading. */
+    onPressLabel?: (anchorRef: React.RefObject<View | null>) => void;
+    /** The label button's accessible name when it opens something. */
+    labelAccessibilityLabel?: string;
     /** A Side by side lane's authored name, editable in place; "Lane {n}" is its placeholder (07). */
     nameEditor?: InlineTextEditor;
-    conditional?: boolean;
     actions?: readonly WorkflowBlockAction[];
     labelTestID: string;
     actionsTestID?: string;
@@ -51,6 +72,32 @@ export function WorkflowContainerLane(props: Readonly<{
     const { theme } = useUnistyles();
     // An editable lane name is sized to its words, so its caret sits right after it (DESIGN-6 M1).
     const [nameWidth, setNameWidth] = React.useState<number | null>(null);
+    const labelAnchorRef = React.useRef<View>(null);
+    const { onPressLabel } = props;
+    const words = props.content ?? props.label;
+    const label = props.nameEditor !== undefined
+        ? <InlineTextField editor={{ ...props.nameEditor, testID: props.labelTestID }}
+            style={[workflowEditorStyles.laneLabelInput, { width: nameWidth ?? undefined, maxWidth: '100%' }]} />
+        : onPressLabel === undefined
+            ? <Text testID={props.labelTestID} numberOfLines={props.content === undefined ? 1 : 2} style={workflowEditorStyles.laneLabel}>{words}</Text>
+            : (
+                <View ref={labelAnchorRef} collapsable={false} style={workflowEditorStyles.laneLabelButton}>
+                    <HappierPressable
+                        testID={props.labelTestID}
+                        accessibilityRole="button"
+                        accessibilityLabel={props.labelAccessibilityLabel ?? props.label}
+                        hasPopup="dialog"
+                        onPress={() => onPressLabel(labelAnchorRef)}
+                        style={(state) => [
+                            workflowEditorStyles.actionTarget,
+                            state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null,
+                            focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
+                        ]}
+                    >
+                        <Text numberOfLines={2} style={workflowEditorStyles.laneLabel}>{words}</Text>
+                    </HappierPressable>
+                </View>
+            );
     return (
         <View accessibilityRole="none">
             <View style={workflowEditorStyles.laneLabelRow}>
@@ -65,14 +112,14 @@ export function WorkflowContainerLane(props: Readonly<{
                 )}
                 <View
                     testID={`${props.labelTestID}-tick`}
+                    pointerEvents="none"
                     accessibilityElementsHidden
                     importantForAccessibility="no-hide-descendants"
-                    style={[workflowEditorStyles.laneTick, props.conditional === true ? workflowEditorStyles.laneTickConditional : null]}
+                    style={workflowEditorStyles.laneFork}
                 />
-                {props.nameEditor === undefined
-                    ? <Text testID={props.labelTestID} numberOfLines={1} style={workflowEditorStyles.laneLabel}>{props.label}</Text>
-                    : <InlineTextField editor={{ ...props.nameEditor, testID: props.labelTestID }}
-                        style={[workflowEditorStyles.laneLabelInput, { width: nameWidth ?? undefined, maxWidth: '100%' }]} />}
+                <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+                    style={workflowEditorStyles.laneLead} />
+                {label}
                 {props.actions === undefined || props.actions.length === 0 ? null : (
                     <View style={workflowEditorStyles.laneCaret}>
                         <WorkflowBlockActionsMenu blockLabel={props.label} actions={props.actions} trigger="caret" testID={props.actionsTestID} />
@@ -80,6 +127,10 @@ export function WorkflowContainerLane(props: Readonly<{
                 )}
             </View>
             {props.children}
+            <View testID={`${props.labelTestID}-join`} pointerEvents="none" accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants" style={workflowEditorStyles.laneJoin}>
+                <View style={workflowEditorStyles.laneJoinBend} />
+            </View>
         </View>
     );
 }

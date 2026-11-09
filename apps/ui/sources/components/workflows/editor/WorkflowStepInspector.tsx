@@ -14,11 +14,12 @@ import {
     type WorkflowEngineSelectionV1,
     type WorkflowSessionAuthoringSelection,
 } from '@happier-dev/protocol/workflows/workflowV1';
-import type { WorkflowRoleV1 } from '@happier-dev/protocol';
+import type { WorkflowRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 
 import {
     SESSION_AUTHORING_CONTROL_FIELD_IDS,
     findSessionAuthoringAgentTargetOption,
+    resolveSessionAuthoringAgentId,
     resolveSessionAuthoringFieldTitle,
     type SessionAuthoringControlFacts,
     type SessionAuthoringFieldId,
@@ -205,6 +206,7 @@ export function WorkflowStepInspector(props: Readonly<{
         effective.agentTarget,
     ), [effective.agentTarget, props.authoringFacts?.agentTargets]);
 
+    const waitsOnAgent = resolveSessionAuthoringAgentId({ agentTarget: effective.agentTarget, facts: props.authoringFacts }) === null;
     return (
         <View testID={testIDPrefix} style={styles.root}>
             {/* The step is named once, by the Step options header that holds this group. */}
@@ -247,7 +249,11 @@ export function WorkflowStepInspector(props: Readonly<{
                 // The control's own field row names the field and carries the state beside that name.
                 // Only a field with no control of its own gets a name line here, so it is never silent.
                 if (control !== null && control !== undefined) {
-                    return <React.Fragment key={field}>{control}</React.Fragment>;
+                    // Its Agent-owned fields wait on an Agent and their one-field forms hide, so it is said
+                    // once, right under Agent and model where they would be (owner 2026-11-06).
+                    return <React.Fragment key={field}>{control}{isEngine && waitsOnAgent ? (
+                        <Text testID={`${testIDPrefix}-requires-agent`} style={workflowEditorStyles.metaText}>{t('newSession.chooseAgentFirst')}</Text>
+                    ) : null}</React.Fragment>;
                 }
                 return (
                     <View key={field} style={styles.fieldRow}>

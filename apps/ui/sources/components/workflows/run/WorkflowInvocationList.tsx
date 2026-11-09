@@ -75,12 +75,28 @@ const styles = StyleSheet.create((theme) => ({
     rowSelected: {
         backgroundColor: theme.colors.surface.selected,
     },
-    /** The state glyph, in the page's ordinal column, so the name lands where a step's does. */
+    /**
+     * The state glyph, in the page's ordinal column, so the name lands where a step's does. It spans
+     * the row's height, so the day's spine (lab round 1106 F1) runs from row edge to row edge through it.
+     */
     marker: {
         width: ICON_SIZE.lg,
         marginRight: WORKFLOW_ORDINAL_GAP_PX - theme.space.s12,
         alignItems: 'center',
         justifyContent: 'center',
+        alignSelf: 'stretch',
+        // Through the row's padding and its reserved focus border, to the row's edges.
+        marginVertical: -(theme.space.s6 + 1),
+    },
+    /** One half of the spine through a row's glyph: to the previous or next run of the same day. */
+    markerSpine: {
+        flex: 1,
+        width: 0,
+        borderLeftWidth: 1,
+        borderColor: theme.colors.border.strong,
+    },
+    markerSpineGap: {
+        flex: 1,
     },
     label: {
         ...Typography.variant('label', 'medium'),
@@ -229,6 +245,7 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
         const recordedTime = formatAsOfTime(recordedAt);
         const elapsed = props.resolveInvocationElapsedLabel?.(invocation) ?? null;
         const previous = index > 0 ? props.invocations[index - 1] : undefined;
+        const next = props.invocations[index + 1];
         const day = previous !== undefined && sameDay(Date.parse(previous.createdAt), recordedAt) ? null : formatDayLabel(recordedAt);
         const word = finished || workflowLifecycleAwaitsDecision(invocation.lifecycle) ? null : (
             <Text testID={`${testIDPrefix}-word-${invocation.id}`} numberOfLines={1} style={[styles.word, speaks ? styles.wordSpeaking : null,
@@ -252,6 +269,8 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
                 style={(state) => [styles.row, props.rowInsetStyle, selected ? styles.rowSelected : null, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
             >
                 <View style={styles.marker}>
+                    <View testID={day === null ? `${testIDPrefix}-spine-in-${invocation.id}` : undefined}
+                        style={day === null ? styles.markerSpine : styles.markerSpineGap} />
                     <WorkflowLifecycleStatus
                         testID={`${testIDPrefix}-state-${invocation.id}`}
                         lifecycle={invocation.lifecycle}
@@ -259,6 +278,7 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
                         context={props.invocationStatusContext}
                         markerOnly
                     />
+                    <View style={next !== undefined && sameDay(Date.parse(next.createdAt), recordedAt) ? styles.markerSpine : styles.markerSpineGap} />
                 </View>
                 <View style={styles.identity}>
                     <Text style={[styles.label, finished ? styles.labelFinished : null, selected ? styles.labelSelected : null]} numberOfLines={1}>

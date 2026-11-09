@@ -3,8 +3,9 @@ import { StyleSheet } from 'react-native-unistyles';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import { Typography } from '@/constants/Typography';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
-import { HAPPIER_PAGE_METRICS, HAPPIER_SEGMENTED_METRICS } from '@happier-dev/plugin-ui/presentation';
-import { WORKFLOW_DOCUMENT_INSET_PX, WORKFLOW_PAGE_TITLE_EDGE_PX } from '../editor/workflowEditorStyles';
+import { TOOLBAR_BUTTON_MD_HEIGHT_PX } from '@/components/ui/buttons/ToolbarButton';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { WORKFLOW_DOCUMENT_INSET_PX, WORKFLOW_PAGE_MARK_EDGE_PX, WORKFLOW_PAGE_TITLE_EDGE_PX } from '../editor/workflowEditorStyles';
 
 /**
  * Text-labelled controls draw at the WCAG 2.2 pointer floor under every pointer; a finger reaches its
@@ -94,6 +95,10 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
         flexWrap: 'wrap',
         gap: theme.space.s8,
     },
+    // While a terminal Run's actions are undecided the row keeps the height they will take.
+    headerControlsHeld: {
+        minHeight: TOOLBAR_BUTTON_MD_HEIGHT_PX,
+    },
     /** The view switch hugs its labels at the start of its row rather than spanning the column. */
     viewSwitch: {
         flexDirection: 'row',
@@ -107,10 +112,6 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
     viewTabs: {
         flexShrink: 1,
         minWidth: 0,
-    },
-    /** Wide: the selected plate bleeds its padding, so the first tab's word sits on the title's edge. */
-    viewSwitchOnTitle: {
-        paddingLeft: WORKFLOW_PAGE_TITLE_EDGE_PX - HAPPIER_SEGMENTED_METRICS.plain.paddingHorizontalPx,
     },
     /** Wide: this section's words start on the title's edge (lab round 1105 P1). */
     onTitleEdge: {
@@ -126,6 +127,10 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
         paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx,
     },
     // A phone gives the view switch the full width (lab phone-P1); the view's own actions sit under it.
+    /** Wide: the view switch starts on the mark edge, under the header's mark (owner 2026-11-06). */
+    viewSwitchOnMark: {
+        paddingLeft: WORKFLOW_PAGE_MARK_EDGE_PX,
+    },
     viewSwitchPhone: {
         flexDirection: 'column',
         alignItems: 'stretch',
@@ -136,7 +141,7 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
         flexWrap: 'wrap',
         alignItems: 'center',
         gap: theme.space.s8,
-        minHeight: MINIMUM_TARGET_SIZE,
+        minHeight: TOOLBAR_BUTTON_MD_HEIGHT_PX,
     },
     /** Wide: the view's own actions close the tab row at its trailing edge (lab run-A); phones stack them. */
     viewActionsTrailing: {

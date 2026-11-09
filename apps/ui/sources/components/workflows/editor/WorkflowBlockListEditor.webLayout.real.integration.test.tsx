@@ -219,6 +219,52 @@ describe('the document grid, as a browser lays it out', () => {
     });
 });
 
+describe('the flow, as a browser lays it out', () => {
+    it('joins every mark to the next with one spine, and forks a branch off it and back (lab round 1106 F1)', async () => {
+        pointer.coarse = false;
+        vi.resetModules();
+        try {
+            const container = await renderDocument([
+                step('build', 'Check the build', 'Run the release checks.'),
+                { kind: 'if', id: 'gate', name: 'If the build fails',
+                    when: { kind: 'exists', value: { kind: 'result', producer: { blockId: 'build', scope: { kind: 'current' } }, path: [] } },
+                    then: [step('fix', 'Fix the failures', 'Fix each failure.'), step('again', 'Check again', 'Run the checks again.')], otherwise: [] },
+                step('notes', 'Write the notes', 'Write the release notes.'),
+            ], 900);
+            const layout = await measureWebLayout(container, { viewport: { width: 900, height: 1600 }, settle });
+            const ring = (id: string) => layout.rect(`workflow-editor-step-${id}-label-ordinal`);
+            const gateMark = layout.rect('workflow-editor-if-gate-label-ordinal-mark');
+            const axis = (rect: Readonly<{ left: number; width: number }>) => rect.left + rect.width / 2;
+            // Root: each mark's spine runs from under it to the next mark, on the marks' axis.
+            for (const [from, to] of [[ring('build'), gateMark], [gateMark, ring('notes')]] as const) {
+                const spine = layout.rects.get(`workflow-editor-${from === gateMark ? 'gate' : 'build'}-spine`)![0]!;
+                expect(Math.abs(spine.top - from.bottom), 'starts at its mark').toBeLessThanOrEqual(1);
+                expect(Math.abs(spine.bottom - to.top), 'reaches the next mark').toBeLessThanOrEqual(1);
+                expect(Math.abs(axis(spine) - axis(from)), 'on the marks’ axis').toBeLessThanOrEqual(1);
+            }
+            // The lane forks off at its label's first line, on the If's axis, and its own marks join up.
+            const label = layout.rect('workflow-editor-if-gate-then-label');
+            const fork = layout.rect('workflow-editor-if-gate-then-label-tick');
+            expect(Math.abs(fork.bottom - (label.top + LANE_LINE / 2))).toBeLessThanOrEqual(2);
+            expect(Math.abs(fork.left - axis(gateMark))).toBeLessThanOrEqual(1);
+            const inLane = layout.rects.get('workflow-editor-fix-spine')![0]!;
+            expect(Math.abs(inLane.top - ring('fix').bottom)).toBeLessThanOrEqual(1);
+            expect(Math.abs(inLane.bottom - ring('again').top)).toBeLessThanOrEqual(1);
+            // The lane's last mark runs past its end inserter into the bend that joins the If's spine.
+            const join = layout.rect('workflow-editor-if-gate-then-label-join');
+            expect(Math.abs(layout.rects.get('workflow-editor-again-spine')![0]!.bottom - join.top)).toBeLessThanOrEqual(1);
+            // A named If states its condition where its branch starts, once.
+            const sentence = layout.rect('workflow-editor-if-gate-sentence');
+            expect(sentence.top).toBeGreaterThanOrEqual(label.top - 1);
+            expect(sentence.bottom).toBeLessThanOrEqual(label.bottom + 1);
+            expect(layout.rects.get('workflow-editor-if-gate-sentence')).toHaveLength(1);
+        } finally {
+            pointer.coarse = true;
+            vi.resetModules();
+        }
+    });
+});
+
 describe('a typed card, as a browser lays it out', () => {
     it('insets its foot from the bottom border as it does from the sides (DESIGN-7 N30)', async () => {
         pointer.coarse = false;
@@ -256,7 +302,8 @@ describe('a lane, as a browser lays it out', () => {
             // The name's first line: its box starts at its text (no vertical padding), one caption line tall.
             const firstLine = name.top + LANE_LINE / 2;
             expect(Math.abs(centre(caret) - firstLine)).toBeLessThanOrEqual(2);
-            expect(Math.abs(layout.rect(`workflow-editor-parallel-panel-branch-${lane}-label-tick`).top - firstLine)).toBeLessThanOrEqual(2);
+            // The lane forks off the spine into its line at the name's first line (lab round 1106 F1).
+            expect(Math.abs(layout.rect(`workflow-editor-parallel-panel-branch-${lane}-label-tick`).bottom - firstLine)).toBeLessThanOrEqual(2);
             // The caret's glyph starts within a few pixels of the name's box (its button is wider than its glyph).
             expect(caret.left + (caret.width - 14) / 2 - name.right).toBeLessThanOrEqual(8);
         }
