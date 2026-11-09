@@ -558,9 +558,13 @@ describe('materializeConnectedServicesForSpawn', () => {
       const fixture = createForegroundPurposeOwnerFixture({
         consumer: scope.purpose.consumer, service: scope.serviceRefs[0]!, purpose: scope.purpose.purpose,
         accountId: 'retained-profile',
-        materializeAccount: async () => ({ kind: 'files', files: {
-          'antigravity-acp/acp_token.json': Buffer.from('{"access_token":"fixture-access"}'),
-        } }),
+        materializeAccount: async ({ request }) => {
+          if (request.kind === 'environment') return { kind: 'environment', env: { AGY_ACP_FORCE_FILE_STORAGE: '1' } };
+          if (request.kind === 'files') return { kind: 'files', files: {
+            'antigravity-acp/acp_token.json': Buffer.from('{"access_token":"fixture-access"}'),
+          } };
+          throw new Error('Unexpected Antigravity materialization request');
+        },
       });
       bindingLease = fixture.owner.activateSessionPurposeBindings({
         sessionId: 'retained-companions', purposes: declaration.purposes, bindings: [fixture.binding],

@@ -2,6 +2,7 @@ import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sd
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { FX_PERMISSION_MODE_MAPPING } from './agent/acp/permissionModes.js';
 import { FX_ACP_COMMAND } from './agent/preflight.js';
 import { fxExternalSessionsContribution } from './agent/externalSessions/contribution.js';
 import { FX_CLI_AUTH } from './agent/auth/status.js';
@@ -21,7 +22,7 @@ export const FX_PLUGIN = definePlugin({
     declaration: {
       title: { key: 'agentInput.agent.fx', fallback: 'FX' },
       description: { key: 'profiles.aiBackend.fxSubtitleExperimental', fallback: 'FX coding agent (experimental)' },
-      runtime: { kind: 'custom' },
+      runtime: { kind: 'custom', permissionModeMapping: FX_PERMISSION_MODE_MAPPING },
       providerRequirements: {
         acceptsProtocols: ['openai-chat'], required: { streaming: true, toolRoundTrips: true },
         credentialSupport: { supportsNoAuth: false, apiKeyTransports: [
