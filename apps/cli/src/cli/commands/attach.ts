@@ -79,13 +79,13 @@ type AttachCommandDeps = Readonly<{
   terminalRuntime?: CommandContext['terminalRuntime'];
   readCredentialsFn?: () => Promise<StoredCredentials | null>;
   readSettingsFn?: () => Promise<Settings>;
-  fetchSessionByIdFn?: (params: { token: string; sessionId: string }) => Promise<RawSessionRecord | null>;
+  fetchSessionByIdFn?: typeof fetchSessionById;
   fetchSessionsPageFn?: (params: { token: string; cursor?: string; limit?: number; activeOnly?: boolean; archivedOnly?: boolean }) => Promise<{
     sessions: RawSessionListRow[];
     nextCursor: string | null;
     hasNext: boolean;
   }>;
-  resolveSessionIdOrPrefixFn?: (params: { credentials: StoredCredentials; idOrPrefix: string }) => Promise<
+  resolveSessionIdOrPrefixFn?: (params: Parameters<typeof resolveSessionIdOrPrefix>[0]) => Promise<
     | { ok: true; sessionId: string }
     | { ok: false; code: string; candidates?: string[] }
   >;
@@ -286,7 +286,7 @@ async function resolveAttachContext(
     deps.tryDecryptSessionOwnerMetadataViewFn ?? tryDecryptSessionOwnerMetadataView;
   const getAccountEncryptionCurrentnessFn = deps.getAccountEncryptionCurrentnessFn
     ?? (async (credentials: StoredCredentials) =>
-      await fetchAccountEncryptionCurrentness({ token: credentials.token }));
+      await fetchAccountEncryptionCurrentness({ credentials: credentials, token: credentials.token }));
 
   const credentials = await readCredentialsFn();
   if (!credentials) return null;
@@ -392,7 +392,7 @@ export async function handleAttachCommand(
   const selectAttachableSessionIdFn = deps.selectAttachableSessionIdFn ?? selectAttachableSessionId;
   const getAccountEncryptionCurrentnessFn = deps.getAccountEncryptionCurrentnessFn
     ?? (async (credentials: StoredCredentials) =>
-      await fetchAccountEncryptionCurrentness({ token: credentials.token }));
+      await fetchAccountEncryptionCurrentness({ credentials: credentials, token: credentials.token }));
   let commandAccountEncryptionCurrentnessPromise:
     Promise<AccountEncryptionCurrentnessResponse> | null = null;
   const getCommandAccountEncryptionCurrentness = (

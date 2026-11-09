@@ -3,10 +3,8 @@ import type {
   SecretReferenceOverlayV1,
   SessionModelSelectionV1,
 } from '@happier-dev/protocol';
-import {
-  getAgentSessionModesKind,
-  type AgentId,
-} from '@happier-dev/agents';
+import type { AgentId } from '@happier-dev/agents';
+import { getAgentSessionModesKind } from '@happier-dev/agents/permissions';
 
 import { partitionProviderSessionArgs } from '@/cli/providerSessionArgPartition';
 

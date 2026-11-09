@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createContext, runInContext } from 'node:vm';
+import { Console } from 'node:console';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
@@ -335,6 +336,34 @@ describe('logger.debugLargeJson', () => {
             consoleSpy.mockRestore();
             fetchSpy.mockRestore();
         }
+    });
+
+    it.each(['ordinary', 'axios'] as const)('writes sanitized %s error diagnostics to stderr even when file logging is silent', async kind => {
+        envScope.patch({ HAPPIER_LOG_LEVEL: 'silent' });
+        const { Logger } = await import('@/ui/logger');
+        const { serializeAxiosErrorForLog } = await import('@/api/client/serializeAxiosErrorForLog');
+        const { AxiosError } = await import('axios');
+        const { captureStderr } = await import('@/testkit/logger/captureOutput');
+        const output = captureStderr();
+        // Vitest replaces console.error; retain Node's real stderr binding.
+        const errorConsole = vi.spyOn(console, 'error').mockImplementation(new Console(process.stdout, process.stderr).error);
+        try {
+            const isolatedLogger = new Logger({ logFilePath: join(tempDir, 'logs', 'startup.log'), pruneCurrentProcessLogs: false });
+            // Exercise the real serializer -> stderr path used by fatal startup.
+            const message = 'native initialization failed password=PRIVATE_PASSWORD api_key=PRIVATE_API_KEY {"client_secret":"PRIVATE_QUOTED_SECRET"}';
+            const code = 'ERR_NATIVE token=PRIVATE_CODE_SECRET';
+            const error = kind === 'axios' ? new AxiosError(message, code) : Object.assign(new Error(message), { code });
+            error.stack = 'Error: native initialization failed\n    at bootstrap secret=PRIVATE_STACK_SECRET';
+            isolatedLogger.error('Daemon startup failed', serializeAxiosErrorForLog(error));
+            expect(output.text()).toContain('native initialization failed');
+            expect(output.text()).toContain('ERR_NATIVE');
+            if (kind === 'ordinary') expect(output.text()).toContain('at bootstrap');
+            for (const secret of ['PRIVATE_PASSWORD', 'PRIVATE_API_KEY', 'PRIVATE_QUOTED_SECRET', 'PRIVATE_CODE_SECRET', 'PRIVATE_STACK_SECRET']) {
+                expect(output.text()).not.toContain(secret);
+            }
+            isolatedLogger.flushSync();
+            expect(existsSync(isolatedLogger.logFilePath)).toBe(false);
+        } finally { errorConsole.mockRestore(); output.restore(); }
     });
 
     it('durably records sanitized fatal errors without serializing argv or env fields', async () => {

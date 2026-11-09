@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import {
   assertComposedCommandPathsAreUnambiguous,
@@ -9,8 +9,27 @@ import {
 import { composeActionCliInput, parseActionCliCommandInput } from './actions/parseCommandInput';
 
 describe('composed CLI command path ownership', () => {
-  it('admits the real Action catalog alongside static commands at startup', async () => {
-    await expect(ensureMergedAgentCommandRegistryLoaded()).resolves.toBeUndefined();
+  beforeAll(async () => {
+    await ensureMergedAgentCommandRegistryLoaded();
+  }, 120_000);
+
+  it.each([
+    { argv: ['workflow', 'definition', 'export'], actionId: 'workflow.definition.export' },
+    { argv: ['workflow', 'definition', 'import'], actionId: 'workflow.definition.import' },
+    { argv: ['mcp', 'servers', 'tools', 'example-server'], actionId: 'mcp.servers.tools.list' },
+    { argv: ['mcp', 'servers', 'tools', 'list', 'example-server'], actionId: 'mcp.servers.tools.list' },
+    { argv: ['mcp', 'found'], actionId: 'mcp.found.list' },
+    { argv: ['mcp', 'found', 'adopt'], actionId: 'mcp.found.adopt' },
+    { argv: ['mcp', 'rules'], actionId: 'mcp.rules.set' },
+    { argv: ['mcp', 'rules', 'set'], actionId: 'mcp.rules.set' },
+    { argv: ['skills', 'rules'], actionId: 'skills.rules.set' },
+    { argv: ['skills', 'rules', 'set'], actionId: 'skills.rules.set' },
+    { argv: ['session', 'capabilities', 'example-session'], actionId: 'session.capabilities.get' },
+    { argv: ['session', 'capabilities', 'example-session', 'list'], actionId: 'session.capabilities.get' },
+    { argv: ['session', 'capabilities', 'example-session', 'add', 'skill', 'example-skill'], actionId: 'session.capabilities.set' },
+  ])('keeps the formerly colliding path $argv reachable through $actionId', async ({ argv, actionId }) => {
+    await ensureMergedAgentCommandRegistryLoaded();
+    expect(await resolveAdmittedActionCliCommand(argv)).toMatchObject({ actionId });
   });
 
   it('dispatches status reads and source-bound reason edits as separate Session leaves', async () => {

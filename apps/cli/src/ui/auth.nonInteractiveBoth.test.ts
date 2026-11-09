@@ -91,7 +91,7 @@ vi.mock('node:crypto', async (importOriginal) => {
 type AxiosRequestResponse = { state: 'requested' };
 type AxiosClaimResponse = { state: 'authorized'; token: string; response: string };
 type AxiosStatusResponse = { status: 'authorized' };
-type AxiosResponse<T> = { data: T };
+type AxiosResponse<T> = { data: T; status?: number };
 
 type AxiosLike = {
   post: (url: string, body?: unknown) => Promise<AxiosResponse<AxiosRequestResponse | AxiosClaimResponse | unknown>>;
@@ -102,6 +102,7 @@ let capturedPublicKeyBase64: string | null = null;
 let requestExpiresAt: number | null = null;
 let claimServerIdentityId = 'srv_interactive_auth_home';
 let beforeStatusResponse: (() => Promise<void>) | null = null;
+let redirectedAuthPath: string | null = null;
 
 function sealCurrentTerminalResponse(recipientPublicKeyBase64: string): string {
   const renderedPairingLink = vi.mocked(console.log).mock.calls
@@ -138,9 +139,11 @@ function sealCurrentTerminalResponse(recipientPublicKeyBase64: string): string {
   })).toString('base64');
 }
 
-vi.mock('axios', async () => {
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
   const axios: AxiosLike = {
     post: vi.fn(async (url: string, body?: unknown) => {
+      if (redirectedAuthPath && url.endsWith(redirectedAuthPath)) return { status: 307, data: {} };
       if (url.endsWith('/v1/auth/request')) {
         const publicKey = (body as { publicKey?: unknown } | undefined)?.publicKey;
         capturedPublicKeyBase64 = typeof publicKey === 'string' ? publicKey : '';
@@ -161,6 +164,7 @@ vi.mock('axios', async () => {
       throw new Error(`Unexpected axios.post URL: ${url}`);
     }),
     get: vi.fn(async (url: string) => {
+      if (redirectedAuthPath && url.endsWith(redirectedAuthPath)) return { status: 307, data: {} };
       if (url.endsWith('/v1/auth/request/status')) {
         await beforeStatusResponse?.();
         return { data: { status: 'authorized' } };
@@ -168,7 +172,7 @@ vi.mock('axios', async () => {
       throw new Error(`Unexpected axios.get URL: ${url}`);
     }),
   };
-  return { default: axios };
+  return { ...actual, default: { ...actual.default, ...axios } };
 });
 
 // Transform the source graph during collection, before behavioral deadlines.
@@ -193,6 +197,7 @@ describe.sequential('doAuth (non-interactive)', () => {
     capturedPublicKeyBase64 = null;
     requestExpiresAt = null;
     beforeStatusResponse = null;
+    redirectedAuthPath = null;
     displayQRCodeMock.mockClear();
     fetchServerFeaturesSnapshotMock.mockClear();
     acquireTerminalAuthEnrollmentRuntimeMock.mockReset();
@@ -200,6 +205,38 @@ describe.sequential('doAuth (non-interactive)', () => {
     machineRegistrationMocks.ensure.mockClear();
     runTailscaleServeStatusMock.mockReset();
   });
+
+  it.each(['/v1/auth/request', '/v1/auth/request/status', '/v1/auth/request/claim'])(
+    'preserves a typed refusal from %s at the terminal auth entry',
+    async (redirectPath) => {
+      const home = await createTempDir('happier-cli-auth-redirect-');
+      const envScope = createEnvKeyScope(envKeys);
+      const restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
+      const output = captureConsoleLogAndMuteStdout();
+      redirectedAuthPath = redirectPath;
+      try {
+        envScope.patch({
+          HAPPIER_HOME_DIR: home,
+          HAPPIER_SERVER_URL: 'https://server.example.test',
+          HAPPIER_WEBAPP_URL: 'https://webapp.example.test',
+          HAPPIER_NO_BROWSER_OPEN: '1',
+          HAPPIER_AUTH_POLL_INTERVAL_MS: '1',
+          HAPPIER_AUTH_METHOD: undefined,
+        });
+        vi.resetModules();
+        const { doAuth } = await import('./auth');
+        await expect(doAuth()).rejects.toMatchObject({
+          code: 'credential_request_redirect_refused', retryable: false, status: 307,
+        });
+      } finally {
+        output.restore();
+        restoreTty();
+        envScope.restore();
+        await removeTempDir(home);
+      }
+    },
+    15_000,
+  );
 
   it('turns Ctrl-C during setup-managed auth wait into typed cancellation without exiting zero', async () => {
     const home = await createTempDir('happier-cli-auth-setup-cancel-');
@@ -715,7 +752,7 @@ describe.sequential('doAuth (non-interactive)', () => {
       expect(creds).toBeNull();
 
       const out = output.logs.join('\n').toLowerCase();
-      expect(out).toContain('use https or loopback http');
+      expect(out).toContain('invalid_target');
       expect(displayQRCodeMock).not.toHaveBeenCalled();
     } finally {
       output.restore();

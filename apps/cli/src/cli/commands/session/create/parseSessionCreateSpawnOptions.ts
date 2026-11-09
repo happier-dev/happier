@@ -1,7 +1,8 @@
 import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { readCapabilitySelectionCarrierV1, type SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
+import type { SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
+import { SessionMcpSelectionAuthoringV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 import type { AcpConfigOptionOverridesV1, ConnectedServiceBindingsV2, SpawnConfigOptionValue } from '@happier-dev/protocol';
 
 import { readCommandPositionals, readFlagValue, readRawFlagValue, hasFlag } from '@/cli/commands/shared/argvFlags';
@@ -298,11 +299,7 @@ export function parseSessionCreateSpawnOptions(argv: readonly string[]): ParsedS
   const capabilitySelection = readParsedJsonFlag(
     argv,
     '--mcp-selection-json',
-    (value) => {
-      const selection = readCapabilitySelectionCarrierV1({ mcpSelection: value });
-      if (!selection) throw new Error('Invalid MCP selection');
-      return selection;
-    },
+    (value) => ({ mcp: SessionMcpSelectionAuthoringV1Schema.parse(value) }),
   );
   const capabilitySelectionNames = {
     skills: { include: readRepeatedFlagValues(argv, '--skill'), exclude: readRepeatedFlagValues(argv, '--no-skill') },

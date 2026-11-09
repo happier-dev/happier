@@ -3,6 +3,42 @@ import { findCompiledActionCliCommand, listCompiledActionCliCommands } from './c
 import { composeActionCliInput, parseActionCliCommandInput } from './parseCommandInput';
 
 describe('marketplace spellings compile through registry Actions', () => {
+  it('compiles every registry update path with its keys operand and preserves strict app demand', () => {
+    const commands = listCompiledActionCliCommands();
+    const paths = [
+      ['registries', 'updates', 'check'], ['skills', 'updates', 'check'],
+      ['mcp', 'servers', 'updates', 'check'], ['agents', 'updates', 'check'],
+    ] as const;
+    for (const path of paths) {
+      const command = findCompiledActionCliCommand(path, commands);
+      expect(command?.actionId).toBe('registries.updates.check');
+      expect(command?.variadicPositional).toMatchObject({ path: 'keys', kind: 'string_list', required: false });
+    }
+    const command = findCompiledActionCliCommand(paths[0], commands);
+    if (!command) throw new Error('Expected registry update command');
+    const environments = [{ environmentId: 'environment', expectedRevision: 3 }];
+    for (const [args, expected] of [
+      [['--kind', 'app', '--environments-json', JSON.stringify(environments)], { kind: 'app', environments }],
+      [['--kind', 'skill', 'first', 'second'], { kind: 'skill', keys: ['first', 'second'] }],
+    ] as const) {
+      const parsed = parseActionCliCommandInput(command, [...command.path, ...args]);
+      if (!parsed.ok) throw new Error(parsed.message);
+      expect(composeActionCliInput({ parsed, canonicalSchema: command.spec.inputSchema,
+        wholeInputSchema: command.wholeInputSchema, callerSchema: command.callerSchema, bindInput: command.spec.cli?.bindInput,
+        context: { actionId: command.actionId, invocationId: 'update-test', commandPath: command.path } }))
+        .toMatchObject({ ok: true, input: expected });
+    }
+    const mixed = parseActionCliCommandInput(command, [...command.path, '--kind', 'app', 'invalid-key',
+      '--environments-json', JSON.stringify(environments)]);
+    if (mixed.ok) {
+      expect(composeActionCliInput({ parsed: mixed, canonicalSchema: command.spec.inputSchema,
+        wholeInputSchema: command.wholeInputSchema, callerSchema: command.callerSchema, bindInput: command.spec.cli?.bindInput,
+        context: { actionId: command.actionId, invocationId: 'invalid-update-test', commandPath: command.path } }).ok).toBe(false);
+    } else {
+      expect(mixed.code).toBe('invalid_arguments');
+    }
+  });
+
   it.each([
     [['plugins', 'install'], ['/workspace/plugin'], 'plugins.install', { path: '/workspace/plugin' }],
     [['plugins', 'uninstall'], ['acme.plugin'], 'plugins.uninstall', { pluginId: 'acme.plugin' }],

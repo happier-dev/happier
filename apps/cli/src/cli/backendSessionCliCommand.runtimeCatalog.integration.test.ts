@@ -105,6 +105,8 @@ import {
   runBackendSessionCliCommand as runBackendSessionCliCommandProduction,
 } from './runBackendSessionCliCommand';
 import { buildAgentCliSessionCommandBuildInput } from './providerSessionArgPartition';
+import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
+import { readBundledPluginManifestInput } from '@/plugins/projection/registry/builtIn/manifestFile';
 import * as authModule from '@/ui/auth';
 import * as persistenceModule from '@/persistence';
 import * as accountSettingsModule from '@/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -126,7 +128,8 @@ import {
 } from '@/session/shared/spawnSessionContract';
 
 async function runBackendSessionCliCommand(
-  params: Parameters<typeof runBackendSessionCliCommandProduction>[0],
+  params: Omit<Parameters<typeof runBackendSessionCliCommandProduction>[0], 'resolveSessionRuntimePreferences'>
+    & Partial<Pick<Parameters<typeof runBackendSessionCliCommandProduction>[0], 'resolveSessionRuntimePreferences'>>,
 ): Promise<void> {
   const runtimeAuthorityAgentId =
     params.runtimeAuthorityAgentId
@@ -134,6 +137,9 @@ async function runBackendSessionCliCommand(
     ?? params.agentIdForDeprecatedAliases;
   await runBackendSessionCliCommandProduction({
     ...params,
+    resolveSessionRuntimePreferences: params.resolveSessionRuntimePreferences === undefined
+      ? input => catalogHooksModule.resolveProviderSessionRuntimePreferences(params.agentIdForAccountSettings, input)
+      : params.resolveSessionRuntimePreferences,
     ...(runtimeAuthorityAgentId ? { runtimeAuthorityAgentId } : {}),
   });
 }
@@ -820,6 +826,8 @@ describe('runBackendSessionCliCommand', () => {
   });
 
   it('does not force a second account-settings network refresh before daemon-started child startup', async () => {
+    const bundledInputs = new Set(BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.map(locator => readBundledPluginManifestInput(locator)));
+    const decode = vi.spyOn(JSON, 'parse');
     const credentials = { token: 'x' } as any;
 
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials } as any);
@@ -839,6 +847,7 @@ describe('runBackendSessionCliCommand', () => {
       context: { args: ['codex', '--started-by', 'daemon', '--account-settings-version-hint', '9'], terminalRuntime: null } as any,
       backendIdForSessionRuntime: 'codex',
       agentIdForAccountSettings: 'codex' as any,
+      resolveSessionRuntimePreferences: null,
     });
 
     expect(authSpy).not.toHaveBeenCalled();
@@ -853,6 +862,7 @@ describe('runBackendSessionCliCommand', () => {
         minSettingsVersion: expect.any(Number),
       }),
     );
+    expect(decode.mock.calls.filter(([input]) => bundledInputs.has(input))).toHaveLength(0);
   });
 
   it('forces refresh without blocking Codex terminal starts on fast account settings', async () => {

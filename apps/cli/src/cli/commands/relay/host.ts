@@ -30,7 +30,6 @@ import {
   type SystemTaskSshConnectionConfig,
 } from '@happier-dev/cli-common/systemTasks';
 import {
-  readKnownHostsTextSync,
   runOpenSshRemoteCommand,
   transferOpenSshFile,
   writeKnownHostsTextSync,
@@ -363,10 +362,11 @@ function ensureTrustedHostKeySeeded(ssh: SystemTaskSshConnectionConfig, knownHos
   const knownHostsPath = String(ssh.knownHostsPath ?? '').trim();
   const trustedHostKey = String(ssh.trustedHostKey ?? '').trim();
   if (!knownHostsPath || !trustedHostKey) return;
-  const existing = readKnownHostsTextSync(knownHostsPath);
-  if (existing.includes(trustedHostKey)) return;
-  const suffix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
-  writeKnownHostsTextSync(knownHostsPath, `${existing}${suffix}${trustedHostKey}`);
+  writeKnownHostsTextSync(knownHostsPath, existing => {
+    if (existing.includes(trustedHostKey)) return existing;
+    const suffix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
+    return `${existing}${suffix}${trustedHostKey}`;
+  });
 }
 
 function createInvalidArgumentsError(message: string): Error & { code: 'invalid_arguments' } {

@@ -11,6 +11,12 @@ const scope = { serverId: 'home-a', accountId: 'account-a' };
 const composer = { scope, ref: { kind: 'newSession', instanceId: 'composer-a' } };
 const position = { anchorId: null, placement: 'before' };
 const cases = [
+  { id: 'shell.column.get', input: { column: 'main' }, result: { present: true, visible: true, available: true, tabs: ['overview', 'changes'], activeTab: 'overview' } },
+  { id: 'shell.column.set', input: { column: 'main', visible: true, tab: 'changes' }, result: { ok: true } },
+  { id: 'session.list.view.reset', input: {}, result: { ok: true } },
+  { id: 'discussion.list.view.reset', input: scope, result: { ok: true } },
+  { id: 'notifications.webhooks.list', input: {}, result: { items: [] } },
+  { id: 'notifications.push.tokens.list', input: {}, result: { tokens: [] } },
   { id: 'session.work.get', input: { sessionId: 'session-a' }, result: { status: 'ready', sessionId: 'session-a',
     summary: { outstanding: 0, needsYou: 0, stalled: 0, sessions: 0, runs: 0 }, items: [],
     managedRuns: { phase: 'loaded', refreshFailed: false } } },
@@ -55,10 +61,10 @@ const commands = listCompiledActionCliCommands();
 const contextFor = (id: ActionId) => id === 'inbox.get' ? { ...context, runtimeAccountId: scope.accountId } : context;
 
 describe('mounted Action CLI parity', () => {
-  it('does not expose undeclared client scope Actions', () => {
-    for (const id of ['session.list.view.get', 'session.list.view.set', 'session.list.view.reset', 'shell.column.get', 'shell.column.set'] as const) {
-      expect(getActionSpec(id).surfaces.cli).toBe(false);
-      expect(commands.some(command => command.actionId === id)).toBe(false);
+  it('exposes column read/select through canonical CLI declarations', () => {
+    for (const id of ['shell.column.get', 'shell.column.set'] as const) {
+      expect(getActionSpec(id).surfaces.cli).toBe(true);
+      expect(commands.some(command => command.actionId === id && command.visibility === 'canonical')).toBe(true);
     }
   });
   it.each(cases)('$id admits CLI input and preserves the mounted responder outcome', async ({ id, input, result }) => {

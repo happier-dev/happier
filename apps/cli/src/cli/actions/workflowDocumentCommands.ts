@@ -1,26 +1,29 @@
 import { readFile, writeFile } from 'node:fs/promises';
+import { addAbortSignal } from 'node:stream';
 
 import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
 
 import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
-import { argvBeforeOptionTerminator } from '@/cli/commands/shared/argvFlags';
+import { assertCommandArguments, argvBeforeOptionTerminator } from '@/cli/commands/shared/argvFlags';
 import { resolveAbsolutePathFromWorkingDirectory } from '@/utils/path/expandHomeDirPath';
 
 import { findCompiledActionCliCommand, listCompiledActionCliCommands } from './compiledCommands';
-import { type ActionCliExecutionDeps, runCompiledActionCliCommand } from './executeCommand';
+import { type ActionCliExecutionDeps, describeCompiledActionCliCommandArgvPolicy, runCompiledActionCliCommand } from './executeCommand';
+import { buildActionCliHelpModel, renderActionCliHelpModel } from './commandHelp';
 
 type WorkflowDocumentCommandDeps = Readonly<{
   readFileFn: (path: string) => Promise<string | Uint8Array>;
-  readStdinFn: () => Promise<string | Uint8Array>;
+  readStdinFn: (signal?: AbortSignal) => Promise<string | Uint8Array>;
   writeFileFn: (path: string, content: string) => Promise<void>;
   actionExecutionDeps?: Partial<ActionCliExecutionDeps>;
 }>;
 
 const DEFAULT_DEPS: WorkflowDocumentCommandDeps = {
   readFileFn: readFile,
-  readStdinFn: async () => {
+  readStdinFn: async (signal) => {
+    signal?.throwIfAborted();
     const chunks: Uint8Array[] = [];
-    for await (const chunk of process.stdin) {
+    for await (const chunk of signal ? addAbortSignal(signal, process.stdin) : process.stdin) {
       chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
     }
     return Buffer.concat(chunks);
@@ -33,9 +36,7 @@ function decodeUtf8(content: string | Uint8Array): string {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(content);
   } catch (error) {
-    throw Object.assign(new TypeError('Workflow document is not valid UTF-8', { cause: error }), {
-      code: 'invalid_workflow_document_encoding',
-    });
+    throw new TypeError('Workflow document is not valid UTF-8', { cause: error });
   }
 }
 
@@ -45,26 +46,6 @@ function commandFor(path: readonly string[]) {
     throw new Error(`Missing canonical Action command: ${path.join(' ')}`);
   }
   return command;
-}
-
-function transportArgs(argv: readonly string[]): readonly string[] {
-  const kept: string[] = [];
-  for (let index = 0; index < argv.length; index += 1) {
-    const token = argv[index]!;
-    if (token === '--json') {
-      kept.push(token);
-      continue;
-    }
-    if (token === '--server-id' || token === '--machine-id') {
-      const next = argv[index + 1];
-      if (!next || next.startsWith('--')) throw new TypeError(`${token} requires a value.`);
-      kept.push(token, next);
-      index += 1;
-      continue;
-    }
-    if (token.startsWith('--server-id=') || token.startsWith('--machine-id=')) kept.push(token);
-  }
-  return kept;
 }
 
 async function reportError(
@@ -83,17 +64,6 @@ async function reportError(
   }
   console.error(`Error: ${code}`);
   process.exitCode = 1;
-}
-
-function assertKnownOptions(argv: readonly string[], valueOptions: ReadonlySet<string>): void {
-  for (let index = 0; index < argv.length; index += 1) {
-    const token = argv[index]!;
-    if (!token.startsWith('--')) throw new TypeError(`Unexpected argument: ${token}`);
-    const name = token.includes('=') ? token.slice(0, token.indexOf('=')) : token;
-    if (name === '--json') continue;
-    if (!valueOptions.has(name)) throw new TypeError(`Unknown option: ${name}`);
-    if (!token.includes('=')) index += 1;
-  }
 }
 
 function positionalAt(argv: readonly string[], index: number): string | null {
@@ -125,32 +95,31 @@ export async function tryHandleWorkflowDocumentCliCommand(params: Readonly<{
   const deps = { ...DEFAULT_DEPS, ...params };
   const kind = `workflow_definition_${operation}`;
   try {
+    const command = commandFor(['workflow', 'definition', operation]);
+    const usage = operation === 'import'
+      ? 'happier workflow definition import <file|-> [options]'
+      : 'happier workflow definition export <definition-id> [file|-] [options]';
     if (argv.includes('--help') || argv.includes('-h')) {
-      const usage = operation === 'import'
-        ? 'Usage: happier workflow definition import <file|-> [--server-id <id>] [--machine-id <id>] [--json]'
-        : 'Usage: happier workflow definition export <definition-id> [file|-] [--server-id <id>] [--machine-id <id>]';
-      console.log(usage);
+      console.log(renderActionCliHelpModel({ ...buildActionCliHelpModel(command), usage }));
       return true;
     }
-    const transport = transportArgs(argv.slice(3));
     if (operation === 'import') {
       const source = positionalAt(argv, 3);
-      assertKnownOptions(
-        argv.slice(4),
-        new Set(['--server-id', '--machine-id']),
-      );
       if (!source) throw new TypeError('Import requires <file|->.');
+      const options = argv.slice(4);
+      assertCommandArguments(options, { ...describeCompiledActionCliCommandArgvPolicy(command),
+        startIndex: 0, maxPositionals: 0, usage });
       const raw = decodeUtf8(source === '-'
-        ? await deps.readStdinFn()
+        ? await deps.readStdinFn(params.signal)
         : await deps.readFileFn(resolveAbsolutePathFromWorkingDirectory(source) ?? source));
-      const command = commandFor(['workflow', 'definition', 'import']);
+      params.signal?.throwIfAborted();
       await runCompiledActionCliCommand({
         command,
         argv: [
           ...command.path,
           '--input-json',
           JSON.stringify({ json: raw }),
-          ...transport,
+          ...options,
         ],
         ...(deps.actionExecutionDeps ? { deps: deps.actionExecutionDeps } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
@@ -161,14 +130,12 @@ export async function tryHandleWorkflowDocumentCliCommand(params: Readonly<{
     const definitionId = positionalAt(argv, 3);
     if (!definitionId) throw new TypeError('Export requires <definition-id>.');
     const target = positionalAt(argv, 4);
-    assertKnownOptions(
-      argv.slice(target ? 5 : 4),
-      new Set(['--server-id', '--machine-id']),
-    );
-    const command = commandFor(['workflow', 'definition', 'export']);
+    const options = argv.slice(target ? 5 : 4);
+    assertCommandArguments(options, { ...describeCompiledActionCliCommandArgvPolicy(command),
+      startIndex: 0, maxPositionals: 0, usage });
     await runCompiledActionCliCommand({
       command,
-      argv: [...command.path, '--input-json', JSON.stringify({ definitionId }), ...transport],
+      argv: [...command.path, '--input-json', JSON.stringify({ definitionId }), ...options],
       ...(deps.actionExecutionDeps ? { deps: deps.actionExecutionDeps } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
       consumeSuccess: async (payload) => {

@@ -5,6 +5,7 @@ export function showMachineHelp(): void {
     title: 'happier machine',
     subtitle: 'Set up remote machines (SSH)',
     usage: [
+      { label: 'happier machine enroll --ssh <user@host> --role server|deployTarget --admin-access ask|preauthorized|none [--administrator <non-root-user>]', description: 'Enroll a dedicated Linux server with reviewed administrator access' },
       { label: 'happier machine enroll --ssh <user@host> [--ssh-port <number>] [--ssh-auth=agent|keyfile|password] [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>]', description: 'Connect a remote machine to the selected Home' },
       { label: 'happier machine enroll --ssh-user <user> --ssh-host <host> [--ssh-port <number>] [--ssh-auth=agent|keyfile|password] [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>]', description: 'Bootstrap a remote machine with split SSH fields' },
       { label: 'happier machine enroll --ssh <user@host> [--ssh-port <number>] [--ssh-auth=agent|keyfile|password] [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>] [--service-mode <user|none>] [--install-relay-runtime] [--relay-runtime-mode <user|system>] [--require-local-approval] [--yes] [--json] [--preview|--dev|--channel stable|preview|dev]', description: 'Advanced/operator setup, including optional generic Relay runtime installation' },
@@ -13,6 +14,10 @@ export function showMachineHelp(): void {
     ],
     notes: [
       'This is a thin wrapper over the canonical remote SSH setup task.',
+      '--role personal (the default) or adopted keeps the existing account; sandbox keeps the guest process lifecycle. Server/deployTarget uses the dedicated happier user and cannot override --service-mode.',
+      'Dedicated SSH servers default to Ask using the non-root SSH login as administrator. With root SSH, name a non-root --administrator or explicitly choose --admin-access preauthorized or none.',
+      'Ask requires an interactive terminal, including with --yes. Administrator passwords are prompted transiently and never accepted as flags or saved.',
+      'With --admin-access none, Happier cannot gain administrator access later without your provider console or your own administrator terminal.',
       'Use --home, --home-url, or --home-descriptor-file to target a Home. Global --server and URL flags remain available as compatibility aliases.',
       'Descriptor-selected Homes always require trusted local approval. Use --require-local-approval to apply the same rule to generic URL-only compatibility setup.',
       '--install-relay-runtime is an advanced generic runtime option; it never creates or converts a Personal Home.',

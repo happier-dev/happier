@@ -49,7 +49,7 @@ import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommand
 
 import type { CommandContext, CommandHandler } from '@/cli/commandRegistry';
 
-type FetchSessionByIdFn = (params: { token: string; sessionId: string }) => Promise<RawSessionRecord | null>;
+type FetchSessionByIdFn = typeof fetchSessionById;
 type FetchSessionsPageFn = typeof fetchSessionsPage;
 
 type ReadAccountSettingsFn = (params: { credentials: StoredCredentials }) => Promise<AccountSettings>;
@@ -176,7 +176,7 @@ export async function handleResumeCommand(
     process.exit(1);
   }
   const getAccountEncryptionCurrentnessFn = deps?.getAccountEncryptionCurrentnessFn
-    ?? (async () => await fetchAccountEncryptionCurrentness({ token: credentials.token }));
+    ?? (async () => await fetchAccountEncryptionCurrentness({ credentials: credentials, token: credentials.token }));
 
   const rawInput = argv[0]?.trim() ?? '';
   const isInteractive = rawInput.length === 0;
@@ -228,7 +228,6 @@ export async function handleResumeCommand(
       reason: 'session-control',
       credentials,
       idOrPrefix: sessionIdOrPrefix,
-      accountEncryptionMode: accountEncryptionCurrentness.mode,
     });
     if (!resolved.ok) {
       if (resolved.code === 'session_id_ambiguous') {

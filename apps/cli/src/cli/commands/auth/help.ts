@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import { cmd, warn } from '@happier-dev/cli-common/output';
 import { USAGE as API_TOKEN_USAGE } from './apiTokensHelp';
-import { ACCOUNT_SECURITY_USAGE, CLI_APPROVALS_USAGE } from './accountSecurityHelp';
+import { ACCOUNT_SECURITY_USAGE } from './accountSecurityHelp';
 import { NATIVE_EMAIL_USAGE } from './nativeEmailHelp';
 import { USAGE as AUTH_SERVICE_USAGE } from './serviceHelp';
 
@@ -9,7 +9,6 @@ export function printAuthFamilyHelp(args: readonly string[]): void {
   switch (args[1]) {
     case 'api-tokens': console.log(API_TOKEN_USAGE); return;
     case 'security': console.log('Usage: happier auth security get [--json]'); return;
-    case 'cli-approvals': console.log(CLI_APPROVALS_USAGE); return;
     case 'password': console.log(ACCOUNT_SECURITY_USAGE); return;
     case 'email':
     case 'recovery-key': console.log(NATIVE_EMAIL_USAGE); return;
@@ -47,8 +46,6 @@ ${chalk.bold('Usage:')}
   happier auth api-tokens revoke <tokenId> [--yes] [--json]
   happier auth api-tokens revoke-all [--yes] [--json]
   happier auth security get [--json]   View Account security (sign-in email, password state)
-  happier auth cli-approvals get [--json]   View the Account's CLI/daemon approval policy
-  happier auth cli-approvals set allowed|disallowed [--yes] [--json]
   happier auth password change [--current-password <password>] --new-password <password> [--revision <n>] [--recover] [--yes] [--json]
   happier auth password remove [--current-password <password>] [--revision <n>] [--yes] [--json]
   happier auth password enroll-email-request --email <email> [--json]
@@ -109,7 +106,6 @@ ${chalk.gray('Password and recovery-key operations never leave this host: they a
 ${chalk.gray('E2EE password and recovery-key login derive and open Account material locally; passwords, wrapping keys, and recovery keys never reach the Home.')}
 ${chalk.gray('E2EE Account Security changes reuse the current recovery secret and never rotate Account signing or content keys.')}
 ${chalk.gray('API-token revocation stops future API authorization; keys or data already obtained cannot be recalled.')}
-${chalk.gray('CLI/daemon approvals are allowed by default. HAPPIER_CLI_PRESENT_USER=disallowed narrows this machine; Account allowed cannot override it.')}
 ${chalk.gray('Keep Account recovery keys private: anyone with one may be able to recover the Account.')}
 ${chalk.gray('The CLI stores credentials only for the selected Home and uses Account material only')}
 ${chalk.gray('when that Account is E2EE; plaintext Accounts do not require fabricated key material.')}

@@ -1,5 +1,6 @@
 import type { StoredCredentials } from '@/persistence';
-import { refreshServerProfileHomeConnectionDescriptor, resolveServerProfileHomeIdentityId, type ServerProfile } from '@/server/serverProfiles';
+import { resolveServerProfileHomeIdentityId, type ServerProfile } from '@/server/serverProfiles';
+import { observeServerProfileHomeConnection } from '@/server/profileObservation';
 import { configuration } from '@/configuration';
 import { ACTION_CLI_SERVER_ID_FLAG } from './parseCommandInput';
 
@@ -62,28 +63,34 @@ export async function resolveActionCliCredentialTarget(params: Readonly<{
   credentials: StoredCredentials | null;
   fixedServer: ActionCliFixedServerTarget | null;
   serverIdentityId?: string;
+  /** Portable endpoint for exported commands, not a device-local connection override. */
+  canonicalServerUrl?: string;
 }>> {
-  const prepareProfile = async (profile: ServerProfile | null, credentials: StoredCredentials | null): Promise<ServerProfile | null> => {
-    if (!profile || !credentials || profile.homeConnectionDescriptorAuthority === 'exact' && profile.homeConnectionDescriptor) return profile;
-    // Restored identities can have credentials and a URL-only profile. Establish
-    // its binding at the existing authenticated descriptor owner before Actions
-    // apply their saved-Home currentness checks.
-    const refreshed = await refreshServerProfileHomeConnectionDescriptor({ profileId: profile.id,
+  const prepareProfile = async (profile: ServerProfile | null, credentials: StoredCredentials | null) => {
+    if (!profile || !credentials || profile.homeConnectionDescriptorAuthority === 'exact' && profile.homeConnectionDescriptor) {
+      return { profile, serverIdentityId: profile ? await resolveServerProfileHomeIdentityId(profile.id) ?? undefined : undefined };
+    }
+    // URL-only profiles can authenticate a Home even while its descriptor is
+    // withheld. Keep that identity invocation-scoped at the observation owner.
+    const observation = await observeServerProfileHomeConnection({ profileId: profile.id,
       serverUrl: profile.localServerUrl ?? profile.serverUrl, token: credentials.token,
-    }).catch(() => 'unavailable' as const);
-    return refreshed === 'unavailable' ? profile : await params.deps.getServerProfileFn(profile.id);
+    }).catch(() => null);
+    if (!observation) return { profile, serverIdentityId: undefined };
+    const serverIdentityId = observation.descriptorOutcome === 'unavailable' ? observation.serverIdentityId
+      : await resolveServerProfileHomeIdentityId(profile.id) ?? undefined;
+    return { profile: observation.profile, serverIdentityId };
   };
   if (params.requestedServerId === null) {
     const credentials = await params.deps.readCredentialsFn();
-    const profile = await prepareProfile(await params.deps.getServerProfileFn(configuration.activeServerId).catch(() => null), credentials);
-    const serverIdentityId = profile ? await resolveServerProfileHomeIdentityId(profile.id) ?? undefined : undefined;
+    const { serverIdentityId } = await prepareProfile(await params.deps.getServerProfileFn(configuration.activeServerId).catch(() => null), credentials);
     return { credentials, fixedServer: null,
       ...(serverIdentityId ? { serverIdentityId } : {}) };
   }
   const selectedProfile = await params.deps.getServerProfileFn(params.requestedServerId);
   const credentials = await params.deps.readCredentialsForServerIdFn(selectedProfile.id);
-  const profile = await prepareProfile(selectedProfile, credentials) ?? selectedProfile;
-  const serverIdentityId = await resolveServerProfileHomeIdentityId(profile.id) ?? undefined;
+  const prepared = await prepareProfile(selectedProfile, credentials);
+  const profile = prepared.profile ?? selectedProfile;
+  const serverIdentityId = prepared.serverIdentityId;
   if (params.requireServerIdentityId && !serverIdentityId) {
     throw Object.assign(
       new Error(`Saved Home "${profile.id}" has no verified server identity. Re-add or refresh it before retrying.`),
@@ -92,6 +99,7 @@ export async function resolveActionCliCredentialTarget(params: Readonly<{
   }
   return {
     credentials,
+    canonicalServerUrl: profile.homeConnectionDescriptor?.canonicalServerUrl ?? profile.serverUrl,
     ...(serverIdentityId ? { serverIdentityId } : {}),
     fixedServer: {
       serverId: profile.id,

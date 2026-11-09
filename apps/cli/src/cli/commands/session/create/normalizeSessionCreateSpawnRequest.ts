@@ -1,3 +1,6 @@
+import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
+import { getProfileDefaultBackendTarget } from '@happier-dev/protocol/profiles/profileCompatibility';
+import { assertProfileCompatibleWithBackendTarget, resolveAccountProfileForSessionStart } from '@/settings/profiles/resolveProfileForAgent';
 import { DEFAULT_AGENT_ID } from '@happier-dev/agents';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -12,7 +15,6 @@ import { SessionCapabilitySelectionAuthoringV1Schema, type SessionCapabilitySele
 import { configuration } from '@/configuration';
 import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
 import { readSettings, readStoredCredentials, type Settings } from '@/persistence';
-import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { createCliMcpServerStore } from '@/settings/mcp/mcpServerStore';
 import { readSkillLibraryItems } from '@/prompts/skills/library/readSkillLibraryItems';
@@ -35,7 +37,7 @@ export type SessionCreateSpawnRequestNormalizerDeps = Readonly<{
   activeServerId: string;
   defaultAgentId: string;
   readSettings: () => Promise<SessionCreateMachineSettings>;
-  readAgentDefinitions: () => Iterable<SpawnAgentDefinition>;
+  readAgentDefinitions: () => Iterable<SpawnAgentDefinition> | Promise<Iterable<SpawnAgentDefinition>>;
   now: () => number;
   readCapabilityCatalogs?: (kinds: Readonly<{ mcp: boolean; skills: boolean }>) => Promise<Readonly<{
     mcp: readonly Readonly<{ id: string; name: string }>[];
@@ -53,8 +55,11 @@ function nonEmptyString(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function invalidSessionCreateArgument(message: string): never {
-  throw new Error(`Invalid session create argument: ${message}`);
+function invalidSessionCreateArgument(
+  message: string,
+  details?: Readonly<{ field: 'serverId'; allowedValues: readonly string[] }>,
+): never {
+  throw Object.assign(new Error(`Invalid session create argument: ${message}`), details ? { details } : {});
 }
 
 function defaultNormalizerDeps(): SessionCreateSpawnRequestNormalizerDeps {
@@ -62,7 +67,10 @@ function defaultNormalizerDeps(): SessionCreateSpawnRequestNormalizerDeps {
     activeServerId: configuration.activeServerId,
     defaultAgentId: DEFAULT_AGENT_ID,
     readSettings,
-    readAgentDefinitions: () => readAgentCatalogSnapshot().agentDefinitionsById.values(),
+    readAgentDefinitions: async () => {
+      const { ensureMergedAgentCommandRegistryLoaded } = await import('@/cli/commandRegistry');
+      return (await ensureMergedAgentCommandRegistryLoaded()).agentDefinitionsById.values();
+    },
     now: () => Date.now(),
     readCapabilityCatalogs: async (kinds) => {
       const credentials = await readStoredCredentials();
@@ -150,14 +158,14 @@ function resolveConfiguration(
   };
 }
 
-function resolveAgentTarget(
+async function resolveAgentTarget(
   request: SessionCreateSpawnRequest,
   deps: SessionCreateSpawnRequestNormalizerDeps,
-): Readonly<{
+): Promise<Readonly<{
   agentId: string;
   agentTarget: SessionSpawnNewInputV2['agentTarget'];
   backendTargetKey: string;
-}> {
+}>> {
   const requestedTarget = request.backendTargetKey
     ? (() => {
         try {
@@ -173,9 +181,11 @@ function resolveAgentTarget(
   if (!requestedTarget && !selectedAgentId) {
     invalidSessionCreateArgument('the default Agent is unavailable.');
   }
-  const agent = [...deps.readAgentDefinitions()].find((candidate) => requestedTarget?.kind === 'agent'
-    ? candidate.identity?.pluginId === requestedTarget.identity.pluginId && candidate.identity.localId === requestedTarget.identity.localId
-    : candidate.id === selectedAgentId);
+  const definitions = [...await deps.readAgentDefinitions()];
+  const resolvedAgentId = requestedTarget?.kind === 'agent'
+    ? readAgentRoutingIdForContributionIdentity(indexAgentRoutingIdsByContributionIdentity(definitions), requestedTarget.identity)
+    : selectedAgentId;
+  const agent = definitions.find((candidate) => candidate.id === resolvedAgentId);
   if (!agent?.identity) {
     invalidSessionCreateArgument('--backend does not identify an executable Agent.');
   }
@@ -200,7 +210,9 @@ async function resolveExecutionTarget(
   }
   const requestedServerId = nonEmptyString(request.serverId);
   if (requestedServerId && requestedServerId !== activeServerId) {
-    invalidSessionCreateArgument('--server-id must match the active server.');
+    invalidSessionCreateArgument('--server-id must match the active server.', {
+      field: 'serverId', allowedValues: [activeServerId],
+    });
   }
   const settings = await deps.readSettings();
   const accountId = nonEmptyString(settings.lastTokenSubByServerId?.[activeServerId]);
@@ -229,11 +241,23 @@ export async function normalizeSessionCreateSpawnRequest(
   if (!directory) {
     invalidSessionCreateArgument('--path is required.');
   }
+  const profileId = nonEmptyString(request.profileId);
+  const selectedProfile = profileId ? await (async () => {
+    const credentials = await readStoredCredentials();
+    if (!credentials) throw new Error('Authentication required to select a launch Profile.');
+    const { bootstrapAccountSettingsContext } = await import('@/settings/accountSettings/bootstrapAccountSettingsContext');
+    const accountSettingsContext = await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'auto' });
+    return (await resolveAccountProfileForSessionStart({ query: profileId, credentials, accountSettingsContext })).profile;
+  })() : null;
+  const preferredTarget = !request.backendTargetKey && selectedProfile ? getProfileDefaultBackendTarget(selectedProfile) : null;
+  const effectiveRequest = preferredTarget
+    ? { ...request, backendTargetKey: buildBackendTargetKeyV2(preferredTarget) } : request;
   const updatedAtMs = deps.now();
   const [executionTarget, resolvedAgent] = await Promise.all([
     resolveExecutionTarget(request, deps),
-    Promise.resolve(resolveAgentTarget(request, deps)),
+    resolveAgentTarget(effectiveRequest, deps),
   ]);
+  if (selectedProfile) assertProfileCompatibleWithBackendTarget(selectedProfile, resolvedAgent.agentTarget);
   const modelId = nonEmptyString(request.modelId);
   const providerConnectionId = nonEmptyString(request.providerConnectionId);
   if (providerConnectionId && !modelId) {
@@ -250,7 +274,6 @@ export async function normalizeSessionCreateSpawnRequest(
     invalidSessionCreateArgument(`permission mode "${permissionModeRaw}" is invalid.`);
   }
   const agentModeId = nonEmptyString(request.agentModeId);
-  const profileId = nonEmptyString(request.profileId);
   const capabilitySelection = await resolveCapabilityNames(request, deps);
   // The `default` reset sentinel is native-only: a Provider connection may serve
   // a model literally named `default`, so the canonical resolver — not this
@@ -289,7 +312,7 @@ export async function normalizeSessionCreateSpawnRequest(
     ...(capabilitySelection ? { capabilitySelection } : {}),
     ...(request.transcriptStorage ? { transcriptStorage: request.transcriptStorage } : {}),
     ...(request.terminal ? { terminal: request.terminal } : {}),
-    ...(profileId ? { profileId } : {}),
+    ...(profileId ? { profileId: selectedProfile?.id ?? profileId } : {}),
     ...(request.environmentVariables ? { environmentVariables: request.environmentVariables } : {}),
   };
   const parsed = SessionSpawnNewInputV2Schema.safeParse(candidate);

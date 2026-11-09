@@ -26,7 +26,9 @@ import {
   resolveAdmittedAgentCommandMetadata,
   staticCommandDescriptors,
 } from './commandDescriptors';
-import { BUNDLED_ACTION_CLI_COMMAND_PATHS } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
+import { BUNDLED_ACTION_CLI_COMMAND_PATHS, BUNDLED_FIRST_PARTY_PLUGIN_COMMAND_METADATA } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
+import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from '@/plugins/projection/registry/sources/generatedBundledPlugins';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { CompiledActionCliCommand } from '@/cli/actions/compiledCommands';
 import { resolveCommandPathCompletionCandidates } from './commandCompletionPaths';
 import { findActionCliCommandPattern, resolveActionCliCommandPathCompletionCandidates } from './actions/commandPatterns';
@@ -40,6 +42,13 @@ export type CommandContext = Readonly<{
   rawArgv: string[];
   terminalRuntime: TerminalRuntimeFlags | null;
   signal?: AbortSignal;
+  /** Invocation-local authentication and settled Settings used to choose an implicit Agent. */
+  sessionStart?: Readonly<{
+    credentials: import('@/persistence').StoredCredentials;
+    machineId: string;
+    accountSettingsContext: import('@/settings/accountSettings/bootstrapAccountSettingsContext').AccountSettingsContext;
+    selectedProfile: import('@/settings/profiles/readProfilesFromAccountSettings').CliAiLaunchProfile;
+  }>;
   /** Trusted explicit invocation provenance; contains neither credentials nor persistence authority. */
   explicitServerSelection?: EphemeralResolvedServerSelection;
   /** In-memory only; carries launch-scoped values without argv or process.env. */
@@ -158,7 +167,8 @@ let dynamicPluginCommandTmuxEntries: readonly Readonly<{
   mode: 'inherit' | 'required' | 'forbidden';
   available: boolean;
 }>[] = Object.freeze([]);
-let mergedAgentCommandRegistryPromise: Promise<void> | null = null;
+let mergedAgentCommandRegistryPromise: Promise<ResolvedContributionRegistry> | null = null;
+let mergedAgentCommandRegistryRoot: string | undefined;
 
 export function listRegisteredCommandSurfaceEntries(): readonly CommandSurfaceDescriptorInput[] {
   const staticRoots = new Set(Object.keys(staticCommandDescriptors));
@@ -173,7 +183,7 @@ export function listRegisteredCommandSurfaceEntries(): readonly CommandSurfaceDe
   ]);
 }
 
-function syncAgentCommandRegistryFromCatalogSnapshot(registry: ResolvedContributionRegistry): void {
+function syncAgentCommandRegistryFromCatalogSnapshot(registry: ResolvedContributionRegistry, reservedActionRoots: ReadonlySet<string> = dynamicActionCommandKeys): void {
   for (const key of dynamicAgentCommandKeys) {
     delete mutableCommandRegistry[key];
     delete mutableCommandPolicies[key];
@@ -185,7 +195,7 @@ function syncAgentCommandRegistryFromCatalogSnapshot(registry: ResolvedContribut
     .filter((entry) => Boolean(entry.getCliCommandHandler))
     .map((entry) => ({ ...entry, title: registry.agentDefinitionsById.get(entry.id)?.runtimeSpec?.title }));
 
-  for (const entry of resolveAdmittedAgentCommandMetadata(agentEntries, dynamicActionCommandKeys)) {
+  for (const entry of resolveAdmittedAgentCommandMetadata(agentEntries, reservedActionRoots)) {
     if (!entry.getCliCommandHandler) continue;
     mutableCommandRegistry[entry.cliSubcommand] = async (context) => {
       const handler = await entry.getCliCommandHandler!();
@@ -258,17 +268,14 @@ let admittedActionCliCommandsCache: readonly CompiledActionCliCommand[] | null =
  * whole subtree, so a declared Action path underneath one is not admitted; every
  * other declared path is admitted, and a leaf under an existing static root wins
  * only for its exact spelling while the root handler keeps everything else.
- */
-let actionCliRootsRegistered = false;
-
-/**
- * Claims the roots the Action catalog owns. This runs before Agent and plugin
- * synchronization so those sources see the Action roots as reserved, and it
+ *
+ * Claims the roots the Action catalog owns during static registry setup,
+ * before dispatch can mistake them for Agent or plugin commands. Agent and
+ * plugin synchronization therefore see the Action roots as reserved. This
  * reads only the declared paths — compiling every command's fields is deferred
  * to the first invocation or completion that actually needs them.
  */
-async function ensureActionCliRootsRegistered(): Promise<void> {
-  if (actionCliRootsRegistered) return;
+function registerActionCliRoots(): void {
   assertActionCommandPathsFitStaticRegistry(BUNDLED_ACTION_CLI_COMMAND_PATHS);
   for (const declaration of BUNDLED_ACTION_CLI_COMMAND_PATHS) {
     const root = declaration.path[0];
@@ -278,12 +285,10 @@ async function ensureActionCliRootsRegistered(): Promise<void> {
     mutableCommandRegistry[root] = lazyActionCliRootHandler(root);
     mutableCommandSurfaceEntries[root] = projectActionCommandSurface(root);
   }
-  actionCliRootsRegistered = true;
 }
 
 async function loadAdmittedActionCliCommands(): Promise<readonly CompiledActionCliCommand[]> {
   if (admittedActionCliCommandsCache) return admittedActionCliCommandsCache;
-  await ensureActionCliRootsRegistered();
   const { listCompiledActionCliCommands } = await import('@/cli/actions/compiledCommands');
   const compiledCommands = listCompiledActionCliCommands();
   assertActionCommandPathsFitStaticRegistry(compiledCommands);
@@ -470,6 +475,8 @@ export function resolvePluginCommandTmuxMode(args: readonly string[]): 'inherit'
   return exact[0]!.mode;
 }
 
+registerActionCliRoots();
+
 export const commandRegistry: Readonly<Record<string, CommandHandler>> = mutableCommandRegistry;
 
 export function findCommandDispatchDescriptor(command: string): CommandDispatchDescriptor | null {
@@ -490,9 +497,35 @@ export function resolveCommandDispatchRegistry(): CommandDispatchRegistry {
   );
 }
 
-export async function ensureMergedAgentCommandRegistryLoaded(params: Readonly<{ happyHomeDir?: string }> = {}): Promise<void> {
+export async function ensureMergedAgentCommandRegistryLoaded(params: Readonly<{
+  happyHomeDir?: string;
+  commandRoot?: string;
+  runnerBootstrapFilePath?: string;
+}> = {}): Promise<ResolvedContributionRegistry> {
+  if (params.runnerBootstrapFilePath) {
+    const [{ readRunnerAgentSessionBootstrap }, { projectManifestAgentContribution }, { createResolvedContributionRegistry }] = await Promise.all([
+      import('@/agent/runtime/session/process/runnerAgentSessionBootstrap'),
+      import('@/plugins/projection/registry/projectManifestAgentContribution'),
+      import('@/plugins/projection/registry/createResolvedContributionRegistry'),
+    ]);
+    const { descriptor } = await readRunnerAgentSessionBootstrap(params.runnerBootstrapFilePath);
+    if (!descriptor.agentDeclaration) throw new Error('Runner Agent declaration is unavailable');
+    // This is the daemon's already-admitted declaration, used only to select
+    // the command. Runtime operations still claim the existing runner authority.
+    // The child must not perform a new Account admission with Session credentials.
+    const registry = createResolvedContributionRegistry({ agents: [projectManifestAgentContribution({
+      ...descriptor.agentDeclaration,
+      pluginId: descriptor.pluginId,
+    })] });
+    syncAgentCommandRegistryFromCatalogSnapshot(registry, new Set([
+      ...dynamicActionCommandKeys, ...BUNDLED_ACTION_CLI_COMMAND_PATHS.map(command => command.path[0]!),
+    ]));
+    return registry;
+  }
   if (mergedAgentCommandRegistryPromise) {
-    return await mergedAgentCommandRegistryPromise;
+    const pendingRoot = mergedAgentCommandRegistryRoot;
+    const registry = await mergedAgentCommandRegistryPromise;
+    if (pendingRoot === undefined || pendingRoot === params.commandRoot) return registry;
   }
   const pending = (async () => {
     const { configuration } = await import('@/configuration');
@@ -500,24 +533,46 @@ export async function ensureMergedAgentCommandRegistryLoaded(params: Readonly<{ 
     // Explicit ephemeral merged snapshot for the standalone CLI command
     // surface: it feeds only this command registry and is never written back
     // into any shared registry authority.
-    const registry = await resolveMergedContributionRegistry({ happyHomeDir: params.happyHomeDir ?? configuration.happyHomeDir });
+    const bundledCommand = params.commandRoot ? BUNDLED_FIRST_PARTY_PLUGIN_COMMAND_METADATA.flatMap(plugin =>
+      plugin.agents.filter(agent => agent.cliSubcommand === params.commandRoot).map(agent => ({ pluginId: plugin.pluginId, agentId: agent.id }))) : [];
+    const agentIdentity = params.commandRoot
+      ? BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS.find(binding => binding.registrationFamily === 'agents'
+        && bundledCommand.some(command => command.pluginId === binding.identity.pluginId && command.agentId === binding.implementationOwnerId))?.identity
+        ?? parseQualifiedPluginContributionKey(params.commandRoot) ?? undefined
+      : undefined;
+    let registry = await resolveMergedContributionRegistry({ happyHomeDir: params.happyHomeDir ?? configuration.happyHomeDir,
+      ...(agentIdentity ? { agentIdentity } : {}),
+    });
+    if (agentIdentity && registry) {
+      // Generated paths select demand, never executable rights. The selected
+      // manifest still goes through the ordinary admission and Agent projector.
+      syncAgentCommandRegistryFromCatalogSnapshot(registry, new Set([
+        ...dynamicActionCommandKeys, ...BUNDLED_ACTION_CLI_COMMAND_PATHS.map(command => command.path[0]!),
+      ]));
+      if (params.commandRoot && isAgentCliCommandRoot(params.commandRoot)) return registry;
+      // A qualified command spelling is only a selection hint. If no admitted
+      // Agent owns it, preserve ordinary Action/plugin-command discovery.
+      registry = await resolveMergedContributionRegistry({ happyHomeDir: params.happyHomeDir ?? configuration.happyHomeDir });
+    }
     // Some command-registry harnesses intentionally replace only the Agent catalog boundary.
     // Production always resolves the merged snapshot; absent snapshots cannot admit plugin roots.
-    // Action-owned roots are claimed first so Agent and plugin synchronization
-    // both see one complete reservation set. Compilation stays deferred until
+    // Static setup already claimed Action-owned roots, so Agent and plugin
+    // synchronization see the complete reservation set. Compilation stays deferred until
     // an Action invocation or completion needs the admitted command fields.
-    await ensureActionCliRootsRegistered();
     if (registry) {
       syncAgentCommandRegistryFromCatalogSnapshot(registry);
       synchronizePluginCommandContributions(registry);
     }
+    return registry;
   })();
   mergedAgentCommandRegistryPromise = pending;
+  mergedAgentCommandRegistryRoot = params.commandRoot;
   try {
-    await pending;
+    return await pending;
   } finally {
     if (mergedAgentCommandRegistryPromise === pending) {
       mergedAgentCommandRegistryPromise = null;
+      mergedAgentCommandRegistryRoot = undefined;
     }
   }
 }

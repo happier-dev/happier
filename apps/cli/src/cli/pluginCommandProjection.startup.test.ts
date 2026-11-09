@@ -13,9 +13,9 @@ it('evaluates the canonical pure command policy without importing declaration sc
     const child = await executeFile(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', `
       import { resolvePluginCommandProjection } from './src/cli/pluginCommandProjection.ts';
       const projection = resolvePluginCommandProjection({
-        registry: { commands: [{ pluginId: 'acme.cost', definition: {
-          id: 'read', actionId: 'acme.cost/read', title: 'Read', path: ['cost', 'read'],
-        } }] }, reservedRoots: new Set(),
+        registry: { actions: [{ pluginId: 'acme.cost', definition: { id: 'read' }, admittedTarget: { declaration: {
+          id: 'read', title: 'Read', surfaces: ['cli'], cli: { path: ['cost', 'read'] },
+        } } }] }, reservedRoots: new Set(),
       });
       console.log(JSON.stringify(projection.roots));
     `], { env: { ...process.env, NODE_V8_COVERAGE: coverageDirectory } });

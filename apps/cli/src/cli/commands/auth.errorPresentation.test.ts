@@ -1,6 +1,9 @@
 import { runInNewContext } from 'node:vm';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createHappierJsonExecutorFromTextRunner, runRemoteHomeEnrollmentFlow } from '@happier-dev/cli-common/systemTasks';
+import { readRemoteEnrollmentCommandFailure } from '@happier-dev/protocol/ssh/commandFailure';
+import { ActionOperationFailureV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 
 import { handleAuthCliCommand } from './auth';
 import { projectSafeAuthError } from './auth/errorDiagnostic';
@@ -9,6 +12,54 @@ import { handleAuthWait } from './auth/wait';
 afterEach(() => vi.restoreAllMocks());
 
 describe('auth command error presentation', () => {
+  it.each([
+    { code: 'HOME_FEATURES_NETWORK', expected: 'HOME_FEATURES_NETWORK', carrierFailure: undefined },
+    { code: 'private_secret', expected: 'AUTH_ENROLL_REMOTE_FAILED', carrierFailure: undefined },
+    { code: 'AUTH_ENROLL_REMOTE_CARRIER_UNAVAILABLE', expected: 'AUTH_ENROLL_REMOTE_CARRIER_UNAVAILABLE',
+      carrierFailure: { attemptedCarrier: 'iroh', reason: 'transport_closed' } },
+    ...[false, true].map(buffered => ({ code: 'HOME_AUTHORITY_MISMATCH', expected: 'HOME_AUTHORITY_MISMATCH',
+      carrierFailure: undefined, buffered, authority: { authorityReason: 'descriptor', authorityPhase: 'first_contact',
+        authorityCarrier: 'https', authorityDescriptorPresent: false } })),
+  ])('emits a closed enrollment error envelope ($expected, buffered=$buffered)', async ({ code, expected, carrierFailure, ...variant }) => {
+    const authority = 'authority' in variant ? variant.authority : undefined;
+    const buffered = 'buffered' in variant && variant.buffered;
+    vi.spyOn(process.stdin, Symbol.asyncIterator).mockImplementation(async function* () {
+      throw Object.assign(new Error('private-input'), { code, token: 'private-token', carrierFailure, ...authority });
+    });
+    const chunks: string[] = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, encodingOrCallback, callback) => {
+      chunks.push(String(chunk));
+      (typeof encodingOrCallback === 'function' ? encodingOrCallback : callback)?.();
+      return true;
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('test_exit'); });
+    await expect(handleAuthCliCommand({ args: buffered ? ['auth', 'request', '--json', '--remote-enrollment', '--home-target-stdin']
+      : ['auth', 'enroll-remote', '--json-lines', '--home-target-stdin'],
+      rawArgv: [], terminalRuntime: null })).rejects.toThrow('test_exit');
+    expect(JSON.parse(chunks.join(''))).toEqual({ v: 1, ok: false, kind: buffered ? 'auth_request' : 'auth_enroll_remote',
+      error: { code: expected, category: 'auth_error', ...(carrierFailure ? { carrierFailure } : {}), ...authority } });
+    expect(chunks.join('')).not.toMatch(/private-input|private-token|private_secret/);
+    // Feed the real guest producer's bytes through the real controller/reader.
+    const failure = await runRemoteHomeEnrollmentFlow({
+      executor: createHappierJsonExecutorFromTextRunner(async (_args, options) => {
+        options?.onStdoutChunk?.(chunks.join(''));
+        return { status: 1, stdout: chunks.join(''), stderr: '' };
+      }), homeTargetInput: { kind: 'https_url', url: 'https://home.example.test' },
+      ...(buffered ? { processIO: 'buffered' as const } : {}),
+      approvePairingRequest: async () => { throw new Error('Failure cannot request approval'); },
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'remote_command_failed',
+      message: expect.stringContaining(buffered ? `code ${expected}` : `guestCliCode ${expected}`) });
+    if (carrierFailure) expect(failure).toMatchObject({ message: expect.stringContaining('attemptedCarrier iroh; carrierReason transport_closed') });
+    if (!(failure instanceof Error) || !('code' in failure)) throw failure;
+    const presented = readRemoteEnrollmentCommandFailure(failure.code, failure.message);
+    expect(presented?.message).toBe(failure.message);
+    const settled = ActionOperationFailureV1Schema.parse({ errorCode: presented?.code, error: presented?.message,
+      ...(presented && 'details' in presented ? { details: presented.details } : {}) });
+    expect(settled.error).toBe(failure.message);
+    if (authority) expect(settled.details).toEqual({ kind: 'homeAuthorityMismatch', ...authority });
+  });
   it('requires JSON for finite auth wait through the typed owner boundary', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('test_exit'); });

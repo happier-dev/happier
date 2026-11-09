@@ -75,8 +75,8 @@ vi.mock('@/session/services/resolveSessionTransportContext', () => ({
   resolveSessionTransportContext,
 }));
 
-vi.mock('@/session/actions/createCliActionExecutor', () => ({
-  createCliActionExecutor,
+vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
+  createCliActionExecutorFromCredentials: createCliActionExecutor,
 }));
 
 vi.mock('@/settings/accountSettings/bootstrapAccountSettingsContext', () => ({
@@ -138,7 +138,7 @@ describe('happier session actions (unit)', () => {
         serverFeaturesSnapshot,
       }));
       expect(createCliActionExecutor).toHaveBeenCalledWith(expect.objectContaining({
-        serverHttpBaseUrl: boundServerUrl,
+        serverApiUrl: boundServerUrl,
         serverId: expect.any(String),
       }));
     } finally {
@@ -494,7 +494,7 @@ describe('happier session actions (unit)', () => {
       );
       expect(createCliActionExecutor).toHaveBeenCalledWith(expect.objectContaining({
         serverId: expect.any(String),
-        serverHttpBaseUrl: expect.stringMatching(/^https?:\/\//),
+        serverApiUrl: expect.stringMatching(/^https?:\/\//),
       }));
     } finally {
       output.restore();

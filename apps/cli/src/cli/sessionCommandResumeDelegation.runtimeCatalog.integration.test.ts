@@ -20,7 +20,7 @@ describe('resolveSessionCommandResumeDelegation', () => {
     })).resolves.toEqual({ kind: 'delegate', sessionId: 'session-1' });
 
     expect(ensureAuthFn).toHaveBeenCalledTimes(1);
-    expect(fetchSessionByIdFn).toHaveBeenCalledWith({ token: 'token-1', sessionId: 'session-1' });
+    expect(fetchSessionByIdFn).toHaveBeenCalledWith({ reason: 'session-control', token: 'token-1', sessionId: 'session-1' });
   });
 
   it('continues without lookup for explicit provider invocations', async () => {
@@ -48,7 +48,7 @@ describe('resolveSessionCommandResumeDelegation', () => {
       fetchSessionByIdFn,
     })).resolves.toEqual({ kind: 'delegate', sessionId: 'session-2' });
 
-    expect(fetchSessionByIdFn).toHaveBeenCalledWith({ token: 'token-1', sessionId: 'session-2' });
+    expect(fetchSessionByIdFn).toHaveBeenCalledWith({ reason: 'session-control', token: 'token-1', sessionId: 'session-2' });
   });
 
   it('ignores unsupported short inline resume assignments', async () => {
@@ -84,7 +84,7 @@ describe('resolveSessionCommandResumeDelegation', () => {
       readCredentialsFn: async () => credentials,
       fetchSessionByIdFn,
     })).resolves.toEqual({ kind: 'continue' });
-    expect(fetchSessionByIdFn).toHaveBeenCalledWith({ token: 'token-1', sessionId: 'vendor-session-1' });
+    expect(fetchSessionByIdFn).toHaveBeenCalledWith({ reason: 'session-control', token: 'token-1', sessionId: 'vendor-session-1' });
 
     await expect(resolveSessionCommandResumeDelegation({
       args: ['-r=vendor-session-2'],

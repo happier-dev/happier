@@ -15,6 +15,8 @@ export function showHelp(): void {
         description: command.title,
       })),
       { label: 'happier actions invoke <action-id> [options]', description: 'Invoke an Action' },
+      { label: 'happier actions get deployments.deploy --github-actions --environment <id> --server-id <id>',
+        description: 'Print a finite GitHub Actions step for an installed Happier binary' },
     ],
     sections: [
       { title: 'Options:', rows: [

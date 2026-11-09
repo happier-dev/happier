@@ -1,5 +1,5 @@
 import inspector from 'node:inspector';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 
 it('keeps the interactive renderer and protocol root barrel unloaded through daemon cold admission', async () => {
   const session = new inspector.Session();
@@ -69,4 +69,70 @@ it('keeps the interactive renderer and protocol root barrel unloaded through dae
   } finally {
     session.disconnect();
   }
+}, 180_000);
+
+type SchemaConstruction = Readonly<{
+  owner: string;
+  flavor: 'classic' | 'mini';
+  type: string;
+}>;
+
+function readSchemaConstruction(): readonly SchemaConstruction[] {
+  // The diagnostic setup owns this test-only native observation boundary.
+  const census = (globalThis as typeof globalThis & {
+    __daemonSchemaCensus?: { read(): readonly SchemaConstruction[] };
+  }).__daemonSchemaCensus;
+  if (!census) throw new Error('Schema census setup must precede CLI setup');
+  return census.read();
+}
+
+it.runIf(process.env.SCHEMA_MEMORY_CENSUS === '1')('observes native Classic and Mini schema construction', async () => {
+  const classic = await import('zod');
+  const mini = await import('zod/mini');
+  const before = readSchemaConstruction().length;
+  const classicSchema = classic.object({ id: classic.string() });
+  const miniSchema = mini.object({ id: mini.string() });
+
+  expect(readSchemaConstruction().slice(before).map(({ flavor, type }) => ({ flavor, type }))).toEqual([
+    { flavor: 'classic', type: 'string' }, { flavor: 'classic', type: 'object' },
+    { flavor: 'mini', type: 'string' }, { flavor: 'mini', type: 'object' },
+  ]);
+  expect(classicSchema.parse({ id: 'accepted' })).toEqual({ id: 'accepted' });
+  expect(miniSchema.parse({ id: 'accepted' })).toEqual({ id: 'accepted' });
+  expect(classicSchema.safeParse({ id: 1 }).success).toBe(false);
+  expect(miniSchema.safeParse({ id: 1 }).success).toBe(false);
+});
+
+it.runIf(process.env.SCHEMA_MEMORY_CENSUS === '1')('keeps unused host and plugin schema graphs cold until real parse demand', async () => {
+  vi.resetModules();
+  const before = readSchemaConstruction().length;
+  const [usage, cursor] = await Promise.all([
+    import('../api/usage'),
+    import('../../../../packages/plugins/cursor/src/agent/acp/extensions/schemas'),
+  ]);
+  const owners = [
+    'apps/cli/src/api/usage.ts',
+    'packages/plugins/cursor/src/agent/acp/extensions/schemas.ts',
+  ];
+  const imported = readSchemaConstruction().slice(before)
+    .filter(({ owner }) => owners.some(path => owner.includes(path)));
+  const eager = imported.filter(({ type }) => type !== 'lazy');
+  console.info('daemon-unused-schema-construction', JSON.stringify({
+    nestedSchemas: eager.length, nativeLazyFacades: imported.length - eager.length,
+  }));
+  expect(eager).toEqual([]);
+
+  expect(usage.UsageSchema.parse({ input_tokens: 1, output_tokens: 2 })).toMatchObject({
+    input_tokens: 1, output_tokens: 2,
+  });
+  expect(usage.UsageSchema.safeParse({ input_tokens: -1, output_tokens: 2 }).success).toBe(false);
+  const question = {
+    questions: [{ id: 'q', prompt: 'Pick', options: [{ id: 'one', label: 'One' }] }],
+  };
+  expect(cursor.cursorAskQuestionRequestSchema.parse(question).questions[0]?.id).toBe('q');
+  const afterFirstParse = readSchemaConstruction().length;
+  expect(cursor.cursorAskQuestionRequestSchema.parse(question).questions[0]?.id).toBe('q');
+  expect(readSchemaConstruction().slice(afterFirstParse)
+    .filter(({ owner, type }) => type !== 'lazy' && owner.includes(owners[1]!))).toEqual([]);
+  expect(cursor.cursorAskQuestionRequestSchema.safeParse({ questions: [] }).success).toBe(false);
 }, 180_000);

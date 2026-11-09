@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { join } from 'node:path';
 
 import {
@@ -58,7 +59,7 @@ async function writeSeed(serverUrl: string, seed: Uint8Array, serverIdentityId?:
 
 async function requestToken(endpoint: string, secret: Uint8Array): Promise<string> {
   const { challenge, publicKey, signature } = authChallenge(secret);
-  const response = await fetch(`${endpoint.replace(/\/+$/u, '')}/v1/auth`, {
+  const response = await fetchWithCredentialRedirectRefusal(`${endpoint.replace(/\/+$/u, '')}/v1/auth`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -170,7 +171,10 @@ export async function createLocalPersonalHome(
           return readback?.token === credentials.token && readback?.encryption === null;
         },
         verifyAuthenticatedAccess: async ({ endpoint, token }) => {
-          const response = await fetch(`${endpoint.replace(/\/+$/u, '')}/v1/auth/ping`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
+          const response = await fetchWithCredentialRedirectRefusal(`${endpoint.replace(/\/+$/u, '')}/v1/auth/ping`, { headers: { Authorization: `Bearer ${token}` } }).catch((error: unknown) => {
+            if (error instanceof CredentialRequestRedirectError) throw error;
+            return null;
+          });
           return response?.status === 200;
         },
         probeAnonymousSignupRefused: async ({ endpoint }) => {

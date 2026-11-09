@@ -4,7 +4,7 @@ import { readProviderConnectionFlag } from '@/cli/commands/session/shared/readPr
 
 import type { AgentId } from '@happier-dev/agents';
 import type { AgentCliSessionCommandBuildInputV1 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
 import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { deserializeSessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
@@ -17,7 +17,7 @@ import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/s
 import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 
-import { isPermissionMode, type PermissionMode } from '@/api/types';
+import { isPermissionMode, type PermissionMode } from '@/api/permissionModes';
 import {
   deserializeNativeForkSourceV1,
   type NativeForkSource,

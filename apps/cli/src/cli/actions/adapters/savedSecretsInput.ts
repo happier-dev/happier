@@ -1,5 +1,3 @@
-import { writeInputPath } from '@happier-dev/protocol/inputs/inputFieldRuntime';
-import { readMissingActionSecretInputPaths } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { Buffer } from 'node:buffer';
 import type { ActionExecuteResult, ActionId } from '@happier-dev/protocol';
 import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
@@ -7,14 +5,16 @@ import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/accou
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { parseSavedSecretPasskeyImportV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
+import { readMissingActionSecretInputPaths } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import { writeInputPath } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { promptInput, isInteractiveTerminal } from '@/terminal/prompts/promptInput';
 import { normalizeActionExecuteResult, unwrapCliActionSuccessPayload } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { isApprovalRequestCreatedResult, type ApprovalRequestCreatedResult } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import type { ActionCliFailure } from '../commandPresentation';
 
-type SecretInputDeclaration = Parameters<typeof readMissingActionSecretInputPaths>[0];
 type Input = Readonly<Record<string, unknown>>;
 type ReadAction = (actionId: ActionId, input: Input) => Promise<ActionExecuteResult>;
+type SecretInputDeclaration = Parameters<typeof readMissingActionSecretInputPaths>[0];
 
 /** The Action failed before a mutation; retain its typed outcome at the CLI boundary. */
 export class SavedSecretsInputFailure extends Error {

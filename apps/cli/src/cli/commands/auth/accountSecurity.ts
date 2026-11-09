@@ -1,20 +1,20 @@
-import { ACCOUNT_SECURITY_USAGE, CLI_APPROVALS_USAGE } from './accountSecurityHelp';
+import { ACCOUNT_SECURITY_USAGE } from './accountSecurityHelp';
 export { ACCOUNT_SECURITY_USAGE } from './accountSecurityHelp';
 import axios from '@/api/client/credentialAxios';
 
-import { ACCOUNT_PASSWORD_MUTATION_CHALLENGE_PATH_V1, ACCOUNT_PASSWORD_ENROLL_EMAIL_REQUEST_PATH_V1, AccountEmailChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordEnrollEmailRequestV1Schema, AccountEmailChangeRequestResponseV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordRemoveRequestV1Schema, AccountSecurityGetResponseV1Schema, AccountTerminalPresentUserPolicySetRequestV1Schema, AccountTerminalPresentUserPolicySetResponseV1Schema, AccountSecurityRouteErrorV1Schema, PasswordMutationPreparationRequestV1Schema, PasswordMutationPreparationResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
+import { ACCOUNT_PASSWORD_MUTATION_CHALLENGE_PATH_V1, ACCOUNT_PASSWORD_ENROLL_EMAIL_REQUEST_PATH_V1, AccountEmailChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordEnrollEmailRequestV1Schema, AccountEmailChangeRequestResponseV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordRemoveRequestV1Schema, AccountSecurityGetResponseV1Schema, AccountSecurityRouteErrorV1Schema, PasswordMutationPreparationRequestV1Schema, PasswordMutationPreparationResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
 import { AccountExternalAuthProofV1Schema } from '@happier-dev/protocol/auth/accountExternalAuthProof';
 import { buildE2eeAccountPasswordChangeRequestV1, buildE2eeAccountPasswordEnrollRequestV1, buildE2eeAccountPasswordRemoveRequestV1 } from '@happier-dev/protocol/auth/accountSecurityCrypto';
 import { canonicalizeKeyChallengeV2AudienceOrigin } from '@happier-dev/protocol/auth/keyChallenge';
 import { createPasswordCredentialMutationDigestV1, createPasswordCredentialTargetDigestV1 } from '@happier-dev/protocol/auth/passwordMutationChallenge';
 import { normalizeVerifiedEmail } from '@happier-dev/protocol/auth/verifiedEmail';
-import type { ActionExecuteResult, ActionId, AccountSecurityGetResponseV1, AccountTerminalPresentUserPolicySetResponseV1 } from '@happier-dev/protocol';
+import type { ActionExecuteResult, ActionId, AccountSecurityGetResponseV1 } from '@happier-dev/protocol';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { hasStoredSessionCredentialProvenance, readStoredCredentials, type StoredCredentials } from '@/persistence';
-import { assertCommandArguments, readCommandPositionals, readFlagValue, readRawFlagValue } from '@/cli/commands/shared/argvFlags';
+import { assertCommandArguments, readFlagValue, readRawFlagValue } from '@/cli/commands/shared/argvFlags';
 import { printJsonEnvelope, wantsJson, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 
@@ -371,51 +371,6 @@ async function confirmDangerousAction(message: string, args: readonly string[]):
   const { promptConfirmYesNo } = await import('@/terminal/prompts/promptConfirmYesNo');
   const confirmed = await promptConfirmYesNo(message, { default: 'no' });
   if (!confirmed) throw new AccountSecurityCommandError('confirmation_declined');
-}
-
-export async function handleAuthCliApprovals(args: string[], signal?: AbortSignal): Promise<void> {
-  const kind = `auth_cli_approvals_${args[0] ?? 'help'}`;
-  try {
-    args = await applyServerSelectionFromArgs(args);
-    signal?.throwIfAborted();
-    const command = args[0];
-    if (!command || command === 'help' || args.includes('--help') || args.includes('-h')) {
-      console.log(CLI_APPROVALS_USAGE);
-      return;
-    }
-    if (command !== 'get' && command !== 'set') throw new AccountSecurityCommandError('invalid_arguments', CLI_APPROVALS_USAGE);
-    try {
-      assertCommandArguments(args, { usage: CLI_APPROVALS_USAGE, startIndex: 1,
-        booleanFlags: command === 'get' ? ['--json'] : ['--json', '--yes'], valueFlags: [],
-        maxPositionals: command === 'get' ? 0 : 1 });
-    } catch { throw new AccountSecurityCommandError('invalid_arguments', CLI_APPROVALS_USAGE); }
-    const input = command === 'set'
-      ? AccountTerminalPresentUserPolicySetRequestV1Schema.safeParse({ policy: readCommandPositionals(args, { startIndex: 1 })[0] })
-      : null;
-    if (input && !input.success) throw new AccountSecurityCommandError('invalid_arguments', CLI_APPROVALS_USAGE);
-    const credentials = await readStoredCredentials();
-    if (!credentials) throw new AccountSecurityCommandError('not_authenticated');
-    let data: AccountTerminalPresentUserPolicySetResponseV1;
-    if (command === 'get') {
-      const security = await readSelectedAccountSecurity(credentials, signal);
-      data = { policy: security.terminalPresentUserPolicy };
-    } else {
-      if (!hasStoredSessionCredentialProvenance(credentials)) throw new AccountSecurityCommandError('present_user_required');
-      if (!input?.success) throw new AccountSecurityCommandError('invalid_arguments', CLI_APPROVALS_USAGE);
-      await confirmDangerousAction(`Set CLI and daemon approval authority to ${input.data.policy}?`, args);
-      signal?.throwIfAborted();
-      const runtime = await createAccountSecurityActionRuntime(credentials, signal, 'account.security.terminalPresentUser.set');
-      data = AccountTerminalPresentUserPolicySetResponseV1Schema.parse(unwrap(await runtime.executor.execute(
-        'account.security.terminalPresentUser.set', input.data, runtime.mutationContext,
-      )));
-    }
-    if (wantsJson(args)) await printJsonEnvelope({ ok: true, kind, data });
-    else await writeJsonStdout(data, { pretty: true });
-  } catch (error) {
-    const { code, message } = projectAccountSecurityFailure(error);
-    if (wantsJson(args)) await printJsonEnvelope({ ok: false, kind, error: { code, message } });
-    else { console.error(message); process.exitCode = 1; }
-  }
 }
 
 export async function handleAuthSecurityGet(args: string[], signal?: AbortSignal): Promise<void> {

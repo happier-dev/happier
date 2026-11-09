@@ -113,6 +113,7 @@ export function showConnectHelp(targets: readonly ConnectTarget[]): void {
       `  ${cmd('happier connect <service> --oauth')}           Select authorization-code OAuth`,
       `  ${cmd('happier connect <service> --device')}          Select device-code OAuth`,
       `  ${cmd('happier connect <service> --token')}           Select the built-in token mode`,
+      `  ${cmd('happier connect <service> --yes')}             Confirm this connected-account operation`,
       `  ${cmd('happier connect <service> --no-open')}         Do not open a browser`,
       `  ${cmd('happier connect <service> --timeout <seconds>')} Bound the interactive flow`,
       '',

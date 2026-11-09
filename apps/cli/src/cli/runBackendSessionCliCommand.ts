@@ -2,35 +2,27 @@ import type { AgentId } from '@happier-dev/agents';
 import { randomUUID } from 'node:crypto';
 import { consumeSessionInitialAccessFile } from '@/daemon/spawn/sessionInitialAccessFile';
 import { errorFrame, warn } from '@happier-dev/cli-common/output';
-import { isLaunchProfileV2 } from '@happier-dev/protocol/profiles/read';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
-import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readBackendTargetRefV2, readBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
-import { HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY } from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
-import { readRunnerAgentSessionBootstrap } from '@/agent/runtime/session/process/runnerAgentSessionBootstrap';
-import type { BackendTargetRefV2Input, PluginSourceCustodyV1, ProviderErrorV1 } from '@happier-dev/protocol';
+import {
+  HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY,
+  HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY,
+  HAPPIER_FOREGROUND_AGENT_RUNTIME_ADMISSION_FILE_ENV_KEY,
+} from '@/agent/runtime/session/process/agentRuntimeRunnerEnvironment';
+import type { BackendTargetRefV2Input, PluginSourceCustodyV1 } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
 import { readStoredCredentials } from '@/persistence';
-import { authAndSetupMachineIfNeeded, ensureMachineIdForCredentials } from '@/ui/auth';
 import type { CommandContext } from '@/cli/commandRegistry';
-import { bootstrapAccountSettingsContext, type AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import type { AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { resolveSessionStartAccountSettingsContext } from '@/settings/accountSettings/resolveSessionStartAccountSettingsContext';
 import { resolveSessionStartAccountSettingsRefreshMode } from '@/settings/accountSettings/resolveSessionStartAccountSettingsRefreshMode';
-import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
+import { shouldAutoStartDaemonAfterAuth } from '@/daemon/daemonAutostartPolicy';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
-import {
-  buildProfileEnvOverlay,
-  expandProfileEnvOverlay,
-} from '@/settings/profiles/buildProfileEnvOverlay';
-import { readAccountLaunchProfiles } from '@/settings/profiles/readProfilesFromAccountSettings';
-import { ProviderProfileMigrationFactsUnavailableError, resolveProfileForAgent } from '@/settings/profiles/resolveProfileForAgent';
-import { prepareProviderConnectionsCatalogForCli } from '@/providers/settings/hydrate';
-import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { isPermissionMode, type PermissionMode } from '@/api/types';
+import { isPermissionMode, type PermissionMode } from '@/api/permissionModes';
 import {
   applyDeprecatedSessionStartAliasesForAgent,
   type ParsedSessionStartArgs,
@@ -40,21 +32,18 @@ import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
 import {
   isProviderCliInfoCommandPrefixRequest,
-  passthroughProviderCliArgs,
   type ProviderCliInfoCommandPrefix,
-} from '@/cli/providerCliPassthrough';
+} from '@/cli/providerCliInfoRequest';
 import {
   buildAgentCliSessionCommandBuildInput,
   partitionProviderSessionArgs,
   type ProviderSessionArgPartitionResult,
 } from '@/cli/providerSessionArgPartition';
 import { resolveSessionStartBackendTarget, resolveSessionStartModelSelection } from '@/cli/resolveSessionStartModelSelection';
-import { buildRootHelpText } from '@/cli/buildRootHelpText';
-import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup } from '@/daemon/platform/linux/daemonSpawnedSessionCgroupSelfMigration';
 import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
-import { resolveProviderSessionRuntimePreferences } from '@/session/runtime/catalogHooks';
 import { presentProviderCliRefusal } from '@/providers/lifecycle/presentProviderCliRefusal';
+import { createForegroundAdmissionError, DirectProviderLaunchError } from './foregroundAdmissionFailure';
 import {
   buildScopedProcessEnv,
   normalizeUnsetEnvKeys,
@@ -65,24 +54,9 @@ import {
   stripSessionControlEnvOverrides,
   stripSessionControlUnsetEnvKeys,
 } from '@/session/runtime/control/sessionControlEnvironment';
-import { resolveDirectCliConnectedServiceBindings } from '@/cli/connectedServices/resolveDirectCliConnectedServiceBindings';
-import { mergeSessionTeamCredentialBindingIntents } from '@/session/services/spawnConnectedServicesDefaults';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
-import {
-  admitDaemonForegroundAgentRuntime,
-  releaseDaemonForegroundAgentRuntime,
-  resolveDaemonForegroundAgentRuntimeSessionOptions,
-} from '@/daemon/controlClient';
-import {
-  claimDaemonForegroundAgentRuntimeEnvironment,
-} from '@/agent/runtime/session/process/foregroundAgentRuntimeAdmissionClient';
-import {
-  HAPPIER_FOREGROUND_AGENT_RUNTIME_ADMISSION_FILE_ENV_KEY,
-} from '@/daemon/agentRuntime/foregroundAdmissionContract';
-import { HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
-import { reportSessionRunnerFailure } from './resolveSessionRunnerFailureExitCode';
-import { projectResolvedAgentBackendTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import type { HostPrivateLateSessionEnvironmentResolver } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
+import type { ProviderSessionRuntimePreferencesResolver } from '@/agent/catalog/types';
 
 type CommonBackendRunOptions = ParsedSessionStartArgs & {
   credentials: StoredCredentials;
@@ -98,16 +72,6 @@ type CommonBackendRunOptions = ParsedSessionStartArgs & {
 };
 
 type RuntimeAuthorityAgentId = string;
-
-class DirectProviderLaunchError extends Error {
-  readonly providerError: ProviderErrorV1;
-
-  constructor(providerError: ProviderErrorV1) {
-    super(providerError.code);
-    this.name = 'DirectProviderLaunchError';
-    this.providerError = providerError;
-  }
-}
 
 function readProviderEnvironmentVariables(value: unknown): Record<string, string> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -131,7 +95,8 @@ function readUnsetEnvironmentVariables(value: unknown): readonly string[] | unde
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function passthroughProviderCliArgsAndExit(params: Parameters<typeof passthroughProviderCliArgs>[0]): void {
+async function passthroughProviderCliArgsAndExit(params: Parameters<typeof import('@/cli/providerCliPassthrough').passthroughProviderCliArgs>[0]): Promise<void> {
+  const { passthroughProviderCliArgs } = await import('@/cli/providerCliPassthrough');
   passthroughProviderCliArgs(params);
   process.exit(0);
 }
@@ -149,6 +114,8 @@ async function finalizeProviderRunOptions(extras: Readonly<Record<string, unknow
 export async function runBackendSessionCliCommand<Extra extends Record<string, unknown>>(params: {
   context: CommandContext;
   backendIdForSessionRuntime: string;
+  /** The admitted command's composer; null explicitly declares no options hook. */
+  resolveSessionRuntimePreferences: ProviderSessionRuntimePreferencesResolver | null;
   /** Canonical catalog Agent identity used only for daemon runtime authority. */
   runtimeAuthorityAgentId?: RuntimeAuthorityAgentId;
   /** Host-derived command form preserved for a public Agent CLI options composer. */
@@ -232,6 +199,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
         ? undefined
         : await consumeSessionInitialAccessFile(parsed.initialAccessFilePath);
       if (cliArgumentAgentId && parsed.helpRequested) {
+        const { buildRootHelpText } = await import('@/cli/buildRootHelpText');
         console.log(`${buildRootHelpText()}
 
 Happier session options:
@@ -254,7 +222,7 @@ Provider CLI Options:
         const providerHelpArgs = parsed.providerArgs.some((arg) => arg === '-h' || arg === '--help')
           ? parsed.providerArgs
           : [...parsed.providerArgs, '--help'];
-        passthroughProviderCliArgsAndExit({
+        await passthroughProviderCliArgsAndExit({
           agentId: cliArgumentAgentId,
           providerArgs: providerHelpArgs,
         });
@@ -265,7 +233,7 @@ Provider CLI Options:
         && parsed.versionRequested
         && parsed.versionFlag
       ) {
-        passthroughProviderCliArgsAndExit({
+        await passthroughProviderCliArgsAndExit({
           agentId: cliArgumentAgentId,
           providerArgs: [parsed.versionFlag],
         });
@@ -279,7 +247,7 @@ Provider CLI Options:
           prefixes: params.providerInfoCommandPrefixes,
         })
       ) {
-        passthroughProviderCliArgsAndExit({
+        await passthroughProviderCliArgsAndExit({
           agentId: cliArgumentAgentId,
           providerArgs: parsed.providerArgs,
         });
@@ -302,7 +270,9 @@ Provider CLI Options:
       const bootstrapPath = startedBy === 'daemon'
         ? process.env[HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]?.trim()
         : undefined;
-      const bootstrap = bootstrapPath ? await readRunnerAgentSessionBootstrap(bootstrapPath) : null;
+      const bootstrap = bootstrapPath
+        ? await (await import('@/agent/runtime/session/process/runnerAgentSessionBootstrap')).readRunnerAgentSessionBootstrap(bootstrapPath)
+        : null;
       if (bootstrap && bootstrap.descriptor.backendId !== params.backendIdForSessionRuntime.trim()) {
         throw new Error('Runner bootstrap does not match the selected Agent command');
       }
@@ -350,14 +320,15 @@ Provider CLI Options:
         backendId,
       });
 
-      let credentials = await readStoredCredentials();
+      let credentials = params.context.sessionStart?.credentials ?? await readStoredCredentials();
       let machineId: string;
       if (!credentials) {
-        const auth = await authAndSetupMachineIfNeeded();
+        const auth = await (await import('@/ui/auth')).authAndSetupMachineIfNeeded();
         credentials = auth.credentials;
         machineId = auth.machineId;
       } else {
-        machineId = (await ensureMachineIdForCredentials(credentials)).machineId;
+        machineId = params.context.sessionStart?.machineId
+          ?? (await (await import('@/ui/auth')).ensureMachineIdForCredentials(credentials)).machineId;
         if (
           shouldAutoStartDaemonAfterAuth({
             env: process.env,
@@ -365,20 +336,21 @@ Provider CLI Options:
             startedBy,
           })
         ) {
-          void ensureDaemonRunningForSessionCommand().catch((error) => {
+          void import('@/daemon/ensureDaemon').then(({ ensureDaemonRunningForSessionCommand }) => ensureDaemonRunningForSessionCommand()).catch((error) => {
             logger.debug('[session] Failed to auto-start daemon (non-fatal)', error);
           });
         }
       }
 
-      let accountSettingsContext: AccountSettingsContext | null = null;
+      let accountSettingsContext: AccountSettingsContext | null = params.context.sessionStart?.accountSettingsContext ?? null;
       recordStartupPhase('credentials_and_machine');
       const profileAgentId =
         params.agentIdForAccountSettings
         ?? params.agentIdForDeprecatedAliases;
       const runtimeAuthorityAgentId = params.runtimeAuthorityAgentId;
 
-      if (params.agentIdForAccountSettings || params.loadAccountSettings || profileQuery) {
+      if (!accountSettingsContext && (params.agentIdForAccountSettings || params.loadAccountSettings || profileQuery)) {
+        const { bootstrapAccountSettingsContext } = await import('@/settings/accountSettings/bootstrapAccountSettingsContext');
         const accountSettingsBootstrapMode = profileQuery ? 'blocking' : 'fast';
         const snapshot = await bootstrapAccountSettingsContext({
           ...(profileAgentId ? { agentId: profileAgentId } : {}),
@@ -393,6 +365,7 @@ Provider CLI Options:
         accountSettingsContext = await resolveSessionStartAccountSettingsContext({
           startedBy,
           snapshot,
+          refreshRequested: parsed.refreshSettings,
         });
       }
 
@@ -400,35 +373,29 @@ Provider CLI Options:
         normalizedExistingSessionId || `direct-${randomUUID()}`;
       recordStartupPhase('account_settings');
       const catalogAgentId = params.agentIdForAccountSettings ?? null;
-      const selectedProfile =
-        profileQuery && accountSettingsContext && profileAgentId
-          ? await (async () => {
-              const {
-                visibleProfiles,
-                terminalMigratedProfileIds,
-              } = await readAccountLaunchProfiles(
-                accountSettingsContext.settings, credentials,
-              );
-              try {
-                return resolveProfileForAgent({
-                  agentId: profileAgentId, query: profileQuery, customProfiles: visibleProfiles, terminalMigratedProfileIds,
-                });
-              } catch (error) {
-                if (!(error instanceof ProviderProfileMigrationFactsUnavailableError)) throw error;
-                // Only this affected retained selection consumes Provider migration facts.
-                // Listing and independent modern Profiles never demand the Provider catalog.
-                const catalog = await prepareProviderConnectionsCatalogForCli({ expectedScopeKey: resolveAccountSettingsScopeKey(credentials) });
-                if (catalog.status !== 'ready') throw error;
-                const refreshed = await readAccountLaunchProfiles(getActiveAccountSettingsSnapshot()?.settings, credentials);
-                return resolveProfileForAgent({ agentId: profileAgentId, query: profileQuery,
-                  customProfiles: refreshed.visibleProfiles, terminalMigratedProfileIds: refreshed.terminalMigratedProfileIds });
-              }
-            })()
-          : null;
+      let selectedProfile = params.context.sessionStart?.selectedProfile ?? null;
+      if (!selectedProfile && profileQuery && accountSettingsContext) {
+        const selection = await (await import('@/settings/profiles/resolveProfileForAgent')).resolveAccountProfileForSessionStart({
+          query: profileQuery, backendTarget: modelSelectionBackendTargetInput, credentials, accountSettingsContext,
+        });
+        selectedProfile = selection.profile;
+        accountSettingsContext = selection.accountSettingsContext;
+      }
+      if (accountSettingsContext) {
+        const { assertBackendEnabledByAccountSettings } = await import('@/settings/backendEnabled');
+        assertBackendEnabledByAccountSettings({ backendTarget: modelSelectionBackendTargetInput, settings: accountSettingsContext.settings });
+      }
+      if (selectedProfile) {
+        (await import('@/settings/profiles/resolveProfileForAgent')).assertProfileCompatibleWithBackendTarget(
+          selectedProfile, modelSelectionBackendTargetInput,
+        );
+      }
       const preferredProfileModelSelection =
-        selectedProfile && isLaunchProfileV2(selectedProfile)
+        selectedProfile && (await import('@happier-dev/protocol/profiles/read')).isLaunchProfileV2(selectedProfile)
+          && selectedProfile.preferredModelSelection?.ref.agentTargetKey === readBackendTargetKeyV2(modelSelectionBackendTargetInput)
           ? selectedProfile.preferredModelSelection
           : undefined;
+      const profileEnvOverlay = selectedProfile ? await import('@/settings/profiles/buildProfileEnvOverlay') : null;
       const modelSelection = resolveSessionStartModelSelection({
         backendTarget: modelSelectionBackendTargetInput,
         canonicalSelection: resolved.modelSelection,
@@ -451,6 +418,7 @@ Provider CLI Options:
         if (!catalogAgentId || !accountSettingsContext) {
           throw new Error('connected_service_auth_unsupported');
         }
+        const { resolveDirectCliConnectedServiceBindings } = await import('@/cli/connectedServices/resolveDirectCliConnectedServiceBindings');
         directConnectedServices = await resolveDirectCliConnectedServiceBindings({
           agentId: catalogAgentId,
           credentials,
@@ -501,6 +469,11 @@ Provider CLI Options:
             'Foreground Profile admission requires an exact account settings scope',
           );
         }
+        const [{ ensureDaemonRunningForSessionCommand }, { admitDaemonForegroundAgentRuntime }, { projectResolvedAgentBackendTarget }] = await Promise.all([
+          import('@/daemon/ensureDaemon'),
+          import('@/daemon/controlClient'),
+          import('@/session/creation/resolveSessionCreationAgentTarget'),
+        ]);
         await ensureDaemonRunningForSessionCommand();
         admitForegroundRuntime = async () => {
           const attemptId = randomUUID();
@@ -550,16 +523,7 @@ Provider CLI Options:
             ...(params.context.signal ? { signal: params.context.signal } : {}),
           });
           if (!admission.ok) {
-            if (admission.error.code === 'project_agent_launch_refused') {
-              const reason = admission.error.reason;
-              const recovery = reason === 'child_required'
-                ? 'Open this Project in its Devcontainer child.'
-                : reason === 'project_setup_consent_required' || reason === 'project_setup_effect_changed'
-                  ? 'Review this Project’s setup before starting the Agent.'
-                  : 'Review this Project’s setup and native environment before trying again.';
-              throw new Error(`Project launch refused (${reason}). ${recovery}`);
-            }
-            throw new DirectProviderLaunchError(admission.error);
+            throw createForegroundAdmissionError(admission.error);
           }
           return Object.freeze({
             claim: Object.freeze({
@@ -607,7 +571,7 @@ Provider CLI Options:
           const activeClaim = foregroundAdmissionClaim;
           foregroundAdmissionClaim = null;
           if (!activeClaim) return;
-          await releaseDaemonForegroundAgentRuntime({
+          await (await import('@/daemon/controlClient')).releaseDaemonForegroundAgentRuntime({
             v: 1,
             attemptId: activeClaim.attemptId,
             sessionId: activeClaim.sessionId,
@@ -622,9 +586,10 @@ Provider CLI Options:
       let foregroundSatisfiedProfileSecretRequirementNames: readonly string[] =
         Object.freeze([]);
       const profileLaunchPreferences =
-        selectedProfile && accountSettingsContext && profileAgentId
-          ? await buildProfileEnvOverlay({
-              agentId: profileAgentId,
+        selectedProfile && accountSettingsContext && profileEnvOverlay
+          ? await profileEnvOverlay.buildProfileEnvOverlay({
+              agentId: backendId,
+              backendTarget: modelSelectionBackendTargetInput,
               profile: selectedProfile,
               processEnv: process.env,
               promptSecretFn:
@@ -672,6 +637,7 @@ Provider CLI Options:
               parsed,
             });
             if (foregroundAdmissionClaim) {
+              const { resolveDaemonForegroundAgentRuntimeSessionOptions } = await import('@/daemon/controlClient');
               const resolved = await resolveDaemonForegroundAgentRuntimeSessionOptions({
                 v: 1,
                 attemptId: foregroundAdmissionClaim.attemptId,
@@ -687,10 +653,7 @@ Provider CLI Options:
               return await finalizeProviderRunOptions(resolved.options);
             }
             return await finalizeProviderRunOptions(
-              await resolveProviderSessionRuntimePreferences(
-                params.agentIdForAccountSettings,
-                buildInput,
-              ),
+              await params.resolveSessionRuntimePreferences?.(buildInput) ?? {},
             );
           })()
           : {};
@@ -748,9 +711,9 @@ Provider CLI Options:
         admissionEnvironment: Readonly<Record<string, string>>,
         admissionUnsetEnvironmentVariableNames: readonly string[],
       ) => {
-        const resolvedProfileEnvironment = selectedProfile
+        const resolvedProfileEnvironment = selectedProfile && profileEnvOverlay
           ? {
-              ...stripSessionControlEnvOverrides(expandProfileEnvOverlay({
+              ...stripSessionControlEnvOverrides(profileEnvOverlay.expandProfileEnvOverlay({
                 profile: selectedProfile,
                 envOverlayRaw: profileEnvironmentVariablesRaw,
                 processEnv: process.env,
@@ -835,6 +798,7 @@ Provider CLI Options:
                 'Foreground Agent runtime admission capability is unavailable',
               );
             }
+            const { claimDaemonForegroundAgentRuntimeEnvironment } = await import('@/agent/runtime/session/process/foregroundAgentRuntimeAdmissionClient');
             return await claimDaemonForegroundAgentRuntimeEnvironment({
               env: {
                 [HAPPIER_FOREGROUND_AGENT_RUNTIME_ADMISSION_FILE_ENV_KEY]:
@@ -909,7 +873,7 @@ Provider CLI Options:
             const staleClaim = foregroundAdmissionClaim;
             foregroundAdmissionClaim = null;
             if (staleClaim) {
-              await releaseDaemonForegroundAgentRuntime({
+              await (await import('@/daemon/controlClient')).releaseDaemonForegroundAgentRuntime({
                 v: 1,
                 attemptId: staleClaim.attemptId,
                 sessionId: staleClaim.sessionId,
@@ -936,7 +900,7 @@ Provider CLI Options:
                 retryAdmission.claim.sourceCustody,
               )
             ) {
-              await releaseDaemonForegroundAgentRuntime({
+              await (await import('@/daemon/controlClient')).releaseDaemonForegroundAgentRuntime({
                 v: 1,
                 attemptId: retryAdmission.claim.attemptId,
                 sessionId: retryAdmission.claim.sessionId,
@@ -981,6 +945,7 @@ Provider CLI Options:
         });
       }
 
+      const { mergeSessionTeamCredentialBindingIntents } = await import('@/session/services/spawnConnectedServicesDefaults');
       const sessionRuntimeParams = {
         credentials,
         directory: parsed.directory ?? resolveRequestedSessionDirectory(),
@@ -1028,6 +993,7 @@ Provider CLI Options:
             : undefined,
         ...(resolveLateEnvironment ? { resolveLateEnvironment } : {}),
       };
+      const { getSessionHostBridge } = await import('@/agent/runtime/bridges/session/SessionHostBridge');
       const sessionHostBridge = getSessionHostBridge();
       recordStartupPhase('launch_options');
       if (foregroundAdmissionClaim) {
@@ -1035,6 +1001,7 @@ Provider CLI Options:
           backendId,
           sessionRuntimeParams,
           {
+            localWorkflow: !bootstrap && startedBy !== 'daemon' && !normalizedExistingSessionId,
             agentRuntimeRunnerBootstrapFilePath:
               foregroundAdmissionClaim.bootstrapFilePath,
             get agentRuntimeDaemonServiceAuthorityFilePath() {
@@ -1046,9 +1013,11 @@ Provider CLI Options:
         await sessionHostBridge.runSessionCommand(
           backendId,
           sessionRuntimeParams,
+          { localWorkflow: !bootstrap && startedBy !== 'daemon' && !normalizedExistingSessionId },
         );
       }
     } catch (error) {
+      const { reportSessionRunnerFailure } = await import('./resolveSessionRunnerFailureExitCode');
       const exitCode = reportSessionRunnerFailure(error);
       const rawLines = error instanceof DirectProviderLaunchError
         ? presentProviderCliRefusal(error.providerError)

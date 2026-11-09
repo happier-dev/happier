@@ -251,7 +251,18 @@ describe('happier session create plaintext sessions (integration)', () => {
     bindApiSessionSocketMock(mockIo, socket);
   });
 
-  afterEach(async () => {
+  afterEach(async (context) => {
+    const histogram = (requests: readonly string[]) => requests.reduce<Record<string, number>>((counts, request) => {
+      counts[request] = (counts[request] ?? 0) + 1;
+      return counts;
+    }, {});
+    console.info('[selector-transport]', JSON.stringify({
+      test: context.task.name,
+      discoveryOnlyHttp: histogram(inventoryRequests()),
+      allHttp: histogram(observedHttpRequests),
+      allRpc: histogram(observedRpcMethods),
+    }));
+    resetActiveAccountSettingsSnapshotForTests();
     await clearDaemonStateForTestTeardown();
     if (server) {
       await new Promise<void>((resolve, reject) => {

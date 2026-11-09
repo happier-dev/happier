@@ -24,6 +24,8 @@ import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } 
 import { buildConfigureServerLinks, buildTerminalConnectLinks } from '@happier-dev/cli-common/links';
 import { createStepPrinter } from '@happier-dev/cli-common/output';
 import { tailscaleServeHttpsUrlForInternalServerUrl } from '@/integrations/tailscale/tailscaleServe';
+import { TailscaleCommandError } from '@happier-dev/cli-common/tailscale';
+import { warnTailscaleCommandFailure } from '@/integrations/tailscale/tailscaleCommand';
 import { isLoopbackHttpServerUrl, isLoopbackServerHost } from '@/server/serverUrlClassification';
 import { buildServerUrlReachabilityHintLines } from '@/server/reachability/serverUrlReachabilityHint';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -36,8 +38,8 @@ import {
 } from '@/auth/terminalProvisioningResponse';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
-import { resolveCliHomeTarget, resolveCurrentCliHomeTarget } from '@/server/homeTarget';
-import { assertResolvedHomeTargetIdentity } from '@happier-dev/cli-common/homeTarget';
+import { resolveCurrentCliHomeTarget } from '@/server/homeTarget';
+import { assertResolvedHomeTargetIdentity, CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { ApiClient } from '@/api/api';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMode';
@@ -54,6 +56,7 @@ import {
     type TerminalAuthEnrollmentRuntime,
 } from '@/auth/terminalAuthEnrollmentClient';
 import { acquireTerminalAuthEnrollmentRuntime } from '@/auth/terminalAuthEnrollmentRuntime';
+import { resolveTerminalAuthHomeTarget } from './authHomeTarget';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 
@@ -143,6 +146,11 @@ async function applyAutoPublicServerUrlFromTailscaleServeBestEffort(): Promise<v
         internalServerUrl: serverUrl,
         timeoutMs: resolveTailscaleServeStatusTimeoutMs(),
         env: process.env,
+    }).catch(error => {
+        if (error instanceof TailscaleCommandError && error.failure) {
+            warnTailscaleCommandFailure(error.failure);
+        }
+        return null;
     });
     if (!inferred) return;
 
@@ -233,16 +241,8 @@ export async function doAuth(options: Readonly<{
         throw new AuthenticationCancelledError();
     }
 
-    let target: ResolvedHomeTarget;
-    try {
-        const selectedTarget = await resolveCurrentCliHomeTarget();
-        target = selectedTarget.descriptor
-            ? selectedTarget
-            : await resolveCliHomeTarget({ kind: 'https_url', url: configuration.apiServerUrl });
-    } catch {
-        console.log('The selected Home address is not eligible for terminal authentication. Use HTTPS or loopback HTTP.');
-        return null;
-    }
+    const target = await resolveTerminalAuthHomeTarget();
+    if (!target) return null;
     // Tailscale inference is a released URL-only compatibility adapter for
     // legacy QR/deep links. A descriptor is already the route authority; adding
     // and persisting another inferred route here would compete with descriptor
@@ -269,6 +269,7 @@ export async function doAuth(options: Readonly<{
             target,
             runtime: acquiredRuntime.runtime,
             snapshot: featuresSnapshot,
+            phase: 'first_contact',
         });
     } catch (error) {
         console.log(
@@ -312,6 +313,7 @@ export async function doAuth(options: Readonly<{
             console.log(`[AUTH DEBUG] Auth request sent successfully`);
         }
     } catch (error) {
+        if (error instanceof CredentialRequestRedirectError) throw error;
         if (debugEnabled) {
             console.log(`[AUTH DEBUG] Failed to send auth request:`, projectSafeAuthError(error));
         }
@@ -701,7 +703,8 @@ async function waitForAuthentication(
                     }
                     try {
                         await params.verifyClaimDestination(token);
-                    } catch {
+                    } catch (error) {
+                        if (error instanceof CredentialRequestRedirectError) throw error;
                         print(
                             '\n\nThe authentication response did not match the selected Home destination. '
                             + 'Credentials were not changed; run `happier auth login` again for the intended Home.',
@@ -835,6 +838,7 @@ async function waitForAuthentication(
                     }
                 }
             } catch (error) {
+                if (error instanceof CredentialRequestRedirectError) throw error;
                 throwIfCancelled();
                 if (error instanceof AuthenticationCancelledError) throw error;
                 if (waitExpired()) {
@@ -1034,6 +1038,8 @@ export async function ensureMachineIdForCredentials(
 
 
 type AuthAndMachineSetupOptions = Readonly<{
+    /** Session dispatch applies the selected Agent policy before daemon startup. */
+    deferDaemonAutostart?: boolean;
     callerIntent?: AuthCallerIntent;
     requireAccountMaterial?: boolean;
     signal?: AbortSignal;
@@ -1086,7 +1092,7 @@ async function authAndPrepareMachineIfNeeded(
             const mode = await readAccountEncryptionModeOnce({
                 credentials: authenticatedCredentials,
                 request: async () => {
-                    const response = await fetch(`${runtimeOrigin.replace(/\/+$/u, '')}/v1/account/encryption`, {
+                    const response = await fetchWithCredentialRedirectRefusal(`${runtimeOrigin.replace(/\/+$/u, '')}/v1/account/encryption`, {
                         headers: { Authorization: `Bearer ${authenticatedCredentials.token}` },
                         ...(opts.signal ? { signal: opts.signal } : {}),
                     });
@@ -1183,8 +1189,8 @@ async function authAndPrepareMachineIfNeeded(
 
     if (
       machineRegistrationMode === 'immediate'
-      &&
-      shouldAutoStartDaemonAfterAuth({
+      && !opts.deferDaemonAutostart
+      && shouldAutoStartDaemonAfterAuth({
         env: process.env,
         isDaemonProcess: configuration.isDaemonProcess,
         startedBy: 'terminal',

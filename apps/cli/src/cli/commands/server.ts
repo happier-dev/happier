@@ -2,6 +2,7 @@
 import type { CommandContext } from '@/cli/commandRegistry';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
+import { TailscaleCommandError } from '@happier-dev/cli-common/tailscale';
 
 import { showServerHelp } from './server/help';
 import { runServerSubcommand } from './server/subcommands';
@@ -84,7 +85,7 @@ export async function handleServerCliCommand(context: CommandContext): Promise<v
     }
     console.error(fail(error instanceof Error ? error.message : 'Unknown error'));
     showServerHelp();
-    if (process.env.DEBUG) console.error(error);
+    if (process.env.DEBUG && !(error instanceof TailscaleCommandError && error.failure)) console.error(error);
     process.exitCode = typeof process.exitCode === 'number' && process.exitCode > 1 ? process.exitCode : 1;
   }
 }

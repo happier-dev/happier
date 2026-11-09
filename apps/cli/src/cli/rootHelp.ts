@@ -25,7 +25,7 @@ import type { loadAdmittedInstalledPluginDeclarations } from '@/plugins/discover
 import { renderRootHelpText } from './rootHelpText';
 import { ensureWindowsUtf8CodePage } from '@/utils/platform/windows/ensureWindowsUtf8CodePage';
 import { installConsoleWriteErrorGuards, shouldInstallConsoleWriteErrorGuards } from '@/utils/writeConsoleBestEffort';
-import { assertUniquePluginIdentities } from '@/plugins/projection/registry/normalize/pluginIdentities';
+import { assertUniquePluginIdentities, excludeReplacedPluginIdentities } from '@/plugins/projection/registry/normalize/pluginIdentities';
 
 /** Uses the same static, Agent and plugin admission owners as executable dispatch. */
 function projectCommandDeclarations(
@@ -106,13 +106,17 @@ export async function resolveReadOnlyHelpDeclarations(happyHomeDir: string) {
       manifest: plugin.manifest, provenance: 'external', source: { kind: plugin.sourceSpec.kind },
     }));
   }
+  const plugins = [
+    ...excludeReplacedPluginIdentities(
+      BUNDLED_FIRST_PARTY_PLUGIN_COMMAND_METADATA.filter((plugin) => !excluded.has(plugin.pluginId)),
+      installedMetadata,
+    ),
+    ...installedMetadata,
+  ];
   return {
-    ...projectCommandDeclarations([
-      ...BUNDLED_FIRST_PARTY_PLUGIN_COMMAND_METADATA.filter((plugin) => !excluded.has(plugin.pluginId)),
-      ...installedMetadata,
-    ]),
+    ...projectCommandDeclarations(plugins),
     installedPlugins,
-    pluginIds: [...BUNDLED_FIRST_PARTY_PLUGIN_COMMAND_METADATA.filter((plugin) => !excluded.has(plugin.pluginId)), ...installedMetadata].map((plugin) => plugin.pluginId),
+    pluginIds: plugins.map((plugin) => plugin.pluginId),
   };
 }
 

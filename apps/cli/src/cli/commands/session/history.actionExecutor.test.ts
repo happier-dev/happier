@@ -380,7 +380,7 @@ describe('happier session history (action executor)', () => {
           includeReasoning: true,
           includeEvents: true,
           includeRaw: true,
-          maxRawPayloadChars: 32768,
+          maxRawPayloadChars: null,
         },
         { surface: 'cli', defaultSessionId: null },
       );
@@ -789,7 +789,7 @@ describe('happier session history (action executor)', () => {
           includeReasoning: true,
           includeEvents: true,
           includeRaw: true,
-          maxRawPayloadChars: 32768,
+          maxRawPayloadChars: null,
           includeMeta: true,
           includeStructuredPayload: true,
         },

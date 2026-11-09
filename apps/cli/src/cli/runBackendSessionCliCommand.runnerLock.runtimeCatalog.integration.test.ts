@@ -27,6 +27,7 @@ describe('runBackendSessionCliCommand (session runner lock)', () => {
     vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('runner-exit'); });
     try {
       await expect(runBackendSessionCliCommand({
+        resolveSessionRuntimePreferences: null,
         context: { args: ['codex', '--existing-session', sessionId], rawArgv: [], terminalRuntime: null },
         backendIdForSessionRuntime: 'codex',
       })).rejects.toThrow('runner-exit');

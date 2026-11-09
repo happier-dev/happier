@@ -11,8 +11,8 @@ vi.mock('@/session/services/resolveSessionTransportContext', () => ({
   resolveSessionTransportContext,
 }));
 
-vi.mock('@/session/actions/createCliActionExecutor', () => ({
-  createCliActionExecutor,
+vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
+  createCliActionExecutorFromCredentials: createCliActionExecutor,
 }));
 
 describe('happier session actions --json contract', () => {

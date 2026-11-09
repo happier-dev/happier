@@ -28,15 +28,22 @@ import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/
 import type { ActionId, ActionsSettingsV1, FeatureId } from '@happier-dev/protocol';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
-import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { fail } from '@happier-dev/cli-common/output';
 import { resolveShellBridgeActionSurfaceV1 as resolveToolsCommandSurface } from '@/cli/actions/shellBridgeActionSurface';
+import { callSessionMcpTool, listSessionMcpTools } from './toolsSessionMcp';
+import { supportsSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
+import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { readMcpExecutionSource, refuseMcpExecutionSource } from '@/mcp/runtime/mcpExecutionSource';
+import { configuration } from '@/configuration';
+import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { readServerIdentityIdFromFeaturesSnapshot } from '@/features/serverFeaturesClient';
 
 type BuiltInToolEntry = Awaited<ReturnType<typeof listBuiltInHappierTools>>[number];
 type CustomToolEntry = Awaited<ReturnType<typeof listResolvedCustomHappierTools>>['tools'][number];
 type ToolCallResult = Awaited<ReturnType<typeof callBuiltInHappierTool>>
-  | Awaited<ReturnType<typeof callResolvedCustomHappierTool>>;
+  | Awaited<ReturnType<typeof callResolvedCustomHappierTool>>
+  | Awaited<ReturnType<typeof callSessionMcpTool>>;
 
 export type ToolsCommandDeps = Readonly<{
   readCredentials: () => Promise<StoredCredentials | null>;
@@ -189,23 +196,44 @@ async function resolveCustomToolsRuntimeContext(
     ? await resolveToolsBaseContext(args, deps, { requireSessionId: true })
     : await resolveToolsBaseContext(args, deps);
   const { credentials, sessionId, directory } = baseContext;
-  const { api, machineId } = await deps.initializeBackendApiContext({
+  const localWorkflow = resolveToolsCommandSurface(args) === 'cli';
+  const accountAutomation = localWorkflow && credentials.credentialProvenance === 'api_token'
+    && !('requesterSessionCredentialScope' in credentials);
+  const serverHttpBaseUrl = resolveServerHttpBaseUrl();
+  const serverId = configuration.activeServerId;
+  const isHomeCurrent = () => configuration.activeServerId === serverId;
+  const withHeldHome = <T>(read: () => T): T => accountAutomation
+    ? runWithServerHttpBaseUrl(serverHttpBaseUrl, read) : read();
+  if (!accountAutomation) await readMcpExecutionSource({ credentials, localWorkflow });
+  const { api, machineId } = await withHeldHome(() => deps.initializeBackendApiContext({
     credentials,
     machineMetadata: initialMachineMetadata,
     ...(wantsJson(args) ? { suppressMachineRegistrationRecoveryLogs: true } : {}),
-  });
-  const accountSettingsContext = await loadFreshMcpAccountSettingsContext(credentials, deps);
-  const customContext = await deps.resolveCustomHappierToolsContext({
+  }));
+  const apiSource = accountAutomation ? await withHeldHome(async () => readMcpExecutionSource({
+    credentials, catalogCredentials: credentials, machineId, serverHttpBaseUrl, localWorkflow,
+    accountAutomation: { homeServerIdentityId: readServerIdentityIdFromFeaturesSnapshot(
+      await api.getServerFeaturesSnapshot({ refresh: true })), isCurrent: isHomeCurrent },
+  })) : null;
+  const accountSettingsContext = await withHeldHome(() => loadFreshMcpAccountSettingsContext(credentials, deps));
+  const customContext = await withHeldHome(() => deps.resolveCustomHappierToolsContext({
     credentials,
     accountSettingsSnapshot: accountSettingsContext,
     operationContext: accountSettingsContext.operationContext,
     machineId,
     directory,
-  });
+    localWorkflow,
+    ...(apiSource ? { readExecutionSource: async (signal?: AbortSignal) => {
+      signal?.throwIfAborted();
+      if (!isHomeCurrent() || !await accountSettingsContext.operationContext.isCurrent()) {
+        return refuseMcpExecutionSource('requester_authority_unavailable');
+      }
+      return apiSource;
+    } } : {}),
+  }));
   const serverFeaturesSnapshot = resolveToolsCommandSurface(args) === 'agent' && sessionId
     ? await api.getServerFeaturesSnapshot({ refresh: true }).catch(() => undefined)
     : undefined;
-
   return {
     credentials,
     sessionId,
@@ -219,7 +247,7 @@ async function resolveCustomToolsRuntimeContext(
 }
 
 function printHumanToolList(params: Readonly<{
-  builtInTools: ReadonlyArray<BuiltInToolEntry>;
+  builtInTools: ReadonlyArray<Readonly<{ name: string; description?: string }>>;
   customTools: ReadonlyArray<CustomToolEntry>;
   warnings: ReadonlyArray<ResolvedCustomHappierToolWarning>;
 }>): void {
@@ -249,23 +277,35 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
   const json = wantsJson(args);
   const kind = resolveCommandKind(args);
   const subcommand = String(args[0] ?? '').trim();
+  const surface = resolveToolsCommandSurface(args);
+  const useSessionMcp = surface === 'agent' && supportsSessionMcpLocalTransport();
 
   try {
     if (subcommand === 'list') {
+      if (useSessionMcp) {
+        const listed = await listSessionMcpTools(signal);
+        if (!listed.ok) {
+          if (!json) throw new Error(listed.error);
+          await printJsonEnvelope({ ok: false, kind, error: { code: listed.errorCode, message: listed.error } }, { exitCode: 1 });
+          return;
+        }
+        if (json) await printJsonEnvelope({ ok: true, kind, data: { sources: listed.sources, warnings: listed.warnings } });
+        else printHumanToolList({ builtInTools: listed.sources.happier ?? [],
+          customTools: Object.entries(listed.sources).flatMap(([source, tools]) => source === 'happier' ? [] : tools.map(tool => ({ ...tool, source }))),
+          warnings: listed.warnings });
+        return;
+      }
+      if (surface === 'agent') refuseMcpExecutionSource('session_requester_unavailable');
       const context = await resolveCustomToolsRuntimeContext(args, deps);
       try {
-        const surface = resolveToolsCommandSurface(args);
         const actionsSettingsProvider = createActionSettingsProvider({
           accountSettings: context.accountSettings,
           scopeKey: resolveAccountSettingsScopeKeyForToken(context.credentials.token),
         });
         const actionsSettings = actionsSettingsProvider.getActionsSettings();
         const isServerFeatureEnabled = surface === 'agent'
-          ? (featureId: FeatureId) => resolveCliFeatureDecision({
-              featureId,
-              env: process.env,
-              serverSnapshot: context.serverFeaturesSnapshot,
-            }).state === 'enabled'
+          ? (featureId: FeatureId) => resolveCliFeatureDecision({ featureId, env: process.env,
+              serverSnapshot: context.serverFeaturesSnapshot }).state === 'enabled'
           : undefined;
         const builtInTools = await deps.listBuiltInHappierTools({
           surface,
@@ -326,10 +366,15 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
       const parsedArgs = JSON.parse(argsJson);
 
       let result: ToolCallResult;
-      if (source === 'happier') {
+      if (useSessionMcp) {
+        const toolCallId = getFlagValue(args, '--tool-call-id');
+        result = await callSessionMcpTool({ source, toolName, args: parsedArgs,
+          ...(toolCallId ? { toolCallId } : {}),
+          ...(signal ? { signal } : {}),
+        });
+      } else if (source === 'happier') {
         const context = await resolveToolsBaseContext(args, deps, { requireSessionId: true });
-        const surface = resolveToolsCommandSurface(args);
-        const toolCallId = surface === 'agent' ? (getFlagValue(args, '--tool-call-id') ?? '') : '';
+        const toolCallId = surface === 'agent' ? getFlagValue(args, '--tool-call-id') : null;
         result = await deps.callBuiltInHappierTool({
           credentials: context.credentials,
           sessionId: context.sessionId,
@@ -341,6 +386,7 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
           ...(signal ? { signal } : {}),
         });
       } else {
+        if (surface === 'agent') refuseMcpExecutionSource('session_requester_unavailable');
         const context = await resolveCustomToolsRuntimeContext(args, deps, { requireSessionId: true });
         try {
           result = await deps.callResolvedCustomHappierTool({

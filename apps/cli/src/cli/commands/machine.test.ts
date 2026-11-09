@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   SYSTEM_TASK_PROTOCOL_VERSION,
   type SystemTaskEvent,
+  type SystemTaskJsonObject,
   type SystemTaskResult,
 } from '@happier-dev/protocol';
 
@@ -24,6 +25,121 @@ describe('handleMachineCommand', () => {
     errorSpy.mockClear();
     stdoutChunks.length = 0;
     process.exitCode = undefined;
+  });
+
+  function createEnrollmentBoundary(interactive = false) {
+    const start = vi.fn(async () => ({ taskId: 'identity-entry' }));
+    const poll = vi.fn(async (): Promise<{ events: SystemTaskEvent[]; nextCursor: number;
+      pendingPrompt: { kind: string; data: SystemTaskJsonObject } | null; result: SystemTaskResult | null }> => ({ events: [], nextCursor: 1, pendingPrompt: null,
+      result: { protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION, taskId: 'identity-entry', ok: true, data: {} } satisfies SystemTaskResult }));
+    const respond = vi.fn(async () => undefined);
+    return { start, poll, respond, deps: {
+      createRunner: () => ({ start, poll, respond }),
+      readRelaySelection: () => ({ relayUrl: 'https://relay.example.test', webappUrl: 'https://app.example.test' }),
+      isInteractiveTerminal: () => interactive,
+      promptInput: async () => '', promptSecret: vi.fn(async () => 'transient-password'), sleep: async () => undefined,
+    } };
+  }
+
+  it('refuses the private effect command in ordinary machine dispatch', async () => {
+    const boundary = createEnrollmentBoundary();
+    await handleMachineCommand(['effect-internal'], boundary.deps);
+    expect(process.exitCode).toBe(1);
+    expect(errorSpy).toHaveBeenCalled();
+    expect(stdoutChunks.join('')).toBe('');
+    expect(boundary.start).not.toHaveBeenCalled();
+  });
+
+  it.each(['server', 'deployTarget'])('admits explicit %s identity without inheriting the SSH bootstrap user', async role => {
+    const boundary = createEnrollmentBoundary();
+    await handleMachineCommand(['enroll', '--ssh', 'root@example.test', '--role', role, '--admin-access', 'none', '--json'], boundary.deps);
+    expect(boundary.start).toHaveBeenCalledWith({ spec: expect.objectContaining({ params: expect.objectContaining({
+      enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role, adminAccessAtCreation: 'none' },
+    }) }) });
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('admits explicit preauthorized creation headlessly', async () => {
+    const boundary = createEnrollmentBoundary();
+    await handleMachineCommand(['enroll', '--ssh', 'root@example.test', '--role', 'server', '--admin-access', 'preauthorized', '--json'], boundary.deps);
+    expect(boundary.start).toHaveBeenCalledWith({ spec: expect.objectContaining({ params: expect.objectContaining({
+      enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'preauthorized' },
+    }) }) });
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('discloses console recovery when a person chooses no administrator access', async () => {
+    const boundary = createEnrollmentBoundary(true);
+    let outputAtStart = '';
+    boundary.start.mockImplementationOnce(async () => {
+      outputAtStart = logSpy.mock.calls.flat().join('\n');
+      return { taskId: 'identity-entry' };
+    });
+    await handleMachineCommand(['enroll', '--ssh', 'root@example.test', '--role', 'server', '--admin-access', 'none'], boundary.deps);
+    expect(outputAtStart).toMatch(/administrator access.*(?:console|administrator terminal)/i);
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it.each([
+    { role: 'personal', identity: { kind: 'existingUser', role: 'personal' } },
+    { role: 'adopted', identity: { kind: 'existingUser', role: 'adopted' } },
+    { role: 'sandbox', identity: { kind: 'guestProcess', role: 'sandbox' } },
+  ])('keeps $role enrollment free of dedicated administrator grants', async ({ role, identity }) => {
+    const boundary = createEnrollmentBoundary();
+    await handleMachineCommand(['enroll', '--ssh', 'operator@example.test', '--role', role, '--service-mode', 'none', '--json'], boundary.deps);
+    expect(boundary.start).toHaveBeenCalledWith({ spec: expect.objectContaining({ params: expect.objectContaining({
+      enrollmentIdentity: identity, serviceMode: 'none',
+    }) }) });
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it.each([
+    { target: 'operator@example.test', flags: [], administrator: 'operator' },
+    { target: 'root@example.test', flags: ['--administrator', 'operator'], administrator: 'operator' },
+  ])('drafts attended Ask with a named administrator for $target', async ({ target, flags, administrator }) => {
+    const boundary = createEnrollmentBoundary(true);
+    await handleMachineCommand(['enroll', '--ssh', target, '--role', 'server', ...flags, '--yes'], boundary.deps);
+    expect(boundary.start).toHaveBeenCalledWith({ spec: expect.objectContaining({ params: expect.objectContaining({
+      enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server',
+        adminAccessAtCreation: 'ask', administrator: { username: administrator } },
+    }) }) });
+  });
+
+  it('asks an attended root SSH caller for a non-root administrator before starting the task', async () => {
+    const boundary = createEnrollmentBoundary(true);
+    const promptInput = vi.fn(async () => 'operator');
+    await handleMachineCommand(['enroll', '--ssh', 'root@example.test', '--role', 'server', '--yes'], { ...boundary.deps, promptInput });
+    expect(promptInput).toHaveBeenCalledOnce();
+    expect(boundary.start).toHaveBeenCalledWith({ spec: expect.objectContaining({ params: expect.objectContaining({
+      enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server',
+        adminAccessAtCreation: 'ask', administrator: { username: 'operator' } },
+    }) }) });
+  });
+
+  it.each([
+    { flags: ['--admin-access', 'ask', '--administrator', 'operator', '--json'], interactive: true },
+    { flags: ['--admin-access', 'ask', '--administrator', 'operator', '--yes'], interactive: false },
+    { flags: [], interactive: false },
+    { flags: ['--admin-access', 'none', '--service-mode', 'none'], interactive: true },
+    { flags: ['--admin-access', 'none', '--service-mode', 'user'], interactive: true },
+    { flags: ['--admin-access', 'ask', '--administrator', 'happier'], interactive: true },
+    { flags: ['--admin-access', 'ask', '--administrator', 'root'], interactive: true },
+  ])('rejects unsupported dedicated choices before starting a task: $flags', async ({ flags, interactive }) => {
+    const boundary = createEnrollmentBoundary(interactive);
+    await handleMachineCommand(['enroll', '--ssh', 'root@example.test', '--role', 'server', ...flags], boundary.deps);
+    expect(boundary.start).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeGreaterThan(0);
+  });
+
+  it('answers administrator establishment with a transient secret even with --yes', async () => {
+    const boundary = createEnrollmentBoundary(true);
+    boundary.poll.mockResolvedValueOnce({ events: [], nextCursor: 0, result: null,
+      pendingPrompt: { kind: 'administrator.establish', data: { administratorUsername: 'operator' } } });
+    await handleMachineCommand(['enroll', '--ssh', 'operator@example.test', '--role', 'server', '--yes'], boundary.deps);
+    expect(boundary.deps.promptSecret).toHaveBeenCalledOnce();
+    expect(boundary.respond).toHaveBeenCalledWith(expect.objectContaining({ answer: { password: 'transient-password' } }));
+    expect(JSON.stringify(boundary.start.mock.calls)).not.toContain('transient-password');
+    expect(stdoutChunks.join('')).not.toContain('transient-password');
   });
 
   it('streams remote setup task events/results in json mode and forwards parsed relay/task options, including --require-local-approval', async () => {
@@ -137,6 +253,7 @@ describe('handleMachineCommand', () => {
             authority: 'manual_url',
           },
           channel: 'preview',
+          enrollmentIdentity: { kind: 'existingUser', role: 'personal' },
           serviceMode: 'none',
           knownHostsMode: 'app',
           relayRuntime: {

@@ -22,6 +22,7 @@ import { pruneLogs } from '@/utils/logs/pruneLogs'
 import { createTimestampForFilename } from '@/utils/logs/logFileName'
 import {
   DAEMON_LOG_SUFFIX,
+  DAEMON_STDERR_LOG_PATH_ENV,
   LOG_FILE_SUFFIX,
   resolveCrashedSessionLogKeepPaths,
   resolveLiveSessionLogKeepPaths,
@@ -232,11 +233,13 @@ async function pruneCurrentProcessLogsBestEffort(currentLogPath: string): Promis
   if (configuration.isDaemonProcess) {
     const keepCount = resolveDaemonLogKeepCount()
     if (keepCount === undefined) return
+    const stderrLogPath = process.env[DAEMON_STDERR_LOG_PATH_ENV]
     await pruneLogs({
       dir: logsDir,
       suffix: DAEMON_LOG_SUFFIX,
       keepCount,
       keepPath: currentLogPath,
+      keepPaths: stderrLogPath ? [stderrLogPath] : [],
     })
     return
   }
@@ -413,6 +416,12 @@ export class Logger {
     this.logToConsole('warn', '', message, ...args)
     if (!this.warnFileEnabled) return
     this.logToFile(`[${this.localTimezoneTimestamp()}]`, `[WARN] ${message}`, args)
+  }
+
+  error(message: string, ...args: unknown[]): void {
+    this.logToConsole('error', '', message, ...args)
+    if (this.fileLogLevel === 'silent') return
+    this.logToFile(`[${this.localTimezoneTimestamp()}]`, `[ERROR] ${message}`, args)
   }
 
   /** Retain local paths, redact credentials, and bypass console and remote output. */

@@ -5,7 +5,7 @@ import {
   type ResolvedHomeTarget,
 } from '@happier-dev/cli-common/homeTarget';
 import {
-  runRemoteHomeEnrollmentRecipe,
+  runRemoteHomeEnrollmentFlow,
   type HappierJsonExecutor,
 } from '@happier-dev/cli-common/systemTasks';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
@@ -32,7 +32,6 @@ type PairRemoteDeps = Readonly<{
   parseHomeTargetArgs: typeof parseCliHomeTargetArgs;
 }>;
 
-const PAIR_REMOTE_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_DEPS: PairRemoteDeps = {
   resolveHomeTarget: resolveCurrentCliHomeTarget,
   fetchServerFeaturesSnapshot,
@@ -163,11 +162,10 @@ export async function handleAuthPairRemote(
     : transferableTarget;
 
   if (!json.present) console.log(`Requesting remote authentication on ${ssh.value}...`);
-  const result = await runRemoteHomeEnrollmentRecipe({
+  const result = await runRemoteHomeEnrollmentFlow({
     executor,
     homeTargetInput: remoteHomeTargetInput,
     signal: effectiveDeps.signal,
-    timeoutMs: PAIR_REMOTE_TIMEOUT_MS,
     approvePairingRequest: async (request) => {
       publicKey = request.publicKey;
       const selectedIdentity = await readHomeIdentity(selectedHomeTarget, effectiveDeps);

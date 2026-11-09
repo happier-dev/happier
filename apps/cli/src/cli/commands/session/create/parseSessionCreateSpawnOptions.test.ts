@@ -16,6 +16,14 @@ describe('parseSessionCreateSpawnOptions', () => {
       .toThrow('--provider-connection requires --model.');
   });
 
+  it.each(['{"servers":[]}', '[]', 'null', 'false'])('rejects unsupported MCP selection JSON %s', raw => {
+    expect(() => parseSessionCreateSpawnOptions(['create', '--mcp-selection-json', raw]))
+      .toThrow('Invalid --mcp-selection-json');
+  });
+  it('retains the built-in tools opt-out in canonical capability selection', () => {
+    expect(parseSessionCreateSpawnOptions(['create', '--mcp-selection-json', '{"happierToolsEnabled":false}'])
+      .spawnRequest.capabilitySelection?.mcp).toMatchObject({ happierToolsEnabled: false });
+  });
 
   it('accepts repeated capability names for resolution at the Action transport boundary', () => {
     const parsed = parseSessionCreateSpawnOptions([

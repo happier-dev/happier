@@ -6,6 +6,7 @@ import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/sp
 import { isApprovalRequestCreatedResult } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import type { SessionControlExitCode } from '@/cli/output/jsonEnvelope';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
+import { throwCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
 export { supportsFiniteActionOutcome } from './commandPresentationMetadata';
 
@@ -18,7 +19,7 @@ export function finiteActionExitCode(code: string, unexpected = false): SessionC
 }
 
 function refuse(code: string, details: unknown, message: string): never {
-  throw Object.assign(new Error(message), { actionFailure: true, code, details });
+  throwCliActionFailure({ ok: false, errorCode: code, error: message, details });
 }
 
 /** Observe returned custody, never reconstruct a host from current placement. */

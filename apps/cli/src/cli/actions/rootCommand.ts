@@ -31,10 +31,6 @@ export function renderActionCliRootHelp(root: string, prefix: readonly string[] 
  * resolves it first — so this owns help and the unknown-subcommand diagnostic.
  */
 export async function handleActionCliRootCommand(root: string, context: CommandContext): Promise<void> {
-  if (root === 'workflow') {
-    const { tryHandleWorkflowDocumentCliCommand } = await import('./workflowDocumentCommands');
-    if (await tryHandleWorkflowDocumentCliCommand({ argv: context.args })) return;
-  }
   // Root help, subcommand resolution and diagnostics are CLI control scanning.
   // Once the caller supplied `--`, the remaining bytes are Action-authored
   // literals, never another help/JSON/command signal.

@@ -12,6 +12,7 @@ import { resolveLocalPathPluginSource } from '@/plugins/discovery/sources/localP
 import { resolvePluginStorePathLayout } from '@/plugins/store/pathLayout';
 import { loadAdmittedInstalledPluginDeclarations } from '@/plugins/discovery/load/admitted';
 import { loadPluginsFromState } from '@/plugins/discovery/load/installed';
+import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { readAdmittedPluginRegistryState } from '@/plugins/store/registry/admittedState';
 import { stateRevisionPath } from '@/plugins/store/registry/installationStateRevisionFile';
 import { ensureMergedAgentCommandRegistryLoaded, findCommandDispatchDescriptor, listRegisteredCommandSurfaceEntries, resolveCommandCompletionCandidates } from './commandRegistry';
@@ -185,17 +186,37 @@ actions: [{ scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon'
     await expect(resolveRootHelpEntries(happyHomeDir)).rejects.toThrow('no canonical runtime catalog');
   });
 
-  it('preserves the canonical collision with an installed bundled plugin identity', async () => {
+  it('uses the installed replacement consistently for executable commands, help and Agent listing', async () => {
     const happyHomeDir = await temporaryDirectory();
     const pluginRoot = await temporaryDirectory();
-    const pluginId = BUNDLED_FIRST_PARTY_PLUGIN_COMMAND_METADATA[0]!.pluginId;
+    const pluginId = 'happier.agent.codex';
+    const bundled = loadCurrentBundledPluginLocatorResult().loadedPlugins.find(plugin => plugin.pluginId === pluginId);
+    if (!bundled) throw new Error('Bundled Codex fixture is required');
     const manifestPath = join(pluginRoot, '.happier-plugin', 'plugin.json');
-    const manifest = PluginManifestV2Schema.parse(createPluginManifestV2Fixture({ id: pluginId }));
+    const manifest = PluginManifestV2Schema.parse({ ...bundled.manifest, version: '2.0.0', entrypoints: { daemon: './daemon.mjs' }, contributes: {
+      ...bundled.manifest.contributes,
+      agents: bundled.manifest.contributes.agents.map(agent => ({
+        ...agent, title: 'Development Codex',
+        ...(agent.cli ? { cli: { ...agent.cli, displayName: 'Development Codex' } } : {}),
+      })),
+    } });
     await mkdir(dirname(manifestPath), { recursive: true });
     await writeFile(join(pluginRoot, 'daemon.mjs'), 'export function activate() {}\n');
     await writeFile(manifestPath, JSON.stringify(manifest));
     await seedCurrentLocalPathPluginFixture({ happyHomeDir, pluginRoot, pluginId, manifestVersion: manifest.version, devWatch: true });
-    await expect(ensureMergedAgentCommandRegistryLoaded({ happyHomeDir })).rejects.toThrow(`Duplicate plugin identity '${pluginId}'`);
-    await expect(resolveRootHelpEntries(happyHomeDir)).rejects.toThrow(`Duplicate plugin identity '${pluginId}'`);
+    await ensureMergedAgentCommandRegistryLoaded({ happyHomeDir });
+    expect((await resolveRootHelpEntries(happyHomeDir)).find(entry => entry.command === `${pluginId}/codex`))
+      .toMatchObject({ rootHelpDescription: 'Start Development Codex' });
+    const { resolveAdmittedAgentListingContributions } = await import('@/plugins/projection/registry/admittedAgents');
+    const { agents } = await resolveAdmittedAgentListingContributions(happyHomeDir);
+    expect(agents.filter(agent => agent.identity?.pluginId === pluginId)).toEqual([
+      expect.objectContaining({ richDefinition: expect.objectContaining({ definition: expect.objectContaining({ title: 'Development Codex' }) }) }),
+    ]);
+    const { resolveMergedContributionRegistry } = await import('@/plugins/projection/registry/createResolvedContributionRegistry');
+    const merged = await resolveMergedContributionRegistry({ happyHomeDir });
+    expect(merged.agents.filter(agent => agent.pluginId === pluginId)).toEqual([
+      expect.objectContaining({ source: { kind: 'path' }, richDefinition: expect.objectContaining({ definition: expect.objectContaining({ title: 'Development Codex' }) }) }),
+    ]);
+    expect(merged.activationTargets.filter(target => target.pluginId === pluginId)).toHaveLength(1);
   });
 });

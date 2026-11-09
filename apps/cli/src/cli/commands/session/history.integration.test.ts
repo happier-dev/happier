@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { createAccountEncryptionCurrentnessFixture, createCompactSessionListQueryResponseFixture, createSessionNotificationContextFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { SessionMessagesPageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import { SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 import {
@@ -111,7 +114,8 @@ describe('happier session history (integration)', () => {
       'base64',
     );
 
-    const sessionRow = {
+    const sessionRow = createSessionRecordFixture({
+      ...createSessionNotificationContextFixture(sessionId),
       id: sessionId,
       seq: 1,
       createdAt: 1,
@@ -127,28 +131,39 @@ describe('happier session history (integration)', () => {
       pendingVersion: 0,
       dataEncryptionKey: dataEncryptionKeyBase64,
       share: null,
-    };
+    });
+    const sessionListResponse = createCompactSessionListQueryResponseFixture({
+      sessions: [sessionRow], nextCursor: null, hasNext: false,
+      attentionNextCursor: null, attentionHasNext: false,
+    });
 
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (req.method === 'POST' && url.pathname === '/v2/sessions/lookup-by-tags') {
+        req.resume();
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify(SessionLookupByTagsResponseV2Schema.parse({ sessions: [] })));
+        return;
+      }
+      if (req.method === 'GET' && url.pathname === '/v1/account/encryption/currentness') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify(createAccountEncryptionCurrentnessFixture({ mode: 'e2ee' })));
+        return;
+      }
       if (req.method === 'GET' && url.pathname === `/v2/sessions`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(
-          JSON.stringify({
-            sessions: [
-              sessionRow,
-            ],
-            nextCursor: null,
-            hasNext: false,
-          }),
+          JSON.stringify(sessionListResponse),
         );
         return;
       }
       if (req.method === 'GET' && url.pathname === `/v2/sessions/archived`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }));
+        res.end(JSON.stringify(createCompactSessionListQueryResponseFixture({ sessions: [], nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false })));
         return;
       }
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
@@ -166,30 +181,37 @@ describe('happier session history (integration)', () => {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(
-          JSON.stringify({
+          JSON.stringify(SessionMessagesPageV1Schema.parse({
             messages: [
               {
+                id: 'message-2',
                 seq: 2,
                 createdAt: 1690000000000,
                 content: { t: 'encrypted', c: memoryArtifactCiphertext },
               },
               {
+                id: 'message-3',
                 seq: 3,
                 createdAt: 1700000000000,
                 content: { t: 'encrypted', c: msg1Ciphertext },
               },
               {
+                id: 'message-4',
                 seq: 4,
                 createdAt: 1700000001000,
                 content: { t: 'encrypted', c: acpMessageCiphertext },
               },
               {
+                id: 'message-5',
                 seq: 5,
                 createdAt: 1700000002000,
                 content: { t: 'encrypted', c: acpTextCiphertext },
               },
             ],
-          }),
+            hasMore: false,
+            nextBeforeSeq: null,
+            nextAfterSeq: null,
+          })),
         );
         return;
       }
@@ -253,7 +275,7 @@ describe('happier session history (integration)', () => {
       );
       const parsedDefault = output.json();
       expect(parsedDefault.v).toBe(1);
-      expect(parsedDefault.ok).toBe(true);
+      expect(parsedDefault.ok, JSON.stringify(parsedDefault)).toBe(true);
       expect(parsedDefault.kind).toBe('session_history');
       expect(parsedDefault.data?.format).toBe('compact');
       expect(parsedDefault.data?.sessionId).toBe('sess_integration_history_123');
@@ -289,7 +311,7 @@ describe('happier session history (integration)', () => {
         },
       );
       const parsed = output.json();
-      expect(parsed.ok).toBe(true);
+      expect(parsed.ok, JSON.stringify(parsed)).toBe(true);
       expect(parsed.kind).toBe('session_history');
       const acpMessage = parsed.data?.messages?.find((message: any) => message.kind === 'acp');
       expect(acpMessage).toEqual(expect.objectContaining({
@@ -322,6 +344,7 @@ describe('happier session history (integration)', () => {
         },
       );
       const parsed = output.json();
+      expect(parsed.ok, JSON.stringify(parsed)).toBe(true);
       const acpText = parsed.data?.messages?.find(
         (message: any) => message.text === 'CODEX_LUNA_LOW_READY',
       );
@@ -356,7 +379,7 @@ describe('happier session history (integration)', () => {
         },
       );
       const parsed = output.json();
-      expect(parsed.ok).toBe(true);
+      expect(parsed.ok, JSON.stringify(parsed)).toBe(true);
       expect(parsed.kind).toBe('session_history');
       expect(parsed.data?.format).toBe('raw');
       expect(parsed.data?.messages?.some((message: any) => message.raw?.content?.text === 'should stay hidden')).toBe(false);
@@ -404,7 +427,7 @@ describe('happier session history (integration)', () => {
         },
       );
       const parsed = output.json();
-      expect(parsed.ok).toBe(true);
+      expect(parsed.ok, JSON.stringify(parsed)).toBe(true);
       expect(parsed.kind).toBe('session_history');
       expect(parsed.data?.sessionId).toBe('sess_integration_history_123');
     } finally {
@@ -428,7 +451,8 @@ describe('happier session history (plaintext integration)', () => {
       flavor: 'claude',
     });
 
-    const sessionRow = {
+    const sessionRow = createSessionRecordFixture({
+      ...createSessionNotificationContextFixture(sessionId),
       id: sessionId,
       seq: 1,
       createdAt: 1,
@@ -445,21 +469,32 @@ describe('happier session history (plaintext integration)', () => {
       pendingVersion: 0,
       dataEncryptionKey: null,
       share: null,
-    };
+    });
+    const sessionListResponse = createCompactSessionListQueryResponseFixture({
+      sessions: [sessionRow], nextCursor: null, hasNext: false,
+      attentionNextCursor: null, attentionHasNext: false,
+    });
 
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (req.method === 'POST' && url.pathname === '/v2/sessions/lookup-by-tags') {
+        req.resume();
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify(SessionLookupByTagsResponseV2Schema.parse({ sessions: [] })));
+        return;
+      }
+      if (req.method === 'GET' && url.pathname === '/v1/account/encryption/currentness') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify(createAccountEncryptionCurrentnessFixture({ mode: 'e2ee' })));
+        return;
+      }
       if (req.method === 'GET' && url.pathname === `/v2/sessions`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(
-          JSON.stringify({
-            sessions: [
-              sessionRow,
-            ],
-            nextCursor: null,
-            hasNext: false,
-          }),
+          JSON.stringify(sessionListResponse),
         );
         return;
       }
@@ -478,9 +513,10 @@ describe('happier session history (plaintext integration)', () => {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(
-          JSON.stringify({
+          JSON.stringify(SessionMessagesPageV1Schema.parse({
             messages: [
               {
+                id: 'message-3',
                 seq: 3,
                 createdAt: 1700000000000,
                 content: {
@@ -498,6 +534,7 @@ describe('happier session history (plaintext integration)', () => {
                 },
               },
               {
+                id: 'message-4',
                 seq: 4,
                 createdAt: 1700000001000,
                 content: {
@@ -516,7 +553,10 @@ describe('happier session history (plaintext integration)', () => {
                 },
               },
             ],
-          }),
+            hasMore: false,
+            nextBeforeSeq: null,
+            nextAfterSeq: null,
+          })),
         );
         return;
       }
@@ -578,7 +618,7 @@ describe('happier session history (plaintext integration)', () => {
         },
       );
       const parsedDefault = output.json();
-      expect(parsedDefault.ok).toBe(true);
+      expect(parsedDefault.ok, JSON.stringify(parsedDefault)).toBe(true);
       expect(parsedDefault.kind).toBe('session_history');
       expect(parsedDefault.data?.format).toBe('compact');
       expect(parsedDefault.data?.sessionId).toBe('sess_integration_history_plain_123');

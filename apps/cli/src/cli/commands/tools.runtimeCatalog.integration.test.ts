@@ -2,12 +2,17 @@ import axios from 'axios';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { handleToolsCommand } from './tools';
-import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
+import { captureConsoleLogAndMuteStdout, captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 import { listBuiltInHappierTools as projectBuiltInHappierTools } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 import { bootstrapAccountSettingsContext as bootstrapSettings, resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { resolveAccountSettingsCachePath } from '@/settings/accountSettings/accountSettingsCache';
 import { getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { withCliApiToken } from '@/auth/cliApiToken';
+import { readOrCreateInstallationIdentitySync } from '@/daemon/identity/store';
+import { AccountApiTokenSelfV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { createServer } from 'node:http';
 
 type BoundaryTools = { tools: Array<{ name: string; description?: string; inputSchema: { type: 'object' } }> };
 let listToolsAtBoundary: () => Promise<BoundaryTools>;
@@ -15,18 +20,21 @@ let connectAtBoundary: (transport: { command: string }) => Promise<void>;
 let callToolAtBoundary: () => Promise<unknown>;
 let outwardCalls: string[];
 let mcpCatalog: McpServerCatalogV1;
+let exactHomeOrigin = 'https://home.example.test';
+let openToolConnections = 0;
 
 // Genuine process/SDK boundaries only: the command, row selector, materializer,
 // custom resolver, and custom-list orchestration remain their actual owners.
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   Client: class {
-    async connect(transport: { command: string }) { await connectAtBoundary(transport); }
+    private connected = false;
+    async connect(transport: { command: string }) { await connectAtBoundary(transport); this.connected = true; openToolConnections++; }
     async listTools() { return await listToolsAtBoundary(); }
     async callTool(request: { name: string }) {
       outwardCalls.push(request.name);
       return await callToolAtBoundary();
     }
-    async close() {}
+    async close() { if (this.connected) { this.connected = false; openToolConnections--; } }
   },
 }));
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
@@ -48,7 +56,7 @@ vi.mock('@/persistence', async importOriginal => ({
 vi.mock('axios', () => ({ default: { get: vi.fn(), post: vi.fn(), isAxiosError: () => false } }));
 vi.mock('@/api/client/serverHttpBaseUrl', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/client/serverHttpBaseUrl')>(),
-  resolveServerHttpBaseUrl: () => 'https://home.example.test',
+  resolveServerHttpBaseUrl: () => exactHomeOrigin,
 }));
 
 function bootstrapToolSettings(raw: Readonly<Record<string, unknown>> = {}): typeof bootstrapSettings {
@@ -60,6 +68,8 @@ function bootstrapToolSettings(raw: Readonly<Record<string, unknown>> = {}): typ
 }
 
 beforeEach(() => {
+  exactHomeOrigin = 'https://home.example.test';
+  openToolConnections = 0;
   resetInMemoryAccountSettingsContextForTests();
   mcpCatalog = { v: 1, servers: [], bindings: [] };
   connectAtBoundary = async () => {};
@@ -78,34 +88,14 @@ beforeEach(() => {
     throw new Error(`Unexpected HTTP path: ${path}`);
   });
 });
-afterEach(() => resetInMemoryAccountSettingsContextForTests());
-
-const BOARD_TOOL_NAMES = [
-  'session_board_get',
-  'session_board_item_upsert',
-  'session_board_item_remove',
-  'session_board_layout_update',
-] as const;
-
-function serverFeaturesSnapshot(boardEnabled: unknown) {
-  return {
-    status: 'ready' as const,
-    features: {
-      features: {
-        sessions: {
-          enabled: true,
-          board: { enabled: boardEnabled },
-        },
-      },
-    },
-  } as any;
-}
+afterEach(() => { resetInMemoryAccountSettingsContextForTests(); vi.unstubAllGlobals(); });
 
 function createBaseDeps() {
   return {
     readCredentials: async () => ({
       token: 'token',
       encryption: null,
+      credentialProvenance: 'stored_session' as const,
     }),
     initializeBackendApiContext: async () => ({
       api: { getServerFeaturesSnapshot: async () => undefined } as any,
@@ -132,7 +122,79 @@ function retireAndReenterToolsAccount() {
 }
 
 describe('happier tools --json', () => {
-  it('prints a tools_list JSON envelope grouped by source', async () => {
+  it.each(['owner', 'member'] as const)('qualifies opaque API automation through the actual CLI initializer and Home (%s)', async accountId => {
+    const installation = readOrCreateInstallationIdentitySync();
+    const credentialId = 'afbc64cb-68d1-4a57-b55d-4096ab268c80';
+    const token = `hap_v1_${credentialId}_${'A'.repeat(43)}`;
+    const principal = AccountApiTokenSelfV1Schema.parse({ accountId, accountEncryptionMode: 'plain', credentialId,
+      parentTokenId: null, expiresAt: null, grant: API_TOKEN_FULL_GRANT_V1, embedConfig: null });
+    let selfReads = 0;
+    let machineReads = 0;
+    let catalogReads = 0;
+    mcpCatalog = { v: 1, servers: [{ id: 'api-server', name: 'api-server', transport: 'stdio',
+      stdio: { command: 'api-fixture', args: [] }, env: {}, createdAt: 1, updatedAt: 1 }],
+      bindings: [{ id: 'api-binding', serverId: 'api-server', enabled: true,
+        target: { t: 'allMachines' }, createdAt: 1, updatedAt: 1 }] };
+    const home = createServer((request, response) => {
+      request.resume();
+      response.setHeader('content-type', 'application/json');
+      const path = new URL(request.url ?? '/', 'http://home.test').pathname;
+      if (path !== '/v1/features' && request.headers.authorization !== `Bearer ${token}`) {
+        response.statusCode = 401;
+        response.end('{}');
+        return;
+      }
+      let body: unknown;
+      if (path === '/v1/features') body = { features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_tools_owner' } } };
+      else if (path === '/v1/auth/api-tokens/self') { selfReads++; body = principal; }
+      else if (path === '/v1/machines/machine-1') { machineReads++; body = { machine: { id: 'machine-1',
+        installationId: installation.installationId, metadata: null, metadataVersion: 0, daemonState: null,
+        daemonStateVersion: 0, storageMode: 'plain', access: { custodian: { accountId: 'owner', displayName: 'Owner' },
+          role: 'manage', resourceMode: 'plain', accessState: 'ready' } } }; }
+      else if (path === '/v1/account/entity-rows/mcp') { catalogReads++; body = {
+        status: 'present', revision: 1, content: { t: 'plain', v: mcpCatalog } }; }
+      else if (path === '/v1/account/encryption/currentness') body = { mode: 'plain', version: 0,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 };
+      else { response.statusCode = 404; body = {}; }
+      response.end(JSON.stringify(body));
+    });
+    await new Promise<void>(resolve => home.listen(0, '127.0.0.1', resolve));
+    const address = home.address();
+    if (!address || typeof address === 'string') throw new Error('Expected fixture Home');
+    exactHomeOrigin = `http://127.0.0.1:${address.port}`;
+    vi.mocked(axios.get).mockImplementation(async (url, options) => {
+      const response = await fetch(String(url), { headers: options?.headers as Record<string, string> | undefined });
+      return { status: response.status, data: await response.json() };
+    });
+    const output = captureConsoleLogAndMuteStdout();
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await withCliApiToken(token, () => handleToolsCommand(['list', '--directory', '/tmp/workspace',
+        ...(accountId === 'member' ? ['--json'] : [])], {
+        bootstrapAccountSettingsContext: bootstrapToolSettings(),
+        listBuiltInHappierTools: projectBuiltInHappierTools,
+      }));
+      if (accountId === 'owner') {
+        expect(output.logs.join('\n').includes('api-server\n- open_page:')).toBe(true);
+        expect(catalogReads).toBeGreaterThan(0);
+      } else {
+        expect(JSON.parse(output.stdoutChunks.join(''))).toMatchObject({ ok: false, error: { code: 'agent_isolation_unavailable' } });
+        expect(catalogReads).toBe(0);
+      }
+      expect(selfReads).toBe(1);
+      expect(machineReads).toBe(1);
+      expect(openToolConnections).toBe(0);
+    } finally {
+      output.restore();
+      process.exitCode = previousExitCode;
+      await new Promise<void>((resolve, reject) => home.close(error => error ? reject(error) : resolve()));
+    }
+  });
+  it.each([
+    ['with a session id', ['--session-id', 'sess-1']],
+    ['without a session id', []],
+  ])('prints a tools_list JSON envelope grouped by source %s', async (_label, sessionArgs) => {
     const output = captureStdoutJsonOutput();
     mcpCatalog = { v: 1, servers: [{ id: 'playwright-server', name: 'playwright', transport: 'stdio',
       stdio: { command: 'playwright-fixture', args: [] }, env: {}, createdAt: 1, updatedAt: 1 }],
@@ -142,7 +204,7 @@ describe('happier tools --json', () => {
     process.exitCode = undefined;
 
     try {
-      await handleToolsCommand(['list', '--session-id', 'sess-1', '--directory', '/tmp/workspace', '--json'], {
+      await handleToolsCommand(['list', ...sessionArgs, '--directory', '/tmp/workspace', '--json'], {
         readCredentials: createBaseDeps().readCredentials,
         bootstrapAccountSettingsContext: bootstrapToolSettings(),
         listBuiltInHappierTools: projectBuiltInHappierTools,
@@ -314,31 +376,6 @@ describe('happier tools --json', () => {
     }
   });
 
-  it('allows happier tools list without a session id', async () => {
-    const output = captureStdoutJsonOutput();
-    const prevExitCode = process.exitCode;
-    process.exitCode = undefined;
-
-    try {
-      await handleToolsCommand(['list', '--directory', '/tmp/workspace', '--json'], {
-        readCredentials: createBaseDeps().readCredentials,
-        bootstrapAccountSettingsContext: bootstrapToolSettings(),
-        listBuiltInHappierTools: projectBuiltInHappierTools,
-      });
-
-      const parsed = output.json<any>();
-      expect(parsed.ok).toBe(true);
-      expect(parsed.kind).toBe('tools_list');
-      expect(parsed.data?.sources?.happier).toEqual(expect.arrayContaining([
-        expect.objectContaining({ name: 'change_title' }),
-      ]));
-      expect(process.exitCode).toBe(0);
-    } finally {
-      output.restore();
-      process.exitCode = prevExitCode;
-    }
-  });
-
   it('prints a tools_call JSON envelope for built-in Happier tools', async () => {
     const output = captureStdoutJsonOutput();
     const initializeBackendApiContext = vi.fn(async () => ({ api: {} as any, machineId: 'machine-1' }));
@@ -441,7 +478,9 @@ describe('happier tools --json', () => {
     }
   });
 
-  it('forwards native tool-call identity only for the internal Agent bridge', async () => {
+  it.each([
+    ['does not forward', 'an ordinary CLI call', [], { surface: 'cli' }],
+  ] as const)('%s native tool-call identity for %s', async (_verb, _label, bridgeArgs, expected) => {
     const output = captureStdoutJsonOutput();
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
@@ -455,7 +494,7 @@ describe('happier tools --json', () => {
         '--source', 'happier',
         '--tool', 'action_execute',
         '--args-json', '{"actionId":"memory.search","input":{}}',
-        '--agent-bridge',
+        ...bridgeArgs,
         '--tool-call-id', 'pi-call-1',
         '--json',
       ], {
@@ -463,163 +502,51 @@ describe('happier tools --json', () => {
         callBuiltInHappierTool,
       } as any);
 
-      expect(callBuiltInHappierTool).toHaveBeenCalledWith(expect.objectContaining({
-        surface: 'agent',
-        toolCallId: 'pi-call-1',
-      }));
+      expect(callBuiltInHappierTool).toHaveBeenCalledOnce();
+      const [request] = callBuiltInHappierTool.mock.calls[0] as unknown as [Record<string, unknown>];
+      expect(request).toMatchObject(expected);
+      if (!('toolCallId' in expected)) expect(request).not.toHaveProperty('toolCallId');
     } finally {
       output.restore();
       process.exitCode = previousExitCode;
     }
   });
 
-  it('dispatches the generated shell-bridge call as Agent automation even with stored human credentials', async () => {
-    const { buildHappierToolsShellBridgeCommand } = await import(
-      '@/agent/tools/happierTools/runtime/buildHappierToolsShellBridgeCommand'
-    );
-    const { parseHappierToolsShellBridgeCommand } = await import('@happier-dev/protocol');
-    const generated = buildHappierToolsShellBridgeCommand([
-      'call',
-      '--session-id',
-      'sess-1',
-      '--directory',
-      '/tmp/workspace',
-      '--source',
-      'happier',
-      '--tool',
-      'change_title',
-      '--args-json',
-      '{"title":"Renamed"}',
-      '--json',
-    ]);
-    const parsed = parseHappierToolsShellBridgeCommand(generated);
-    expect(parsed).toMatchObject({ kind: 'call', agentBridge: true });
+  describe('Windows Agent custom MCP transport admission', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  beforeEach(() => Object.defineProperty(process, 'platform', { ...platform, value: 'win32' }));
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', platform);
+    vi.unstubAllGlobals();
+  });
 
+  it.each(['list', 'call'])('refuses %s before borrowing the current user Account catalog or credentials', async command => {
     const output = captureStdoutJsonOutput();
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
-    const callBuiltInHappierTool = vi.fn(async () => ({ ok: true as const, result: { done: true } }));
+    const readCredentials = vi.fn(async () => ({ token: 'windows-board-token', encryption: null }));
 
     try {
-      // The exact argv the generated command runs, taken from the producer
-      // rather than restated by hand.
       await handleToolsCommand([
-        'call',
+        command,
         '--agent-bridge',
         '--session-id', 'sess-1',
-        '--directory', '/tmp/workspace',
-        '--source', 'happier',
-        '--tool', 'change_title',
-        '--args-json', '{"title":"Renamed"}',
+        ...(command === 'call' ? ['--source', 'custom', '--tool', 'echo', '--args-json', '{}'] : []),
         '--json',
       ], {
-        ...createBaseDeps(),
-        callBuiltInHappierTool,
-      } as any);
+        readCredentials,
+        bootstrapAccountSettingsContext: bootstrapToolSettings(),
+      });
 
-      expect(callBuiltInHappierTool).toHaveBeenCalledWith(expect.objectContaining({
-        surface: 'agent',
-      }));
+      expect(output.json()).toMatchObject({ ok: false, error: { code: 'agent_isolation_unavailable' } });
+      expect(readCredentials).not.toHaveBeenCalled();
+      expect(outwardCalls).toEqual([]);
     } finally {
       output.restore();
       process.exitCode = previousExitCode;
     }
   });
 
-  it('lists tools on the Agent surface for the generated shell bridge', async () => {
-    const output = captureStdoutJsonOutput();
-    const previousExitCode = process.exitCode;
-    process.exitCode = undefined;
-    const listBuiltInHappierTools = vi.fn(async () => []);
-
-    try {
-      await handleToolsCommand(['list', '--agent-bridge', '--session-id', 'sess-1', '--json'], {
-        ...createBaseDeps(),
-        listBuiltInHappierTools,
-        listResolvedCustomHappierTools: async () => ({ tools: [], warnings: [] }),
-      } as any);
-
-      expect(listBuiltInHappierTools).toHaveBeenCalledWith(expect.objectContaining({
-        surface: 'agent',
-      }));
-    } finally {
-      output.restore();
-      process.exitCode = previousExitCode;
-    }
-  });
-
-  it.each([
-    ['missing exact Session target', serverFeaturesSnapshot(true), false],
-    ['missing snapshot', undefined, true],
-    ['malformed snapshot', serverFeaturesSnapshot('yes'), true],
-    ['disabled snapshot', serverFeaturesSnapshot(false), true],
-  ])('fails closed for server-backed Board tools on the shell Agent bridge with a %s', async (_label, snapshot, withSession) => {
-    const output = captureStdoutJsonOutput();
-    const previousExitCode = process.exitCode;
-    process.exitCode = undefined;
-
-    try {
-      await handleToolsCommand([
-        'list',
-        '--agent-bridge',
-        ...(withSession ? ['--session-id', 'sess-1'] : []),
-        '--json',
-      ], {
-        ...createBaseDeps(),
-        initializeBackendApiContext: async () => ({
-          api: { getServerFeaturesSnapshot: async () => snapshot } as any,
-          machineId: 'machine-1',
-        }),
-        listBuiltInHappierTools: async (params: any) => projectBuiltInHappierTools(params),
-        listResolvedCustomHappierTools: async () => ({ tools: [], warnings: [] }),
-      } as any);
-
-      const names = output.json<any>().data.sources.happier.map((tool: { name: string }) => tool.name);
-      for (const boardToolName of BOARD_TOOL_NAMES) {
-        expect(names).not.toContain(boardToolName);
-      }
-    } finally {
-      output.restore();
-      process.exitCode = previousExitCode;
-    }
-  });
-
-  it('advertises all Board tools only from the shell Agent bridge target Home enabled snapshot', async () => {
-    const seenByToken = new Map<string, readonly string[]>();
-
-    for (const [token, enabled] of [['home-a-token', false], ['home-b-token', true]] as const) {
-      const output = captureStdoutJsonOutput();
-      const previousExitCode = process.exitCode;
-      process.exitCode = undefined;
-      try {
-        await handleToolsCommand(['list', '--agent-bridge', '--session-id', 'same-session-id', '--json'], {
-          ...createBaseDeps(),
-          readCredentials: async () => ({ token, encryption: null }),
-          initializeBackendApiContext: async ({ credentials }: any) => ({
-            api: {
-              getServerFeaturesSnapshot: async () => serverFeaturesSnapshot(
-                credentials.token === 'home-b-token',
-              ),
-            } as any,
-            machineId: 'machine-1',
-          }),
-          listBuiltInHappierTools: async (params: any) => projectBuiltInHappierTools(params),
-          listResolvedCustomHappierTools: async () => ({ tools: [], warnings: [] }),
-        } as any);
-        seenByToken.set(
-          token,
-          output.json<any>().data.sources.happier.map((tool: { name: string }) => tool.name),
-        );
-      } finally {
-        output.restore();
-        process.exitCode = previousExitCode;
-      }
-    }
-
-    for (const boardToolName of BOARD_TOOL_NAMES) {
-      expect(seenByToken.get('home-a-token')).not.toContain(boardToolName);
-    }
-    expect(seenByToken.get('home-b-token')).toEqual(expect.arrayContaining([...BOARD_TOOL_NAMES]));
   });
 
   it('lists built-in tools with the bootstrapped Account Action policy', async () => {

@@ -291,7 +291,7 @@ export async function cmdSessionHistory(
       includeReasoning: true,
       includeEvents: true,
       includeRaw: true,
-      maxRawPayloadChars: 32768,
+      maxRawPayloadChars: null,
       ...(includeMeta ? { includeMeta: true } : {}),
       ...(includeStructuredPayload ? { includeStructuredPayload: true } : {}),
     },

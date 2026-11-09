@@ -5,6 +5,7 @@ import {
   projectLegacySessionAccessCapabilitiesV1,
   SessionOwnerMetadataV1Schema,
   SessionSummarySchema,
+  SessionSharedMetadataV1Schema,
 } from '@happier-dev/protocol';
 import { encodeBase64, encryptLegacy } from '@/api/encryption';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -41,6 +42,18 @@ describe('summarizeSessionRow', () => {
       secret: Uint8Array;
     };
   };
+
+  it.each(['plain', 'e2ee'] as const)('carries the shared Bot face through the %s metadata reader', (encryptionMode) => {
+    const shared = SessionSharedMetadataV1Schema.parse({ v: 1, bot: { kind: 'bot' },
+      botFace: { style: 'planet', body: 'crab', seed: 'saved-face' } });
+    const row = createSessionRecordFixture({ id: 'bot-summary', encryptionMode, metadataLayoutVersion: 1,
+      effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+        capabilities: projectLegacySessionAccessCapabilitiesV1({ level: 'owner' }) },
+      metadata: encryptionMode === 'plain' ? JSON.stringify(shared)
+        : encodeBase64(encryptLegacy(shared, credentials.encryption.secret)) });
+    const summary = SessionSummarySchema.parse(summarizeSessionRow({ credentials, row, accountEncryptionMode: encryptionMode }));
+    expect(summary).toMatchObject({ bot: shared.bot, botFace: shared.botFace });
+  });
 
   it('preserves the canonical manager facts used by direct worker target resolution', () => {
     const manager = { sessionId: 'c222222222222222222222222' };

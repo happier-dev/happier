@@ -9,10 +9,7 @@ export type SessionCommandResumeDelegationDecision =
 
 type ReadCredentials = () => Promise<StoredCredentials | null>;
 type EnsureAuth = () => Promise<Readonly<{ credentials: StoredCredentials }>>;
-type FetchSessionById = (params: Readonly<{
-  token: string;
-  sessionId: string;
-}>) => Promise<unknown | null>;
+type FetchSessionById = (params: Parameters<typeof fetchSessionById>[0]) => Promise<unknown | null>;
 
 export type SessionCommandResumeDelegationParams = Readonly<{
   args: readonly string[];

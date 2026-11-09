@@ -5,7 +5,7 @@ import { SKILL_ACTION_OUTPUT_SCHEMAS_V1 as outputs, SkillFoundListResultV1Schema
 import { SkillReadResultV1Schema } from '@happier-dev/protocol/prompts/library/skills/skillReadV1';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
 import { argvBeforeOptionTerminator } from '@/cli/commands/shared/argvFlags';
-import { resolveShellBridgeActionSurfaceV1 } from './shellBridgeActionSurface';
+import { isShellBridgeAgentMarkerV1, resolveShellBridgeActionSurfaceV1 } from './shellBridgeActionSurface';
 import { readSkillDirectoryInputV1 } from './skillsDirectoryInputAdapter';
 import { readSkillSourceArgV1 } from './skillsSourceArgAdapter';
 import { writeSkillExportOutputV1 } from './skillsExportOutputAdapter';
@@ -30,7 +30,7 @@ export async function tryHandleSkillsCliCommand(params: Readonly<{ argv: readonl
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index]!;
     if (token === '--') { rest.push(...tokens.slice(index)); break; }
-    if (bridge && token === '--agent-bridge') continue;
+    if (bridge && isShellBridgeAgentMarkerV1(token)) continue;
     if (bridge && (token === '--session-id' || token.startsWith('--session-id='))) {
       if (bridgeSessionId !== undefined) throw new Error('Supply --session-id once.');
       bridgeSessionId = token.startsWith('--session-id=') ? token.slice('--session-id='.length) : tokens[++index];

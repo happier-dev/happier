@@ -80,6 +80,18 @@ const CallerSchema = z.strictObject({
   recipient: z.optional(z.object({ kind: z.literal('execution_run'), runId: z.string() })),
 });
 
+it('admits review Apply through the generic Action CLI with one canonical Session target', () => {
+  const spec = getActionSpec('review.apply');
+  const fields = compileActionCliFields(spec);
+  const input = { sessionId: { selector: 'self' }, reviews: [{ runId: 'review-1', findings: [{
+    id: 'finding', title: 'Unsafe read', summary: 'Verify the read', severity: 'high', category: 'correctness',
+  }] }] };
+  expect(spec.surfaces.cli).toBe(true);
+  expect(parseActionCliInput({ fields: fields.fields, positionals: [] }, ['--input-json', JSON.stringify(input)]))
+    .toMatchObject({ ok: true, canonicalBase: input });
+  expect(spec.sessionTarget).toEqual({ field: 'sessionId', cardinality: 'one' });
+});
+
 function fixtureSpec(cli: NonNullable<ActionSpec['cli']>, overrides: Partial<ActionSpec> = {}): ActionSpec {
   return {
     id: 'session.message.send',

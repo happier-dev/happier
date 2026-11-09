@@ -45,16 +45,13 @@ export function readActionInputHints(definition: Readonly<Record<string, unknown
 }
 
 /**
- * The complete canonical contributed-Action input contract used by command
- * parsing and final validation. `null` means the installed command references
- * a predecessor Action definition which is not present in this registry.
+ * The canonical Action input contract used by parsing and final validation.
+ * `null` means the Action has no discoverable authored input schema.
  */
 export function resolvePluginCommandActionInputContract(params: Readonly<{
   registry: PluginCommandActionInputRegistry | undefined;
   qualifiedActionId: string;
 }>): PluginCommandActionInputContract | null {
-  // No registry snapshot means no discoverable canonical definition, which is
-  // exactly the predecessor case: keep the JSON-only adapter.
   const contribution = (params.registry?.actions ?? []).find((candidate) => (
     candidate.pluginId
     && `${candidate.pluginId}/${candidate.definition.id}` === params.qualifiedActionId

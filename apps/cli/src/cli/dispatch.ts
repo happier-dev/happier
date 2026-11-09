@@ -14,6 +14,7 @@ import {
   isTmuxAllowedCommand,
 } from '@/cli/commandSurfaceManifest';
 import { readStartedByArg } from '@/cli/readStartedByArg';
+import { HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY } from '@/agent/runtime/session/process/agentRuntimeRunnerEnvironment';
 import { applyDaemonAutostartEnvForInvocation, shouldEnsureDaemonForInvocation } from '@/daemon/daemonAutostartPolicy';
 import { printJsonEnvelope, wantsJson } from '@/cli/output/jsonEnvelope';
 import { errorFrame } from '@happier-dev/cli-common/output';
@@ -315,6 +316,7 @@ export async function dispatchCli(params: Readonly<{
   const globalOptionArgs = argvBeforeOptionTerminator(args);
   const { terminalRuntime, rawArgv } = params;
   let signal = params.signal;
+  let sessionStart: CommandContext['sessionStart'];
   const scopedEnvironment =
     resolveExplicitSpawnScopedEnvironmentFromProcessEnv(process.env);
   const buildCommandContext = async (
@@ -335,6 +337,7 @@ export async function dispatchCli(params: Readonly<{
       ? { explicitServerSelection: params.explicitServerSelection }
       : {}),
     ...(scopedEnvironment ? { scopedEnvironment } : {}),
+    ...(sessionStart ? { sessionStart } : {}),
     });
   };
 
@@ -355,18 +358,6 @@ export async function dispatchCli(params: Readonly<{
     if (await tryPrintFamilyHelp(args)) return;
   }
 
-  // Global Home/token prefixes are resolved before admission. Local information
-  // needs no credential or security read; real commands retain the fresh policy
-  // before dispatch. Auth stays reachable during the one-way CLI re-login.
-  if (args[0] !== 'auth' && !isCredentialFreeInvocation(args)) {
-    const { readStoredCredentials } = await import('@/persistence');
-    const credentials = await readStoredCredentials();
-    if (credentials) {
-      const { refreshTerminalPresentUserPolicy } = await import('@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy');
-      await refreshTerminalPresentUserPolicy({ token: credentials.token });
-    }
-  }
-
   // If --version is passed - do not log, its likely daemon inquiring about our version
   if (!globalOptionArgs.includes('--version')) {
     debugCliStart(rawArgv);
@@ -374,8 +365,12 @@ export async function dispatchCli(params: Readonly<{
 
   // Check if first argument is a subcommand
   const subcommand = args[0];
+  const runnerBootstrapFilePath = readStartedByArg(globalOptionArgs).value === 'daemon'
+    ? process.env[HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]?.trim()
+    : undefined;
   let commandDescriptor = subcommand ? findCommandDispatchDescriptor(subcommand) : null;
   let mergedCommandRegistryForSubcommand = false;
+  let standaloneAgentCatalog: Awaited<ReturnType<typeof ensureMergedAgentCommandRegistryLoaded>> | undefined;
 
   if (
     !commandDescriptor
@@ -386,8 +381,10 @@ export async function dispatchCli(params: Readonly<{
     return;
   }
 
-  if (!commandDescriptor && subcommand) {
-    await ensureMergedAgentCommandRegistryLoaded();
+  if (subcommand && (!commandDescriptor || runnerBootstrapFilePath)) {
+    standaloneAgentCatalog = await ensureMergedAgentCommandRegistryLoaded({ commandRoot: subcommand,
+      ...(runnerBootstrapFilePath ? { runnerBootstrapFilePath } : {}),
+    });
     mergedCommandRegistryForSubcommand = true;
     commandDescriptor = findCommandDispatchDescriptor(subcommand);
   }
@@ -398,7 +395,7 @@ export async function dispatchCli(params: Readonly<{
     policy: commandDescriptor?.policy,
   });
 
-  applyDaemonAutostartEnvForInvocation({ args: [...globalOptionArgs], env: process.env });
+  if (commandDescriptor) applyDaemonAutostartEnvForInvocation({ args: [...globalOptionArgs], env: process.env });
 
   const pluginTmuxMode = resolvePluginCommandTmuxMode(globalOptionArgs);
   const isHelpOrVersionRequest = globalOptionArgs.includes('-h') || globalOptionArgs.includes('--help') || globalOptionArgs.includes('-v') || globalOptionArgs.includes('--version');
@@ -509,7 +506,7 @@ export async function dispatchCli(params: Readonly<{
 
     let commandHandler = commandDescriptor?.handler ?? (subcommand ? commandRegistry[subcommand] : undefined);
     if (!commandHandler && subcommand && !mergedCommandRegistryForSubcommand) {
-      await ensureMergedAgentCommandRegistryLoaded();
+      standaloneAgentCatalog = await ensureMergedAgentCommandRegistryLoaded({ commandRoot: subcommand });
       commandDescriptor = findCommandDispatchDescriptor(subcommand);
       commandHandler = commandDescriptor?.handler ?? commandRegistry[subcommand];
     }
@@ -524,16 +521,34 @@ export async function dispatchCli(params: Readonly<{
       return;
     }
 
-    const [{ requireCatalogEntry }, { DEFAULT_CATALOG_AGENT_ID }] = await Promise.all([
-      import('@/agent/catalog/registry'),
-      import('@/agent/catalog/ids'),
+    const [{ requireCatalogEntry }, { DEFAULT_CATALOG_AGENT_ID }, { partitionProviderSessionArgs }] = await Promise.all([
+      import('@/agent/catalog/registry'), import('@/agent/catalog/ids'), import('@/cli/providerSessionArgPartition'),
     ]);
-    const defaultEntry = requireCatalogEntry(DEFAULT_CATALOG_AGENT_ID);
-    if (!defaultEntry.getCliCommandHandler) {
-      throw new Error(`Default agent '${DEFAULT_CATALOG_AGENT_ID}' has no CLI command handler registered`);
+    const parsed = partitionProviderSessionArgs({ args, providerSubcommand: null });
+    const prepared = parsed.profileQuery && !isHelpOrVersionRequest
+      ? await (await import('@/cli/profileSessionStart')).prepareProfileSessionStart({
+          profileQuery: parsed.profileQuery, startedBy: parsed.startedBy, refreshRequested: parsed.refreshSettings,
+        }) : null;
+    sessionStart = prepared?.sessionStart;
+    const target = prepared?.backendTarget;
+    if (target && !standaloneAgentCatalog) standaloneAgentCatalog = await ensureMergedAgentCommandRegistryLoaded();
+    const { resolveSessionCreationAgentTarget } = await import('@/session/creation/resolveSessionCreationAgentTarget');
+    const selectedAgentId = target?.kind === 'agent'
+      ? resolveSessionCreationAgentTarget(target, standaloneAgentCatalog)?.agentId : target?.backendId ?? DEFAULT_CATALOG_AGENT_ID;
+    if (!selectedAgentId) throw new Error('Profile default Agent is not installed or unavailable');
+    const entry = standaloneAgentCatalog?.catalogEntriesById[selectedAgentId] ?? requireCatalogEntry(selectedAgentId);
+    applyCommandDaemonAutostartDefaultPolicy({ args: [...globalOptionArgs], env: process.env, policy: entry.cliCommandPolicy });
+    applyDaemonAutostartEnvForInvocation({ args: [...globalOptionArgs], env: process.env });
+    if (target?.kind === 'agent' && target.definitionId !== undefined) {
+      const { handleConfiguredAcpCatalogCliCommand } = await import('@/agent/acp/catalog/configured/handleCatalogCliCommand');
+      await handleConfiguredAcpCatalogCliCommand(await buildCommandContext([...args, '--backend', target.definitionId], true));
+      return;
     }
-    const defaultHandler = await defaultEntry.getCliCommandHandler();
-    await defaultHandler(await buildCommandContext(args, true));
+    if (!entry.getCliCommandHandler) {
+      throw new Error(`Agent '${selectedAgentId}' has no CLI command handler registered`);
+    }
+    const handler = await entry.getCliCommandHandler();
+    await handler(await buildCommandContext(args, true));
   } finally {
     disposeCommandSignal?.();
   }

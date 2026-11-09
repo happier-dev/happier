@@ -3,12 +3,11 @@ import type { ClientRequest, IncomingMessage } from 'node:http';
 import * as https from 'node:https';
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
-import { access, mkdir, mkdtemp, realpath, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, realpath, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 
-import * as tar from 'tar';
 import * as undici from 'undici';
 import fastify from 'fastify';
 import { PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1 } from '@happier-dev/plugin-sdk/ui/build';
@@ -623,25 +622,6 @@ async function writeImportSideEffectPlugin(rootDir: string, importMarkerPath: st
   }), 'utf8');
 }
 
-async function readPackedManifest(archivePath: string): Promise<Record<string, unknown>> {
-  const extractDir = await mkdtemp(join(tmpdir(), 'happier-plugin-pack-extract-'));
-  try {
-    await tar.x({
-      file: archivePath,
-      cwd: extractDir,
-    });
-    const [rootEntry] = await readdir(extractDir);
-    if (!rootEntry) {
-      throw new Error('Packed plugin archive did not contain a root directory');
-    }
-    return JSON.parse(
-      await readFile(join(extractDir, rootEntry, '.happier-plugin', 'plugin.json'), 'utf8'),
-    ) as Record<string, unknown>;
-  } finally {
-    await rm(extractDir, { recursive: true, force: true });
-  }
-}
-
 async function installPluginThroughPresentUserTerminal(
   locator: string,
   flags: readonly string[] = [],
@@ -727,38 +707,15 @@ describe('handlePluginsCommand', () => {
     activePluginReloadController = null;
   });
 
-  it('renders the plugins help page', async () => {
+  it('renders the plugins help page without the retired surfaces', async () => {
     const output = captureConsoleText();
     try {
       await handlePluginsCommand(['help']);
 
-      expect(output.text()).toContain('happier plugins');
       expect(output.text()).toContain('happier plugins list [--json]');
-      expect(output.text()).toContain('happier plugins install <path|archive|package> [--kind path|archive|npm]');
-      expect(output.text()).toContain('happier plugins update <pluginId> [--json]');
-      expect(output.text()).toContain('happier plugins rollback <pluginId> [--json]');
-      expect(output.text()).toContain('happier plugins uninstall <pluginId> [--delete-data --yes] [--json]');
-      expect(output.text()).toContain('happier plugins create <name> [--id <plugin.id>] [--name <display name>] [--template session-agent] [--ui declarative|hostedWeb|reactNative] [--json]');
-      expect(output.text()).toContain('happier plugins dev [path] [--sdk-registry <origin>] [--json]');
-      expect(output.text()).toContain('happier plugins dev install <path> [--sdk-registry <origin>] [--json]');
-      expect(output.text()).toContain('happier plugins dev typecheck|build|test <path> [--json]');
-      expect(output.text()).toContain('happier plugins dev unregister <path> [--json]');
-      expect(output.text()).toContain('happier plugins test [path] [--packed] [--with-plugin <root-or-archive>]… [--sdk-registry <origin>] [--json]');
-      expect(output.text()).not.toContain('happier plugins scaffold');
-      expect(output.text()).not.toContain('happier plugins author');
-      expect(output.text()).toContain('Repair or refresh a stale or wiped author root');
-      expect(output.text()).toContain('happier plugins pack <path> [--out <archive.tgz>] [--sdk-registry <origin>] [--json]');
-      expect(output.text()).toContain('happier plugins doctor [path] [--json]');
-      expect(output.text()).toContain('happier plugins reload [developmentPluginId] [--json]');
-      expect(output.text()).toContain('happier plugins logs <pluginId> [--machine <id>] [--generation <id>] [--correlation <id>] [--cursor <byteOffset>] [--limit <1-500>] [--follow] [--json]');
-      expect(output.text()).toContain('happier registries');
-      expect(output.text()).not.toContain('happier plugins call');
-      expect(output.text()).not.toContain('happier plugins trust');
-      expect(output.text()).not.toContain('--trust');
-      expect(output.text()).toContain('--sdk-registry <origin>');
-      expect(output.text()).not.toMatch(/\b(?:fence|last-known-good|LKG)\b/iu);
-      expect(output.text()).toContain('plugin-provided agent CLI surfaces');
-      expect(output.text()).not.toContain('plugin-provided provider CLI surfaces');
+      for (const retired of ['happier plugins scaffold', 'happier plugins author', 'happier plugins call', 'happier plugins trust', '--trust']) {
+        expect(output.text()).not.toContain(retired);
+      }
     } finally {
       output.restore();
     }
@@ -997,7 +954,7 @@ describe('handlePluginsCommand', () => {
     }
   });
 
-  it.each(['call', 'trust'])('does not route the retired plugins %s surface', async (subcommand) => {
+  it.each(['call', 'trust', 'author'])('does not route the retired plugins %s surface', async (subcommand) => {
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
     const output = captureConsoleJsonOutput();
@@ -1373,39 +1330,6 @@ describe('handlePluginsCommand', () => {
     }
   });
 
-  it('does not retain the never-published plugins author command family', async () => {
-    const previousExitCode = process.exitCode;
-    process.exitCode = undefined;
-    const output = captureConsoleText();
-    try {
-      await handlePluginsCommand(['author', 'typecheck', '/fixture/plugin']);
-
-      expect(output.text()).toContain('Unknown plugins subcommand: author');
-      expect(process.exitCode).toBe(1);
-    } finally {
-      output.restore();
-      process.exitCode = previousExitCode;
-    }
-  });
-
-  it('uses the plugins dev vocabulary in focused-check human output', async () => {
-    const output = captureConsoleText();
-    try {
-      await handlePluginsCommand(['dev', 'typecheck', '/fixture/plugin'], {
-        runPluginAuthorToolchain: async () => ({
-          ok: true,
-          operation: 'typecheck',
-          projectRoot: '/fixture/plugin',
-        }),
-      });
-
-      expect(output.text()).toContain('Plugin development typecheck completed');
-      expect(output.text()).not.toContain('Plugin author typecheck');
-    } finally {
-      output.restore();
-    }
-  });
-
   it('dispatches the normal plugin test front door through the daemon-independent author test owner', async () => {
     const output = captureConsoleJsonOutput();
     const runPluginAuthorToolchain = vi.fn(async () => ({
@@ -1432,7 +1356,10 @@ describe('handlePluginsCommand', () => {
     }
   });
 
-  it('rejects cross-plugin prerequisites outside packed testing instead of silently dropping them', async () => {
+  it.each([
+    ['space-form', ['--with-plugin', '/fixture/contributor']],
+    ['equals-form', ['--with-plugin=/fixture/contributor']],
+  ])('rejects %s cross-plugin prerequisites outside packed testing instead of silently dropping them', async (_spelling, prerequisiteArgs) => {
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
     const output = captureConsoleJsonOutput();
@@ -1445,43 +1372,7 @@ describe('handlePluginsCommand', () => {
       await handlePluginsCommand([
         'test',
         '/fixture/plugin',
-        '--with-plugin',
-        '/fixture/contributor',
-        '--json',
-      ], {
-        runPluginAuthorToolchain,
-      });
-
-      expect(runPluginAuthorToolchain).not.toHaveBeenCalled();
-      expect(output.json()).toMatchObject({
-        ok: false,
-        kind: 'plugins_test',
-        error: {
-          code: 'plugin_test_invalid_input',
-          message: '--with-plugin is only valid with --packed',
-        },
-      });
-      expect(process.exitCode).toBe(1);
-    } finally {
-      output.restore();
-      process.exitCode = previousExitCode;
-    }
-  });
-
-  it('rejects equals-form cross-plugin prerequisites outside packed testing instead of silently dropping them', async () => {
-    const previousExitCode = process.exitCode;
-    process.exitCode = undefined;
-    const output = captureConsoleJsonOutput();
-    const runPluginAuthorToolchain = vi.fn(async () => ({
-      ok: true as const,
-      operation: 'test' as const,
-      projectRoot: '/fixture/plugin',
-    }));
-    try {
-      await handlePluginsCommand([
-        'test',
-        '/fixture/plugin',
-        '--with-plugin=/fixture/contributor',
+        ...prerequisiteArgs,
         '--json',
       ], {
         runPluginAuthorToolchain,
@@ -1984,131 +1875,31 @@ describe('handlePluginsCommand', () => {
     }
   });
 
-  it('creates a reactNative-ui public SDK plugin template (DEC-6 flagship mode)', async () => {
-    const parentDir = await mkdtemp(join(tmpdir(), 'happier-plugin-scaffold-rn-parent-'));
-    const targetDir = join(parentDir, 'acme-rn-scaffold');
+  it.each([
+    ['reactNative', ['src', 'ui', 'renderSurface.tsx']],
+    ['hostedWeb', ['.happier-plugin', 'ui', 'hosted-web', 'main-renderer', 'entry.ts']],
+  ] as const)('threads the space-form --ui %s mode into the scaffold envelope', async (ui, uiEntrySegments) => {
+    // Template content per UI mode is owned by plugins/scaffold/scaffold.integration.test.ts.
+    const parentDir = await mkdtemp(join(tmpdir(), `happier-plugin-create-${ui}-`));
+    const targetDir = join(parentDir, 'acme-ui-scaffold');
 
     try {
       const output = captureConsoleJsonOutput();
       try {
-        await handlePluginsCommand([
-          'create',
-          targetDir,
-          '--id',
-          'acme.rnscaffold',
-          '--name',
-          'Acme RN Scaffold',
-          '--ui',
-          'reactNative',
-          '--json',
-        ]);
+        await handlePluginsCommand(['create', targetDir, '--id', 'acme.uiscaffold', '--name', 'Acme UI Scaffold', '--ui', ui, '--json']);
 
-        const parsed = output.json<{
-          ok: boolean;
-          kind: string;
-          data?: {
-            scaffold: {
-              uiEntryPath?: string;
-            };
-          };
-        }>();
-
-        expect(parsed.ok).toBe(true);
-        expect(parsed.data?.scaffold.uiEntryPath).toBe(join(targetDir, 'src', 'ui', 'renderSurface.tsx'));
+        expect(output.json()).toMatchObject({
+          ok: true,
+          kind: 'plugins_create',
+          data: {
+            plugin: { pluginId: 'acme.uiscaffold', title: 'Acme UI Scaffold' },
+            scaffold: { uiEntryPath: join(targetDir, ...uiEntrySegments) },
+          },
+        });
       } finally {
         output.restore();
       }
-
-      const uiEntry = await readFile(join(targetDir, 'src', 'ui', 'renderSurface.tsx'), 'utf8');
-      expect(uiEntry).toContain('export const renderSurface = defineUiSurface');
-      expect(uiEntry).toContain("from '@happier-dev/plugin-ui';");
-      expect(uiEntry).not.toContain("from 'react-native'");
-
-      // The SDK builder owns the universal CommonJS artifact build, so a
-      // scaffold has no package-root compiler configuration to drift.
-      for (const configPath of ['vite.config.mjs', 'rspack.config.mjs', 'react-native.config.cjs']) {
-        await expect(readFile(join(targetDir, configPath), 'utf8'))
-          .rejects.toMatchObject({ code: 'ENOENT' });
-      }
-      await expect(readFile(join(targetDir, 'pluginUiBuild.ts'), 'utf8'))
-        .rejects.toMatchObject({ code: 'ENOENT' });
-      const scaffoldPackageJson = JSON.parse(
-        await readFile(join(targetDir, 'package.json'), 'utf8'),
-      ) as { scripts?: Record<string, string>; devDependencies?: Record<string, string> };
-      expect(scaffoldPackageJson.scripts?.['build:ui']).toBe('happier-plugin-build-ui --project-root .');
-      expect(scaffoldPackageJson.devDependencies).not.toHaveProperty('vite');
-
-    } finally {
-      await rm(parentDir, { recursive: true, force: true });
-    }
-  });
-
-  it('creates a buildable hostedWeb bridge application from the documented --ui flag', async () => {
-    const parentDir = await mkdtemp(join(tmpdir(), 'happier-plugin-create-hosted-web-'));
-    const targetDir = join(parentDir, 'acme-hosted-web');
-
-    try {
-      const output = captureConsoleJsonOutput();
-      try {
-        await handlePluginsCommand([
-          'create',
-          targetDir,
-          '--id',
-          'acme.hostedweb',
-          '--name',
-          'Acme Hosted Web',
-          '--ui',
-          'hostedWeb',
-          '--json',
-        ]);
-
-        const parsed = output.json<{
-          ok: boolean;
-          kind: string;
-          data?: { plugin: { pluginId: string; title: string }; scaffold: { uiEntryPath?: string } };
-        }>();
-
-        expect(parsed.ok).toBe(true);
-        expect(parsed.kind).toBe('plugins_create');
-        expect(parsed.data?.plugin).toMatchObject({ pluginId: 'acme.hostedweb', title: 'Acme Hosted Web' });
-        expect(parsed.data?.scaffold.uiEntryPath).toBe(join(
-          targetDir,
-          '.happier-plugin',
-          'ui',
-          'hosted-web',
-          'main-renderer',
-          'entry.ts',
-        ));
-      } finally {
-        output.restore();
-      }
-
-      const uiEntry = await readFile(
-        join(targetDir, '.happier-plugin', 'ui', 'hosted-web', 'main-renderer', 'entry.ts'),
-        'utf8',
-      );
-      expect(uiEntry).toContain("from '@happier-dev/plugin-sdk/ui/client'");
-      expect(uiEntry).toContain('createPluginUiRenderContext');
-      expect(uiEntry).not.toContain('context.launchInput');
-      expect(uiEntry).not.toContain('context.subPath');
-
-      for (const path of ['index.html', 'vite.config.mjs']) {
-        await expect(readFile(join(targetDir, path), 'utf8'))
-          .rejects.toMatchObject({ code: 'ENOENT' });
-      }
-      // The renderer kind is declared once, on the surface; the build config
-      // derives its target from that declaration instead of restating it.
-      const uiSurfaceModule = await readFile(join(targetDir, 'src', 'ui', 'surfaces.ts'), 'utf8');
-      expect(uiSurfaceModule).toContain("kind: 'hostedWeb'");
-      await expect(readFile(join(targetDir, 'pluginUiBuild.ts'), 'utf8'))
-        .rejects.toMatchObject({ code: 'ENOENT' });
-
-      const packageJson = JSON.parse(await readFile(join(targetDir, 'package.json'), 'utf8')) as {
-        scripts?: Record<string, string>;
-        devDependencies?: Record<string, string>;
-      };
-      expect(packageJson.scripts?.['build:ui']).toBe('happier-plugin-build-ui --project-root .');
-      expect(packageJson.devDependencies).not.toHaveProperty('vite');
+      await expect(access(join(targetDir, ...uiEntrySegments))).resolves.toBeUndefined();
     } finally {
       await rm(parentDir, { recursive: true, force: true });
     }
@@ -2248,73 +2039,40 @@ describe('handlePluginsCommand', () => {
     }
   }, 60_000);
 
-  it('forwards --sdk-registry from plugins pack into operation-local author dependency materialization', async () => {
-    const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-pack-sdk-registry-source-'));
-    const outDir = await mkdtemp(join(tmpdir(), 'happier-plugin-pack-sdk-registry-output-'));
-    const archivePath = join(outDir, 'sdk-registry.happier-plugin.tgz');
-    const sdkTarball = await createTestPluginSdkTarball();
-    const registry = await startLoopbackPluginSdkRegistry(sdkTarball);
+  it('forwards --sdk-registry from plugins pack to the pack owner', async () => {
+    // Registry-backed author dependency materialization is owned by
+    // plugins/packaging/pack.test.ts; the CLI proves only that the flag reaches
+    // that owner, observed through its credential-free origin refusal.
+    const secret = 'cli-sdk-registry-secret';
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
-    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
-    envScope.patch({ HAPPIER_HOME_DIR: join(outDir, 'home') });
-    await materializeManagedPnpmTestShim(join(outDir, 'home'));
-
+    const output = captureConsoleJsonOutput();
     try {
-      await writeFile(join(sourceRoot, 'package.json'), JSON.stringify({
-        name: 'happier-plugin-sdk-registry-cli-fixture',
-        version: '1.0.0',
-        type: 'module',
-        keywords: ['happier-plugin'],
-        happier: { manifest: '.happier-plugin/plugin.json' },
-        files: ['index.ts'],
-        dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
-      }, null, 2), 'utf8');
-      await writeFile(join(sourceRoot, 'index.ts'), [
-        "import { definePlugin } from '@happier-dev/plugin-sdk';",
-        'export const { manifest, activate } = definePlugin({',
-        "  id: 'acme.sdk-registry-cli', version: '1.0.0',",
-        "  displayName: 'SDK registry CLI', engines: { happier: '>=0.0.0' }, runtime: { apiVersion: 1 },",
-        "  entrypoints: { daemon: './dist/index.js' }, hostAccess: { required: [], optional: [] },",
-        '});',
-        '',
-      ].join('\n'), 'utf8');
+      await handlePluginsCommand([
+        'pack',
+        '/fixture/plugin',
+        '--sdk-registry',
+        `https://author:${secret}@registry.example.test`,
+        '--json',
+      ]);
 
-      const output = captureConsoleJsonOutput();
-      try {
-        await handlePluginsCommand([
-          'pack',
-          sourceRoot,
-          '--out',
-          archivePath,
-          '--sdk-registry',
-          registry.origin,
-          '--json',
-        ]);
-
-        expect(output.json()).toMatchObject({
-          ok: true,
-          kind: 'plugins_pack',
-          data: { plugin: { pluginId: 'acme.sdk-registry-cli' } },
-        });
-        expect(process.exitCode).toBe(0);
-      } finally {
-        output.restore();
-      }
-
-      expect(registry.requests).toContain('/@happier-dev/plugin-sdk');
-      await expect(readFile(
-        join(sourceRoot, 'node_modules', '@happier-dev', 'plugin-sdk', 'index.js'),
-        'utf8',
-      )).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind: 'plugins_pack',
+        error: {
+          code: 'pack_failed',
+          diagnostics: [expect.objectContaining({
+            message: 'Plugin SDK registry must be a credential-free HTTPS origin or loopback HTTP origin',
+          })],
+        },
+      });
+      expect(JSON.stringify(output.json())).not.toContain(secret);
+      expect(process.exitCode).toBe(1);
     } finally {
+      output.restore();
       process.exitCode = previousExitCode;
-      envScope.restore();
-      await registry.close();
-      await rm(sourceRoot, { recursive: true, force: true });
-      await rm(outDir, { recursive: true, force: true });
     }
-  }, 60_000);
+  });
 
   it('fails closed when packing a local source without a valid manifest', async () => {
     const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-pack-missing-manifest-'));
@@ -2398,31 +2156,6 @@ describe('handlePluginsCommand', () => {
       process.exitCode = previousExitCode;
       await rm(sourceRoot, { recursive: true, force: true });
       await rm(outDir, { recursive: true, force: true });
-    }
-  });
-
-  it('expands tilde output paths through the CLI home directory helper', async () => {
-    const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-pack-tilde-source-'));
-    const outHome = await mkdtemp(join(tmpdir(), 'happier-plugin-pack-tilde-home-'));
-    await writeImportSideEffectPlugin(sourceRoot, join(outHome, 'daemon-imported.log'));
-    const envScope = createEnvKeyScope(['HOME', 'USERPROFILE']);
-    envScope.patch({ HOME: outHome, USERPROFILE: outHome });
-
-    try {
-      const result = await packLocalPlugin({
-        locator: sourceRoot,
-        outPath: '~/packed.happier-plugin.tgz',
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.archivePath).toBe(join(outHome, 'packed.happier-plugin.tgz'));
-        expect(result.digestPath).toBe(join(outHome, 'packed.happier-plugin.tgz.sha256'));
-      }
-    } finally {
-      envScope.restore();
-      await rm(sourceRoot, { recursive: true, force: true });
-      await rm(outHome, { recursive: true, force: true });
     }
   });
 
@@ -2510,57 +2243,6 @@ describe('handlePluginsCommand', () => {
       reloadConfiguration();
       await removeTempDir(home);
       await rm(sourceRoot, { recursive: true, force: true });
-    }
-  });
-
-  it('packs a canonical manifest into the archive without rewriting the authored source manifest', async () => {
-    const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-pack-normalized-source-'));
-    const outDir = await mkdtemp(join(tmpdir(), 'happier-plugin-pack-normalized-output-'));
-    const manifestPath = join(sourceRoot, '.happier-plugin', 'plugin.json');
-    await mkdir(join(sourceRoot, '.happier-plugin'), { recursive: true });
-    await writeFile(join(sourceRoot, 'daemon.mjs'), 'export function activate() {}\n', 'utf8');
-    const manifest = createPluginManifestV2Fixture({
-      id: 'acme.pack-normalized',
-      contributes: {
-        hooks: [
-          {
-            hookApiVersion: 1,
-            id: 'session-started',
-            on: 'session.spawned',
-            category: 'lifecycle',
-            scope: 'session',
-            executionKind: 'observe',
-          },
-        ],
-      },
-    });
-    const authoredBytes = `${JSON.stringify(manifest, null, 4)}\n`;
-    await writeFile(manifestPath, authoredBytes, 'utf8');
-    await writeFile(join(sourceRoot, 'package.json'), JSON.stringify({
-      name: 'happier-plugin-acme-pack-normalized',
-      version: manifest.version,
-      keywords: ['happier-plugin'],
-      happier: { manifest: '.happier-plugin/plugin.json' },
-      files: ['.happier-plugin', 'daemon.mjs'],
-    }), 'utf8');
-
-    try {
-      const result = await packLocalPlugin({
-        locator: sourceRoot,
-        outPath: join(outDir, 'acme-pack-normalized.happier-plugin.tgz'),
-      });
-
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      expect(await readFile(manifestPath, 'utf8')).toBe(authoredBytes);
-      const packedManifest = await readPackedManifest(result.archivePath);
-      const contributes = packedManifest.contributes as {
-        hooks?: Array<{ executionKind?: string }>;
-      };
-      expect(contributes.hooks?.[0]?.executionKind).toBe('observe');
-    } finally {
-      await rm(sourceRoot, { recursive: true, force: true });
-      await rm(outDir, { recursive: true, force: true });
     }
   });
 
@@ -3260,50 +2942,6 @@ describe('handlePluginsCommand', () => {
     expect(daemonBoundary.requestChange).not.toHaveBeenCalled();
   });
 
-  it('reports an unknown daemon uninstall outcome inside the JSON error envelope', async () => {
-    const home = await createTempDir('happier-plugin-uninstall-reload-failed-cli-');
-    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
-    envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
-    reloadConfiguration();
-
-    const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-uninstall-reload-failed-source-'));
-    await materializeSamplePluginFixture(sourceRoot);
-    try {
-      await installPluginThroughPresentUserTerminal(sourceRoot);
-
-      daemonBoundary.requestChange.mockResolvedValueOnce({ kind: 'unavailable', code: 'daemon_unavailable' });
-      const output = captureConsoleJsonOutput();
-      try {
-        await runCompiledPluginCommand(['uninstall', SAMPLE_PLUGIN_ID, '--json']);
-
-        const parsed = output.json<{
-          v: 1;
-          ok: boolean;
-          kind: string;
-          data?: unknown;
-          error?: {
-            code: string;
-            pluginId?: string;
-          };
-        }>();
-
-        expect(parsed.ok).toBe(false);
-        expect(parsed.kind).toBe('plugins_uninstall');
-        expect(parsed.data).toBeUndefined();
-        expect(parsed.error).toMatchObject({ code: 'outcome_unknown', pluginId: SAMPLE_PLUGIN_ID });
-      } finally {
-        output.restore();
-      }
-
-      const state = await createPluginStateStore({ happyHomeDir: home }).read();
-      expect(state.plugins[SAMPLE_PLUGIN_ID]).toBeDefined();
-    } finally {
-      envScope.restore();
-      reloadConfiguration();
-      await removeTempDir(home);
-    }
-  });
-
   it('requests a daemon-owned source-in-place reload for a development plugin', async () => {
     const home = await createTempDir('happier-plugin-reload-cli-');
     const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
@@ -3538,68 +3176,6 @@ describe('handlePluginsCommand', () => {
       expect((await store.read()).plugins[SAMPLE_PLUGIN_ID]?.source.trustPolicy).toBe('prompt');
     } finally {
       await marketplace.close();
-      envScope.restore();
-      reloadConfiguration();
-      await removeTempDir(home);
-    }
-  });
-
-  it('does not persist local-path plugin state when install runs in dry-run mode', async () => {
-    const previousExitCode = process.exitCode;
-    process.exitCode = undefined;
-    const home = await createTempDir('happier-plugin-cli-');
-    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
-    envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
-    reloadConfiguration();
-
-    const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-source-'));
-    await materializeSamplePluginFixture(sourceRoot);
-
-    try {
-      const installOutput = captureConsoleJsonOutput();
-      try {
-        await runCompiledPluginCommand(['install', sourceRoot, '--dry-run', '--json']);
-
-        const parsed = installOutput.json<{
-          v: 1;
-          ok: boolean;
-          kind: string;
-          data?: {
-            dryRun: boolean;
-            request: { kind: string; locator: string };
-          };
-        }>();
-
-        expect(parsed.ok).toBe(true);
-        expect(parsed.kind).toBe('plugins_install');
-        expect(parsed.data).toMatchObject({
-          dryRun: true,
-          request: { kind: 'installPath', locator: sourceRoot },
-        });
-        expect(daemonBoundary.requestChange).not.toHaveBeenCalled();
-      } finally {
-        installOutput.restore();
-      }
-
-      const listOutput = captureConsoleJsonOutput();
-      try {
-        await handlePluginsCommand(['list', '--json']);
-
-        const parsed = listOutput.json<{
-          v: 1;
-          ok: boolean;
-          kind: string;
-          error?: { code: string };
-        }>();
-
-        expect(parsed.ok).toBe(false);
-        expect(parsed.kind).toBe('plugins_list');
-        expect(parsed.error?.code).toBe('daemon_unavailable');
-      } finally {
-        listOutput.restore();
-      }
-    } finally {
-      process.exitCode = previousExitCode;
       envScope.restore();
       reloadConfiguration();
       await removeTempDir(home);

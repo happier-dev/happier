@@ -3,49 +3,20 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { resolveWindowsCommandInvocationMock, spawnSyncMock, writeSyncMock } = vi.hoisted(() => ({
-  resolveWindowsCommandInvocationMock: vi.fn((
-    { command, args }: { command: string; args: readonly string[] },
-  ): { command: string; args: string[]; windowsVerbatimArguments?: boolean } => ({
-    command,
-    args: [...args],
-  })),
-  spawnSyncMock: vi.fn(),
-  writeSyncMock: vi.fn(),
+const { spawnSyncMock, writeSyncMock } = vi.hoisted(() => ({
+  spawnSyncMock: vi.fn<typeof import('node:child_process').spawnSync>(),
+  writeSyncMock: vi.fn<typeof import('node:fs').writeSync>(),
 }));
 
-vi.mock('@happier-dev/cli-common/process', async (importOriginal) => ({
-  ...await importOriginal<typeof import('@happier-dev/cli-common/process')>(),
-  resolveWindowsCommandInvocation: resolveWindowsCommandInvocationMock,
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:child_process')>(),
+  spawnSync: spawnSyncMock,
 }));
 
-vi.mock('node:child_process', async (importOriginal) => {
-  const original = await importOriginal<typeof import('node:child_process')>();
-  return {
-    ...original,
-    spawnSync: spawnSyncMock,
-  };
-});
-
-vi.mock('node:fs', async (importOriginal) => {
-  const original = await importOriginal<typeof import('node:fs')>();
-  return {
-    ...original,
-    writeSync: writeSyncMock,
-  };
-});
-
-const { requireProviderCliLaunchSpecMock } = vi.hoisted(() => ({
-  requireProviderCliLaunchSpecMock: vi.fn(),
+vi.mock('node:fs', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:fs')>(),
+  writeSync: writeSyncMock,
 }));
-
-vi.mock('@/packagedRuntime/managedTools/requireAgentCliLaunchSpec', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@/packagedRuntime/managedTools/requireAgentCliLaunchSpec')>();
-  return {
-    ...original,
-    requireAgentCliLaunchSpec: requireProviderCliLaunchSpecMock,
-  };
-});
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
@@ -60,36 +31,22 @@ const envKeys = [
   'HAPPIER_NODE_PATH',
 ] as const;
 
+const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
 const tempDirs = new Set<string>();
 let envScope = createEnvKeyScope(envKeys);
 
 beforeEach(async () => {
-  const actualLaunch = await vi.importActual<typeof import('@/packagedRuntime/managedTools/requireAgentCliLaunchSpec')>('@/packagedRuntime/managedTools/requireAgentCliLaunchSpec');
-  requireProviderCliLaunchSpecMock.mockReset();
-  requireProviderCliLaunchSpecMock.mockImplementation(actualLaunch.requireAgentCliLaunchSpec);
-
   const actualChildProcess = await vi.importActual<typeof import('node:child_process')>('node:child_process');
   spawnSyncMock.mockReset();
-  spawnSyncMock.mockImplementation(actualChildProcess.spawnSync as any);
+  spawnSyncMock.mockImplementation(actualChildProcess.spawnSync);
+  writeSyncMock.mockReset();
 });
 
-async function createExecutable(dir: string, name: string, contents: string): Promise<string> {
-  return await writeExecutableShim({
-    dir,
-    fileName: process.platform === 'win32' ? `${name}.cmd` : name,
-    contents,
-  });
-}
-
 afterEach(async () => {
+  if (originalPlatformDescriptor) {
+    Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+  }
   vi.restoreAllMocks();
-  resolveWindowsCommandInvocationMock.mockReset();
-  resolveWindowsCommandInvocationMock.mockImplementation((
-    { command, args }: { command: string; args: readonly string[] },
-  ): { command: string; args: string[]; windowsVerbatimArguments?: boolean } => ({
-    command,
-    args: [...args],
-  }));
   spawnSyncMock.mockReset();
   writeSyncMock.mockReset();
   envScope.restore();
@@ -100,110 +57,128 @@ afterEach(async () => {
   tempDirs.clear();
 });
 
-describe('maybePassthroughProviderCliInfoRequest', () => {
-  it('runs system node-shebang provider CLIs through the resolved JS runtime', async () => {
+function successfulSpawnResult() {
+  return {
+    pid: 1,
+    output: [],
+    stdout: Buffer.alloc(0),
+    stderr: Buffer.alloc(0),
+    status: 0,
+    signal: null,
+  };
+}
+
+describe('provider CLI passthrough', () => {
+  it('does not native-spawn provider subcommands through the info passthrough path', () => {
+    spawnSyncMock.mockReturnValue(successfulSpawnResult());
+
+    expect(maybePassthroughProviderCliInfoRequest({
+      agentId: 'codex',
+      args: ['codex', 'resume', '--all'],
+      processEnv: process.env,
+    })).toBe(false);
+    expect(spawnSyncMock).not.toHaveBeenCalled();
+  });
+
+  it('runs system JavaScript provider CLIs through the resolved JS runtime', async () => {
     const root = await createTempDir('happier-provider-passthrough-');
     tempDirs.add(root);
     const pathDir = join(root, 'bin');
-    const runtimeDir = join(root, 'runtime');
     await mkdir(pathDir, { recursive: true });
-    await mkdir(runtimeDir, { recursive: true });
-    const providerPath = await createExecutable(
-      pathDir,
-      'gemini',
-      '#!/usr/bin/env node\nprocess.stdout.write(\"fake-system-gemini-help\\n\")\n',
-    );
-    const markerPath = join(root, 'runtime-marker.txt');
-    const runtimePath = await createExecutable(
-      runtimeDir,
-      'node',
-      `#!/bin/sh\nprintf '%s\\n' \"$1\" > ${JSON.stringify(markerPath)}\n`,
-    );
+    const markerPath = join(root, 'runtime-marker.json');
+    const providerPath = await writeExecutableShim({
+      dir: pathDir,
+      fileName: process.platform === 'win32' ? 'gemini.js' : 'gemini',
+      contents: '#!/usr/bin/env node\n'
+        + 'require("node:fs").writeFileSync(' + JSON.stringify(markerPath)
+        + ', JSON.stringify(process.argv.slice(2)));\n',
+    });
 
-    process.env.PATH = pathDir;
-    process.env.HAPPIER_JS_RUNTIME_PATH = runtimePath;
+    envScope.patch({
+      PATH: pathDir,
+      HAPPIER_GEMINI_PATH: undefined,
+      HAPPIER_JS_RUNTIME_PATH: process.execPath,
+      HAPPIER_MANAGED_NODE_BIN: undefined,
+      HAPPIER_NODE_PATH: undefined,
+    });
 
-    const handled = maybePassthroughProviderCliInfoRequest({
+    expect(maybePassthroughProviderCliInfoRequest({
       agentId: 'gemini',
       args: ['--help'],
-      processEnv: { ...process.env, PATH: pathDir, HAPPIER_JS_RUNTIME_PATH: runtimePath },
-    });
-
-    expect(handled).toBe(true);
-    await expect(readFile(markerPath, 'utf8')).resolves.toContain(providerPath);
+      processEnv: {
+        ...process.env,
+        ...(process.platform === 'win32' ? { PATHEXT: '.js;.exe' } : {}),
+      },
+    })).toBe(true);
+    expect(spawnSyncMock).toHaveBeenCalledWith(
+      process.execPath,
+      [providerPath, '--help'],
+      expect.objectContaining({ stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
+    );
+    await expect(readFile(markerPath, 'utf8')).resolves.toBe(JSON.stringify(['--help']));
   });
 
-  it('wraps Windows shell shims before passthrough invocations', () => {
-    spawnSyncMock.mockReturnValue({
-      pid: 1,
-      output: [],
-      stdout: null,
-      stderr: null,
-      status: 0,
-      signal: null,
-    } as any);
-    resolveWindowsCommandInvocationMock.mockReturnValueOnce({
-      command: 'C:\\Windows\\System32\\cmd.exe',
-      args: ['/d', '/s', '/c', '"C:\\Users\\natan\\AppData\\Roaming\\npm\\opencode.CMD --help"'],
-      windowsVerbatimArguments: true,
+  it('routes Windows shell shims through the real managed Agent CLI runner before passthrough', async () => {
+    const root = await createTempDir('happier-provider-passthrough-windows-');
+    tempDirs.add(root);
+    const shimPath = await writeExecutableShim({
+      dir: root,
+      fileName: 'opencode.CMD',
+      contents: '@echo off\r\n',
     });
-    requireProviderCliLaunchSpecMock.mockReturnValueOnce({
-      source: 'override',
-      resolvedPath: 'C:\\Users\\natan\\AppData\\Roaming\\npm\\opencode.CMD',
-      command: 'C:\\Users\\natan\\AppData\\Roaming\\npm\\opencode.CMD',
-      args: [],
-    });
+    if (!originalPlatformDescriptor) {
+      throw new Error('Expected process.platform to be configurable for this test');
+    }
+    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
+    // The Windows process is the boundary; catalog, resolution and launch preparation stay real.
+    spawnSyncMock.mockReturnValue(successfulSpawnResult());
 
-    const handled = maybePassthroughProviderCliInfoRequest({
+    expect(maybePassthroughProviderCliInfoRequest({
       agentId: 'opencode',
       args: ['--help'],
       processEnv: {
         ...process.env,
-        HAPPIER_OPENCODE_PATH: 'C:\\Users\\natan\\AppData\\Roaming\\npm\\opencode.CMD',
-        ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+        HAPPIER_OPENCODE_PATH: shimPath,
+        HAPPIER_JS_RUNTIME_PATH: process.execPath,
       },
-    });
-
-    expect(handled).toBe(true);
-    expect(resolveWindowsCommandInvocationMock).toHaveBeenCalledWith(expect.objectContaining({
-      command: 'C:\\Users\\natan\\AppData\\Roaming\\npm\\opencode.CMD',
-      args: ['--help'],
-    }));
+    })).toBe(true);
     expect(spawnSyncMock).toHaveBeenCalledWith(
-      'C:\\Windows\\System32\\cmd.exe',
-      ['/d', '/s', '/c', '"C:\\Users\\natan\\AppData\\Roaming\\npm\\opencode.CMD --help"'],
+      process.execPath,
+      [expect.stringMatching(/agent_cli_windows_shim_runner\.cjs$/u), shimPath, '--help'],
       expect.objectContaining({
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
-        windowsVerbatimArguments: true,
       }),
     );
   });
 
-  it('preserves exact provider-native info arguments and replays captured output', () => {
+  it('preserves exact provider-native info arguments and replays captured output', async () => {
+    const root = await createTempDir('happier-provider-passthrough-output-');
+    tempDirs.add(root);
+    const providerPath = await writeExecutableShim({
+      dir: root,
+      fileName: 'codex.mjs',
+      contents: '#!/usr/bin/env node\n',
+    });
     spawnSyncMock.mockReturnValue({
-      pid: 1,
-      output: [],
+      ...successfulSpawnResult(),
       stdout: Buffer.from('provider stdout\n'),
       stderr: Buffer.from('provider stderr\n'),
-      status: 0,
-      signal: null,
-    } as any);
-    requireProviderCliLaunchSpecMock.mockReturnValueOnce({
-      source: 'path',
-      resolvedPath: '/usr/local/bin/codex',
-      command: '/usr/local/bin/codex',
-      args: ['--wrapped'],
     });
 
     passthroughProviderCliArgs({
       agentId: 'codex',
       providerArgs: ['exec', '--help'],
+      processEnv: {
+        ...process.env,
+        HAPPIER_CODEX_PATH: providerPath,
+        HAPPIER_JS_RUNTIME_PATH: process.execPath,
+      },
     });
 
     expect(spawnSyncMock).toHaveBeenCalledWith(
-      '/usr/local/bin/codex',
-      ['--wrapped', 'exec', '--help'],
+      process.execPath,
+      [providerPath, 'exec', '--help'],
       expect.objectContaining({
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,

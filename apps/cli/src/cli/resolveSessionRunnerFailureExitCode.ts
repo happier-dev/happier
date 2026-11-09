@@ -2,6 +2,8 @@ import { HostTerminalTranscriptFollowAdmissionError } from '@/agent/runtime/sess
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { logger } from '@/ui/logger';
 import { classifyPrimarySessionRuntimeIssue, readSessionPreparationFailureDiagnostic } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
+import { inspectOwnErrorCodeDataProperty } from '@/agent/runtime/session/process/agentRuntimeBridgeError';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { writeConsoleErrorBestEffort } from '@/utils/writeConsoleBestEffort';
 import {
@@ -23,6 +25,12 @@ export function resolveSessionRunnerFailureExitCode(error: unknown): number {
   // A refused requester cannot be supplied by repeating this same runner.
   // Keep the existing terminal admission disposition and explicit Resume recovery.
   if (isPluginError(error) && error.code === 'project_requester_credentials_unavailable') {
+    return SESSION_RUNNER_EXIT_CODES.TERMINAL_FOLLOW_ADMISSION_FAILED;
+  }
+  const errorCode = inspectOwnErrorCodeDataProperty(error);
+  const providerCode = errorCode.kind === 'string' ? ProviderErrorCodeV1Schema.safeParse(errorCode.value) : null;
+  // Repeating a launch cannot supply required consent or repair a definite Provider refusal.
+  if (providerCode?.success && !createProviderErrorV1(providerCode.data).retryable) {
     return SESSION_RUNNER_EXIT_CODES.TERMINAL_FOLLOW_ADMISSION_FAILED;
   }
   return 1;

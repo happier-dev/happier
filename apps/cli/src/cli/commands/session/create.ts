@@ -1,7 +1,10 @@
 import chalk from 'chalk';
 import { HappierActionError } from '@happier-dev/sdk';
 import { randomUUID } from 'node:crypto';
-import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import {
+  readSessionSpawnNewActionResultV1,
+  SessionSpawnNewActionResultV1Schema,
+} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol';
 
 import { hasFlag } from '@/cli/commands/shared/argvFlags';
@@ -52,7 +55,7 @@ async function resolveSessionCreateConnectedServices(params: Readonly<{
     listInventory: async () => {
       const inventoryResult = normalizeActionExecuteResult(await params.executor.execute(
         'sessions.spawn.connected_services.list',
-        { agentId: params.agentId, includeUnavailable: false },
+        { agentId: params.agentId, includeUnavailable: false, includeDefaults: false },
         { surface: 'cli', defaultSessionId: null },
       ));
       if (!inventoryResult.ok) {
@@ -124,7 +127,7 @@ export async function cmdSessionCreate(
     externalActionClient: true,
     ...(spawnRequest.machineId ? { machineId: spawnRequest.machineId } : {}),
   });
-  if (credentials.credentialProvenance === 'api_token' && !spawnRequest.machineId) {
+  if (!spawnRequest.machineId) {
     const machineTarget = await executor.resolveMachineTarget();
     if (!machineTarget.ok) {
       if (structuredCreationOutput) {
@@ -134,6 +137,7 @@ export async function cmdSessionCreate(
           error: {
             code: machineTarget.code,
             ...(machineTarget.candidates ? { candidates: machineTarget.candidates } : {}),
+            ...(machineTarget.details ? { details: machineTarget.details } : {}),
           },
         });
         return;
@@ -141,6 +145,7 @@ export async function cmdSessionCreate(
       throw Object.assign(new Error(machineTarget.code), {
         code: machineTarget.code,
         ...(machineTarget.candidates ? { candidates: machineTarget.candidates } : {}),
+        ...(machineTarget.details ? { details: machineTarget.details } : {}),
       });
     }
     spawnRequest.machineId = machineTarget.machineId;
@@ -183,6 +188,7 @@ export async function cmdSessionCreate(
     }
     throw Object.assign(new Error(mapped.message ?? (error instanceof Error ? error.message : 'Failed to create session')), {
       code: mapped.code,
+      ...(((error as { details?: unknown })?.details !== undefined) ? { details: (error as { details?: unknown }).details } : {}),
     });
   }
 
@@ -219,11 +225,11 @@ export async function cmdSessionCreate(
   })) {
     return;
   }
-  const parsedCreated = SessionSpawnNewResultV1Schema.safeParse(rawCreated);
+  const parsedCreated = SessionSpawnNewActionResultV1Schema.safeParse(rawCreated);
   if (!parsedCreated.success) {
     throw new Error('session_create_failed');
   }
-  const created = parsedCreated.data;
+  const created = readSessionSpawnNewActionResultV1(parsedCreated.data);
   if (created.type === 'error') {
     const { type: _type, code, retryable, ...cause } = created;
     const error = { code, ...(retryable ? { retryable: true } : {}), ...cause };
@@ -235,7 +241,10 @@ export async function cmdSessionCreate(
       });
       return;
     }
-    throw Object.assign(new Error(code === 'agent_signed_out' ? created.launchError?.message ?? code : code), error);
+    const message = code === 'agent_signed_out'
+      || (created.launchError?.code === 'CHILD_EXITED_BEFORE_WEBHOOK' && created.launchError.childExit)
+      ? created.launchError?.message ?? code : code;
+    throw Object.assign(new Error(message), error);
   }
   if (created.type === 'pending') {
     if (structuredCreationOutput) {

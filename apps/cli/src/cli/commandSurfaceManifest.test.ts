@@ -5,20 +5,26 @@ import {
   listRootHelpCommands,
 } from './commandSurfaceManifest';
 import { buildRootHelpText } from './buildRootHelpText';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 
 const { getResolvedContributionRegistryMock } = vi.hoisted(() => ({
   getResolvedContributionRegistryMock: vi.fn(),
 }));
 
-vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>();
+vi.mock('@/plugins/projection/registry/builtIn/snapshot', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/plugins/projection/registry/builtIn/snapshot')>();
   getResolvedContributionRegistryMock.mockImplementation(actual.getResolvedContributionRegistry);
   return {
     ...actual,
     getResolvedContributionRegistry: getResolvedContributionRegistryMock,
-    resolveMergedContributionRegistry: async () => getResolvedContributionRegistryMock(),
   };
 });
+vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>(),
+  resolveMergedContributionRegistry: async () => (
+    await import('@/plugins/projection/registry/builtIn/snapshot')
+  ).getResolvedContributionRegistry(),
+}));
 
 import { ensureMergedAgentCommandRegistryLoaded } from './commandRegistry';
 
@@ -161,6 +167,7 @@ describe('CLI command-surface manifest', () => {
 
   it('projects merged provider command entries into the root help surface', async () => {
     getResolvedContributionRegistryMock.mockReturnValue({
+      ...createResolvedContributionRegistry({}),
       agents: [],
       backends: [],
       runtimeAdaptersByBackendId: new Map(),
@@ -213,6 +220,7 @@ describe('CLI command-surface manifest', () => {
 
   it('uses projected first-party root help metadata for bundled provider commands', async () => {
     getResolvedContributionRegistryMock.mockReturnValue({
+      ...createResolvedContributionRegistry({}),
       agents: [],
       backends: [],
       runtimeAdaptersByBackendId: new Map(),

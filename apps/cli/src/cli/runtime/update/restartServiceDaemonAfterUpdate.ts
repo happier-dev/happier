@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 
 import {
+  doesCliLauncherUseInstallation,
   formatPinnedDaemonServiceRestartCommand,
   planServiceDaemonsRestartAfterCliUpdate,
   resolveInstalledFirstPartyComponentPaths,
@@ -19,9 +20,12 @@ import {
   discoverInstalledDaemonServiceEntries,
   isInstalledDaemonServiceForHappierHome,
   readInstalledDaemonServiceManagedBy,
+  readInstalledDaemonServiceLauncher,
+  type InstalledDaemonServiceEntry,
   resolveInstalledDaemonServiceDefinitionPath,
 } from '@/daemon/service/discoverInstalledDaemonServiceEntries';
 import { resolveDaemonServiceLaunchdLabel, type DaemonServiceTargetMode } from '@/daemon/service/plan';
+import { isJavaScriptRuntimeExecutable } from '@/daemon/service/runtimeTarget';
 import { resolveDaemonServiceDiscoveryTargets } from '@/daemon/service/resolveDaemonServiceDiscoveryTargets';
 import { readSettings } from '@/persistence';
 import { sanitizeServerIdForFilesystem } from '@/server/serverId';
@@ -112,16 +116,22 @@ export async function restartServiceDaemonOntoInstalledCli(params: Readonly<{
     channel,
     processEnv,
   }).binaryPath;
+  const env = { ...processEnv };
+  for (const key of DEFINITION_OWNED_SERVICE_ENV_KEYS) delete env[key];
+  const serviceEnv: NodeJS.ProcessEnv = {
+    ...env,
+    HAPPIER_DAEMON_SERVICE_CHANNEL: channel,
+    HAPPIER_PUBLIC_RELEASE_CHANNEL: getReleaseRingCatalogEntry(channel).publicLabel,
+    HAPPIER_DAEMON_SERVICE_TARGET_MODE: params.plan.targetMode,
+    HAPPIER_DAEMON_SERVICE_INSTANCE_ID: params.plan.instanceId,
+  };
+  await repairLegacyWindowsServiceLauncher({
+    channel, target: params.plan, binaryPath, serviceEnv, expectedVersion: params.expectedVersion,
+  });
   const result = spawnSync(binaryPath, ['service', 'restart'], {
     stdio: 'inherit',
     windowsHide: true,
-    env: {
-      ...processEnv,
-      HAPPIER_DAEMON_SERVICE_CHANNEL: channel,
-      HAPPIER_PUBLIC_RELEASE_CHANNEL: getReleaseRingCatalogEntry(channel).publicLabel,
-      HAPPIER_DAEMON_SERVICE_TARGET_MODE: params.plan.targetMode,
-      HAPPIER_DAEMON_SERVICE_INSTANCE_ID: params.plan.instanceId,
-    },
+    env: serviceEnv,
   });
   if (result.status !== 0) {
     const detail = result.error instanceof Error ? result.error.message : `exit status ${result.status ?? 'unknown'}`;
@@ -144,12 +154,21 @@ type OtherServiceDaemonBeforeUpdate = Readonly<{
   managedBy: 'desktop' | null;
   /** The server whose lifecycle directory holds this service's daemon state. */
   lifecycleServerId: string;
+  windowsLauncherRepairPath: string | null;
 }>;
 
 /**
  * Selectors an inherited environment can use to point the CLI at another server or lifecycle; each
  * restart of another server's service names that service instead.
  */
+const DEFINITION_OWNED_SERVICE_ENV_KEYS = [
+  'HAPPIER_DAEMON_SERVICE_MANAGED_BY',
+  'HAPPIER_DAEMON_SERVICE_BUNDLE_ID',
+  'HAPPIER_DAEMON_SERVICE_AUTOSTART',
+  'HAPPIER_DAEMON_SERVICE_NODE_PATH',
+  'HAPPIER_DAEMON_SERVICE_ENTRY_PATH',
+] as const;
+
 const INHERITED_SERVICE_SELECTOR_ENV_KEYS = [
   'HAPPIER_ACTIVE_SERVER_ID',
   'HAPPIER_SERVER_URL',
@@ -167,20 +186,12 @@ function serviceLabelOfPlan(plan: ServiceDaemonRestartPlan): string | null {
     : null;
 }
 
-/**
- * Every other user-mode service of this Happier home and ring (besides `excludeLabel`, the invoking
- * server's own) whose own service was running its daemon, observed before the update.
- */
-async function observeOtherServiceDaemonsBeforeUpdate(params: Readonly<{
-  channel: PublicReleaseRingId;
-  processEnv: NodeJS.ProcessEnv;
-  excludeLabel: string | null;
-}>): Promise<OtherServiceDaemonBeforeUpdate[]> {
-  const runtime = resolveDaemonServiceCliRuntimeFromEnv({ channel: params.channel, processEnv: params.processEnv });
-  const settings = await readSettings();
-  // The default-following service serves the persisted selection, never this invocation's `--server`.
-  const followedServerId = sanitizeServerIdForFilesystem(settings.activeServerId ?? 'cloud', 'cloud');
-  const entries = (await Promise.all(
+async function listUserServicesOfThisHomeAndRing(
+  channel: PublicReleaseRingId,
+  processEnv: NodeJS.ProcessEnv,
+): Promise<InstalledDaemonServiceEntry[]> {
+  const runtime = resolveDaemonServiceCliRuntimeFromEnv({ channel, processEnv });
+  return (await Promise.all(
     resolveDaemonServiceDiscoveryTargets({
       platform: runtime.platform,
       mode: 'user',
@@ -195,12 +206,26 @@ async function observeOtherServiceDaemonsBeforeUpdate(params: Readonly<{
         mode: target.mode,
         serversById: {},
       })),
-  )).flat();
+  )).flat().filter((entry) => entry.releaseChannel === channel
+    && happierHomeDirsMatch(entry.happierHomeDir, runtime.happierHomeDir, runtime.platform));
+}
+
+/**
+ * Every other user-mode service of this Happier home and ring (besides `excludeLabel`, the invoking
+ * server's own) whose own service was running its daemon, observed before the update.
+ */
+async function observeOtherServiceDaemonsBeforeUpdate(params: Readonly<{
+  channel: PublicReleaseRingId;
+  processEnv: NodeJS.ProcessEnv;
+  excludeLabel: string | null;
+}>): Promise<OtherServiceDaemonBeforeUpdate[]> {
+  const settings = await readSettings();
+  // The default-following service serves the persisted selection, never this invocation's `--server`.
+  const followedServerId = sanitizeServerIdForFilesystem(settings.activeServerId ?? 'cloud', 'cloud');
+  const entries = await listUserServicesOfThisHomeAndRing(params.channel, params.processEnv);
 
   const others: OtherServiceDaemonBeforeUpdate[] = [];
   for (const entry of entries) {
-    if (entry.releaseChannel !== params.channel) continue;
-    if (!happierHomeDirsMatch(entry.happierHomeDir, runtime.happierHomeDir, runtime.platform)) continue;
     // The label the service hands its daemon (`HAPPIER_DAEMON_SERVICE_LABEL`), which the daemon records.
     const label = resolveDaemonServiceLaunchdLabel(entry.serverId, entry.releaseChannel, entry.targetMode);
     if (label === params.excludeLabel || others.some((other) => other.label === label)) continue;
@@ -213,9 +238,50 @@ async function observeOtherServiceDaemonsBeforeUpdate(params: Readonly<{
     ) {
       continue;
     }
-    others.push({ label, targetMode: entry.targetMode, instanceId: entry.serverId, managedBy: entry.managedBy ?? null, lifecycleServerId });
+    others.push({ label, targetMode: entry.targetMode, instanceId: entry.serverId, managedBy: entry.managedBy ?? null, lifecycleServerId,
+      windowsLauncherRepairPath: entry.windowsLauncherUpgradeNeeded ? entry.path : null,
+    });
   }
   return others;
+}
+
+async function repairLegacyWindowsServiceLauncher(params: Readonly<{
+  channel: PublicReleaseRingId;
+  target: { targetMode: DaemonServiceTargetMode; instanceId: string };
+  binaryPath: string;
+  serviceEnv: NodeJS.ProcessEnv;
+  expectedVersion: string;
+  repairPath?: string | null;
+}>): Promise<void> {
+  const runtime = resolveDaemonServiceCliRuntimeFromEnv({ channel: params.channel, processEnv: params.serviceEnv });
+  if (runtime.platform !== 'win32') return;
+  const repairPath = params.repairPath === undefined
+    ? (await listUserServicesOfThisHomeAndRing(params.channel, params.serviceEnv)).find((entry) =>
+        resolveDaemonServiceLaunchdLabel(entry.serverId, entry.releaseChannel, entry.targetMode)
+          === resolveDaemonServiceLaunchdLabel(params.target.instanceId, params.channel, params.target.targetMode)
+        && entry.windowsLauncherUpgradeNeeded)?.path
+    : params.repairPath;
+  if (!repairPath) return;
+  const launcher = readInstalledDaemonServiceLauncher({ platform: 'win32', path: repairPath });
+  if (!launcher || !(launcher.length === 1 || (launcher.length === 2 && isJavaScriptRuntimeExecutable(launcher[0])))) {
+    process.stderr.write(`Windows background service launcher needs repair: its custom CLI prefix cannot be preserved by automatic installation (${repairPath}). Run the service installer with the original CLI.\n`);
+    return;
+  }
+  const installation = resolveInstalledFirstPartyComponentPaths({ componentId: 'happier-cli', channel: params.channel, processEnv: params.serviceEnv });
+  const managed = doesCliLauncherUseInstallation({ launcher: [launcher[launcher.length - 1]!], installationRoots: [installation.installRoot] });
+  const repair = spawnSync(params.binaryPath, ['service', 'install', '--preserve-desktop-ownership'], {
+    stdio: 'inherit', windowsHide: true,
+    env: {
+      ...params.serviceEnv,
+      HAPPIER_DAEMON_SERVICE_NODE_PATH: managed ? params.binaryPath : launcher[0],
+      HAPPIER_DAEMON_SERVICE_ENTRY_PATH: managed ? '' : launcher[1] ?? '',
+    },
+  });
+  if (repair.status !== 0) {
+    const detail = repair.error instanceof Error ? repair.error.message : `exit status ${repair.status ?? 'unknown'}`;
+    throw new Error(`Windows background service launcher repair failed (${detail})`);
+  }
+  if (!managed) process.stderr.write(`Windows background service launcher repaired while preserving its external CLI (${launcher.join(' ')}). The service must provide ${params.expectedVersion}.\n`);
 }
 
 async function restartOtherServiceDaemonOntoInstalledCli(params: Readonly<{
@@ -231,19 +297,21 @@ async function restartOtherServiceDaemonOntoInstalledCli(params: Readonly<{
     processEnv: params.processEnv,
   }).binaryPath;
   const env: NodeJS.ProcessEnv = { ...params.processEnv };
-  for (const key of INHERITED_SERVICE_SELECTOR_ENV_KEYS) delete env[key];
+  for (const key of [...INHERITED_SERVICE_SELECTOR_ENV_KEYS, ...DEFINITION_OWNED_SERVICE_ENV_KEYS]) delete env[key];
+  const serviceEnv: NodeJS.ProcessEnv = {
+    ...env,
+    HAPPIER_DAEMON_SERVICE_CHANNEL: channel,
+    HAPPIER_PUBLIC_RELEASE_CHANNEL: getReleaseRingCatalogEntry(channel).publicLabel,
+    HAPPIER_DAEMON_SERVICE_TARGET_MODE: service.targetMode,
+    HAPPIER_DAEMON_SERVICE_INSTANCE_ID: service.instanceId,
+    ...(service.targetMode === 'pinned' ? { HAPPIER_ACTIVE_SERVER_ID: service.lifecycleServerId } : {}),
+  };
+  await repairLegacyWindowsServiceLauncher({
+    channel, target: service, binaryPath, serviceEnv, expectedVersion: params.expectedVersion,
+    repairPath: service.windowsLauncherRepairPath,
+  });
   const result = spawnSync(binaryPath, ['service', 'restart'], {
-    stdio: 'inherit',
-    windowsHide: true,
-    env: {
-      ...env,
-      HAPPIER_DAEMON_SERVICE_CHANNEL: channel,
-      HAPPIER_PUBLIC_RELEASE_CHANNEL: getReleaseRingCatalogEntry(channel).publicLabel,
-      HAPPIER_DAEMON_SERVICE_TARGET_MODE: service.targetMode,
-      HAPPIER_DAEMON_SERVICE_INSTANCE_ID: service.instanceId,
-      // A pinned service's own server; the default-following one reads the persisted selection.
-      ...(service.targetMode === 'pinned' ? { HAPPIER_ACTIVE_SERVER_ID: service.lifecycleServerId } : {}),
-    },
+    stdio: 'inherit', windowsHide: true, env: serviceEnv,
   });
   if (result.status !== 0) {
     const detail = result.error instanceof Error ? result.error.message : `exit status ${result.status ?? 'unknown'}`;

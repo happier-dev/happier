@@ -3,6 +3,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writ
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { createBuiltinRelayAccessSelection as selection } from '@happier-dev/cli-common/relayAccess';
+
 import { reloadConfiguration } from '@/configuration';
 import { commandRegistry } from '@/cli/commandRegistry';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -64,9 +66,15 @@ if (expectedPassword !== null) {
     process.stderr.write('missing SSH_ASKPASS_REQUIRE\\n');
     process.exit(43);
   }
-  if (!process.env.SSH_ASKPASS || !process.env.SSH_ASKPASS.includes('happier-ssh-askpass')) {
+  if (!process.env.SSH_ASKPASS) {
     process.stderr.write('missing SSH_ASKPASS\\n');
     process.exit(44);
+  }
+  // Exercise the real askpass contract; its private directory name is not an API.
+  const askpass = require('node:child_process').spawnSync(process.env.SSH_ASKPASS, [], { encoding: 'utf8' });
+  if (askpass.status !== 0 || askpass.stdout !== expectedPassword + '\\n') {
+    process.stderr.write('askpass did not return the expected password\\n');
+    process.exit(45);
   }
 }
 
@@ -257,22 +265,18 @@ describe('happier relay access --json', () => {
             expect(parsed.data?.providerId).toBe('lan');
             expect(parsed.data?.state).toBe('enabled');
             expect(parsed.data?.shareUrl).toBe('https://relay.lan.example.test');
-            expect(parsed.data?.config).toEqual({ providerId: 'lan', url: 'https://relay.lan.example.test' });
+            expect(parsed.data?.config).toEqual(selection('lan', { url: 'https://relay.lan.example.test' }));
 
             const persistedPath = join(home, 'relay', 'access', 'local.json');
             const persisted = JSON.parse(readFileSync(persistedPath, 'utf8'));
-            expect(persisted).toEqual({ providerId: 'lan', url: 'https://relay.lan.example.test' });
+            expect(persisted).toEqual(selection('lan', { url: 'https://relay.lan.example.test' }));
         } finally {
             output.restore();
             process.exitCode = prevExitCode;
         }
     });
 
-    it('enforces 0600 permissions on the persisted local relay access config file (even when it already exists)', async () => {
-        if (process.platform === 'win32') {
-            return;
-        }
-
+    it.skipIf(process.platform === 'win32')('enforces 0600 permissions on the persisted local relay access config file (even when it already exists)', async () => {
         const configDir = join(home, 'relay', 'access');
         mkdirSync(configDir, { recursive: true, mode: 0o700 });
         const configPath = join(configDir, 'local.json');
@@ -317,11 +321,11 @@ describe('happier relay access --json', () => {
             expect(parsed.data?.providerId).toBe('localOnly');
             expect(parsed.data?.state).toBe('disabled');
             expect(parsed.data?.shareUrl).toBe(null);
-            expect(parsed.data?.config).toEqual({ providerId: 'localOnly' });
+            expect(parsed.data?.config).toEqual(selection('localOnly'));
 
             const persistedPath = join(home, 'relay', 'access', 'local.json');
             const persisted = JSON.parse(readFileSync(persistedPath, 'utf8'));
-            expect(persisted).toEqual({ providerId: 'localOnly' });
+            expect(persisted).toEqual(selection('localOnly'));
         } finally {
             output.restore();
             process.exitCode = prevExitCode;
@@ -365,18 +369,21 @@ describe('happier relay access --json', () => {
         }
     });
 
-    it('disables relay access by removing the persisted config file', async () => {
+    it.each([
+        ['a LAN config', selection('lan', { url: 'https://relay.lan.example.test' }), ['relay', 'access', 'disable', '--json']],
+        ['--yes', selection('localOnly'), ['relay', 'access', 'disable', '--yes', '--json']],
+    ])('disables relay access by removing the persisted config file (%s)', async (_case, persistedConfig, args) => {
         const persistedPath = join(home, 'relay', 'access', 'local.json');
         mkdirSync(join(home, 'relay', 'access'), { recursive: true });
-        writeFileSync(persistedPath, JSON.stringify({ providerId: 'lan', url: 'https://relay.lan.example.test' }), 'utf8');
+        writeFileSync(persistedPath, JSON.stringify(persistedConfig), 'utf8');
 
         const output = captureConsoleLogAndMuteStdout();
         const prevExitCode = process.exitCode;
         process.exitCode = undefined;
         try {
             await commandRegistry.relay({
-                args: ['relay', 'access', 'disable', '--json'],
-                rawArgv: ['node', 'happier', 'relay', 'access', 'disable', '--json'],
+                args,
+                rawArgv: ['node', 'happier', ...args],
                 terminalRuntime: null,
             });
 
@@ -404,7 +411,7 @@ describe('happier relay access --json', () => {
         });
         const persistedPath = join(home, 'relay', 'access', 'local.json');
         mkdirSync(join(home, 'relay', 'access'), { recursive: true });
-        writeFileSync(persistedPath, JSON.stringify({ providerId: 'lan', url: 'https://old-provider.example.test' }), 'utf8');
+        writeFileSync(persistedPath, JSON.stringify(selection('lan', { url: 'https://old-provider.example.test' })), 'utf8');
 
         const output = captureConsoleLogAndMuteStdout();
         try {
@@ -419,35 +426,6 @@ describe('happier relay access --json', () => {
             expect(active.localServerUrl).toBe('http://127.0.0.1:3005');
         } finally {
             output.restore();
-        }
-    });
-
-    it('accepts --yes for relay access disable', async () => {
-        const persistedPath = join(home, 'relay', 'access', 'local.json');
-        mkdirSync(join(home, 'relay', 'access'), { recursive: true });
-        writeFileSync(persistedPath, JSON.stringify({ providerId: 'localOnly' }), 'utf8');
-
-        const output = captureConsoleLogAndMuteStdout();
-        const prevExitCode = process.exitCode;
-        process.exitCode = undefined;
-        try {
-            await commandRegistry.relay({
-                args: ['relay', 'access', 'disable', '--yes', '--json'],
-                rawArgv: ['node', 'happier', 'relay', 'access', 'disable', '--yes', '--json'],
-                terminalRuntime: null,
-            });
-
-            const parsed = JSON.parse(output.logs.join('\n').trim());
-            expect(parsed.ok).toBe(true);
-            expect(parsed.kind).toBe('relay_access_disable');
-            expect(parsed.data?.configured).toBe(false);
-            expect(parsed.data?.state).toBe('disabled');
-            expect(process.exitCode).toBe(0);
-
-            expect(() => readFileSync(persistedPath, 'utf8')).toThrow();
-        } finally {
-            output.restore();
-            process.exitCode = prevExitCode;
         }
     });
 
@@ -568,6 +546,27 @@ describe('happier relay access --json', () => {
         }
     });
 
+    it('requires an explicit SSH upstream instead of borrowing the local Home profile', async () => {
+        await addServerProfile({ name: 'local-home', serverUrl: 'http://127.0.0.1:3005', webappUrl: 'https://app.example.test', use: true });
+        const fakeSsh = createFakeSsh({});
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            const args = ['relay', 'access', 'configure', '--ssh', 'dev@example.test', '--provider', 'tailscaleServe', '--json'];
+            await withPatchedPath(fakeSsh.binDir, () => commandRegistry.relay({
+                args, rawArgv: ['node', 'happier', ...args], terminalRuntime: null,
+            }));
+            expect(JSON.parse(output.logs.join('\n').trim())).toMatchObject({ ok: false, error: { code: 'invalid_arguments' } });
+            expect(fakeSsh.readInvocations()).toEqual([]);
+            expect(await getActiveServerProfile()).toMatchObject({ serverUrl: 'http://127.0.0.1:3005' });
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+            fakeSsh.cleanup();
+        }
+    });
+
     it('uses an active loopback server URL as the relay-access upstream', async () => {
         const relayEnvScope = createEnvKeyScope([
             'HAPPIER_SERVER_URL',
@@ -612,28 +611,34 @@ describe('happier relay access --json', () => {
             },
         });
 
+        const output = captureConsoleLogAndMuteStdout();
         try {
             await withPatchedPath(fakeTailscale.binDir, async () => {
                 await commandRegistry.relay({
-                    args: ['relay', 'access', 'configure', '--provider', 'tailscaleServe'],
-                    rawArgv: ['node', 'happier', 'relay', 'access', 'configure', '--provider', 'tailscaleServe'],
+                    args: ['relay', 'access', 'configure', '--provider', 'tailscaleServe', '--json'],
+                    rawArgv: ['node', 'happier', 'relay', 'access', 'configure', '--provider', 'tailscaleServe', '--json'],
                     terminalRuntime: null,
                 });
             });
 
+            expect(JSON.parse(output.logs.join('\n').trim())).toMatchObject({
+                ok: true, kind: 'relay_access_configure',
+                data: { providerId: 'tailscaleServe', state: 'needs_auth', shareUrl: null },
+            });
             expect(fakeTailscale.readInvocations()).toContainEqual([
                 'serve',
                 '--bg',
                 'http://127.0.0.1:3005',
             ]);
         } finally {
+            output.restore();
             fakeTailscale.cleanup();
             relayEnvScope.restore();
             reloadConfiguration();
         }
     });
 
-    it('redacts cloudflare named-tunnel secrets in JSON output', async () => {
+    it('rejects raw credential flags without leaking them or persisting relay configuration', async () => {
         const output = captureConsoleLogAndMuteStdout();
         const prevExitCode = process.exitCode;
         process.exitCode = undefined;
@@ -649,6 +654,8 @@ describe('happier relay access --json', () => {
                     'relay.example.test',
                     '--token',
                     'super-secret-token',
+                    '--upstream-url',
+                    'http://127.0.0.1:3005',
                     '--json',
                 ],
                 rawArgv: [
@@ -663,6 +670,8 @@ describe('happier relay access --json', () => {
                     'relay.example.test',
                     '--token',
                     'super-secret-token',
+                    '--upstream-url',
+                    'http://127.0.0.1:3005',
                     '--json',
                 ],
                 terminalRuntime: null,
@@ -671,94 +680,67 @@ describe('happier relay access --json', () => {
             const text = output.logs.join('\n').trim();
             expect(text).not.toContain('super-secret-token');
             const parsed = JSON.parse(text);
-            expect(parsed.ok).toBe(true);
-            expect(parsed.kind).toBe('relay_access_configure');
-            expect(parsed.data?.providerId).toBe('cloudflareNamed');
-            expect(parsed.data?.config?.token).toBeUndefined();
-            expect(parsed.data?.shareUrl).toBe('https://relay.example.test');
-        } finally {
-            output.restore();
-            process.exitCode = prevExitCode;
-        }
-    });
-
-    it('rejects newline-separated hostname and token values', async () => {
-        const output = captureConsoleLogAndMuteStdout();
-        const prevExitCode = process.exitCode;
-        process.exitCode = undefined;
-        try {
-            await commandRegistry.relay({
-                args: [
-                    'relay',
-                    'access',
-                    'configure',
-                    '--provider',
-                    'cloudflareNamed',
-                    '--hostname',
-                    'relay.example.test\ninvalid',
-                    '--token',
-                    'super-secret-token',
-                    '--json',
-                ],
-                rawArgv: [
-                    'node',
-                    'happier',
-                    'relay',
-                    'access',
-                    'configure',
-                    '--provider',
-                    'cloudflareNamed',
-                    '--hostname',
-                    'relay.example.test\ninvalid',
-                    '--token',
-                    'super-secret-token',
-                    '--json',
-                ],
-                terminalRuntime: null,
-            });
-
-            const parsed = JSON.parse(output.logs.join('\n').trim());
             expect(parsed.ok).toBe(false);
             expect(parsed.error?.code).toBe('invalid_arguments');
-            expect(process.exitCode).toBe(1);
+            expect(() => readFileSync(join(home, 'relay', 'access', 'local.json'), 'utf8')).toThrow();
         } finally {
             output.restore();
             process.exitCode = prevExitCode;
         }
     });
 
-    it('rejects newline-separated token values', async () => {
+    it('persists exact Connected Account references through descriptor JSON configuration without claiming a live tunnel', async () => {
+        const credentialRefs = [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount', account: {
+            service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'account-a',
+        } } }];
+        const config = { hostname: 'relay.example.test' };
+        const args = ['relay', 'access', 'configure', '--provider', 'cloudflareNamed', '--config', JSON.stringify(config),
+            '--credential-refs', JSON.stringify(credentialRefs), '--upstream-url', 'http://127.0.0.1:3005', '--json'];
+        const output = captureConsoleLogAndMuteStdout();
+        try {
+            await commandRegistry.relay({ args, rawArgv: ['node', 'happier', ...args], terminalRuntime: null });
+            expect(JSON.parse(output.logs.join('\n').trim())).toMatchObject({ ok: true, data: {
+                configured: true, providerId: 'cloudflareNamed', state: 'unknown', shareUrl: null,
+                config: { provider: { kind: 'builtin', id: 'cloudflareNamed' }, config, credentialRefs },
+            } });
+            expect(JSON.parse(readFileSync(join(home, 'relay', 'access', 'local.json'), 'utf8')))
+                .toEqual({ provider: { kind: 'builtin', id: 'cloudflareNamed' }, config, credentialRefs });
+        } finally { output.restore(); }
+    });
+
+    it('refuses build-denied provider configuration before persistence or native execution', async () => {
+        const policy = createEnvKeyScope(['HAPPIER_BUILD_FEATURES_DENY']);
+        policy.patch({ HAPPIER_BUILD_FEATURES_DENY: 'setup.relayAccess.allowTailscale' });
+        const output = captureConsoleLogAndMuteStdout();
+        try {
+            const args = ['relay', 'access', 'configure', '--provider', 'tailscaleServe', '--upstream-url', 'http://127.0.0.1:3005', '--json'];
+            await commandRegistry.relay({ args, rawArgv: ['node', 'happier', ...args], terminalRuntime: null });
+            expect(JSON.parse(output.logs.join('\n').trim())).toMatchObject({ ok: false, error: { code: 'invalid_arguments' } });
+            expect(() => readFileSync(join(home, 'relay', 'access', 'local.json'), 'utf8')).toThrow();
+        } finally { output.restore(); policy.restore(); }
+    });
+
+    it('rejects a newline-separated hostname value', async () => {
+        const hostname = 'relay.example.test\ninvalid';
         const output = captureConsoleLogAndMuteStdout();
         const prevExitCode = process.exitCode;
         process.exitCode = undefined;
         try {
+            const args = [
+                'relay',
+                'access',
+                'configure',
+                '--provider',
+                'cloudflareNamed',
+                '--hostname',
+                hostname,
+                '--upstream-url',
+                'http://127.0.0.1:3005',
+                '--json',
+            ];
             await commandRegistry.relay({
-                args: [
-                    'relay',
-                    'access',
-                    'configure',
-                    '--provider',
-                    'cloudflareNamed',
-                    '--hostname',
-                    'relay.example.test',
-                    '--token',
-                    'super-secret-token\ninvalid',
-                    '--json',
-                ],
-                rawArgv: [
-                    'node',
-                    'happier',
-                    'relay',
-                    'access',
-                    'configure',
-                    '--provider',
-                    'cloudflareNamed',
-                    '--hostname',
-                    'relay.example.test',
-                    '--token',
-                    'super-secret-token\ninvalid',
-                    '--json',
-                ],
+                args,
+                rawArgv: ['node', 'happier', ...args],
                 terminalRuntime: null,
             });
 
@@ -775,7 +757,7 @@ describe('happier relay access --json', () => {
     it('supports reading relay access config over ssh', async () => {
         const fakeSsh = createFakeSsh({
             outputs: [
-                { status: 0, stdout: `${JSON.stringify({ providerId: 'lan', url: 'https://relay.remote.lan.test' })}\n` },
+                { status: 0, stdout: `${JSON.stringify(selection('lan', { url: 'https://relay.remote.lan.test' }))}\n` },
             ],
         });
 
@@ -812,7 +794,7 @@ describe('happier relay access --json', () => {
     it('trusts the SSH host key (app-managed known_hosts) before reading relay access config when --known-hosts-path and --yes are provided', async () => {
         const fakeSsh = createFakeSsh({
             outputs: [
-                { status: 0, stdout: `${JSON.stringify({ providerId: 'lan', url: 'https://relay.remote.lan.test' })}\n` },
+                { status: 0, stdout: `${JSON.stringify(selection('lan', { url: 'https://relay.remote.lan.test' }))}\n` },
             ],
         });
 
@@ -878,7 +860,7 @@ describe('happier relay access --json', () => {
     it('refuses a changed SSH host key under --yes and runs no remote command', async () => {
         const fakeSsh = createFakeSsh({
             outputs: [
-                { status: 0, stdout: `${JSON.stringify({ providerId: 'lan', url: 'https://relay.remote.lan.test' })}\n` },
+                { status: 0, stdout: `${JSON.stringify(selection('lan', { url: 'https://relay.remote.lan.test' }))}\n` },
             ],
         });
 
@@ -942,55 +924,10 @@ describe('happier relay access --json', () => {
         }
     });
 
-    it('supports password auth when reading relay access config over ssh', async () => {
-        const fakeSsh = createFakeSsh({
-            outputs: [
-                { status: 0, stdout: `${JSON.stringify({ providerId: 'lan', url: 'https://relay.remote.lan.test' })}\n` },
-            ],
-        });
-
-        const output = captureConsoleLogAndMuteStdout();
-        const prevExitCode = process.exitCode;
-        const previousPassword = process.env.HAPPIER_SSH_PASSWORD;
-        process.exitCode = undefined;
-        process.env.HAPPIER_SSH_PASSWORD = 'super-secret-password';
-        try {
-            await withPatchedPath(fakeSsh.binDir, async () => {
-                await commandRegistry.relay({
-                    args: ['relay', 'access', 'status', '--ssh', 'dev@example.test', '--ssh-auth', 'password', '--json'],
-                    rawArgv: ['node', 'happier', 'relay', 'access', 'status', '--ssh', 'dev@example.test', '--ssh-auth', 'password', '--json'],
-                    terminalRuntime: null,
-                });
-            });
-
-            const parsed = JSON.parse(output.logs.join('\n').trim());
-            expect(parsed.ok).toBe(true);
-            expect(parsed.kind).toBe('relay_access_status');
-            expect(parsed.data?.configured).toBe(true);
-            expect(parsed.data?.providerId).toBe('lan');
-            expect(parsed.data?.state).toBe('enabled');
-            expect(parsed.data?.shareUrl).toBe('https://relay.remote.lan.test');
-            expect(output.logs.join('\n')).not.toContain('super-secret-password');
-
-            const invocations = fakeSsh.readInvocations();
-            expect(invocations.length).toBe(1);
-            expect(invocations[0]?.includes('dev@example.test')).toBe(true);
-        } finally {
-            output.restore();
-            process.exitCode = prevExitCode;
-            if (previousPassword === undefined) {
-                delete process.env.HAPPIER_SSH_PASSWORD;
-            } else {
-                process.env.HAPPIER_SSH_PASSWORD = previousPassword;
-            }
-            fakeSsh.cleanup();
-        }
-    });
-
     it('supports --ssh-config-file when reading relay access config over ssh', async () => {
         const fakeSsh = createFakeSsh({
             outputs: [
-                { status: 0, stdout: `${JSON.stringify({ providerId: 'lan', url: 'https://relay.remote.lan.test' })}\n` },
+                { status: 0, stdout: `${JSON.stringify(selection('lan', { url: 'https://relay.remote.lan.test' }))}\n` },
             ],
         });
 
@@ -1025,7 +962,7 @@ describe('happier relay access --json', () => {
         const fakeSsh = createFakeSsh({
             outputs: [
                 { status: 0, stdout: 'hostname 127.0.0.1\nport 53621\n' },
-                { status: 0, stdout: `${JSON.stringify({ providerId: 'lan', url: 'https://relay.remote.lan.test' })}\n` },
+                { status: 0, stdout: `${JSON.stringify(selection('lan', { url: 'https://relay.remote.lan.test' }))}\n` },
             ],
         });
 
@@ -1115,7 +1052,7 @@ echo "[127.0.0.1]:53621 ssh-ed25519 AAAATESTKEY"
     it('supports --ssh-port when reading relay access config over ssh', async () => {
         const fakeSsh = createFakeSsh({
             outputs: [
-                { status: 0, stdout: `${JSON.stringify({ providerId: 'lan', url: 'https://relay.remote.lan.test' })}\n` },
+                { status: 0, stdout: `${JSON.stringify(selection('lan', { url: 'https://relay.remote.lan.test' }))}\n` },
             ],
         });
 
@@ -1211,7 +1148,7 @@ echo "[127.0.0.1]:53621 ssh-ed25519 AAAATESTKEY"
     it('does not forward local tailscale bin overrides into ssh relay access status', async () => {
         const fakeSsh = createFakeSsh({
             outputs: [
-                { status: 0, stdout: `${JSON.stringify({ providerId: 'tailscaleServe' })}\n` },
+                { status: 0, stdout: `${JSON.stringify(selection('tailscaleServe'))}\n` },
                 { status: 0, stdout: '/usr/bin/tailscale\n' },
                 {
                     status: 0,
@@ -1263,7 +1200,7 @@ echo "[127.0.0.1]:53621 ssh-ed25519 AAAATESTKEY"
         const fakeSsh = createFakeSsh({
             expectedPassword: 'super-secret',
             outputs: [
-                { status: 0, stdout: `${JSON.stringify({ providerId: 'lan', url: 'https://relay.remote.lan.test' })}\n` },
+                { status: 0, stdout: `${JSON.stringify(selection('lan', { url: 'https://relay.remote.lan.test' }))}\n` },
             ],
         });
 
@@ -1307,11 +1244,14 @@ echo "[127.0.0.1]:53621 ssh-ed25519 AAAATESTKEY"
             expect(parsed.kind).toBe('relay_access_status');
             expect(parsed.data?.configured).toBe(true);
             expect(parsed.data?.providerId).toBe('lan');
+            expect(parsed.data?.state).toBe('enabled');
+            expect(parsed.data?.shareUrl).toBe('https://relay.remote.lan.test');
             expect(output.logs.join('\n')).not.toContain('super-secret');
 
             const invocations = fakeSsh.readInvocations();
             expect(invocations.length).toBe(1);
             const args = invocations[0] ?? [];
+            expect(args).toContain('dev@example.test');
             expect(args.join(' ')).toContain('BatchMode=no');
             expect(args.join(' ')).not.toContain('super-secret');
         } finally {

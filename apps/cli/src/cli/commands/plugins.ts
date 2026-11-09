@@ -29,6 +29,7 @@ import {
   type PluginCatalogEntryIntrospectionSnapshot,
 } from '@/plugins/projection/introspection/catalogSnapshot';
 import { readPluginDiagnosticDisplayMessage } from '@/plugins/projection/introspection/project';
+import { describePluginModuleFailure } from '@/plugins/runtime/moduleFailure';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { createNpmRegistryProfileService } from '@/plugins/distribution/npm/profiles/service';
 import { createNpmRegistryProfileProbe } from '@/plugins/distribution/npm/profiles/probe';
@@ -146,7 +147,7 @@ function formatInstalledContributionSummary(entry: PluginCatalogEntryIntrospecti
 
 type PluginActionCatalogRow = Readonly<{
   actionId: string;
-  kind: 'action' | 'tool';
+  kind: 'action';
   title: string;
   description: string | null;
   surfaces: readonly string[];
@@ -889,7 +890,7 @@ function printPluginDevelopmentStatus(status: DaemonPluginDevelopmentStatus): vo
     if (plugin.occurrenceId) out.line(`  ${dim('Occurrence:')} ${plugin.occurrenceId}`);
     if (plugin.uiArtifactDigest) out.line(`  ${dim('UI digest:')} ${plugin.uiArtifactDigest}`);
     if (plugin.diagnostic) {
-      out.line(`  ${dim('Diagnostic:')} ${plugin.diagnostic.message ?? plugin.diagnostic.code}`);
+      out.line(`  ${dim('Diagnostic:')} ${describePluginModuleFailure(plugin.diagnostic.message ?? plugin.diagnostic.code, plugin.diagnostic.details) ?? plugin.diagnostic.message ?? plugin.diagnostic.code}`);
     }
   }
   console.log(out.render());
@@ -910,11 +911,11 @@ async function runPluginsStatusCommand(
       await printJsonEnvelope({
         ok: false,
         kind: 'plugins_status',
-        error: { code: result.code, message: result.message },
+        error: { code: result.code, message: result.message, ...(result.details === undefined ? {} : { details: result.details }) },
       }, { exitCode: 1 });
       return;
     }
-    console.error(errorFrame('Error:', [result.message]));
+    console.error(errorFrame('Error:', [describePluginModuleFailure(result.message, result.details) ?? result.message]));
     process.exitCode = 1;
     return;
   }
@@ -965,11 +966,11 @@ async function runPluginsDevCommand(
         await printJsonEnvelope({
           ok: false,
           kind: 'plugins_dev_unregister',
-          error: { code: result.code, message: result.message },
+          error: { code: result.code, message: result.message, ...(result.details === undefined ? {} : { details: result.details }) },
         }, { exitCode: 1 });
         return;
       }
-      console.error(errorFrame('Error:', [result.message]));
+      console.error(errorFrame('Error:', [describePluginModuleFailure(result.message, result.details) ?? result.message]));
       process.exitCode = 1;
       return;
     }
@@ -1038,11 +1039,11 @@ async function runPluginsDevCommand(
       await printJsonEnvelope({
         ok: false,
         kind: 'plugins_dev',
-        error: { code: result.code, message: result.message },
+        error: { code: result.code, message: result.message, ...(result.details === undefined ? {} : { details: result.details }) },
       }, { exitCode: 1 });
       return;
     }
-    console.error(errorFrame('Error:', [result.message]));
+    console.error(errorFrame('Error:', [describePluginModuleFailure(result.message, result.details) ?? result.message]));
     process.exitCode = 1;
     return;
   }
@@ -1388,7 +1389,7 @@ function renderInstalledGenerationReport(report: InstalledPluginGenerationReport
   }
   lines.push(`${fail('unhealthy')} ${header} ${dim(`(${report.inspectedFileCount} files)`)}`);
   for (const diagnostic of report.diagnostics) {
-    lines.push(`  ${diagnostic.relativePath ? `${diagnostic.relativePath}: ` : ''}${diagnostic.message}`);
+    lines.push(`  ${diagnostic.relativePath ? `${diagnostic.relativePath}: ` : ''}${describePluginModuleFailure(diagnostic.message, diagnostic.details) ?? diagnostic.message}`);
   }
   if (report.repair === 'reinstall') {
     const pluginCommand = `${resolveInvokerName() ?? 'happier'} plugins`;
@@ -1591,11 +1592,11 @@ async function runPluginsReloadCommand(args: readonly string[], deps: PluginsCom
       await printJsonEnvelope({
         ok: false,
         kind: 'plugins_reload',
-        error: { code: result.code, message: result.message },
+        error: { code: result.code, message: result.message, ...(result.details === undefined ? {} : { details: result.details }) },
       }, { exitCode: 1 });
       return;
     }
-    console.error(errorFrame('Error:', [result.message]));
+    console.error(errorFrame('Error:', [describePluginModuleFailure(result.message, result.details) ?? result.message]));
     process.exitCode = 1;
     return;
   }

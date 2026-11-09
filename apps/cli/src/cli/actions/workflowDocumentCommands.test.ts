@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { PassThrough } from 'node:stream';
 
 import { parseWorkflowDocumentV1, validateWorkflowDefinition } from '@happier-dev/protocol';
 import { parseWorkflowDocumentJsonIngressV1 } from '@happier-dev/protocol/workflows/workflowDocumentV1';
@@ -40,8 +41,87 @@ function actionHarness(resultFor: (actionId: string, input: unknown) => unknown)
 }
 
 describe('workflow document CLI commands', () => {
+  it.each(['import', 'export'] as const)('forwards compiled project targeting for file %s', async (operation) => {
+    const harness = actionHarness(() => operation === 'import'
+      ? { ok: true, classification: 'unsaved_definition', document: DOCUMENT }
+      : { definitionId: 'definition-1', revision: { headerVersion: 1, bodyVersion: 1 },
+        document: DOCUMENT, json: JSON.stringify(DOCUMENT), metadata: { title: 'Review' } });
+    const output = captureStdoutJsonOutput();
+    try {
+      await tryHandleWorkflowDocumentCliCommand({
+        argv: ['workflow', 'definition', operation, operation === 'import' ? 'workflow.json' : 'definition-1',
+          '--machine-id', 'machine-1', '--project-directory', '/repo', '--workspace-ref-id=workspace-1', '--json'],
+        readFileFn: async () => JSON.stringify(DOCUMENT),
+        actionExecutionDeps: harness.deps as never,
+      });
+      expect(harness.execute).toHaveBeenCalledExactlyOnceWith(`workflow.definition.${operation}`,
+        operation === 'import' ? { json: JSON.stringify(DOCUMENT) } : { definitionId: 'definition-1' },
+        expect.objectContaining({ externalActionTarget: { kind: 'machine', machineId: 'machine-1',
+          project: { machineId: 'machine-1', directory: '/repo', workspaceRefId: 'workspace-1' } } }));
+      expect(process.exitCode ?? 0).toBe(0);
+    } finally {
+      output.restore();
+      process.exitCode = undefined;
+    }
+  });
+
+  it.each([
+    ['--unknown'], ['--machine-id'], ['--project-directory'],
+    ['--machine-id', 'machine-1', '--project-directory', '/repo', '--project-directory', '/other'],
+  ])('rejects invalid compiled options before executing: %j', async (...flags) => {
+    const harness = actionHarness(() => ({}));
+    const output = captureStdoutJsonOutput();
+    try {
+      await tryHandleWorkflowDocumentCliCommand({ argv: ['workflow', 'definition', 'import', '-', '--json', ...flags],
+        readStdinFn: async () => JSON.stringify(DOCUMENT), actionExecutionDeps: harness.deps as never });
+      expect(harness.execute).not.toHaveBeenCalled();
+      expect(output.json()).toMatchObject({ ok: false });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      output.restore();
+      process.exitCode = undefined;
+    }
+  });
+
+  it('settles interrupted stdin import without waiting for EOF or executing an Action', async () => {
+    const stdin = new PassThrough();
+    const stdinBoundary = vi.spyOn(process, 'stdin', 'get').mockReturnValue(stdin as typeof process.stdin);
+    const controller = new AbortController();
+    const harness = actionHarness(() => ({}));
+    const output = captureStdoutJsonOutput();
+    let settled = false;
+    const command = tryHandleWorkflowDocumentCliCommand({
+      argv: ['workflow', 'definition', 'import', '-', '--json'], signal: controller.signal,
+      actionExecutionDeps: harness.deps as never,
+    }).then(() => { settled = true; });
+    try {
+      stdin.write('{"kind":"happier.workflow"');
+      controller.abort(new Error('Command interrupted'));
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(settled).toBe(true);
+      expect(stdin.writableEnded).toBe(false);
+      expect(harness.execute).not.toHaveBeenCalled();
+      expect(output.json()).toMatchObject({ ok: false });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      stdin.end();
+      await command;
+      stdinBoundary.mockRestore();
+      output.restore();
+      process.exitCode = undefined;
+    }
+  });
+
   it('imports stdin through the canonical unsaved document Action', async () => {
     const harness = actionHarness(() => ({ ok: true, classification: 'unsaved_definition', document: DOCUMENT }));
+    const stdin = new PassThrough();
+    const stdinBoundary = vi.spyOn(process, 'stdin', 'get').mockReturnValue(stdin as typeof process.stdin);
+    const raw = JSON.stringify(DOCUMENT).replace('Summarize the current work', 'Résumé 🦋');
+    const bytes = Buffer.from(raw);
+    // Split a multi-byte character across input chunks; decoding follows accumulation.
+    const split = bytes.indexOf(Buffer.from('🦋')) + 1;
+    stdin.write(bytes.subarray(0, split));
+    stdin.end(bytes.subarray(split));
     const output = captureStdoutJsonOutput();
     try {
       expect(await tryHandleWorkflowDocumentCliCommand({
@@ -49,14 +129,13 @@ describe('workflow document CLI commands', () => {
           'workflow', 'definition', 'import', '-',
           '--json',
         ],
-        readStdinFn: async () => JSON.stringify(DOCUMENT),
         actionExecutionDeps: harness.deps as never,
       })).toBe(true);
 
       expect(harness.execute).toHaveBeenCalledOnce();
       expect(harness.execute).toHaveBeenCalledWith(
         'workflow.definition.import',
-        { json: JSON.stringify(DOCUMENT) },
+        { json: raw },
         expect.objectContaining({ surface: 'cli' }),
       );
       expect(output.json()).toMatchObject({
@@ -65,6 +144,7 @@ describe('workflow document CLI commands', () => {
         data: { classification: 'unsaved_definition', document: DOCUMENT },
       });
     } finally {
+      stdinBoundary.mockRestore();
       output.restore();
       process.exitCode = undefined;
     }

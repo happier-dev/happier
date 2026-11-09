@@ -15,6 +15,7 @@ import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
 import { parseApproveRemoteProvisioningPromptData } from '@happier-dev/protocol/system/tasks/promptPayloadContracts';
 import type { SystemTaskEvent, SystemTaskJsonObject, SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol';
+import { ManagedMachineEnrollmentIdentityV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 import { showMachineHelp } from './machine/help';
 import {
@@ -139,15 +140,17 @@ function normalizeTaskChannel(args: readonly string[]): 'stable' | 'preview' | '
   }).label;
 }
 
-function buildMachineSetupSpec(params: Readonly<{
+async function buildMachineSetupSpec(params: Readonly<{
   args: string[];
+  interactive: boolean;
+  promptInput: MachineCommandDeps['promptInput'];
   homeTarget: ResolvedHomeTarget;
   relaySelection: Readonly<{
     relayUrl: string;
     webappUrl: string;
     publicRelayUrl?: string;
   }>;
-}>): SystemTaskSpec {
+}>) {
   let args = [...params.args];
   const json = takeFlag(args, '--json');
   args = json.rest;
@@ -220,6 +223,12 @@ function buildMachineSetupSpec(params: Readonly<{
   args = trustedHostKey.rest;
   const serviceMode = takeFlagValue(args, '--service-mode');
   args = serviceMode.rest;
+  const role = takeFlagValue(args, '--role');
+  args = role.rest;
+  const adminAccess = takeFlagValue(args, '--admin-access');
+  args = adminAccess.rest;
+  const administrator = takeFlagValue(args, '--administrator');
+  args = administrator.rest;
   const relayRuntimeMode = takeFlagValue(args, '--relay-runtime-mode');
   args = relayRuntimeMode.rest;
   const installRelayRuntime = takeFlag(args, '--install-relay-runtime');
@@ -239,6 +248,30 @@ function buildMachineSetupSpec(params: Readonly<{
   }
   const sshAuthMode = explicitSshAuth ?? (identityFile.value && identityFile.value.trim() ? 'keyfile' : 'agent');
   const normalizedTrustedHostKey = normalizeTrustedHostKeyFlag(trustedHostKey.value);
+  const selectedRole = role.value?.trim() ?? 'personal';
+  const dedicated = selectedRole === 'server' || selectedRole === 'deployTarget';
+  if (dedicated && serviceMode.value !== null) {
+    throw new Error('Dedicated servers use a user service. Do not combine --role server/deployTarget with --service-mode.');
+  }
+  if (!dedicated && (adminAccess.value !== null || administrator.value !== null)) {
+    throw new Error('--admin-access and --administrator require --role server or --role deployTarget.');
+  }
+  const selectedAdminAccess = adminAccess.value?.trim() ?? 'ask';
+  let administratorUsername = administrator.value?.trim()
+    || (selectedAdminAccess === 'ask' ? sshTargetUsername : undefined);
+  if (dedicated && selectedAdminAccess === 'ask' && administrator.value === null && params.interactive
+    && (!administratorUsername || administratorUsername.toLowerCase() === 'root')) {
+    administratorUsername = (await params.promptInput('Name a non-root administrator for Ask access (or cancel and choose --admin-access preauthorized/none): ')).trim();
+  }
+  const enrollmentIdentity = ManagedMachineEnrollmentIdentityV1Schema.parse(dedicated
+    ? { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: selectedRole,
+        adminAccessAtCreation: selectedAdminAccess,
+        ...(administratorUsername ? { administrator: { username: administratorUsername } } : {}) }
+    : selectedRole === 'sandbox' ? { kind: 'guestProcess', role: selectedRole }
+      : { kind: 'existingUser', role: selectedRole });
+  if (enrollmentIdentity.kind === 'dedicatedDaemonUser' && enrollmentIdentity.adminAccessAtCreation === 'ask' && !params.interactive) {
+    throw new Error('Ask administrator access requires an interactive terminal. Choose --admin-access preauthorized or --admin-access none for headless or JSON enrollment.');
+  }
 
   return {
     protocolVersion: 1,
@@ -261,6 +294,7 @@ function buildMachineSetupSpec(params: Readonly<{
         ...(params.relaySelection.publicRelayUrl ? { publicRelayUrl: params.relaySelection.publicRelayUrl } : {}),
       },
       homeTarget: params.homeTarget,
+      enrollmentIdentity,
       ...(requireLocalApproval.present ? { requireLocalApproval: true } : {}),
       channel: normalizeTaskChannel([
         ...(preview.present ? ['--preview'] : []),
@@ -279,7 +313,7 @@ function buildMachineSetupSpec(params: Readonly<{
           }
         : {}),
     },
-  };
+  } satisfies SystemTaskSpec;
 }
 
 function formatPromptMessage(prompt: Readonly<{ kind: string; data: SystemTaskJsonObject }>, fallbackMessage = ''): string {
@@ -349,6 +383,13 @@ async function resolvePromptAnswer(params: Readonly<{
     const password = await params.promptSecret(`${message}\nSSH password: `);
     return { password };
   }
+  if (params.prompt.kind === 'administrator.establish') {
+    if (!params.interactive) {
+      throw new Error('Administrator establishment requires an interactive terminal.');
+    }
+    const password = await params.promptSecret(`${message}\nPassword for the new administrator account: `);
+    return { password };
+  }
 
   if (params.assumeYes) {
     if (params.prompt.kind === 'auth.approveRemoteProvisioning') {
@@ -391,11 +432,17 @@ async function runEnrollSubcommand(argsRaw: string[], deps: MachineCommandDeps):
   const homeTarget = parsedTargetArgs.target
     ? await resolveCliHomeTarget(parsedTargetArgs.target)
     : await deps.resolveHomeTarget();
-  const spec = buildMachineSetupSpec({
+  const spec = await buildMachineSetupSpec({
     args,
+    interactive: deps.isInteractiveTerminal() && !json,
+    promptInput: deps.promptInput,
     homeTarget,
     relaySelection: deps.readRelaySelection(),
   });
+  if (!json && spec.params.enrollmentIdentity.kind === 'dedicatedDaemonUser'
+    && spec.params.enrollmentIdentity.adminAccessAtCreation === 'none') {
+    console.log(warn('With no administrator access, later administrator work requires an administrator terminal or console recovery.'));
+  }
   const runner = deps.createRunner();
   const result = await runSystemTaskToCompletion({
     runner,

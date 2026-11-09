@@ -6,11 +6,13 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 
 it.each(['plugin_mcp_preparation_unavailable', 'agent_runtime_daemon_service_generation_not_current',
   'native_agent_privileged_effect_authority_unavailable', 'native_agent_privileged_effect_outcome_unknown',
-  'skills_unavailable', 'team_credential_provider_selection_not_current'])('retains only the closed startup refusal %s', code => {
+  'skills_unavailable', 'team_credential_provider_selection_not_current', 'provider_compatibility_unverified',
+  'provider_endpoint_unavailable', 'agent_startup_model_reconciliation_failed'])('retains only the closed startup refusal %s', code => {
   const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
   const fatal = vi.spyOn(logger, 'fatal').mockImplementation(() => {});
   try {
-    expect(reportSessionRunnerFailure(new PluginError({ code, message: 'PRIVATE_BODY', details: { secret: 'PRIVATE_TOKEN' } }))).toBe(1);
+    expect(reportSessionRunnerFailure(new PluginError({ code, message: 'PRIVATE_BODY', details: { secret: 'PRIVATE_TOKEN' } })))
+      .toBe(code === 'provider_compatibility_unverified' ? 79 : 1);
     expect(log).toHaveBeenLastCalledWith('[Session] Runner failed', expect.objectContaining({ errorCode: code }));
     reportSessionRunnerFailure(new PluginError({ code: `${code}_PRIVATE`, message: 'PRIVATE_BODY' }));
     expect(log).toHaveBeenLastCalledWith('[Session] Runner failed', expect.objectContaining({ errorCode: null }));

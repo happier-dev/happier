@@ -50,6 +50,7 @@ beforeEach(() => {
   process.exitCode = undefined;
   execute.mockReset();
   resolveMachineTarget.mockReset();
+  resolveMachineTarget.mockResolvedValue({ ok: true, machineId: 'machine-1' });
   createCliActionExecutorFromCredentials.mockClear();
   readStoredCredentials.mockReset();
   readStoredCredentials.mockResolvedValue({
@@ -97,7 +98,7 @@ function sessionSpawnSuccess(sessionId: string) {
       sessionId,
       disposition: 'created' as const,
       executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-      organizationPlacement: { folderId: null, tagIds: [] },
+      organizationPlacement: { sectionId: null, tagIds: [] },
       initialInput: { status: 'notRequested' as const },
     },
   };
@@ -657,7 +658,7 @@ describe('happier session create (action executor)', () => {
       expect(execute).toHaveBeenNthCalledWith(
         1,
         'sessions.spawn.connected_services.list',
-        { agentId: 'codex', includeUnavailable: false },
+        { agentId: 'codex', includeUnavailable: false, includeDefaults: false },
         { surface: 'cli', defaultSessionId: null },
       );
       expect(execute).toHaveBeenNthCalledWith(

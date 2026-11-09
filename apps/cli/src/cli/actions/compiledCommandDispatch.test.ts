@@ -716,12 +716,11 @@ describe('compiled Action CLI command dispatch', () => {
   });
 
   it('never lets one spelling mean both physical routing and Action input', () => {
-    // `--machine-id` is the CLI's routing flag. An Action that declares its own
-    // `machineId` field owns the spelling instead; the declaration decides, so
-    // no runtime precedence rule has to.
+    // Workflow queries reserve transport spelling and project their semantic
+    // filter separately. Other Actions may own machineId as caller input.
     for (const command of listCompiledActionCliCommands()) {
-      const declaresMachineId = command.fields.some((field) => field.path === 'machineId');
-      expect(command.routesByTransportMachineId).toBe(!declaresMachineId);
+      const callerFlags = new Set(command.fields.flatMap(field => [field.flag, ...field.aliases]));
+      for (const flag of command.transportMachineIdFlags) expect(callerFlags.has(flag)).toBe(false);
     }
   });
 

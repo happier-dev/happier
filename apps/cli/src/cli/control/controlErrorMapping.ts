@@ -1,8 +1,12 @@
 import { SessionControlErrorCodeSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { TailscaleCommandError } from '@happier-dev/cli-common/tailscale';
 
 export type ControlCliMappedError = Readonly<{ code: string; unexpected: boolean; message?: string }>;
 
 export function mapUnknownErrorToControlError(error: unknown): ControlCliMappedError {
+  if (error instanceof TailscaleCommandError && error.failure) {
+    return { code: error.failure.code, unexpected: false, message: error.failure.remediation };
+  }
   const errorRecord = typeof error === 'object' && error !== null ? error : null;
   const rawCode = errorRecord && 'code' in errorRecord && typeof errorRecord.code === 'string' ? errorRecord.code : null;
 
@@ -30,6 +34,7 @@ export function mapUnknownErrorToControlError(error: unknown): ControlCliMappedE
     || rawCode === 'machine_inventory_unavailable'
     || rawCode === 'server_identity_unavailable'
     || rawCode === 'mcp_catalog_unavailable'
+    || rawCode === 'agent_isolation_unavailable'
     || rawCode === 'client_refused'
     || rawCode === 'no_machine_online'
     || rawCode === 'mcp_server_not_found'

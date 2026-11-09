@@ -1,3 +1,4 @@
+import { artifactListResponse } from '@/testkit/http/artifactHome';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -7,6 +8,7 @@ import {
   AuthTokenProvenanceSchema,
   parseTerminalConnectLinkV4Parameters,
   sealTerminalProvisioningV3Payload,
+  sealTerminalProvisioningV3TokenOnlyPayload,
 } from '@happier-dev/protocol';
 import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -150,6 +152,139 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
     vi.resetModules();
   });
 
+  it.each(['agent:happier.agent.custom-acp/custom-acp:definition:chosen', 'agent:com.acme.review/reviewer'])(
+    'selects a custom profile default after real first login in the same invocation: %s', async (preferredAgentTargetKey) => {
+      const homeDir = mkdtempSync(join(tmpdir(), 'happier-profile-first-login-'));
+      process.env.HAPPIER_HOME_DIR = homeDir;
+      process.env.HAPPIER_ACTIVE_SERVER_ID = 'profile-home';
+      process.env.HAPPIER_SERVER_URL = 'https://profile-home.example.test';
+      process.env.HAPPIER_WEBAPP_URL = 'https://app.happier.dev';
+      process.env.HAPPIER_AUTH_METHOD = 'web';
+      process.env.HAPPIER_NO_BROWSER_OPEN = '1';
+      process.env.HAPPIER_AUTH_POLL_INTERVAL_MS = '1';
+      homeBoundary.origin = process.env.HAPPIER_SERVER_URL;
+      homeBoundary.approvedToken = makeJwtWithSub('profile-account');
+      homeBoundary.descriptor = { v: 1, homeServerIdentityId: 'srv_profile_home', canonicalServerUrl: homeBoundary.origin,
+        revision: 1, endpoints: [{ kind: 'https', url: homeBoundary.origin }] };
+      const profile = { v: 2, id: 'work', name: 'Work', preferredAgentTargetKey,
+        extraEnvironmentVariables: [{ name: 'TEAM_FLAG', value: 'selected' }], createdAt: 1, updatedAt: 1 };
+      const control = { status: 'present', revision: 1, content: { t: 'plain', v: {
+        v: 1, phase: 'active', sourceSettingsVersion: 1, migratedLogicalRevision: 1, inventory: [] } } };
+      app.get('/v1/artifacts', async (request) => artifactListResponse(request.url, []));
+      app.get('/v2/account/settings', async () => ({ version: 1, content: { t: 'plain', v: {} } }));
+      app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+      app.get('/v1/account/entity-rows/profiles', async () => ({ status: 'listed', complete: true, nextCursor: null,
+        diagnostics: [], referenceGuardRevision: 1, transferControl: control, rows: [{ id: profile.id, revision: 1,
+          content: { t: 'plain', v: { v: 1, id: profile.id, enabled: true, promptStack: [], secretBindings: {},
+            definition: { kind: 'inline', profile } } } }] }));
+      app.get('/v1/account/entity-rows/profiles/reference-guard', async () => ({ status: 'ready', revision: 1 }));
+      app.get('/v1/account/entity-rows/profiles/transfer', async () => control);
+      app.get('/v1/account/authoring-memory/lastUsedProfile', async () => ({ status: 'present', revision: 1, content: { t: 'plain', v: null } }));
+      let disposePluginFixture: (() => Promise<void>) | undefined;
+      if (preferredAgentTargetKey === 'agent:com.acme.review/reviewer') {
+        const { createAuthoredAdmittedPluginRuntimeFixture } = await import('@/plugins/testkit/admittedRuntime');
+        const { createPluginManifestV2Fixture } = await import('@/plugins/testkit/manifestV2Fixture');
+        const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: homeDir, plugins: [{
+          manifest: createPluginManifestV2Fixture({ id: 'com.acme.review', contributes: { agents: [{
+            id: 'reviewer', title: 'Review', runtime: { kind: 'custom' }, primary: 'sessions',
+            capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+          }] } }), files: {
+            'runtime.mjs': 'export function createRuntime() { throw new Error("Normalization must not execute the Agent"); }',
+            'daemon.mjs': 'import { createRuntime } from "./runtime.mjs"; export function activate(api) { api.agents.register("reviewer", createRuntime, { sessionRunnerFactory: { module: "./runtime.mjs", export: "createRuntime", runtimeApiVersion: 1 } }); }',
+          },
+        }] });
+        disposePluginFixture = () => fixture.dispose();
+      }
+      const output = captureConsoleLogAndMuteStdout();
+      try {
+        const { prepareProfileSessionStart } = await import('@/cli/profileSessionStart');
+        const preparing = prepareProfileSessionStart({ profileQuery: profile.id, refreshRequested: true });
+        await vi.waitFor(() => expect(output.logs.some((line) => line.includes('/terminal/connect#'))).toBe(true));
+        const link = output.logs.find((line) => line.includes('/terminal/connect#'));
+        if (!link) throw new Error('Expected terminal connect link');
+        const parameters = new URLSearchParams(new URL(link).hash.slice(1));
+        const envelope = parseTerminalConnectLinkV4Parameters(parameters);
+        // A fresh Home has URL-bound pairing until authentication learns its descriptor.
+        const publicKey = envelope?.publicKeyB64Url ?? parameters.get('key');
+        const pairing = envelope?.pairing ?? { secretB64Url: parameters.get('pairingSecret'),
+          createdAtMs: Number(parameters.get('createdAt')), expiresAtMs: Number(parameters.get('expiresAt')) };
+        if (!publicKey || !pairing.secretB64Url) throw new Error('Expected authenticated terminal pairing context');
+        homeBoundary.response = Buffer.from(sealTerminalProvisioningV3TokenOnlyPayload({
+          terminalEphemeralPublicKey: new Uint8Array(Buffer.from(publicKey, 'base64url')),
+          pairingSecret: new Uint8Array(Buffer.from(pairing.secretB64Url, 'base64url')),
+          createdAtMs: pairing.createdAtMs, expiresAtMs: pairing.expiresAtMs,
+          randomBytes: (length) => new Uint8Array(length).fill(31),
+        })).toString('base64');
+        const prepared = await preparing;
+        const { buildBackendTargetKeyV2 } = await import('@happier-dev/protocol/backends/targets/backendTargetRefV2');
+        expect(prepared.backendTarget && buildBackendTargetKeyV2(prepared.backendTarget)).toBe(preferredAgentTargetKey);
+        expect(prepared.sessionStart).toMatchObject({ credentials: { token: homeBoundary.approvedToken },
+          selectedProfile: { id: profile.id, extraEnvironmentVariables: [{ name: 'TEAM_FLAG', value: 'selected' }] },
+          accountSettingsContext: { source: 'network', settingsVersion: 1, whenRefreshed: null,
+            profileCatalog: { status: 'ready', source: 'destination' } } });
+        const { normalizeSessionCreateSpawnRequest } = await import('@/cli/commands/session/create/normalizeSessionCreateSpawnRequest');
+        const normalized = await normalizeSessionCreateSpawnRequest({ directory: '/workspace', backendTargetKey: null,
+          machineId: 'profile-machine', profileId: profile.id });
+        expect(normalized.input).toMatchObject({ profileId: profile.id, agentTarget: prepared.backendTarget });
+        const explicit = await normalizeSessionCreateSpawnRequest({ directory: '/workspace', backendTargetKey: 'agent:claude',
+          machineId: 'profile-machine', profileId: profile.id });
+        expect(explicit.input.agentTarget).toEqual({ kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } });
+        expect(homeBoundary.requests.filter(request => request.path === '/v1/auth/request')).toHaveLength(1);
+        const { readStoredCredentials } = await import('@/persistence');
+        expect((await readStoredCredentials())?.token).toBe(homeBoundary.approvedToken);
+      } finally {
+        output.restore();
+        await disposePluginFixture?.();
+        const { resetInMemoryAccountSettingsContextForTests } = await import('@/settings/accountSettings/bootstrapAccountSettingsContext');
+        resetInMemoryAccountSettingsContextForTests();
+        const { logger } = await import('./logger'); logger.flushSync();
+        rmSync(homeDir, { recursive: true, force: true });
+      }
+    }, 120_000);
+
+  it('hydrates canonical Provider migration facts for a retained profile during Session creation', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-profile-create-migration-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_ACTIVE_SERVER_ID = 'profile-home';
+    process.env.HAPPIER_SERVER_URL = 'https://profile-home.example.test';
+    homeBoundary.origin = process.env.HAPPIER_SERVER_URL;
+    const { AIBackendProfileSchema } = await import('@happier-dev/protocol/profiles/backendProfileSchema');
+    const profile = AIBackendProfileSchema.parse({ id: 'deepseek', name: 'Retained DeepSeek', environmentVariables: [],
+      defaultBackendTargetKey: 'acpBackend:chosen', createdAt: 1, updatedAt: 1 });
+    const control = { status: 'present', revision: 1, content: { t: 'plain', v: {
+      v: 1, phase: 'active', sourceSettingsVersion: 1, migratedLogicalRevision: 1, inventory: [] } } };
+    app.get('/v2/account/settings', async () => ({ version: 1, content: { t: 'plain', v: {} } }));
+    app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+    app.get('/v1/account/entity-rows/profiles', async () => ({ status: 'listed', complete: true, nextCursor: null,
+      diagnostics: [], referenceGuardRevision: 1, transferControl: control, rows: [{ id: profile.id, revision: 1,
+        content: { t: 'plain', v: { v: 1, id: profile.id, enabled: true, promptStack: [], secretBindings: {},
+          definition: { kind: 'legacy', profile } } } }] }));
+    app.get('/v1/account/entity-rows/profiles/reference-guard', async () => ({ status: 'ready', revision: 1 }));
+    app.get('/v1/account/entity-rows/profiles/transfer', async () => control);
+    app.get('/v1/account/authoring-memory/lastUsedProfile', async () => ({ status: 'present', revision: 1, content: { t: 'plain', v: null } }));
+    app.get('/v1/artifacts', async request => artifactListResponse(request.url, []));
+    app.get('/v1/account/entity-rows/provider-connections', async () => {
+      const { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } = await import('@happier-dev/protocol/providers/connections/connectionRowsV1');
+      return { status: 'present', revision: 1, content: { t: 'plain', v: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } };
+    });
+    try {
+      const { writeCredentialsTokenOnly } = await import('@/persistence');
+      await writeCredentialsTokenOnly({ token: makeJwtWithSub('profile-account') });
+      const { normalizeSessionCreateSpawnRequest } = await import('@/cli/commands/session/create/normalizeSessionCreateSpawnRequest');
+      const normalized = await normalizeSessionCreateSpawnRequest({ directory: '/workspace', backendTargetKey: null,
+        machineId: 'profile-machine', profileId: profile.id });
+      expect(normalized.input).toMatchObject({ profileId: profile.id, agentTarget: { kind: 'agent',
+        identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'chosen' } });
+      expect(homeBoundary.requests).toContainEqual(expect.objectContaining({ method: 'GET', path: '/v1/account/entity-rows/provider-connections' }));
+    } finally {
+      const { resetInMemoryAccountSettingsContextForTests } = await import('@/settings/accountSettings/bootstrapAccountSettingsContext');
+      resetInMemoryAccountSettingsContextForTests();
+      const { logger } = await import('./logger'); logger.flushSync(); rmSync(homeDir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   it('keeps a descriptor carrier open through machine registration and closes it afterward', async () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-auth-machine-iroh-'));
     process.env.HAPPIER_HOME_DIR = homeDir;
@@ -287,7 +422,7 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
       mkdirSync(serverDir, { recursive: true });
       writeFileSync(
         join(serverDir, 'access.key'),
-        JSON.stringify({ token: makeJwtWithSub('acct-b'), secret: Buffer.from('x').toString('base64') }, null, 2),
+        JSON.stringify({ token: makeJwtWithSub('acct-b') }, null, 2),
         'utf8',
       );
 
@@ -791,7 +926,7 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
       const serverDir = join(homeDir, 'servers', 'stack_main__id_default');
       mkdirSync(serverDir, { recursive: true });
       const accessKeyPayload = JSON.stringify(
-        { token: makeJwtWithSub('acct-a'), secret: Buffer.from('x').toString('base64') },
+        { token: makeJwtWithSub('acct-a') },
         null,
         2,
       );

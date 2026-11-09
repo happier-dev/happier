@@ -1,3 +1,4 @@
+import { recordDesktopDaemonServiceUse } from '@/daemon/service/cli';
 import { printDaemonHelp } from './daemonHelp';
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 import type { RestartSessionRunnerResultV1 } from '@happier-dev/protocol';
@@ -23,6 +24,7 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 import {
   hasObservableDaemonStartProcessExited,
+  hasObservableDaemonStartProcessRunning,
   waitForDaemonRunningWithinBudget,
 } from '@/daemon/waitForDaemonRunningWithinBudget';
 import { readDaemonStartWaitPollMs, readDaemonStartWaitTimeoutMs } from '@/daemon/startupWaitDefaults';
@@ -257,6 +259,10 @@ export async function handleDaemonControlCliCommand(context: CommandContext): Pr
       started = await waitForDaemonRunningWithinBudget({
         isRunning: () => checkIfDaemonRunningAndCleanupStaleState(),
         shouldAbort: () => hasObservableDaemonStartProcessExited(child),
+        // Source loading may outlast the checkpoint before ownership is published.
+        // Published startup keeps the existing `starting` response below.
+        isStillStarting: async () => hasObservableDaemonStartProcessRunning(child)
+          && (await inspectDaemonRunningStateAndCleanupStaleState()).status !== 'starting',
         timeoutMs,
         pollMs,
       });
@@ -697,6 +703,8 @@ export async function handleDaemonControlCliCommand(context: CommandContext): Pr
   }
 
   if (daemonSubcommand === 'status') {
+    const desktopBundleFlag = args.findIndex((arg) => arg === '--desktop-bundle-id');
+    if (desktopBundleFlag !== -1) await recordDesktopDaemonServiceUse(args[desktopBundleFlag + 1] ?? '');
       if (args.includes('--json')) {
       if (args.includes('--all')) {
         const statuses = await listDaemonStatusesForAllKnownServers();

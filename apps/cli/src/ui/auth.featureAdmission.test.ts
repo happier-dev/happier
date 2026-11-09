@@ -3,7 +3,8 @@ import axios from 'axios';
 import { inspect } from 'node:util';
 
 import { reloadConfiguration } from '@/configuration';
-import { readStoredCredentials } from '@/persistence';
+import { readStoredCredentials, updateSettings } from '@/persistence';
+import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
@@ -28,6 +29,72 @@ vi.mock('node:fs', async (importOriginal) => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+it.each([true, false])('uses the selected descriptor before pairing when public discovery omits it (matching identity=%s)', async (identityMatches) => {
+  const home = await createTempDir('happier-auth-public-omission-');
+  const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL',
+    'HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_AUTH_METHOD', 'HAPPIER_TAILSCALE_AUTO_PUBLIC_URL']);
+  const restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
+  const output = captureConsoleLogAndMuteStdout();
+  const origin = `https://${identityMatches ? 'matching' : 'wrong'}.selected-home.example.test`;
+  const descriptor = { v: 1 as const, homeServerIdentityId: 'srv_selected_home', canonicalServerUrl: origin,
+    revision: 1, endpoints: [{ kind: 'https' as const, url: origin }] };
+  const post = vi.spyOn(axios, 'post').mockRejectedValue(new Error('Pairing request reached'));
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json({ features: {}, capabilities: {
+    serverIdentity: { serverIdentityId: identityMatches ? descriptor.homeServerIdentityId : 'srv_other_home' },
+  } })));
+  try {
+    env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined,
+      HAPPIER_PUBLIC_SERVER_URL: undefined, HAPPIER_ACTIVE_SERVER_ID: undefined,
+      HAPPIER_AUTH_METHOD: 'web', HAPPIER_TAILSCALE_AUTO_PUBLIC_URL: '0' });
+    reloadConfiguration();
+    await adoptServerProfileHomeConnectionDescriptor({ descriptor, observation: 'exact', use: true });
+    reloadConfiguration();
+    await expect(doAuth()).resolves.toBeNull();
+    expect(post).toHaveBeenCalledTimes(identityMatches ? 1 : 0);
+    if (identityMatches) expect(post.mock.calls[0]?.[0]).toBe(`${origin}/v1/auth/request`);
+    else expect(output.logs.join('\n')).toContain('HOME_AUTHORITY_MISMATCH');
+    expect(await readStoredCredentials()).toBeNull();
+  } finally {
+    output.restore(); restoreTty(); env.restore(); reloadConfiguration(); await removeTempDir(home);
+  }
+});
+
+it('reports an invalid saved Home web app URL before attempting terminal authentication', async () => {
+  const home = await createTempDir('happier-auth-invalid-webapp-');
+  const env = createEnvKeyScope([
+    'HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL',
+    'HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_AUTH_METHOD',
+  ]);
+  const restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
+  const output = captureConsoleLogAndMuteStdout();
+  try {
+    env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: undefined,
+      HAPPIER_WEBAPP_URL: undefined, HAPPIER_PUBLIC_SERVER_URL: undefined,
+      HAPPIER_ACTIVE_SERVER_ID: undefined, HAPPIER_AUTH_METHOD: 'web' });
+    reloadConfiguration();
+    await updateSettings(current => ({ ...current, activeServerId: 'borrowed-home', servers: {
+      ...current.servers,
+      'borrowed-home': { id: 'borrowed-home', name: 'Borrowed Home',
+        serverUrl: 'http://127.0.0.1:43005',
+        webappUrl: 'http://happier-qa.localhost:19364/?server=http%3A%2F%2Fhappier-qa.localhost%3A43005&happier_hmr=0',
+        createdAt: 1, updatedAt: 1 },
+    } }));
+    reloadConfiguration();
+    const post = vi.spyOn(axios, 'post').mockRejectedValue(new Error('Unexpected authentication request'));
+    const fetchBoundary = vi.fn<typeof fetch>(async () => { throw new Error('Unexpected network request'); });
+    vi.stubGlobal('fetch', fetchBoundary);
+    await expect(doAuth()).resolves.toBeNull();
+    const text = output.logs.join('\n');
+    expect(text).toContain('invalid_target: Home web app URL is invalid');
+    expect(text).not.toContain('Use HTTPS or loopback HTTP');
+    expect(post).not.toHaveBeenCalled();
+    expect(fetchBoundary).not.toHaveBeenCalled();
+    expect(await readStoredCredentials()).toBeNull();
+  } finally {
+    output.restore(); restoreTty(); env.restore(); reloadConfiguration(); await removeTempDir(home);
+  }
 });
 
 it.each(['unreadable', 'network', 'timeout', 'http'] as const)('reports %s Home features before creating terminal credentials', async (reason) => {

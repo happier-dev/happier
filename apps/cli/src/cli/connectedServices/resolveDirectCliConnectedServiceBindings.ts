@@ -51,7 +51,7 @@ export async function resolveDirectCliConnectedServiceBindings(params: Readonly<
       const executor = createCliActionExecutorFromCredentials({ credentials: params.credentials });
       const result = normalizeActionExecuteResult(await executor.execute(
         'sessions.spawn.connected_services.list',
-        { agentId: params.agentId, includeUnavailable: false },
+        { agentId: params.agentId, includeUnavailable: false, includeDefaults: false },
         { surface: 'cli', defaultSessionId: null },
       ));
       if (!result.ok) throw new HappierActionError(result.errorCode,

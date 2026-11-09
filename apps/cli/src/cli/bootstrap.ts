@@ -15,7 +15,6 @@ import { ensureWindowsUtf8CodePage } from '@/utils/platform/windows/ensureWindow
 import { installConsoleWriteErrorGuards, shouldInstallConsoleWriteErrorGuards } from '@/utils/writeConsoleBestEffort';
 import { logger } from '@/ui/logger';
 import { applyStackSessionPriority } from '@/utils/process/applyStackSessionPriority';
-import { installTerminalAuthorityCeiling } from '@/api/client/terminalAuthorityCeiling';
 import { fail } from '@happier-dev/cli-common/output';
 import { joinCurrentWindowsSessionProcessCustody } from '@/subprocess/supervision/processCustody';
 
@@ -32,7 +31,6 @@ export async function runCliBootstrap(entrypointUrl: string): Promise<void> {
     }
     initToolTraceIfEnabled();
     installAxiosProxySupport({ axios, env: process.env });
-    installTerminalAuthorityCeiling(axios);
     const cliRootDir = dirname(dirname(fileURLToPath(entrypointUrl)));
     const normalizedArgv = readCliProcessArgs();
     const updatePackageName = resolveNpmPackageNameOverride({

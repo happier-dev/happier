@@ -11,6 +11,7 @@ import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/se
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
+import { buildSessionStopHoldV1, type SessionExplicitStopV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 
 const { mockIo, openSessionDataEncryptionKeySpy } = vi.hoisted(() => ({
   mockIo: vi.fn(),
@@ -41,6 +42,7 @@ describe('happier session send plaintext sessions (integration)', () => {
   let happyHomeDir = '';
   const receivedMessages: any[] = [];
   let sessionActive = true;
+  let explicitStop: SessionExplicitStopV1 | null = null;
   let sessionActiveAt = 2;
   let latestTurnStatus: 'in_progress' | 'completed' = 'completed';
   let latestTurnStatusObservedAt = 1;
@@ -55,11 +57,13 @@ describe('happier session send plaintext sessions (integration)', () => {
   let transcriptMessages: Array<Record<string, unknown>> = [];
   let currentnessFailure: '503' | 'reset' | '401' | 'invalid' | 'migration' | null = null;
   const mutationPaths: string[] = [];
+  const machineReadPaths: string[] = [];
 
   beforeEach(async () => {
     happyHomeDir = await createTempDir('happier-cli-session-send-plain-');
     receivedMessages.length = 0;
     sessionActive = true;
+    explicitStop = null;
     sessionActiveAt = 2;
     latestTurnStatus = 'completed';
     latestTurnStatusObservedAt = 1;
@@ -67,11 +71,12 @@ describe('happier session send plaintext sessions (integration)', () => {
     transcriptMessages = [];
     currentnessFailure = null;
     mutationPaths.length = 0;
+    machineReadPaths.length = 0;
     mockIo.mockClear();
     openSessionDataEncryptionKeySpy.mockClear();
 
     const sessionId = 'sess_integration_send_plain_123';
-    const metadataPlain = JSON.stringify({
+    const metadataPlain = () => JSON.stringify({
       path: '/tmp',
       tag: 'MyTag',
       host: 'host1',
@@ -84,11 +89,13 @@ describe('happier session send plaintext sessions (integration)', () => {
       permissionMode: 'safe-yolo',
       permissionModeUpdatedAt: 10,
       modelOverrideV1: { v: 1, updatedAt: 11, modelId: 'claude-sonnet-4-0' },
+      ...(explicitStop ? { machineId: 'machine-1', claudeSessionId: 'native-session', sessionExplicitStopV1: explicitStop } : {}),
     });
 
     server = createServer(async (req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
       if (req.method !== 'GET') mutationPaths.push(url.pathname);
+      if (url.pathname.includes('/machines')) machineReadPaths.push(url.pathname);
 
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
         res.statusCode = 200;
@@ -102,7 +109,7 @@ describe('happier session send plaintext sessions (integration)', () => {
               updatedAt: 2,
               active: sessionActive,
               activeAt: sessionActiveAt,
-              metadata: metadataPlain,
+              metadata: metadataPlain(),
               metadataVersion: 0,
               agentState: JSON.stringify({ controlledByUser: false, requests: {} }),
               agentStateVersion: 0,
@@ -322,6 +329,34 @@ describe('happier session send plaintext sessions (integration)', () => {
       expect(mutationPaths).toEqual([`/v2/sessions/sess_integration_send_plain_123/pending`]);
     } finally {
       retryOutput.restore();
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('keeps a terminal Send queued with the hold in place when the resume cannot reach a machine', async () => {
+    const { handleSessionCommand } = await import('./index');
+    const hold = buildSessionStopHoldV1({ rawSession: { id: 'sess_integration_send_plain_123' },
+      stopIntent: 'explicit_stop', executionAuthority: 'present_user', requestId: 'person-stop', requestedAtMs: 1 });
+    if (hold.kind !== 'hold') throw new Error('Expected an explicit Stop hold');
+    sessionActive = false;
+    explicitStop = hold.stop;
+    const previousExitCode = process.exitCode;
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['send', 'sess_integration_send_plain_123', 'An ordinary message',
+        '--local-id', 'ordinary-held', '--json'], {
+        readCredentialsFn: async () => ({ token: 'token_test', encryption: null }),
+      });
+      // The public Send result reports durable input admission, not wake or
+      // provider consumption. A failed resume leaves it queued and the hold unchanged.
+      expect(output.json()).toMatchObject({ ok: true, kind: 'session_send', data: { localId: 'ordinary-held' } });
+      expect(visibleMessageByLocalId).toMatchObject({ localId: 'ordinary-held' });
+      expect(explicitStop).toEqual(hold.stop);
+      expect(mutationPaths).toEqual(['/v2/sessions/sess_integration_send_plain_123/pending']);
+      expect(machineReadPaths).toEqual([]);
+      expect(mockIo).not.toHaveBeenCalled();
+    } finally {
+      output.restore();
       process.exitCode = previousExitCode;
     }
   });

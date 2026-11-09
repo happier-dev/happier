@@ -130,7 +130,7 @@ describe('auth pair-remote Home enrollment', () => {
 
     caller.abort();
 
-    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(pending).rejects.toMatchObject({ code: 'cancelled' });
     expect(executorSignal?.aborted).toBe(true);
   });
 });

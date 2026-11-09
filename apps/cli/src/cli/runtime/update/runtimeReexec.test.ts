@@ -74,7 +74,7 @@ describe('maybeReexecToRuntime', () => {
     expect(exec).toHaveBeenCalledWith(
       process.execPath,
       expect.arrayContaining(['/home/x/.happier/runtime/node_modules/@happier-dev/cli/dist/index.mjs', 'self', 'check']),
-      expect.any(Object),
+      expect.objectContaining({ windowsHide: true, stdio: 'inherit' }),
     );
     expect(exit).toHaveBeenCalledWith(0);
   });

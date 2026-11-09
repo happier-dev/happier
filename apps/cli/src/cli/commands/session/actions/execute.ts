@@ -2,10 +2,8 @@ import chalk from 'chalk';
 import { randomUUID } from 'node:crypto';
 
 import type { StoredCredentials } from '@/persistence';
-import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { enrichCliActionApprovalContext } from '@/session/actions/enrichCliActionApprovalContext';
-import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { readSessionOwnerLocality, tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
@@ -25,8 +23,7 @@ import {
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { cmd, fail } from '@happier-dev/cli-common/output';
 
-type CliActionExecutorLike = Pick<ReturnType<typeof createCliActionExecutor>, 'execute'>;
-type CliActionExecutorParams = Parameters<typeof createCliActionExecutor>[0];
+type CliActionExecutorLike = Pick<ReturnType<typeof createCliActionExecutorFromCredentials>, 'execute'>;
 
 function withResolvedSessionInput(actionId: string, input: unknown, sessionId: string): unknown {
   if (
@@ -187,38 +184,19 @@ export async function cmdSessionActionsExecute(
       fixedServerId: serverId,
       resolveServerFeaturesSnapshot: async () => serverFeaturesSnapshot,
     });
-    const accountServerActionDeps = createAccountServerActionDeps({
-      credentials, token: credentials.token, serverId, serverHttpBaseUrl,
-      resolveServerFeaturesSnapshot: () => serverFeaturesSnapshot,
-    });
     const isApprovalExecutionOriginCurrent = locality?.machineId
       ? createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
           credentials, machineId: locality.machineId, serverId, serverApiUrl: serverHttpBaseUrl,
           resolveServerFeaturesSnapshot: () => serverFeaturesSnapshot,
         })
       : undefined;
-    const executorParams: CliActionExecutorParams = sessionTarget.mode === 'plain'
-      ? {
-          token: credentials.token,
-          credentials,
-          serverId,
-          serverHttpBaseUrl,
-          sessionId,
-          ctx: null,
-          mode: 'plain',
-          rawSession: sessionTarget.rawSession,
-        }
-      : {
-          token: credentials.token,
-          credentials,
-          serverId,
-          serverHttpBaseUrl,
-          sessionId,
-          ctx: sessionTarget.ctx,
-          mode: 'e2ee',
-          rawSession: sessionTarget.rawSession,
-        };
-    executor = createCliActionExecutor({ ...executorParams, accountServerActionDeps, isApprovalExecutionOriginCurrent });
+    // A bound CLI is still a credentialed caller, not the Session's live host.
+    // Keep transport, policy and daemon materialization at the shared front door.
+    executor = createCliActionExecutorFromCredentials({
+      credentials, serverId, serverApiUrl: serverHttpBaseUrl,
+      resolveServerFeaturesSnapshot: () => serverFeaturesSnapshot,
+      isApprovalExecutionOriginCurrent,
+    });
   }
   const input = withResolvedSessionInput(
     actionId,

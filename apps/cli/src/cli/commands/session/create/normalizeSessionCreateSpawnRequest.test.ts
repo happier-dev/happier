@@ -42,6 +42,37 @@ function createDeps(
 }
 
 describe('normalizeSessionCreateSpawnRequest', () => {
+  it('admits the P0-DATA no-prompt Codex recipe with read-only permission and low effort', async () => {
+    const serverId = 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN';
+    const machineId = '3ca2700f-c0a8-440f-be06-cb4f3f51cb01';
+    const parsed = parseSessionCreateSpawnOptions([
+      'create', '--path', '/tmp/forge-qa-pr54-20261024', '--agent', 'codex',
+      '--model', 'gpt-5.6-luna', '--reasoning-effort', 'low',
+      '--permission-mode', 'read-only', '--auth', 'default',
+      '--machine-id', machineId, '--server-id', serverId,
+      '--title', 'P0-DATA — Investigate checkout recovery', '--json',
+    ]);
+    const activeServerId = 'stack_agent-qa-prs-issues__id_default';
+    const deps = createDeps({
+      activeServerId,
+      readAgentDefinitions: () => readAgentCatalogSnapshot().agentDefinitionsById.values(),
+    });
+    await expect(normalizeSessionCreateSpawnRequest(parsed.spawnRequest, deps)).rejects.toMatchObject({
+      details: { field: 'serverId', allowedValues: [activeServerId] },
+    });
+    const { serverId: _serverId, ...correctedRequest } = parsed.spawnRequest;
+    const normalized = await normalizeSessionCreateSpawnRequest(correctedRequest, deps);
+    expect(normalized.input).toMatchObject({
+      executionTarget: { serverId: activeServerId, machineId },
+      directory: { kind: 'path', path: '/tmp/forge-qa-pr54-20261024' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      permissionMode: 'read-only',
+      modelSelection: { ref: { modelId: 'gpt-5.6-luna' } },
+      configuration: { options: { reasoning_effort: { value: 'low', updatedAtMs: 100 } } },
+    });
+    expect(normalized.input).not.toHaveProperty('initialInput');
+    expect(parsed.connectedServicesAuthIntent).toEqual({ kind: 'default' });
+  });
   it('resolves repeated capability names to catalog IDs and rejects missing names with not_found', async () => {
     const deps = {
       ...createDeps(),

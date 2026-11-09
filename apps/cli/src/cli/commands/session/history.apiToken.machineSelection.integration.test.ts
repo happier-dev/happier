@@ -4,6 +4,9 @@ import { createServer, type Server } from 'node:http';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { handleSessionCommand } from './handleSessionCommand';
+
+const apiToken = `hap_v1_123e4567-e89b-42d3-a456-426614174000_${'A'.repeat(43)}`;
 
 describe('happier session history API Token machine selection', () => {
   const envKeys = [
@@ -60,6 +63,7 @@ describe('happier session history API Token machine selection', () => {
           response.end(JSON.stringify({
             v: 1,
             actionId,
+            ...(typeof actionRequest.requestId === 'string' ? { requestId: actionRequest.requestId } : {}),
             execution: {
               ok: true,
               result,
@@ -109,7 +113,6 @@ describe('happier session history API Token machine selection', () => {
   });
 
   it('reads an inactive Session transcript through the explicitly selected machine', async () => {
-    const { handleSessionCommand } = await import('./handleSessionCommand');
     const output = captureConsoleJsonOutput();
     try {
       await handleSessionCommand([
@@ -122,7 +125,7 @@ describe('happier session history API Token machine selection', () => {
         '--json',
       ], {
         readCredentialsFn: async () => ({
-          token: 'hap_v1_fixture_token',
+          token: apiToken,
           encryption: null,
           credentialProvenance: 'api_token',
         }),
@@ -139,7 +142,7 @@ describe('happier session history API Token machine selection', () => {
           includeReasoning: true,
           includeEvents: true,
           includeRaw: true,
-          maxRawPayloadChars: 32768,
+          maxRawPayloadChars: null,
         },
       });
       expect(output.json()).toEqual(expect.objectContaining({
@@ -195,7 +198,11 @@ describe('happier session history API Token machine selection', () => {
           ok: true,
           session: {
             id: 'c123456789012345678901234',
+            createdAt: 123,
+            updatedAt: 123,
             active: statusRead === 1,
+            activeAt: 123,
+            encryption: null,
           },
         };
       }
@@ -205,7 +212,6 @@ describe('happier session history API Token machine selection', () => {
       return null;
     };
 
-    const { handleSessionCommand } = await import('./handleSessionCommand');
     const output = captureConsoleJsonOutput();
     try {
       await handleSessionCommand([
@@ -217,7 +223,7 @@ describe('happier session history API Token machine selection', () => {
         '--jsonl',
       ], {
         readCredentialsFn: async () => ({
-          token: 'hap_v1_fixture_token',
+          token: apiToken,
           encryption: null,
           credentialProvenance: 'api_token',
         }),
