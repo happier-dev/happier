@@ -539,9 +539,10 @@ describe('capability preflight with a cold Agent plugin', () => {
         id: 'cli.claude', method: 'probeModels', params: { cwd: home, bypassCache: true },
       });
       const expectedModels = [{ id: 'default', name: 'Default' }, { id: 'claude-rpc-model', name: 'RPC model' }];
-      expect(await client.call(RPC_METHODS.CAPABILITIES_INVOKE, {
+      const currentOnly = await client.call(RPC_METHODS.CAPABILITIES_INVOKE, {
         id: 'cli.claude', method: 'probeModels', params: { cwd: home, currentOnly: true },
-      })).toMatchObject({ ok: true, result: { source: 'static' } });
+      });
+      expect(currentOnly, JSON.stringify(currentOnly)).toMatchObject({ ok: true, result: { source: 'static' } });
       expect(requests).toBe(0);
       const initial = await invoke();
       expect(initial, JSON.stringify(initial)).toMatchObject({ ok: true, result: { observedAt: 42, refreshError: false, availableModels: expectedModels } });

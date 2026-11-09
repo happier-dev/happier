@@ -35,7 +35,7 @@ async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T> 
 }
 
 describe('resolvePreflightSessionControlsProbeEnvironment', () => {
-  it('uses only the selected contributed Agent home and executable declarations', async () => {
+  it('keeps selected Agent configuration and excludes ambient credentials', async () => {
     const agentId = 'acme/custom-agent';
     const resolved = await resolvePreflightSessionControlsProbeEnvironment({
       agentId,
@@ -57,12 +57,23 @@ describe('resolvePreflightSessionControlsProbeEnvironment', () => {
           },
         }]]),
       },
+      modelConfig: {
+        nativeCatalogObservation: {
+          providerLocalId: 'custom', purpose: 'model_upstream', connectedServiceId: 'custom-account',
+          nativeTarget: {
+            endpointEnvironmentVariable: 'CUSTOM_BASE_URL',
+            credentialSources: [{ kind: 'environment', variable: 'CUSTOM_LOGIN_TOKEN',
+              headers: [{ name: 'authorization', format: 'bearer' }] }],
+          },
+        },
+      },
       processEnv: {
         PATH: '/usr/bin', CUSTOM_HOME: '/native/custom', CUSTOM_CONFIG_HOME: '/native/config',
         CUSTOM_SOURCE_HOME: '/native/source', CUSTOM_INSTALL_ROOT: '/opt/custom', CUSTOM_FALLBACK_ENABLED: '0',
         HAPPIER_ACME_CUSTOM_AGENT_PATH: '/opt/custom/bin/agent',
         CODEX_HOME: '/unselected/codex', CLAUDE_CONFIG_DIR: '/unselected/claude',
         HAPPIER_CODEX_PATH: '/unselected/codex-bin', HAPPIER_CURSOR_AGENT_FALLBACK_ENABLED: '1',
+        CUSTOM_BASE_URL: 'https://custom.example/gateway', CUSTOM_LOGIN_TOKEN: 'fake-declared-ambient-token',
         CUSTOM_API_KEY: 'fake-ambient-secret', OPENAI_API_KEY: 'fake-unselected-secret',
       },
       materializedEnv: { CUSTOM_HOME: '/selected/materialized', CUSTOM_API_KEY: 'fake-selected-secret' },
@@ -71,6 +82,7 @@ describe('resolvePreflightSessionControlsProbeEnvironment', () => {
     expect(resolved.env).toEqual({
       PATH: '/usr/bin', CUSTOM_HOME: '/selected/materialized', CUSTOM_CONFIG_HOME: '/native/config',
       CUSTOM_SOURCE_HOME: '/native/source', CUSTOM_INSTALL_ROOT: '/opt/custom', CUSTOM_FALLBACK_ENABLED: '0',
+      CUSTOM_BASE_URL: 'https://custom.example/gateway',
       HAPPIER_ACME_CUSTOM_AGENT_PATH: '/opt/custom/bin/agent', CUSTOM_API_KEY: 'fake-selected-secret',
     });
   });

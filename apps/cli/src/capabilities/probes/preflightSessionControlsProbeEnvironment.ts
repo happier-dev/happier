@@ -1,4 +1,5 @@
 import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
+import type { AgentModelConfig } from '@happier-dev/agents';
 
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
@@ -15,6 +16,7 @@ type ResolvePreflightSessionControlsProbeEnvironmentParams = Readonly<{
     agentDefinitionsById: ReadonlyMap<string, Pick<ResolvedAgentContribution, 'runtimeSpec' | 'richDefinition' | 'catalogEntry'>>;
   }>;
   catalogEntry?: Pick<AgentCatalogEntry, 'connectedAccountNativeHome'> | null;
+  modelConfig?: Pick<AgentModelConfig, 'nativeCatalogObservation'> | null;
   processEnv?: NodeJS.ProcessEnv;
   materializedEnv?: Readonly<Record<string, string>>;
 }>;
@@ -60,11 +62,13 @@ function buildBaseEnvironment(params: ResolvePreflightSessionControlsProbeEnviro
   const runtime = agent?.runtimeSpec;
   const nativeHome = (params.catalogEntry === undefined ? agent?.catalogEntry : params.catalogEntry)?.connectedAccountNativeHome;
   const declaredEnvironment = agent?.richDefinition?.definition.ui?.behavior?.payload?.environmentVariables;
+  const nativeEndpointEnvironmentKey = params.modelConfig?.nativeCatalogObservation?.nativeTarget?.endpointEnvironmentVariable;
   const allowedKeys = createAllowedEnvKeySet([
     ...COLD_PROBE_PROCESS_ENV_KEYS,
     ...(runtime ? [resolveAgentCliOverrideEnvKey(runtime.id)] : []),
     ...(runtime?.knownEnvironmentBinDirs?.map((directory) => directory.envVar) ?? []),
     ...(runtime?.alternativeBinaryFallbackEnabledEnvVar ? [runtime.alternativeBinaryFallbackEnabledEnvVar] : []),
+    ...(nativeEndpointEnvironmentKey ? [nativeEndpointEnvironmentKey] : []),
     ...(nativeHome ? [nativeHome.environmentKey, ...(nativeHome.fallbackEnvironmentKeys ?? []),
       ...(nativeHome.sourceEnvironmentKey ? [nativeHome.sourceEnvironmentKey] : [])] : []),
     ...(declaredEnvironment ? [declaredEnvironment.backendMode.envKey,

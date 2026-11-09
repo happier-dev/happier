@@ -459,7 +459,7 @@ export async function invokeCliPreflightMethod(
             || !connectedServiceProbeEnvironment.exactPurposeBindingSubjectId) {
             return { ok: false, error: { code: 'connected-service-preflight-failed', message: 'Native account preparation is unavailable for this probe.' } };
         }
-        const environment = (await resolvePreflightSessionControlsProbeEnvironment({ agentId, registrySnapshot, catalogEntry: dependencies.agentCatalogEntry, processEnv: ambientEnv, materializedEnv })).env;
+        const environment = (await resolvePreflightSessionControlsProbeEnvironment({ agentId, registrySnapshot, catalogEntry: dependencies.agentCatalogEntry, modelConfig, processEnv: ambientEnv, materializedEnv })).env;
         const values = Object.fromEntries(Object.entries(environment).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
         const services = await dependencies.createAgentInvocationServices({
             pluginId: identity.pluginId, pluginVersion: target.manifest.version, agentId,
@@ -476,6 +476,7 @@ export async function invokeCliPreflightMethod(
     }
     const probeProcessEnv = (await resolvePreflightSessionControlsProbeEnvironment({
         agentId,
+        modelConfig,
         registrySnapshot,
         catalogEntry: dependencies.agentCatalogEntry,
         // Preparation receives the complete cold launch environment. Do not
@@ -517,6 +518,7 @@ export async function invokeCliPreflightMethod(
       if (method === 'probePassiveRealtimeSetup') {
         const result = await withPreflightSessionControlsProbeEnvironment({
           agentId,
+          modelConfig,
           registrySnapshot,
           catalogEntry: dependencies.agentCatalogEntry,
           processEnv: probeProcessEnv,

@@ -567,6 +567,7 @@ async function probeAgentModels(params: {
           provenance = {};
           catalogObserved = false;
           const modelsRaw = await withPreflightSessionControlsProbeEnvironment({
+            modelConfig,
             registrySnapshot: params.registrySnapshot ?? readCurrentContributionRegistry(),
             catalogEntry: params.catalogEntry,
             agentId: params.agentId,
