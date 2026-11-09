@@ -154,7 +154,8 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         const sourceDocument = await parseNativeComposeSource(template.compose.document);
         const existingSource = current?.content.definition.kind === 'stored' ? await parseNativeComposeSource(current.content.definition.document) : undefined;
         const currentInput = current && existingSource ? { content: current.content, source: existingSource } : undefined;
-        const recorded = resolveDeploymentTemplateInstantiationBaselineRefV1({ templateRef: input.templateRef, source: sourceDocument, current: currentInput });
+        const recorded = resolveDeploymentTemplateInstantiationBaselineRefV1({ templateRef: input.templateRef, source: sourceDocument, current: currentInput,
+            intent: input.intent });
         const baselineTemplate = recorded ? await readPinnedTemplate({ templateRef: recorded }, context).catch(error => {
                 if (error instanceof RegistryFetchErrorV1 && error.code !== 'auth_failed') return refuse('template_source_unavailable');
                 throw error;
@@ -165,7 +166,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         // No new collection, timer, freshness budget or Docker-filesystem guess.
         const sample = template.minimumResources?.memoryBytes !== undefined && input.machineId === host.machineId
             ? host.readMachineVitals?.() : undefined;
-        const prepareInput = { template, templateRef: input.templateRef, source: sourceDocument,
+        const prepareInput = { template, templateRef: input.templateRef, source: sourceDocument, intent: input.intent,
             ...(sample ? { targetResources: { sampledAt: sample.sampledAt,
                 ...(sample.memory.reported ? { memoryBytes: sample.memory.totalBytes } : {}) } } : {}),
             ...(currentInput ? { current: { ...currentInput, ...(baseline ? { baseline } : {}) } } : {}),
@@ -262,7 +263,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             if (plan.prepared.domains.length && !context.hostReviewedChild) return failure('credential_scope_denied');
             const { input } = plan;
             const createContent = (content: unknown, kind: string) => host.createContent(content, kind, context, plan.contentAuthority);
-            const bindings: StoredAppPresetInputV1['bindings'] = [...input.bindings];
+            const bindings: StoredAppPresetInputV1['bindings'] = [...plan.prepared.bindings];
             for (const secret of plan.prepared.generatedSecrets) {
                 context.signal?.throwIfAborted();
                 effectIssued = true;
@@ -273,8 +274,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                         readCredentials: async () => host.credentials,
                         operationContext: host.savedSecretOperationContext });
                     savedSecrets.push({ name: secret.name, phase: secret.phase, source });
-                    const index = bindings.findIndex(binding => binding.name === secret.name && binding.phase === secret.phase);
-                    bindings[index] = { purpose: 'variable', name: secret.name, phase: secret.phase, source };
+                    bindings.push({ purpose: 'variable', name: secret.name, phase: secret.phase, source });
                 } catch (error) {
                     const details = error && typeof error === 'object' && 'details' in error ? error.details : undefined;
                     if (errorCode(error) === 'outcome_unknown' && details && typeof details === 'object'

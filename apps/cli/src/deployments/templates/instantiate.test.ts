@@ -1,5 +1,6 @@
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import axios from 'axios';
+import { readFile } from 'node:fs/promises';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployment-protocol';
@@ -41,6 +42,109 @@ import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSet
 import { PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 
 afterEach(() => vi.restoreAllMocks());
+
+it('persists two additions of the bundled default database with independent generated credentials', async () => {
+    const fixture = await createSavedSecretsCliHttpFixture();
+    try {
+        const credentials = await fixture.deps.readCredentialsFn?.();
+        if (!credentials) throw new Error('Fixture credentials unavailable');
+        const identity = await readOrCreateInstallationIdentity();
+        const catalog: unknown = JSON.parse(await readFile(new URL('../../../../../packages/plugins/deployment-templates/resources/registry/apps.json', import.meta.url), 'utf8'));
+        if (!catalog || typeof catalog !== 'object' || !('apps' in catalog) || !Array.isArray(catalog.apps)) throw new Error('Expected bundled catalog');
+        const entry: unknown = catalog.apps.find((entry: { itemId: string }) => entry.itemId === 'postgresql');
+        if (!entry || typeof entry !== 'object' || !('app' in entry)) throw new Error('Expected bundled PostgreSQL');
+        const app = DeploymentTemplateV1Schema.parse(entry.app);
+        const source: RegistrySourceDescriptorV1 = { id: 'apps', title: 'Apps', format: 'happier-catalog', kinds: ['app'],
+            url: 'https://apps.test/catalog.json', enabled: true, addedAt: 1, origin: { kind: 'user' }, removable: true };
+        const registry = createRegistryHostV1({ host: 'node', readSources: async () => [source], http: {
+            getJson: async () => ({ ok: true, value: catalog, fetchedAt: 1 }),
+            getText: async () => { throw new Error('No text fetch'); }, getBytes: async () => { throw new Error('No binary fetch'); },
+        } });
+        const selected = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await registry.execute('registries.items.read', {
+            sourceId: 'apps', kind: 'app', itemId: 'postgresql' })).item;
+        if (selected.payload.kind !== 'app') throw new Error('Expected app producer');
+        const { origin: _origin, removable: _removable, ...sourceRow } = source;
+        const current = createDeploymentEnvironmentDetailV1();
+        current.environment.projectSourceId = 'project';
+        current.environment.controllerMachineId = 'target';
+        current.content = DeploymentEnvironmentContentV1Schema.parse({ ...current.content, bindings: [],
+            definition: await normalizeStoredComposeDefinitionInput({ from: 'compose', document: 'services:\n  app:\n    image: nginx:1\n',
+                profiles: [], services: ['app'] }) });
+        const link = current.targetLinks[0]!.targetLink;
+        current.environment.runtimeTargetLinkId = link.id;
+        link.machines = ['target'];
+        link.members = [{ machineId: 'target', installationId: identity.installationId, state: 'active' }];
+        // Artifact and Home persistence are genuine process boundaries; the complete template writer stays real.
+        const artifacts = new Map<string, unknown>();
+        const persist = (raw: unknown) => {
+            const body = readCarrierMutation(raw);
+            current.content = DeploymentEnvironmentContentV1Schema.parse(artifacts.get(String(body.contentArtifactId)));
+            current.environment.revision++;
+            return { ok: true as const, environmentId: current.environment.id, revision: current.environment.revision };
+        };
+        const originalGet = axios.get.bind(axios);
+        const originalRequest = axios.request.bind(axios);
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(catalog));
+        vi.spyOn(axios, 'get').mockImplementation(async (url, config) => url.endsWith('/v1/account/entity-rows/prompt-library')
+            ? { status: 200, data: PromptLibraryRowsListResponseV1Schema.parse({ status: 'listed',
+                rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: 1, content: key === 'registry-sources'
+                    ? { t: 'plain', v: { key, value: { v: 2, sources: [sourceRow], disabledSourceIds: [] } } } : null })) }) }
+            : originalGet(url, config));
+        vi.spyOn(axios, 'request').mockImplementation(async request => {
+            const path = request.url ? new URL(request.url).pathname : '';
+            if (request.method === 'GET' && path === '/v1/projects/sources/project') return { status: 200, data: { ok: true, canManage: true,
+                source: { id: 'project', revision: 1, name: 'Project', createdByAccountId: 'account-cli-fixture', audience: [] } } };
+            if (request.method === 'POST' && path.endsWith('/template')) return { status: 200, data: persist(request.data) };
+            return originalRequest(request);
+        });
+        const scopeKey = fixture.inHome(() => resolveAccountSettingsScopeKey(credentials));
+        const operation = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: fixture.origin,
+            snapshot: { source: 'network', settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1,
+                scopeKey, settingsSecretsReadKeys: [] }, isCurrent: async () => true });
+        const templates = createDeploymentTemplateInstantiationForHost({ credentials, serverId: 'home', machineId: 'target',
+            readInstallation: async () => identity.installationId, serverHttpBaseUrl: fixture.origin,
+            savedSecretOperationContext: operation, assertCurrent: async () => {}, headers: async () => ({}),
+            readEnvironment: async () => current, readCreationDefaultInputs: async () => ({}),
+            createContent: async content => { const id = `content-${artifacts.size}`; artifacts.set(id, content);
+                return { contentArtifactId: id, contentHeaderVersion: 1, contentBodyVersion: 1 }; },
+            storage: async (_action, input) => persist(input),
+        });
+        for (const ordinal of [1, 2]) {
+            const definition = current.content.definition;
+            if (definition.kind !== 'stored') throw new Error('Expected stored definition');
+            const input = DeploymentTemplateInstantiateInputV1Schema.parse({ mode: 'apply', intent: 'add', serverId: 'home', machineId: 'target',
+                projectSourceId: 'project', templateRef: { sourceId: 'apps', itemId: 'postgresql', version: selected.summary.version!, ref: selected.payload.ref },
+                environment: { kind: 'existing', environmentId: current.environment.id, expectedRevision: current.environment.revision },
+                target: { kind: 'existing', targetLinkId: link.id, expectedRevision: link.revision, installationId: identity.installationId },
+                destination: { kind: 'stored', contentRevision: definition.contentRevision, composeDigest: definition.composeDigest },
+                bindings: [{ purpose: 'variable', name: 'DB_PASSWORD', phase: 'runtime', source: { kind: 'generated', key: 'DB_PASSWORD' } }],
+                generatedSecretAudience: { accountGrants: [], teamGrants: [], groupGrants: [] } });
+            const preview = await fixture.inHome(() => templates.instantiate({ ...input, mode: 'preview' }, { runtimeAccountId: 'account-cli-fixture' }));
+            expect(preview).toMatchObject({ kind: 'preview', review: { generatedSecrets: [{ name: ordinal === 1 ? 'DB_PASSWORD' : 'DB_PASSWORD_2' }] } });
+            const result = await fixture.inHome(() => templates.instantiate(input, { runtimeAccountId: 'account-cli-fixture' }));
+            expect(result).toMatchObject({ kind: 'applied', savedSecrets: [{ name: ordinal === 1 ? 'DB_PASSWORD' : 'DB_PASSWORD_2' }] });
+        }
+        const stored = DeploymentEnvironmentContentV1Schema.parse(current.content);
+        expect(stored.template?.data?.map(data => ({ service: data.service, variables: data.variables, backup: data.logicalBackup })))
+            .toEqual([1, 2].map(ordinal => ({ service: ordinal === 1 ? 'database' : 'database-2',
+                variables: { username: ordinal === 1 ? 'DB_USER' : 'DB_USER_2', password: ordinal === 1 ? 'DB_PASSWORD' : 'DB_PASSWORD_2',
+                    database: ordinal === 1 ? 'DB_NAME' : 'DB_NAME_2' },
+                backup: { adapter: 'postgres-v1', database: ordinal === 1 ? 'DB_NAME' : 'DB_NAME_2', username: ordinal === 1 ? 'DB_USER' : 'DB_USER_2' } })));
+        expect(stored.bindings.map(binding => binding.name)).toEqual(['DB_USER', 'DB_NAME', 'DB_PASSWORD', 'DB_USER_2', 'DB_NAME_2', 'DB_PASSWORD_2']);
+        if (stored.definition.kind !== 'stored') throw new Error('Expected stored output');
+        const composed = await parseNativeComposeSource(stored.definition.document);
+        expect(composed.services).toHaveProperty('database-2');
+        expect(composed.services).toMatchObject({ 'database-2': { environment: {
+            POSTGRES_USER: '${DB_USER_2}', POSTGRES_PASSWORD: '${DB_PASSWORD_2}', POSTGRES_DB: '${DB_NAME_2}' },
+            volumes: ['postgres-data-2:/var/lib/postgresql/data'],
+            healthcheck: { test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'] } } });
+        expect(composed.volumes).toEqual({ 'postgres-data': {}, 'postgres-data-2': {} });
+        expect(stored.template?.exports?.DATABASE_URL).toMatchObject({ service: 'database-2',
+            env: { DATABASE_URL: 'postgres://${DB_USER_2}:${DB_PASSWORD_2}@database-2:5432/${DB_NAME_2}' } });
+        expect(fixture.writes).toHaveLength(2);
+        expect(fixture.opened(fixture.writes[0]!)?.value === fixture.opened(fixture.writes[1]!)?.value).toBe(false);
+    } finally { await fixture.close(); }
+});
 
 it.each(['template', 'environment', 'admittedTemplate'] as const)('retains generated secret outcomes through the %s entry and refuses a fresh disabled-source request', async entry => {
     const fixture = await createSavedSecretsCliHttpFixture();

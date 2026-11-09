@@ -47,6 +47,8 @@ export const DeploymentTemplateGeneratedSecretAudienceV1Schema = lazyZodSchema((
 export const DeploymentTemplateInstantiateInputV1Schema = lazyZodSchema(() => z.strictObject({
   mode: z.enum(['preview', 'apply']), serverId: id, machineId: id, projectSourceId: z.optional(id), newProject: z.optional(DeploymentNewProjectV1Schema),
   templateRef: DeploymentTemplateRefV1Schema,
+  /** Add another instance; omission preserves replacement/upgrade semantics. Names are owned by template preparation. */
+  intent: z.optional(z.literal('add')),
   environment: z.discriminatedUnion('kind', [existingEnvironment, createEnvironment]),
   target: z.discriminatedUnion('kind', [existingTarget, newTarget]),
   managedRetention: z.optional(DeploymentTargetManagedRetentionV1Schema),

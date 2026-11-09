@@ -523,7 +523,7 @@ describe('Environment → Data → Add (P10)', () => {
         ?? screen.findByTestId('project-deployments.add.progress')).not.toBeNull());
       expect(receivedApplyResults).toEqual([outcome === 'applied' ? { ok: true }
         : { ok: false, errorCode: outcome === 'partial' ? 'deployment_access_denied' : outcome }]);
-      expect(applied).toEqual([expect.objectContaining({ mode: 'apply', environment: { kind: 'existing',
+      expect(applied).toEqual([expect.objectContaining({ mode: 'apply', intent: 'add', environment: { kind: 'existing',
         environmentId: detail.environment.id, expectedRevision: detail.environment.revision },
         templateRef: expect.objectContaining({ sourceId, itemId: 'postgresql' }),
         bindings: [{ purpose: 'variable', name: 'DB_PASSWORD', phase: 'runtime', source: { kind: 'generated', key: 'DB_PASSWORD' } }],
@@ -766,6 +766,8 @@ describe('Environment → Data → Database page (P9)', () => {
       await view.screen.pressByTestIdAsync(`${page}.connect`);
       expect(await view.settle('project-deployments.connect.needsShare')).not.toBeNull();
       expect(view.screen.findByTestId('project-deployments.connect.confirm')).toBeNull();
+      await view.screen.pressByTestIdAsync('project-deployments.connect.openSettings');
+      expect(view.navigate).toHaveBeenCalledWith({ tab: 'settings', section: 'servers-build' });
     } finally { await view.dispose(); }
   });
 

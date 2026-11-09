@@ -117,6 +117,44 @@ describe('stored template preparation', () => {
         expect(stored.template?.health).toEqual(health);
     });
 
+    it('adds a repeated database with independent service, volume, generated login and connection exports', () => {
+        const repeatedSource = { ...source, services: { db: { ...source.services.db,
+            environment: { ...source.services.db.environment, POSTGRES_DB: 'db' },
+            healthcheck: { test: ['CMD-SHELL', 'pg_isready -d "$$POSTGRES_DB"'] } } } };
+        const selected = DeploymentTemplateV1Schema.parse({ ...template, generatedSecrets: [{ key: 'DB_PASSWORD',
+            purpose: 'database-password', label: 'Password', profile: { kind: 'base64url-32-bytes' } }] });
+        const first = prepareDeploymentTemplateInstantiationV1({ template: selected, templateRef, source: repeatedSource, bindings: [binding] });
+        const content = DeploymentEnvironmentContentV1Schema.parse({ name: 'Databases', retainPreviousDeployments: 1,
+            bindings: [binding], definition: { kind: 'stored', document: first.document, profiles: [], services: first.services,
+                contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` },
+            template: { ...first.template, definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` } } });
+        const existing = { content, source: JSON.parse(first.document), baseline: { templateRef, source: repeatedSource } };
+        const second = prepareDeploymentTemplateInstantiationV1({ template: selected, templateRef, source: repeatedSource,
+            ...{ intent: 'add' as const }, current: existing,
+            bindings: [{ purpose: 'variable', name: 'DB_PASSWORD', phase: 'runtime', source: { kind: 'generated', key: 'DB_PASSWORD' } }] });
+        const composed = JSON.parse(second.document);
+        expect(Object.keys(composed.services)).toEqual(['db', 'db-2']);
+        expect(composed.services.db).toEqual(repeatedSource.services.db);
+        expect(composed.services['db-2'].environment.POSTGRES_PASSWORD).toBe('${DB_PASSWORD_2}');
+        expect(composed.services['db-2'].environment.POSTGRES_DB).toBe('db');
+        expect(composed.services['db-2'].healthcheck).toEqual(repeatedSource.services.db.healthcheck);
+        expect(composed.services['db-2'].volumes).toEqual(['data-2:/var/lib/postgresql/data']);
+        expect(Object.keys(composed.volumes)).toEqual(['data', 'data-2']);
+        expect(second.generatedSecrets).toEqual([{ name: 'DB_PASSWORD_2', phase: 'runtime', key: 'DB_PASSWORD_2',
+            profile: { kind: 'base64url-32-bytes' } }]);
+        expect(second.template.data?.map(data => ({ service: data.service, password: data.variables?.password })))
+            .toEqual([{ service: 'db', password: 'DB_PASSWORD' }, { service: 'db-2', password: 'DB_PASSWORD_2' }]);
+        expect(second.template.exports?.database).toMatchObject({ service: 'db-2', env: {
+            DATABASE_URL: 'postgres://app:${DB_PASSWORD_2}@db-2:5432/app', DIRECT_URL: 'postgres://app:${DB_PASSWORD_2}@db-2:5432/app',
+        } });
+        // An upgrade is still the existing service and credential when the caller does not request Add.
+        const upgrade = prepareDeploymentTemplateInstantiationV1({ template: selected, templateRef, source: repeatedSource,
+            current: existing, bindings: [binding] });
+        expect(Object.keys(JSON.parse(upgrade.document).services)).toEqual(['db']);
+        expect(upgrade.template.data).toEqual([template.data]);
+        expect(upgrade.generatedSecrets).toEqual([]);
+    });
+
     it('reviews declared capacity shortfalls without refusing the attempt or inventing unavailable disk observations', () => {
         const declared = DeploymentTemplateV1Schema.parse({ ...template, minimumResources: { memoryBytes: 2048, freeDiskBytes: 4096 } });
         const input = { template: declared, templateRef, source, bindings: [binding] };

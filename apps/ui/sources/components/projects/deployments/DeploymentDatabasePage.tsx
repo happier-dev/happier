@@ -605,7 +605,7 @@ function DeploymentAddSheet(props: DeploymentAddSheetInput & CustomModalInjected
       machine={props.machineName(member.machineId)} onBack={back!} onClose={onClose} setChrome={setChrome}
       {...(props.onOpenRecovery ? { onOpenRecovery: props.onOpenRecovery } : {})}
       {...(props.onNavigate ? { onNavigate: props.onNavigate } : {})}
-      operands={{ machineId: member.machineId, projectSourceId: detail.environment.projectSourceId,
+      operands={{ intent: 'add', machineId: member.machineId, projectSourceId: detail.environment.projectSourceId,
         environment: { kind: 'existing', environmentId: detail.environment.id, expectedRevision: detail.environment.revision },
         target: { kind: 'existing', targetLinkId: link.id, expectedRevision: link.revision, installationId: member.installationId },
         destination: { kind: 'stored', contentRevision: definition.contentRevision, composeDigest: definition.composeDigest } }} />

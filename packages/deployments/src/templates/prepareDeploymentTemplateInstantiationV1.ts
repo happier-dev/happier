@@ -1,9 +1,10 @@
 import type { DeploymentTemplateV1, DeploymentTemplateSecretProfileV1, StoredAppPresetInputV1,
     DeploymentEnvironmentContentV1, EnvironmentVariableBindingV1, DeploymentTemplateCapacityReviewV1, DeploymentTemplateInstantiateInputV1 } from '@happier-dev/deployment-protocol';
+import { prepareDeploymentTemplateAdditionV1 } from './prepareDeploymentTemplateAdditionV1.js';
 
 type TemplateRef = Extract<StoredAppPresetInputV1['definition'], { from: 'catalogApp' }>['templateRef'];
 export type DeploymentTemplateInstantiationPreparationInputV1 = Readonly<{
-    template: DeploymentTemplateV1; templateRef: TemplateRef;
+    template: DeploymentTemplateV1; templateRef: TemplateRef; intent?: DeploymentTemplateInstantiateInputV1['intent'];
     /** Parsed by P41's source syntax owner, never a separately interpreted template language. */
     source: Record<string, unknown>;
     current?: Readonly<{ content: DeploymentEnvironmentContentV1; source: Record<string, unknown>;
@@ -62,8 +63,9 @@ function environment(value: unknown): Record<string, unknown> {
 
 /** Add-only/metadata composition needs no historical source; replacing an existing service does. */
 export function resolveDeploymentTemplateInstantiationBaselineRefV1(
-    input: Pick<DeploymentTemplateInstantiationPreparationInputV1, 'templateRef' | 'source' | 'current'>,
+    input: Pick<DeploymentTemplateInstantiationPreparationInputV1, 'templateRef' | 'source' | 'current' | 'intent'>,
 ): TemplateRef | undefined {
+    if (input.intent === 'add') return undefined;
     const current = input.current;
     const recorded = current?.content.template?.templateRef;
     if (!current || !recorded || recorded.sourceId !== input.templateRef.sourceId || recorded.itemId !== input.templateRef.itemId) return undefined;
@@ -73,6 +75,7 @@ export function resolveDeploymentTemplateInstantiationBaselineRefV1(
 
 /** One inert plan for preview/apply. P41 admits the output; Actions alone create refs and write content. */
 export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTemplateInstantiationPreparationInputV1): PreparedDeploymentTemplateInstantiationV1 {
+    input = prepareDeploymentTemplateAdditionV1(input);
     const { template } = input;
     const source = structuredClone(input.source);
     const declaredServices = record(source.services);

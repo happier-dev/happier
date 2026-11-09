@@ -858,6 +858,19 @@ nonnegative safe integer). Preparation patches the existing private Environment
 content and preserves omitted settings. An unchanged patch does not write an
 Artifact; a changed patch uses the existing signed content-publication path.
 
+In the same 0.3 development Action, `patch.ownServer.serviceExports` replaces the
+declared exports with an explicit private endpoint list: each entry names its
+key, Compose service, container port, scheme and `privateNetwork` exposure with
+the selected private network. An empty list clears the declarations. This operand
+cannot author public or loopback exports; existing declarations remain readable.
+`patch.definition` accepts the existing
+`from: 'compose'` source input, including document, public files and selectors;
+the native source owner derives its digest and stored content revision. It edits
+an existing stored definition, rather than converting a repository source.
+Both operands stay in the private invocation and Account Artifact; Home receives
+the prepared content reference. Neither an export declaration nor a source save
+opens a firewall rule or deploys the change.
+
 Deployment approval observation uses the existing `approval.request.get` result's
 optional `deploymentReceipt` projection. An open request reports
 `waiting-for-approval`; Approve and Deny use the existing approval decision
@@ -1096,6 +1109,16 @@ pre-migration backups select the database named by the saved dump source. The
 Environment decoder normalizes scalar database metadata already written by the
 current development producer into the same inventory. Catalog templates continue
 to declare their own single database.
+
+The existing Environment Add sheet sends `intent: 'add'` to template
+instantiation. Preparation selects the first available shared suffix for the
+template's services, variable bindings and private Compose resources, then
+rewrites their declared references, connection exports and database/backup
+metadata together. For example, adding the default PostgreSQL template twice
+creates `database` and `database-2`, with separate `postgres-data` volumes and
+`DB_PASSWORD` / `DB_PASSWORD_2` generated credentials. External resources remain
+shared by their declared names. Omitting the Add intent preserves the existing
+pinned-template replacement and upgrade behavior.
 
 In development, generated template bindings select the pinned descriptor's `generatedSecrets[].key`;
 they do not name a new Saved Secret. The shared planner refuses an undeclared
